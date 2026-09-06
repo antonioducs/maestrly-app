@@ -1,0 +1,374 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Validate tag, version, and release state
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[A-Za-z-][0-9A-Za-z-]*))*))?'
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v$semver$ ]]; then
+            echo "Release tag must be strict SemVer with a v prefix."
+            exit 1
+          fi
+          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]]; then
+            echo "Release tags must be annotated."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          release_commit="$(git rev-parse "$GITHUB_REF_NAME^{commit}")"
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "Release commit must be reachable from origin/main."
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          VERSION="$version" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          const expected = process.env.VERSION
+          const manifest = JSON.parse(readFileSync('package.json', 'utf8'))
+          const lockfile = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+          const versions = [
+            ['package.json', manifest.version],
+            ['package-lock.json', lockfile.packages?.['']?.version],
+          ]
+          for (const [file, actual] of versions) {
+            if (actual !== expected) throw new Error(`${file} has ${actual}; tag expects ${expected}`)
+          }
+          NODE
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "A draft or published release already exists for $GITHUB_REF_NAME."
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install dependencies
+        run: npm ci
+      - name: Check application
+        run: npm run check
+
+  linux:
+    name: Build Linux x64
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Electron system libraries
+        run: npx playwright install-deps chromium
+      - name: Build Linux packages
+        run: npm run package:linux
+      - name: Smoke packaged desktop
+        run: xvfb-run -a npm run smoke:packaged-desktop
+      - name: Smoke packaged Local ML
+        run: xvfb-run -a npm run smoke:packaged-local-ml-runtime
+      - name: Stage Linux release assets
+        run: node scripts/stage-release-assets.mjs linux dist .release-local-staging/linux
+      - name: Upload Linux release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux
+          path: .release-local-staging/linux
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  windows:
+    name: Build Windows x64
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Windows package
+        run: npm run package:win
+      - name: Smoke packaged desktop
+        run: npm run smoke:packaged-desktop
+      - name: Smoke packaged Local ML
+        run: npm run smoke:packaged-local-ml-runtime
+      - name: Stage Windows release assets
+        run: node scripts/stage-release-assets.mjs windows dist .release-local-staging/windows
+      - name: Upload Windows release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-windows
+          path: .release-local-staging/windows
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  macos:
+    name: Build signed macOS arm64
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: release
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Import Developer ID certificate and materialize notary key
+        env:
+          CSC_LINK_BASE64: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CSC_LINK_BASE64 CSC_KEY_PASSWORD CSC_NAME APPLE_API_KEY_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing release secret: $name"
+              exit 1
+            fi
+          done
+          if [[ "$RUNNER_ARCH" != "ARM64" ]]; then
+            echo "Signed macOS releases require an arm64 runner; got $RUNNER_ARCH."
+            exit 1
+          fi
+          if [[ "$CSC_NAME" == "Developer ID Application:"* ]]; then
+            echo "CSC_NAME must omit the Developer ID Application: prefix."
+            exit 1
+          fi
+          umask 077
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          api_key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          keychain="$RUNNER_TEMP/maestrly-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          CERTIFICATE_PATH="$certificate" API_KEY_PATH="$api_key" node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          const files = [
+            [process.env.CERTIFICATE_PATH, process.env.CSC_LINK_BASE64],
+            [process.env.API_KEY_PATH, process.env.APPLE_API_KEY_BASE64],
+          ]
+          for (const [file, encoded] of files) {
+            const contents = Buffer.from(encoded, 'base64')
+            if (contents.length === 0) throw new Error('Signing material decoded to an empty file.')
+            writeFileSync(file, contents, { mode: 0o600 })
+          }
+          NODE
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$CSC_KEY_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          security find-identity -v -p codesigning "$keychain" | grep -F "Developer ID Application: $CSC_NAME"
+          printf 'APPLE_API_KEY=%s\n' "$api_key" >> "$GITHUB_ENV"
+      - name: Build signed and notarized macOS package
+        env:
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: npm run package:release
+      - name: Verify app and notarize exact DMG
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(dist/mac-arm64/*.app)
+          if [[ "${#apps[@]}" -ne 1 ]]; then
+            echo "Expected exactly one packaged macOS app; found ${#apps[@]}."
+            exit 1
+          fi
+          app="${apps[0]}"
+          plist="$app/Contents/Info.plist"
+          if [[ "$(plutil -extract CFBundleIdentifier raw "$plist")" != "io.github.antonioducs.maestrly" ]]; then
+            echo "Packaged macOS app has an unexpected bundle identifier."
+            exit 1
+          fi
+          if [[ "$(plutil -extract CFBundleShortVersionString raw "$plist")" != "$RELEASE_VERSION" ]]; then
+            echo "Packaged macOS app version does not match the release tag."
+            exit 1
+          fi
+          executable="$(plutil -extract CFBundleExecutable raw "$plist")"
+          if [[ "$(lipo -archs "$app/Contents/MacOS/$executable")" != "arm64" ]]; then
+            echo "Packaged macOS executable is not arm64-only."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          dmgs=(dist/*.dmg)
+          if [[ "${#dmgs[@]}" -ne 1 ]]; then
+            echo "Expected exactly one macOS DMG; found ${#dmgs[@]}."
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+          codesign --force --sign "Developer ID Application: $CSC_NAME" --timestamp "$dmg"
+          codesign --verify --verbose=2 "$dmg"
+          xcrun notarytool submit "$dmg" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          codesign --verify --verbose=2 "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
+      - name: Smoke packaged desktop
+        run: npm run smoke:packaged-desktop
+      - name: Smoke packaged Local ML
+        run: npm run smoke:packaged-local-ml-runtime
+      - name: Stage macOS release assets
+        run: node scripts/stage-release-assets.mjs macos dist .release-local-staging/macos
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-macos
+          path: .release-local-staging/macos
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/maestrly-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP"/AuthKey_*.p8
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate, linux, windows, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Validate assets and generate checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "Maestrly-App-${RELEASE_VERSION}-linux-x64.AppImage"
+            "Maestrly-App-${RELEASE_VERSION}-linux-x64.deb"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.dmg"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip"
+            "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe"
+          )
+          for file in "${expected[@]}"; do
+            test -s "release-assets/$file"
+          done
+          actual_count="$(find release-assets -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          if [[ "$actual_count" -ne "${#expected[@]}" ]]; then
+            echo "Release staging contains unexpected files."
+            exit 1
+          fi
+          (
+            cd release-assets
+            LC_ALL=C sha256sum "${expected[@]}" > SHA256SUMS.txt
+          )
+      - name: Create and verify draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "Maestrly-App-${RELEASE_VERSION}-linux-x64.AppImage"
+            "Maestrly-App-${RELEASE_VERSION}-linux-x64.deb"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.dmg"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip"
+            "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe"
+          )
+          assets=()
+          for file in "${expected[@]}"; do
+            assets+=("release-assets/$file")
+          done
+          release_flags=(--draft --verify-tag --generate-notes --title "Maestrly App $GITHUB_REF_NAME")
+          if [[ "$PRERELEASE" == "true" ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" release-assets/SHA256SUMS.txt "${release_flags[@]}"
+          mkdir release-verification
+          gh release download "$GITHUB_REF_NAME" --dir release-verification
+          verification_count="$(find release-verification -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          if [[ "$verification_count" -ne 6 ]]; then
+            echo "Draft release must contain exactly six assets."
+            exit 1
+          fi
+          (
+            cd release-verification
+            sha256sum --check SHA256SUMS.txt
+          )
+          gh release edit "$GITHUB_REF_NAME" --draft=false

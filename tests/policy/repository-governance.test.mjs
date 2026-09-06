@@ -55,6 +55,43 @@ test('package smoke runs only on schedule or manual dispatch and cannot publish'
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
 })
 
+test('release workflow publishes verified native artifacts only from version tags', () => {
+  const source = read('.github/workflows/release.yml')
+  const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
+  const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
+
+  assert.deepEqual(triggers, ['push'])
+  assert.match(triggerBlock, /^    tags:\n      - "v\*"$/m)
+  assert.doesNotMatch(triggerBlock, /pull_request|pull_request_target|workflow_dispatch/)
+  assert.match(source, /^permissions:\n  contents: read$/m)
+  assert.match(source, /^concurrency:\n  group: release-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false$/m)
+
+  assert.match(source, /^  macos:\n[\s\S]*?^    runs-on: macos-15$/m)
+  assert.match(source, /^  macos:\n[\s\S]*?^    environment: release$/m)
+  assert.match(source, /npm run package:linux/)
+  assert.match(source, /npm run package:win/)
+  assert.match(source, /npm run package:release/)
+  assert.equal((source.match(/npm run smoke:packaged-desktop/g) ?? []).length, 3)
+  assert.equal((source.match(/npm run smoke:packaged-local-ml-runtime/g) ?? []).length, 3)
+  assert.match(source, /name: release-linux/)
+  assert.match(source, /name: release-windows/)
+  assert.match(source, /name: release-macos/)
+
+  assert.match(source, /^  publish:\n    name: Publish GitHub Release\n    needs: \[validate, linux, windows, macos\]$/m)
+  assert.match(source, /^  publish:\n[\s\S]*?^    permissions:\n      contents: write$/m)
+  assert.match(source, /gh release create "\$GITHUB_REF_NAME"/)
+  assert.match(source, /--draft/)
+  assert.match(source, /--generate-notes/)
+  assert.match(source, /sha256sum --check SHA256SUMS\.txt/)
+  assert.match(source, /gh release edit "\$GITHUB_REF_NAME" --draft=false/)
+  assert.doesNotMatch(source, /--clobber|\bnpm publish\b|\belectron-builder\b|--publish/)
+
+  assert.match(source, /if: always\(\)/)
+  assert.match(source, /security delete-keychain/)
+  assert.match(source, /developer-id\.p12/)
+  assert.match(source, /AuthKey_\$\{APPLE_API_KEY_ID\}\.p8/)
+})
+
 test('CI is read-only and exposes stable platform names', () => {
   const source = read('.github/workflows/ci.yml')
   assert.match(source, /^permissions:\n  contents: read$/m)
