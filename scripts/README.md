@@ -46,7 +46,8 @@ node scripts/package.mjs prod --mac dmg zip --arm64 --config electron-builder.re
 
 The protected `release` environment stores the PKCS#12 certificate and App Store
 Connect key as base64 secrets. The release workflow materializes them only in
-`RUNNER_TEMP`, uses a temporary keychain, verifies and notarizes the exact
+`RUNNER_TEMP`, uses a temporary keychain, signs native Mach-O code inside the
+bundled Local ML archive before compression, verifies and notarizes the exact
 distributables, and removes all temporary signing material. No feed bucket or
 minimum-version gate is included. Size budgets are provisional for this edition:
 measure actual distributable artifacts before promoting a target to a measured

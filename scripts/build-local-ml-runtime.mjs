@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
 import { ensureLocalMlDependencies } from './local-ml-npm.mjs'
+import { signMacRuntimeEntries } from './sign-macos-runtime.mjs'
 import tar from 'tar-stream'
 
 export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-1'
@@ -108,6 +109,8 @@ async function visit(directory, archiveDirectory) {
 for (const [relative, directory] of [...packages].sort(([a], [b]) => compareArchiveText(a, b)))
   await visit(directory, relative)
 entries.sort((a, b) => compareArchiveText(a.archive, b.archive))
+const signedMachO =
+  requestedPlatform === 'darwin' ? await signMacRuntimeEntries(entries, { cscName: process.env.CSC_NAME }) : []
 
 async function archiveEntryContent(entry) {
   if (!crossHostCanonicalArchive || entry.archive !== 'runtime.mjs') return null
@@ -231,6 +234,7 @@ console.log(
       unpackedBytes,
       sha256,
       files: entries.length,
+      signedMachOFiles: signedMachO.length,
     },
     null,
     2
