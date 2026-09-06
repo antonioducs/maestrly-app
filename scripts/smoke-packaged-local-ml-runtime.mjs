@@ -67,25 +67,16 @@ async function findUnpackedExecutable(unpackedRoot) {
     return path.join(unpackedRoot, candidates[0].name)
   }
 
-  const candidates = []
-  for (const entry of entries) {
-    if (
-      !entry.isFile() ||
-      entry.name.endsWith('.bin') ||
-      entry.name === 'chrome-sandbox' ||
-      entry.name === 'chrome_crashpad_handler'
-    ) {
-      continue
+  if (packagedPlatform === 'linux') {
+    const candidate = path.join(unpackedRoot, 'maestrly-app')
+    const details = await stat(candidate).catch(() => null)
+    if (!details?.isFile() || (details.mode & 0o111) === 0) {
+      throw new Error(`Packaged Linux executable is missing or not executable: ${candidate}`)
     }
-    const candidate = path.join(unpackedRoot, entry.name)
-    const mode = (await stat(candidate)).mode
-    if ((mode & 0o111) !== 0) candidates.push(candidate)
+    return candidate
   }
 
-  if (candidates.length === 1) return candidates[0]
-  throw new Error(
-    `Expected one main macOS/Linux executable under ${unpackedRoot}, found ${candidates.map((candidate) => path.basename(candidate)).join(', ') || 'none'}`
-  )
+  throw new Error(`Unsupported unpacked executable platform: ${packagedPlatform}`)
 }
 
 async function extractRuntime(destination) {
