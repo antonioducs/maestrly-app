@@ -338,28 +338,34 @@ describe('preview preparation and startup', () => {
   })
 
   it('retries an announced URL and requires stable reachability before resolving', async () => {
-    const root = temporaryProject()
-    writeFileSync(path.join(root, 'package-lock.json'), '{}')
-    writeJson(path.join(root, 'package.json'), { scripts: { dev: 'vite' } })
-    const proc = fakeProcess(4545)
-    const reachable = vi.fn<(url: string) => Promise<boolean>>().mockResolvedValueOnce(false).mockResolvedValue(true)
-    const dependencies: PreviewRuntimeDependencies = {
-      spawn: () => proc,
-      killProcessTree: () => {
-        proc.emit('close', null)
-      },
-      reachable,
-      randomId: ids('retry-target', 'retry-prepared'),
-    }
-    const [target] = discoverPreviewTargets(root, { dependencies })
-    const prepared = await preparePreview(root, { targetId: target.id }, { dependencies })
-    const starting = startPreview(prepared, { dependencies, startupTimeoutMs: 2_000 })
-    proc.stdout.write('Local: http://127.0.0.1:5173/\n')
-    const handle = await starting
+    vi.useFakeTimers()
+    try {
+      const root = temporaryProject()
+      writeFileSync(path.join(root, 'package-lock.json'), '{}')
+      writeJson(path.join(root, 'package.json'), { scripts: { dev: 'vite' } })
+      const proc = fakeProcess(4545)
+      const reachable = vi.fn<(url: string) => Promise<boolean>>().mockResolvedValueOnce(false).mockResolvedValue(true)
+      const dependencies: PreviewRuntimeDependencies = {
+        spawn: () => proc,
+        killProcessTree: () => {
+          proc.emit('close', null)
+        },
+        reachable,
+        randomId: ids('retry-target', 'retry-prepared'),
+      }
+      const [target] = discoverPreviewTargets(root, { dependencies })
+      const prepared = await preparePreview(root, { targetId: target.id }, { dependencies })
+      const starting = startPreview(prepared, { dependencies, startupTimeoutMs: 2_000 })
+      proc.stdout.write('Local: http://127.0.0.1:5173/\n')
+      await vi.advanceTimersByTimeAsync(300)
+      const handle = await starting
 
-    expect(reachable).toHaveBeenCalledTimes(3)
-    expect(handle.running?.()).toBe(true)
-    await handle.dispose()
+      expect(reachable).toHaveBeenCalledTimes(3)
+      expect(handle.running?.()).toBe(true)
+      await handle.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('waits for complete HTTP responses and starts the browser at the first loopback redirect URL', async () => {
