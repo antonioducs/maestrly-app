@@ -79,6 +79,11 @@ test('release workflow publishes verified native artifacts only from version tag
 
   assert.match(source, /^  publish:\n    name: Publish GitHub Release\n    needs: \[validate, linux, windows, macos\]$/m)
   assert.match(source, /^  publish:\n[\s\S]*?^    permissions:\n      contents: write$/m)
+  const publishBlock = source.slice(source.indexOf('\n  publish:'))
+  assert.match(
+    publishBlock,
+    /name: Create and verify draft release\n\s+env:\n\s+GH_TOKEN: \$\{\{ github\.token \}\}\n\s+GH_REPO: \$\{\{ github\.repository \}\}/
+  )
   assert.match(source, /gh release create "\$GITHUB_REF_NAME"/)
   assert.match(source, /--draft/)
   assert.match(source, /--generate-notes/)
