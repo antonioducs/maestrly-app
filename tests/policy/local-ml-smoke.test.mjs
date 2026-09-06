@@ -24,4 +24,5 @@ test('packaged local ML smoke selects the named Linux executable instead of shar
     source,
     /if \(packagedPlatform === 'linux'\) \{[\s\S]*?path\.join\(unpackedRoot, 'maestrly-app'\)/
   )
+  assert.match(source, /process\.platform === 'linux'\s+\? \['--no-sandbox'\]/)
 })

@@ -176,8 +176,25 @@ export function prepareSevenZipExecutable(binary = sevenZip, platform = process.
   return binary
 }
 
+export function resolveSevenZipExecutable({
+  bundled = sevenZip,
+  platform = process.platform,
+  environment = process.env,
+} = {}) {
+  if (platform === 'win32') {
+    // 7zip-bin uses an older standalone extractor that cannot decode newer NSIS ARM64 BCJ filters.
+    // Prefer the current system installation on Windows runners, then retain the bundled fallback.
+    const roots = [...new Set([environment.ProgramW6432, environment.ProgramFiles].filter(Boolean))]
+    for (const root of roots) {
+      const candidate = path.join(root, '7-Zip', '7z.exe')
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return prepareSevenZipExecutable(bundled, platform)
+}
+
 export function extractSevenZip(file, out) {
-  const binary = prepareSevenZipExecutable()
+  const binary = resolveSevenZipExecutable()
   const result = spawnSync(binary, ['x', '-y', `-o${out}`, file], { encoding: 'utf8' })
   if (result.error || result.status !== 0) {
     fail(

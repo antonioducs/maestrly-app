@@ -163,7 +163,12 @@ try {
   childEnv.MAESTRLY_PACKAGED_LOCAL_ML_SMOKE = '1'
   childEnv.MAESTRLY_LOCAL_ML_RUNTIME_PATH = runtimePath
 
-  const launchArgs = process.platform === 'darwin' ? ['--use-mock-keychain'] : []
+  const launchArgs =
+    process.platform === 'darwin'
+      ? ['--use-mock-keychain']
+      : process.platform === 'linux'
+        ? ['--no-sandbox']
+        : []
   const child = spawn(executablePath, launchArgs, { cwd: dist, env: childEnv, stdio: 'inherit' })
   const exitCode = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

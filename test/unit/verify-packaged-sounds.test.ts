@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 // @ts-expect-error
 import * as verifySounds from '../../scripts/verify-packaged-sounds.mjs'
 
-const { isPackagedArtifact, layoutsUnder, prepareSevenZipExecutable } = verifySounds
+const { isPackagedArtifact, layoutsUnder, prepareSevenZipExecutable, resolveSevenZipExecutable } = verifySounds
 
 const tempDirs: string[] = []
 const script = fileURLToPath(new URL('../../scripts/verify-packaged-sounds.mjs', import.meta.url))
@@ -63,6 +63,26 @@ describe('verify-packaged-sounds layout discovery', () => {
 
     expect(prepareSevenZipExecutable(binary, process.platform)).toBe(binary)
     expect(statSync(binary).mode & 0o111).not.toBe(0)
+  })
+
+  it('prefers a modern system 7-Zip installation on Windows and retains the bundled fallback', () => {
+    const programFiles = join(makeTempDir(), 'Program Files')
+    const systemBinary = join(programFiles, '7-Zip', '7z.exe')
+    const bundledBinary = join(makeTempDir(), '7za.exe')
+    mkdirSync(join(programFiles, '7-Zip'), { recursive: true })
+    writeFileSync(systemBinary, 'system')
+    writeFileSync(bundledBinary, 'bundled')
+
+    expect(
+      resolveSevenZipExecutable({
+        bundled: bundledBinary,
+        platform: 'win32',
+        environment: { ProgramFiles: programFiles },
+      }),
+    ).toBe(systemBinary)
+    expect(
+      resolveSevenZipExecutable({ bundled: bundledBinary, platform: 'win32', environment: {} }),
+    ).toBe(bundledBinary)
   })
 
   // 7zip-bin cannot open DMG; mount it with hdiutil on macOS.
