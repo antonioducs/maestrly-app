@@ -101,10 +101,16 @@ mitigations.
 
 ## Package and release boundary
 
-Package workflows never upload or publish `dist`. Checked-in electron-builder
-configurations disable publication, and the wrapper adds `--publish never`.
-Ad-hoc and CI packages prove build/runtime behavior only. Signed supported
-releases require the separate process in [releasing.md](releasing.md).
+Ordinary package workflows never upload or publish `dist`. Checked-in
+electron-builder configurations disable publication, and the wrapper adds
+`--publish never`. Ad-hoc and scheduled CI packages prove build/runtime
+behavior only.
+
+The tag-only `Release` workflow is the separate publication boundary. It
+copies only verified distributables into `.release-local-staging`, transfers
+them between native jobs as short-lived workflow artifacts, and grants
+`contents: write` only to the final draft-publication job. Signed supported
+releases follow [releasing.md](releasing.md).
 
 ## Versioned ruleset
 
@@ -137,8 +143,33 @@ unprotected.
 
 ## Release environments and secrets
 
-No release workflow or release environment is enabled by this change. Signing
-credentials must never be added to repository variables, files, logs, or pull
-request workflows. A future release workflow requires a separate review of
-environment protection, least-privilege permissions, signing material cleanup,
-checksums, and artifact provenance.
+The `release` environment is restricted to tag deployments matching `v*`.
+It has no required reviewer during the single-maintainer phase and does not make
+its secrets available to pull-request workflows. Its expected configuration is:
+
+```sh
+jq -n '{
+  wait_timer: 0,
+  can_admins_bypass: true,
+  deployment_branch_policy: {
+    protected_branches: false,
+    custom_branch_policies: true
+  }
+}' | gh api --method PUT repos/antonioducs/maestrly-app/environments/release --input -
+
+gh api --method POST \
+  repos/antonioducs/maestrly-app/environments/release/deployment-branch-policies \
+  -f name='v*' \
+  -f type=tag
+```
+
+The environment holds exactly the six Apple signing/notarization secret names
+documented in [releasing.md](releasing.md). Values must never be added to
+repository variables, files, logs, issues, pull requests, or chat. GitHub does
+not expose existing secret values, so they must be provisioned independently
+for this repository.
+
+The workflow uses read-only permissions until all native jobs pass. It creates a
+draft through the GitHub CLI, verifies downloaded checksums, and only then
+publishes it. Code-signing material lives in a temporary keychain and
+`RUNNER_TEMP` and is removed by an unconditional cleanup step.

@@ -29,9 +29,11 @@ for model-cache preparation and offline installation.
 
 The default macOS package is an ad-hoc signed `.app`; Windows uses a per-user NSIS
 installer; Linux generates AppImage and DEB packages. Configuration inheritance
-preserves separate app IDs, executable names, and icons for each channel. Nothing
-publishes automatically: every package invocation passes `--publish never` and
-all checked-in configurations disable publishing. Updates are installed manually.
+preserves separate app IDs, executable names, and icons for each channel. Every
+package invocation passes `--publish never` and all checked-in builder
+configurations disable publication. The separate tag-only GitHub workflow stages
+and publishes verified files after native packaging completes. Updates are
+installed manually.
 
 Optional signed macOS distribution uses `electron-builder.release.yml` or
 `electron-builder.release.beta.yml`. Supply your own `CSC_NAME`, certificate
@@ -42,15 +44,20 @@ Optional signed macOS distribution uses `electron-builder.release.yml` or
 node scripts/package.mjs prod --mac dmg zip --arm64 --config electron-builder.release.yml
 ```
 
-No release credentials, feed buckets, minimum-version gates, or upload scripts are
-included. Size budgets are provisional for this edition: measure actual distributable
-artifacts before promoting a target to a measured baseline.
+The protected `release` environment stores the PKCS#12 certificate and App Store
+Connect key as base64 secrets. The release workflow materializes them only in
+`RUNNER_TEMP`, uses a temporary keychain, verifies and notarizes the exact
+distributables, and removes all temporary signing material. No feed bucket or
+minimum-version gate is included. Size budgets are provisional for this edition:
+measure actual distributable artifacts before promoting a target to a measured
+baseline.
 
-These commands produce validation packages only. A source build, ad-hoc macOS
-signature, or successful package smoke is not a supported release. Before signing,
-tagging, checksumming, or distributing any artifact, follow the full maintainer
-checklist in [`docs/releasing.md`](../docs/releasing.md). Checked-in configuration
-and the wrapper keep publication disabled.
+Local commands produce validation packages only. A source build, ad-hoc macOS
+signature, or successful package smoke is not a supported release. An official
+release requires an annotated, version-aligned tag reachable from protected
+`main`, successful native jobs, signed/notarized macOS artifacts, and verified
+checksums. Follow the full maintainer checklist in
+[`docs/releasing.md`](../docs/releasing.md).
 
 ## Profiles and developer utilities
 

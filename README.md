@@ -24,9 +24,10 @@ account, license server, hosted backend, telemetry endpoint, and mandatory
 updater are not required.
 
 > [!IMPORTANT]
-> This project is a `0.x` source preview. There is no supported public binary
-> or automatic update channel. A source build or CI package is not a signed
-> production release.
+> This project is a `0.x` source preview. Official binaries, when available,
+> exist only as assets on a tagged [GitHub Release](https://github.com/antonioducs/maestrly-app/releases).
+> There is no automatic update channel, and a source build or CI package is not
+> a production release.
 
 ![A local Maestrly conversation with integrated developer tools](docs/images/desktop-chat.png)
 
@@ -49,14 +50,16 @@ updater are not required.
 
 | Platform | Source CI | Native package smoke | Public download |
 | --- | --- | --- | --- |
-| macOS arm64 | Typecheck, tests, build, and Electron | Verified locally; scheduled CI configured | None |
-| Linux x64 | Typecheck, tests, build, and Electron | Scheduled CI configured; first run required | None |
-| Windows x64 | Typecheck, tests, build, and Electron | Scheduled CI configured; first run required | None |
+| macOS arm64 | Typecheck, tests, build, and Electron | Verified locally; scheduled CI configured | Tagged signed DMG and ZIP |
+| Linux x64 | Typecheck, tests, build, and Electron | Scheduled CI configured; first run required | Tagged AppImage and DEB |
+| Windows x64 | Typecheck, tests, build, and Electron | Scheduled CI configured; first run required | Tagged NSIS installer |
 
 The standard CI matrix validates all three operating systems. Package smoke jobs
 are intentionally separate because they build native runtimes and installers.
-See [Releasing](docs/releasing.md) for the distinction between a validation
-bundle and a distributable release.
+The table describes the release pipeline, not the existence of a published
+version; the Releases page is the only source of official downloads. See
+[Releasing](docs/releasing.md) for the distinction between a validation bundle
+and a distributable release.
 
 ## Quickstart from source
 

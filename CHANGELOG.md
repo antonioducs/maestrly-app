@@ -14,6 +14,8 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   optional Local ML capabilities.
 - Reproducible dependency installation, cross-platform CI, security checks, and
   native package-smoke workflows.
+- Tag-driven GitHub Releases with Linux x64, Windows x64, and signed/notarized
+  macOS arm64 artifacts plus verified SHA-256 checksums.
 
 ### Security
 

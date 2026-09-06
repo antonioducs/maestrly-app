@@ -1,9 +1,11 @@
 # Releasing
 
-Maestrly App currently has no supported public binary or automatic release
-workflow. This guide is the maintainer checklist for preparing and validating a
-future `0.x` release; publishing authority, signing credentials, and a public
-release decision remain separate controls.
+Maestrly App publishes native artifacts through a maintainer-triggered tag
+workflow. No public binary exists until an authorized version tag is pushed, and
+there is no automatic update channel. This guide is the maintainer checklist for
+preparing and validating a `0.x` release; publishing authority, signing
+credentials, and the decision to create a public release remain separate
+controls.
 
 ## Version policy
 
@@ -71,6 +73,18 @@ The package wrapper builds and verifies the target Local ML archive, builds
 Electron output, inspects ASAR/resources, requires expected installer formats,
 and checks bundle-size/leakage budgets. It always appends `--publish never`.
 
+An approved tagged release publishes exactly these deterministic assets:
+
+- `Maestrly-App-<version>-linux-x64.AppImage`;
+- `Maestrly-App-<version>-linux-x64.deb`;
+- `Maestrly-App-<version>-windows-x64.exe`;
+- `Maestrly-App-<version>-macos-arm64.dmg`;
+- `Maestrly-App-<version>-macos-arm64.zip`; and
+- `SHA256SUMS.txt`, covering the five native artifacts.
+
+The macOS files contain the signed and notarized application. The Linux and
+Windows files are native validation builds but are not currently code-signed.
+
 If GitHub Copilot login is included in a distribution, provide
 `MAIN_VITE_GITHUB_COPILOT_CLIENT_ID` from an OAuth App owned by the distributing
 project or organization. The identifier is public but must not be borrowed from
@@ -109,6 +123,26 @@ names are:
 - `APPLE_API_KEY_ID`; and
 - `APPLE_API_ISSUER`.
 
+The protected GitHub `release` environment stores `CSC_LINK` as a base64
+PKCS#12 file and `APPLE_API_KEY` as a base64 App Store Connect `.p8` file.
+`CSC_NAME` contains the certificate name and team identifier without the
+`Developer ID Application:` prefix. Provision file secrets through stdin and
+enter string secrets at the interactive prompt:
+
+```sh
+base64 < "$P12_PATH" | tr -d '\n' | gh secret set CSC_LINK --env release -R antonioducs/maestrly-app
+base64 < "$P8_PATH" | tr -d '\n' | gh secret set APPLE_API_KEY --env release -R antonioducs/maestrly-app
+gh secret set CSC_KEY_PASSWORD --env release -R antonioducs/maestrly-app
+gh secret set CSC_NAME --env release -R antonioducs/maestrly-app
+gh secret set APPLE_API_KEY_ID --env release -R antonioducs/maestrly-app
+gh secret set APPLE_API_ISSUER --env release -R antonioducs/maestrly-app
+```
+
+Never paste these values into issues, pull requests, logs, repository variables,
+chat, or command-line arguments. The release workflow decodes them only under
+`RUNNER_TEMP`, imports the certificate into a temporary keychain, and removes
+the keychain and files even when packaging fails.
+
 Run the preflight and signed package command only in an authorized release
 checkout:
 
@@ -139,9 +173,11 @@ exact candidate bytes.
 
 ## Checksums and provenance
 
-Generate SHA-256 checksums for every downloadable file after signing,
-notarization, and final packaging. Re-download each uploaded asset, recompute its
-hash, and compare it with the published checksum before announcement.
+The release workflow generates SHA-256 checksums only after signing,
+notarization, and final packaging. It creates a draft, re-downloads every
+uploaded asset, verifies `SHA256SUMS.txt`, and publishes the draft only after
+the downloaded bytes pass. A manual release must apply the same process before
+announcement.
 
 Lockfiles, runtime manifests, package reports, and
 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) are the current component
@@ -150,19 +186,33 @@ against actual package contents before it is advertised.
 
 ## Publication
 
-There is no checked-in publishing workflow. A future one must be reviewed
-separately and must:
+The checked-in `Release` workflow runs only when a maintainer pushes an
+annotated `v*` tag. The tag must be valid Semantic Versioning, match
+`package.json` and `package-lock.json`, and resolve to a commit reachable from
+protected `main`. Merge the version and changelog update before creating it:
 
-- run only for an immutable authorized tag reachable from protected `main`;
-- validate version/tag alignment before accessing credentials;
-- use a protected release environment and least-privilege permissions;
-- build or verify every exact candidate, including native smokes;
-- remove temporary signing material even after failure;
-- publish checksums and accurate prerelease/platform labels; and
-- never enable a mandatory updater or hosted Maestrly dependency.
+```sh
+git switch main
+git pull --ff-only
+npm ci
+npm run audit:dependencies
+npm run check
+npm run test:e2e
+git tag -a v0.1.0 -m "Maestrly App v0.1.0"
+git push origin v0.1.0
+```
 
-Manual publication follows the same gates. Do not silently replace assets or
-retarget a tag.
+The workflow rechecks the source, builds on native Linux, Windows, and arm64
+macOS runners, runs both packaged smokes, signs and notarizes macOS, stages only
+the five expected files, and publishes them with checksums. Tags containing a
+SemVer prerelease suffix create a GitHub prerelease.
+
+Publication starts as a draft only after all native jobs succeed. If upload or
+verification fails, inspect the retained draft and the workflow logs; never
+overwrite assets with `--clobber`, silently replace a failed candidate, move
+the tag, or publish the draft manually without repeating verification. A
+successful tagged release does not enable a mandatory updater or hosted
+Maestrly dependency.
 
 ## Rollback and security response
 
