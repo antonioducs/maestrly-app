@@ -1,39 +1,14 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createGunzip } from 'node:zlib'
-import tar from 'tar-stream'
+import { extractLocalMlArchive as extractArchive } from './extract-local-ml-archive.mjs'
 
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
-
-async function extractArchive(archive, temporary) {
-  const extract = tar.extract()
-  extract.on('entry', (header, stream, next) => {
-    const parts = header.name.split('/')
-    if (path.isAbsolute(header.name) || parts.some((part) => !part || part === '..')) {
-      extract.destroy(new Error(`Unsafe archive entry: ${header.name}`))
-      return
-    }
-    const output = path.join(temporary, ...parts)
-    void mkdir(path.dirname(output), { recursive: true })
-      .then(async () => {
-        const chunks = []
-        for await (const chunk of stream) chunks.push(chunk)
-        await writeFile(output, Buffer.concat(chunks), { mode: header.mode })
-        next()
-      })
-      .catch((error) => extract.destroy(error))
-  })
-  const done = new Promise((resolve, reject) => extract.once('finish', resolve).once('error', reject))
-  createReadStream(archive).pipe(createGunzip()).pipe(extract)
-  await done
-}
 
 async function verifyExtractedRuntime(temporary) {
   const runtimeEntry = path.join(temporary, 'runtime.mjs')

@@ -88,6 +88,10 @@ describe('safe streaming archive extraction', () => {
     { name: '../escape', type: 'file' as const },
     { name: 'inside/../traversal', type: 'file' as const },
     { name: '/absolute', type: 'file' as const },
+    { name: '..\\escape', type: 'file' as const },
+    { name: 'C:escape', type: 'file' as const },
+    { name: 'nested/file:stream', type: 'file' as const },
+    { name: 'nested/.. /escape', type: 'file' as const },
     { name: 'safe/link', type: 'symlink' as const },
     { name: 'safe/hardlink', type: 'link' as const },
     { name: 'safe/device', type: 'character-device' as const },
@@ -163,11 +167,9 @@ describe('HTTPS downloader', () => {
     const destination = path.join(temporary, 'oversized-download')
 
     await expect(
-      downloader(
-        { ...target('x'), maxDownloadBytes: body.length - 1 },
-        destination,
-        { signal: new AbortController().signal }
-      )
+      downloader({ ...target('x'), maxDownloadBytes: body.length - 1 }, destination, {
+        signal: new AbortController().signal,
+      })
     ).rejects.toThrow(/exceeds maximum/i)
     expect(existsSync(destination)).toBe(false)
   })

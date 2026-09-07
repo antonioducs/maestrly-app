@@ -4,15 +4,13 @@
  * separate gate from smoke-local-ml-runtime.mjs: the latter validates the archive under Node, while this one
  * launches the signed app and its utilityProcess helper with the exact runtime staged outside the app bundle.
  */
-import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { createGunzip } from 'node:zlib'
-import tar from 'tar-stream'
+import { extractLocalMlArchive } from './extract-local-ml-archive.mjs'
 
 const run = promisify(execFile)
 const dist = path.resolve(process.argv[2] ?? 'dist')
@@ -79,41 +77,11 @@ async function findUnpackedExecutable(unpackedRoot) {
   throw new Error(`Unsupported unpacked executable platform: ${packagedPlatform}`)
 }
 
-async function extractRuntime(destination) {
-  const unpack = tar.extract()
-  unpack.on('entry', (header, stream, next) => {
-    void (async () => {
-      const normalized = path.posix.normalize(header.name)
-      if (path.posix.isAbsolute(header.name) || normalized === '..' || normalized.startsWith('../')) {
-        throw new Error(`Unsafe local-ML archive entry: ${header.name}`)
-      }
-      const output = path.join(destination, ...normalized.split('/'))
-      if (header.type === 'directory') {
-        await mkdir(output, { recursive: true })
-        stream.resume()
-      } else if (header.type === 'file') {
-        await mkdir(path.dirname(output), { recursive: true })
-        await new Promise((resolve, reject) => {
-          const target = createWriteStream(output, { mode: header.mode })
-          target.once('finish', resolve).once('error', reject)
-          stream.once('error', reject).pipe(target)
-        })
-      } else {
-        throw new Error(`Unsupported local-ML archive entry: ${header.name} (${header.type})`)
-      }
-      next()
-    })().catch((error) => unpack.destroy(error))
-  })
-  const done = new Promise((resolve, reject) => unpack.once('finish', resolve).once('error', reject))
-  createReadStream(archive).pipe(createGunzip()).pipe(unpack)
-  await done
-}
-
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'maestrly-packaged-ml-smoke-'))
 try {
   const runtimePath = path.join(temporary, 'runtime')
   await mkdir(runtimePath, { recursive: true })
-  await extractRuntime(runtimePath)
+  await extractLocalMlArchive(archive, runtimePath)
   if (!existsSync(path.join(runtimePath, 'runtime.mjs'))) throw new Error('Staged local-ML runtime.mjs is missing')
 
   let packagedRoot
@@ -164,11 +132,7 @@ try {
   childEnv.MAESTRLY_LOCAL_ML_RUNTIME_PATH = runtimePath
 
   const launchArgs =
-    process.platform === 'darwin'
-      ? ['--use-mock-keychain']
-      : process.platform === 'linux'
-        ? ['--no-sandbox']
-        : []
+    process.platform === 'darwin' ? ['--use-mock-keychain'] : process.platform === 'linux' ? ['--no-sandbox'] : []
   const child = spawn(executablePath, launchArgs, { cwd: dist, env: childEnv, stdio: 'inherit' })
   const exitCode = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {

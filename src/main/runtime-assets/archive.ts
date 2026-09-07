@@ -16,13 +16,17 @@ function safeOutput(root: string, rawName: string, stripPrefix?: string): string
   if (
     rawName.includes('\\') ||
     rawName.includes('\0') ||
+    rawName.includes(':') ||
     path.posix.isAbsolute(rawName) ||
     /^[A-Za-z]:/.test(rawName)
   ) {
     throw new Error(`Unsafe archive path: ${rawName}`)
   }
   const normalized = rawName.replace(/\/$/, '')
-  if (!normalized || normalized.split('/').some((part) => !part || part === '.' || part === '..')) {
+  if (
+    !normalized ||
+    normalized.split('/').some((part) => !part || part === '.' || part === '..' || /[ .]$/.test(part))
+  ) {
     throw new Error(`Unsafe archive path: ${rawName}`)
   }
   let relative = normalized
@@ -35,7 +39,11 @@ function safeOutput(root: string, rawName: string, stripPrefix?: string): string
   if (!relative || relative.split('/').some((part) => part === '..' || part === '.' || !part)) {
     throw new Error(`Unsafe archive path: ${rawName}`)
   }
-  return path.join(root, ...relative.split('/'))
+  const destination = path.resolve(root)
+  const output = path.resolve(destination, relative)
+  // Enforce containment on the final path as well as validating archive entry components.
+  if (!output.startsWith(destination + path.sep)) throw new Error(`Unsafe archive path: ${rawName}`)
+  return output
 }
 
 async function exclusiveFileStream(file: string, mode?: number) {
