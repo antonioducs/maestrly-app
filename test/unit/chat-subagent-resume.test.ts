@@ -4,6 +4,7 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getDb } from '../../src/main/store'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import {
+  claudeSubagentRuntimeSignature,
   planSubagentResume,
   recreatedTask,
   releaseTurnDelegationRuntimes,
@@ -20,6 +21,12 @@ import { listClaudeSessionCleanup, queueClaudeSessionCleanup } from '../../src/m
 
 const codexHandle = { kind: 'codex-thread' as const, threadId: 'thread_1', accountId: null, toolSignature: 'sig-a' }
 const claudeHandle = { kind: 'claude-session' as const, sessionId: 'sess_1', cwd: '/w', accountId: 'acc' }
+const claudeContractHandle = {
+  ...claudeHandle,
+  modelId: 'claude-fable-5-1',
+  behaviorProfileId: 'maestrly-fable-5.1-v1',
+  runtimeSignature: 'runtime-a',
+}
 
 const replay = [
   { role: 'user' as const, content: 'Build it.' },
@@ -90,6 +97,57 @@ describe('planSubagentResume', () => {
         resume: { handle: claudeHandle },
       })
     ).toEqual({ mode: 'native', handle: claudeHandle })
+  })
+
+  it('binds persistent Claude workers to model, behavior version and definition', () => {
+    const base = {
+      providerId: 'builtin_claude_subscription@acc',
+      accountId: 'acc',
+      modelId: 'claude-fable-5-1',
+      behaviorProfileId: 'maestrly-fable-5.1-v1',
+      runtimeSignature: 'runtime-a',
+      resume: { handle: claudeContractHandle },
+    }
+    expect(planSubagentResume(base)).toEqual({ mode: 'native', handle: claudeContractHandle })
+    expect(planSubagentResume({ ...base, modelId: 'claude-sonnet-5' })).toEqual({
+      mode: 'recreate',
+      reason: 'model-changed',
+    })
+    expect(planSubagentResume({ ...base, behaviorProfileId: null })).toEqual({
+      mode: 'recreate',
+      reason: 'behavior-profile-changed',
+    })
+    expect(planSubagentResume({ ...base, runtimeSignature: 'runtime-b' })).toEqual({
+      mode: 'recreate',
+      reason: 'definition-changed',
+    })
+    expect(planSubagentResume({ ...base, resume: { handle: claudeHandle } })).toEqual({
+      mode: 'recreate',
+      reason: 'model-changed',
+    })
+  })
+
+  it('builds deterministic Claude worker signatures from sorted tools and behavior', () => {
+    const base = {
+      modelId: 'claude-fable-5-1',
+      behaviorProfileId: 'maestrly-fable-5.1-v1',
+      prompt: 'p',
+      readOnly: true,
+      sentEffort: 'high',
+      fastMode: false,
+    }
+    expect(claudeSubagentRuntimeSignature({ ...base, toolNames: ['grep', 'read'] })).toBe(
+      claudeSubagentRuntimeSignature({ ...base, toolNames: ['read', 'grep'] })
+    )
+    expect(claudeSubagentRuntimeSignature({ ...base, toolNames: ['read'] })).not.toBe(
+      claudeSubagentRuntimeSignature({ ...base, toolNames: ['read', 'grep'] })
+    )
+    expect(claudeSubagentRuntimeSignature({ ...base, toolNames: ['read'], sentEffort: 'max' })).not.toBe(
+      claudeSubagentRuntimeSignature({ ...base, toolNames: ['read'] })
+    )
+    expect(claudeSubagentRuntimeSignature({ ...base, toolNames: ['read'], fastMode: true })).not.toBe(
+      claudeSubagentRuntimeSignature({ ...base, toolNames: ['read'] })
+    )
   })
 })
 

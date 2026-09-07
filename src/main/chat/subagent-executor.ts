@@ -26,6 +26,7 @@ import { runCodexSubagent } from './codex-subscription/subagent-runner'
 import { queueCodexThreadCleanup } from './codex-subscription/thread-store'
 import {
   planSubagentResume,
+  claudeSubagentRuntimeSignature,
   recreatedTask,
   resolveSubagentResume,
   subagentToolSignature,
@@ -33,6 +34,8 @@ import {
   type SubagentResumeRecreateReason,
   type SubagentResumeSource,
 } from './subagent-resume'
+import { getAppFlag } from '../store'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from './fable/profile'
 import { resolveCodexSubagentServiceTier } from './subscription-failover/codex-adapter'
 import type { GitHubCopilotAccountIdentity, GitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
@@ -243,7 +246,8 @@ export async function executeSubagent(args: {
   const resumeFor = (
     providerId: string,
     accountId: string | null,
-    toolSignature?: string
+    toolSignature?: string,
+    claudeContract?: { modelId: string; behaviorProfileId: string | null; runtimeSignature: string }
   ): {
     task: string
     handle: SubagentRuntimeHandle | null
@@ -252,7 +256,13 @@ export async function executeSubagent(args: {
   } => {
     if (!resumeSource) return { task: args.task, handle: null, fallbackTask: args.task }
     const fallback = (reason: SubagentResumeRecreateReason) => recreatedTask(args.task, resumeSource, reason)
-    const plan = planSubagentResume({ providerId, accountId, toolSignature, resume: resumeSource })
+    const plan = planSubagentResume({
+      providerId,
+      accountId,
+      toolSignature,
+      ...claudeContract,
+      resume: resumeSource,
+    })
     if (plan.mode === 'recreate') {
       recordResume('recreated', plan.reason)
       return { task: fallback(plan.reason), handle: null, fallbackTask: fallback(plan.reason) }
@@ -279,7 +289,34 @@ export async function executeSubagent(args: {
       }
       manager.assertAccountIdentity(identity)
       const accountId = manager.accountId ?? null
-      const resume = resumeFor(effective.providerId, accountId)
+      let resolvedModelId: string | undefined
+      if (effective.modelId.trim() === 'fable') {
+        try {
+          resolvedModelId = (await manager.resolveModelId(effective.modelId, args.signal, true)) ?? undefined
+        } catch {
+          return { text: '', error: 'Claude Fable alias could not be resolved.', errorCode: 'agent-unavailable' }
+        }
+      }
+      const behaviorProfile = resolveFableBehaviorProfile({
+        requestedModelId: effective.modelId,
+        resolvedModelId,
+        enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+      }).profile
+      const runtimeModelId = resolvedModelId ?? effective.modelId
+      const runtimeSignature = claudeSubagentRuntimeSignature({
+        modelId: runtimeModelId,
+        behaviorProfileId: behaviorProfile?.id ?? null,
+        prompt: effectiveDefinition.prompt,
+        readOnly: effectiveReadOnly,
+        sentEffort: effective.sentEffort,
+        fastMode: effective.fastMode === true,
+        toolNames: [...allowed],
+      })
+      const resume = resumeFor(effective.providerId, accountId, undefined, {
+        modelId: runtimeModelId,
+        behaviorProfileId: behaviorProfile?.id ?? null,
+        runtimeSignature,
+      })
       const result = await runClaudeSubagent({
         ...args,
         task: resume.task,
@@ -287,6 +324,8 @@ export async function executeSubagent(args: {
         readOnly: effectiveReadOnly,
         manager,
         accountIdentity: identity,
+        ...(resolvedModelId ? { resolvedModelId } : {}),
+        behaviorProfile,
         tools,
         allowSkillLoader: args.mode === 'maestro',
         progress,
@@ -297,7 +336,15 @@ export async function executeSubagent(args: {
           : {}),
         onSessionStarted: ({ sessionId }) => {
           if (!persistRuntime) return
-          recorder?.runtimeHandle({ kind: 'claude-session', sessionId, cwd: args.cwd, accountId })
+          recorder?.runtimeHandle({
+            kind: 'claude-session',
+            sessionId,
+            cwd: args.cwd,
+            accountId,
+            modelId: runtimeModelId,
+            behaviorProfileId: behaviorProfile?.id ?? null,
+            runtimeSignature,
+          })
           queueClaudeSessionCleanup(args.conversationId, sessionId, args.cwd, accountId)
         },
       })

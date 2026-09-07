@@ -100,6 +100,7 @@ import { getClaudeSubscriptionManager } from '../claude-agent-sdk/manager'
 import { queueClaudeSessionCleanup } from '../claude-agent-sdk/session-store'
 import { runClaudeSubagent } from '../claude-agent-sdk/subagent-runner'
 import {
+  claudeSubagentRuntimeSignature,
   planSubagentResume,
   recreatedTask,
   resolveSubagentResume,
@@ -108,6 +109,7 @@ import {
   type SubagentResumeRecreateReason,
   type SubagentResumeSource,
 } from '../subagent-resume'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from '../fable/profile'
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
@@ -1869,11 +1871,7 @@ async function buildDynamicTools(
     }
     // ALL Maestrly skills (`.agents` + `.claude`) enter the same host-owned ToolSet above. Codex's
     // NATIVE catalog is disabled in all modes (`skills.include_instructions: false`).
-    if (
-      !args.reviewerRuntime &&
-      args.mode !== 'ask' &&
-      args.mode !== 'maestro'
-    ) {
+    if (!args.reviewerRuntime && args.mode !== 'ask' && args.mode !== 'maestro') {
       const schema = asSchema(reviewPlanTool.parameters)
       runtimes.push({
         spec: {
@@ -3122,7 +3120,8 @@ export async function runCodexSubscriptionChat(
             const resumeFor = (
               providerId: string,
               accountId: string | null,
-              toolSignature?: string
+              toolSignature?: string,
+              claudeContract?: { modelId: string; behaviorProfileId: string | null; runtimeSignature: string }
             ): {
               task: string
               handle: SubagentRuntimeHandle | null
@@ -3131,7 +3130,13 @@ export async function runCodexSubscriptionChat(
             } => {
               if (!resumeSource) return { task, handle: null, fallbackTask: task }
               const fallback = (reason: SubagentResumeRecreateReason) => recreatedTask(task, resumeSource, reason)
-              const plan = planSubagentResume({ providerId, accountId, toolSignature, resume: resumeSource })
+              const plan = planSubagentResume({
+                providerId,
+                accountId,
+                toolSignature,
+                ...claudeContract,
+                resume: resumeSource,
+              })
               if (plan.mode === 'recreate') {
                 recordResume('recreated', plan.reason)
                 return { task: fallback(plan.reason), handle: null, fallbackTask: fallback(plan.reason) }
@@ -3438,7 +3443,35 @@ export async function runCodexSubscriptionChat(
                       return { text: '', error: 'Claude subscription is not authenticated.' }
                     }
                     const accountId = manager.accountId ?? null
-                    const resume = resumeFor(profile.effective!.providerId, accountId)
+                    let resolvedModelId: string | undefined
+                    if (profile.effective!.modelId.trim() === 'fable') {
+                      try {
+                        resolvedModelId =
+                          (await manager.resolveModelId(profile.effective!.modelId, signal, true)) ?? undefined
+                      } catch {
+                        return { text: '', error: 'Claude Fable alias could not be resolved.' }
+                      }
+                    }
+                    const behaviorProfile = resolveFableBehaviorProfile({
+                      requestedModelId: profile.effective!.modelId,
+                      resolvedModelId,
+                      enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+                    }).profile
+                    const runtimeModelId = resolvedModelId ?? profile.effective!.modelId
+                    const runtimeSignature = claudeSubagentRuntimeSignature({
+                      modelId: runtimeModelId,
+                      behaviorProfileId: behaviorProfile?.id ?? null,
+                      prompt: effectiveDefinition.prompt,
+                      readOnly: codexReadOnly,
+                      sentEffort: profile.effective!.sentEffort,
+                      fastMode: profile.effective!.fastMode === true,
+                      toolNames: [...childToolNames],
+                    })
+                    const resume = resumeFor(profile.effective!.providerId, accountId, undefined, {
+                      modelId: runtimeModelId,
+                      behaviorProfileId: behaviorProfile?.id ?? null,
+                      runtimeSignature,
+                    })
                     const outcome = await runClaudeSubagent({
                       manager,
                       accountIdentity: {
@@ -3448,6 +3481,8 @@ export async function runCodexSubscriptionChat(
                       conversationId: args.conversationId,
                       cwd: args.cwd,
                       profile,
+                      ...(resolvedModelId ? { resolvedModelId } : {}),
+                      behaviorProfile,
                       definition: effectiveDefinition,
                       signal,
                       agentName,
@@ -3463,7 +3498,15 @@ export async function runCodexSubscriptionChat(
                         : {}),
                       onSessionStarted: ({ sessionId }) => {
                         if (!persistRuntime) return
-                        sessionRecorder.runtimeHandle({ kind: 'claude-session', sessionId, cwd: args.cwd, accountId })
+                        sessionRecorder.runtimeHandle({
+                          kind: 'claude-session',
+                          sessionId,
+                          cwd: args.cwd,
+                          accountId,
+                          modelId: runtimeModelId,
+                          behaviorProfileId: behaviorProfile?.id ?? null,
+                          runtimeSignature,
+                        })
                         queueClaudeSessionCleanup(args.conversationId, sessionId, args.cwd, accountId)
                       },
                     })
@@ -3471,62 +3514,62 @@ export async function runCodexSubscriptionChat(
                     return outcome
                   })()
                 : nativeCopilot
-                    ? await (async () => {
-                        const manager = getGitHubCopilotSubscriptionManager(
-                          subscriptionAccountId(profile.effective!.providerId)
-                        )
-                        const identity = manager.getAccountIdentity()
-                        if (!identity.fingerprint) {
-                          return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
-                        }
-                        return runGitHubCopilotSubagent({
-                          manager,
-                          accountIdentity: identity,
-                          conversationId: args.conversationId,
-                          cwd: args.cwd,
-                          profile,
-                          definition: effectiveDefinition,
-                          signal,
-                          agentName,
-                          task: resumeFor(profile.effective!.providerId, null).task,
-                          readOnly: codexReadOnly,
-                          tools: await copilotTools(
-                            Object.fromEntries(
-                              Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
-                            ),
-                            signal,
-                            childDeferredToolNames
+                  ? await (async () => {
+                      const manager = getGitHubCopilotSubscriptionManager(
+                        subscriptionAccountId(profile.effective!.providerId)
+                      )
+                      const identity = manager.getAccountIdentity()
+                      if (!identity.fingerprint) {
+                        return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
+                      }
+                      return runGitHubCopilotSubagent({
+                        manager,
+                        accountIdentity: identity,
+                        conversationId: args.conversationId,
+                        cwd: args.cwd,
+                        profile,
+                        definition: effectiveDefinition,
+                        signal,
+                        agentName,
+                        task: resumeFor(profile.effective!.providerId, null).task,
+                        readOnly: codexReadOnly,
+                        tools: await copilotTools(
+                          Object.fromEntries(
+                            Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                           ),
-                          allowSkillLoader: args.mode === 'maestro',
-                          progress,
-                          onTextUpdate,
-                        })
-                      })()
-                    : await (async () => {
-                        // BYOK: without a server-side session, resume replays the previous turn as history.
-                        const resume = resumeFor(profile.effective!.providerId, null)
-                        const outcome = await runSubagent({
-                          cwd: args.cwd,
-                          projectId: args.projectId,
-                          conversationId: args.conversationId,
-                          parentMessageId: assistantId,
-                          toolCallId,
-                          profile,
-                          definition: effectiveDefinition,
-                          broker: args.broker,
                           signal,
-                          agentName,
-                          task: resume.task,
-                          ...(resume.replay ? { replayHistory: resume.replay } : {}),
-                          progress,
-                          onTextUpdate,
-                          readOnly: codexReadOnly,
-                          tools: childTools,
-                          allowSkillLoader: args.mode === 'maestro',
-                        })
-                        if (resume.replay) settleResume({ resumed: true })
-                        return outcome
-                      })()
+                          childDeferredToolNames
+                        ),
+                        allowSkillLoader: args.mode === 'maestro',
+                        progress,
+                        onTextUpdate,
+                      })
+                    })()
+                  : await (async () => {
+                      // BYOK: without a server-side session, resume replays the previous turn as history.
+                      const resume = resumeFor(profile.effective!.providerId, null)
+                      const outcome = await runSubagent({
+                        cwd: args.cwd,
+                        projectId: args.projectId,
+                        conversationId: args.conversationId,
+                        parentMessageId: assistantId,
+                        toolCallId,
+                        profile,
+                        definition: effectiveDefinition,
+                        broker: args.broker,
+                        signal,
+                        agentName,
+                        task: resume.task,
+                        ...(resume.replay ? { replayHistory: resume.replay } : {}),
+                        progress,
+                        onTextUpdate,
+                        readOnly: codexReadOnly,
+                        tools: childTools,
+                        allowSkillLoader: args.mode === 'maestro',
+                      })
+                      if (resume.replay) settleResume({ resumed: true })
+                      return outcome
+                    })()
             const runtimeEstimatedCostUsd = (result as { runtimeEstimatedCostUsd?: number }).runtimeEstimatedCostUsd
             if (
               result.model &&
