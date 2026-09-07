@@ -23,6 +23,12 @@ export interface CodexInitializeResponse {
   codexHome: string
   platformFamily: string
   platformOs: string
+  capabilities?: {
+    requestUserInputAsync?: boolean
+    turnSteer?: boolean
+    turnSettingsUpdate?: boolean
+    [key: string]: unknown
+  } | null
 }
 
 export type CodexPlanType =
@@ -250,6 +256,31 @@ export interface CodexTurnInterruptParams {
   threadId: string
   turnId: string
 }
+
+export interface CodexTurnSteerParams {
+  threadId: string
+  expectedTurnId: string
+  input: readonly CodexUserInput[]
+  clientUserMessageId: string
+}
+
+/** A successful RPC means the input was queued; it does not claim the model has consumed it. */
+export interface CodexTurnSteerResponse {
+  turnId?: string
+  accepted?: boolean
+  [key: string]: unknown
+}
+
+export interface CodexTurnSettingsUpdateParams {
+  threadId: string
+  expectedTurnId: string
+  model?: string | null
+  effort?: string | null
+}
+
+export type CodexTurnSettingsUpdateResponse =
+  | { applied: true; [key: string]: unknown }
+  | { applied: false; targetUnavailable: true; [key: string]: unknown }
 
 export type CodexEmptyResponse = Record<string, never>
 

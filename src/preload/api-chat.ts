@@ -473,6 +473,9 @@ export const chatApi = {
   chatSetOpenAIHarness: (enabled: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('chat:set-openai-harness', enabled),
 
+  chatSetAstraHarness: (enabled: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('chat:set-astra-harness', enabled),
+
   chatGetPermMode: (conversationId: string): Promise<'full' | 'ask' | 'auto'> =>
     ipcRenderer.invoke('chat:get-perm-mode', conversationId),
   chatSetPermMode: (conversationId: string, mode: 'full' | 'ask' | 'auto'): Promise<{ ok: boolean }> =>
@@ -523,6 +526,19 @@ export const chatApi = {
 
   chatRuntime: (conversationId: string): Promise<ChatRuntimeState> =>
     ipcRenderer.invoke('chat:runtime', conversationId),
+
+  chatSteer: (
+    conversationId: string,
+    text: string,
+    clientUserMessageId: string
+  ): Promise<{ ok: boolean; accepted?: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:steer', conversationId, text, clientUserMessageId),
+
+  chatUpdateLiveReasoning: (
+    conversationId: string,
+    effort: ChatReasoningEffort
+  ): Promise<{ ok: boolean; applied?: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:update-live-reasoning', conversationId, effort),
 
   chatMaestroLivePost: (
     conversationId: string,

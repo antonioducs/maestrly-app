@@ -152,6 +152,15 @@ lines.on('line', (line) => {
               context_window: 272_000,
               max_context_window: 1_000_000,
               effective_context_window_percent: 95,
+              supports_experimental_context: true,
+              prefer_websockets: true,
+              supports_parallel_tool_calls: true,
+              tool_mode: 'code_mode_only',
+              multi_agent_version: 2,
+              use_responses_lite: true,
+              supported_verbosity: ['low', 'medium'],
+              default_verbosity: 'medium',
+              minimum_client_version: '0.153.4',
               isDefault: true,
             },
           ],
@@ -199,7 +208,7 @@ lines.on('line', (line) => {
 })
 `
 
-function runtime(executablePath: string, version: string | null = '0.153.2-fixture'): CodexRuntimeResolution {
+function runtime(executablePath: string, version: string | null = '0.153.4-fixture'): CodexRuntimeResolution {
   const executableName = process.platform === 'win32' ? 'codex.exe' : 'codex'
   return {
     executablePath,
@@ -495,6 +504,15 @@ describe('CodexSubscriptionManager', () => {
       maxContextWindow: 1_000_000,
       effectiveContextWindowPercent: 95,
       contextWindow: 258_400,
+      supportsExperimentalContext: true,
+      preferWebsockets: true,
+      supportsParallelToolCalls: true,
+      toolMode: 'code_mode_only',
+      multiAgentVersion: 2,
+      useResponsesLite: true,
+      supportedVerbosity: ['low', 'medium'],
+      defaultVerbosity: 'medium',
+      minimumClientVersion: '0.153.4',
     })
   })
 
@@ -775,7 +793,7 @@ describe('CodexSubscriptionManager', () => {
         void writeFile(
           cachePath,
           JSON.stringify({
-            client_version: '0.153.2-fixture',
+            client_version: '0.153.4-fixture',
             models: [
               { slug: 'gpt-6-astra', multi_agent_version: 'v2' },
               { slug: 'gpt-5.6-sol', multi_agent_version: 'v2' },
@@ -795,7 +813,7 @@ describe('CodexSubscriptionManager', () => {
     const refreshedOverride = JSON.parse(
       await readFile(path.join(codexHome, 'maestrly-model-catalog.json'), 'utf8')
     ) as { client_version: string; models: Array<{ slug: string; multi_agent_version: unknown }> }
-    expect(refreshedOverride.client_version).toBe('0.153.2-fixture')
+    expect(refreshedOverride.client_version).toBe('0.153.4-fixture')
     expect(refreshedOverride.models).toEqual([
       { slug: 'gpt-6-astra', multi_agent_version: null },
       { slug: 'gpt-5.6-sol', multi_agent_version: null, max_context_window: 1_050_000 },
@@ -809,7 +827,7 @@ describe('CodexSubscriptionManager', () => {
     await writeFile(
       path.join(codexHome, 'models_cache.json'),
       JSON.stringify({
-        client_version: '0.153.2-fixture',
+        client_version: '0.153.4-fixture',
         models: [{ slug: 'gpt-5.6-sol', multi_agent_version: 'v2' }],
       }),
       'utf8'

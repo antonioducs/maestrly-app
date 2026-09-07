@@ -148,7 +148,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(347)
+    expect(keys).toHaveLength(350)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -814,6 +814,20 @@ describe('preload API — chat pagination (#559)', () => {
   it('chatSetOpenAIHarness(enabled) -> chat:set-openai-harness preserves the boolean', () => {
     api.chatSetOpenAIHarness(false)
     expect(invokeSpy).toHaveBeenCalledWith('chat:set-openai-harness', false)
+  })
+
+  it('exposes Astra kill switch and active-turn controls without remote identifiers', () => {
+    api.chatSetAstraHarness(false)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:set-astra-harness', false)
+    api.chatSteer('conversation-1', 'also verify lint', 'client-message-1')
+    expect(invokeSpy).toHaveBeenLastCalledWith(
+      'chat:steer',
+      'conversation-1',
+      'also verify lint',
+      'client-message-1'
+    )
+    api.chatUpdateLiveReasoning('conversation-1', 'ultra')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:update-live-reasoning', 'conversation-1', 'ultra')
   })
 
   it('subagent profiles preserve channels and argument order', () => {

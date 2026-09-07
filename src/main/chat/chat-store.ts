@@ -93,6 +93,7 @@ interface MetaJson {
   /** Execution scope; absent = main conversation (legacy). */
   executionScope?: ChatExecutionScope
   memoryContext?: ChatMessage['memoryContext']
+  steering?: ChatMessage['steering']
 }
 
 function parseMemoryContext(raw: unknown): ChatMessage['memoryContext'] | undefined {
@@ -410,6 +411,9 @@ function rowToMessage(r: any): StoredChatMessage {
     ...(executionScope ? { executionScope } : {}),
     ...(reviewLoop ? { reviewLoop } : {}),
     ...(memoryContext ? { memoryContext } : {}),
+    ...(meta.steering?.status === 'queued' || meta.steering?.status === 'failed'
+      ? { steering: { status: meta.steering.status } }
+      : {}),
     createdAt: r.created_at,
   }
 }
@@ -440,6 +444,7 @@ function metaOf(m: StoredChatMessage): string {
       ...(m.reviewLoop.reviewerConversationId ? { reviewerConversationId: m.reviewLoop.reviewerConversationId } : {}),
     }
   }
+  if (m.steering?.status === 'queued' || m.steering?.status === 'failed') meta.steering = m.steering
   const memoryContext = parseMemoryContext(m.memoryContext)
   if (memoryContext) {
     // Sanitize at the write boundary too. TypeScript callers are not the only possible runtime source, and

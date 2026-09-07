@@ -131,6 +131,12 @@ lines.on('line', (line) => {
     case 'turn/interrupt':
       success(message.id, {})
       break
+    case 'turn/steer':
+      success(message.id, { accepted: true, turnId: message.params.expectedTurnId })
+      break
+    case 'turn/settings/update':
+      success(message.id, { applied: true, effort: message.params.effort })
+      break
     default:
       failure(message.id, -32601, 'Method not found')
   }
@@ -252,6 +258,17 @@ describe('CodexAppServerClient', () => {
       turn: { id: 'turn-1', receivedInput: [{ type: 'text', text: 'hi', text_elements: [] }] },
     })
     await expect(client.interruptTurn({ threadId: 'thread-1', turnId: 'turn-1' })).resolves.toEqual({})
+    await expect(
+      client.steerTurn({
+        threadId: 'thread-1',
+        expectedTurnId: 'turn-1',
+        input: [codexTextInput('also check tests')],
+        clientUserMessageId: 'client-message-1',
+      })
+    ).resolves.toEqual({ accepted: true, turnId: 'turn-1' })
+    await expect(
+      client.updateTurnSettings({ threadId: 'thread-1', expectedTurnId: 'turn-1', effort: 'ultra' })
+    ).resolves.toEqual({ applied: true, effort: 'ultra' })
     await expect(client.logoutAccount()).resolves.toEqual({ omittedParams: true })
     expect(notifications).toContain('turn/started')
     expect(notifications).toContain('thread/deleted')

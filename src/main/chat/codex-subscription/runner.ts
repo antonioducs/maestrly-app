@@ -126,7 +126,16 @@ import {
 } from '../image-gen'
 import type { CodexAppServerClient } from './client'
 import { generateImageForConversation } from './image-generation'
-import { getCodexSubscriptionManager } from './manager'
+import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './manager'
+import {
+  astraDeveloperInstructions,
+  buildAstraCodexThreadProfile,
+  type AstraCodexThreadProfile,
+} from './astra-runtime-profile'
+import {
+  serializableReasoningEffortForProfile,
+  type ModelHarnessProfileId,
+} from '../model-harness-profile'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
 import {
   dynamicToolRegistrations,
@@ -240,7 +249,7 @@ export interface CodexFailoverRuntimeTarget {
   providerId: string
   accountId: string | null
   client: CodexAppServerClient
-  model: { id: string; model: string; contextWindow?: number | null }
+  model: Pick<CodexSubscriptionModel, 'id' | 'model'> & Partial<CodexSubscriptionModel>
   runtimeModelId: string
   reasoningEffort?: string
   serviceTier: string | null
@@ -252,7 +261,10 @@ export interface CodexFailoverRuntimeTarget {
   /** Conservative effective window used by the host for this target's requested nominal configuration. */
   effectiveContextWindow?: number | null
   availabilityLease?: { leaseId: string; generation: number }
-  manager?: { observeModelContextWindow(modelId: string, value: number, requestedNominal?: number | null): void }
+  manager?: {
+    observeModelContextWindow(modelId: string, value: number, requestedNominal?: number | null): void
+    getStatusSnapshot?(): { account?: { type?: string } | null } | null
+  }
 }
 
 export interface CodexFailoverResolutionFailure {
@@ -290,6 +302,10 @@ export interface RunCodexSubscriptionChatArgs {
   /** Half-open probe lease for the initial attempt, if any. */
   availabilityLease?: { leaseId: string; generation: number }
   client: CodexAppServerClient
+  /** Exact model/list entry used for capability-gated Astra behavior. */
+  runtimeModel?: CodexSubscriptionModel | null
+  /** Experimental context is a ChatGPT-session capability, never an API-key/ephemeral assumption. */
+  eligibleChatGptSession?: boolean
   broker: PermissionBroker
   questionBroker: QuestionBroker
   emit: (event: ChatStreamEvent) => void
@@ -349,6 +365,16 @@ export interface RunCodexSubscriptionChatArgs {
     reason: string
     resetsAt?: number | null
   }) => void
+  /** Active-turn controls are valid only until the runner publishes null or replaces the port. */
+  onTurnControl?: (control: CodexActiveTurnControlPort | null) => void
+}
+
+export interface CodexActiveTurnControlPort {
+  harnessProfile: ModelHarnessProfileId
+  midTurnSteering: boolean
+  liveReasoningUpdate: boolean
+  steer(text: string, clientUserMessageId: string): Promise<'accepted' | 'target-unavailable'>
+  updateReasoning(effort: string): Promise<'applied' | 'target-unavailable' | 'invalid-effort'>
 }
 
 export interface RunCodexSubscriptionChatResult {
@@ -489,7 +515,7 @@ const DEFAULT_MODE_REQUEST_USER_INPUT_CONFIG = {
   'shell_environment_policy.ignore_default_excludes': false,
 } as const
 /**
- * Codex 0.153.2 has no hard-off for auto-compaction. With `body_after_prefix`, it compares this limit directly
+ * Codex 0.153.4 has no hard-off for auto-compaction. With `body_after_prefix`, it compares this limit directly
  * (without model_info's default 90% clamp). MAX_SAFE_INTEGER crosses `thread/start` JSON without rounding and
  * delays native compaction, giving Maestrly the first chance to compact; the physical model window remains the
  * runtime's final limit. This applies ONLY to the persistent root thread. Ephemeral subagent/imagegen threads lack
@@ -509,6 +535,7 @@ const PORTABLE_CONTINUE_PROMPT =
   'Continue the same assistant turn from the imported transcript. Do not repeat completed work or prior progress updates.'
 export const SUBAGENT_CATALOG_DESCRIPTION_MAX_CHARS = 240
 export const TASK_TOOL_DESCRIPTION_MAX_BYTES = 512
+const ASTRA_EXPERIMENTAL_CONTEXT_UNAVAILABLE = new WeakSet<CodexAppServerClient>()
 const TASK_TOOL_DESCRIPTION =
   'Delegate one focused, self-contained task to an isolated Maestrly subagent. The subagent sees only the ' +
   'supplied prompt and returns its result. Include all required context and select the agent from the input enum.'
@@ -780,11 +807,38 @@ export function maestrlyDeveloperInstructions(
   )
 }
 
+function maestrlyAstraHostInstructions(
+  mode: ChatBehavior,
+  skills: readonly ChatSkill[],
+  agents: readonly ChatAgent[],
+  options: { conversationId: string; maestro?: MaestroTurnSnapshotV1 }
+): string {
+  const modeBoundary =
+    mode === 'plan'
+      ? 'Plan mode is read-only: investigate, submit the final plan with review_plan, and stop.'
+      : mode === 'ask'
+        ? 'Ask mode is read-only unless the user explicitly changes the task.'
+        : mode === 'maestro'
+          ? MAESTRO_SYSTEM_SPEC
+          : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
+  return (
+    modeBoundary +
+    maestrlySkillCatalog(skills) +
+    (mode === 'maestro' && options.maestro
+      ? `\n\n${renderMaestroAgentCatalog(options.maestro)}\n\n${renderMaestroTurnPolicy(options.maestro)}`
+      : subagentCatalog(agents, options.conversationId, mode === 'plan' || mode === 'ask')) +
+    `\n\n${MEMORY_TOOL_GUIDANCE}`
+  )
+}
+
 /**
  * `collaborationMode` persists in the app-server thread. Explicitly send `default` in other modes so conversations
  * leaving Plan do not retain native planning instructions.
  */
-function collaborationModeFor(args: RunCodexSubscriptionChatArgs): CodexCollaborationMode {
+function collaborationModeFor(
+  args: RunCodexSubscriptionChatArgs,
+  reasoningEffort: string | undefined = args.reasoningEffort
+): CodexCollaborationMode {
   const ultraInstructions = args.maestrlyUltra
     ? args.mode === 'maestro'
       ? 'Maestrly Ultra applies only to the orchestrator reasoning profile. Keep all worker selection governed by the frozen Strategy and Agent Pool.'
@@ -812,7 +866,7 @@ function collaborationModeFor(args: RunCodexSubscriptionChatArgs): CodexCollabor
     mode: args.mode === 'plan' ? 'plan' : 'default',
     settings: {
       model: args.selection.modelId,
-      reasoning_effort: args.reasoningEffort && args.reasoningEffort !== 'off' ? args.reasoningEffort : null,
+      reasoning_effort: reasoningEffort && reasoningEffort !== 'off' ? reasoningEffort : null,
       // `null` restores the official preset after a Maestrly Ultra turn; the app-server field is sticky.
       developer_instructions: ultraInstructions,
     },
@@ -1341,11 +1395,18 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
     }
   }
 
-  if (request.method === 'item/tool/requestUserInput') {
+  if (request.method === 'item/tool/requestUserInput' || request.method === 'item/tool/requestUserInputAsync') {
+    const asyncQuestion = request.method === 'item/tool/requestUserInputAsync'
     const pendingRequest = beginPendingServerRequest(route, threadId, request.id, {
       preserveOnAccountFailover: threadId !== route.rootThreadId,
     })
-    const rawQuestions = Array.isArray(params.questions) ? params.questions : []
+    const rawQuestions = asyncQuestion
+      ? typeof params.question === 'string'
+        ? [{ id: 'async', header: 'Question', question: params.question, options: [] }]
+        : []
+      : Array.isArray(params.questions)
+        ? params.questions
+        : []
     const questions: ChatQuestion[] = rawQuestions.map((raw, index) => {
       const question = isRecord(raw) ? raw : {}
       const options = Array.isArray(question.options)
@@ -1402,7 +1463,9 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
         toolCallId: visibleItemId,
         state: { status: 'completed', output: clipPersistedToolOutput(persistedOutput) },
       })
-      return { answers: byId }
+      return asyncQuestion
+        ? { answers: byId, answer: answers[0]?.join('\n') ?? '' }
+        : { answers: byId }
     } finally {
       pendingRequest.finish()
     }
@@ -1923,6 +1986,7 @@ function bindingCanResume(
   previousMessageId: string | null,
   signature: string,
   instructionHash: string,
+  harnessProfile: ModelHarnessProfileId,
   accountId: string | null
 ): binding is CodexThreadBinding {
   // Model is not part of identity: `thread/resume` accepts the official `model` override. Sol/Luna changes
@@ -1933,8 +1997,15 @@ function bindingCanResume(
     binding.lastMessageId === previousMessageId &&
     binding.toolSignature === signature &&
     binding.instructionHash === instructionHash &&
+    binding.harnessProfile === harnessProfile &&
     // Multiple accounts: a thread lives in its owner's CODEX_HOME; another account must never resume it.
     binding.accountId === accountId
+  )
+}
+
+function experimentalContextUnavailable(error: unknown): boolean {
+  return /(?:experimental[_ ]context|context[_ ]management).*(?:unsupported|unavailable|not enabled|not eligible)|(?:unsupported|unknown).*(?:experimental[_ ]mode)/i.test(
+    errorMessage(error)
   )
 }
 
@@ -2071,6 +2142,46 @@ export async function runCodexSubscriptionChat(
   let currentModelId = args.selection.modelId
   let currentLease = args.availabilityLease
   let currentRequestedContextWindow = positiveContextWindow(args.requestedContextWindow) || null
+  let experimentalContextFallbackDisabled = false
+  const astraHarnessEnabledAtAdmission = getAppFlag('chat.astraHarness', true)
+  const profileFor = (
+    model: Partial<CodexSubscriptionModel> | null | undefined,
+    client: CodexAppServerClient,
+    eligibleChatGptSession = args.eligibleChatGptSession === true
+  ): AstraCodexThreadProfile => {
+    const session = client.initializeResult?.capabilities
+    return buildAstraCodexThreadProfile({
+      modelId: currentModelId,
+      model,
+      astraHarnessEnabled: astraHarnessEnabledAtAdmission,
+      eligibleChatGptSession,
+      ephemeral: Boolean(args.ephemeralSession),
+      reviewer: Boolean(args.reviewerRuntime),
+      requestUserInputAsyncAvailable: session?.requestUserInputAsync === true,
+      turnSteerAvailable: session?.turnSteer,
+      turnSettingsUpdateAvailable: session?.turnSettingsUpdate,
+      reasoningEffort: currentReasoningEffort,
+      experimentalContextFallbackDisabled:
+        experimentalContextFallbackDisabled || ASTRA_EXPERIMENTAL_CONTEXT_UNAVAILABLE.has(client),
+    })
+  }
+  let runtimeProfile = profileFor(args.runtimeModel, currentClient)
+  currentReasoningEffort = runtimeProfile.reasoningEffort ?? undefined
+  chatDiag({
+    kind: 'codex-subscription-harness-profile',
+    profile: runtimeProfile.modelHarnessProfileId,
+    model: currentModelId,
+    conv: args.conversationId,
+    nativeCompaction: runtimeProfile.nativeCompactionFirst,
+    experimentalContext: runtimeProfile.experimentalContextEnabled,
+    steering: runtimeProfile.capabilities.steering,
+    liveReasoning: runtimeProfile.capabilities.configurationUpdates,
+    asyncQuestions: runtimeProfile.asyncQuestionGuidance,
+    nativeMultiAgent: 'disabled-host-task',
+    modelCapabilities: runtimeProfile.modelCapabilities,
+    adapterCapabilities: runtimeProfile.adapterCapabilities,
+    effectiveCapabilities: runtimeProfile.capabilities,
+  })
   let currentObserveContextWindow: ((contextWindow: number) => void) | undefined
   const updateContextWindowObserver = (
     manager?: CodexFailoverRuntimeTarget['manager'],
@@ -2135,6 +2246,9 @@ export async function runCodexSubscriptionChat(
       createdAt,
     },
   ]
+  // Steering user messages are persisted after the in-progress assistant row. The binding follows the latest
+  // accepted portable anchor so the next turn can still resume the same native thread.
+  let lastBindingMessageId: string = assistantId
   let dirty = false
   let lastPersistAt = 0
   const persistNow = (): void => {
@@ -2319,7 +2433,34 @@ export async function runCodexSubscriptionChat(
   const toolProfile = profileDynamicTools(specs)
   const signature = dynamicToolSignature(specs)
   const projectContext = await buildProjectContext(args.projectId, args.cwd)
-  const instructionHash = createHash('sha256').update(projectContext).digest('hex')
+  const developerInstructionsFor = (profile: AstraCodexThreadProfile): string => {
+    const base = profile.isAstra
+      ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
+          conversationId: args.conversationId,
+          maestro: args.maestro,
+        })
+      : maestrlyDeveloperInstructions(args.mode, dynamic.skills, dynamic.agents, {
+          conversationId: args.conversationId,
+          maestro: args.maestro,
+        })
+    return (profile.isAstra ? astraDeveloperInstructions(base, profile) : base) + projectContext
+  }
+  let developerInstructions = developerInstructionsFor(runtimeProfile)
+  const structuralInstructionHash = (): string =>
+    createHash('sha256')
+      .update(
+        JSON.stringify({
+          version: 2,
+          harnessProfile: runtimeProfile.modelHarnessProfileId,
+          promptVersion: runtimeProfile.promptVersion,
+          developerInstructions,
+          projectContext,
+          nativeCompactionFirst: runtimeProfile.nativeCompactionFirst,
+          experimentalContext: runtimeProfile.experimentalContextEnabled,
+        })
+      )
+      .digest('hex')
+  let instructionHash = structuralInstructionHash()
   // Account slot: bindings/tombstones record the thread owner so hard-delete always uses the correct
   // CODEX_HOME, even after restart. `threadAccountId` is mutable under failover.
   const runtimeByName = new Map(dynamic.runtimes.map((runtime) => [runtime.spec.name, runtime]))
@@ -2329,9 +2470,24 @@ export async function runCodexSubscriptionChat(
   const previousMessage = history.at(-2) ?? null
   const canResume =
     !args.ephemeralSession &&
-    bindingCanResume(existing, previousMessage?.id ?? null, signature, instructionHash, threadAccountId)
+    bindingCanResume(
+      existing,
+      previousMessage?.id ?? null,
+      signature,
+      instructionHash,
+      runtimeProfile.modelHarnessProfileId,
+      threadAccountId
+    )
   // Isolated: neither resume NOR retire the main conversation binding.
   if (existingThreadId && !canResume && !args.ephemeralSession) {
+    chatDiag({
+      kind: 'codex-subscription-thread-boundary',
+      conv: args.conversationId,
+      model: currentModelId,
+      fromProfile: existing?.harnessProfile,
+      toProfile: runtimeProfile.modelHarnessProfileId,
+      reason: existing?.harnessProfile !== runtimeProfile.modelHarnessProfileId ? 'harness-profile' : 'compatibility',
+    })
     await retireCodexThread(args.conversationId, existingThreadId, existingAccountId)
   }
   let baseline = canResume ? existing.usage : { ...EMPTY_USAGE }
@@ -2348,7 +2504,12 @@ export async function runCodexSubscriptionChat(
     // Default modes used by Agent/Ask without duplicating it as a dynamic tool.
     config: {
       ...DEFAULT_MODE_REQUEST_USER_INPUT_CONFIG,
-      ...ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG,
+      ...(runtimeProfile.nativeCompactionFirst ? {} : ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG),
+      ...(runtimeProfile.experimentalContextEnabled
+        ? { 'features.context_management.experimental_mode': true }
+        : runtimeProfile.isAstra
+          ? { 'features.context_management.experimental_mode': false }
+          : {}),
       // Maestrly discovers and budgets project docs for all runtimes. Zero prevents Codex from injecting
       // AGENTS.md twice with a root/budget that may differ from the canonical contract.
       project_doc_max_bytes: 0,
@@ -2388,15 +2549,29 @@ export async function runCodexSubscriptionChat(
       // providers. The explicit flag also protects Plan/Ask against runtime defaults.
       'features.image_generation': false,
     } as Record<string, unknown>,
-    developerInstructions:
-      maestrlyDeveloperInstructions(args.mode, dynamic.skills, dynamic.agents, {
-        conversationId: args.conversationId,
-        maestro: args.maestro,
-      }) + projectContext,
-    personality: 'pragmatic' as const,
+    developerInstructions,
+    ...(runtimeProfile.personality ? { personality: runtimeProfile.personality } : {}),
   }
   const baseThreadConfig: Record<string, unknown> = { ...threadOptions.config }
   delete baseThreadConfig.model_context_window
+  const disableExperimentalContext = (): void => {
+    if (!runtimeProfile.experimentalContextEnabled) return
+    experimentalContextFallbackDisabled = true
+    ASTRA_EXPERIMENTAL_CONTEXT_UNAVAILABLE.add(currentClient)
+    runtimeProfile = profileFor(args.runtimeModel, currentClient)
+    baseThreadConfig['features.context_management.experimental_mode'] = false
+    threadOptions.config = {
+      ...baseThreadConfig,
+      ...(currentRequestedContextWindow != null ? { model_context_window: currentRequestedContextWindow } : {}),
+    }
+    instructionHash = structuralInstructionHash()
+    chatDiag({
+      kind: 'codex-subscription-experimental-context-fallback',
+      profile: runtimeProfile.modelHarnessProfileId,
+      model: currentModelId,
+      conv: args.conversationId,
+    })
+  }
   const setRequestedContextWindow = (value: unknown): void => {
     currentRequestedContextWindow = positiveContextWindow(value) || null
     threadOptions.config = {
@@ -2405,6 +2580,7 @@ export async function runCodexSubscriptionChat(
     }
   }
   const applyTarget = (next: CodexFailoverRuntimeTarget): void => {
+    args.onTurnControl?.(null)
     currentClient = next.client
     threadAccountId = next.accountId
     currentProviderId = next.providerId
@@ -2412,9 +2588,31 @@ export async function runCodexSubscriptionChat(
     currentDropImages = next.dropImages
     currentReasoningEffort = next.reasoningEffort
     currentModelId = next.runtimeModelId
+    runtimeProfile = profileFor(
+      next.model,
+      next.client,
+      next.manager?.getStatusSnapshot?.()?.account?.type === 'chatgpt'
+    )
+    currentReasoningEffort = runtimeProfile.reasoningEffort ?? undefined
     currentLease = next.availabilityLease
     threadOptions.model = currentModelId
     threadOptions.serviceTier = currentServiceTier
+    developerInstructions = developerInstructionsFor(runtimeProfile)
+    threadOptions.developerInstructions = developerInstructions
+    if (runtimeProfile.personality) threadOptions.personality = runtimeProfile.personality
+    else delete (threadOptions as { personality?: string }).personality
+    if (runtimeProfile.isAstra) {
+      baseThreadConfig['features.context_management.experimental_mode'] = runtimeProfile.experimentalContextEnabled
+    } else {
+      delete baseThreadConfig['features.context_management.experimental_mode']
+    }
+    if (runtimeProfile.nativeCompactionFirst) {
+      delete baseThreadConfig.model_auto_compact_token_limit
+      delete baseThreadConfig.model_auto_compact_token_limit_scope
+    } else {
+      Object.assign(baseThreadConfig, ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG)
+    }
+    instructionHash = structuralInstructionHash()
     setRequestedContextWindow(next.requestedContextWindow)
     updateContextWindowObserver(next.manager, currentModelId)
     observePortableContextWindow(targetEffectiveContextWindow(next))
@@ -2517,6 +2715,9 @@ export async function runCodexSubscriptionChat(
         if (threadId !== existing.threadId) routeRegistration.removeThread(existing.threadId)
       } catch (error) {
         if (args.signal.aborted) throw error
+        if (runtimeProfile.experimentalContextEnabled && experimentalContextUnavailable(error)) {
+          disableExperimentalContext()
+        }
         routeRegistration.removeThread(existing.threadId)
         await retireCodexThread(args.conversationId, existing.threadId, existing.accountId)
         // The replacement thread starts cumulative counts at zero. Reusing the lost thread's baseline
@@ -2599,6 +2800,10 @@ export async function runCodexSubscriptionChat(
           .catch(() => {})
         deadline.cancel()
         if (args.signal.aborted) throw error
+        if (runtimeProfile.experimentalContextEnabled && experimentalContextUnavailable(error)) {
+          disableExperimentalContext()
+          continue
+        }
 
         const startClassification = await classifyCodexQuotaFailureWithRateLimits(error, () =>
           getCodexSubscriptionManager(threadAccountId).getRateLimits(true)
@@ -2688,6 +2893,7 @@ export async function runCodexSubscriptionChat(
     let rootAttemptActive = false
     let portableCompactionRequested = false
     let portableInterruptPromise: Promise<void> | null = null
+    let nativeCompactionActive = false
     let inTurnCompactions = 0
     const carriedMainUsage = { totalInput: 0, cachedInput: 0, cacheCreate: 0, output: 0 }
     const carryCurrentAttemptUsage = (notification: TokenUsageNotification | null): void => {
@@ -3195,6 +3401,7 @@ export async function runCodexSubscriptionChat(
                             ? profile.effective!.sentEffort
                             : undefined,
                       fastMode: effectiveProfile.fastMode === true,
+                      astraHarnessEnabled: astraHarnessEnabledAtAdmission,
                       chain,
                       attemptedProviderIds: attempted,
                       signal,
@@ -3941,6 +4148,7 @@ export async function runCodexSubscriptionChat(
       const eventThreadId = typeof params.threadId === 'string' ? params.threadId : ''
       if (!activeThreadIds.has(eventThreadId)) return
       const rootEvent = eventThreadId === threadId
+      if (rootEvent && nativeCompactionActive && method !== 'thread/deleted') return
       const eventTurnId = typeof params.turnId === 'string' ? params.turnId : ''
       if (rootEvent && turnId && eventTurnId && eventTurnId !== turnId) return
 
@@ -3980,6 +4188,76 @@ export async function runCodexSubscriptionChat(
           if (startedTurnId) {
             turnId = startedTurnId
             rootTurnAccepted = true
+            const controlledClient = currentClient
+            const controlledThreadId = threadId
+            const controlledTurnId = startedTurnId
+            const controlledProfile = runtimeProfile
+            args.onTurnControl?.({
+              harnessProfile: controlledProfile.modelHarnessProfileId,
+              midTurnSteering: controlledProfile.capabilities.steering,
+              liveReasoningUpdate: controlledProfile.capabilities.configurationUpdates,
+              steer: async (text, clientUserMessageId) => {
+                if (
+                  !controlledProfile.capabilities.steering ||
+                  !rootAttemptActive ||
+                  turnId !== controlledTurnId ||
+                  threadId !== controlledThreadId ||
+                  currentClient !== controlledClient
+                )
+                  return 'target-unavailable'
+                await controlledClient.steerTurn(
+                  {
+                    threadId: controlledThreadId,
+                    expectedTurnId: controlledTurnId,
+                    input: [codexTextInput(text)],
+                    clientUserMessageId,
+                  },
+                  { signal: args.signal, timeoutMs: 30_000 }
+                )
+                lastBindingMessageId = clientUserMessageId
+                chatDiag({
+                  kind: 'codex-subscription-steering',
+                  profile: controlledProfile.modelHarnessProfileId,
+                  model: currentModelId,
+                  conv: args.conversationId,
+                  result: 'accepted',
+                })
+                return 'accepted'
+              },
+              updateReasoning: async (effort) => {
+                if (
+                  !controlledProfile.capabilities.configurationUpdates ||
+                  !rootAttemptActive ||
+                  turnId !== controlledTurnId ||
+                  threadId !== controlledThreadId ||
+                  currentClient !== controlledClient
+                )
+                  return 'target-unavailable'
+                const sent = serializableReasoningEffortForProfile(controlledProfile.modelHarnessProfileId, effort)
+                if (effort !== 'off' && effort !== 'default' && !sent) return 'invalid-effort'
+                if (sent && !controlledProfile.capabilities.validReasoningEfforts.includes(sent)) {
+                  return 'invalid-effort'
+                }
+                const result = await controlledClient.updateTurnSettings(
+                  {
+                    threadId: controlledThreadId,
+                    expectedTurnId: controlledTurnId,
+                    effort: sent,
+                  },
+                  { signal: args.signal, timeoutMs: 30_000 }
+                )
+                if (result.applied === false) return 'target-unavailable'
+                currentReasoningEffort = sent ?? undefined
+                chatDiag({
+                  kind: 'codex-subscription-live-reasoning',
+                  profile: controlledProfile.modelHarnessProfileId,
+                  model: currentModelId,
+                  conv: args.conversationId,
+                  result: 'applied',
+                })
+                return 'applied'
+              },
+            })
           }
           if ((args.signal.aborted || planStopArmed) && turnId) {
             void currentClient.interruptTurn({ threadId, turnId }).catch(() => {})
@@ -4051,7 +4329,7 @@ export async function runCodexSubscriptionChat(
             !portableCompactionRequested &&
             inTurnCompactions < MAX_IN_TURN_COMPACTIONS &&
             compactionWindow > 0 &&
-            args.compactHistory &&
+            (runtimeProfile.nativeCompactionFirst || args.compactHistory) &&
             turnId &&
             contextTokens / compactionWindow >= IN_TURN_COMPACT_RATIO
           ) {
@@ -4077,6 +4355,7 @@ export async function runCodexSubscriptionChat(
         }
         return
       }
+      if (rootEvent && method === 'turn/completed') args.onTurnControl?.(null)
       if (!rootEvent && method.startsWith('item/')) {
         // Preserve only lifecycle/approval metadata. No child text or internal tool becomes a parent part;
         // useful managed-subagent progress is already aggregated in the `task` card.
@@ -4583,8 +4862,8 @@ export async function runCodexSubscriptionChat(
             sandboxPolicy: sandboxPolicyFor(approval.sandbox, args.cwd),
             effort: currentReasoningEffort && currentReasoningEffort !== 'off' ? currentReasoningEffort : null,
             summary: 'auto',
-            personality: 'pragmatic',
-            collaborationMode: collaborationModeFor(args),
+            ...(runtimeProfile.personality ? { personality: runtimeProfile.personality } : {}),
+            collaborationMode: collaborationModeFor(args, currentReasoningEffort),
           },
           { timeoutMs: 0 }
         )
@@ -4737,6 +5016,70 @@ export async function runCodexSubscriptionChat(
         latestUsage = null
         // compactHistory reads the durable conversation; publish all partial output from the interrupted provider first.
         persistNow()
+        if (runtimeProfile.nativeCompactionFirst) {
+          const beforeNative = interruptedUsage ? usageTotals(interruptedUsage.tokenUsage.total) : baseline
+          try {
+            nativeCompactionActive = true
+            const nativeUsage = await compactCodexSubscriptionThread(currentClient, threadId, args.signal)
+            const nativeBaseline = nativeUsage ?? beforeNative
+            if (nativeUsage) {
+              carriedMainUsage.totalInput += nonNegativeDifference(
+                nativeUsage.inputTokens,
+                beforeNative.inputTokens
+              )
+              carriedMainUsage.cachedInput += nonNegativeDifference(
+                nativeUsage.cachedInputTokens,
+                beforeNative.cachedInputTokens
+              )
+              carriedMainUsage.output += nonNegativeDifference(
+                nativeUsage.outputTokens,
+                beforeNative.outputTokens
+              )
+            }
+            baseline = nativeBaseline
+            inTurnCompactions += 1
+            apply(
+              {
+                kind: 'compaction',
+                messageId: assistantId,
+                partId: randomUUID(),
+                text: 'Context compacted by the Codex runtime.',
+                strategy: 'codex-native',
+                usage: withSubagentUsage(mainUsage(null), childUsage, args.selection.providerId, externalSubagentUsage),
+              },
+              true
+            )
+            chatDiag({
+              kind: 'codex-subscription-native-compaction',
+              profile: runtimeProfile.modelHarnessProfileId,
+              model: args.selection.modelId,
+              conv: args.conversationId,
+              result: 'success',
+            })
+            const continueMessageId = randomUUID()
+            input = [codexTextInput(PORTABLE_CONTINUE_PROMPT)]
+            clientUserMessageId = continueMessageId
+            latestUsage = null
+            continue
+          } catch {
+            chatDiag({
+              kind: 'codex-subscription-native-compaction',
+              profile: runtimeProfile.modelHarnessProfileId,
+              model: args.selection.modelId,
+              conv: args.conversationId,
+              result: 'portable-fallback',
+            })
+          } finally {
+            nativeCompactionActive = false
+          }
+        }
+        if (!args.compactHistory) {
+          for (const activeThreadId of activeThreadIds) routeRegistration.removeThread(activeThreadId)
+          activeThreadIds = new Set()
+          await retireCodexThread(args.conversationId, threadId, threadAccountId)
+          threadDisposed = true
+          throw new Error('Codex portable intra-turn compaction is unavailable')
+        }
         let compacted: Awaited<ReturnType<NonNullable<RunCodexSubscriptionChatArgs['compactHistory']>>> = null
         try {
           compacted = await args.compactHistory!()
@@ -4975,7 +5318,8 @@ export async function runCodexSubscriptionChat(
           modelId: currentModelId,
           toolSignature: signature,
           instructionHash,
-          lastMessageId: assistantId,
+          harnessProfile: runtimeProfile.modelHarnessProfileId,
+          lastMessageId: lastBindingMessageId,
           usage: finalUsage ? usageTotals(finalUsage.tokenUsage.total) : baseline,
           accountId: threadAccountId,
         })
@@ -5017,6 +5361,7 @@ export async function runCodexSubscriptionChat(
         )
     }
   } finally {
+    args.onTurnControl?.(null)
     settleCurrentAttempt('other')
     // Deliberate order: (1) listener OFF so no new notification can queue another write; (2) await in-flight
     // writes. The runner is the lifecycle boundary (delete/truncate/wipe assume no writes outlive it), and

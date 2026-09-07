@@ -473,7 +473,7 @@ export type MessagePart =
       type: 'compaction'
       id: string
       text: string
-      strategy?: 'summary' | 'openai-native' | 'claude-native'
+      strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
     }
   | {
       type: 'skill-invocation'
@@ -889,6 +889,9 @@ export interface ChatMessage {
   reviewLoop?: ChatReviewLoopMeta
 
   memoryContext?: import('./memory').MemoryContextMeta
+
+  /** User input accepted into an already-running Astra turn. */
+  steering?: { status: 'queued' | 'failed' }
 }
 
 export interface PendingChatQuestion {
@@ -970,6 +973,13 @@ export type ChatErrorCode =
 
 export type ChatStreamEvent =
   | {
+      kind: 'runtime-capabilities'
+      midTurnSteering: boolean
+      liveReasoningUpdate: boolean
+      activeHarnessProfile: ChatActiveHarnessProfile | null
+    }
+  | { kind: 'steering-accepted'; message: ChatMessage }
+  | {
       kind: 'message-start'
       messageId: string
       model?: ChatModelRef
@@ -1001,7 +1011,7 @@ export type ChatStreamEvent =
       messageId: string
       partId: string
       text: string
-      strategy?: 'summary' | 'openai-native' | 'claude-native'
+      strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
       usage?: ChatUsage
     }
   | { kind: 'finish'; messageId: string; finishReason: string; usage?: ChatUsage; responseDurationMs: number }
@@ -1040,7 +1050,16 @@ export interface ChatRuntimeState {
   pendingQuestions: PendingChatQuestion[]
 
   maestroLive?: MaestroLiveState | null
+
+  midTurnSteering: boolean
+  liveReasoningUpdate: boolean
+  activeHarnessProfile: ChatActiveHarnessProfile | null
 }
+
+export type ChatActiveHarnessProfile =
+  | 'openai-default-v1'
+  | 'openai-gpt-5.6-sol-v1'
+  | 'openai-gpt-6-astra-v1'
 
 export type ChatProviderKind =
   | 'anthropic'
@@ -1546,6 +1565,8 @@ export interface ChatConfig {
 
   openAIHarnessEnabled: boolean
 
+  astraHarnessEnabled: boolean
+
   storageMode: 'secure' | 'unavailable'
 
   defaultSelection: ChatModelRef | null
@@ -1660,6 +1681,12 @@ function lastPart<T extends MessagePart['type']>(
 
 export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): ChatMessage[] {
   switch (ev.kind) {
+    case 'runtime-capabilities':
+      return messages
+    case 'steering-accepted':
+      return messages.some((message) => message.id === ev.message.id)
+        ? messages.map((message) => (message.id === ev.message.id ? ev.message : message))
+        : [...messages, ev.message]
     case 'message-start': {
       if (messages.some((m) => m.id === ev.messageId)) {
         return patchMessage(messages, ev.messageId, (m) => {

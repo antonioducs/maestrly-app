@@ -11,6 +11,7 @@ import { getContextLimit } from '../context-limits'
 import { getProactiveRateLimitExhaustion } from '../codex-subscription/rate-limits'
 import type { CodexAccountRateLimits } from '../codex-subscription/protocol'
 import { failoverDiag } from './diag'
+import { OPENAI_GPT6_ASTRA_MANIFEST, resolveModelHarnessProfile } from '../model-harness-profile'
 import {
   getSubscriptionFailoverRouter,
   type AvailabilityLease,
@@ -73,6 +74,7 @@ export interface ResolveCodexTargetArgs {
    * leave this false so their current runtime-owned context policy is unchanged.
    */
   configureContextWindow?: boolean
+  astraHarnessEnabled?: boolean
   signal?: AbortSignal
   now?: number
 }
@@ -158,11 +160,21 @@ function contextWindowForTarget(
 
 function resolveReasoningEffort(
   requested: string | undefined,
-  model: CodexSubscriptionModel
+  model: CodexSubscriptionModel,
+  astraHarnessEnabled = true
 ): { ok: true; effort?: string } | { ok: false } {
   if (!requested || requested === 'off') return { ok: true, effort: undefined }
 
-  const supported = model.supportedReasoningEfforts.map((option) => option.reasoningEffort)
+  const advertised = model.supportedReasoningEfforts.map((option) => option.reasoningEffort)
+  const astra =
+    resolveModelHarnessProfile({
+      providerKind: 'codex-subscription',
+      modelId: model.model,
+      astraHarnessEnabled,
+    }).id === 'openai-gpt-6-astra-v1'
+  const supported = astra
+    ? advertised.filter((effort) => OPENAI_GPT6_ASTRA_MANIFEST.validReasoningEfforts.includes(effort))
+    : advertised
 
   if (isMaestrlyUltraEffort(requested, supported)) {
     if (supported.length === 0) {
@@ -453,7 +465,7 @@ export async function resolveCodexRuntimeTarget(args: ResolveCodexTargetArgs): P
       continue
     }
 
-    const reasoning = resolveReasoningEffort(args.reasoningEffort, model)
+    const reasoning = resolveReasoningEffort(args.reasoningEffort, model, args.astraHarnessEnabled)
     if (!reasoning.ok) {
       releaseLease('other')
       recordFailure('incompatible')

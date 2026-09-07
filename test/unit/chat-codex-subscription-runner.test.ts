@@ -350,6 +350,8 @@ class FakeCodexClient {
   readonly deleteThreadCalls: unknown[] = []
   readonly startTurnCalls: unknown[] = []
   readonly interruptTurnCalls: unknown[] = []
+  readonly steerTurnCalls: unknown[] = []
+  readonly updateTurnSettingsCalls: unknown[] = []
   readonly requestCalls: Array<{ method: string; params: unknown; options: unknown }> = []
 
   failure: Error | null = null
@@ -361,6 +363,8 @@ class FakeCodexClient {
   startTurnHook: ((params: unknown) => void | Promise<void>) | null = null
   deleteThreadHook: ((params: unknown) => void | Promise<void>) | null = null
   interruptTurnHook: ((params: unknown) => void | Promise<void>) | null = null
+  requestHook: ((method: string, params: unknown) => void | Promise<void>) | null = null
+  initializeResult: { capabilities?: Record<string, boolean> | null } = { capabilities: null }
   private threadSequence = 0
   private readonly listeners = new Set<NotificationListener>()
   private readonly turnScripts: TurnScript[] = []
@@ -437,6 +441,16 @@ class FakeCodexClient {
     await this.interruptTurnHook?.(params)
   }
 
+  async steerTurn(params: unknown): Promise<{ accepted: true }> {
+    this.steerTurnCalls.push(params)
+    return { accepted: true }
+  }
+
+  async updateTurnSettings(params: unknown): Promise<{ applied: true }> {
+    this.updateTurnSettingsCalls.push(params)
+    return { applied: true }
+  }
+
   onNotification(listener: NotificationListener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -455,6 +469,7 @@ class FakeCodexClient {
 
   async request(method: string, params: unknown, options?: unknown): Promise<Record<string, never>> {
     this.requestCalls.push({ method, params, options })
+    await this.requestHook?.(method, params)
     return {}
   }
 
@@ -494,6 +509,7 @@ function runArgs(
     fastMode: true,
     serviceTier: 'priority',
     client: client as unknown as CodexAppServerClient,
+    eligibleChatGptSession: true,
     broker: {
       assert: vi.fn(async () => {}),
       assertDecision: vi.fn(async () => 'once' as const),
@@ -503,6 +519,41 @@ function runArgs(
     } as unknown as RunCodexSubscriptionChatArgs['questionBroker'],
     emit,
     signal: new AbortController().signal,
+  }
+}
+
+function astraRuntimeModel(): NonNullable<RunCodexSubscriptionChatArgs['runtimeModel']> {
+  return {
+    id: 'gpt-6-astra',
+    model: 'gpt-6-astra',
+    displayName: 'Astra',
+    description: '',
+    hidden: false,
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low', description: '' },
+      { reasoningEffort: 'high', description: '' },
+      { reasoningEffort: 'ultra', description: '' },
+    ],
+    defaultReasoningEffort: 'medium',
+    inputModalities: ['text', 'image'],
+    supportsPersonality: true,
+    serviceTiers: [],
+    defaultServiceTier: null,
+    legacySpeedTiers: [],
+    contextWindow: 1_000,
+    nominalContextWindow: 1_000,
+    maxContextWindow: 1_000,
+    effectiveContextWindowPercent: 100,
+    supportsExperimentalContext: null,
+    preferWebsockets: true,
+    supportsParallelToolCalls: true,
+    toolMode: 'code_mode_only',
+    multiAgentVersion: 2,
+    useResponsesLite: true,
+    supportedVerbosity: ['low', 'medium'],
+    defaultVerbosity: 'medium',
+    minimumClientVersion: '0.153.4',
+    isDefault: false,
   }
 }
 
@@ -1499,6 +1550,7 @@ describe('Codex subscription runner', () => {
       modelId: 'gpt-5.6-sol',
       toolSignature: expect.any(String),
       instructionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      harnessProfile: 'openai-default-v1',
       lastMessageId: assistant.id,
       usage: {
         inputTokens: 120,
@@ -5618,7 +5670,7 @@ describe('Codex subscription runner', () => {
         dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })
 
-      // Plan is read-only, but the RUNTIME default for image_generation is `true` (0.153.2). Without the explicit
+      // Plan is read-only, but the RUNTIME default for image_generation is `true` (0.153.4). Without the explicit
       // flag, the mode would gain artifact writing by omission.
       const planConversation = makeConversation(workspace.id, {})
       persistUser(planConversation.id, 'user_img_cfg_plan', 'Plan a robot', 1)
@@ -8025,5 +8077,206 @@ describe('Codex subscription runner', () => {
     expect(input).not.toContain('fix round a')
     expect(input).not.toContain('findings round b')
     expect(input).not.toContain('fix round b')
+  })
+
+  it('creates profile boundaries for default → Astra → default while preserving same-profile model resume', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    const client = new FakeCodexClient()
+    client.initializeResult = {
+      capabilities: { turnSteer: true, turnSettingsUpdate: true, requestUserInputAsync: true },
+    }
+
+    persistUser(conversation.id, 'user_default_profile', 'default turn', 1)
+    client.queueTurn({
+      turnId: 'turn_default_profile',
+      notifications: [completedNotification('thread_1', 'turn_default_profile')],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    expect(getCodexThreadBinding(conversation.id)?.harnessProfile).toBe('openai-default-v1')
+
+    persistUser(conversation.id, 'user_astra_profile', 'astra turn', 3)
+    const astraArgs = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    astraArgs.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    astraArgs.runtimeModel = astraRuntimeModel()
+    astraArgs.reasoningEffort = 'ultra'
+    client.queueTurn({
+      turnId: 'turn_astra_profile',
+      notifications: [completedNotification('thread_2', 'turn_astra_profile')],
+    })
+    await runCodexSubscriptionChat(astraArgs)
+    expect(client.deleteThreadCalls).toContainEqual({ threadId: 'thread_1' })
+    expect(getCodexThreadBinding(conversation.id)?.harnessProfile).toBe('openai-gpt-6-astra-v1')
+    const astraThread = client.startThreadCalls[1] as Record<string, any>
+    expect(astraThread.personality).toBeUndefined()
+    expect(astraThread.config.model_auto_compact_token_limit).toBeUndefined()
+    expect(astraThread.config['features.context_management.experimental_mode']).toBe(true)
+    expect(astraThread.developerInstructions).toContain('Native multi-agent tools are disabled')
+    expect((client.startTurnCalls[1] as Record<string, unknown>).personality).toBeUndefined()
+    expect(client.startTurnCalls[1]).toMatchObject({ effort: 'ultra' })
+
+    persistUser(conversation.id, 'user_restored_profile', 'back to current', 5)
+    client.queueTurn({
+      turnId: 'turn_restored_profile',
+      notifications: [completedNotification('thread_3', 'turn_restored_profile')],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    expect(client.deleteThreadCalls).toContainEqual({ threadId: 'thread_2' })
+    expect(getCodexThreadBinding(conversation.id)?.harnessProfile).toBe('openai-default-v1')
+    expect((client.startThreadCalls[2] as Record<string, any>).personality).toBe('pragmatic')
+  })
+
+  it('publishes Astra steering and live-effort controls only for the active turn', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_astra_controls', 'start long task', 1)
+    const client = new FakeCodexClient()
+    client.initializeResult = { capabilities: { turnSteer: true, turnSettingsUpdate: true } }
+    client.queueTurn({
+      turnId: 'turn_astra_controls',
+      notifications: [
+        {
+          method: 'turn/started',
+          params: { threadId: 'thread_1', turn: { id: 'turn_astra_controls', status: 'inProgress' } },
+        },
+      ],
+    })
+    const controls: Array<NonNullable<Parameters<NonNullable<RunCodexSubscriptionChatArgs['onTurnControl']>>[0]>> = []
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+    args.onTurnControl = (control) => {
+      if (control) controls.push(control)
+    }
+
+    const running = runCodexSubscriptionChat(args)
+    await vi.waitFor(() => expect(controls).toHaveLength(1))
+    await expect(controls[0].steer('also inspect tests', 'client-steer-1')).resolves.toBe('accepted')
+    await expect(controls[0].updateReasoning('ultra')).resolves.toBe('applied')
+    await expect(controls[0].updateReasoning('minimal')).resolves.toBe('invalid-effort')
+    expect(client.steerTurnCalls).toEqual([
+      {
+        threadId: 'thread_1',
+        expectedTurnId: 'turn_astra_controls',
+        input: [{ type: 'text', text: 'also inspect tests', text_elements: [] }],
+        clientUserMessageId: 'client-steer-1',
+      },
+    ])
+    expect(client.updateTurnSettingsCalls).toEqual([
+      { threadId: 'thread_1', expectedTurnId: 'turn_astra_controls', effort: 'ultra' },
+    ])
+    client.emit(completedNotification('thread_1', 'turn_astra_controls'))
+    await running
+    await expect(controls[0].steer('too late', 'client-steer-2')).resolves.toBe('target-unavailable')
+  })
+
+  it('compacts Astra natively in the same thread and bypasses the portable fallback on success', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_astra_compaction', 'long astra task', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({
+      turnId: 'turn_astra_compact_1',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_astra_compact_1',
+          { total: breakdown(950, 100, 10), last: breakdown(950, 100, 10) },
+          1_000
+        ),
+        completedNotification('thread_1', 'turn_astra_compact_1', 'interrupted'),
+      ],
+    })
+    client.queueTurn({
+      turnId: 'turn_astra_compact_2',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_astra_compact_2',
+          { total: breakdown(1_100, 120, 20), last: breakdown(150, 20, 10) },
+          1_000
+        ),
+        completedNotification('thread_1', 'turn_astra_compact_2'),
+      ],
+    })
+    client.requestHook = (method) => {
+      if (method !== 'thread/compact/start') return
+      setImmediate(() => {
+        client.emit({
+          method: 'turn/started',
+          params: { threadId: 'thread_1', turn: { id: 'turn_native_compact', status: 'inProgress' } },
+        })
+        client.emit(
+          usageNotification(
+            'thread_1',
+            'turn_native_compact',
+            { total: breakdown(1_000, 110, 15), last: breakdown(50, 10, 5) },
+            1_000
+          )
+        )
+        client.emit(completedNotification('thread_1', 'turn_native_compact'))
+      })
+    }
+    const emitted: ChatStreamEvent[] = []
+    const compactHistory = vi.fn(async () => ({ summary: 'portable fallback' }))
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+    args.contextWindow = 1_000
+    args.compactHistory = compactHistory
+
+    await runCodexSubscriptionChat(args)
+    expect(client.requestCalls).toContainEqual(
+      expect.objectContaining({ method: 'thread/compact/start', params: { threadId: 'thread_1' } })
+    )
+    expect(compactHistory).not.toHaveBeenCalled()
+    expect(client.startThreadCalls).toHaveLength(1)
+    expect(client.deleteThreadCalls).toEqual([])
+    expect(emitted.find((event) => event.kind === 'compaction')).toMatchObject({ strategy: 'codex-native' })
+  })
+
+  it('retries one fresh Astra thread with experimental context disabled when the account is ineligible', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_astra_context_fallback', 'run with astra', 1)
+    const client = new FakeCodexClient()
+    let rejected = false
+    client.startThreadHook = (params) => {
+      const config = (params as { config: Record<string, unknown> }).config
+      if (!rejected && config['features.context_management.experimental_mode'] === true) {
+        rejected = true
+        throw new Error('experimental context management is unavailable for this account')
+      }
+    }
+    client.queueTurn({
+      turnId: 'turn_astra_context_fallback',
+      notifications: [completedNotification('thread_1', 'turn_astra_context_fallback')],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+
+    await runCodexSubscriptionChat(args)
+    expect(client.startThreadCalls).toHaveLength(2)
+    expect((client.startThreadCalls[0] as any).config['features.context_management.experimental_mode']).toBe(true)
+    expect((client.startThreadCalls[1] as any).config['features.context_management.experimental_mode']).toBe(false)
+    expect(getCodexThreadBinding(conversation.id)?.harnessProfile).toBe('openai-gpt-6-astra-v1')
+
+    persistUser(conversation.id, 'user_astra_context_fallback_2', 'continue with astra', 3)
+    client.queueTurn({
+      turnId: 'turn_astra_context_fallback_2',
+      notifications: [completedNotification('thread_1', 'turn_astra_context_fallback_2')],
+    })
+    const resumed = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    resumed.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    resumed.runtimeModel = astraRuntimeModel()
+    await runCodexSubscriptionChat(resumed)
+    expect(client.startThreadCalls).toHaveLength(2)
+    expect(client.resumeThreadCalls).toEqual([
+      expect.objectContaining({
+        threadId: 'thread_1',
+        config: expect.objectContaining({ 'features.context_management.experimental_mode': false }),
+      }),
+    ])
   })
 })

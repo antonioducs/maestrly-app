@@ -43,6 +43,7 @@ import type {
   ChatStreamEvent,
   ChatSubscriptionFailoverEvent,
   ChatConfig,
+  ChatActiveHarnessProfile,
   ChatUserPrompt,
   MessagePart,
   ReviewLoopInfo,
@@ -87,6 +88,7 @@ import type { DelegatePart } from './OrchestrationRun'
 import { SubagentSessionPanel } from './SubagentSessionPanel'
 import { SubagentSessionContext, SubagentSessionsContext, type OpenSubagentSession } from './SubagentSessionContext'
 import { SubagentActivityPill } from './SubagentActivityPill'
+import { routeAstraComposerSubmit, routeAstraReasoningChange } from './astra-turn-controls'
 
 interface Props {
   conversationId: string
@@ -214,6 +216,9 @@ export function ChatView({
   const [modelRefresh, setModelRefresh] = useState(0)
   const [mode, setMode] = useState<ChatMode>('agent')
   const [reasoning, setReasoning] = useState<ChatReasoningEffort>('off')
+  const [activeHarnessProfile, setActiveHarnessProfile] = useState<ChatActiveHarnessProfile | null>(null)
+  const [midTurnSteering, setMidTurnSteering] = useState(false)
+  const [liveReasoningUpdate, setLiveReasoningUpdate] = useState(false)
 
   const [subagents, setSubagents] = useState<SubagentAgentDto[] | null>(null)
   const [fontScale, setFontScaleState] = useState<number>(() => {
@@ -773,6 +778,9 @@ export function ChatView({
       const event = ev as ChatStreamEvent
 
       if (kind === 'done') {
+        setActiveHarnessProfile(null)
+        setMidTurnSteering(false)
+        setLiveReasoningUpdate(false)
         runtimeQuestionRevisionRef.current += 1
         setRuntimeQuestionState([])
         finishTurn(hidden)
@@ -780,6 +788,19 @@ export function ChatView({
         refreshStats()
 
         setModelRefresh((n) => n + 1)
+        return
+      }
+
+      if (event.kind === 'runtime-capabilities') {
+        setActiveHarnessProfile(event.activeHarnessProfile)
+        setMidTurnSteering(event.midTurnSteering)
+        setLiveReasoningUpdate(event.liveReasoningUpdate)
+        return
+      }
+      if (event.kind === 'steering-accepted') {
+        if (!hidden) {
+          setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
+        }
         return
       }
 
@@ -869,6 +890,9 @@ export function ChatView({
       streamingRef.current = runtime.streaming
       setStreaming(runtime.streaming)
       setPending(runtime.pendingPermissions)
+      setActiveHarnessProfile(runtime.activeHarnessProfile)
+      setMidTurnSteering(runtime.midTurnSteering)
+      setLiveReasoningUpdate(runtime.liveReasoningUpdate)
       if (maestroRevision === maestroLiveRevisionRef.current) {
         const live = runtime.maestroLive ?? null
         maestroLiveRef.current = live
@@ -1019,8 +1043,24 @@ export function ChatView({
     (r: ChatReasoningEffort) => {
       setReasoning(r)
       void window.api.chatSetReasoning(conversationId, r)
+      const supportedEfforts = modelMeta?.reasoning
+        ? modelMeta.reasoningEfforts?.length
+          ? modelMeta.reasoningEfforts
+          : [...DEFAULT_REASONING_EFFORTS]
+        : []
+      if (
+        routeAstraReasoningChange({
+          streaming: streamingRef.current,
+          activeHarnessProfile,
+          liveReasoningUpdate,
+          effort: r,
+          supportedEfforts,
+        }) === 'live-and-next-turn'
+      ) {
+        void window.api.chatUpdateLiveReasoning(conversationId, r)
+      }
     },
-    [conversationId]
+    [activeHarnessProfile, conversationId, liveReasoningUpdate, modelMeta]
   )
 
   const applyMode = useCallback(
@@ -1116,13 +1156,54 @@ export function ChatView({
             .finally(() => setMaestroPostPending((count) => Math.max(0, count - 1)))
           return
         }
+        const invocation = parseSlashInvocation(text)
+        const invokesSkill = Boolean(
+          invocation && remoteCmdsRef.current.skills.some((skill) => skill.name === invocation.name)
+        )
+        if (
+          routeAstraComposerSubmit({
+            streaming: true,
+            activeHarnessProfile,
+            midTurnSteering,
+            text,
+            attachmentCount: atts.length,
+            agentMentionCount: agentMentions.length,
+            invokesSkill,
+            maestro: isMaestro,
+          }) === 'steer'
+        ) {
+          const clientUserMessageId = crypto.randomUUID()
+          const enqueueFallback = () =>
+            setQueueState((current) =>
+              current.some((item) => item.id === clientUserMessageId)
+                ? current
+                : [...current, { id: clientUserMessageId, text, attachments: [], agentMentions: [] }]
+            )
+          void window.api
+            .chatSteer(conversationId, text, clientUserMessageId)
+            .then((result) => {
+              if (!result.ok || !result.accepted) enqueueFallback()
+            })
+            .catch(enqueueFallback)
+          return
+        }
         setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: atts, agentMentions }])
         if (isMaestro) setMaestroSendTarget('current')
         return
       }
       void doSend(text, atts, agentMentions)
     },
-    [applyMaestroLiveEvent, attachments, conversationId, doSend, isMaestro, maestroSendTarget, setQueueState]
+    [
+      activeHarnessProfile,
+      applyMaestroLiveEvent,
+      attachments,
+      conversationId,
+      doSend,
+      isMaestro,
+      maestroSendTarget,
+      midTurnSteering,
+      setQueueState,
+    ]
   )
 
   const searchFiles = useCallback((q: string) => window.api.chatSearchFiles(conversationId, q), [conversationId])
@@ -1574,6 +1655,12 @@ export function ChatView({
                   onStartEdit={startEdit}
                   onCancelEdit={cancelEdit}
                   onSubmitEdit={submitEdit}
+                  onRetrySteering={(text) =>
+                    setQueueState((current) => [
+                      ...current,
+                      { id: crypto.randomUUID(), text, attachments: [], agentMentions: [] },
+                    ])
+                  }
                   onOpenMention={openMention}
                   scrollContainerRef={scrollRef}
                   onLoadOlder={loadOlder}
@@ -1745,7 +1832,7 @@ export function ChatView({
                 onMentionsChange={setDraftMentions}
                 structuredAgentMentions={draftMentions}
                 streaming={streaming}
-                sendWhileStreaming={maestroLiveActive}
+                sendWhileStreaming={maestroLiveActive || (midTurnSteering && activeHarnessProfile === 'openai-gpt-6-astra-v1')}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
                 disabled={keyMissing || reviewLoopActive}
                 onSend={submitDraft}
