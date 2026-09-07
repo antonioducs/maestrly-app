@@ -390,6 +390,12 @@ export default {
     },
   },
   subagentSession: {
+    providerUnavailable: 'Provider unavailable',
+    duration: 'Duration',
+    estimatedCost: 'Estimated cost',
+    costHint: 'Estimate in USD; does not necessarily represent subscription charges.',
+    enabled: 'on',
+    disabled: 'off',
     title: 'Subagent execution',
     open: 'Open session',
     close: 'Close session',
