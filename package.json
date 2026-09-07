@@ -96,7 +96,7 @@
     "zod": "4.5.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "2.5.2",
     "@electron/asar": "3.4.1",
     "@electron/rebuild": "4.2.0",
     "@openai/codex": "0.153.4",
