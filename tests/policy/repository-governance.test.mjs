@@ -121,8 +121,10 @@ test('packages include synchronized project and runtime license notices', () => 
   const manifest = JSON.parse(read('package.json'))
   const notices = read('THIRD_PARTY_NOTICES.md')
   const codexNotice = read('resources/licenses/openai-codex-runtime-NOTICE.txt')
+  const codexFetcher = read('scripts/fetch-codex-runtime.mjs')
   assert.ok(notices.includes('`@openai/codex` ' + manifest.devDependencies['@openai/codex']))
   assert.ok(codexNotice.includes('Version: ' + manifest.devDependencies['@openai/codex']))
+  assert.ok(codexFetcher.includes(`CODEX_RUNTIME_VERSION = '${manifest.devDependencies['@openai/codex']}'`))
 })
 
 test('dependency policy covers the packaged local ML closure', () => {

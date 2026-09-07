@@ -8,6 +8,8 @@ import type { ChatAgent } from './agents'
 import { getProvider } from './catalog'
 import { chatDiag } from './diag-log'
 import { MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from './fable/profile'
+import { compileFableSubagentPrompt } from './fable/prompt'
 import { isOpenAIHarnessActive, OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE, openAIHarnessProviderOptions } from './harness'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import {
@@ -30,6 +32,12 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
 } from './openai/native-tools'
 import { compileOpenAIPrompt, openAINativeToolsPromptOverlay } from './openai/prompt'
+import { compileOpenAIAstraPrompt } from './openai/astra-prompt'
+import {
+  isAstraHarnessProfile,
+  OPENAI_GPT6_ASTRA_PROMPT_PROFILE,
+  serializableReasoningEffortForProfile,
+} from './model-harness-profile'
 import type { OpenAILedgerReplayResult, OpenAIResponsesLedger, OpenAIStreamEventLike } from './openai/types'
 import { optimizeOpenAITools } from './openai/tools'
 import {
@@ -326,7 +334,13 @@ export async function runSubagent(args: {
   try {
     // Snapshot already resolved once per toolCallId. Adapter, harness, and options derive ONLY from it;
     // continuations never reevaluate rules/credentials or fail over after a possible mutation.
-    const resolvedSubModel = resolveChatModel(usedModel.providerId, usedModel.modelId)
+    const resolvedSubModel = resolveChatModel(usedModel.providerId, usedModel.modelId, {
+      astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
+    })
+    const behaviorProfile = resolveFableBehaviorProfile({
+      requestedModelId: usedModel.modelId,
+      enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    }).profile
     const provider = getProvider(usedModel.providerId)
     const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
     const subMetaResult = await getProviderModelMetaWithStatus(usedModel.modelId, catalogProviderId)
@@ -375,7 +389,7 @@ export async function runSubagent(args: {
     // → return undefined for other kinds (existing behavior unchanged).
     let subProviderOptions: SharedV3ProviderOptions | undefined = buildProviderOptionsForSentEffort(
       resolvedSubModel.transport,
-      effective.sentEffort
+      serializableReasoningEffortForProfile(resolvedSubModel.modelHarnessProfileId, effective.sentEffort)
     )
     subProviderOptions = applyFastModeServiceTier(subProviderOptions, effective.fastMode === true, usedModel.providerId)
     // Mirrors main runner: Anthropic models outside adapter tables default max_tokens to 4096 →
@@ -430,7 +444,18 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = [def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n')
+    let subSystem = compileFableSubagentPrompt([def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n'), behaviorProfile)
+    chatDiag({
+      kind: 'fable-behavior-profile',
+      profile: behaviorProfile?.id ?? 'legacy',
+      requestedModel: usedModel.modelId,
+      resolvedModel: usedModel.modelId,
+      transport: resolvedSubModel.transport,
+      effort: effective.sentEffort ?? 'default',
+      progressMode: 'prompt-only',
+      agent: args.agentName,
+      conv: args.conversationId,
+    })
     let subLifecycle: OpenAICompactionLifecycle | null = useOpenAISubagent
       ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
       : null
@@ -494,6 +519,22 @@ export async function runSubagent(args: {
         })
         subSystem = prompt.instructions
         promptStablePrefix = prompt.stablePrefix
+      } else if (!standalone && resolvedSubModel.promptProfile === OPENAI_GPT6_ASTRA_PROMPT_PROFILE) {
+        const prompt = compileOpenAIAstraPrompt({
+          cwd: args.cwd,
+          mode: subagentCanMutate ? 'agent' : 'ask',
+          appToolsEnabled: false,
+          hasNotesTab: false,
+          projectContext,
+          agentsContext: `${subagentCanMutate ? '' : 'This delegated run is read-only.\n\n'}${def.prompt}`,
+          envContext: `Delegated subagent: ${args.agentName}. Project directory: ${args.cwd}.`,
+          nativeTools: {
+            localShell: nativeTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
+            applyPatch: nativeTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,
+          },
+        })
+        subSystem = prompt.instructions
+        promptStablePrefix = prompt.stablePrefix
       }
       const optimized = await optimizeOpenAITools(tools, {
         conversationId: args.conversationId,
@@ -526,6 +567,9 @@ export async function runSubagent(args: {
               compactionThreshold: subMeta?.contextWindow
                 ? Math.floor(subMeta.contextWindow * IN_TURN_COMPACT_RATIO)
                 : undefined,
+              ...(isAstraHarnessProfile(resolvedSubModel.modelHarnessProfileId)
+                ? { promptCacheTtl: '30m' }
+                : {}),
             }
           ),
         },

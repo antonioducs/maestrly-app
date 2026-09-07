@@ -8,6 +8,9 @@ releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A versioned `gpt-6-astra` harness for official OpenAI Responses and ChatGPT subscription sessions, including
+  profile-safe continuity, native-first context management, persisted reasoning, prompt caching, mid-turn text
+  steering, and live reasoning updates when the runtime advertises them.
 - Initial public source baseline for the local-first Maestrly desktop.
 - Chat, Maestro orchestration, Git/worktrees, terminal, embedded
   editor and browser, notes, memory, MCP, settings, i18n, export/reset, and

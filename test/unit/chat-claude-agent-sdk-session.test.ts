@@ -56,6 +56,9 @@ describe('Claude Agent SDK session resolution', () => {
     expect(isClaudeSessionBindingCompatible(binding(), expected)).toBe(true)
     expect(isClaudeSessionBindingCompatible({ ...binding(), accountEpoch: 4 }, expected)).toBe(false)
     expect(isClaudeSessionBindingCompatible({ ...binding(), toolSignature: 'other-tools' }, expected)).toBe(false)
+    expect(isClaudeSessionBindingCompatible({ ...binding(), promptHash: 'maestrly-fable-5.1-v1-hash' }, expected)).toBe(
+      false
+    )
   })
 
   it('resumes the tip and forks from a mapped rewind', () => {
@@ -197,6 +200,28 @@ describe('Claude Agent SDK session resolution', () => {
       },
     ])
     expect(JSON.stringify(content)).not.toContain('SECRET_IMAGE_BYTES')
+  })
+
+  it('adds current environment context to the new user message without changing prior transcript bytes', async () => {
+    const message = {
+      id: 'user-env',
+      conversationId: 'conversation-1',
+      role: 'user',
+      createdAt: 1,
+      parts: [{ type: 'text', text: 'continue' }],
+    } as ChatMessage
+    const seed = 'stable prior transcript'
+    const prompt = buildClaudeSessionPrompt(message, seed, {
+      transientContext: '# Current environment\nGit branch: main (clean).',
+    })
+    prompt.release()
+    const next = await prompt.prompt[Symbol.asyncIterator]().next()
+    expect(next.value?.message.content).toEqual([
+      { type: 'text', text: `Previous Maestrly transcript (continue from this context):\n\n${seed}` },
+      { type: 'text', text: '# Current environment\nGit branch: main (clean).' },
+      { type: 'text', text: 'continue' },
+    ])
+    expect(seed).toBe('stable prior transcript')
   })
 
   it('only seeds a transcript when no native session can resume', () => {

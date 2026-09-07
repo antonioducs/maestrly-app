@@ -43,6 +43,9 @@ export type SubagentResumeRecreateReason =
   | 'provider-mismatch'
   | 'account-changed'
   | 'tools-changed'
+  | 'model-changed'
+  | 'behavior-profile-changed'
+  | 'definition-changed'
   | 'resume-rejected'
   | 'session-replaced'
 
@@ -58,6 +61,31 @@ export type SubagentResumePlan =
 export function subagentToolSignature(specs: ReadonlyArray<{ name: string }>): string {
   const names = specs.map((spec) => spec.name).sort()
   return createHash('sha256').update(JSON.stringify(names)).digest('hex')
+}
+
+export function claudeSubagentRuntimeSignature(input: {
+  modelId: string
+  behaviorProfileId: string | null
+  prompt: string
+  readOnly: boolean
+  sentEffort: string | null
+  fastMode: boolean
+  toolNames: readonly string[]
+}): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        version: 1,
+        modelId: input.modelId,
+        behaviorProfileId: input.behaviorProfileId,
+        prompt: input.prompt,
+        readOnly: input.readOnly,
+        sentEffort: input.sentEffort,
+        fastMode: input.fastMode,
+        toolNames: [...input.toolNames].sort(),
+      })
+    )
+    .digest('hex')
 }
 
 /** Reads what the previous turn left: native handle (if any) and final report for fallback. */
@@ -83,7 +111,8 @@ export function resolveSubagentResume(sessionId: string): SubagentResumeSource |
     sessionId,
     agentName: session.agentName,
     handle: getSubagentRuntimeHandle(sessionId),
-    lastReport: lastReport.length > LAST_REPORT_MAX_CHARS ? `${lastReport.slice(0, LAST_REPORT_MAX_CHARS)}…` : lastReport,
+    lastReport:
+      lastReport.length > LAST_REPORT_MAX_CHARS ? `${lastReport.slice(0, LAST_REPORT_MAX_CHARS)}…` : lastReport,
     replay: work
       ? [
           { role: 'user', content: session.task },
@@ -103,6 +132,10 @@ export function planSubagentResume(input: {
   accountId: string | null
   /** Codex only: thread/resume does not accept dynamicTools, so tool lists must be identical. */
   toolSignature?: string
+  /** Claude-only native-session identity and prompt contract. */
+  modelId?: string
+  behaviorProfileId?: string | null
+  runtimeSignature?: string
   resume: Pick<SubagentResumeSource, 'handle'> & Partial<Pick<SubagentResumeSource, 'replay'>>
 }): SubagentResumePlan {
   const codex = isCodexSubscriptionProvider(input.providerId)
@@ -122,7 +155,22 @@ export function planSubagentResume(input: {
     return { mode: 'recreate', reason: 'provider-mismatch' }
   }
   if ((handle.accountId ?? null) !== (input.accountId ?? null)) return { mode: 'recreate', reason: 'account-changed' }
-  if (handle.kind === 'codex-thread' && input.toolSignature !== undefined && handle.toolSignature !== input.toolSignature) {
+  if (handle.kind === 'claude-session') {
+    if (input.modelId !== undefined && handle.modelId !== input.modelId) {
+      return { mode: 'recreate', reason: 'model-changed' }
+    }
+    if (input.behaviorProfileId !== undefined && (handle.behaviorProfileId ?? null) !== input.behaviorProfileId) {
+      return { mode: 'recreate', reason: 'behavior-profile-changed' }
+    }
+    if (input.runtimeSignature !== undefined && handle.runtimeSignature !== input.runtimeSignature) {
+      return { mode: 'recreate', reason: 'definition-changed' }
+    }
+  }
+  if (
+    handle.kind === 'codex-thread' &&
+    input.toolSignature !== undefined &&
+    handle.toolSignature !== input.toolSignature
+  ) {
     return { mode: 'recreate', reason: 'tools-changed' }
   }
   return { mode: 'native', handle }

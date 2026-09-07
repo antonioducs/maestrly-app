@@ -72,7 +72,7 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       expect(options.env).not.toHaveProperty('ANTHROPIC_API_KEY')
       expect(options.env).not.toHaveProperty('ANTHROPIC_BASE_URL')
       expect(options.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN')
-      if (args[0] === '--version') return { exitCode: 0, stdout: '2.1.258 (Claude Code)', stderr: '' }
+      if (args[0] === '--version') return { exitCode: 0, stdout: '2.1.263 (Claude Code)', stderr: '' }
       if (args.join(' ') === 'auth status --json') {
         return {
           exitCode: 0,
@@ -160,8 +160,8 @@ describe('Claude subscription manager', () => {
         subscriptionType: 'max',
       },
       accountEpoch: 1,
-      cliVersion: '2.1.258',
-      sdkVersion: '0.3.258',
+      cliVersion: '2.1.263',
+      sdkVersion: '0.3.263',
     })
     expect(status.accountFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(JSON.stringify(status)).not.toContain('keychain-selector-only')
@@ -182,7 +182,8 @@ describe('Claude subscription manager', () => {
   })
 
   it('rejects incompatible CLI releases and parses signed-out status', async () => {
-    expect(isCompatibleClaudeCodeVersion('2.1.258')).toBe(true)
+    expect(isCompatibleClaudeCodeVersion('2.1.258')).toBe(false)
+    expect(isCompatibleClaudeCodeVersion('2.1.263')).toBe(true)
     expect(isCompatibleClaudeCodeVersion('2.2.0')).toBe(true)
     expect(isCompatibleClaudeCodeVersion('2.1.257')).toBe(false)
     expect(isCompatibleClaudeCodeVersion('3.0.0')).toBe(false)
@@ -202,7 +203,7 @@ describe('Claude subscription manager', () => {
       state: 'unavailable',
       authenticated: false,
       cliVersion: '2.1.100',
-      error: expect.stringContaining('2.1.258'),
+      error: expect.stringContaining('2.1.263'),
     })
   })
 
@@ -294,7 +295,7 @@ describe('Claude subscription manager', () => {
     }
     vi.mocked(dependencies.runProcess).mockImplementation(async (_executable, args) =>
       args[0] === '--version'
-        ? { exitCode: 0, stdout: '2.1.258 (Claude Code)', stderr: '' }
+        ? { exitCode: 0, stdout: '2.1.263 (Claude Code)', stderr: '' }
         : {
             exitCode: 0,
             stdout: JSON.stringify({
@@ -338,7 +339,7 @@ describe('Claude subscription manager', () => {
           versionStarted()
           await versionGate
         }
-        return { exitCode: 0, stdout: '2.1.258 (Claude Code)', stderr: '' }
+        return { exitCode: 0, stdout: '2.1.263 (Claude Code)', stderr: '' }
       }
       if (args.join(' ') === 'auth status --json') {
         return {

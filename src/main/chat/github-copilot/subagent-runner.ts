@@ -2,6 +2,7 @@ import type { CopilotSession, SessionEvent, Tool as CopilotTool } from '@github/
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
 import type { ChatAgent } from '../agents'
+import { getAppFlag } from '../../store'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
@@ -15,6 +16,9 @@ import type {
 } from './manager'
 import { queueGitHubCopilotSessionCleanup } from './session-store'
 import { COPILOT_TOOL_SEARCH_DEFER_THRESHOLD } from './tools'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from '../fable/profile'
+import { compileFableSubagentPrompt } from '../fable/prompt'
+import { chatDiag } from '../diag-log'
 
 const SESSION_WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1_000
 const FORBIDDEN_CHILD_TOOLS = new Set(['task', 'delegate', 'review_plan', 'ask_question', 'todo_write'])
@@ -156,7 +160,7 @@ export async function runGitHubCopilotSubagent(
         return
     }
   }
-  const systemMessage = [
+  const legacySystemMessage = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
     MEMORY_TOOL_GUIDANCE,
@@ -164,6 +168,22 @@ export async function runGitHubCopilotSubagent(
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
   ].join('\n\n')
+  const behaviorProfile = resolveFableBehaviorProfile({
+    requestedModelId: effective.modelId,
+    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+  }).profile
+  const systemMessage = compileFableSubagentPrompt(legacySystemMessage, behaviorProfile)
+  chatDiag({
+    kind: 'fable-behavior-profile',
+    profile: behaviorProfile?.id ?? 'legacy',
+    requestedModel: effective.modelId,
+    resolvedModel: effective.modelId,
+    transport: 'github-copilot',
+    effort: effective.sentEffort ?? 'default',
+    progressMode: 'prompt-only',
+    agent: args.agentName,
+    conv: args.conversationId,
+  })
   const config: GitHubCopilotCreateSessionConfig = {
     model: effective.modelId,
     ...(effective.sentEffort ? { reasoningEffort: effective.sentEffort as CopilotReasoningEffort } : {}),

@@ -19,13 +19,13 @@ function event(type: SessionEvent['type'], data: Record<string, unknown>): Sessi
   return { type, data } as unknown as SessionEvent
 }
 
-function profile() {
+function profile(modelId = 'claude-sonnet-4.6') {
   return {
     version: 1 as const,
     agentName: 'reviewer',
     effective: {
       providerId: 'builtin_github_copilot_subscription',
-      modelId: 'claude-sonnet-4.6',
+      modelId,
       configuredEffort: 'high',
       sentEffort: 'high',
       source: 'conversation-default' as const,
@@ -166,6 +166,19 @@ describe('GitHub Copilot ephemeral subagent runner', () => {
 
     expect(manager.createCalls[0].availableTools).toContain('custom:use_skill')
     expect(manager.createCalls[0].enableSkills).toBe(false)
+  })
+
+  it('applies only the behavioral prompt for an exact Fable child', async () => {
+    const manager = new FakeManager()
+    await runGitHubCopilotSubagent({ ...args(manager), profile: profile('claude-fable-5-1') })
+
+    expect(manager.createCalls[0]).toMatchObject({
+      model: 'claude-fable-5-1',
+      systemMessage: { mode: 'replace', content: expect.stringContaining('maestrly-fable-5.1-v1') },
+    })
+    expect(manager.createCalls[0]).not.toHaveProperty('thinking')
+    expect(manager.createCalls[0]).not.toHaveProperty('betas')
+    expect(manager.createCalls[0].availableTools).not.toContain('custom:task')
   })
 
   it('retains generate_image only when provided by the host to a mutable worker', async () => {

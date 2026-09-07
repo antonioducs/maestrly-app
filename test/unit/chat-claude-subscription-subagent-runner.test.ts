@@ -15,13 +15,13 @@ const identity: ClaudeSubscriptionAccountIdentity = {
   epoch: 4,
 }
 
-function profile(overrides: { fastMode?: boolean; source?: 'conversation-default' | 'parent' } = {}) {
+function profile(overrides: { fastMode?: boolean; source?: 'conversation-default' | 'parent'; modelId?: string } = {}) {
   return {
     version: 1 as const,
     agentName: 'reviewer',
     effective: {
       providerId: 'builtin_claude_subscription',
-      modelId: 'sonnet',
+      modelId: overrides.modelId ?? 'sonnet',
       configuredEffort: 'high',
       sentEffort: 'high',
       source: overrides.source ?? ('conversation-default' as const),
@@ -210,6 +210,35 @@ describe('Claude isolated subagent runner', () => {
     expect(options.allowedTools).toContain('mcp__maestrly__generate_image')
     expect(progress).toEqual(['Starting subagent reviewer'])
     expect(manager.query.close).toHaveBeenCalledOnce()
+  })
+
+  it('applies the Fable profile from the resolved child identity without changing the child tool boundary', async () => {
+    const manager = new FakeManager()
+    manager.query = new FakeQuery([result()])
+
+    await runClaudeSubagent({
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      conversationId: 'conversation-1',
+      cwd: '/repo',
+      profile: profile({ modelId: 'fable' }),
+      resolvedModelId: 'claude-fable-5-1',
+      definition,
+      signal: new AbortController().signal,
+      agentName: 'reviewer',
+      task: 'Inspect independently.',
+      readOnly: true,
+      tools: tools(),
+    })
+
+    const options = manager.calls[0]?.options ?? {}
+    expect(options.model).toBe('claude-fable-5-1')
+    expect(options.systemPrompt).toContain('maestrly-fable-5.1-v1')
+    expect(options.systemPrompt).toContain('report to the parent')
+    expect(options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+    expect((options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+    expect(options.allowedTools).not.toContain('mcp__maestrly__task')
+    expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
   })
 
   it('exposes the host-governed skill loader only for a Maestro worker', async () => {

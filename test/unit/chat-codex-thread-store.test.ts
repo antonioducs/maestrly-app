@@ -32,6 +32,7 @@ describe('Codex thread store', () => {
       modelId: 'gpt-5.6-sol',
       toolSignature: 'tools-sha256',
       instructionHash: 'instructions-sha256',
+      harnessProfile: 'openai-gpt-6-astra-v1',
       lastMessageId: 'message_456',
       usage: {
         inputTokens: 1_234,
@@ -47,6 +48,7 @@ describe('Codex thread store', () => {
       modelId: 'gpt-5.6-sol',
       toolSignature: 'tools-sha256',
       instructionHash: 'instructions-sha256',
+      harnessProfile: 'openai-gpt-6-astra-v1',
       lastMessageId: 'message_456',
       usage: {
         inputTokens: 1_234,

@@ -156,4 +156,49 @@ describe('OpenAI harness profile', () => {
       contextManagement: [{ type: 'compaction', compactThreshold: 900_000 }],
     })
   })
+
+  it('applies the exact Astra BYOK profile without advertising synchronous-only controls', () => {
+    const resolved = resolveChatHarness('openai-responses', 'gpt-6-astra', openAIBaseURL)
+    expect(resolved).toMatchObject({
+      profile: 'openai-responses-v1',
+      modelHarnessProfileId: 'openai-gpt-6-astra-v1',
+      promptProfile: 'maestrly-openai-gpt-6-astra@v1',
+      capabilities: {
+        encryptedReasoning: true,
+        reasoningContext: true,
+        nativeCompaction: true,
+        parallelTools: true,
+        midTurnSteering: false,
+        asyncTools: false,
+        liveReasoningUpdate: false,
+      },
+    })
+    const options = openAIHarnessProviderOptions(resolved, {
+      promptCacheKey: 'maestrly:astra',
+      promptCacheTtl: '30m',
+      reasoningEnabled: true,
+      compactionThreshold: 300_000,
+    })
+    expect(options).toMatchObject({
+      include: ['reasoning.encrypted_content'],
+      reasoningContext: 'all_turns',
+      parallelToolCalls: true,
+      promptCacheOptions: { ttl: '30m' },
+      contextManagement: [{ type: 'compaction', compactThreshold: 300_000 }],
+    })
+    expect(options).not.toHaveProperty('temperature')
+    expect(options).not.toHaveProperty('topP')
+    expect(options).not.toHaveProperty('topLogprobs')
+    expect(options).not.toHaveProperty('logprobs')
+  })
+
+  it('restores the generic profile when the Astra switch is disabled or endpoint is custom', () => {
+    expect(
+      resolveChatHarness('openai-responses', 'gpt-6-astra', openAIBaseURL, { astraHarnessEnabled: false })
+        .modelHarnessProfileId
+    ).toBe('openai-default-v1')
+    expect(
+      resolveChatHarness('openai-responses', 'gpt-6-astra', 'https://gateway.example/v1').modelHarnessProfileId
+    ).toBe('openai-default-v1')
+  })
 })

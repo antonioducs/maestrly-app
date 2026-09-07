@@ -4,6 +4,7 @@ import {
   buildClaudeCompactionQueryOptions,
   resolveClaudeEffort,
 } from '../../src/main/chat/claude-agent-sdk/options'
+import { createFablePostToolUseHook } from '../../src/main/chat/fable/sdk-hooks'
 
 function bridge() {
   return {
@@ -52,6 +53,10 @@ describe('Claude Agent SDK query options', () => {
       forkSession: true,
     })
     expect(options.env).toBeUndefined()
+    expect(options.thinking).toBeUndefined()
+    expect(options).not.toHaveProperty('toolChoice')
+    expect(options).not.toHaveProperty('tool_choice')
+    expect(options).not.toHaveProperty('maxThinkingTokens')
     // The interactive chat has no turn cap: the user's Stop button is the guard.
     expect(options.maxTurns).toBeUndefined()
     expect(options.mcpServers).toEqual({ maestrly: expect.any(Object) })
@@ -63,6 +68,25 @@ describe('Claude Agent SDK query options', () => {
       autoCompactEnabled: false,
       precomputeCompactionEnabled: false,
     })
+  })
+
+  it('isolates adaptive summarized thinking and the post-tool hook to Fable options', () => {
+    const postToolUseHook = createFablePostToolUseHook()
+    const options = buildClaudeChatQueryOptions({
+      abortController: new AbortController(),
+      cwd: '/project',
+      modelId: 'claude-fable-5-1',
+      systemPrompt: 'Fable system prompt',
+      bridge: bridge(),
+      postToolUseHook,
+      disallowedNativeTools: ['Bash'],
+    })
+
+    expect(options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+    expect(options.hooks?.PostToolUse).toEqual([postToolUseHook])
+    expect(options.hooks?.PreToolUse).toHaveLength(1)
+    expect(options).not.toHaveProperty('toolChoice')
+    expect(options).not.toHaveProperty('maxThinkingTokens')
   })
 
   it('rejects unknown effort values', () => {

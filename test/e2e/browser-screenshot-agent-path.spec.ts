@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, test, _electron as electron, type ElectronApplication, type TestInfo } from '@playwright/test'
+import { expect, test, _electron as electron, type ElectronApplication, type Page, type TestInfo } from '@playwright/test'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
 const mainEntry = path.join(repoRoot, 'out', 'main', 'index.js')
@@ -48,26 +48,32 @@ function callAppTool(
   )
 }
 
-function decodePng(app: ElectronApplication, data: string): Promise<DecodedPng> {
-  return app.evaluate(
-    ({ nativeImage }, encoded) => {
-      const image = nativeImage.createFromBuffer(Buffer.from(encoded, 'base64'))
-      if (image.isEmpty()) throw new Error('Screenshot PNG could not be decoded by Electron.')
-      const { width, height } = image.getSize()
-      const bitmap = image.toBitmap({ scaleFactor: 1 })
+function decodePng(page: Page, data: string): Promise<DecodedPng> {
+  return page.evaluate(
+    async (encoded) => {
+      const image = new Image()
+      image.src = `data:image/png;base64,${encoded}`
+      await image.decode()
+      const { naturalWidth: width, naturalHeight: height } = image
+      if (width <= 0 || height <= 0) throw new Error('Screenshot PNG could not be decoded by Chromium.')
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Screenshot PNG canvas context could not be created.')
+      context.drawImage(image, 0, 0)
       // Sample away from the centered white label so the assertion observes the band itself.
       const x = Math.min(width - 1, Math.max(0, Math.floor(width / 4)))
       const y = Math.min(height - 1, Math.max(0, Math.floor(height / 4)))
-      const offset = (y * width + x) * 4
+      const pixel = context.getImageData(x, y, 1, 1).data
       return {
         width,
         height,
-        // Electron's bitmap representation is BGRA on the supported desktop platforms.
         center: {
-          blue: bitmap[offset] ?? 0,
-          green: bitmap[offset + 1] ?? 0,
-          red: bitmap[offset + 2] ?? 0,
-          alpha: bitmap[offset + 3] ?? 0,
+          red: pixel[0] ?? 0,
+          green: pixel[1] ?? 0,
+          blue: pixel[2] ?? 0,
+          alpha: pixel[3] ?? 0,
         },
       }
     },
@@ -163,7 +169,7 @@ test('agent app-tool captures the hidden browser before and after a real scroll'
     expect(await inspectBrowserView(app)).toEqual(parked)
     expect(before.images[0]).toMatchObject({ mediaType: 'image/png' })
     const beforePath = writeScreenshot(testInfo, 'before-scroll.png', before.images[0]!.data)
-    const beforeDecoded = await decodePng(app, before.images[0]!.data)
+    const beforeDecoded = await decodePng(win, before.images[0]!.data)
     expect(beforeDecoded.width).toBeGreaterThan(100)
     expect(beforeDecoded.height).toBeGreaterThan(100)
     expect(beforeDecoded.center.red).toBeGreaterThan(beforeDecoded.center.green + 80)
@@ -175,7 +181,7 @@ test('agent app-tool captures the hidden browser before and after a real scroll'
     expect(after.isError, after.text).toBe(false)
     expect(after.images).toHaveLength(1)
     const afterPath = writeScreenshot(testInfo, 'after-scroll.png', after.images[0]!.data)
-    const afterDecoded = await decodePng(app, after.images[0]!.data)
+    const afterDecoded = await decodePng(win, after.images[0]!.data)
     expect(afterDecoded.width).toBe(beforeDecoded.width)
     expect(afterDecoded.height).toBe(beforeDecoded.height)
     expect(afterDecoded.center.green).toBeGreaterThan(afterDecoded.center.red + 80)

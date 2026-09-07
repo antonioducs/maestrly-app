@@ -1,4 +1,5 @@
 import { getDb, transaction } from '../../store'
+import type { ModelHarnessProfileId } from '../model-harness-profile'
 
 export interface CodexThreadBinding {
   conversationId: string
@@ -7,6 +8,7 @@ export interface CodexThreadBinding {
   toolSignature: string
   /** Hash of the canonical AGENTS.override.md/AGENTS.md/CLAUDE.md block used to create the thread. */
   instructionHash: string
+  harnessProfile: ModelHarnessProfileId
   lastMessageId: string
   usage: CodexUsageTotals
   /** Subscription account slot owning the thread; null means the default account. */
@@ -38,6 +40,7 @@ interface BindingRow {
   model_id: string
   tool_signature: string
   instruction_hash: string
+  harness_profile: string
   last_message_id: string
   usage_json: string
   account_id: string
@@ -82,6 +85,12 @@ function fromRow(row: BindingRow): CodexThreadBinding {
     modelId: row.model_id,
     toolSignature: row.tool_signature,
     instructionHash: row.instruction_hash,
+    harnessProfile:
+      row.harness_profile === 'openai-gpt-6-astra-v1'
+        ? 'openai-gpt-6-astra-v1'
+        : row.harness_profile === 'openai-gpt-5.6-sol-v1'
+          ? 'openai-gpt-5.6-sol-v1'
+          : 'openai-default-v1',
     lastMessageId: row.last_message_id,
     usage: parseUsage(row.usage_json),
     accountId: row.account_id || null,
@@ -104,24 +113,26 @@ export function listCodexThreadBindings(): CodexThreadBinding[] {
 }
 
 export function putCodexThreadBinding(
-  input: Omit<CodexThreadBinding, 'updatedAt' | 'accountId' | 'instructionHash'> & {
+  input: Omit<CodexThreadBinding, 'updatedAt' | 'accountId' | 'instructionHash' | 'harnessProfile'> & {
     accountId?: string | null
     instructionHash?: string
+    harnessProfile?: ModelHarnessProfileId
   }
 ): void {
-  const { usage, accountId, instructionHash, ...row } = input
+  const { usage, accountId, instructionHash, harnessProfile, ...row } = input
   getDb()
     .prepare(
       `INSERT INTO chat_codex_threads
-         (conversation_id, thread_id, model_id, tool_signature, instruction_hash, last_message_id, usage_json,
+         (conversation_id, thread_id, model_id, tool_signature, instruction_hash, harness_profile, last_message_id, usage_json,
           account_id, updated_at)
-       VALUES (@conversationId, @threadId, @modelId, @toolSignature, @instructionHash, @lastMessageId, @usageJson,
+       VALUES (@conversationId, @threadId, @modelId, @toolSignature, @instructionHash, @harnessProfile, @lastMessageId, @usageJson,
                @accountId, @updatedAt)
        ON CONFLICT(conversation_id) DO UPDATE SET
          thread_id = excluded.thread_id,
          model_id = excluded.model_id,
          tool_signature = excluded.tool_signature,
          instruction_hash = excluded.instruction_hash,
+         harness_profile = excluded.harness_profile,
          last_message_id = excluded.last_message_id,
          usage_json = excluded.usage_json,
          account_id = excluded.account_id,
@@ -130,6 +141,7 @@ export function putCodexThreadBinding(
     .run({
       ...row,
       instructionHash: instructionHash ?? '',
+      harnessProfile: harnessProfile ?? 'openai-default-v1',
       usageJson: JSON.stringify(usage),
       accountId: accountId ?? '',
       updatedAt: Date.now(),
