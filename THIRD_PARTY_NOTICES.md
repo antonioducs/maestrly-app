@@ -69,7 +69,7 @@ Maestrly is not affiliated with or endorsed by GitHub.
 
 ## Anthropic Claude Agent SDK
 
-Maestrly integrates `@anthropic-ai/claude-agent-sdk` 0.3.258 to communicate
+Maestrly integrates `@anthropic-ai/claude-agent-sdk` 0.3.263 to communicate
 with a separately installed and authenticated Claude Code runtime. The package
 declares `SEE LICENSE IN README.md`; its distributed README links Anthropic's
 [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms),

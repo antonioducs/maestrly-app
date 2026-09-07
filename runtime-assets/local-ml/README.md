@@ -1,7 +1,6 @@
 # Local ML runtime and offline models
 
-Local ML does not require a Maestrly account or distribution service. The runtime
-is built from the pinned npm lockfile in this directory. RAG and speech recognition
+The runtime is built from the pinned npm lockfile in this directory. RAG and speech recognition
 use Transformers.js, ONNX Runtime, and Sharp. Their licenses remain in the archive.
 
 ## Build and package
@@ -12,12 +11,8 @@ use Transformers.js, ONNX Runtime, and Sharp. Their licenses remain in the archi
 4. Run `node scripts/package.mjs prod --mac --arm64` (or `--win --x64`,
    `--linux --x64`, and the appropriate architecture for your host).
 
-The package wrapper performs steps 2 and 3 automatically, stages one archive in
-`runtime-assets/local-ml/bundle`, and embeds it as `resources/local-ml`. It builds
-before electron-vite so the embedded registry includes that archive's actual hash.
-The app's component setup installs this archive into its own profile, using the
-same size, hash, extraction, and generation verification as provider downloads.
-No network access is needed for this runtime installation or repair.
+The package wrapper performs steps 2 and 3 automatically and embeds one verified
+archive. The app installs it into its profile without network access.
 
 Development uses `runtime-assets/local-ml/archives` directly. Rebuild/restart the
 app after changing the archive or manifest. Direct `electron-builder` invocation

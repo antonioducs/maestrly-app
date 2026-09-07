@@ -19,8 +19,6 @@
     "test": "npm run test:unit && npm run test:policy && npm run test:docs",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "smoke:one-shot-ram": "node scripts/one-shot-ram-smoke.mjs",
-    "benchmark:memory": "node --expose-gc scripts/one-shot-ram-benchmark.mjs",
     "build:local-ml-runtime": "node scripts/build-local-ml-runtime.mjs",
     "smoke:local-ml-runtime": "node scripts/smoke-local-ml-runtime.mjs",
     "verify:cross-local-ml-runtime": "node scripts/verify-cross-local-ml-runtime.mjs",

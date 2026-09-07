@@ -26,7 +26,10 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
 
   if (!sessions.length || !openSession) return null
   return (
-    <div ref={rootRef} className="absolute bottom-3 right-3 z-10">
+    <div
+      ref={rootRef}
+      className="absolute bottom-3 right-[max(0.75rem,calc((100%_-_var(--container-3xl))/2))] z-10"
+    >
       {open && (
         <div className="absolute bottom-full right-0 mb-2 w-[min(25rem,calc(100vw-3rem))] overflow-hidden rounded-xl border border-violet-400/20 bg-[#15131d]/95 shadow-xl backdrop-blur">
           <div className="flex items-center gap-2 border-b border-white/[0.07] px-3 py-2">

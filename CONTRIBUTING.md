@@ -1,27 +1,13 @@
-# Contributing to Maestrly App
+# Contributing
 
-Thank you for helping improve Maestrly App. Contributions can include focused
-code changes, tests, documentation, accessibility fixes, reproducible bug
-reports, and design feedback.
+Keep pull requests focused. Discuss substantial features, dependencies, storage
+changes, or permission changes in an issue before implementation. Follow the
+[Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities through
+[SECURITY.md](SECURITY.md).
 
-Follow the [Code of Conduct](CODE_OF_CONDUCT.md). Use [Support](SUPPORT.md) for
-questions and report vulnerabilities only through [SECURITY.md](SECURITY.md).
+## Setup and checks
 
-## Before starting
-
-Search existing issues and discussions first. A small, isolated fix can go
-directly to a pull request. Open a discussion or issue before investing in a new
-provider, remote service, dependency replacement, storage migration, major UI
-flow, or change to an execution, privacy, or security boundary.
-
-Keep pull requests focused. Do not combine a behavior change with unrelated
-refactors, generated-file churn, broad dependency upgrades, or formatting of
-untouched files.
-
-## Development setup
-
-Use Node.js 22.15 or newer but lower than 23, npm 10 or newer, Git, and the
-native toolchain for Electron and `node-pty`. Install exactly from the lockfile:
+Follow [Development](docs/development.md) for prerequisites and packaging.
 
 ```sh
 npm ci
@@ -29,117 +15,51 @@ npm run hooks:install
 npm run dev
 ```
 
-The development launcher creates an isolated profile and must not reuse a
-production or beta profile. See the [development guide](docs/development.md) for
-operating-system prerequisites, repository layout, profiles, and common build
-failures.
-
-## Required checks
-
-Before requesting review, run:
+Before review, run the checks appropriate to the change and report their results.
+For application changes, run:
 
 ```sh
 npm run check
 npm run test:e2e
 ```
 
-Run the live advisory gate when dependencies or the lockfile change:
+For documentation-only changes, run `npm run test:docs` and `npm run test:policy`.
+Run `npm run audit:dependencies` when dependencies or lockfiles change. Changes
+to native modules, runtimes, icons, signing, or packaging also need a native build
+and both packaged smoke checks described in the development guide.
 
-```sh
-npm run audit:dependencies
-```
+Use temporary profiles and synthetic repositories. Standard tests must not need
+personal credentials or user data; live provider checks must be explicitly opt-in.
+Do not commit private data, signing material, or unsanitized logs and screenshots.
 
-Run native packaging and both packaged smokes when changing Electron,
-`electron-builder`, native modules, runtime assets, file allowlists, icons,
-signing, or package scripts. Commands and target limitations are documented in
-[scripts/README.md](scripts/README.md).
+## Code conventions
 
-The standard suite must remain deterministic and must not require provider
-authentication, a remote MCP server, a user database, Docker, or unrestricted
-network access. Tests for a real provider or downloadable runtime must be
-explicitly opt-in and skip with a clear reason when prerequisites are absent.
+- Use strict TypeScript. Keep shared code independent of Electron, React, and
+  Node-only APIs.
+- Keep privileged operations and credential handling in the main process; validate
+  renderer input there and preserve permission checks.
+- Preserve durable data on failed writes and test relevant denial, failure,
+  cancellation, and recovery paths.
+- Use English for source, comments, tests, diagnostics, and documentation. Put
+  user-facing text in the shared translation catalogs. Keep multilingual test
+  inputs where they exercise localization, Unicode, or transcript compatibility.
+- Document user-visible behavior, required setup, and data compatibility. Keep
+  internal decision records and one-time review reports out of repository docs.
+- Preserve third-party attribution and update [notices](THIRD_PARTY_NOTICES.md)
+  when dependencies or derived material change.
 
-## Security and privacy expectations
+## Pull requests
 
-Never commit or paste credentials, provider sessions, private conversations,
-local databases, private repository names, personal paths, signing material, or
-unsanitized logs. Tests, screenshots, and documentation use synthetic data.
+Branch from `main`. Use an English Conventional Commit subject, at most 100
+characters, for commits and the PR title: `type(scope): imperative description`.
+The scope is optional. Types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`,
+`build`, `ci`, `chore`, `revert`; use `!` for breaking changes.
 
-Changes must preserve these boundaries:
+Explain the problem, resulting behavior, and validation. Include compatibility,
+privacy, or attribution details when affected. Resolve review threads; accepted
+PRs are squash-merged after required checks pass.
 
-- application-owned credentials stay in the main process and are persisted only
-  through Electron `safeStorage`;
-- the preload exposes named operations, not raw IPC, SQL, filesystem handles, or
-  arbitrary process access;
-- renderer input is validated again in the main process;
-- command, file-write, network, and MCP operations retain their permission and
-  project-scope checks;
-- reset and migration preserve repositories/worktrees and remain recoverable;
-- external network access is user-enabled or inherent to the selected external
-  operation and is disclosed in [PRIVACY.md](PRIVACY.md); and
-- no Maestrly account, license, hosted backend, telemetry, or mandatory updater
-  is reintroduced.
-
-Changes touching these boundaries should include negative tests and a concise
-threat analysis in the pull request. Read the
-[security model](docs/security-model.md).
-
-## Code and architecture
-
-- Keep TypeScript strict and narrow unknown data at process boundaries.
-- Keep shared code independent of Electron, React, and Node-only APIs.
-- Put domain and persistence invariants in shared rules or the main-process
-  store, not only in React.
-- Preserve drafts and durable data on failed writes; make conflicts visible.
-- Use argument arrays and non-shell process execution for structured commands.
-- Test success, denial, cancellation, timeout, restart, and recovery behavior
-  where they are meaningful.
-- Preserve upstream copyright and license notices. Record persisted-data impact
-  in [docs/local-data.md](docs/local-data.md) and derived third-party material in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Branches, commits, and pull requests
-
-1. Branch from current `main` with a descriptive `feat/`, `fix/`, `docs/`,
-   `test/`, `ci/`, or `chore/` name.
-2. Keep the branch current and update behavior, tests, and documentation in the
-   same coherent change.
-3. Use a Conventional Commit subject for every commit and for the pull request
-   title, which becomes the squash-merge subject.
-4. Record the user impact, validation evidence, data compatibility, network or
-   permission changes, and third-party attribution.
-5. Resolve every review thread. Accepted pull requests are squash-merged.
-
-Each commit subject is one non-empty English line, at most 100 characters:
-
-```text
-type(scope): imperative description
-```
-
-The scope is optional. Allowed types are `feat`, `fix`, `docs`, `refactor`,
-`perf`, `test`, `build`, `ci`, `chore`, and `revert`. A breaking change
-may add `!` before the colon. Bodies, `Co-authored-by`, `Signed-off-by`, and
-other standard trailers are welcome when accurate and useful. Never rewrite or
-impersonate another contributor's identity.
-
-Examples:
-
-```text
-feat(chat): persist local conversation filters
-fix(git): preserve worktrees after reset
-docs: explain offline provider setup
-```
-
-Contributors may open pull requests from any GitHub account. Repository
-permissions determine who can merge; they never change commit authorship. CI
-validates non-merge commit subjects and the pull-request title independently.
-Source, comments, test names, logs, and documentation use English; user-facing
-copy belongs in locale dictionaries. Intentional multilingual fixtures follow
-[docs/language-policy.md](docs/language-policy.md).
-
-## Licensing
-
-Contributions are accepted under the same [MIT License](LICENSE) as this
-repository. No separate contributor license agreement is currently required.
-Submit only material you have the right to contribute and preserve applicable
-third-party notices.
+Anyone may open a pull request using their own truthful Git identity. Bodies,
+`Co-authored-by`, and other standard trailers are welcome when accurate.
+Contributions use the repository's [MIT License](LICENSE); submit only material
+you have the right to contribute.

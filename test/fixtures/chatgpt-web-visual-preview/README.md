@@ -3,7 +3,7 @@
 Use this fixture for the acceptance check that cannot be proven by local unit tests: whether the ChatGPT
 custom MCP app delivers `content[].type="image"` to the model as vision.
 
-1. Start Maestrly from this branch and refresh the Maestrly developer app in ChatGPT (tool catalog v9).
+1. Start Maestrly and refresh its connected developer app in ChatGPT.
 2. Pair the companion and set Browser / Visual review to **Interact** before starting the session.
 3. Ask ChatGPT to call `discover_frontend_previews`; select the candidate whose cwd is
    `test/fixtures/chatgpt-web-visual-preview` when the repository root is exposed, or start a companion rooted

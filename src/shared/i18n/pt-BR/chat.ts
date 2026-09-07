@@ -396,6 +396,12 @@ export default {
     },
   },
   subagentSession: {
+    providerUnavailable: 'Provider indisponível',
+    duration: 'Duração',
+    estimatedCost: 'Custo estimado',
+    costHint: 'Estimativa em USD; não representa necessariamente o valor cobrado pela assinatura.',
+    enabled: 'ativado',
+    disabled: 'desativado',
     title: 'Execução do subagent',
     open: 'Abrir sessão',
     close: 'Fechar sessão',

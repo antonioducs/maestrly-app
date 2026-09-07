@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot, ChevronDown, Loader2, PanelRightClose, ShieldCheck, TriangleAlert } from 'lucide-react'
-import type { SubagentSessionSummary, SubagentTranscriptPage } from '../../../shared/chat'
+import type { ChatModelMeta, SubagentSessionSummary, SubagentTranscriptPage } from '../../../shared/chat'
 import type { OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
+import { subagentEffortLabel, subagentRunCost, subagentRunDisplay } from '@/lib/subagent-profile-display'
 import { ChatMessageList } from './ChatMessageList'
 
 function elapsed(ms: number): string {
@@ -79,20 +80,54 @@ export function SubagentSessionPanel({
     }
   }, [conversationId, sessionId])
 
+  const session = page?.session ?? sessions.find((item) => item.id === sessionId) ?? null
+  const live = session != null && isLive(session.status)
+  const effective = session?.profile?.effective
+  const providerId = effective?.providerId
+  const modelId = effective?.modelId
+  const [modelInfo, setModelInfo] = useState<{
+    providerId: string
+    modelId: string
+    providerName: string | null
+    metadata: ChatModelMeta | null
+  } | null>(null)
+
   useEffect(() => {
-    if (!page || !isLive(page.session.status)) return
+    if (!live) return
     const timer = setInterval(() => tick((value) => value + 1), 1_000)
     return () => clearInterval(timer)
-  }, [page?.session.status])
+  }, [live])
 
-  const session = page?.session ?? sessions.find((item) => item.id === sessionId) ?? null
-  const duration = session ? (session.durationMs ?? Math.max(0, Date.now() - session.startedAt)) : 0
-  const model = session?.profile?.effective
-    ? `${session.profile.effective.modelId} · ${session.profile.effective.providerId}`
-    : t('subagentSession.modelUnavailable')
-  const totalTokens = session?.usage
-    ? session.usage.input + session.usage.output + session.usage.cacheRead + session.usage.cacheCreate
+  useEffect(() => {
+    if (!providerId || !modelId) return
+    let cancelled = false
+    void Promise.all([
+      window.api
+        .chatConfig()
+        .then((config) => config.providers.find((provider) => provider.id === providerId)?.name ?? null)
+        .catch(() => null),
+      window.api.chatModelMeta(modelId, providerId).catch(() => null),
+    ]).then(([providerName, metadata]) => {
+      if (!cancelled) setModelInfo({ providerId, modelId, providerName, metadata })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [providerId, modelId])
+
+  const currentModelInfo = modelInfo?.providerId === providerId && modelInfo?.modelId === modelId ? modelInfo : null
+  const display = subagentRunDisplay(undefined, session)
+  const cost =
+    session?.usage || display.runtimeEstimatedCostUsd != null
+      ? subagentRunCost(display, currentModelInfo?.metadata ?? null)
+      : null
+  const duration = session
+    ? (session.durationMs ??
+      Math.max(0, (session.finishedAt ?? (live ? Date.now() : session.lastActivityAt)) - session.startedAt))
     : 0
+  const model = effective
+    ? `${currentModelInfo?.providerName ?? t('subagentSession.providerUnavailable')} · ${effective.modelId}`
+    : t('subagentSession.modelUnavailable')
   const orderedSessions = useMemo(
     () => [...sessions].sort((left, right) => right.startedAt - left.startedAt),
     [sessions]
@@ -115,9 +150,7 @@ export function SubagentSessionPanel({
               </span>
               {session && <StatusIcon session={session} />}
             </div>
-            <div className="truncate text-[10px] text-muted-foreground">
-              {session?.origin === 'delegate' ? 'Maestro · delegate' : 'Agent · task'} · {model}
-            </div>
+            <div className="break-words text-[10px] text-muted-foreground">{model}</div>
           </div>
           <button
             type="button"
@@ -140,7 +173,7 @@ export function SubagentSessionPanel({
             >
               {orderedSessions.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.agentName} · {item.status}
+                  {item.agentName} · {t(`subagentSession.status.${item.status}`)}
                 </option>
               ))}
             </select>
@@ -153,17 +186,42 @@ export function SubagentSessionPanel({
             <span className={cn(isLive(session.status) && 'text-sky-200')}>
               {t(`subagentSession.status.${session.status}`)}
             </span>
-            <span className="font-mono tabular-nums">{elapsed(duration)}</span>
-            {totalTokens > 0 && <span className="font-mono tabular-nums">{totalTokens.toLocaleString()} tok</span>}
-            {session.runtimeEstimatedCostUsd != null && (
-              <span className="font-mono tabular-nums">${session.runtimeEstimatedCostUsd.toFixed(4)}</span>
-            )}
-            <span className="truncate">
-              {t('subagentSession.phase')}: {session.currentTool ?? session.phase ?? '—'}
+            <span>
+              {t('subagentSession.duration')}:{' '}
+              <span className="font-mono tabular-nums text-foreground">{elapsed(duration)}</span>
             </span>
             <span>
-              {t('subagentSession.lastActivity')}: {elapsed(Date.now() - session.lastActivityAt)}
+              Tokens:{' '}
+              <span className="font-mono tabular-nums text-foreground">
+                {session.usage ? display.totalTokens.toLocaleString() : '—'}
+              </span>
             </span>
+            <span title={cost == null ? t('subagent.costUnavailable') : t('subagentSession.costHint')}>
+              {t('subagentSession.estimatedCost')}:{' '}
+              <span className="font-mono tabular-nums text-foreground">
+                {cost == null ? '—' : `$${cost.toFixed(4)}`}
+              </span>
+            </span>
+            <span>
+              Effort:{' '}
+              <span className="text-violet-200">
+                {effective ? subagentEffortLabel(effective.sentEffort ?? 'off', t) : '—'}
+              </span>
+            </span>
+            <span className={cn(effective?.fastMode === true && 'text-amber-200')}>
+              Fast:{' '}
+              {effective?.fastMode == null
+                ? '—'
+                : t(effective.fastMode ? 'subagentSession.enabled' : 'subagentSession.disabled')}
+            </span>
+            {live && (
+              <div className="flex w-full flex-wrap gap-x-3 gap-y-1 border-t border-white/[0.06] pt-1.5">
+                <span>{session.currentTool ?? t(`subagentSession.status.${session.status}`)}</span>
+                <span>
+                  {t('subagentSession.lastActivity')}: {elapsed(Date.now() - session.lastActivityAt)}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </header>
