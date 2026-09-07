@@ -13,6 +13,8 @@
  * - Conversation `subagentProfilesEnabled === false` → synthesize no aliases.
  */
 import { normalizeSubagentProfileKey, type SubagentProfileRulesV1 } from '../../shared/subagent-profiles'
+import type { ChatMode } from '../../shared/chat'
+import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { BUILTIN_AGENTS, listAgents, type ChatAgent } from './agents'
 import { getConversationSubagentProfileRules, getGlobalSubagentProfileRules } from './subagent-profile-config'
 
@@ -92,9 +94,9 @@ export interface ListEffectiveAgentsInput {
   cwd: string
   conversationId: string
   home?: string
-  /** 'agent' = physical + virtual; plan/ask = physical only (read-only modes; runners
+  /** Agent capabilities = physical + virtual; plan/ask = physical only (read-only modes; runners
    * already restrict Ultra to `explore`). Omitted = UI (includes virtuals). */
-  mode?: 'agent' | 'plan' | 'ask'
+  mode?: ChatMode
 }
 
 /** Effective conversation catalog: physical via `listAgents` + virtual rules (if enabled). */
@@ -102,7 +104,7 @@ export async function listEffectiveAgents(input: ListEffectiveAgentsInput): Prom
   const conversation = getConversationSubagentProfileRules(input.conversationId)
   if (!conversation.subagentsEnabled) return []
   const physical = await listAgents(input.cwd, input.home)
-  if (input.mode !== undefined && input.mode !== 'agent') return physical
+  if (input.mode !== undefined && capabilityBehaviorFor(input.mode) !== 'agent') return physical
   if (!conversation.enabled) return physical
   const global = getGlobalSubagentProfileRules()
   return mergeVirtualSubagents({

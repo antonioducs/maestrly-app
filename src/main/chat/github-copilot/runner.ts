@@ -19,6 +19,7 @@ import type {
   ToolOutput,
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import { applyChatEvent } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
@@ -91,6 +92,7 @@ import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabiliti
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
+import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { resolveGitHubCopilotHarness } from './harness'
 import {
   COPILOT_TOOL_SEARCH_DEFER_THRESHOLD,
@@ -432,6 +434,7 @@ async function prepareRuntime(
   assistantId: string,
   state: GitHubCopilotRunnerState
 ): Promise<PreparedRuntime> {
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const activateTerminalStep = (): void => {
     state.planSubmitted = true
     // Let the custom tool result cross JSON-RPC before ending this agent loop.
@@ -588,12 +591,12 @@ async function prepareRuntime(
       : await listEffectiveAgents({
           cwd: args.cwd,
           conversationId: args.conversationId,
-          mode: args.mode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+          mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
         })
     const agents =
       args.mode === 'maestro' && args.maestro
         ? maestroAgentsFromTurn(args.maestro, allAgents)
-        : args.mode === 'agent'
+        : capabilityMode === 'agent'
           ? allAgents
           : args.maestrlyUltra
             ? allAgents.filter((agent) => agent.name === 'explore')
@@ -666,7 +669,7 @@ async function prepareRuntime(
     const agentContext =
       args.mode === 'maestro' && args.maestro
         ? renderMaestroAgentCatalog(args.maestro)
-        : agentsCatalog(agents, args.conversationId, args.mode === 'plan' || args.mode === 'ask')
+        : agentsCatalog(agents, args.conversationId, capabilityMode === 'plan' || capabilityMode === 'ask')
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
     const git = await gitEnvInfo(args.cwd).catch(() => null)
@@ -675,9 +678,11 @@ async function prepareRuntime(
     const ultra = args.maestrlyUltra
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
-        : args.mode === 'agent'
-          ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
-          : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
+        : args.mode === 'design'
+          ? renderDesignUltraGuidance(args.mode)
+          : args.mode === 'agent'
+            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
+            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
       : ''
     const notes = Boolean(getConversation(args.conversationId))
     const runtimeOverlay =

@@ -27,6 +27,7 @@ import type {
   ChatSkillSelection,
   ChatSkillsState,
   ChatModelMeta,
+  ChatMode,
   ChatReasoningEffort,
   ChatHistoryPage,
   ChatHistoryStats,
@@ -478,9 +479,9 @@ export const chatApi = {
   chatSetPermMode: (conversationId: string, mode: 'full' | 'ask' | 'auto'): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('chat:set-perm-mode', conversationId, mode),
 
-  chatGetMode: (conversationId: string): Promise<'agent' | 'plan' | 'ask'> =>
+  chatGetMode: (conversationId: string): Promise<ChatMode> =>
     ipcRenderer.invoke('chat:get-mode', conversationId),
-  chatSetMode: (conversationId: string, mode: 'agent' | 'plan' | 'ask'): Promise<{ ok: boolean }> =>
+  chatSetMode: (conversationId: string, mode: ChatMode): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:set-mode', conversationId, mode),
 
   chatGetReasoning: (conversationId: string): Promise<ChatReasoningEffort> =>
@@ -493,9 +494,9 @@ export const chatApi = {
   chatSetFastMode: (conversationId: string, enabled: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('chat:set-fast-mode', conversationId, enabled),
 
-  onChatModeChanged: (conversationId: string, cb: (mode: 'agent' | 'plan' | 'ask') => void): (() => void) => {
+  onChatModeChanged: (conversationId: string, cb: (mode: ChatMode) => void): (() => void) => {
     const channel = `chat:mode:${conversationId}`
-    const listener = (_e: unknown, mode: 'agent' | 'plan' | 'ask') => cb(mode)
+    const listener = (_e: unknown, mode: ChatMode) => cb(mode)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
   },

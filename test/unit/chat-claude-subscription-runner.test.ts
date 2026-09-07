@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ChatStreamEvent } from '../../src/shared/chat'
+import type { ChatBehavior } from '../../src/shared/conversation-experience'
 
 const h = vi.hoisted(() => ({
   stagePlan: vi.fn(),
@@ -54,10 +56,15 @@ vi.mock('../../src/main/chat/project-context', () => ({
 vi.mock('../../src/main/git-service', () => ({
   gitEnvInfo: vi.fn(async () => null),
 }))
-vi.mock('../../src/main/chat/runner', () => ({
-  IN_TURN_COMPACT_RATIO: 0.9,
-  SYSTEM_PROMPT: vi.fn(() => 'Maestrly system prompt'),
-}))
+vi.mock('../../src/main/chat/runner', async () => {
+  const { renderDesignModePrompt } = await import('../../src/main/chat/design-mode-prompt')
+  return {
+    IN_TURN_COMPACT_RATIO: 0.9,
+    SYSTEM_PROMPT: vi.fn((_cwd: string, _appToolsEnabled: boolean, mode: ChatBehavior) =>
+      ['Maestrly system prompt', renderDesignModePrompt(mode)].filter(Boolean).join('\n\n')
+    ),
+  }
+})
 vi.mock('../../src/main/chat/usage-diagnostics', () => ({
   recordModelCallUsage: vi.fn(),
 }))
@@ -894,6 +901,78 @@ describe('Claude official chat runner', () => {
   })
   afterEach(closeDb)
 
+  it('gives Design the Agent tool surface, hashes its prompt once, and keeps Plan/Ask restricted', async () => {
+    const workspace = makeWorkspace()
+    h.listAgents.mockResolvedValue([
+      {
+        name: 'general-purpose',
+        description: 'Worker with full tools.',
+        tools: ['read', 'bash', 'write', 'edit'],
+        prompt: 'Do the work.',
+        source: 'test',
+      },
+    ])
+
+    const runMode = async (mode: 'agent' | 'design' | 'plan' | 'ask') => {
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      upsertChatMessage({
+        id: `user-tools-${mode}`,
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: `text-tools-${mode}`, text: `Work in ${mode}.` }],
+        createdAt: 1,
+      })
+      const manager = new StreamingTextManager()
+      await runClaudeChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd: '/repo',
+        selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+        mode,
+        permMode: 'ask',
+        maestrlyUltra: mode === 'design',
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(), on: vi.fn() } as never,
+        questionBroker: { ask: vi.fn() } as never,
+        emit: vi.fn(),
+        signal: new AbortController().signal,
+      })
+      return { conversation, options: manager.calls[0].options ?? {} }
+    }
+
+    const agent = await runMode('agent')
+    const design = await runMode('design')
+    const plan = await runMode('plan')
+    const ask = await runMode('ask')
+    const allowed = (value: { options: Record<string, unknown> }) =>
+      [...((value.options.allowedTools as string[] | undefined) ?? [])].sort()
+    const designPrompt = design.options.systemPrompt as string
+
+    expect(allowed(design)).toEqual(allowed(agent))
+    expect(allowed(design)).toEqual(expect.arrayContaining(['mcp__maestrly__bash', 'mcp__maestrly__task']))
+    for (const restricted of [plan, ask]) {
+      for (const toolName of [
+        'mcp__maestrly__bash',
+        'mcp__maestrly__edit',
+        'mcp__maestrly__write',
+        'mcp__maestrly__task',
+      ]) {
+        expect(allowed(restricted)).not.toContain(toolName)
+      }
+    }
+    expect(designPrompt.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(designPrompt).toContain('## Design + Ultra guidance')
+    expect(designPrompt).not.toContain('Stay read-only, investigate deeply')
+    expect(agent.options.systemPrompt).not.toContain('# Maestrly Design mode')
+    expect(getClaudeSessionBinding(design.conversation.id)?.promptHash).toBe(
+      createHash('sha256').update(designPrompt).digest('hex')
+    )
+    expect(getClaudeSessionBinding(agent.conversation.id)?.promptHash).not.toBe(
+      getClaudeSessionBinding(design.conversation.id)?.promptHash
+    )
+  })
+
   it('compacts at a folded tool-result boundary, continues in a fresh session and aggregates usage', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
@@ -1422,7 +1501,7 @@ describe('Claude official chat runner', () => {
     const { setAppFlag } = await import('../../src/main/store')
     const workspace = makeWorkspace()
 
-    const runTurn = async (conversationId: string, userId: string) => {
+    const runTurn = async (conversationId: string, userId: string, mode: 'agent' | 'design' = 'agent') => {
       upsertChatMessage({
         id: userId,
         conversationId,
@@ -1436,7 +1515,7 @@ describe('Claude official chat runner', () => {
         projectId: workspace.id,
         cwd: '/repo',
         selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        mode: 'agent',
+        mode,
         permMode: 'ask',
         manager: manager as unknown as ClaudeSubscriptionManager,
         accountIdentity: identity,
@@ -1454,6 +1533,8 @@ describe('Claude official chat runner', () => {
     h.codexStatusSnapshot = { authenticated: true }
     const connected = makeConversation(workspace.id, { cwd: '/repo' })
     expect(await runTurn(connected.id, 'user-img-on')).toContain('mcp__maestrly__generate_image')
+    const design = makeConversation(workspace.id, { cwd: '/repo' })
+    expect(await runTurn(design.id, 'user-img-design', 'design')).toContain('mcp__maestrly__generate_image')
 
     // (b) Global toggle disabled: hidden even with the account connected.
     setAppFlag('chat.imageGen', false)

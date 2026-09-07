@@ -56,6 +56,17 @@ describe('OpenAI Codex prompt port', () => {
     expect(nextTurn.volatileSuffix).not.toBe(first.volatileSuffix)
   })
 
+  it('changes prompt identity for Design and restores the original Agent prefix when leaving it', () => {
+    const agentBefore = compileOpenAIPrompt(input({ mode: 'agent' }))
+    const design = compileOpenAIPrompt(input({ mode: 'design' }))
+    const agentAfter = compileOpenAIPrompt(input({ mode: 'agent' }))
+
+    expect(design.stablePrefix).not.toBe(agentBefore.stablePrefix)
+    expect(design.stablePrefix.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(agentAfter.stablePrefix).toBe(agentBefore.stablePrefix)
+    expect(agentAfter.stablePrefix).not.toContain('# Maestrly Design mode')
+  })
+
   it('orders durable context before the volatile suffix', () => {
     const prompt = compileOpenAIPrompt(input()).instructions
     const project = prompt.indexOf('# Project instructions')
@@ -73,11 +84,20 @@ describe('OpenAI Codex prompt port', () => {
 
   it('maps each mode only to capabilities Maestrly exposes', () => {
     const agent = compileOpenAIPrompt(input({ mode: 'agent' })).instructions
+    const design = compileOpenAIPrompt(input({ mode: 'design' })).instructions
     const plan = compileOpenAIPrompt(input({ mode: 'plan' })).instructions
     const ask = compileOpenAIPrompt(input({ mode: 'ask' })).instructions
 
     expect(agent).toContain('AGENT MODE')
     expect(agent).toContain('todo_write')
+    expect(design.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(design).toContain('DESIGN MODE uses Agent-equivalent capabilities')
+    expect(design).toContain('todo_write')
+    expect(design).toContain('notes_*')
+    expect(design).toContain('`local_shell`')
+    expect(design).toContain('`apply_patch`')
+    expect(design).not.toContain('PLAN MODE')
+    expect(design).not.toContain('ASK MODE')
     expect(plan).toContain('PLAN MODE')
     expect(plan).toContain('external MCP tools explicitly declared read-only')
     expect(plan).toContain('notes list/read/create/write/append')
@@ -90,6 +110,7 @@ describe('OpenAI Codex prompt port', () => {
     expect(ask).toContain('page interaction through click/type/drag/key/mouse/evaluate')
     expect(ask).not.toContain('interactive browser actions')
     expect(ask).not.toContain('review_plan')
+    for (const prompt of [agent, plan, ask]) expect(prompt).not.toContain('# Maestrly Design mode')
   })
 
   it('describes drawer tools by mode and respects the notes surface', () => {
@@ -137,6 +158,7 @@ describe('OpenAI Codex prompt port', () => {
     expect(patchOnly).not.toContain('`local_shell`')
     expect(patchOnly).not.toContain('legacy `bash`')
     expect(openAINativeToolsPromptOverlay({ localShell: true, applyPatch: true }, 'ask')).toBe('')
+    expect(openAINativeToolsPromptOverlay({ localShell: true, applyPatch: true }, 'design')).toBe(both)
   })
 
   it('omits empty optional sections and rejects an empty workspace', () => {

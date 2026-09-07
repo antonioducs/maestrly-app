@@ -542,6 +542,13 @@ describe('channel cross-check group:* (preload -> main)', () => {
 // Check settings and runtime prefixes separately.
 // ---------------------------------------------------------------------------
 describe('preload API — Chat settings wrappers', () => {
+  it('forwards Design mode through the existing chat mode IPC channel', () => {
+    api.chatSetMode('conversation-design', 'design')
+    expect(invokeSpy).toHaveBeenCalledWith('chat:set-mode', 'conversation-design', 'design')
+    api.chatGetMode('conversation-design')
+    expect(invokeSpy).toHaveBeenCalledWith('chat:get-mode', 'conversation-design')
+  })
+
   it('setDrawerShortcut(binding) -> settings:drawer-shortcut-set (send)', () => {
     const binding = { key: 'd', mods: ['meta', 'control'] as Array<'meta' | 'control'> }
     api.setDrawerShortcut(binding)

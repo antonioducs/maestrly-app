@@ -1,6 +1,6 @@
 import type { FloatTab } from '../../shared/tool-tabs'
 import type { SubagentProfileRulesV1 } from '../../shared/subagent-profiles'
-import type { ChatGptWebCapabilities, ChatSkillSelection } from '../../shared/chat'
+import type { ChatGptWebCapabilities, ChatMode, ChatSkillSelection } from '../../shared/chat'
 import { normalizeConversationExperience, type ConversationExperience } from '../../shared/conversation-experience'
 import type { MaestroConfigV1 } from '../../shared/maestro'
 import { getDb, transaction } from './db'
@@ -52,8 +52,8 @@ export interface ConvUiPrefs {
     modelId?: string
     /** Permission mode: full, ask, or auto; default inherits the global setting. */
     permMode?: 'full' | 'ask' | 'auto'
-    /** Behavior mode: agent enables tools, plan is read-only, and ask disables tools. */
-    mode?: 'agent' | 'plan' | 'ask'
+    /** Standard behavior mode. Design shares Agent capabilities while applying a prototype-focused harness. */
+    mode?: ChatMode
     /**
      * Reasoning/thinking level, usually the provider's raw effort. maestrly-ultra is a local sentinel
      * intercepted before transport; off means none.

@@ -297,6 +297,7 @@ import {
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
 import type { ChatMode } from '../../shared/chat'
+import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
 import { tFor } from '../i18n'
 import { getMainWebContents } from '../window-ipc'
@@ -2160,8 +2161,7 @@ function rulesetFor(conversationId: string): Ruleset {
 
 /** Effective conversation behavior mode (default agent). */
 function modeFor(conversationId: string): ChatMode {
-  const m = getConvUiPrefs(conversationId).chat?.mode
-  return m === 'plan' || m === 'ask' ? m : 'agent'
+  return normalizeChatMode(getConvUiPrefs(conversationId).chat?.mode)
 }
 
 /** Single structural behavior resolver used by admission, compatibility checks and every runtime. */
@@ -2170,7 +2170,7 @@ function behaviorFor(conversationId: string): ChatBehavior {
 }
 
 /** Sets conversation behavior mode (used by index when approving a plan → return to agent). */
-export function setChatMode(conversationId: string, mode: 'agent' | 'plan' | 'ask'): void {
+export function setChatMode(conversationId: string, mode: ChatMode): void {
   if (getConversation(conversationId)?.experience === 'maestro') return
   patchConvChat(conversationId, { mode })
 }
@@ -4211,6 +4211,7 @@ async function startSend(
         questionBroker: getQuestionBroker(),
         emit,
         signal: controller.signal,
+        behaviorOverride: turnBehavior,
         ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
         assistantMessageId,
         assistantCreatedAt,
@@ -4225,13 +4226,10 @@ async function startSend(
               reasoningOverride: frozenProfile?.reasoning ?? 'off',
               // Frozen EFFECT (after resolving Ultra): the runner requires equality with live resolution.
               frozenReasoningEffort: frozenProfile?.reasoningEffort,
-              modeOverride: internalTurnMode,
               ...(typeof frozenProfile?.fastMode === 'boolean' ? { fastModeOverride: frozenProfile.fastMode } : {}),
             }
           : {}),
-        ...(maestroTurn
-          ? { behaviorOverride: 'maestro' as const, maestro: maestroTurn, maestroLive: run.maestroLive }
-          : {}),
+        ...(maestroTurn ? { maestro: maestroTurn, maestroLive: run.maestroLive } : {}),
         ...(isolated && reviewLoopMessageMeta
           ? {
               ephemeralSession: true as const,
@@ -7863,17 +7861,19 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     return { ok: true }
   })
 
-  // Behavior mode per conversation (agent | plan | ask).
+  // Standard behavior mode per conversation.
   deps.mhandle('chat:get-mode', (_e, conversationId: string) =>
     typeof conversationId === 'string' ? modeFor(conversationId) : 'agent'
   )
-  deps.mhandle('chat:set-mode', (_e, conversationId: string, mode: 'agent' | 'plan' | 'ask') => {
-    if (typeof conversationId === 'string' && getConversation(conversationId)?.experience === 'maestro') {
+  deps.mhandle('chat:set-mode', (_e, conversationId: string, mode: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId || !getConversation(conversationId)) {
+      return { ok: false, error: 'invalid-conversation' }
+    }
+    if (getConversation(conversationId)?.experience === 'maestro') {
       return { ok: false, error: 'maestro-experience' }
     }
-    if (typeof conversationId === 'string' && (mode === 'agent' || mode === 'plan' || mode === 'ask')) {
-      patchConvChat(conversationId, { mode })
-    }
+    if (!isChatMode(mode)) return { ok: false, error: 'invalid-mode' }
+    patchConvChat(conversationId, { mode })
     return { ok: true }
   })
 

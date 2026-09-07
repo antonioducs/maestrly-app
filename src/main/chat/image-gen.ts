@@ -89,8 +89,8 @@ export async function codexImageGenConnected(): Promise<boolean> {
 }
 
 /**
- * Should `generate_image` enter this turn's catalog? Only in Agent mode (Plan/Ask are read-only and
- * produce no artifacts), with the toggle enabled and ChatGPT subscription connected.
+ * Should `generate_image` enter this turn's catalog? Only with Agent capabilities (Agent or Design),
+ * the toggle enabled, and a connected ChatGPT subscription.
  */
 export async function generateImageToolEnabled(conversationId: string, mode: ChatBehavior): Promise<boolean> {
   if (!canExposeGeneratedImageTool({ mode, enabled: imageGenEnabledFor(conversationId) })) return false

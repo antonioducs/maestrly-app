@@ -138,6 +138,20 @@ describe('chat runner helpers', () => {
     }
   })
 
+  it('keeps Design prompt identity exactly once with Agent-equivalent app capabilities', () => {
+    const design = SYSTEM_PROMPT('/repo', true, 'design', true)
+    const agent = SYSTEM_PROMPT('/repo', true, 'agent', true)
+
+    expect(design.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(design).toContain('You are operating in Maestrly Design mode')
+    expect(design).toContain('ON — you receive them NATIVELY in your tool set')
+    expect(design).toContain('terminal_*, browser_*, notes_*, memory_*, debug_*')
+    expect(design).not.toContain("this mode's restricted catalog")
+    expect(design).not.toContain('PLAN MODE')
+    expect(design).not.toContain('ASK MODE')
+    expect(agent).not.toContain('# Maestrly Design mode')
+  })
+
   it('declares prescriptive subagent selection without provider details', () => {
     const rendered = renderSubagentDispatchCatalog(
       buildSubagentDispatchCatalog({

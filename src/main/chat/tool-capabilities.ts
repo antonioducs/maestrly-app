@@ -1,4 +1,5 @@
 import type { ChatBehavior } from '../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import type { ToolSet } from 'ai'
 import {
   chatToolOutputToAiSdkOutput,
@@ -27,9 +28,9 @@ export function supportsChatToolImages(args: {
   return args.unknownVision !== 'unsupported' || args.imageInterpreterConfigured !== true
 }
 
-/** A worker may receive image results in any mode, but image generation is a mutating agent-only capability. */
+/** A worker may receive image results in any mode, but image generation requires Agent capabilities. */
 export function canExposeGeneratedImageTool(args: { mode: ChatBehavior; enabled: boolean }): boolean {
-  return args.mode === 'agent' && args.enabled
+  return capabilityBehaviorFor(args.mode) === 'agent' && args.enabled
 }
 
 /** Wraps a host ToolSet at the model boundary so a child model can have different vision capability than its parent. */

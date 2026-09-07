@@ -1,4 +1,5 @@
 import type { ChatBehavior } from '../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../shared/chat-mode'
 
 /** "Allowed" is a product capability for Plan/Ask, not a guarantee of zero side effects. */
 export interface AppToolPolicy {
@@ -118,7 +119,7 @@ function validKnownAnnotations(annotations: Record<string, unknown>): boolean {
 }
 
 export function externalMcpToolAllowed(mode: ChatBehavior, annotations: unknown): boolean {
-  if (mode === 'agent') return true
+  if (capabilityBehaviorFor(mode) === 'agent') return true
   return externalMcpToolReadOnly(annotations)
 }
 
@@ -139,7 +140,7 @@ export function isHostToolReadOnly(name: string, metadata?: unknown): boolean {
 
 export function appToolAllowed(mode: ChatBehavior, name: string): boolean {
   if (name === 'review_plan') return false
-  if (mode === 'agent') return true
+  if (capabilityBehaviorFor(mode) === 'agent') return true
   const entry = APP_TOOL_POLICY[name as AppToolName]
   // Plan/Ask retain their product allowlist, including safe recording/navigation side effects. Maestro is a
   // stricter structural boundary: its parent receives only entries that are both allowlisted and proven read-only.

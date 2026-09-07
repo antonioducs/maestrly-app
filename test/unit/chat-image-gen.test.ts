@@ -863,6 +863,7 @@ describe('global and conversation image-generation toggles', () => {
     const conversation = makeConversation(workspace.id, {})
 
     await expect(generateImageToolEnabled(conversation.id, 'agent')).resolves.toBe(true)
+    await expect(generateImageToolEnabled(conversation.id, 'design')).resolves.toBe(true)
     expect(h.readyRuntimeAsset).not.toHaveBeenCalled()
   })
 

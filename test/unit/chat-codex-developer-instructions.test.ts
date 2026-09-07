@@ -51,6 +51,19 @@ describe('developer instructions subagent catalog', () => {
     expect(out).not.toContain('modelId')
   })
 
+  it('keeps Design identity exactly once with the Agent subagent catalog', () => {
+    const out = maestrlyDeveloperInstructions('design', [], agents)
+
+    expect(out.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(out).toContain('This turn is Design mode with Agent-equivalent capabilities')
+    expect(out).toContain(
+      '- general-purpose [generic fallback, worker, inherited profile]: Worker agent with FULL tools.'
+    )
+    expect(out).not.toContain('This turn is Plan mode')
+    expect(out).not.toContain('This turn is Ask mode')
+    expect(maestrlyDeveloperInstructions('agent', [], agents)).not.toContain('# Maestrly Design mode')
+  })
+
   it('omits agent blocks when no agents exist', () => {
     const out = maestrlyDeveloperInstructions('ask', [], [])
     expect(out).not.toContain('`task` tool')

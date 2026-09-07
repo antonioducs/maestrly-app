@@ -14,6 +14,7 @@ import type {
   SubagentRuntimeHandle,
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import { applyChatEvent, MAESTRLY_ULTRA_EFFORT } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
@@ -89,6 +90,7 @@ import {
   type MaestroWorkerToolRuntime,
 } from '../maestro-worker-tools'
 import { recordModelCallUsage } from '../usage-diagnostics'
+import { renderDesignModePrompt, renderDesignUltraGuidance } from '../design-mode-prompt'
 import {
   getProvider,
   isClaudeSubscriptionProvider,
@@ -675,9 +677,9 @@ export function approvalConfig(
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
   approvalPolicy: 'untrusted' | 'on-request' | 'never'
 } {
-  // Read-only behavior modes must not escalate to writes regardless of the permission toggle. In Agent mode,
+  // Read-only behavior modes must not escalate to writes regardless of the permission toggle. With Agent capabilities,
   // the official sandbox is the first gate; escalation requests pass through the broker.
-  if (mode !== 'agent') {
+  if (capabilityBehaviorFor(mode) !== 'agent') {
     return { sandbox: 'read-only', approvalPolicy: permMode === 'full' ? 'never' : 'untrusted' }
   }
   if (permMode === 'full') return { sandbox: 'danger-full-access', approvalPolicy: 'never' }
@@ -746,6 +748,7 @@ export function maestrlyDeveloperInstructions(
   options: { conversationId?: string; maestro?: MaestroTurnSnapshotV1 } = {}
 ): string {
   const conversationId = options.conversationId ?? ''
+  const designPrompt = renderDesignModePrompt(mode)
   const common =
     'You are running inside Maestrly through the official Codex runtime. Keep your native Codex operating ' +
     'instructions and tool discipline. Maestrly renders GitHub-flavored Markdown and fenced `mermaid` diagrams. ' +
@@ -756,7 +759,8 @@ export function maestrlyDeveloperInstructions(
       ? `\n\n${renderMaestroAgentCatalog(options.maestro)}`
       : subagentCatalog(agents, conversationId, mode === 'plan' || mode === 'ask')) +
     (mode === 'maestro' && options.maestro ? `\n\n${renderMaestroTurnPolicy(options.maestro)}` : '') +
-    `\n\n${MEMORY_TOOL_GUIDANCE}`
+    `\n\n${MEMORY_TOOL_GUIDANCE}` +
+    (designPrompt ? `\n\n${designPrompt}` : '')
   if (mode === 'plan') {
     return (
       common +
@@ -775,6 +779,9 @@ export function maestrlyDeveloperInstructions(
   if (mode === 'maestro') {
     return common + `\n\n${MAESTRO_SYSTEM_SPEC}`
   }
+  if (mode === 'design') {
+    return common + ' This turn is Design mode with Agent-equivalent capabilities under the selected permissions.'
+  }
   return (
     common + ' This turn is Agent mode: carry the task through to a verified result within the selected permissions.'
   )
@@ -788,23 +795,25 @@ function collaborationModeFor(args: RunCodexSubscriptionChatArgs): CodexCollabor
   const ultraInstructions = args.maestrlyUltra
     ? args.mode === 'maestro'
       ? 'Maestrly Ultra applies only to the orchestrator reasoning profile. Keep all worker selection governed by the frozen Strategy and Agent Pool.'
-      : args.mode === 'agent'
-        ? 'Maestrly Ultra mode is active for this turn. Use maximum rigor. For every non-trivial task, actively ' +
-          'look for independent slices before starting. When useful independent slices exist, DELEGATE them through ' +
-          'the Maestrly `task` tool and emit multiple independent `task` calls in the same response so they run in ' +
-          'parallel. Use `explore` for broad investigation and worker agents for self-contained implementation ' +
-          'slices. Keep yourself as the orchestrator: integrate the results, verify the implementation, and ' +
-          'critically review the outcome before finishing. Delegation is encouraged, not mandatory when there is no ' +
-          'meaningful independent slice.'
-        : args.mode === 'plan'
-          ? 'Maestrly Ultra mode is active for this Plan turn. Stay read-only, investigate deeply, and actively look ' +
-            'for independent research lines. When useful, delegate them through the Maestrly `task` tool and emit ' +
-            'multiple independent `task` calls in the same response so they run in parallel. Synthesize and ' +
-            'cross-check the results into a concrete plan, submit it through review_plan, and stop.'
-          : 'Maestrly Ultra mode is active for this Ask turn. Stay read-only, investigate deeply, and actively look ' +
-            'for broad or independent investigation lines. When useful, delegate them through the Maestrly `task` ' +
-            'tool and emit multiple independent `task` calls in the same response so they run in parallel. ' +
-            'Cross-check the findings, verify assumptions, and answer with maximum rigor.'
+      : args.mode === 'design'
+        ? renderDesignUltraGuidance(args.mode)
+        : args.mode === 'agent'
+          ? 'Maestrly Ultra mode is active for this turn. Use maximum rigor. For every non-trivial task, actively ' +
+            'look for independent slices before starting. When useful independent slices exist, DELEGATE them through ' +
+            'the Maestrly `task` tool and emit multiple independent `task` calls in the same response so they run in ' +
+            'parallel. Use `explore` for broad investigation and worker agents for self-contained implementation ' +
+            'slices. Keep yourself as the orchestrator: integrate the results, verify the implementation, and ' +
+            'critically review the outcome before finishing. Delegation is encouraged, not mandatory when there is no ' +
+            'meaningful independent slice.'
+          : args.mode === 'plan'
+            ? 'Maestrly Ultra mode is active for this Plan turn. Stay read-only, investigate deeply, and actively look ' +
+              'for independent research lines. When useful, delegate them through the Maestrly `task` tool and emit ' +
+              'multiple independent `task` calls in the same response so they run in parallel. Synthesize and ' +
+              'cross-check the results into a concrete plan, submit it through review_plan, and stop.'
+            : 'Maestrly Ultra mode is active for this Ask turn. Stay read-only, investigate deeply, and actively look ' +
+              'for broad or independent investigation lines. When useful, delegate them through the Maestrly `task` ' +
+              'tool and emit multiple independent `task` calls in the same response so they run in parallel. ' +
+              'Cross-check the findings, verify assumptions, and answer with maximum rigor.'
     : args.mode === 'maestro'
       ? MAESTRO_SYSTEM_SPEC
       : null
@@ -1639,18 +1648,19 @@ async function buildDynamicTools(
   agents: ChatAgent[]
   close: () => Promise<void>
 }> {
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const physicalAgents = args.reviewerRuntime
     ? []
     : await listEffectiveAgents({
         cwd: args.cwd,
         conversationId: args.conversationId,
-        mode: args.mode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+        mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
       })
   const agents = args.reviewerRuntime
     ? []
     : args.mode === 'maestro' && args.maestro
       ? maestroAgentsFromTurn(args.maestro, physicalAgents)
-      : args.mode === 'agent'
+      : capabilityMode === 'agent'
         ? physicalAgents
         : args.maestrlyUltra
           ? physicalAgents.filter((agent) => agent.name === 'explore')
@@ -1672,7 +1682,7 @@ async function buildDynamicTools(
   const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp =
-    !args.reviewerRuntime && (args.mode === 'agent' || args.mode === 'maestro')
+    !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro')
       ? await buildMcpTools({
           signal: args.signal,
           mode: args.mode,
@@ -1690,7 +1700,7 @@ async function buildDynamicTools(
         })
       : { tools: {}, close: async () => {} }
   const app =
-    !args.reviewerRuntime && (args.mode === 'agent' || args.mode === 'maestro') && appToolsEnabled
+    !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled
       ? await buildAppTools({
           conversationId: args.conversationId,
           mode: args.mode,
@@ -1720,7 +1730,7 @@ async function buildDynamicTools(
     // Ask may inspect real code without gaining mutation tools.
     const bridgeNames = args.reviewerRuntime
       ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-      : args.mode === 'agent' && args.permMode !== 'full'
+      : capabilityMode === 'agent' && args.permMode !== 'full'
         ? new Set(['bash'])
         : args.mode === 'plan' || args.mode === 'ask' || args.mode === 'maestro'
           ? new Set(['read', 'grep', 'glob', 'webfetch'])
@@ -2035,6 +2045,7 @@ export async function compactCodexSubscriptionThread(
 export async function runCodexSubscriptionChat(
   args: RunCodexSubscriptionChatArgs
 ): Promise<RunCodexSubscriptionChatResult> {
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const settleInitialLeaseAsOther = (): void => {
     if (!args.availabilityLease) return
     getSubscriptionFailoverRouter().confirmAttemptOther(
@@ -2362,7 +2373,7 @@ export async function runCodexSubscriptionChat(
       ...nativeSubagentSuppressionConfig(),
       // Plan receives Maestrly readers; controlled Ask/Agent receive no native shell. This avoids
       // the internal `UnlessTrusted` safelist, which would execute `cat`/`rg` without consulting Maestrly's broker.
-      ...(args.reviewerRuntime || args.mode !== 'agent' || args.permMode !== 'full'
+      ...(args.reviewerRuntime || capabilityMode !== 'agent' || args.permMode !== 'full'
         ? { 'features.shell_tool': false }
         : {}),
       // Native web search never requests approval. Disable it in Ask to avoid bypassing the webfetch gate;
@@ -2577,7 +2588,7 @@ export async function runCodexSubscriptionChat(
           ...threadOptions,
           // Empty is the official contract to disable environment access: removes shell/apply_patch/view_image.
           // Plan and Ask continue investigating only through the gated dynamic readers above.
-          ...(args.mode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+          ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
           ephemeral: Boolean(args.ephemeralSession),
           dynamicTools: registrations,
         } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -4491,7 +4502,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(args.mode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
             ephemeral: false,
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {
@@ -4812,7 +4823,7 @@ export async function runCodexSubscriptionChat(
         const freshThreadRequest = currentClient.startThread(
           {
             ...threadOptions,
-            ...(args.mode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
+            ...(capabilityMode === 'agent' && !args.reviewerRuntime ? {} : { environments: [] }),
             ephemeral: Boolean(args.ephemeralSession),
             dynamicTools: registrations,
           } as Parameters<CodexAppServerClient['startThread']>[0] & {

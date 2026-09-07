@@ -21,6 +21,7 @@ import { submitReviewTool } from './submit-review'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import { isHostToolReadOnly } from '../tool-policy'
 import { OPENAI_APPLY_PATCH_TOOL_NAME, OPENAI_LOCAL_SHELL_TOOL_NAME } from '../openai/native-tools'
 
@@ -224,12 +225,13 @@ export const READ_ONLY_TOOL_NAMES = ALL_TOOL_NAMES.filter(
     !MUTATING_TOOL_NAMES.has(n) && !AGENT_ONLY_TOOL_NAMES.has(n) && !OPT_IN_TOOL_NAMES.has(n) && n !== PLAN_TOOL_NAME
 )
 
-/** Built-ins by mode: agent = all except opt-ins; plan = read-only + review_plan; ask = read-only. */
+/** Built-ins by capability: Agent/Design = all except opt-ins; Plan = read-only + review_plan; Ask = read-only. */
 export function builtinToolNamesForMode(mode: ChatBehavior): Set<string> {
+  const capabilities = capabilityBehaviorFor(mode)
   const selected =
-    mode === 'agent'
+    capabilities === 'agent'
       ? new Set(ALL_TOOL_NAMES.filter((n) => !OPT_IN_TOOL_NAMES.has(n)))
-      : mode === 'plan'
+      : capabilities === 'plan'
         ? new Set([...READ_ONLY_TOOL_NAMES, PLAN_TOOL_NAME])
         : new Set(READ_ONLY_TOOL_NAMES)
   return selected

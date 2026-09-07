@@ -11,6 +11,7 @@ import type {
   SubagentRunMeta,
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { MaestroLiveRunPort } from '../maestro-live'
 import { applyChatEvent } from '../../../shared/chat'
@@ -100,6 +101,7 @@ import {
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolBridge } from './tools'
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
+import { renderDesignUltraGuidance } from '../design-mode-prompt'
 
 const MAX_IN_TURN_COMPACTIONS = 2
 const PORTABLE_CONTINUE_PROMPT =
@@ -436,6 +438,7 @@ async function prepareRuntime(
   assistantId: string,
   state: RunnerState
 ): Promise<PreparedRuntime> {
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const activateTerminalStep = (toolCallId: string): void => {
     state.planSubmitted = true
     state.planToolCallId = toolCallId
@@ -597,12 +600,12 @@ async function prepareRuntime(
       : await listEffectiveAgents({
           cwd: args.cwd,
           conversationId: args.conversationId,
-          mode: args.mode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+          mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
         })
     const agents =
       args.mode === 'maestro' && args.maestro
         ? maestroAgentsFromTurn(args.maestro, allAgents)
-        : args.mode === 'agent'
+        : capabilityMode === 'agent'
           ? allAgents
           : args.maestrlyUltra
             ? allAgents.filter((agent) => agent.name === 'explore')
@@ -678,9 +681,11 @@ async function prepareRuntime(
     const ultra = args.maestrlyUltra
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator. Keep the frozen Strategy and choose agents deliberately from the Pool.'
-        : args.mode === 'agent'
-          ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
-          : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
+        : args.mode === 'design'
+          ? renderDesignUltraGuidance(args.mode)
+          : args.mode === 'agent'
+            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
+            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
       : ''
     const systemPrompt = [
       SYSTEM_PROMPT(args.cwd, appToolsEnabled, args.mode, Boolean(getConversation(args.conversationId))),
@@ -690,7 +695,7 @@ async function prepareRuntime(
       agents.length
         ? args.mode === 'maestro'
           ? renderMaestroAgentCatalog(args.maestro!)
-          : `# Maestrly subagents\n${agentsCatalog(agents, args.conversationId, args.mode !== 'agent')}`
+          : `# Maestrly subagents\n${agentsCatalog(agents, args.conversationId, capabilityMode !== 'agent')}`
         : '',
       args.mode === 'maestro' && args.maestro ? renderMaestroTurnPolicy(args.maestro) : '',
       ultra ? `# Ultra mode\n${ultra}` : '',

@@ -7,7 +7,7 @@ export type ChatRole = 'user' | 'assistant'
 
 export type ChatPermMode = 'full' | 'ask' | 'auto'
 
-export type ChatMode = 'agent' | 'plan' | 'ask'
+export type ChatMode = 'agent' | 'design' | 'plan' | 'ask'
 
 export interface ChatConvTools {
   app: boolean

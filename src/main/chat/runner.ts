@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { streamText, stepCountIs, tool, jsonSchema, type ToolSet, type ModelMessage, type StopCondition } from 'ai'
 import type { SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { ChatBehavior } from '../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../shared/maestro'
 import {
   applyChatEvent,
@@ -105,6 +106,7 @@ import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from './maestro-prompt'
 import type { MaestroLiveRunPort } from './maestro-live'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { applyFastModeServiceTier } from './fast-mode'
+import { renderDesignModePrompt, renderDesignUltraGuidance } from './design-mode-prompt'
 export {
   canReplayOpenAILedger,
   hasSubagentMutationInLedger,
@@ -173,6 +175,7 @@ const MAX_IN_TURN_COMPACTS = 2
 // MODE-AWARE prompt: tool descriptions must match the ACTUAL toolset, otherwise models
 // (e.g. MiMo) assume tools exist and try calling them (or emit tool calls as text). See runChat modes.
 export const SYSTEM_PROMPT = (cwd: string, appToolsEnabled: boolean, mode: ChatBehavior, hasNotesTab: boolean) => {
+  const capabilityMode = capabilityBehaviorFor(mode)
   const base = `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
 
 # Style
@@ -218,13 +221,16 @@ Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/
         : 'memory search/list/read, browser navigation/read, and terminal read'
   const appTools = `\n\nMaestrly app tools (${appToolGroups}): ${
     appToolsEnabled
-      ? mode === 'agent'
+      ? capabilityMode === 'agent'
         ? `ON — you receive them NATIVELY in your tool set (${appToolPrefixes}). Use them directly. PREFER ${preferredDrawerTools} over your equivalent native tools (bash/read/edit and your own memory) when the user should see, follow or edit the result in the drawer — running a server, a long build, a script, recording a decision or a durable project rule: that way they follow along in the UI. A quick internal one-off (e.g. git status) can stay on the native tools.`
         : `ON with this mode's restricted catalog: ${restrictedAppTools}. Use only the tools actually exposed; mutating tools outside this list remain unavailable.`
       : 'OFF right now. If you need them, ASK the user to enable "Maestrly tools" in Settings › Maestrly Chat.'
   }\nNEVER try to reach the app via curl/HTTP or inspect legacy local credentials. The app tools, when on, already arrive ready in your toolset (no network, no token).`
 
-  return base + capability + render + appTools + `\n\n${MEMORY_TOOL_GUIDANCE}`
+  const designPrompt = renderDesignModePrompt(mode)
+  return (
+    base + capability + render + appTools + `\n\n${MEMORY_TOOL_GUIDANCE}` + (designPrompt ? `\n\n${designPrompt}` : '')
+  )
 }
 
 const PERMISSION_ERROR_NAMES = new Set(['PermissionRejectedError', 'PermissionCorrectedError', 'PermissionDeniedError'])
@@ -605,6 +611,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // plan adds review_plan + skills; ask omits these extra actions.
   const mode: ChatBehavior =
     args.behaviorOverride ?? args.modeOverride ?? getConvUiPrefs(conversationId).chat?.mode ?? 'agent'
+  const capabilityMode = capabilityBehaviorFor(mode)
   const conversation = getConversation(conversationId)
   const hasNotesTab = Boolean(conversation)
   const enabledNames = args.reviewerRuntime
@@ -819,7 +826,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? []
     : mode === 'maestro' && args.maestro
       ? maestroAgentsFromTurn(args.maestro, await listEffectiveAgents({ cwd, conversationId, mode: 'agent' }))
-      : mode === 'agent'
+      : capabilityMode === 'agent'
         ? await listEffectiveAgents({ cwd, conversationId, mode: 'agent' })
         : ultra
           ? (await listEffectiveAgents({ cwd, conversationId, mode: 'plan' })).filter((a) => a.name === 'explore')
@@ -830,7 +837,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     detectExplicitSubagentsForTurn(history, selectableAgentNames),
     selectableAgentNames
   )
-  const subagentsReadOnly = mode === 'plan' || mode === 'ask'
+  const subagentsReadOnly = capabilityMode === 'plan' || capabilityMode === 'ask'
   // SUBAGENT tokens consumed this turn (added to main turn cost — see finish). Excluded from
   // "context %" (isolated subagent context, not conversation window).
   const subUsage: NormalizedAiUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, totalInput: 0 }
@@ -1187,7 +1194,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     : {}
   let allTools: ToolSet = { ...tools, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
   if (useOpenAIHarness) {
-    if (mode === 'agent' && !args.reviewerRuntime) {
+    if (capabilityMode === 'agent' && !args.reviewerRuntime) {
       const nativeTools = buildOpenAINativeTools({
         cwd,
         capabilities: resolvedModel.capabilities,
@@ -1218,8 +1225,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       nonStrict: optimized.nonStrictToolNames,
       deferred: optimized.deferredToolNames.length,
       toolSearch: optimized.toolSearchEnabled,
-      nativeShell: mode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeShell,
-      nativeApplyPatch: mode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeApplyPatch,
+      nativeShell: capabilityMode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeShell,
+      nativeApplyPatch:
+        capabilityMode === 'agent' && !args.reviewerRuntime && resolvedModel.capabilities.nativeApplyPatch,
     })
   }
   allTools = adaptToolSetForModel({
@@ -1353,19 +1361,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? ''
     : mode === 'maestro'
       ? '\n\n# ULTRA ORCHESTRATOR\nUse maximum rigor while coordinating. Ultra applies only to the orchestrator profile; the frozen Strategy and Pool still govern every worker.'
-      : mode === 'agent'
-        ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-          'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
-          'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
-          'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
-          'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
-          'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
-          'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
-        : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-          'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
-          '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
-          'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
-          'and be critical of your first conclusion before finishing.'
+      : mode === 'design'
+        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}`
+        : mode === 'agent'
+          ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+            'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
+            'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
+            'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
+            'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
+            'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
+            'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
+          : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+            'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
+            '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
+            'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
+            'and be critical of your first conclusion before finishing.'
   let system =
     SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab) +
     envContext +

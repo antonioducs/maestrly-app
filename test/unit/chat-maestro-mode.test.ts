@@ -13,15 +13,15 @@ describe('Maestro and Standard conversation behavior', () => {
   beforeEach(freshDb)
   afterEach(closeDb)
 
-  it('preserves Agent/Plan/Ask for Standard and ignores legacy mode mutation for Maestro', () => {
+  it('preserves Standard modes including Design and ignores mode mutation for Maestro', () => {
     const workspace = makeWorkspace()
     const standard = makeConversation(workspace.id, { experience: 'standard' })
     const maestro = makeConversation(workspace.id, { experience: 'maestro' })
 
-    setChatMode(standard.id, 'plan')
+    setChatMode(standard.id, 'design')
     setChatMode(maestro.id, 'plan')
 
-    expect(getConvUiPrefs(standard.id).chat?.mode).toBe('plan')
+    expect(getConvUiPrefs(standard.id).chat?.mode).toBe('design')
     expect(getConvUiPrefs(maestro.id).chat?.mode).toBeUndefined()
   })
 
@@ -94,7 +94,7 @@ describe('Maestro and Standard conversation behavior', () => {
       experience: 'standard',
       status: 'ready',
       uiPrefs: {
-        chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'plan', reasoning: 'high' },
+        chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'design', reasoning: 'high' },
         maestro: { config: maestroConfig },
       },
     })
@@ -111,13 +111,13 @@ describe('Maestro and Standard conversation behavior', () => {
       parts_json: JSON.stringify([{ type: 'text', text: 'Standard result' }]),
     })
     expect(getConvUiPrefs(standard.id)).toMatchObject({
-      chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'plan', reasoning: 'high' },
+      chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'design', reasoning: 'high' },
       maestro: { config: { strategy: 'economy' } },
     })
 
     expect(convertMaestroConversationToStandard(standard.id)).toEqual({ ok: true })
     expect(getConversation(standard.id)?.experience).toBe('standard')
-    expect(getConvUiPrefs(standard.id).chat?.mode).toBe('plan')
+    expect(getConvUiPrefs(standard.id).chat?.mode).toBe('design')
   })
 
   it('refuses to enter Maestro while the Standard conversation is active', () => {

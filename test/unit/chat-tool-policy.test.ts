@@ -34,6 +34,12 @@ describe('external MCP tool policy', () => {
     }
   })
 
+  it('gives Design the exact Agent MCP policy', () => {
+    for (const annotations of [undefined, { readOnlyHint: false }, { destructiveHint: true }]) {
+      expect(externalMcpToolAllowed('design', annotations)).toBe(externalMcpToolAllowed('agent', annotations))
+    }
+  })
+
   it('marks accepted external tools read-only but never infers parallel safety', () => {
     expect(EXTERNAL_MCP_RESTRICTED_METADATA).toEqual({ readOnly: true, parallelSafe: false })
   })
@@ -102,6 +108,12 @@ describe('Maestrly app-tool policy', () => {
     expect(appToolAllowed('agent', 'browser_click')).toBe(true)
     expect(appToolAllowed('agent', 'unknown_future_tool')).toBe(true)
     expect(appToolAllowed('agent', 'review_plan')).toBe(false)
+  })
+
+  it('gives Design the exact Agent app-tool policy', () => {
+    for (const name of [...Object.keys(APP_TOOL_POLICY), 'unknown_future_tool', 'review_plan']) {
+      expect(appToolAllowed('design', name), name).toBe(appToolAllowed('agent', name))
+    }
   })
 })
 

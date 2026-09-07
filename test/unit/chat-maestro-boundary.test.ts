@@ -12,6 +12,7 @@ import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 describe('Maestro parent/worker capability boundary', () => {
   it('gives the parent only read-only built-ins and no shell/write/edit/artifact tools', () => {
     expect(resolveChatBehavior('standard', 'plan')).toBe('plan')
+    expect(resolveChatBehavior('standard', 'design')).toBe('design')
     expect(resolveChatBehavior('maestro', 'agent')).toBe('maestro')
     expect(resolveChatBehavior('maestro', 'ask')).toBe('maestro')
     const names = builtinToolNamesForMode('maestro')

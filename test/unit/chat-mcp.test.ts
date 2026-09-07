@@ -458,6 +458,25 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     }
   })
 
+  it('gives Design the warm mutable catalog and metadata behavior of Agent', async () => {
+    const server = registerFixtureServer()
+    const cold = await buildMcpTools({ mode: 'design', gate: async () => {}, signal: new AbortController().signal })
+    await (cold.tools.mcp_search as unknown as Executable).execute({ server: server.id }, { toolCallId: 'seed-design' })
+
+    const gate = vi.fn(async () => {})
+    const built = await buildMcpTools({ mode: 'design', gate, signal: new AbortController().signal })
+    try {
+      expect(built.tools).toHaveProperty('fixture__mutate')
+      expect(built.tools.fixture__mutate.metadata).toBeUndefined()
+      expect(built.tools.mcp_call.metadata).toBeUndefined()
+      const mutate = built.tools.fixture__mutate as unknown as Executable
+      await expect(mutate.execute({}, { toolCallId: 'design-mutate' })).resolves.toBe('mutate-ok')
+      expect(gate).toHaveBeenCalledExactlyOnceWith('fixture__mutate', 'design-mutate')
+    } finally {
+      await built.close()
+    }
+  })
+
   it('exposes only read-only wrappers in restricted warm catalogs', async () => {
     const server = registerFixtureServer()
     const cold = await buildMcpTools({ mode: 'agent', gate: async () => {}, signal: new AbortController().signal })

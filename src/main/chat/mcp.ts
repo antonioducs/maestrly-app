@@ -20,6 +20,7 @@ import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
 import { getAppSetting, setAppSetting } from '../store'
 import type { ChatToolImage, ToolOutput } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { toolOutputImages } from '../../shared/chat'
 import type { MaestroWorkerScope } from '../maestro-worker-scope'
 import {
@@ -445,7 +446,7 @@ async function executeExternalMcpTool(args: {
 
 function cachedExternalMcpTool(server: McpServer, declaration: ListedMcpTool, context: ExternalMcpBuildContext): Tool {
   const metadata =
-    context.mode !== 'agent' || externalMcpToolReadOnly(declaration.annotations)
+    capabilityBehaviorFor(context.mode) !== 'agent' || externalMcpToolReadOnly(declaration.annotations)
       ? EXTERNAL_MCP_RESTRICTED_METADATA
       : undefined
   return tool({
@@ -546,7 +547,7 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
   tools[MCP_CALL_TOOL_NAME] = tool({
     description:
       'Calls one tool on an enabled external MCP server. Use mcp_search first when the remote tool name or schema is unknown.',
-    ...(args.mode !== 'agent' ? { metadata: EXTERNAL_MCP_RESTRICTED_METADATA } : {}),
+    ...(capabilityBehaviorFor(args.mode) !== 'agent' ? { metadata: EXTERNAL_MCP_RESTRICTED_METADATA } : {}),
     inputSchema: jsonSchema<{ server: string; tool: string; arguments?: Record<string, unknown> }>({
       type: 'object',
       properties: {
@@ -620,7 +621,7 @@ export async function buildAppTools(args: {
     appToolAllowed(args.mode, listedTool.name) &&
     (args.only?.has(listedTool.name) ?? true) &&
     !(args.exclude?.has(listedTool.name) ?? false)
-  const restricted = args.mode !== 'agent'
+  const restricted = capabilityBehaviorFor(args.mode) !== 'agent'
   // NO_TIMEOUT_MS: allow room for blocking drawer tools (plan-broker/gates govern the actual limit).
   const tools = await toolsFromClient(
     client,

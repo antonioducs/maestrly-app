@@ -2264,6 +2264,10 @@ describe('READ_ONLY_TOOL_NAMES (Plan mode)', () => {
 })
 
 describe('builtinToolNamesForMode (built-in tools by mode)', () => {
+  it('gives Design the exact Agent built-in capability surface', () => {
+    expect(builtinToolNamesForMode('design')).toEqual(builtinToolNamesForMode('agent'))
+  })
+
   it('agent includes all tool classes except OPT-IN and internal-only capabilities', () => {
     const set = builtinToolNamesForMode('agent')
     expect([...set].sort()).toEqual([...ALL_TOOL_NAMES].filter((name) => !isOptInToolName(name)).sort())

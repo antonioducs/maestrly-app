@@ -371,6 +371,7 @@ describe('GitHub Copilot official runner', () => {
     ['ask', 'interactive'],
     ['plan', 'plan'],
     ['agent', 'interactive'],
+    ['design', 'interactive'],
   ] as const)('sends selective toolSearch in %s mode', async (mode, agentMode) => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })
@@ -384,9 +385,51 @@ describe('GitHub Copilot official runner', () => {
       toolSearch: { enabled: true, deferThreshold: 0 },
     })
     expect(manager.sessions[0].sendCalls[0].input).toMatchObject({ agentMode })
+    const names = manager.createCalls[0].tools?.map((entry) => entry.name) ?? []
+    if (mode === 'agent' || mode === 'design') {
+      expect(names).toEqual(expect.arrayContaining(['bash', 'edit', 'write']))
+    } else {
+      for (const toolName of ['bash', 'edit', 'write', 'task']) expect(names).not.toContain(toolName)
+    }
     for (const entry of manager.createCalls[0].tools ?? []) {
       if (['task', 'use_skill', 'review_plan'].includes(entry.name)) expect(entry.defer).toBe('never')
     }
+  })
+
+  it('replaces Design instructions on resume and removes them after returning to Agent', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    const manager = new FakeManager()
+    const modes = ['agent', 'design', 'agent'] as const
+
+    for (const [index, mode] of modes.entries()) {
+      persistUser(conversation.id, `user-design-transition-${index}`, `turn ${index}`, index * 2 + 1)
+      manager.queue(() => {})
+      await runGitHubCopilotChat({
+        ...args(conversation.id, workspace.id, cwd, manager),
+        mode,
+        maestrlyUltra: mode === 'design',
+      })
+    }
+
+    expect(manager.createCalls).toHaveLength(1)
+    expect(manager.resumeCalls).toHaveLength(2)
+    const started = manager.createCalls[0]
+    const designResume = manager.resumeCalls[0].config
+    const agentResume = manager.resumeCalls[1].config
+    const designPrompt = designResume.systemMessage?.content ?? ''
+
+    expect(started.systemMessage).toMatchObject({ mode: 'replace' })
+    expect(started.systemMessage?.content).not.toContain('# Maestrly Design mode')
+    expect(designResume.systemMessage).toMatchObject({ mode: 'replace' })
+    expect(designPrompt.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(designPrompt).toContain('## Design + Ultra guidance')
+    expect(designPrompt).not.toContain('Stay read-only')
+    expect(designResume.availableTools).toEqual(started.availableTools)
+    expect(agentResume.systemMessage).toMatchObject({ mode: 'replace' })
+    expect(agentResume.systemMessage?.content).not.toContain('# Maestrly Design mode')
+    expect(agentResume.systemMessage?.content).not.toContain('## Design + Ultra guidance')
+    expect(agentResume.availableTools).toEqual(started.availableTools)
   })
 
   it('offers exactly the reviewer read-only tools and terminates after accepted submit_review', async () => {

@@ -17,6 +17,7 @@ import type { CodexAppServerClient } from '../../src/main/chat/codex-subscriptio
 import { CodexAppServerRpcError } from '../../src/main/chat/codex-subscription/client'
 import type { CodexNotification, CodexServerRequest } from '../../src/main/chat/codex-subscription/protocol'
 import {
+  approvalConfig,
   compactCodexSubscriptionThread,
   dynamicToolRegistrations,
   maestrlyDeveloperInstructions,
@@ -1974,6 +1975,82 @@ describe('Codex subscription runner', () => {
     expect(client.startTurnCalls[0]).toMatchObject({
       approvalPolicy: 'never',
       sandboxPolicy: { type: 'dangerFullAccess' },
+    })
+  })
+
+  it('gives Design the exact Agent approval policy for every permission mode', () => {
+    for (const permMode of ['ask', 'auto', 'full'] as const) {
+      expect(approvalConfig('design', permMode)).toEqual(approvalConfig('agent', permMode))
+    }
+    expect(approvalConfig('plan', 'full')).toEqual({ sandbox: 'read-only', approvalPolicy: 'never' })
+    expect(approvalConfig('ask', 'auto')).toEqual({ sandbox: 'read-only', approvalPolicy: 'untrusted' })
+  })
+
+  it('replaces Design instructions on resume and removes them after returning to Agent', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    const client = new FakeCodexClient()
+    const modes = ['agent', 'design', 'agent'] as const
+
+    for (const [index, mode] of modes.entries()) {
+      const turn = index + 1
+      persistUser(conversation.id, `user_design_transition_${turn}`, `turn ${turn}`, turn * 2 - 1)
+      client.queueTurn({
+        turnId: `turn_design_transition_${turn}`,
+        notifications: [completedNotification('thread_1', `turn_design_transition_${turn}`)],
+      })
+      const turnArgs = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      turnArgs.mode = mode
+      turnArgs.permMode = 'auto'
+      turnArgs.maestrlyUltra = mode === 'design'
+      await runCodexSubscriptionChat(turnArgs)
+    }
+
+    expect(client.startThreadCalls).toHaveLength(1)
+    expect(client.resumeThreadCalls).toHaveLength(2)
+    const started = client.startThreadCalls[0] as {
+      config: Record<string, unknown>
+      developerInstructions: string
+      dynamicTools: Array<{ name: string }>
+      environments?: unknown
+    }
+    const designResume = client.resumeThreadCalls[0] as {
+      config: Record<string, unknown>
+      developerInstructions: string
+      environments?: unknown
+    }
+    const agentResume = client.resumeThreadCalls[1] as {
+      config: Record<string, unknown>
+      developerInstructions: string
+      environments?: unknown
+    }
+
+    expect(started.developerInstructions).not.toContain('# Maestrly Design mode')
+    expect(started.dynamicTools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['bash', 'task']))
+    expect(started.environments).toBeUndefined()
+    expect(designResume.config).toEqual(started.config)
+    expect(designResume.environments).toBeUndefined()
+    expect(designResume.developerInstructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(agentResume.config).toEqual(started.config)
+    expect(agentResume.environments).toBeUndefined()
+    expect(agentResume.developerInstructions).not.toContain('# Maestrly Design mode')
+
+    expect(client.startTurnCalls[1]).toMatchObject({
+      approvalPolicy: 'untrusted',
+      sandboxPolicy: {
+        type: 'workspaceWrite',
+        writableRoots: [conversation.cwd],
+        networkAccess: false,
+      },
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          developer_instructions: expect.stringContaining('## Design + Ultra guidance'),
+        },
+      },
+    })
+    expect(client.startTurnCalls[2]).toMatchObject({
+      collaborationMode: { mode: 'default', settings: { developer_instructions: null } },
     })
   })
 
@@ -5587,7 +5664,7 @@ describe('Codex subscription runner', () => {
       expect(existsSync(path.join(artifactsRoot, conversation.id))).toBe(false)
     })
 
-    it('uses the host-managed tool in Agent and blocks native imagegen and the tool in Ask and Plan', async () => {
+    it('uses the host-managed tool in Agent and Design and blocks native imagegen in every mode', async () => {
       const workspace = makeWorkspace()
       const agentConversation = makeConversation(workspace.id, {})
       persistUser(agentConversation.id, 'user_img_cfg_agent', 'Generate a robot', 1)
@@ -5601,6 +5678,22 @@ describe('Codex subscription runner', () => {
       agentArgs.permMode = 'full'
       await runCodexSubscriptionChat(agentArgs)
       expect(agentClient.startThreadCalls[0]).toMatchObject({
+        config: { 'features.image_generation': false },
+        dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
+      })
+
+      const designConversation = makeConversation(workspace.id, {})
+      persistUser(designConversation.id, 'user_img_cfg_design', 'Design a robot', 1)
+      const designClient = new FakeCodexClient()
+      designClient.queueTurn({
+        turnId: 'turn_cfg_design',
+        notifications: [completedNotification('thread_1', 'turn_cfg_design')],
+      })
+      const designArgs = runArgs(designConversation.id, workspace.id, designConversation.cwd, designClient)
+      designArgs.mode = 'design'
+      designArgs.permMode = 'full'
+      await runCodexSubscriptionChat(designArgs)
+      expect(designClient.startThreadCalls[0]).toMatchObject({
         config: { 'features.image_generation': false },
         dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })

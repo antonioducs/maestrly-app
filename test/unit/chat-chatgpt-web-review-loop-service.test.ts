@@ -426,7 +426,7 @@ describe('review loop internal service API', () => {
     expect(h.runChat).toHaveBeenCalledWith(
       expect.objectContaining({
         selection: { providerId: 'provider-1', modelId: 'model-1' },
-        modeOverride: 'agent',
+        behaviorOverride: 'agent',
         reasoningOverride: 'off',
         ephemeralSession: true,
         messageMeta: expect.objectContaining({
@@ -483,7 +483,7 @@ describe('review loop internal service API', () => {
     expect(started.ok).toBe(true)
     expect(h.runChat).toHaveBeenCalledWith(
       expect.objectContaining({
-        modeOverride: 'ask',
+        behaviorOverride: 'ask',
         reviewerRuntime,
         messageMeta: expect.objectContaining({
           source: 'maestrly-review-loop',
@@ -916,7 +916,7 @@ describe('review loop internal service API', () => {
       expect.objectContaining({
         fastModeOverride: true,
         ephemeralSession: true,
-        modeOverride: 'agent',
+        behaviorOverride: 'agent',
       })
     )
     await handle.handle.done

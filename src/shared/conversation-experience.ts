@@ -3,7 +3,7 @@ import type { ChatMode } from './chat'
 /** Structural conversation experience. Maestro may explicitly hand off to Standard while idle. */
 export type ConversationExperience = 'standard' | 'maestro'
 
-/** Effective behavior frozen for one turn. Maestro remains separate from the Standard Agent/Plan/Ask modes. */
+/** Effective behavior frozen for one turn. Maestro remains separate from the Standard chat modes. */
 export type ChatBehavior = ChatMode | 'maestro'
 
 export type MaestroToStandardError =

@@ -7,6 +7,8 @@
  */
 
 import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
+import { renderDesignModePrompt } from '../design-mode-prompt'
 
 export const OPENAI_CODEX_PROMPT_SOURCE = {
   repository: 'https://github.com/openai/codex',
@@ -29,7 +31,7 @@ export const OPENAI_CODEX_PROMPT_SOURCE = {
   ],
 } as const
 
-export type OpenAIPromptMode = 'agent' | 'plan' | 'ask'
+export type OpenAIPromptMode = 'agent' | 'design' | 'plan' | 'ask'
 
 export interface CompileOpenAIPromptInput {
   cwd: string
@@ -187,10 +189,11 @@ PLAN MODE has restricted tools. Investigate with the available read and safe-rec
 
   return `# Maestrly mode
 
-AGENT MODE provides tools to read, search, edit and write files, run commands, and track non-trivial work with todo_write. Prefer small, verifiable actions. Read the relevant code before editing it. Permission-sensitive tools are gated by the harness; explain the reason concisely when approval is requested.`
+${mode === 'design' ? 'DESIGN MODE uses Agent-equivalent capabilities. It' : 'AGENT MODE'} provides tools to read, search, edit and write files, run commands, and track non-trivial work with todo_write. Prefer small, verifiable actions. Read the relevant code before editing it. Permission-sensitive tools are gated by the harness; explain the reason concisely when approval is requested.`
 }
 
 const appToolsOverlay = (enabled: boolean, hasNotesTab: boolean, mode: OpenAIPromptMode): string => {
+  const capabilityMode = capabilityBehaviorFor(mode)
   const groups = hasNotesTab
     ? 'terminal_*, browser_*, notes_*, memory_*, and debug_*'
     : 'terminal_*, browser_*, memory_*, and debug_*'
@@ -202,7 +205,7 @@ const appToolsOverlay = (enabled: boolean, hasNotesTab: boolean, mode: OpenAIPro
 Drawer tools are disabled. If the task genuinely requires them, ask the user to enable Maestrly tools in Settings > Maestrly Chat. Never reach the app through curl/HTTP or inspect legacy local credentials.`
   }
 
-  if (mode !== 'agent') {
+  if (capabilityMode !== 'agent') {
     const restricted = hasNotesTab
       ? 'notes list/read/create/write/append, memory search/list/read, browser navigation/read, and terminal read'
       : 'memory search/list/read, browser navigation/read, and terminal read'
@@ -235,7 +238,7 @@ export const openAINativeToolsPromptOverlay = (
   nativeTools: CompileOpenAIPromptInput['nativeTools'],
   mode: OpenAIPromptMode
 ): string => {
-  if (mode !== 'agent' || !nativeTools) return ''
+  if (capabilityBehaviorFor(mode) !== 'agent' || !nativeTools) return ''
   const mappings = [
     nativeTools.localShell
       ? '- Use `local_shell` for argv-based local commands. The legacy `bash` tool is not exposed; do not call it.'
@@ -279,6 +282,7 @@ export function compileOpenAIPrompt(input: CompileOpenAIPromptInput): CompiledOp
   const stablePrefix = joinSections([
     OPENAI_CODEX_BASE_INSTRUCTIONS,
     maestrlyOverlay,
+    renderDesignModePrompt(input.mode),
     section('Project instructions', input.projectContext),
     skillsOverlay(input.skillsContext),
     section('Subagents', input.agentsContext),
