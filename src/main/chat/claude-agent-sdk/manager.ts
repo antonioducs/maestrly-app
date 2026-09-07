@@ -33,8 +33,8 @@ import {
 } from './model-catalog'
 import { broadcast } from '../../window-ipc'
 
-export const CLAUDE_AGENT_SDK_VERSION = '0.3.258'
-export const CLAUDE_CODE_COMPATIBLE_VERSION = '2.1.258'
+export const CLAUDE_AGENT_SDK_VERSION = '0.3.263'
+export const CLAUDE_CODE_COMPATIBLE_VERSION = '2.1.263'
 const CLAUDE_PROFILE_DIRECTORY = 'claude-agent-sdk'
 const CLAUDE_SIGNED_OUT_MARKER = '.maestrly-signed-out'
 const CLAUDE_USAGE_CACHE_TTL_MS = 60_000
