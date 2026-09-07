@@ -9,7 +9,7 @@ import {
 describe('Claude Agent SDK executable resolution', () => {
   it('prefers the native CLI paired with the installed SDK', () => {
     const bundled = bundledClaudeCandidate()
-    expect(bundled).toContain('@anthropic-ai/claude-agent-sdk-')
+    expect(bundled).toMatch(/@anthropic-ai[\\/]claude-agent-sdk-/)
     clearClaudeCache()
     expect(resolveClaude()).toBe(bundled)
     expect(execFileSync(resolveClaude(), ['--version'], { encoding: 'utf8' }).trim()).toBe('2.1.263 (Claude Code)')

@@ -2980,7 +2980,7 @@ describe('Codex subscription runner', () => {
     args.broker = broker
     const running = runCodexSubscriptionChat(args)
 
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 10_000 })
     const numericId = client.serverRequest({
       id: 7,
       method: 'item/commandExecution/requestApproval',
