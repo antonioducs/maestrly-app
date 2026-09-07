@@ -57,9 +57,9 @@ describe('runtime asset registry', () => {
   })
 
   it('matches the exact versions and representative script pins', () => {
-    expect(RUNTIME_ASSET_REGISTRY['codex-runtime']).toMatchObject({ version: '0.153.2' })
+    expect(RUNTIME_ASSET_REGISTRY['codex-runtime']).toMatchObject({ version: '0.153.4' })
     expect(RUNTIME_ASSET_REGISTRY['codex-runtime'].targets['mac-arm64']?.hash.digest).toBe(
-      '8cEJWOIW5WnSn2+W1RUjc1sm2sN1H6NP+cCrOe73ImamUy2yOk3QKjZM2SfkA9jf3fqgwlBNUslhGMen2omc5g=='
+      'B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg=='
     )
     expect(RUNTIME_ASSET_REGISTRY['github-copilot-runtime']).toMatchObject({ version: '1.0.71' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client']).toMatchObject({ version: '0.0.10' })

@@ -1,20 +1,25 @@
 import { getDb, transaction } from '../../store'
 import { updateChatMessageParts, upsertChatMessage, type StoredChatMessage } from '../chat-store'
-import type { ChatHarnessProfile } from '../harness'
+import {
+  OPENAI_DEFAULT_MODEL_HARNESS_PROFILE,
+  type ModelHarnessProfileId,
+} from '../model-harness-profile'
 import { parseOpenAIResponsesLedger, toOpenAILedgerValue } from './ledger'
 import type { OpenAICanonicalCompactionWindow, OpenAILedgerObject, OpenAIResponsesLedger } from './types'
 import type { MessagePart } from '../../../shared/chat'
 
-export const OPENAI_INFERENCE_STATE_VERSION = 3 as const
+export const OPENAI_INFERENCE_STATE_VERSION = 4 as const
 
 export interface OpenAIInferenceState {
-  /** v2 remains supported for reading/writing fixtures and sidecars from earlier versions. */
-  version: 2 | typeof OPENAI_INFERENCE_STATE_VERSION
+  /** v2/v3 remain readable and normalize to the pre-Astra model profile. */
+  version: 2 | 3 | typeof OPENAI_INFERENCE_STATE_VERSION
   providerId: string
   modelId: string
   /** SHA-256 of endpoint + protocol + credential hash; prevents opaque replay on another backend/account. */
   providerFingerprint: string
-  harnessProfile: Extract<ChatHarnessProfile, 'openai-responses-v1'>
+  modelHarnessProfileId?: ModelHarnessProfileId
+  /** @deprecated v2/v3 compatibility fixture; parsed as openai-default-v1. */
+  harnessProfile?: 'openai-responses-v1'
   /** Provider-generated items in order; never includes the caller's input messages. */
   ledger: OpenAIResponsesLedger
   /** Raw standalone window. ModelMessage is not a lossless codec for this payload. */
@@ -49,10 +54,21 @@ function parseCanonicalWindow(value: unknown): OpenAICanonicalCompactionWindow |
 
 export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState | null {
   if (!value || typeof value !== 'object') return null
-  const state = value as Partial<OpenAIInferenceState>
-  // v2 had no canonicalWindow; normalize to v3 in memory without invalidating existing sidecars.
-  if (state.version !== OPENAI_INFERENCE_STATE_VERSION && Number(state.version) !== 2) return null
-  if (state.harnessProfile !== 'openai-responses-v1') return null
+  const state = value as Partial<OpenAIInferenceState> & { harnessProfile?: unknown }
+  // v2 had no canonicalWindow; v2/v3 used the transport profile as their sidecar identity.
+  if (![2, 3, OPENAI_INFERENCE_STATE_VERSION].includes(Number(state.version))) return null
+  const modelHarnessProfileId =
+    typeof state.modelHarnessProfileId === 'string'
+      ? state.modelHarnessProfileId
+      : state.harnessProfile === 'openai-responses-v1'
+        ? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE
+        : null
+  if (
+    modelHarnessProfileId !== 'openai-default-v1' &&
+    modelHarnessProfileId !== 'openai-gpt-5.6-sol-v1' &&
+    modelHarnessProfileId !== 'openai-gpt-6-astra-v1'
+  )
+    return null
   if (typeof state.providerId !== 'string' || !state.providerId) return null
   if (typeof state.modelId !== 'string' || !state.modelId) return null
   if (typeof state.providerFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(state.providerFingerprint)) return null
@@ -61,11 +77,14 @@ export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState 
       state.canonicalWindow === undefined ? undefined : parseCanonicalWindow(state.canonicalWindow)
     if (state.canonicalWindow !== undefined && !canonicalWindow) return null
     return {
-      version: Number(state.version) === 2 ? 2 : OPENAI_INFERENCE_STATE_VERSION,
+      version:
+        Number(state.version) === 2 ? 2 : Number(state.version) === 3 ? 3 : OPENAI_INFERENCE_STATE_VERSION,
       providerId: state.providerId,
       modelId: state.modelId,
       providerFingerprint: state.providerFingerprint,
-      harnessProfile: 'openai-responses-v1',
+      ...(typeof state.modelHarnessProfileId === 'string'
+        ? { modelHarnessProfileId }
+        : { harnessProfile: 'openai-responses-v1' as const }),
       ledger: parseOpenAIResponsesLedger(state.ledger),
       ...(canonicalWindow ? { canonicalWindow } : {}),
     }
@@ -77,12 +96,14 @@ export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState 
 /** Minimum identity required before inserting opaque items into another request's input. */
 export function canReplayOpenAIInferenceState(
   state: OpenAIInferenceState,
-  current: Pick<OpenAIInferenceState, 'providerId' | 'modelId' | 'providerFingerprint'>
+  current: Pick<OpenAIInferenceState, 'providerId' | 'modelId' | 'providerFingerprint' | 'modelHarnessProfileId'>
 ): boolean {
   return (
     state.providerId === current.providerId &&
     state.modelId === current.modelId &&
-    state.providerFingerprint === current.providerFingerprint
+    state.providerFingerprint === current.providerFingerprint &&
+    (state.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE) ===
+      (current.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE)
   )
 }
 
@@ -113,7 +134,14 @@ export function putOpenAIInferenceState(messageId: string, state: OpenAIInferenc
          state_json = excluded.state_json,
          updated_at = excluded.updated_at`
     )
-    .run(messageId, state.providerId, state.modelId, state.harnessProfile, JSON.stringify(state), Date.now())
+    .run(
+      messageId,
+      state.providerId,
+      state.modelId,
+      state.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE,
+      JSON.stringify(state),
+      Date.now()
+    )
 }
 
 /** Visual message + sidecar form one logical checkpoint; either statement failing rolls back both. */

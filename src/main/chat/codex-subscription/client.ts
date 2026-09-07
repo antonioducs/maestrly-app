@@ -21,6 +21,10 @@ import type {
   CodexThreadStartParams,
   CodexThreadStartResponse,
   CodexTurnInterruptParams,
+  CodexTurnSteerParams,
+  CodexTurnSteerResponse,
+  CodexTurnSettingsUpdateParams,
+  CodexTurnSettingsUpdateResponse,
   CodexTurnStartParams,
   CodexTurnStartResponse,
 } from './protocol'
@@ -361,6 +365,17 @@ export class CodexAppServerClient {
 
   interruptTurn(params: CodexTurnInterruptParams, options?: CodexRequestOptions): Promise<CodexEmptyResponse> {
     return this.request('turn/interrupt', params, options)
+  }
+
+  steerTurn(params: CodexTurnSteerParams, options?: CodexRequestOptions): Promise<CodexTurnSteerResponse> {
+    return this.request('turn/steer', params, options)
+  }
+
+  updateTurnSettings(
+    params: CodexTurnSettingsUpdateParams,
+    options?: CodexRequestOptions
+  ): Promise<CodexTurnSettingsUpdateResponse> {
+    return this.request('turn/settings/update', params, options)
   }
 
   waitForExit(): Promise<CodexProcessExit> {

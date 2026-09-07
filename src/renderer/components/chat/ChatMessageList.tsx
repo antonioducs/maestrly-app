@@ -419,7 +419,11 @@ function Part({
     return (
       <Compaction
         text={part.text}
-        native={part.strategy === 'openai-native'}
+        native={
+          part.strategy === 'openai-native' ||
+          part.strategy === 'codex-native' ||
+          part.strategy === 'claude-native'
+        }
         onOpenMention={onOpenMention}
         searchQuery={searchQuery}
         currentSearchMatch={currentSearchMatch}
@@ -596,6 +600,7 @@ const Bubble = memo(function Bubble({
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
+  onRetrySteering,
   onOpenMention,
   onOpenImage,
   searchQuery,
@@ -611,6 +616,7 @@ const Bubble = memo(function Bubble({
   onStartEdit: (id: string, text: string) => void
   onCancelEdit: () => void
   onSubmitEdit: (id: string, payload: { text: string; agentMentions: StructuredAgentMentionDraft[] }) => void
+  onRetrySteering?: (text: string) => void
   onOpenMention?: (path: string, startLine?: number, endLine?: number) => void
   onOpenImage?: (src: string, name: string) => void
   searchQuery?: string
@@ -681,6 +687,24 @@ const Bubble = memo(function Bubble({
               searchQuery={searchQuery}
               currentSearchMatch={currentSearchMatch}
             />
+          </div>
+        )}
+        {message.steering && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span>
+              {message.steering.status === 'failed'
+                ? t('messages.steeringFailed', { defaultValue: 'Not applied to the active turn.' })
+                : t('messages.steeringQueued', { defaultValue: 'Queued into the active turn.' })}
+            </span>
+            {message.steering.status === 'failed' && onRetrySteering && (
+              <button
+                type="button"
+                onClick={() => onRetrySteering(text)}
+                className="rounded border border-white/10 px-1.5 py-0.5 text-foreground hover:bg-white/[0.06]"
+              >
+                {t('messages.steeringRetry', { defaultValue: 'Queue retry' })}
+              </button>
+            )}
           </div>
         )}
         <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -885,6 +909,7 @@ interface Props extends EditCtx {
   searchHitIds?: ReadonlySet<string>
 
   currentSearchHitId?: string | null
+  onRetrySteering?: (text: string) => void
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
@@ -906,6 +931,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   searchHitIds,
   currentSearchHitId,
   readOnly = false,
+  onRetrySteering,
 }: Props) {
   const { t } = useTranslation('chat')
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null)
@@ -1092,6 +1118,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onStartEdit={onStartEdit}
             onCancelEdit={onCancelEdit}
             onSubmitEdit={onSubmitEdit}
+            onRetrySteering={onRetrySteering}
             onOpenMention={onOpenMention}
             onOpenImage={openImage}
             searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}

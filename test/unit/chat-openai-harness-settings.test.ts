@@ -215,12 +215,15 @@ describe('OpenAI harness kill switch', () => {
     const config = (await register().get('chat:config')?.(undefined as never)) as {
       bashFiltersEnabled: boolean
       openAIHarnessEnabled: boolean
+      astraHarnessEnabled: boolean
     }
 
     expect(config.bashFiltersEnabled).toBe(true)
     expect(config.openAIHarnessEnabled).toBe(true)
+    expect(config.astraHarnessEnabled).toBe(true)
     expect(h.getAppFlag).toHaveBeenCalledWith('chat.bashFilters', true)
     expect(h.getAppFlag).toHaveBeenCalledWith('chat.openAIHarness', true)
+    expect(h.getAppFlag).toHaveBeenCalledWith('chat.astraHarness', true)
   })
 
   it('defaults image generation on and persists global kill switches', async () => {
@@ -285,6 +288,16 @@ describe('OpenAI harness kill switch', () => {
       ((await handlers.get('chat:config')?.(undefined as never)) as { openAIHarnessEnabled: boolean })
         .openAIHarnessEnabled
     ).toBe(true)
+  })
+
+  it('persists the dedicated Astra kill switch independently', async () => {
+    const handlers = register()
+    expect(handlers.get('chat:set-astra-harness')?.(undefined as never, false)).toEqual({ ok: true })
+    expect(h.setAppFlag).toHaveBeenCalledWith('chat.astraHarness', false)
+    expect(
+      ((await handlers.get('chat:config')?.(undefined as never)) as { astraHarnessEnabled: boolean })
+        .astraHarnessEnabled
+    ).toBe(false)
   })
 
   it('does not block cold config and publishes only actual refresh changes', async () => {

@@ -512,6 +512,7 @@ function initializeSchema(): void {
       model_id        TEXT NOT NULL,
       tool_signature  TEXT NOT NULL,
       instruction_hash TEXT NOT NULL DEFAULT '',
+      harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1',
       last_message_id TEXT NOT NULL,
       usage_json      TEXT NOT NULL DEFAULT '{}',
       account_id      TEXT NOT NULL DEFAULT '',
@@ -734,6 +735,11 @@ function initializeSchema(): void {
   }
   if (!codexThreadCols.some((column) => column.name === 'instruction_hash')) {
     db.exec("ALTER TABLE chat_codex_threads ADD COLUMN instruction_hash TEXT NOT NULL DEFAULT '';")
+  }
+  if (!codexThreadCols.some((column) => column.name === 'harness_profile')) {
+    db.exec(
+      "ALTER TABLE chat_codex_threads ADD COLUMN harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1';"
+    )
   }
 
   // Subscription bindings/tombstones add account slots, defaulting to the empty slot. Check columns per

@@ -29,6 +29,7 @@ import {
   type ChatHarnessProfile,
   type ChatPromptProfile,
 } from './harness'
+import type { ModelHarnessProfileId, RuntimeModelCapabilities } from './model-harness-profile'
 import { openAIResponsesFetch } from './openai/raw-input'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
 import { GrokNotAuthenticatedError } from './grok-subscription/manager'
@@ -160,6 +161,7 @@ export interface ResolvedChatModel {
   model: LanguageModelV4
   transport: ChatProviderKind
   harnessProfile: ChatHarnessProfile
+  modelHarnessProfileId: ModelHarnessProfileId
   promptProfile: ChatPromptProfile
   capabilities: ChatHarnessCapabilities
   /** Bind opaque sidecars to their originating endpoint, protocol and credential without persisting the key. */
@@ -172,7 +174,16 @@ export type ResolvedChatHarness = Omit<ResolvedChatModel, 'model' | 'providerFin
  * Resolve harness metadata without instantiating the provider or requiring a configured key;
  * safe for local decisions such as choosing a compaction policy.
  */
-export function resolveChatHarnessMetadata(providerId: string, modelId: string): ResolvedChatHarness {
+export function resolveChatHarnessMetadata(
+  providerId: string,
+  modelId: string,
+  options: {
+    astraHarnessEnabled?: boolean
+    runtimeModelCapabilities?: RuntimeModelCapabilities
+    adapterCapabilities?: RuntimeModelCapabilities
+    runtimeReasoningEfforts?: readonly string[]
+  } = {}
+): ResolvedChatHarness {
   const descriptor = getProvider(providerId)
   if (!descriptor) throw new ChatConfigError(`Unknown provider: ${providerId}`, 'unknown-provider')
   // Harness transport: Grok stays on legacy (openai-compat). Official OpenAI Responses stays Responses.
@@ -181,11 +192,13 @@ export function resolveChatHarnessMetadata(providerId: string, modelId: string):
     // Pass the catalog kind for non-Grok so Responses still activates for openai-responses providers.
     isGrokSubscriptionProvider(providerId) ? 'openai' : getProviderKind(descriptor),
     modelId,
-    descriptor.baseURL
+    descriptor.baseURL,
+    options
   )
   return {
     transport,
     harnessProfile: harness.profile,
+    modelHarnessProfileId: harness.modelHarnessProfileId,
     promptProfile: harness.promptProfile,
     capabilities: harness.capabilities,
   }
@@ -225,11 +238,15 @@ export function buildOpenAIProviderFingerprint(
 }
 
 /** Resolve the model and agent protocol without making callers infer capabilities from the provider name. */
-export function resolveChatModel(providerId: string, modelId: string): ResolvedChatModel {
+export function resolveChatModel(
+  providerId: string,
+  modelId: string,
+  options: Parameters<typeof resolveChatHarnessMetadata>[2] = {}
+): ResolvedChatModel {
   const descriptor = getProvider(providerId)
   if (!descriptor) throw new ChatConfigError(`Unknown provider: ${providerId}`, 'unknown-provider')
   const credential = resolveProviderRuntimeCredential(providerId)
-  const metadata = resolveChatHarnessMetadata(providerId, modelId)
+  const metadata = resolveChatHarnessMetadata(providerId, modelId, options)
   return {
     model: getProviderInstance(providerId)(modelId),
     ...metadata,

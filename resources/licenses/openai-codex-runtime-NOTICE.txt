@@ -3,7 +3,7 @@ OPENAI CODEX RUNTIME NOTICE
 Maestrly can download an unmodified, platform-specific native runtime from:
 
   Package: @openai/codex
-  Version: 0.153.2
+  Version: 0.153.4
   Repository: https://github.com/openai/codex
   Copyright 2025 OpenAI
   License: Apache License 2.0

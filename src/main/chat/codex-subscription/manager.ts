@@ -101,6 +101,16 @@ export interface CodexSubscriptionModel {
   maxContextWindow: number | null
   /** Published percentage for converting the nominal setting to the effective window. */
   effectiveContextWindowPercent: number | null
+  /** Tri-state runtime capability: null means this catalog version did not publish the field. */
+  supportsExperimentalContext: boolean | null
+  preferWebsockets: boolean | null
+  supportsParallelToolCalls: boolean | null
+  toolMode: string | null
+  multiAgentVersion: number | null
+  useResponsesLite: boolean | null
+  supportedVerbosity: readonly string[]
+  defaultVerbosity: string | null
+  minimumClientVersion: string | null
   isDefault: boolean
 }
 
@@ -342,6 +352,22 @@ function parseServiceTiers(value: unknown): readonly CodexSubscriptionServiceTie
   })
 }
 
+function publishedBoolean(...values: unknown[]): boolean | null {
+  const present = values.filter((value) => value !== undefined)
+  if (present.length === 0) return null
+  if (present.some((value) => typeof value !== 'boolean')) return null
+  // Conflicting aliases are malformed metadata and must never enable a capability.
+  return present.every((value) => value === true)
+}
+
+function publishedString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (value === undefined) continue
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  }
+  return null
+}
+
 function parseModel(value: unknown): CodexSubscriptionModel {
   if (!isRecord(value)) throw new CodexAppServerProtocolError('model/list returned a non-object model entry')
   const id = stringOr(value.id, stringOr(value.model))
@@ -378,6 +404,22 @@ function parseModel(value: unknown): CodexSubscriptionModel {
     nominalContextWindow,
     maxContextWindow,
     effectiveContextWindowPercent,
+    supportsExperimentalContext: publishedBoolean(
+      value.supportsExperimentalContext,
+      value.supports_experimental_context
+    ),
+    preferWebsockets: publishedBoolean(value.preferWebsockets, value.prefer_websockets),
+    supportsParallelToolCalls: publishedBoolean(
+      value.supportsParallelToolCalls,
+      value.supports_parallel_tool_calls
+    ),
+    toolMode: publishedString(value.toolMode, value.tool_mode),
+    multiAgentVersion:
+      positiveInteger(value.multiAgentVersion) ?? positiveInteger(value.multi_agent_version),
+    useResponsesLite: publishedBoolean(value.useResponsesLite, value.use_responses_lite),
+    supportedVerbosity: stringArray(value.supportedVerbosity ?? value.supported_verbosity),
+    defaultVerbosity: publishedString(value.defaultVerbosity, value.default_verbosity),
+    minimumClientVersion: publishedString(value.minimumClientVersion, value.minimum_client_version),
     isDefault: value.isDefault === true,
   }
 }
