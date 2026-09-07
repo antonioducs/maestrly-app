@@ -639,8 +639,14 @@ describe('OpenAI Responses harness wire contract', () => {
         type: 'error',
         error: expect.objectContaining({
           type: 'response.failed',
-          response: expect.objectContaining({
-            error: { code: 'server_error', message: 'temporarily unavailable' },
+          code: 'server_error',
+          message: 'temporarily unavailable',
+          statusCode: 500,
+          isRetryable: true,
+          data: expect.objectContaining({
+            response: expect.objectContaining({
+              error: { code: 'server_error', message: 'temporarily unavailable' },
+            }),
           }),
         }),
       })
