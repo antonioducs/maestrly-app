@@ -119,6 +119,11 @@ import { stagePlan } from '../plan-broker'
 import type { PermissionBroker } from './permission'
 import { isOpenAIHarnessActive, OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE, openAIHarnessProviderOptions } from './harness'
 import { compileOpenAIPrompt, openAINativeToolsPromptOverlay } from './openai/prompt'
+import { compileOpenAIAstraPrompt } from './openai/astra-prompt'
+import {
+  isAstraHarnessProfile,
+  OPENAI_GPT6_ASTRA_PROMPT_PROFILE,
+} from './model-harness-profile'
 import { buildOpenAIModelMessages } from './openai/history'
 import {
   advanceOpenAICompactionLifecycle,
@@ -518,8 +523,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   })
   // Resolve transport + profile once. Internal kill switch enables immediate rollback without changing
   // HTTP provider; unknown IDs/formats conservatively retain the legacy harness.
-  const resolvedModel = resolveChatModel(selection.providerId, selection.modelId)
-  const useOpenAIHarness = isOpenAIHarnessActive(getAppFlag('chat.openAIHarness', true), resolvedModel.harnessProfile)
+  const openAIHarnessEnabled = getAppFlag('chat.openAIHarness', true)
+  const astraHarnessEnabled = getAppFlag('chat.astraHarness', true)
+  const resolvedModel = resolveChatModel(selection.providerId, selection.modelId, { astraHarnessEnabled })
+  const modelHarnessProfileId = resolvedModel.modelHarnessProfileId ?? 'openai-default-v1'
+  const useOpenAIHarness = isOpenAIHarnessActive(openAIHarnessEnabled, resolvedModel.harnessProfile)
   const model = resolvedModel.model
   const assistantId = assistantMessageId
   const createdAt = assistantCreatedAt
@@ -553,7 +561,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         providerId: selection.providerId,
         modelId: selection.modelId,
         providerFingerprint: resolvedModel.providerFingerprint,
-        harnessProfile: 'openai-responses-v1',
+        modelHarnessProfileId,
         ledger: ledgerOverride ?? durableOpenAILedger(openAILifecycle),
       })
     } else upsertChatMessage(msgs[0])
@@ -664,7 +672,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 : 'no-capability',
         }),
   })
-  const ultra = isMaestrlyUltraEffort(reasoningEffort, meta?.reasoningEfforts ?? [])
+  const astraEfforts = resolvedModel.capabilities.serializableReasoningEfforts ?? []
+  const effectiveReasoningEfforts = isAstraHarnessProfile(modelHarnessProfileId)
+    ? astraEfforts.filter((effort) => !meta?.reasoningEfforts?.length || meta.reasoningEfforts.includes(effort))
+    : (meta?.reasoningEfforts ?? [])
+  const reasoningMeta = isAstraHarnessProfile(modelHarnessProfileId)
+    ? { reasoning: effectiveReasoningEfforts.length > 0, reasoningEfforts: effectiveReasoningEfforts }
+    : meta
+  const ultra = isMaestrlyUltraEffort(reasoningEffort, effectiveReasoningEfforts)
   const turnMaxSteps = ultra ? ULTRA_MAX_STEPS : MAX_STEPS
   const subagentCoordinator = new SubagentCoordinator({
     onEvent: (event) =>
@@ -1271,9 +1286,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     reasoningOverride: args.reasoningOverride,
     frozenReasoningEffort: args.frozenReasoningEffort,
     providerKind,
-    meta,
+    meta: reasoningMeta,
   })
-  let providerOptions: SharedV3ProviderOptions | undefined = buildProviderOptions(providerKind, reasoningEffort, meta)
+  let providerOptions: SharedV3ProviderOptions | undefined = buildProviderOptions(
+    providerKind,
+    reasoningEffort,
+    reasoningMeta
+  )
 
   // xAI Priority Processing: conversation Fast toggle becomes body `service_tier: "priority"`
   // (extra field accepted by @ai-sdk/openai-compatible outside typed schema). Internal
@@ -1416,6 +1435,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       system = prompt.instructions
       promptStablePrefix = prompt.stablePrefix
       sourceCommit = prompt.source.commit.slice(0, 12)
+    } else if (resolvedModel.promptProfile === OPENAI_GPT6_ASTRA_PROMPT_PROFILE) {
+      const prompt = compileOpenAIAstraPrompt({
+        cwd,
+        mode: mode === 'maestro' ? 'ask' : mode,
+        appToolsEnabled,
+        hasNotesTab,
+        projectContext,
+        skillsContext: skillsCatalog,
+        agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${
+          mode === 'maestro' ? `\n\n${MAESTRO_SYSTEM_SPEC}` : ''
+        }${maestroPolicyContext}`,
+        envContext: envDetails,
+        // Astra's catalog publishes native ultra; never append the synthetic Maestrly overlay for it.
+        ultraContext: ultra && reasoningEffort !== 'ultra' ? ultraBlock.replace(/^\s*# ULTRA MODE\s*/i, '') : null,
+        nativeTools: {
+          localShell: allTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
+          applyPatch: allTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,
+        },
+      })
+      system = prompt.instructions
+      promptStablePrefix = prompt.stablePrefix
     }
     const promptCacheKey = `maestrly:${createHash('sha256')
       .update(promptStablePrefix)
@@ -1434,6 +1474,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             // GPT reasoning models still reason at their provider default when no explicit effort was selected.
             reasoningEnabled: resolvedModel.capabilities.encryptedReasoning,
             compactionThreshold: contextWindow ? Math.floor(contextWindow * IN_TURN_COMPACT_RATIO) : undefined,
+            ...(isAstraHarnessProfile(modelHarnessProfileId) ? { promptCacheTtl: '30m' } : {}),
           }
         ),
       },
@@ -1441,10 +1482,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     chatDiag({
       kind: 'openai-harness-profile',
       profile: resolvedModel.harnessProfile,
+      modelHarnessProfile: modelHarnessProfileId,
       model: selection.modelId,
       conv: conversationId,
       cacheKey: promptCacheKey.slice(-12),
       promptProfile: resolvedModel.promptProfile,
+      capabilities: resolvedModel.capabilities,
       ...(sourceCommit ? { sourceCommit } : {}),
     })
   }
@@ -1475,7 +1518,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               providerId: selection.providerId,
               modelId: selection.modelId,
               providerFingerprint: resolvedModel.providerFingerprint,
-              harnessProfile: 'openai-responses-v1',
+              modelHarnessProfileId,
               ledger: durableOpenAILedger(openAILifecycle),
             })
             chatDiag({
@@ -1501,6 +1544,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             providerId: selection.providerId,
             modelId: selection.modelId,
             providerFingerprint: resolvedModel.providerFingerprint,
+            modelHarnessProfileId,
           })
         )
           return null

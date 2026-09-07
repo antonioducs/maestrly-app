@@ -1,5 +1,11 @@
 import type { JSONObject } from '@ai-sdk/provider'
 import type { ChatProviderKind } from '../../shared/chat'
+import {
+  OPENAI_GPT6_ASTRA_PROMPT_PROFILE,
+  resolveModelHarnessProfile,
+  type ModelHarnessProfileId,
+  type ResolveModelHarnessProfileInput,
+} from './model-harness-profile'
 
 /**
  * Provider HTTP format and agent behavior are separate axes.
@@ -14,6 +20,7 @@ export type ChatPromptProfile =
   | 'maestrly-legacy'
   | 'maestrly-openai-generic-v1'
   | typeof OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE
+  | typeof OPENAI_GPT6_ASTRA_PROMPT_PROFILE
 
 export interface ChatHarnessCapabilities {
   responseItems: boolean
@@ -28,10 +35,16 @@ export interface ChatHarnessCapabilities {
   nativeShell: boolean
   nativeApplyPatch: boolean
   websocket: boolean
+  midTurnSteering?: boolean
+  asyncTools?: boolean
+  liveReasoningUpdate?: boolean
+  experimentalContext?: boolean
+  serializableReasoningEfforts?: readonly string[]
 }
 
 export interface ChatHarnessResolution {
   profile: ChatHarnessProfile
+  modelHarnessProfileId: ModelHarnessProfileId
   promptProfile: ChatPromptProfile
   capabilities: ChatHarnessCapabilities
 }
@@ -49,6 +62,11 @@ const LEGACY_CAPABILITIES: ChatHarnessCapabilities = Object.freeze({
   nativeShell: false,
   nativeApplyPatch: false,
   websocket: false,
+  midTurnSteering: false,
+  asyncTools: false,
+  liveReasoningUpdate: false,
+  experimentalContext: false,
+  serializableReasoningEfforts: [],
 })
 
 function isOpenAIReasoningModel(modelId: string): boolean {
@@ -89,9 +107,48 @@ function supportsOpenAINativeApplyPatch(baseURL?: string): boolean {
  * for known endpoints and models; unknown IDs still receive the
  * basic Responses API ledger, without experimental parameters.
  */
-export function resolveChatHarness(kind: ChatProviderKind, modelId: string, baseURL?: string): ChatHarnessResolution {
+export function resolveChatHarness(
+  kind: ChatProviderKind,
+  modelId: string,
+  baseURL?: string,
+  options: Omit<ResolveModelHarnessProfileInput, 'providerKind' | 'modelId' | 'baseURL'> = {}
+): ChatHarnessResolution {
+  const adapterDefaults =
+    kind === 'openai-responses'
+      ? {
+          responsesTools: true,
+          persistedReasoning: true,
+          encryptedReasoning: true,
+          reasoningContext: true,
+          compaction: true,
+          parallelTools: true,
+          steering: false,
+          asyncTools: false,
+          configurationUpdates: false,
+          experimentalContext: false,
+        }
+      : options.adapterCapabilities
+  const modelProfile = resolveModelHarnessProfile({
+    providerKind: kind,
+    modelId,
+    baseURL,
+    ...options,
+    adapterCapabilities: options.adapterCapabilities ?? adapterDefaults,
+  })
   if (kind !== 'openai-responses' || !isOpenAIModelId(modelId)) {
-    return { profile: 'legacy', promptProfile: 'maestrly-legacy', capabilities: { ...LEGACY_CAPABILITIES } }
+    return {
+      profile: 'legacy',
+      modelHarnessProfileId: modelProfile.id,
+      promptProfile: kind === 'codex-subscription' ? modelProfile.promptProfile : 'maestrly-legacy',
+      capabilities: {
+        ...LEGACY_CAPABILITIES,
+        midTurnSteering: modelProfile.capabilities.steering,
+        asyncTools: modelProfile.capabilities.asyncTools,
+        liveReasoningUpdate: modelProfile.capabilities.configurationUpdates,
+        experimentalContext: modelProfile.capabilities.experimentalContext,
+        serializableReasoningEfforts: modelProfile.capabilities.validReasoningEfforts,
+      },
+    }
   }
 
   const reasoning = isOpenAIReasoningModel(modelId)
@@ -100,28 +157,39 @@ export function resolveChatHarness(kind: ChatProviderKind, modelId: string, base
   // The pinned Codex catalog has different templates even for sol/terra/luna. Exact binding, no inference
   // by family, snapshot, or fine-tune; future models enter only after their own template is ported.
   const promptProfile: ChatPromptProfile =
-    modelId.toLowerCase() === 'gpt-5.6-sol' ? OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE : 'maestrly-openai-generic-v1'
+    modelProfile.id === 'openai-gpt-6-astra-v1'
+      ? OPENAI_GPT6_ASTRA_PROMPT_PROFILE
+      : modelId.toLowerCase() === 'gpt-5.6-sol'
+        ? OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE
+        : 'maestrly-openai-generic-v1'
   const modernResponses = minor != null && minor >= 4
   const structuredPatch = gpt5CodexShell || (minor != null && minor >= 1)
 
   return {
     profile: 'openai-responses-v1',
+    modelHarnessProfileId: modelProfile.id,
     promptProfile,
     capabilities: {
       responseItems: true,
-      encryptedReasoning: reasoning,
-      messagePhase: reasoning,
+      encryptedReasoning: reasoning || modelProfile.capabilities.encryptedReasoning,
+      messagePhase: reasoning || modelProfile.capabilities.persistedReasoning,
       strictTools: true,
-      parallelTools: true,
+      parallelTools: modelProfile.manifest ? modelProfile.capabilities.parallelTools : true,
       promptCacheKey: true,
-      reasoningContext: minor != null && minor >= 6,
-      nativeCompaction: modernResponses,
+      reasoningContext: modelProfile.manifest ? modelProfile.capabilities.reasoningContext : minor != null && minor >= 6,
+      nativeCompaction: modelProfile.manifest ? modelProfile.capabilities.compaction : modernResponses,
       toolSearch: modernResponses,
       // The provider SDK documents local_shell only for the Codex family. Other GPTs keep bash.
       nativeShell: gpt5CodexShell,
       nativeApplyPatch: structuredPatch && supportsOpenAINativeApplyPatch(baseURL),
       // The current runner uses AI SDK HTTP/SSE streaming. Set true only when an actual WS transport exists.
       websocket: false,
+      // BYOK currently streams over HTTP/SSE. Model support alone must not advertise these controls.
+      midTurnSteering: false,
+      asyncTools: false,
+      liveReasoningUpdate: false,
+      experimentalContext: false,
+      serializableReasoningEfforts: modelProfile.capabilities.validReasoningEfforts,
     },
   }
 }
@@ -157,6 +225,7 @@ export interface OpenAIHarnessRequestPolicy {
   reasoningEnabled: boolean
   /** Rendered-token threshold for server-side compaction. Omit when the effective window is unknown. */
   compactionThreshold?: number
+  promptCacheTtl?: '30m'
 }
 
 /** Stable OpenAI profile options. Effort/summary still come from conversation preferences. */
@@ -174,6 +243,7 @@ export function openAIHarnessProviderOptions(
     // Never silently discard the prefix: the app context guard/compactor controls this boundary.
     truncation: 'disabled',
   }
+  if (policy.promptCacheTtl) options.promptCacheOptions = { ttl: policy.promptCacheTtl }
   if (policy.reasoningEnabled && resolution.capabilities.reasoningContext) {
     options.reasoningContext = 'all_turns'
   }

@@ -63,6 +63,24 @@ function inferenceState(overrides: Partial<OpenAIInferenceState> = {}): OpenAIIn
 }
 
 describe('OpenAI inference sidecar', () => {
+  it('persists the Astra model profile as the opaque replay identity', () => {
+    const { conversation } = chatConversation()
+    insertAssistantMessage(conversation.id, 'assistant-astra')
+    const state = inferenceState({
+      version: 4,
+      modelId: 'gpt-6-astra',
+      harnessProfile: undefined,
+      modelHarnessProfileId: 'openai-gpt-6-astra-v1',
+    })
+    putOpenAIInferenceState('assistant-astra', state)
+    expect(getOpenAIInferenceState('assistant-astra')).toEqual(state)
+    expect(
+      getDb()
+        .prepare('SELECT harness_profile FROM chat_inference_state WHERE message_id = ?')
+        .get('assistant-astra')
+    ).toEqual({ harness_profile: 'openai-gpt-6-astra-v1' })
+  })
+
   it('persists complete ledgers including encrypted metadata', () => {
     const { conversation } = chatConversation()
     insertAssistantMessage(conversation.id, 'assistant-1')
@@ -82,7 +100,7 @@ describe('OpenAI inference sidecar', () => {
     ).toEqual({
       provider_id: 'openai',
       model_id: 'gpt-5.6-codex',
-      harness_profile: 'openai-responses-v1',
+      harness_profile: 'openai-default-v1',
     })
   })
 
@@ -156,6 +174,9 @@ describe('OpenAI inference sidecar', () => {
     expect(canReplayOpenAIInferenceState(state, { ...state, providerId: 'other-provider' })).toBe(false)
     expect(canReplayOpenAIInferenceState(state, { ...state, modelId: 'gpt-5.7-codex' })).toBe(false)
     expect(canReplayOpenAIInferenceState(state, { ...state, providerFingerprint: 'b'.repeat(64) })).toBe(false)
+    expect(
+      canReplayOpenAIInferenceState(state, { ...state, modelHarnessProfileId: 'openai-gpt-6-astra-v1' })
+    ).toBe(false)
   })
 
   it('makes explicit deletion idempotent', () => {
