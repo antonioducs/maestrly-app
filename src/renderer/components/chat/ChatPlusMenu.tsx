@@ -356,12 +356,12 @@ export function ChatPlusMenu({
           </div>
 
           <div className="my-1 border-t border-white/[0.06]" />
-          {mode !== 'agent' && (
+          {(mode === 'plan' || mode === 'ask') && (
             <div className="rounded-md bg-white/[0.04] px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
               {t(`plusMenu.restrictedMode.${mode}`)}
             </div>
           )}
-          {mode !== 'agent' && <div className="my-1 border-t border-white/[0.06]" />}
+          {(mode === 'plan' || mode === 'ask') && <div className="my-1 border-t border-white/[0.06]" />}
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
             <div className="min-w-0">
               <div className="text-[13px] text-foreground">{t('plusMenu.appToolsLabel')}</div>

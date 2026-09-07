@@ -149,6 +149,8 @@ export default {
   mode: {
     agentLabel: 'Agent',
     agentDesc: 'All tools: reads, edits files and runs commands.',
+    designLabel: 'Design',
+    designDesc: 'Builds navigable visual prototypes focused on UI/UX with mock data.',
     planLabel: 'Plan',
     planDesc: 'Investigates with restricted tools and proposes a plan (in the Plan tab) for you to approve.',
     askLabel: 'Ask',
@@ -166,8 +168,10 @@ export default {
       reserved: 'End the active review loop before entering Maestro.',
       migrating: "Complete or roll back this conversation's migration before entering Maestro.",
     },
-    buttonTitle: 'Chat mode (⇧Tab toggles)',
-    heading: 'Mode · ⇧Tab toggles',
+    changeFailed: 'The mode could not be saved. Your last confirmed mode is still active.',
+    buttonTitle: 'Chat mode (⇧Tab cycles Agent, Design, Plan and Ask)',
+    heading: 'Mode',
+    shortcutHelp: '⇧Tab cycles Agent → Design → Plan → Ask → Agent.',
   },
   perm: {
     askLabel: 'Ask for approval',

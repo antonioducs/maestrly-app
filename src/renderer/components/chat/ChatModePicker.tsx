@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Bot, ClipboardList, MessageCircle, Check, Loader2, Sparkles } from 'lucide-react'
+import { ChevronDown, Bot, Palette, ClipboardList, MessageCircle, Check, Loader2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatMode } from '../../../shared/chat'
 import type { StandardToMaestroError, StandardToMaestroResult } from '../../../shared/conversation-experience'
 
 export const CHAT_MODES: { id: ChatMode; labelKey: string; descKey: string; icon: React.ReactNode }[] = [
   { id: 'agent', labelKey: 'mode.agentLabel', descKey: 'mode.agentDesc', icon: <Bot className="h-3.5 w-3.5" /> },
+  { id: 'design', labelKey: 'mode.designLabel', descKey: 'mode.designDesc', icon: <Palette className="h-3.5 w-3.5" /> },
   { id: 'plan', labelKey: 'mode.planLabel', descKey: 'mode.planDesc', icon: <ClipboardList className="h-3.5 w-3.5" /> },
   { id: 'ask', labelKey: 'mode.askLabel', descKey: 'mode.askDesc', icon: <MessageCircle className="h-3.5 w-3.5" /> },
 ]
@@ -21,7 +22,7 @@ export function ChatModePicker({
 }: {
   conversationId: string
   mode: ChatMode
-  onChange: (m: ChatMode) => void
+  onChange: (m: ChatMode) => Promise<{ ok: boolean; error?: string }>
   onUseMaestro?: () => Promise<StandardToMaestroResult>
   maestroDisabled?: boolean
   modelId?: string | null
@@ -32,6 +33,25 @@ export function ChatModePicker({
   const [transitionError, setTransitionError] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const mountedRef = useRef(true)
+  const conversationIdRef = useRef(conversationId)
+  const modeRequestRef = useRef(0)
+  conversationIdRef.current = conversationId
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      modeRequestRef.current += 1
+    }
+  }, [])
+
+  useEffect(() => {
+    modeRequestRef.current += 1
+    setTransitioning(false)
+    setTransitionError(null)
+    setOpen(false)
+  }, [conversationId])
 
   useEffect(() => {
     if (!open) return
@@ -54,9 +74,37 @@ export function ChatModePicker({
   }, [open])
 
   const current = CHAT_MODES.find((m) => m.id === mode) ?? CHAT_MODES[0]
-  const choose = (id: ChatMode) => {
-    setOpen(false)
-    onChange(id)
+  const choose = async (id: ChatMode) => {
+    if (transitioning) return
+    if (id === mode) {
+      setOpen(false)
+      return
+    }
+    const targetConversationId = conversationId
+    const request = ++modeRequestRef.current
+    setTransitionError(null)
+    setTransitioning(true)
+    try {
+      const result = await onChange(id)
+      if (
+        !mountedRef.current ||
+        conversationIdRef.current !== targetConversationId ||
+        modeRequestRef.current !== request
+      )
+        return
+      if (!result.ok) return
+      setOpen(false)
+    } catch {
+      // ChatView owns persistence errors so every trigger, including Shift+Tab, has one consistent alert.
+    } finally {
+      if (
+        mountedRef.current &&
+        conversationIdRef.current === targetConversationId &&
+        modeRequestRef.current === request
+      ) {
+        setTransitioning(false)
+      }
+    }
   }
 
   const maestroError = (code: StandardToMaestroError): string => {
@@ -104,7 +152,11 @@ export function ChatModePicker({
         }}
         className={cn(
           'flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] hover:bg-white/[0.05]',
-          mode === 'agent' ? 'text-muted-foreground hover:text-foreground' : 'text-indigo-300'
+          mode === 'design'
+            ? 'bg-amber-400/[0.09] text-amber-300 ring-1 ring-inset ring-orange-400/20 hover:bg-amber-400/[0.14] hover:text-amber-200'
+            : mode === 'agent'
+              ? 'text-muted-foreground hover:text-foreground'
+              : 'text-indigo-300'
         )}
         title={t('mode.buttonTitle')}
       >
@@ -117,12 +169,14 @@ export function ChatModePicker({
           <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/60">
             {t('mode.heading')}
           </div>
+          <p className="px-2.5 pb-1 text-[10px] leading-relaxed text-muted-foreground/70">{t('mode.shortcutHelp')}</p>
           {CHAT_MODES.map((m) => (
             <button
               key={m.id}
               type="button"
-              onClick={() => choose(m.id)}
-              className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left hover:bg-white/[0.05]"
+              onClick={() => void choose(m.id)}
+              disabled={transitioning}
+              className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left hover:bg-white/[0.05] disabled:cursor-wait disabled:opacity-60"
             >
               <span className="mt-0.5 shrink-0 text-muted-foreground">{m.icon}</span>
               <span className="min-w-0 flex-1">
@@ -132,6 +186,14 @@ export function ChatModePicker({
               <Check className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', mode === m.id ? 'opacity-100' : 'opacity-0')} />
             </button>
           ))}
+          {transitionError && (
+            <p
+              role="alert"
+              className="mx-2 mb-1 rounded border border-red-500/20 bg-red-500/[0.08] p-2 text-[11px] text-red-300"
+            >
+              {transitionError}
+            </p>
+          )}
           {onUseMaestro && (
             <>
               <div className="mx-2 my-1 h-px bg-white/[0.08]" />
@@ -155,14 +217,6 @@ export function ChatModePicker({
                   </span>
                 </span>
               </button>
-              {transitionError && (
-                <p
-                  role="alert"
-                  className="mx-2 mb-1 rounded border border-red-500/20 bg-red-500/[0.08] p-2 text-[11px] text-red-300"
-                >
-                  {transitionError}
-                </p>
-              )}
             </>
           )}
         </div>

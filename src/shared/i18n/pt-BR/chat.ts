@@ -153,6 +153,8 @@ export default {
   mode: {
     agentLabel: 'Agente',
     agentDesc: 'Todas as ferramentas: lê, edita arquivos e roda comandos.',
+    designLabel: 'Design',
+    designDesc: 'Cria protótipos visuais navegáveis, com foco em UI/UX e dados simulados.',
     planLabel: 'Plano',
     planDesc: 'Investiga com ferramentas restritas e propõe um plano (na aba Plano) p/ você aprovar.',
     askLabel: 'Pergunta',
@@ -170,8 +172,10 @@ export default {
       reserved: 'Encerre o review loop ativo antes de entrar no Maestro.',
       migrating: 'Conclua ou reverta a migração desta conversa antes de entrar no Maestro.',
     },
-    buttonTitle: 'Modo do chat (⇧Tab alterna)',
-    heading: 'Modo · ⇧Tab alterna',
+    changeFailed: 'Não foi possível salvar o modo. O último modo confirmado continua ativo.',
+    buttonTitle: 'Modo do chat (⇧Tab alterna Agente, Design, Plano e Pergunta)',
+    heading: 'Modo',
+    shortcutHelp: '⇧Tab alterna Agente → Design → Plano → Pergunta → Agente.',
   },
   perm: {
     askLabel: 'Solicitar aprovação',

@@ -50,6 +50,7 @@ import type {
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
+import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
 import {
   shouldReloadOnUserSaved,
@@ -213,6 +214,9 @@ export function ChatView({
   const [modelMeta, setModelMeta] = useState<ChatModelMeta | null>(null)
   const [modelRefresh, setModelRefresh] = useState(0)
   const [mode, setMode] = useState<ChatMode>('agent')
+  const [modeChangeError, setModeChangeError] = useState<string | null>(null)
+  const modeChangeRequestRef = useRef<{ id: number; conversationId: string } | null>(null)
+  const modeChangeSeqRef = useRef(0)
   const [reasoning, setReasoning] = useState<ChatReasoningEffort>('off')
 
   const [subagents, setSubagents] = useState<SubagentAgentDto[] | null>(null)
@@ -1006,10 +1010,21 @@ export function ChatView({
   useEffect(() => {
     if (isMaestro) {
       setMode('agent')
+      setModeChangeError(null)
       return
     }
-    window.api.chatGetMode(conversationId).then(setMode)
-    return window.api.onChatModeChanged(conversationId, setMode)
+    let active = true
+    setModeChangeError(null)
+    void window.api.chatGetMode(conversationId).then((storedMode) => {
+      if (active && convIdRef.current === conversationId) setMode(storedMode)
+    })
+    const unsubscribe = window.api.onChatModeChanged(conversationId, (storedMode) => {
+      if (active && convIdRef.current === conversationId) setMode(storedMode)
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
   }, [conversationId, isMaestro])
 
   useEffect(() => {
@@ -1024,23 +1039,36 @@ export function ChatView({
   )
 
   const applyMode = useCallback(
-    (m: ChatMode) => {
-      if (isMaestro) return
-      setMode(m)
-      void window.api.chatSetMode(conversationId, m)
+    async (m: ChatMode): Promise<{ ok: boolean; error?: string }> => {
+      if (isMaestro) return { ok: false, error: 'maestro-experience' }
+      if (modeChangeRequestRef.current?.conversationId === conversationId) {
+        return { ok: false, error: 'mode-change-pending' }
+      }
+      const request = { id: ++modeChangeSeqRef.current, conversationId }
+      modeChangeRequestRef.current = request
+      setModeChangeError(null)
+      try {
+        const result = await window.api.chatSetMode(conversationId, m)
+        if (convIdRef.current !== conversationId || modeChangeRequestRef.current !== request) return result
+        if (result.ok) setMode(m)
+        else setModeChangeError(t('mode.changeFailed'))
+        return result
+      } catch (reason) {
+        if (convIdRef.current === conversationId && modeChangeRequestRef.current === request) {
+          setModeChangeError(t('mode.changeFailed'))
+        }
+        return { ok: false, error: reason instanceof Error ? reason.message : String(reason) }
+      } finally {
+        if (modeChangeRequestRef.current === request) modeChangeRequestRef.current = null
+      }
     },
-    [conversationId, isMaestro]
+    [conversationId, isMaestro, t]
   )
 
   const cycleMode = useCallback(() => {
     if (isMaestro) return
-    const order: ChatMode[] = ['agent', 'plan', 'ask']
-    setMode((cur) => {
-      const next = order[(order.indexOf(cur) + 1) % order.length]
-      void window.api.chatSetMode(conversationId, next)
-      return next
-    })
-  }, [conversationId, isMaestro])
+    void applyMode(cycleChatMode(mode))
+  }, [applyMode, isMaestro, mode])
 
   const convertMaestroToStandard = useCallback(async () => {
     const result = await window.api.chatMaestroConvertToStandard(conversationId)
@@ -1516,6 +1544,7 @@ export function ChatView({
     reasoning === MAESTRLY_ULTRA_EFFORT || (modelMeta !== null && isMaestrlyUltraEffort(reasoning, reasoningEfforts))
 
   const ultraVisualActive = maestrlyUltraActive || (modelMeta?.nativeUltraMode === true && reasoning === 'ultra')
+  const designVisualActive = !isMaestro && mode === 'design'
   const cycleReasoning = useCallback(() => {
     const next = nextQuickReasoningEffort(reasoning, reasoningEfforts, modelMeta?.nativeUltraMode === true)
     applyReasoning(next)
@@ -1539,8 +1568,11 @@ export function ChatView({
           ref={rootRef}
           id={maestroPanelHostId}
           className={cn(
-            'relative flex h-full w-full flex-row bg-[#0d0d10]',
-            ultraVisualActive && 'ring-1 ring-inset ring-fuchsia-500/30 shadow-[inset_0_0_32px_rgba(217,70,239,0.05)]'
+            'relative flex h-full w-full flex-row bg-[#0d0d10] transition-[background,box-shadow] duration-500',
+            designVisualActive
+              ? 'chat-design-ambient ring-1 ring-inset ring-amber-400/35 shadow-[inset_0_0_44px_rgba(249,115,22,0.08)]'
+              : ultraVisualActive &&
+                  'ring-1 ring-inset ring-fuchsia-500/30 shadow-[inset_0_0_32px_rgba(217,70,239,0.05)]'
           )}
           style={
             {
@@ -1722,6 +1754,25 @@ export function ChatView({
                     type="button"
                     onClick={() => setFailoverNotice(null)}
                     className="rounded p-0.5 text-sky-200/80 hover:text-sky-50"
+                    aria-label={t('messages.cancel')}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {modeChangeError && (
+              <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
+                <div
+                  role="alert"
+                  className="flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.08] px-3 py-1.5 text-[12px] text-red-100"
+                >
+                  <span className="min-w-0 flex-1">{modeChangeError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setModeChangeError(null)}
+                    className="rounded p-0.5 text-red-200/80 hover:text-red-50"
                     aria-label={t('messages.cancel')}
                   >
                     <X className="h-3.5 w-3.5" />

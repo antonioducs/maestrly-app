@@ -169,7 +169,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
 
   return (
     <div className="px-3 pb-3 pt-1">
-      <div className="relative mx-auto w-full max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 pb-2 pt-2.5 focus-within:border-white/[0.16]">
+      <div className="chat-composer-shell relative mx-auto w-full max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 pb-2 pt-2.5 transition-[border-color,background,box-shadow] duration-300 focus-within:border-white/[0.16]">
         {slashOpen && (
           <div className="absolute bottom-full left-3 z-50 mb-1 max-h-72 w-96 overflow-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl">
             {filteredCommands.map((c, i) => (
@@ -282,7 +282,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
                 onClick={submit}
                 disabled={!canSend || disabled}
                 className={cn(
-                  'flex h-8 w-8 items-center justify-center rounded-full transition-colors',
+                  'chat-send-button flex h-8 w-8 items-center justify-center rounded-full transition-[color,background,box-shadow,transform]',
                   canSend ? 'bg-indigo-500 text-white hover:bg-indigo-400' : 'bg-foreground/10 text-muted-foreground',
                   disabled && 'bg-foreground/10 text-muted-foreground'
                 )}
