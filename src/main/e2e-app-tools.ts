@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
-import { toolOutputImages, toolOutputText } from '../shared/chat'
+import { toolOutputImages, toolOutputText, type ChatMode } from '../shared/chat'
+import { isChatMode } from '../shared/chat-mode'
 import { buildAppTools } from './chat/mcp'
 import {
   modelOutputToChatToolOutput,
@@ -12,6 +13,8 @@ import { drawers } from './drawer/state'
 
 export interface E2EAppToolCallInput {
   conversationId: string
+  /** Explicit catalog mode for policy E2Es. Existing tests intentionally default to Agent. */
+  mode?: ChatMode
   name: string
   arguments?: Record<string, unknown>
 }
@@ -66,9 +69,12 @@ export function installE2EAppToolsBridge(): void {
     }
   }
   globalThis.__maestrlyE2ECallAppTool = async (input) => {
+    if (input.mode !== undefined && !isChatMode(input.mode)) {
+      throw new Error(`Invalid E2E app-tool mode: ${String(input.mode)}`)
+    }
     const appTools = await buildAppTools({
       conversationId: input.conversationId,
-      mode: 'agent',
+      mode: input.mode ?? 'agent',
       gate: async () => {},
       supportsImages: true,
       describeImage: async () => {
