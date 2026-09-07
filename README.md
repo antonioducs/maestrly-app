@@ -4,10 +4,44 @@
 
 <h1 align="center">Maestrly App</h1>
 
-A local AI workspace with chat, agent orchestration, Git worktrees, terminals,
-an embedded editor and browser, notes, and project memory.
+<p align="center">
+  A local-first AI workspace for conversations, orchestration, projects, and developer tools.
+</p>
+
+<p align="center">
+  <a href="https://github.com/antonioducs/maestrly-app/actions/workflows/ci.yml"><img src="https://github.com/antonioducs/maestrly-app/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/antonioducs/maestrly-app/actions/workflows/security.yml"><img src="https://github.com/antonioducs/maestrly-app/actions/workflows/security.yml/badge.svg?branch=main" alt="Security checks"></a>
+  <a href="https://github.com/antonioducs/maestrly-app/actions/workflows/package-smoke.yml"><img src="https://github.com/antonioducs/maestrly-app/actions/workflows/package-smoke.yml/badge.svg?branch=main" alt="Package smoke status"></a>
+  <a href="https://github.com/antonioducs/maestrly-app/releases/latest"><img src="https://img.shields.io/github/v/release/antonioducs/maestrly-app" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="macOS, Linux, and Windows">
+</p>
+
+<p align="center">
+  <a href="https://www.maestrly.com/"><strong>Website</strong></a> ·
+  <a href="https://github.com/antonioducs/maestrly-app/releases/latest">Download</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
+
+Maestrly App brings chat, Maestro orchestration, Git worktrees, terminals, an
+embedded editor and browser, notes, and project memory into one desktop.
+Connect your own provider accounts and APIs, and keep your project context
+and tools together as you plan, build, and review.
 
 ![Maestrly desktop with integrated developer tools](docs/images/desktop-chat.png)
+
+## Capabilities
+
+- **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
+  GitHub Copilot, Grok, and ChatGPT Web integrations.
+- **Maestro:** coordinated workers, specialist profiles, subagents, plans,
+  review loops, permissions, and usage accounting.
+- **Workspaces:** conversations on the current branch or isolated Git worktrees,
+  with project context and migration recovery.
+- **Developer tools:** native terminals, an embedded editor and browser,
+  screenshots, file references, and Git diffs.
+- **Knowledge:** project notes, local memory and search, skills, MCP servers,
+  and optional local embedding, transcription, and inference assets.
 
 ## Download
 
