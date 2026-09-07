@@ -1,10 +1,10 @@
 /**
  * `webfetch` tool — ported from opencode tool/webfetch.ts (without Effect). Gated network egress.
- * V1 limitation: no Turndown/htmlparser2 dependencies — uses simple HTML→text
- * stripping; rich HTML-to-markdown is a follow-up (see PORT-PLAN). Returns non-HTML content raw.
+ * HTML is parsed into inert text; non-HTML content and explicitly requested HTML remain raw.
  */
 import { net } from 'electron'
 import { z } from 'zod'
+import { parseFragment, type DefaultTreeAdapterMap } from 'parse5'
 import { defineTool, type ToolContext } from './util'
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -16,7 +16,12 @@ const BROWSER_UA =
 const params = z.object({
   url: z.string().describe('HTTP/HTTPS URL to fetch.'),
   format: z.enum(['text', 'markdown', 'html']).default('markdown').describe('Desired output format.'),
-  timeout: z.number().gt(0).max(MAX_TIMEOUT_SECONDS).optional().describe(`Timeout in seconds (max ${MAX_TIMEOUT_SECONDS}).`),
+  timeout: z
+    .number()
+    .gt(0)
+    .max(MAX_TIMEOUT_SECONDS)
+    .optional()
+    .describe(`Timeout in seconds (max ${MAX_TIMEOUT_SECONDS}).`),
 })
 
 interface WebfetchResult {
@@ -38,21 +43,31 @@ function isTextualMime(mime: string): boolean {
   )
 }
 
-/** Simple HTML → text stripping (removes script/style, decodes basic entities). */
+const OMITTED_HTML_ELEMENTS = new Set(['script', 'style', 'noscript', 'template'])
+const LINE_BREAK_ELEMENTS = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'br'])
+
+/** Extract text, not sanitized HTML. The parser decodes entities exactly once and never executes scripts. */
 function htmlToText(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
-    .replace(/<\/(p|div|h[1-6]|li|tr|br)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  const chunks: string[] = []
+  // Iterative traversal also handles deeply nested untrusted documents without recursive stack growth.
+  const pending: Array<DefaultTreeAdapterMap['node'] | '\n'> = [parseFragment(html)]
+  while (pending.length) {
+    const node = pending.pop()!
+    if (node === '\n') {
+      chunks.push(node)
+    } else if ('value' in node) {
+      chunks.push(node.value)
+    } else if ('childNodes' in node) {
+      if ('tagName' in node) {
+        if (OMITTED_HTML_ELEMENTS.has(node.tagName)) continue
+        if (LINE_BREAK_ELEMENTS.has(node.tagName)) pending.push('\n')
+      }
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index])
+    }
+  }
+  return chunks
+    .join('')
+    .replace(/\u00a0/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -100,7 +115,11 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Webf
   const fetchImpl = net.fetch as unknown as typeof globalThis.fetch
   let res = await fetchImpl(args.url, { headers, signal: ac, redirect: 'follow' })
   if (res.status === 403 && res.headers.get('cf-mitigated') === 'challenge') {
-    res = await fetchImpl(args.url, { headers: { ...headers, 'User-Agent': 'maestrly' }, signal: ac, redirect: 'follow' })
+    res = await fetchImpl(args.url, {
+      headers: { ...headers, 'User-Agent': 'maestrly' },
+      signal: ac,
+      redirect: 'follow',
+    })
   }
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
 
@@ -114,14 +133,14 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Webf
 
   const buf = await readCapped(res.body, MAX_RESPONSE_BYTES)
   const raw = new TextDecoder().decode(buf)
-  const output =
-    ct.includes('text/html') && args.format !== 'html' ? htmlToText(raw) : raw
+  const output = mime === 'text/html' && args.format !== 'html' ? htmlToText(raw) : raw
   return { url: args.url, contentType: ct, output }
 }
 
 export const webfetchTool = defineTool({
   name: 'webfetch',
-  description: 'Fetches the contents of an http/https URL (HTML converted to text). Asks for permission (network egress).',
+  description:
+    'Fetches the contents of an http/https URL (HTML converted to text). Asks for permission (network egress).',
   parameters: params,
   execute: run,
   toModelText: (_args, r) => r.output,
