@@ -3,6 +3,7 @@ import type { ToolSet } from 'ai'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
 import type { ChatAgent } from '../agents'
+import { getAppFlag } from '../../store'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
@@ -15,6 +16,10 @@ import { buildClaudeFastModeSettings } from './options'
 import { gatedClaudeHumanText } from './user-prompt'
 import { normalizeClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
+import { compileFableSubagentPrompt } from '../fable/prompt'
+import { createFablePostToolUseHook } from '../fable/sdk-hooks'
+import { chatDiag } from '../diag-log'
 
 const FORBIDDEN_CHILD_TOOLS = new Set([
   'task',
@@ -34,6 +39,9 @@ export interface RunClaudeSubagentArgs {
   conversationId: string
   cwd: string
   profile: SubagentExecutionSnapshotV1
+  /** Canonical child identity supplied by the Claude runtime when the configured model is an alias. */
+  resolvedModelId?: string
+  behaviorProfile?: FableBehaviorProfile | null
   definition: ChatAgent
   signal: AbortSignal
   agentName: string
@@ -125,7 +133,7 @@ export async function runClaudeSubagent(args: RunClaudeSubagentArgs): Promise<{
     args.signal.removeEventListener('abort', onAbort)
     throw error
   }
-  const systemPrompt = [
+  const legacySystemPrompt = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
     MEMORY_TOOL_GUIDANCE,
@@ -133,6 +141,27 @@ export async function runClaudeSubagent(args: RunClaudeSubagentArgs): Promise<{
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
   ].join('\n\n')
+  const behaviorProfile =
+    args.behaviorProfile === undefined
+      ? resolveFableBehaviorProfile({
+          requestedModelId: effective.modelId,
+          resolvedModelId: args.resolvedModelId,
+          enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+        }).profile
+      : args.behaviorProfile
+  const systemPrompt = compileFableSubagentPrompt(legacySystemPrompt, behaviorProfile)
+  const fablePostToolUseHook = behaviorProfile ? createFablePostToolUseHook() : null
+  chatDiag({
+    kind: 'fable-behavior-profile',
+    profile: behaviorProfile?.id ?? 'legacy',
+    requestedModel: effective.modelId,
+    resolvedModel: args.resolvedModelId ?? effective.modelId,
+    transport: 'claude-agent-sdk',
+    effort: effective.sentEffort ?? 'default',
+    progressMode: behaviorProfile?.progressMode ?? 'prompt-only',
+    agent: args.agentName,
+    conv: args.conversationId,
+  })
   args.signal.throwIfAborted()
   let text = ''
   const emitText = createSubagentTextEmitter(args.onTextUpdate)
@@ -179,7 +208,7 @@ export async function runClaudeSubagent(args: RunClaudeSubagentArgs): Promise<{
         options: {
           abortController: queryAbort,
           cwd: args.cwd,
-          model: effective.modelId,
+          model: args.resolvedModelId ?? effective.modelId,
           ...(effective.sentEffort
             ? { effort: effective.sentEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
             : {}),
@@ -197,7 +226,11 @@ export async function runClaudeSubagent(args: RunClaudeSubagentArgs): Promise<{
           skills: [],
           plugins: [],
           agents: {},
-          hooks: { PreToolUse: [bridge.preToolUseHook] },
+          hooks: {
+            PreToolUse: [bridge.preToolUseHook],
+            ...(fablePostToolUseHook ? { PostToolUse: [fablePostToolUseHook] } : {}),
+          },
+          ...(fablePostToolUseHook ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
           permissionMode: 'dontAsk',
           includePartialMessages: false,
           persistSession: args.persistRuntime === true,
@@ -221,7 +254,12 @@ export async function runClaudeSubagent(args: RunClaudeSubagentArgs): Promise<{
       let sessionReported = false
       try {
         for await (const message of query) {
-          if (!sessionReported && 'session_id' in message && typeof message.session_id === 'string' && message.session_id) {
+          if (
+            !sessionReported &&
+            'session_id' in message &&
+            typeof message.session_id === 'string' &&
+            message.session_id
+          ) {
             sessionReported = true
             if (attempt.resumeId && message.session_id !== attempt.resumeId) {
               replaced = true

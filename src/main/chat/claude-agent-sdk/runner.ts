@@ -100,6 +100,9 @@ import {
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolBridge } from './tools'
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
+import { fableEnvironmentContext } from '../fable/prompt'
+import { createFablePostToolUseHook } from '../fable/sdk-hooks'
 
 const MAX_IN_TURN_COMPACTIONS = 2
 const PORTABLE_CONTINUE_PROMPT =
@@ -111,6 +114,8 @@ export interface RunClaudeChatArgs {
   cwd: string
   selection: ChatModelRef
   resolvedModelId?: string
+  /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
+  behaviorProfile?: FableBehaviorProfile | null
   /** Runtime model id frozen for an isolated review-loop execution. */
   frozenResolvedModelId?: string
   mode: ChatBehavior
@@ -188,6 +193,9 @@ interface PreparedRuntime {
   bridge: ClaudeToolBridge
   systemPrompt: string
   promptHash: string
+  transientContext?: string
+  fablePostToolUseHook?: ReturnType<typeof createFablePostToolUseHook>
+  behaviorProfile?: FableBehaviorProfile
   agents: ChatAgent[]
   close: () => Promise<void>
 }
@@ -682,8 +690,22 @@ async function prepareRuntime(
           ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
           : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
       : ''
+    const behaviorProfile =
+      args.behaviorProfile === undefined
+        ? resolveFableBehaviorProfile({
+            requestedModelId: args.selection.modelId,
+            resolvedModelId: args.frozenResolvedModelId ?? args.resolvedModelId,
+            enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          }).profile
+        : args.behaviorProfile
     const systemPrompt = [
-      SYSTEM_PROMPT(args.cwd, appToolsEnabled, args.mode, Boolean(getConversation(args.conversationId))),
+      SYSTEM_PROMPT(
+        args.cwd,
+        appToolsEnabled,
+        args.mode,
+        Boolean(getConversation(args.conversationId)),
+        behaviorProfile
+      ),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,
       skills.length ? `# Project skills\n${skillsCatalog(skills)}` : '',
@@ -694,7 +716,7 @@ async function prepareRuntime(
         : '',
       args.mode === 'maestro' && args.maestro ? renderMaestroTurnPolicy(args.maestro) : '',
       ultra ? `# Ultra mode\n${ultra}` : '',
-      `# Environment\n${env}`,
+      behaviorProfile ? '' : `# Environment\n${env}`,
     ]
       .filter(Boolean)
       .join('\n\n')
@@ -704,6 +726,9 @@ async function prepareRuntime(
       bridge,
       systemPrompt,
       promptHash: createHash('sha256').update(systemPrompt).digest('hex'),
+      ...(behaviorProfile ? { transientContext: fableEnvironmentContext(env) } : {}),
+      ...(behaviorProfile ? { fablePostToolUseHook: createFablePostToolUseHook() } : {}),
+      ...(behaviorProfile ? { behaviorProfile } : {}),
       agents,
       close: async () => {
         await Promise.all([mcp.close(), app.close()])
@@ -957,6 +982,16 @@ export async function runClaudeChat(args: RunClaudeChatArgs): Promise<RunClaudeC
 
   try {
     runtime = await prepareRuntime({ ...args, signal: runtimeSignal }, assistantId, state)
+    chatDiag({
+      kind: 'fable-behavior-profile',
+      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      requestedModel: args.selection.modelId,
+      resolvedModel: runtimeModelId,
+      transport: 'claude-agent-sdk',
+      effort: args.reasoningEffort ?? 'default',
+      progressMode: runtime.behaviorProfile?.progressMode ?? 'prompt-only',
+      conv: args.conversationId,
+    })
     args.signal.throwIfAborted()
     state.runTask = args.reviewerRuntime
       ? null
@@ -1014,6 +1049,26 @@ export async function runClaudeChat(args: RunClaudeChatArgs): Promise<RunClaudeC
       mappedAssistantUuid: mapping?.sdkAssistantUuid ?? null,
       mappedSessionId: mapping?.sessionId ?? null,
     })
+    chatDiag({
+      kind: 'claude-session-resolution',
+      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      model: runtimeModelId,
+      conv: args.conversationId,
+      resume: Boolean(resolution.resume),
+      fork: resolution.forkSession,
+      retire: resolution.retireExisting,
+      reason: args.ephemeralSession
+        ? 'ephemeral'
+        : !existing
+          ? 'no-binding'
+          : !compatible
+            ? 'incompatible-contract'
+            : resolution.forkSession
+              ? 'rewind-fork'
+              : resolution.resume
+                ? 'tip-resume'
+                : 'history-diverged',
+    })
     if (resolution.retireExisting && existing && !args.ephemeralSession) {
       retireClaudeSessionBinding(args.conversationId, existing.sessionId)
     }
@@ -1026,6 +1081,7 @@ export async function runClaudeChat(args: RunClaudeChatArgs): Promise<RunClaudeC
       .digest('hex')
     let nextPrompt = buildClaudeSessionPrompt(currentUser, claudeSeedTranscript(history, resolution.resume), {
       dropImages: args.dropImages,
+      transientContext: runtime.transientContext,
     })
     let nextResume: Pick<
       Parameters<typeof buildClaudeChatQueryOptions>[0],
@@ -1055,6 +1111,7 @@ export async function runClaudeChat(args: RunClaudeChatArgs): Promise<RunClaudeC
           fastMode: args.fastMode,
           systemPrompt: runtime.systemPrompt,
           bridge: runtime.bridge,
+          postToolUseHook: runtime.fablePostToolUseHook,
           disallowedNativeTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
           ...nextResume,
         }),
@@ -1431,6 +1488,7 @@ export async function runClaudeChat(args: RunClaudeChatArgs): Promise<RunClaudeC
       }
       nextPrompt = buildClaudeSessionPrompt(continueMessage, continuationTranscript, {
         dropImages: args.dropImages,
+        transientContext: runtime.transientContext,
       })
       nextResume = {}
     }

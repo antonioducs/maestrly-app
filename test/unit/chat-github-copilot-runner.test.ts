@@ -30,6 +30,7 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { patchConvUiPrefs } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
+import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
 
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
 
@@ -387,6 +388,27 @@ describe('GitHub Copilot official runner', () => {
     for (const entry of manager.createCalls[0].tools ?? []) {
       if (['task', 'use_skill', 'review_plan'].includes(entry.name)) expect(entry.defer).toBe('never')
     }
+  })
+
+  it('applies only the Fable behavioral profile on Copilot transport', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    persistUser(conversation.id, 'user-fable-copilot', 'Inspect the project.', 1)
+    const manager = new FakeManager()
+    manager.queue(() => {})
+
+    await runGitHubCopilotChat({
+      ...args(conversation.id, workspace.id, cwd, manager),
+      selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'claude-fable-5-1' },
+      behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+    })
+
+    const config = manager.createCalls[0]
+    expect(config.systemMessage?.content).toContain('maestrly-fable-5.1-v1')
+    expect(config.systemMessage?.content).toContain('brief progress updates at meaningful milestones')
+    expect(config).not.toHaveProperty('thinking')
+    expect(config).not.toHaveProperty('betas')
+    expect(config).not.toHaveProperty('toolChoice')
   })
 
   it('offers exactly the reviewer read-only tools and terminates after accepted submit_review', async () => {

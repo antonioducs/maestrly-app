@@ -345,6 +345,8 @@ import {
   setImageInterpreter,
 } from './image-interpreter'
 import { recordIpcSend } from '../performance/metrics'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from './fable/profile'
+import { compileFableCompactionSystem } from './fable/prompt'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -3332,6 +3334,18 @@ async function startSend(
     const isolated =
       !!internalLoop && internalLoop.contextPolicy === 'isolated' && internalLoop.providerSessionPolicy === 'ephemeral'
     const frozenProfile = internalLoop?.selectionOverride
+    const behaviorRequestedModelId = selection.modelId
+    const behaviorProfileFor = (resolvedModelId?: string | null): FableBehaviorProfile | null => {
+      const resolution = resolveFableBehaviorProfile({
+        requestedModelId: behaviorRequestedModelId,
+        resolvedModelId,
+        enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+        frozen: isolated && frozenProfile != null,
+        frozenProfileId: frozenProfile?.behaviorProfileId,
+      })
+      if (resolution.reason === 'frozen-profile-mismatch') throw new Error('executor-unavailable')
+      return resolution.profile
+    }
     const executionScope: ChatExecutionScope | undefined =
       isolated && internalLoop
         ? {
@@ -3718,12 +3732,22 @@ async function startSend(
       if (next <= 0) return
       turnContextWindow = turnContextWindow && turnContextWindow > 0 ? Math.min(turnContextWindow, next) : next
     }
+    const admittedBehaviorResolvedModelId = useClaudeSubscription
+      ? isolated && frozenProfile?.resolvedModelId
+        ? frozenProfile.resolvedModelId
+        : (claudeModelAtAdmission?.resolvedModel ?? claudeModelAtAdmission?.value)
+      : useGitHubCopilot
+        ? githubCopilotModelAtAdmission?.id
+        : undefined
+    const admittedBehaviorProfile = behaviorProfileFor(admittedBehaviorResolvedModelId)
     const compactActiveHistory = () =>
       compact(conversationId, {
         allowActive: true,
         signal: controller.signal,
         persist: false,
         contextWindow: turnContextWindow,
+        behaviorProfile: admittedBehaviorProfile,
+        ...(admittedBehaviorResolvedModelId ? { resolvedModelId: admittedBehaviorResolvedModelId } : {}),
         ...(isolated && internalLoop && frozenProfile
           ? {
               executionId: internalLoop.executionId,
@@ -4056,6 +4080,7 @@ async function startSend(
           projectId: conv.workspaceId,
           cwd: conv.cwd,
           selection,
+          behaviorProfile: admittedBehaviorProfile,
           mode: turnBehavior,
           maestro: maestroTurn,
           maestroLive: run.maestroLive,
@@ -4131,15 +4156,17 @@ async function startSend(
           throw new Error('executor-unavailable')
         }
         const { reasoningEffort, fastMode, maestrlyUltra } = claudeAxes
+        const resolvedClaudeModelId =
+          isolated && frozenProfile?.resolvedModelId
+            ? frozenProfile.resolvedModelId
+            : (claudeModel.resolvedModel ?? claudeModel.value)
         return runClaudeChat({
           conversationId,
           projectId: conv.workspaceId,
           cwd: conv.cwd,
           selection,
-          resolvedModelId:
-            isolated && frozenProfile?.resolvedModelId
-              ? frozenProfile.resolvedModelId
-              : (claudeModel.resolvedModel ?? claudeModel.value),
+          resolvedModelId: resolvedClaudeModelId,
+          behaviorProfile: admittedBehaviorProfile,
           ...(isolated && frozenProfile?.resolvedModelId
             ? { frozenResolvedModelId: frozenProfile.resolvedModelId }
             : {}),
@@ -4207,6 +4234,7 @@ async function startSend(
         projectId: conv.workspaceId,
         cwd: conv.cwd,
         selection,
+        behaviorProfile: admittedBehaviorProfile,
         broker: getBroker(),
         questionBroker: getQuestionBroker(),
         emit,
@@ -4350,12 +4378,12 @@ async function startSend(
           : useClaudeSubscription
             ? claudeSubscriptionErrorMessage(e)
             : useGrokSubscription
-                ? grokSubscriptionErrorMessage(e)
-                : e instanceof ChatConfigError
+              ? grokSubscriptionErrorMessage(e)
+              : e instanceof ChatConfigError
+                ? e.message
+                : e instanceof Error
                   ? e.message
-                  : e instanceof Error
-                    ? e.message
-                    : String(e)
+                  : String(e)
         const ev: ChatStreamEvent = {
           kind: 'error',
           messageId: run.messageId || undefined,
@@ -5208,6 +5236,9 @@ interface CompactOpts {
   executionId?: string
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
+  /** Behavior and canonical identity already frozen by an active turn admission. */
+  behaviorProfile?: FableBehaviorProfile | null
+  resolvedModelId?: string
   /** Never retires the main conversation's native binding. */
   skipRetireBinding?: boolean
 }
@@ -5277,6 +5308,30 @@ export async function compactReserved(
       }
     : selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return { ok: false, error: 'no-model' }
+  let compactResolvedModelId = opts.resolvedModelId ?? frozen?.resolvedModelId
+  if (
+    !compactResolvedModelId &&
+    selection.modelId.trim() === 'fable' &&
+    isClaudeSubscriptionProvider(selection.providerId)
+  ) {
+    compactResolvedModelId =
+      (await getClaudeSubscriptionManager(subscriptionAccountId(selection.providerId))
+        .resolveModelId(selection.modelId, opts.signal, true)
+        .catch(() => null)) ?? undefined
+  }
+  const compactBehaviorResolution = resolveFableBehaviorProfile({
+    requestedModelId: selection.modelId,
+    resolvedModelId: compactResolvedModelId,
+    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    frozen: frozen != null,
+    frozenProfileId: frozen?.behaviorProfileId,
+  })
+  if (compactBehaviorResolution.reason === 'frozen-profile-mismatch') {
+    return { ok: false, error: 'executor-unavailable' }
+  }
+  const compactBehaviorProfile =
+    opts.behaviorProfile === undefined ? compactBehaviorResolution.profile : opts.behaviorProfile
+  const compactSystem = compileFableCompactionSystem(COMPACT_SYSTEM, compactBehaviorProfile)
   const history = opts.executionId
     ? listExecutionContextMessages(conversationId, opts.executionId)
     : listConversationContextMessages(conversationId)
@@ -5336,7 +5391,7 @@ export async function compactReserved(
               client: target.client,
               cwd: conv.cwd,
               modelId: target.runtimeModelId,
-              system: COMPACT_SYSTEM,
+              system: compactSystem,
               prompt,
               signal: operationSignal,
               conversationId,
@@ -5372,7 +5427,7 @@ export async function compactReserved(
           conversationId,
           cwd: conv.cwd,
           modelId: selection.modelId,
-          system: COMPACT_SYSTEM,
+          system: compactSystem,
           prompt,
           signal: compactSignal,
           // Frozen profile: round's EFFECTIVE EFFORT (after resolving Ultra; never raw or live prefs).
@@ -5398,7 +5453,7 @@ export async function compactReserved(
           cwd: conv.cwd,
           // Frozen profile: use the effective ID resolved at freeze, never the mutable conversation alias.
           modelId: frozen?.resolvedModelId ?? selection.modelId,
-          system: COMPACT_SYSTEM,
+          system: compactSystem,
           prompt,
           signal: compactSignal,
           // Frozen profile: round's EFFECTIVE EFFORT (after resolving Ultra; never raw or live prefs);
@@ -5435,7 +5490,7 @@ export async function compactReserved(
       summarize = async (prompt) => {
         const result = await generateText({
           model,
-          system: COMPACT_SYSTEM,
+          system: compactSystem,
           prompt,
           abortSignal: compactSignal,
           ...(frozenFastModeOptions ? { providerOptions: frozenFastModeOptions } : {}),
@@ -5666,6 +5721,11 @@ export async function resolveReviewLoopSelection(
     if (frozenEffort === null) return { ok: false, error: 'no-model' }
     reasoningEffort = frozenEffort
   }
+  const behaviorProfile = resolveFableBehaviorProfile({
+    requestedModelId: modelId,
+    resolvedModelId,
+    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+  }).profile
   return {
     ok: true,
     selection: {
@@ -5677,6 +5737,7 @@ export async function resolveReviewLoopSelection(
       fastMode,
       ...(serviceTier ? { serviceTier } : {}),
       ...(resolvedModelId ? { resolvedModelId } : {}),
+      behaviorProfileId: behaviorProfile?.id ?? null,
       ...(identityFingerprint ? { identityFingerprint } : {}),
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
@@ -5774,6 +5835,15 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 export async function revalidateReviewLoopSelection(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const behaviorResolution = resolveFableBehaviorProfile({
+    requestedModelId: frozen.modelId,
+    resolvedModelId: frozen.resolvedModelId,
+    frozen: true,
+    frozenProfileId: frozen.behaviorProfileId,
+  })
+  if (behaviorResolution.reason === 'frozen-profile-mismatch') {
+    return { ok: false, error: 'executor-unavailable' }
+  }
   const accountId = subscriptionAccountId(frozen.providerId)
   if (isCodexSubscriptionProvider(frozen.providerId)) {
     const status = await codexAuthStatus(false, undefined, accountId)

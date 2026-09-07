@@ -46,6 +46,7 @@ import { clearEphemeralToolImages } from '../../src/main/chat/tool-output'
 import { freshDb, closeDb } from '../helpers/db'
 import type { PermissionBroker } from '../../src/main/chat/permission'
 import type { QuestionBroker } from '../../src/main/chat/question-broker'
+import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
 
 const mocks = vi.hoisted(() => ({
   streamText: vi.fn(),
@@ -966,6 +967,32 @@ describe('runtime tool-image capability learning', () => {
     ])
     expect(mocks.buildMcpTools).not.toHaveBeenCalled()
     expect(mocks.buildAppTools).not.toHaveBeenCalled()
+  })
+
+  it('applies Fable behavior to BYOK without adding Anthropic-only beta or thinking parameters', async () => {
+    mocks.streamText.mockReturnValue(fullStream([]) as never)
+    await runChat({
+      conversationId: 'c',
+      projectId: 'w',
+      cwd: '/tmp/w',
+      selection: { providerId: 'openai', modelId: 'claude-fable-5-1' },
+      behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+      broker: { assert: async () => undefined } as unknown as PermissionBroker,
+      questionBroker: {} as QuestionBroker,
+      emit: vi.fn(),
+      signal: new AbortController().signal,
+      assistantMessageId: 'fable-byok-assistant',
+      assistantCreatedAt: 1,
+      responseStartedAt: 1,
+    })
+
+    const request = mocks.streamText.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(request.system).toContain('maestrly-fable-5.1-v1')
+    expect(request.system).toContain('brief progress updates at meaningful milestones')
+    expect(request).not.toHaveProperty('thinking')
+    expect(request).not.toHaveProperty('betas')
+    expect(request).not.toHaveProperty('toolChoice')
+    expect(request).not.toHaveProperty('maxThinkingTokens')
   })
 
   it('recognizes only image, vision and multimodal rejection errors', () => {

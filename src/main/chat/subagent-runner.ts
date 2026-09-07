@@ -8,6 +8,8 @@ import type { ChatAgent } from './agents'
 import { getProvider } from './catalog'
 import { chatDiag } from './diag-log'
 import { MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from './fable/profile'
+import { compileFableSubagentPrompt } from './fable/prompt'
 import { isOpenAIHarnessActive, OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE, openAIHarnessProviderOptions } from './harness'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import {
@@ -327,6 +329,10 @@ export async function runSubagent(args: {
     // Snapshot already resolved once per toolCallId. Adapter, harness, and options derive ONLY from it;
     // continuations never reevaluate rules/credentials or fail over after a possible mutation.
     const resolvedSubModel = resolveChatModel(usedModel.providerId, usedModel.modelId)
+    const behaviorProfile = resolveFableBehaviorProfile({
+      requestedModelId: usedModel.modelId,
+      enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    }).profile
     const provider = getProvider(usedModel.providerId)
     const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
     const subMetaResult = await getProviderModelMetaWithStatus(usedModel.modelId, catalogProviderId)
@@ -430,7 +436,18 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = [def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n')
+    let subSystem = compileFableSubagentPrompt([def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n'), behaviorProfile)
+    chatDiag({
+      kind: 'fable-behavior-profile',
+      profile: behaviorProfile?.id ?? 'legacy',
+      requestedModel: usedModel.modelId,
+      resolvedModel: usedModel.modelId,
+      transport: resolvedSubModel.transport,
+      effort: effective.sentEffort ?? 'default',
+      progressMode: 'prompt-only',
+      agent: args.agentName,
+      conv: args.conversationId,
+    })
     let subLifecycle: OpenAICompactionLifecycle | null = useOpenAISubagent
       ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
       : null

@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   runCodexSubagent: vi.fn(),
   buildMcpTools: vi.fn(async () => ({ tools: {}, close: vi.fn(async () => {}) })),
   buildAppTools: vi.fn(async () => ({ tools: {}, close: vi.fn(async () => {}) })),
+  gitEnvInfo: vi.fn(async () => null as { branch: string; dirty: boolean } | null),
 }))
 
 vi.mock('../../src/main/plan-broker', () => ({
@@ -52,11 +53,13 @@ vi.mock('../../src/main/chat/project-context', () => ({
   buildProjectContext: vi.fn(async () => ''),
 }))
 vi.mock('../../src/main/git-service', () => ({
-  gitEnvInfo: vi.fn(async () => null),
+  gitEnvInfo: h.gitEnvInfo,
 }))
 vi.mock('../../src/main/chat/runner', () => ({
   IN_TURN_COMPACT_RATIO: 0.9,
-  SYSTEM_PROMPT: vi.fn(() => 'Maestrly system prompt'),
+  SYSTEM_PROMPT: vi.fn((_cwd, _app, _mode, _notes, profile) =>
+    profile ? `Maestrly Fable system prompt ${profile.id}` : 'Maestrly system prompt'
+  ),
 }))
 vi.mock('../../src/main/chat/usage-diagnostics', () => ({
   recordModelCallUsage: vi.fn(),
@@ -81,6 +84,7 @@ import {
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
+import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
 
 const identity: ClaudeSubscriptionAccountIdentity = {
   fingerprint: 'sha256:claude-account',
@@ -891,6 +895,8 @@ describe('Claude official chat runner', () => {
     h.runCodexSubagent.mockReset()
     h.buildMcpTools.mockClear()
     h.buildAppTools.mockClear()
+    h.gitEnvInfo.mockReset()
+    h.gitEnvInfo.mockResolvedValue(null)
   })
   afterEach(closeDb)
 
@@ -1347,6 +1353,62 @@ describe('Claude official chat runner', () => {
     expect(manager.deleteManagedSession).not.toHaveBeenCalled()
     expect(manager.query?.close).toHaveBeenCalledOnce()
     expect(events.some((event) => event.kind === 'finish')).toBe(true)
+  })
+
+  it('keeps the Fable system/hash stable across environment changes and sends current state transiently', async () => {
+    const workspace = makeWorkspace()
+    const runWithGit = async (dirty: boolean) => {
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      upsertChatMessage({
+        id: `user-fable-${dirty}`,
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: `text-fable-${dirty}`, text: 'Make a plan.' }],
+        createdAt: 1,
+      })
+      h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty })
+      const manager = new FakeManager()
+      await runClaudeChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd: '/repo',
+        selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+        behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+        mode: 'plan',
+        permMode: 'ask',
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(), on: vi.fn() } as never,
+        questionBroker: { ask: vi.fn() } as never,
+        emit: vi.fn(),
+        signal: new AbortController().signal,
+      })
+      const structured = (
+        await (
+          manager.calls[0].prompt as AsyncIterable<{
+            message: { content: Array<{ type: string; text?: string }> }
+          }>
+        )
+          [Symbol.asyncIterator]()
+          .next()
+      ).value
+      return {
+        options: manager.calls[0].options ?? {},
+        prompt: structured.message.content.map((part: { text?: string }) => part.text ?? '').join('\n'),
+        binding: getClaudeSessionBinding(conversation.id),
+      }
+    }
+
+    const clean = await runWithGit(false)
+    const dirty = await runWithGit(true)
+    expect(clean.options.systemPrompt).toBe(dirty.options.systemPrompt)
+    expect(clean.binding?.promptHash).toBe(dirty.binding?.promptHash)
+    expect(clean.options.systemPrompt).not.toContain('# Environment')
+    expect(clean.prompt).toContain('# Current environment')
+    expect(clean.prompt).toContain('Git branch: main (clean)')
+    expect(dirty.prompt).toContain('Git branch: main (uncommitted changes)')
+    expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+    expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
   })
 
   it('offers exactly the reviewer tools and waits for submit_review tool-result acknowledgement', async () => {
@@ -2469,6 +2531,58 @@ describe('Claude official chat runner', () => {
       sessionId: 'claude-session-3',
       sdkAssistantUuid: 'sdk-assistant-uuid',
     })
+  })
+
+  it('resumes Fable with a stable system while appending the latest environment observation', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    const manager = new FakeManager()
+    const run = () =>
+      runClaudeChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd: '/repo',
+        selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+        behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+        mode: 'plan',
+        permMode: 'ask',
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(), on: vi.fn() } as never,
+        questionBroker: { ask: vi.fn() } as never,
+        emit: vi.fn(),
+        signal: new AbortController().signal,
+      })
+    const addUser = (id: string) =>
+      upsertChatMessage({
+        id,
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: `${id}-text`, text: 'Continue.' }],
+        createdAt: Date.now(),
+      })
+
+    h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: false })
+    addUser('user-fable-resume-1')
+    await run()
+    h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: true })
+    addUser('user-fable-resume-2')
+    await run()
+
+    expect(manager.calls[1].options).toMatchObject({ resume: 'claude-session-1' })
+    expect(manager.calls[1].options?.systemPrompt).toBe(manager.calls[0].options?.systemPrompt)
+    const second = (
+      await (
+        manager.calls[1].prompt as AsyncIterable<{
+          message: { content: Array<{ type: string; text?: string }> }
+        }>
+      )
+        [Symbol.asyncIterator]()
+        .next()
+    ).value
+    const secondText = second.message.content.map((part: { text?: string }) => part.text ?? '').join('\n')
+    expect(secondText).toContain('# Current environment')
+    expect(secondText).toContain('Git branch: main (uncommitted changes)')
   })
 
   it('discards a plan session when the matching tool result is never acknowledged', async () => {

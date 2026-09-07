@@ -148,6 +148,8 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
   openAINativeOutputText,
 } from './openai/native-tools'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from './fable/profile'
+import { FABLE_51_STYLE_AND_WORK, fableBehaviorHeader } from './fable/prompt'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -172,8 +174,14 @@ const MAX_IN_TURN_COMPACTS = 2
 
 // MODE-AWARE prompt: tool descriptions must match the ACTUAL toolset, otherwise models
 // (e.g. MiMo) assume tools exist and try calling them (or emit tool calls as text). See runChat modes.
-export const SYSTEM_PROMPT = (cwd: string, appToolsEnabled: boolean, mode: ChatBehavior, hasNotesTab: boolean) => {
-  const base = `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
+export const SYSTEM_PROMPT = (
+  cwd: string,
+  appToolsEnabled: boolean,
+  mode: ChatBehavior,
+  hasNotesTab: boolean,
+  behaviorProfile: FableBehaviorProfile | null = null
+) => {
+  const legacyBase = `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
 
 # Style
 Be concise, direct and objective — like a senior engineer pairing, not a tutorial. Lead with the answer or the result. No preamble ("Sure, here's…", "Let me…") and no postamble ("Let me know if…", "Hope this helps"); don't restate the question or narrate routine steps. Match the length to the request: a simple question gets a sentence or two; a real task gets the detail it needs and no more. What matters is the user understanding you without re-reading — clear beats merely short, so don't be terse to the point of being cryptic. Explain your reasoning only when it isn't obvious or the user asks; after a change, say what you did and the outcome in a line or two and don't re-explain code you just wrote. Stop once the question is answered — don't pad with caveats, recaps or repetition. No emojis unless the user uses them first. Reference code as \`file_path:line_number\` so the user can jump to it.
@@ -183,6 +191,17 @@ Read a file before editing it or proposing changes to it — understand the exis
 
 # Using your tools
 Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
+
+  const base = behaviorProfile
+    ? `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
+
+${fableBehaviorHeader(behaviorProfile)}
+
+${FABLE_51_STYLE_AND_WORK}
+
+# Using your tools
+Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
+    : legacyBase
 
   const restrictedCapabilities =
     'Besides read/search tools, you may receive external MCP tools explicitly declared read-only and permitted ' +
@@ -201,9 +220,7 @@ Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/
 
   const render = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
-  const appToolGroups = hasNotesTab
-    ? 'terminal, browser, notes, memory, debug'
-    : 'terminal, browser, memory, debug'
+  const appToolGroups = hasNotesTab ? 'terminal, browser, notes, memory, debug' : 'terminal, browser, memory, debug'
   const appToolPrefixes = hasNotesTab
     ? 'terminal_*, browser_*, notes_*, memory_*, debug_*'
     : 'terminal_*, browser_*, memory_*, debug_*'
@@ -287,6 +304,17 @@ export interface NormalizedAiUsage {
   cacheRead: number
   cacheCreate: number
   totalInput: number
+}
+
+function sentEffortFromProviderOptions(options: SharedV3ProviderOptions | undefined): string | undefined {
+  for (const value of Object.values(options ?? {})) {
+    if (!value || typeof value !== 'object') continue
+    const record = value as Record<string, unknown>
+    for (const key of ['effort', 'reasoningEffort', 'reasoning_effort']) {
+      if (typeof record[key] === 'string') return record[key]
+    }
+  }
+  return undefined
 }
 
 const tokenCount = (value: unknown): number =>
@@ -389,6 +417,8 @@ export interface RunChatArgs {
   projectId: string
   cwd: string
   selection: ChatModelRef
+  /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
+  behaviorProfile?: FableBehaviorProfile | null
   broker: PermissionBroker
   questionBroker: QuestionBroker
   emit: (ev: ChatStreamEvent) => void
@@ -519,6 +549,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Resolve transport + profile once. Internal kill switch enables immediate rollback without changing
   // HTTP provider; unknown IDs/formats conservatively retain the legacy harness.
   const resolvedModel = resolveChatModel(selection.providerId, selection.modelId)
+  const behaviorProfile =
+    args.behaviorProfile === undefined
+      ? resolveFableBehaviorProfile({
+          requestedModelId: selection.modelId,
+          enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+        }).profile
+      : args.behaviorProfile
   const useOpenAIHarness = isOpenAIHarnessActive(getAppFlag('chat.openAIHarness', true), resolvedModel.harnessProfile)
   const model = resolvedModel.model
   const assistantId = assistantMessageId
@@ -607,9 +644,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     args.behaviorOverride ?? args.modeOverride ?? getConvUiPrefs(conversationId).chat?.mode ?? 'agent'
   const conversation = getConversation(conversationId)
   const hasNotesTab = Boolean(conversation)
-  const enabledNames = args.reviewerRuntime
-    ? new Set(REVIEWER_READONLY_TOOL_NAMES)
-    : builtinToolNamesForMode(mode)
+  const enabledNames = args.reviewerRuntime ? new Set(REVIEWER_READONLY_TOOL_NAMES) : builtinToolNamesForMode(mode)
 
   // Metadata must arrive before classifying `ultra`: GPT-5.6 treats it as REAL effort; older conversations
   // on models not advertising it used the same raw value as Maestrly's legacy sentinel.
@@ -1280,6 +1315,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // review-loop carries FROZEN `fastModeOverride` — never rereads live ui_prefs.
   const fastMode = resolveTurnFastMode(args.fastModeOverride, getConvUiPrefs(conversationId).chat?.fastMode === true)
   providerOptions = applyFastModeServiceTier(providerOptions, fastMode, selection.providerId)
+  chatDiag({
+    kind: 'fable-behavior-profile',
+    profile: behaviorProfile?.id ?? 'legacy',
+    requestedModel: selection.modelId,
+    resolvedModel: selection.modelId,
+    transport: resolvedModel.transport,
+    effort: sentEffortFromProviderOptions(providerOptions) ?? 'default',
+    progressMode: 'prompt-only',
+    conv: conversationId,
+  })
 
   // Explicit max_tokens ONLY for anthropic transport: @ai-sdk/anthropic uses internal per-model limits;
   // unknown models (e.g. newly released claude-opus-5) default to 4096 → large writes repeatedly
@@ -1367,7 +1412,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
           'and be critical of your first conclusion before finishing.'
   let system =
-    SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab) +
+    SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab, behaviorProfile) +
     envContext +
     projectContext +
     skillsCatalog +
@@ -1386,7 +1431,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       mode === 'maestro' ? 'ask' : mode
     )
     let promptStablePrefix =
-      SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab) +
+      SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab, behaviorProfile) +
       (nativeToolsPrompt ? `\n\n${nativeToolsPrompt}` : '') +
       projectContext +
       skillsCatalog +

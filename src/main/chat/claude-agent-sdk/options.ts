@@ -1,4 +1,4 @@
-import type { Options } from '@anthropic-ai/claude-agent-sdk'
+import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk'
 import type { ClaudeToolBridge } from './tools'
 
 const CLAUDE_EFFORT_LEVELS = new Set<NonNullable<Options['effort']>>(['low', 'medium', 'high', 'xhigh', 'max'])
@@ -24,6 +24,7 @@ export interface BuildClaudeChatQueryOptionsArgs {
   fastMode?: boolean
   systemPrompt: string
   bridge: ClaudeToolBridge
+  postToolUseHook?: HookCallbackMatcher
   disallowedNativeTools: readonly string[]
   resume?: string
   resumeSessionAt?: string
@@ -61,7 +62,11 @@ export function buildClaudeChatQueryOptions(args: BuildClaudeChatQueryOptionsArg
     skills: [],
     plugins: [],
     agents: {},
-    hooks: { PreToolUse: [args.bridge.preToolUseHook] },
+    hooks: {
+      PreToolUse: [args.bridge.preToolUseHook],
+      ...(args.postToolUseHook ? { PostToolUse: [args.postToolUseHook] } : {}),
+    },
+    ...(args.postToolUseHook ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
     permissionMode: 'dontAsk',
     includePartialMessages: true,
     promptSuggestions: false,

@@ -314,7 +314,16 @@ export type SubagentResumeStatus = 'resumed' | 'recreated'
 
 export type SubagentRuntimeHandle =
   | { kind: 'codex-thread'; threadId: string; accountId: string | null; toolSignature: string }
-  | { kind: 'claude-session'; sessionId: string; cwd: string; accountId: string | null }
+  | {
+      kind: 'claude-session'
+      sessionId: string
+      cwd: string
+      accountId: string | null
+      /** Optional only for persisted handles created before the versioned behavior contract. */
+      modelId?: string
+      behaviorProfileId?: string | null
+      runtimeSignature?: string
+    }
 
 export interface SubagentSessionSummary {
   id: string
@@ -1053,10 +1062,7 @@ export type ChatProviderKind =
 
 export type ChatSubscriptionProviderKind = Extract<
   ChatProviderKind,
-  | 'codex-subscription'
-  | 'github-copilot-subscription'
-  | 'claude-subscription'
-  | 'grok-subscription'
+  'codex-subscription' | 'github-copilot-subscription' | 'claude-subscription' | 'grok-subscription'
 >
 
 export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProviderKind[] = [
@@ -1202,6 +1208,9 @@ export interface FrozenChatSelection {
   serviceTier?: string
 
   resolvedModelId?: string
+
+  /** Frozen behavioral contract. null/absent means the legacy prompt path. */
+  behaviorProfileId?: string | null
 
   identityFingerprint?: string
 

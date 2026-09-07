@@ -28,8 +28,8 @@ const h = vi.hoisted(() => {
       },
       accountFingerprint: 'sha256:claude-account',
       accountEpoch: 2,
-      cliVersion: '2.1.258',
-      sdkVersion: '0.3.258',
+      cliVersion: '2.1.263',
+      sdkVersion: '0.3.263',
       error: null,
     } as any,
     models: [
@@ -180,11 +180,12 @@ import {
   compactReserved,
   registerChatIpc,
   revalidateReviewLoopSelection,
+  resolveReviewLoopSelection,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
-import { patchConvUiPrefs } from '../../src/main/store'
+import { getConvUiPrefs, patchConvUiPrefs, setAppFlag } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -219,8 +220,8 @@ describe('Claude subscription service integration', () => {
       },
       accountFingerprint: 'sha256:claude-account',
       accountEpoch: 2,
-      cliVersion: '2.1.258',
-      sdkVersion: '0.3.258',
+      cliVersion: '2.1.263',
+      sdkVersion: '0.3.263',
       error: null,
     }
     h.state.models = [
@@ -323,6 +324,109 @@ describe('Claude subscription service integration', () => {
     expect(
       listChatMessages(conversation.id).find((message) => message.role === 'assistant')?.memoryContext
     ).toBeUndefined()
+  })
+
+  it('isolates A → Fable 5.1 → A behavior without changing saved model or effort preferences', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    h.state.models = [
+      ...h.state.models,
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Claude Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: ['high', 'max'],
+        supportsAdaptiveThinking: true,
+        supportsFastMode: true,
+      },
+    ] as any[]
+    const setModel = (modelId: string) =>
+      patchConvUiPrefs(conversation.id, {
+        chat: {
+          providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+          modelId,
+          mode: 'agent',
+          permMode: 'ask',
+          reasoning: 'high',
+          fastMode: false,
+        },
+      })
+    const { handlers } = register()
+    const send = async (text: string, calls: number) => {
+      await expect(
+        handlers.get('chat:send')?.({ sender: h.webContents }, { conversationId: conversation.id, text })
+      ).resolves.toEqual({ ok: true })
+      await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledTimes(calls))
+    }
+    const claudeCalls = h.runClaude.mock.calls as unknown as Array<
+      [{ behaviorProfile?: unknown; resolvedModelId?: string }]
+    >
+
+    setModel('sonnet')
+    await send('First A turn.', 1)
+    expect(claudeCalls[0]?.[0].behaviorProfile).toBeNull()
+
+    setModel('fable')
+    await send('Fable turn.', 2)
+    expect(claudeCalls[1]?.[0]).toMatchObject({
+      resolvedModelId: 'claude-fable-5-1',
+      behaviorProfile: { id: 'maestrly-fable-5.1-v1' },
+    })
+
+    setModel('sonnet')
+    await send('Second A turn.', 3)
+    expect(claudeCalls[2]?.[0].behaviorProfile).toBeNull()
+    expect(getConvUiPrefs(conversation.id).chat).toMatchObject({
+      modelId: 'sonnet',
+      reasoning: 'high',
+      fastMode: false,
+    })
+  })
+
+  it('freezes the behavior version and fails closed on an incompatible frozen identity', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    h.state.models = [
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        supportsEffort: true,
+        supportedEffortLevels: ['high'],
+        supportsFastMode: true,
+      },
+    ] as any[]
+    patchConvUiPrefs(conversation.id, {
+      chat: {
+        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        modelId: 'fable',
+        mode: 'agent',
+        permMode: 'ask',
+        reasoning: 'high',
+        fastMode: false,
+      },
+    })
+
+    const frozen = await resolveReviewLoopSelection(conversation.id)
+    expect(frozen).toMatchObject({
+      ok: true,
+      selection: {
+        modelId: 'fable',
+        resolvedModelId: 'claude-fable-5-1',
+        behaviorProfileId: 'maestrly-fable-5.1-v1',
+      },
+    })
+    if (!frozen.ok) throw new Error(frozen.error)
+    expect(
+      await revalidateReviewLoopSelection({
+        ...frozen.selection,
+        resolvedModelId: 'claude-fable-5',
+      })
+    ).toEqual({ ok: false, error: 'executor-unavailable' })
+
+    setAppFlag('chat.fable51Profile', false)
+    const disabled = await resolveReviewLoopSelection(conversation.id)
+    expect(disabled).toMatchObject({ ok: true, selection: { behaviorProfileId: null } })
   })
 
   it('uses portable summaries and invalidates previous native sessions', async () => {
@@ -487,6 +591,73 @@ describe('Claude subscription service integration', () => {
     // Aborts BEFORE any summary call without falling back to live credentials.
     expect(result).toEqual({ ok: false, error: 'executor-unavailable' })
     expect(h.summarizePortable).not.toHaveBeenCalled()
+  })
+
+  it('uses the frozen Fable compaction contract without reusing signed thinking', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    const scope = {
+      kind: 'review-loop' as const,
+      executionId: 'exec-fable',
+      loopId: 'rl-fable',
+      iteration: 1,
+      maxIterations: 5,
+    }
+    upsertChatMessage({
+      id: 'round-fable-user',
+      conversationId: conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'round-fable-user-text', text: 'Keep the rejected approach.' }],
+      internal: true,
+      source: 'chatgpt-web-review-loop',
+      executionScope: scope,
+      createdAt: 1,
+    })
+    upsertChatMessage({
+      id: 'round-fable-assistant',
+      conversationId: conversation.id,
+      role: 'assistant',
+      parts: [{ type: 'text', id: 'round-fable-assistant-text', text: 'Attempt A was rejected.' }],
+      model: { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'fable' },
+      source: 'chatgpt-web-review-loop',
+      executionScope: scope,
+      createdAt: 2,
+    })
+    h.state.models = [
+      {
+        value: 'fable',
+        resolvedModel: 'claude-fable-5-1',
+        supportsEffort: true,
+        supportedEffortLevels: ['high'],
+        supportsFastMode: true,
+      },
+    ] as any[]
+
+    const result = await compactReserved(conversation.id, {
+      executionId: 'exec-fable',
+      selectionOverride: {
+        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        modelId: 'fable',
+        resolvedModelId: 'claude-fable-5-1',
+        behaviorProfileId: 'maestrly-fable-5.1-v1',
+        reasoning: 'off',
+        fastMode: false,
+        identityFingerprint: 'sha256:claude-account',
+        identityEpoch: 2,
+      },
+      persist: false,
+      skipRetireBinding: true,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(h.summarizePortable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'claude-fable-5-1',
+        system: expect.stringMatching(/rejected attempts[\s\S]*user constraints and decisions[\s\S]*Never invent/),
+      })
+    )
+    const summaryCalls = h.summarizePortable.mock.calls as unknown as Array<[Record<string, unknown>]>
+    expect(summaryCalls.at(-1)?.[0]).not.toHaveProperty('thinking')
   })
 
   it('Claude effective axes changing between freeze and round return executor_unavailable', async () => {

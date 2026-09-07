@@ -90,6 +90,7 @@ import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
+import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
 import { resolveGitHubCopilotHarness } from './harness'
 import {
@@ -132,6 +133,7 @@ interface PreparedRuntime {
   toolSignature: string
   availableTools: string[]
   systemMessage: string
+  behaviorProfile?: FableBehaviorProfile
   takeToolOutput: (toolCallId: string) => ToolOutput | undefined
   close: () => Promise<void>
 }
@@ -167,6 +169,8 @@ export interface RunGitHubCopilotChatArgs {
   projectId: string
   cwd: string
   selection: ChatModelRef
+  /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
+  behaviorProfile?: FableBehaviorProfile | null
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
   maestroLive?: MaestroLiveRunPort
@@ -661,6 +665,13 @@ async function prepareRuntime(
     const toolProfile = profileCopilotTools(tools)
 
     const harness = resolveGitHubCopilotHarness(args.selection.modelId)
+    const behaviorProfile =
+      args.behaviorProfile === undefined
+        ? resolveFableBehaviorProfile({
+            requestedModelId: args.selection.modelId,
+            enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          }).profile
+        : args.behaviorProfile
     const projectContext = await buildProjectContext(args.projectId, args.cwd)
     const skillContext = skillsCatalog(skills)
     const agentContext =
@@ -685,7 +696,7 @@ async function prepareRuntime(
       `${harness.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
       `the selected model family governs behavioral instructions. Only the explicitly supplied tools are available.`
     let systemMessage =
-      SYSTEM_PROMPT(args.cwd, appToolsEnabled, args.mode, notes) +
+      SYSTEM_PROMPT(args.cwd, appToolsEnabled, args.mode, notes, behaviorProfile) +
       runtimeOverlay +
       projectContext +
       (skillContext ? `\n\n# Project skills\n${skillContext}` : '') +
@@ -720,6 +731,7 @@ async function prepareRuntime(
       toolSignature: signature,
       availableTools,
       systemMessage,
+      ...(behaviorProfile ? { behaviorProfile } : {}),
       takeToolOutput: (toolCallId) => {
         const output = canonicalToolOutputs.get(toolCallId)
         canonicalToolOutputs.delete(toolCallId)
@@ -945,6 +957,16 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
   const managedSubagentUsage = new Map<string, ChatSubagentUsage>()
   try {
     runtime = await prepareRuntime(args, assistantId, state)
+    chatDiag({
+      kind: 'fable-behavior-profile',
+      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      requestedModel: args.selection.modelId,
+      resolvedModel: args.selection.modelId,
+      transport: 'github-copilot',
+      effort: args.reasoningEffort ?? 'default',
+      progressMode: 'prompt-only',
+      conv: args.conversationId,
+    })
     const taskRuntime = runtime
     const harness = resolveGitHubCopilotHarness(args.selection.modelId)
     const previousMessage = history.at(-2) ?? null
