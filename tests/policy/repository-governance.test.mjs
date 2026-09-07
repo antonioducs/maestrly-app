@@ -106,7 +106,7 @@ test('CI is read-only and exposes stable platform names', () => {
 })
 
 test('contribution policy preserves truthful authorship and standard commit metadata', () => {
-  const source = [read('CONTRIBUTING.md'), read('docs/repository-governance.md')].join('\n')
+  const source = read('CONTRIBUTING.md')
   assert.match(source, /truthful (?:commit )?authorship|truthful Git identity/)
   assert.match(source, /Pull requests are welcome from any GitHub account|Anyone may open a pull request/)
   assert.match(source, /bodies.*(?:trailers|attribution)|Bodies.*Co-authored-by/s)

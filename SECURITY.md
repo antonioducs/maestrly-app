@@ -1,78 +1,41 @@
-# Security Policy
+# Security
 
-Maestrly App is a local-first developer application with powerful access to
-repositories, terminals, browsers, MCP servers, and optional AI providers. We
-welcome responsible reports when those boundaries do not behave as documented.
+## Report a vulnerability
 
-## Supported versions
+Use [private vulnerability reporting](https://github.com/antonioducs/maestrly-app/security/advisories/new).
+Do not disclose a suspected vulnerability in a public issue or PR. If the private
+form is unavailable, open an issue asking for a private contact channel without
+including vulnerability details or personal data.
 
-There is no supported public release yet.
+Include the affected version or commit, OS/architecture, impact, prerequisites,
+and minimal reproduction steps using a disposable profile and synthetic project.
+Share only sanitized diagnostics; never send real databases, conversations,
+repositories, credentials, or signing keys.
 
-| Version | Supported |
-| --- | --- |
-| Latest `main` source preview | Best-effort fixes |
-| Earlier commits or local packages | No |
+Reports and fixes are handled on a best-effort basis with no response or
+remediation SLA. Include whether the issue reproduces on the latest release or
+`main`. Allow time for investigation and coordinated disclosure.
 
-A successful source build or CI package is not a supported release. This table
-will be revised before any public binary is announced.
+## Security limits
 
-## Reporting a vulnerability
+Maestrly is a single-user developer workspace. Projects and conversations do not
+provide isolation between hostile tenants. Terminals, agents, provider CLIs, and
+MCP executables can read files, execute commands, and access the network within
+the authority granted to them. Full-access mode permits broad local changes.
+Trust installed tools and review permissions; prompts alone are not a sandbox.
 
-Do not open a public issue, discussion, or pull request for a suspected
-vulnerability. Use GitHub's
-[private vulnerability reporting](https://github.com/antonioducs/maestrly-app/security/advisories/new)
-when it is available to your account. If the private form is unavailable, open a
-minimal public issue asking maintainers to arrange a private channel. Include no
-vulnerability details, logs, screenshots, repository names, or contact data in
-that issue.
+The primary application renderer uses context isolation and disables Node
+integration, but it and some trusted tool panels are not Electron-sandboxed.
+Application APIs validate input in the main process. OAuth and visual companion
+surfaces use separate sandboxed sessions.
 
-Include only the information needed to reproduce and assess the report:
+Application-managed credentials use Electron `safeStorage`; persistence fails
+when operating-system encryption is unavailable. Local SQLite databases, notes,
+logs, and project files are not an encrypted vault. Software with access to the
+same OS account can access local data. Loopback service tokens do not protect
+against a compromised OS account or application process.
 
-- affected commit, operating system, architecture, and installation method;
-- impact, prerequisites, and required user interaction;
-- minimal steps using a disposable profile and synthetic repository;
-- expected and observed behavior;
-- a minimal proof of concept, if it can be shared safely; and
-- fully redacted diagnostics or screenshots.
-
-Never send real conversations, databases, repositories, tokens, passwords,
-provider sessions, signing keys, credential-bearing URLs, or raw logs. Replace
-project names, usernames, hostnames, paths, and content with synthetic values.
-
-## Security-relevant scope
-
-Reports are especially useful when they involve:
-
-- renderer-to-main privilege escalation, unsafe IPC, navigation escape, or
-  permission-handler bypass;
-- command or filesystem writes outside the selected project or granted scope;
-- permission-mode bypasses in chat, Maestro, subagents, MCP, Git, terminal, web,
-  browser, or review workflows;
-- plaintext credential persistence, failed `safeStorage` isolation, or secrets
-  reaching renderer state, exports, errors, events, screenshots, or logs;
-- loopback services reachable without their capability token or from a
-  non-loopback interface;
-- cross-project data disclosure in conversations, notes, memory,
-  worktrees, browser sessions, or provider context;
-- unintended network egress, telemetry, hosted Maestrly dependencies, or
-  updater behavior;
-- package allowlist bypasses, foreign native runtimes, integrity-check failures,
-  or executable content omitted from third-party notices; and
-- destructive reset or migration behavior that removes repositories or cannot
-  recover after interruption.
-
-The [security model](docs/security-model.md) documents assumptions, trust
-boundaries, and known limitations. [PRIVACY.md](PRIVACY.md) describes local data
-and expected network access.
-
-## What to expect
-
-Reports are handled privately and on a best-effort basis. Maintainers will try
-to acknowledge, reproduce, prioritize, and coordinate a fix and disclosure when
-possible. The project does not promise a response or remediation SLA. Timing
-depends on severity, reproducibility, maintainer availability, and release
-readiness.
-
-Allow reasonable time for investigation before public disclosure. State clearly
-if active exploitation or imminent harm changes the urgency. Credit is offered
-when requested and safe.
+External providers, MCP servers, skills, browsers, and downloaded tools have their
+own security behavior and data retention. Reset cannot retract information
+already sent to them. See [Privacy](PRIVACY.md) and
+[Local data and recovery](docs/local-data.md).
