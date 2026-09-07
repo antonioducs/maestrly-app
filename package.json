@@ -99,7 +99,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
-    "@electron/asar": "3.4.1",
+    "@electron/asar": "4.3.0",
     "@electron/rebuild": "4.0.4",
     "@openai/codex": "0.153.4",
     "@playwright/test": "^1.50.1",
