@@ -22,7 +22,7 @@ import {
 
 const CACHE = 'models_cache.json'
 const OVERRIDE = 'maestrly-model-catalog.json'
-const CURRENT_RUNTIME_VERSION = '0.153.2'
+const CURRENT_RUNTIME_VERSION = '0.153.4'
 
 const catalog = (models: unknown[]): string =>
   JSON.stringify({ fetched_at: '2026-09-04T00:00:00Z', client_version: CURRENT_RUNTIME_VERSION, models })

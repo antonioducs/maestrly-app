@@ -33,37 +33,37 @@ const codex = [
     'mac-arm64',
     'darwin-arm64',
     'aarch64-apple-darwin',
-    '8cEJWOIW5WnSn2+W1RUjc1sm2sN1H6NP+cCrOe73ImamUy2yOk3QKjZM2SfkA9jf3fqgwlBNUslhGMen2omc5g==',
+    'B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
   ],
   [
     'mac-x64',
     'darwin-x64',
     'x86_64-apple-darwin',
-    'hY68UBhIUE3xIn40SdoujokNiCBeHn9Jp9bEtcIrYeYd2IUtu1oCFwxFnkGhw6+UjHn7piiMxohAomddRA4MCg==',
+    'vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
   ],
   [
     'linux-arm64',
     'linux-arm64',
     'aarch64-unknown-linux-musl',
-    'QDkOdJzIdMGaOCViY2dqGqr8WhQv81WfmJkAghC3doFedsOfHt87RuAO4yFN7m0FSR3y5UsScSDUT4zOCcmEVA==',
+    'QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
   ],
   [
     'linux-x64',
     'linux-x64',
     'x86_64-unknown-linux-musl',
-    'CPUPhFmykKRdIcgwiOfKvFKHBP62dPfaiP+pzQ2bVNAfLTW+i0Kasd7hQryoxZUmTPvw0h9HyM2NgsnQ9AJlTw==',
+    'x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
   ],
   [
     'win-arm64',
     'win32-arm64',
     'aarch64-pc-windows-msvc',
-    '+49dim0F4FoxKLBDBLzMQL4C1m9FG2kx6twg98jo2USesKfmj8XG3HSCe2tW2zOfRArSgHCDyNDHFdts3AfaBg==',
+    '/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
   ],
   [
     'win-x64',
     'win32-x64',
     'x86_64-pc-windows-msvc',
-    'x1PnFo9Uy81NEIlPx3qxkP3PQgkfmJOY/2LqKCKlvxArWIL+PrEV9xKcmKeo9Yw23PPU2TDH3AyqcdeblqtNNg==',
+    'lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ==',
   ],
 ] as const
 const copilot = [
@@ -105,21 +105,21 @@ function targetRecord(rows: readonly (readonly string[])[], make: (row: readonly
 
 /** Measured size of each pinned tarball; the archives are immutable, so these are exact. */
 const codexArchiveBytes: Readonly<Record<RuntimeTargetId, number>> = {
-  'mac-arm64': 115_669_249,
-  'mac-x64': 123_497_670,
-  'linux-arm64': 121_675_259,
-  'linux-x64': 129_259_793,
-  'win-arm64': 132_143_077,
-  'win-x64': 141_510_231,
+  'mac-arm64': 115_672_312,
+  'mac-x64': 123_544_033,
+  'linux-arm64': 121_707_000,
+  'linux-x64': 129_272_137,
+  'win-arm64': 132_173_674,
+  'win-x64': 141_495_386,
 }
 /** npm dist.unpackedSize; includes the tiny package envelope, so disk preflight remains conservative. */
 const codexUnpackedBytes: Readonly<Record<RuntimeTargetId, number>> = {
-  'mac-arm64': 288_125_331,
-  'mac-x64': 308_503_598,
+  'mac-arm64': 288_140_243,
+  'mac-x64': 308_574_766,
   'linux-arm64': 291_867_383,
-  'linux-x64': 334_866_458,
-  'win-arm64': 342_786_209,
-  'win-x64': 395_759_772,
+  'linux-x64': 334_960_666,
+  'win-arm64': 342_783_649,
+  'win-x64': 395_725_468,
 }
 const copilotArchiveBytes: Readonly<Record<RuntimeTargetId, number>> = {
   'mac-arm64': 130_336_069,
@@ -136,7 +136,7 @@ function downloadCap(bytes: number): number {
 
 const codexTargets = targetRecord(codex, ([id, suffix, triple, digest]) => ({
   id: id as RuntimeTargetId,
-  url: `https://registry.npmjs.org/@openai/codex/-/codex-0.153.2-${suffix}.tgz`,
+  url: `https://registry.npmjs.org/@openai/codex/-/codex-0.153.4-${suffix}.tgz`,
   archive: 'tar.gz',
   hash: { algorithm: 'sha512', digest, encoding: 'base64' },
   downloadBytes: codexArchiveBytes[id as RuntimeTargetId],
@@ -189,7 +189,7 @@ const localMlTargets = Object.freeze(
 )
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
-  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: '0.153.2', targets: codexTargets }),
+  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: '0.153.4', targets: codexTargets }),
   'github-copilot-runtime': Object.freeze({ id: 'github-copilot-runtime', version: '1.0.71', targets: copilotTargets }),
   'tunnel-client': Object.freeze({ id: 'tunnel-client', version: '0.0.10', targets: tunnelTargets }),
   'local-ml-runtime': Object.freeze({
