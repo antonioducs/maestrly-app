@@ -14,8 +14,14 @@ import {
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
-import { codexTextInput, type CodexApprovalPolicy, type CodexSandboxPolicy } from './protocol'
-import { classifyCodexQuotaFailure } from './quota-error'
+import {
+  codexTextInput,
+  type CodexAccountRateLimitsReadResponse,
+  type CodexApprovalPolicy,
+  type CodexSandboxPolicy,
+} from './protocol'
+import { classifyCodexQuotaFailure, classifyCodexQuotaFailureWithRateLimits } from './quota-error'
+import { parseCodexRateLimits } from './rate-limits'
 
 interface TokenBreakdown {
   inputTokens: number
@@ -400,8 +406,22 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
     }
   }
 
-  const throwIfQuota = (error: unknown, text: string, usage?: NormalizedAiUsage): void => {
-    const classification = classifyCodexQuotaFailure(error)
+  const throwIfQuota = async (error: unknown, text: string, usage?: NormalizedAiUsage): Promise<void> => {
+    let classification = classifyCodexQuotaFailure(error)
+    if (classification.kind === 'suspect') {
+      // Returning an unconfirmed failure as a result would bypass managed-task quota failover.
+      classification = await classifyCodexQuotaFailureWithRateLimits(error, async () =>
+        parseCodexRateLimits(
+          await args.client.request<CodexAccountRateLimitsReadResponse>(
+            'account/rateLimits/read',
+            {},
+            { signal: args.signal, timeoutMs: OWNED_REQUEST_TIMEOUT_MS }
+          )
+        )
+      )
+    }
+    if (abortRequested)
+      throw Object.assign(new Error('Subagent aborted'), { subagentUsage: usage, subagentModel: model })
     if (classification.kind !== 'quota') return
     throw new CodexSubagentQuotaError(classification.message, quotaPartial(text, usage))
   }
@@ -677,7 +697,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
       const error = result.turn.error?.message || `Codex subagent ${result.turn.status}`
       if (abortRequested)
         throw Object.assign(new Error('Subagent aborted'), { subagentUsage: usage, subagentModel: model })
-      throwIfQuota({ turn: result.turn }, text, usage)
+      await throwIfQuota({ turn: result.turn }, text, usage)
       return { text, error, ...(usage ? { usage } : {}), model }
     } catch (error) {
       if (error instanceof CodexSubagentQuotaError) throw error
@@ -685,7 +705,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
       if (abortRequested)
         throw Object.assign(new Error(errorMessage(error)), { subagentUsage: usage, subagentModel: model })
       const text = [...textByItem.values()].join('\n\n').trim()
-      throwIfQuota(error, text, usage)
+      await throwIfQuota(error, text, usage)
       return { text: text || '', error: errorMessage(error), ...(usage ? { usage } : {}), model }
     }
   }
