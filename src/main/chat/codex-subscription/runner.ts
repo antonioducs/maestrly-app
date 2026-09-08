@@ -2224,7 +2224,12 @@ export async function runCodexSubscriptionChat(
   const attemptedProviderIds = new Set<string>([currentProviderId])
   const chain = args.failoverChain?.length ? [...args.failoverChain] : [args.selection.providerId]
   const failoverEnabled = typeof args.resolveNextTarget === 'function' && chain.length > 1
+  let currentAttemptSettled = false
   const settleCurrentAttempt = (result: 'success' | 'quota' | 'other', exhaustionInfo?: MarkExhaustedInfo): void => {
+    // Completion can publish quota before child recovery, then reach failover later.
+    // Settle once so an old failure cannot overwrite a newer probe from another turn.
+    if (currentAttemptSettled) return
+    currentAttemptSettled = true
     const lease = currentLease
     currentLease = undefined
     const providerId = currentProviderId
@@ -2606,6 +2611,7 @@ export async function runCodexSubscriptionChat(
     )
     currentReasoningEffort = runtimeProfile.reasoningEffort ?? undefined
     currentLease = next.availabilityLease
+    currentAttemptSettled = false
     threadOptions.model = currentModelId
     threadOptions.serviceTier = currentServiceTier
     developerInstructions = developerInstructionsFor(runtimeProfile)
@@ -2701,6 +2707,8 @@ export async function runCodexSubscriptionChat(
   }
   const onStartupAbort = (): void => armRootAbortTimeout()
   args.signal.addEventListener('abort', onStartupAbort, { once: true })
+  const managedTaskRecoveryStop = new AbortController()
+  const managedTaskRecoverySignal = AbortSignal.any([args.signal, managedTaskRecoveryStop.signal])
   try {
     if (canResume) {
       try {
@@ -3017,6 +3025,7 @@ export async function runCodexSubscriptionChat(
       // handleServerRequest returns and the client writes the tool response to app-server stdio.
       setImmediate(() => {
         planStopArmed = true
+        managedTaskRecoveryStop.abort()
         if (threadId && turnId) void currentClient.interruptTurn({ threadId, turnId }).catch(() => {})
       })
     }
@@ -3059,6 +3068,21 @@ export async function runCodexSubscriptionChat(
       if (activeManagedTasks) return
       for (const wake of managedTaskWaiters) wake()
       managedTaskWaiters.clear()
+    }
+    const waitForManagedTaskRecovery = (): Promise<void> => {
+      if (!activeManagedTasks || managedTaskRecoverySignal.aborted) return Promise.resolve()
+      // A quota failure ends the provider turn, not the host task. Children may still be
+      // finishing tools or continuing on another account. Their runtime/abort owns that
+      // lifetime; the shutdown deadline starts only once recovery finishes or is stopped.
+      return new Promise<void>((resolve) => {
+        const wake = (): void => {
+          managedTaskWaiters.delete(wake)
+          managedTaskRecoverySignal.removeEventListener('abort', wake)
+          resolve()
+        }
+        managedTaskWaiters.add(wake)
+        managedTaskRecoverySignal.addEventListener('abort', wake, { once: true })
+      })
     }
     const waitForManagedTasks = (deadline: number): Promise<void> => {
       if (!activeManagedTasks) return Promise.resolve()
@@ -4082,10 +4106,11 @@ export async function runCodexSubscriptionChat(
       })
     }
 
-    const stopUnfinishedChildren = async (): Promise<void> => {
+    const stopUnfinishedChildren = async (preserveManagedTasks = false): Promise<void> => {
       // `handleNotification` delivers each line synchronously in order. When parent completion arrives here,
       // receiverThreadIds from earlier spawns are already registered. Do not use timers to start teardown:
       // besides delaying finish, this breaks hosts/tests with virtual clocks.
+      if (preserveManagedTasks) await waitForManagedTaskRecovery()
       const deadline = Date.now() + CHILD_STOP_TIMEOUT_MS
       await waitForManagedTasks(deadline)
       for (let round = 0; round < 8; round += 1) {
@@ -4165,6 +4190,19 @@ export async function runCodexSubscriptionChat(
     const settleRootAfterChildren = (params: TurnCompletedParams): void => {
       if (rootCompletionCleanupStarted) return
       rootCompletionCleanupStarted = true
+      const classification = rootCompletedClassification
+      if (classification?.kind === 'quota') {
+        // Publish exhaustion before waiting so queued children also select another account.
+        settleCurrentAttempt('quota', {
+          reason: classification.message,
+          source: exhaustionSource(classification),
+          resetsAt: classification.resetsAt ?? null,
+        })
+      }
+      const preserveManagedTasks =
+        (classification?.kind === 'quota' || classification?.kind === 'suspect') &&
+        !args.signal.aborted &&
+        !planStopArmed
       // A normal Codex task is synchronous from the provider's point of view, so root completion drains every
       // child before settling. Maestro `delegate` is intentionally detached: draining here would either cancel
       // useful work or wait 15 seconds and fail before the supervision continuation can run.
@@ -4172,7 +4210,7 @@ export async function runCodexSubscriptionChat(
         args.mode === 'maestro' && maestroGuardRequired && !args.signal.aborted && !planStopArmed
       const cleanup = preserveAsyncMaestroDelegations
         ? waitForGeneratedImages()
-        : stopUnfinishedChildren().then(() => waitForGeneratedImages())
+        : stopUnfinishedChildren(preserveManagedTasks).then(() => waitForGeneratedImages())
       void cleanup
         .then(() => settle(params))
         .catch(async (error) => {
@@ -4647,7 +4685,7 @@ export async function runCodexSubscriptionChat(
           await currentClient.interruptTurn({ threadId, turnId }).catch(() => undefined)
         }
         try {
-          await stopUnfinishedChildren()
+          await stopUnfinishedChildren(true)
         } catch (error) {
           // Do not rotate and replay a root turn while a managed child may still be mutating
           // the workspace. Retire the old root and surface the bounded drain failure instead.
@@ -5296,6 +5334,19 @@ export async function runCodexSubscriptionChat(
       )
       if (terminalEventApplied) {
         // Failover already emitted the terminal stream event (accounts exhausted).
+      } else if (args.signal.aborted) {
+        // Stop may arrive while a failed quota turn is awaiting child recovery. The
+        // provider's terminal status predates that user action and must not surface an error.
+        settleCurrentAttempt('other')
+        apply(
+          {
+            kind: 'aborted',
+            messageId: assistantId,
+            usage,
+            responseDurationMs: responseDurationMs(responseStartedAt),
+          },
+          true
+        )
       } else if (result.turn.status === 'completed') {
         settleCurrentAttempt('success')
         apply(
@@ -5325,27 +5376,16 @@ export async function runCodexSubscriptionChat(
           )
         } else {
           settleCurrentAttempt('other')
-          if (args.signal.aborted)
-            apply(
-              {
-                kind: 'aborted',
-                messageId: assistantId,
-                usage,
-                responseDurationMs: responseDurationMs(responseStartedAt),
-              },
-              true
-            )
-          else
-            apply(
-              {
-                kind: 'finish',
-                messageId: assistantId,
-                finishReason: 'interrupted',
-                usage,
-                responseDurationMs: responseDurationMs(responseStartedAt),
-              },
-              true
-            )
+          apply(
+            {
+              kind: 'finish',
+              messageId: assistantId,
+              finishReason: 'interrupted',
+              usage,
+              responseDurationMs: responseDurationMs(responseStartedAt),
+            },
+            true
+          )
         }
       } else {
         settleCurrentAttempt('other')
@@ -5417,6 +5457,7 @@ export async function runCodexSubscriptionChat(
         )
     }
   } finally {
+    managedTaskRecoveryStop.abort()
     args.onTurnControl?.(null)
     settleCurrentAttempt('other')
     // Deliberate order: (1) listener OFF so no new notification can queue another write; (2) await in-flight

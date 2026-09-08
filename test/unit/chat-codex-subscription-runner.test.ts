@@ -364,7 +364,9 @@ class FakeCodexClient {
   startTurnHook: ((params: unknown) => void | Promise<void>) | null = null
   deleteThreadHook: ((params: unknown) => void | Promise<void>) | null = null
   interruptTurnHook: ((params: unknown) => void | Promise<void>) | null = null
-  requestHook: ((method: string, params: unknown) => void | Promise<void>) | null = null
+  requestHook:
+    | ((method: string, params: unknown) => void | Record<string, unknown> | Promise<void | Record<string, unknown>>)
+    | null = null
   initializeResult: { capabilities?: Record<string, boolean> | null } = { capabilities: null }
   private threadSequence = 0
   private readonly listeners = new Set<NotificationListener>()
@@ -468,10 +470,9 @@ class FakeCodexClient {
     return this.serverRequestHandler(request, new AbortController().signal)
   }
 
-  async request(method: string, params: unknown, options?: unknown): Promise<Record<string, never>> {
+  async request(method: string, params: unknown, options?: unknown): Promise<Record<string, unknown>> {
     this.requestCalls.push({ method, params, options })
-    await this.requestHook?.(method, params)
-    return {}
+    return (await this.requestHook?.(method, params)) ?? {}
   }
 
   waitForExit(): Promise<never> {
@@ -6625,7 +6626,9 @@ describe('Codex subscription runner', () => {
       }
     })
 
-    it('keeps an in-flight Codex task during root failover without repeating the side effect', async () => {
+    it.each([
+      0, 20_000, 360_000,
+    ])('keeps an in-flight Codex task during root failover for %i ms without repeating the side effect', async (recoveryMs) => {
       const workspace = makeWorkspace()
       const conversation = makeConversation(workspace.id, {})
       persistUser(conversation.id, 'user_failover_child_in_flight', 'Delegate and continue', 1)
@@ -6700,6 +6703,7 @@ describe('Codex subscription runner', () => {
       })
       await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(2))
 
+      if (recoveryMs) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
       clientA.emit(
         completedNotification(
           'thread_1',
@@ -6715,6 +6719,22 @@ describe('Codex subscription runner', () => {
         threadId: 'thread_2',
         turnId: 'turn_child_in_flight',
       })
+
+      if (recoveryMs) {
+        try {
+          await vi.advanceTimersByTimeAsync(recoveryMs)
+          if (recoveryMs === 360_000) {
+            // A different conversation can successfully probe A while this root still
+            // waits for its child. The old quota must not overwrite that newer success.
+            const router = getSubscriptionFailoverRouter()
+            const admitted = router.tryAdmit(PRIMARY)
+            expect(admitted.ok && admitted.lease).toBeTruthy()
+            if (admitted.ok) router.confirmAttemptSuccess(PRIMARY, admitted.lease)
+          }
+        } finally {
+          vi.useRealTimers()
+        }
+      }
 
       clientA.emit({
         method: 'item/agentMessage/delta',
@@ -6737,6 +6757,125 @@ describe('Codex subscription runner', () => {
       expect(clientA.startTurnCalls).toHaveLength(2)
       expect(clientB.startThreadCalls).toHaveLength(1)
       expect(clientB.startTurnCalls).toHaveLength(1)
+      expect(assistantMessages(conversation.id)[0].error).toBeUndefined()
+      expect(JSON.stringify(clientB.startTurnCalls[0])).toContain('Side effect completed once.')
+      if (recoveryMs === 360_000) expect(getSubscriptionFailoverRouter().getHealth(PRIMARY).state).toBe('available')
+    })
+
+    it.each([
+      { outcome: 'continue', childError: 'UsageLimitExceeded: weekly' },
+      { outcome: 'abort', childError: 'UsageLimitExceeded: weekly' },
+      { outcome: 'continue', childError: 'Rate limit reached' },
+    ])('recovers simultaneous quota: $outcome / $childError', async ({ outcome, childError }) => {
+      setAppSetting(
+        'chat.subscriptionAccounts',
+        JSON.stringify([{ id: 'acc_b', kind: 'codex-subscription', label: 'Account B', createdAt: 1 }])
+      )
+      setFailoverRoute({ primaryProviderId: PRIMARY, enabled: true, fallbackProviderIds: [FALLBACK] })
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_simultaneous_quota', 'Delegate and continue', 1)
+      const clientA = new FakeCodexClient()
+      const clientB = new FakeCodexClient()
+      codexManagerBridge.setClient(clientB, 'acc_b')
+      clientA.queueTurn({ turnId: 'root_a', notifications: [] })
+      clientA.queueTurn({ turnId: 'child_a', notifications: [] })
+      clientA.requestHook = (method) => {
+        if (method === 'account/rateLimits/read') return { rateLimits: { primary: { usedPercent: 100 } } }
+      }
+      clientB.queueTurn({ turnId: 'child_b', notifications: [] })
+      clientB.queueTurn({
+        turnId: 'root_b',
+        notifications: [completedNotification('thread_2', 'root_b')],
+      })
+      clientB.interruptTurnHook = (params) => {
+        const { threadId, turnId } = params as { threadId: string; turnId: string }
+        clientB.emit(completedNotification(threadId, turnId, 'interrupted'))
+      }
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: { name: 'explore', description: 'Explore', prompt: 'Inspect.', source: 'built-in' },
+        profile: {
+          version: 1,
+          agentName: 'explore',
+          effective: {
+            providerId: PRIMARY,
+            modelId: 'gpt-5.6-mini',
+            configuredEffort: 'high',
+            sentEffort: 'high',
+            source: 'conversation-agent',
+            candidateIndex: 0,
+          },
+          attempts: [],
+        },
+      })
+      const controller = new AbortController()
+      const events: ChatStreamEvent[] = []
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, clientA, (event) => events.push(event))
+      args.mode = 'agent'
+      args.signal = controller.signal
+      args.failoverChain = [PRIMARY, FALLBACK]
+      args.resolveNextTarget = vi.fn(async () => failoverTarget(clientB, FALLBACK, 'acc_b'))
+      args.onFailoverTransition = vi.fn()
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(1))
+      const taskResult = clientA.serverRequest({
+        id: 'simultaneous_task',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'root_a',
+          itemId: 'simultaneous_task',
+          callId: 'simultaneous_task',
+          tool: 'task',
+          arguments: { agent: 'explore', prompt: 'Inspect the result once.' },
+        },
+      })
+      await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(2))
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      try {
+        clientA.emit(completedNotification('thread_1', 'root_a', 'failed', 'UsageLimitExceeded: weekly'))
+        await waitImmediate()
+        expect(getSubscriptionFailoverRouter().getHealth(PRIMARY).state).toBe('exhausted')
+        clientA.emit(completedNotification('thread_2', 'child_a', 'failed', childError))
+        await vi.waitFor(() => expect(clientB.startTurnCalls).toHaveLength(1))
+        await vi.advanceTimersByTimeAsync(20_000)
+      } finally {
+        vi.useRealTimers()
+      }
+      expect(events.some((event) => event.kind === 'error')).toBe(false)
+      expect(args.resolveNextTarget).not.toHaveBeenCalled()
+      if (outcome === 'abort') {
+        controller.abort()
+        await expect(taskResult).resolves.toMatchObject({ success: false })
+      } else {
+        clientB.emit({
+          method: 'item/agentMessage/delta',
+          params: { threadId: 'thread_1', turnId: 'child_b', itemId: 'answer', delta: 'Recovered child result.' },
+        })
+        clientB.emit(completedNotification('thread_1', 'child_b'))
+        await expect(taskResult).resolves.toMatchObject({ success: true })
+      }
+      await running
+      expect(events.some((event) => event.kind === 'error')).toBe(false)
+      expect(
+        events.filter((event) => event.kind === 'tool-input-start' && event.toolCallId === 'simultaneous_task')
+      ).toHaveLength(1)
+      expect(events.filter((event) => event.kind === 'message-start')).toHaveLength(1)
+      if (outcome === 'abort') {
+        expect(events.some((event) => event.kind === 'aborted')).toBe(true)
+        expect(args.resolveNextTarget).not.toHaveBeenCalled()
+        expect(clientB.startTurnCalls).toHaveLength(1)
+      } else {
+        expect(clientB.startTurnCalls).toHaveLength(2)
+        expect(JSON.stringify(clientB.startTurnCalls[1])).toContain('Recovered child result.')
+        expect(args.onFailoverTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ scope: 'root', toProviderId: FALLBACK })
+        )
+        expect(args.onFailoverTransition).toHaveBeenCalledWith(
+          expect.objectContaining({ scope: 'subagent', toProviderId: FALLBACK })
+        )
+        expect(events.some((event) => event.kind === 'finish')).toBe(true)
+      }
     })
 
     it('aborts an in-flight Codex task when the root fails with a non-quota error', async () => {
