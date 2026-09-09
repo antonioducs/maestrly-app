@@ -5,6 +5,24 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
+
+### Added
+
+- Ordered Claude subscription account rotation for chat, subagents, summaries,
+  and image interpretation, with configurable fallback accounts.
+
+### Fixed
+
+- Preserve conversation context and completed tool results when switching
+  subscription accounts after usage limits are reached.
+- Make GPT account failover transparent and preserve physical account ownership.
+- Harden archive extraction and web text parsing.
+
+### Changed
+
+- Update compatible dependencies and development tools.
+
 ## [0.2.0] - 2026-09-07
 
 ### Added
