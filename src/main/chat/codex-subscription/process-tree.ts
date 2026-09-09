@@ -34,19 +34,29 @@ export class CodexProcessTree {
             windowsHide: true,
             timeout: 5_000,
           },
-          (error, _stdout, stderr) => {
+          async (error, _stdout, stderr) => {
             if (!error) return resolve()
             // taskkill can report a child that exited while its parent tree was being killed.
             // Accept only confirmed root exit and exclusively already-exited diagnostics.
             const reasons = String(stderr)
               .split(/\r?\n/)
               .filter((line) => /^Reason:/i.test(line.trim()))
-            if (
-              this.rootExited &&
-              reasons.length > 0 &&
-              reasons.every((line) => /There is no running instance of the task/i.test(line))
-            ) {
-              resolve()
+            if (reasons.length > 0 && reasons.every((line) => /There is no running instance of the task/i.test(line))) {
+              // The taskkill callback may run before Node delivers the root's exit event.
+              // Wait on our ChildProcess, never probe or kill a potentially reused PID.
+              if (!this.rootExited) {
+                await new Promise<void>((done) => {
+                  const finish = (): void => {
+                    clearTimeout(timer)
+                    this.child.removeListener('exit', finish)
+                    done()
+                  }
+                  const timer = setTimeout(finish, 1_000)
+                  this.child.once('exit', finish)
+                })
+              }
+              if (this.rootExited) resolve()
+              else reject(error)
             } else reject(error)
           }
         )
