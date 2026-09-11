@@ -31,6 +31,8 @@ describe('approved Git workspace delivery', () => {
       ).trim()
     try {
       execFileSync('git', ['init', '--initial-branch=main', repo], { stdio: 'ignore' })
+      // Keep the patch fixture independent of the runner's global Windows Git settings.
+      git(['config', 'core.autocrlf', 'false'])
       await writeFile(path.join(repo, 'file.txt'), 'main\n')
       git(['add', '.'])
       git(['commit', '-m', 'fixture'])
