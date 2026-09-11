@@ -109,6 +109,8 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import type { ClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
+import { resolveClaudeBehaviorProfile } from '../../src/main/chat/behavior-profile'
+import { opusUltraGuidance } from '../../src/main/chat/opus/prompt'
 import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
 
 const identity: ClaudeSubscriptionAccountIdentity = {
@@ -184,7 +186,7 @@ class PlanQuery implements AsyncIterable<SDKMessage> {
       totalTokens: 420,
       maxTokens: 200_000,
       percentage: 0.21,
-      model: 'claude-sonnet',
+      model: this.options.model === 'claude-opus-5' ? 'claude-opus-5' : 'claude-sonnet',
     }
   })
   readonly initializationResult = vi.fn(async () => ({
@@ -210,7 +212,7 @@ class PlanQuery implements AsyncIterable<SDKMessage> {
           id: 'anthropic-assistant',
           type: 'message',
           role: 'assistant',
-          model: 'claude-sonnet',
+          model: this.options.model === 'claude-opus-5' ? 'claude-opus-5' : 'claude-sonnet',
           content: [
             {
               type: 'tool_use',
@@ -925,6 +927,49 @@ describe('Claude official chat runner', () => {
   })
   afterEach(closeDb)
 
+  it.each([
+    'agent',
+    'design',
+    'plan',
+    'ask',
+    'maestro',
+  ] as const)('uses Opus Ultra guidance in %s mode', async (mode) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    upsertChatMessage({
+      id: 'user-opus-ultra',
+      conversationId: conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'text-opus-ultra', text: 'Inspect the project.' }],
+      createdAt: 1,
+    })
+    const manager = new StreamingTextManager()
+    await runClaudeChat({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      cwd: '/repo',
+      selection: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus-5' },
+      mode,
+      permMode: 'ask',
+      maestrlyUltra: true,
+      reasoningEffort: 'high',
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      broker: { assert: vi.fn(), on: vi.fn() } as never,
+      questionBroker: { ask: vi.fn() } as never,
+      emit: vi.fn(),
+      signal: new AbortController().signal,
+    })
+    const options = manager.calls[0].options ?? {}
+    expect(options.systemPrompt).toContain(opusUltraGuidance(mode))
+    expect(options.systemPrompt).not.toContain('integrate results, verify, and review before finishing')
+    expect(options.systemPrompt).not.toContain('Stay read-only, investigate deeply, and cross-check')
+    expect(options.effort).toBe('high')
+    expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
+    if (mode === 'design') expect(options.systemPrompt).toContain('## Design + Ultra guidance')
+    if (mode === 'maestro') expect(options.systemPrompt).toContain('Keep the frozen Strategy')
+  })
+
   it('gives Design the Agent tool surface, hashes its prompt once, and keeps Plan/Ask restricted', async () => {
     const workspace = makeWorkspace()
     h.listAgents.mockResolvedValue([
@@ -1452,7 +1497,10 @@ describe('Claude official chat runner', () => {
     expect(events.some((event) => event.kind === 'finish')).toBe(true)
   })
 
-  it('keeps the Fable system/hash stable across environment changes and sends current state transiently', async () => {
+  it.each([
+    'fable',
+    'opus',
+  ] as const)('keeps the %s system/hash stable across environment changes and sends current state transiently', async (family) => {
     const workspace = makeWorkspace()
     const runWithGit = async (dirty: boolean) => {
       const conversation = makeConversation(workspace.id, { cwd: '/repo' })
@@ -1470,7 +1518,8 @@ describe('Claude official chat runner', () => {
         projectId: workspace.id,
         cwd: '/repo',
         selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+        behaviorProfile: family === 'fable' ? FABLE_51_BEHAVIOR_PROFILE : undefined,
+        resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
         mode: 'plan',
         permMode: 'ask',
         manager: manager as unknown as ClaudeSubscriptionManager,
@@ -1504,8 +1553,16 @@ describe('Claude official chat runner', () => {
     expect(clean.prompt).toContain('# Current environment')
     expect(clean.prompt).toContain('Git branch: main (clean)')
     expect(dirty.prompt).toContain('Git branch: main (uncommitted changes)')
-    expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
-    expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+    if (family === 'fable') {
+      expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+      expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+    } else {
+      expect(clean.options.systemPrompt).toContain(
+        resolveClaudeBehaviorProfile({ requestedModelId: 'claude-opus-5' }).profile!.id
+      )
+      expect(clean.options.thinking).toBeUndefined() // Preserve Opus's enabled SDK default.
+      expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
+    }
   })
 
   it('offers exactly the reviewer tools and waits for submit_review tool-result acknowledgement', async () => {
@@ -2635,7 +2692,10 @@ describe('Claude official chat runner', () => {
     })
   })
 
-  it('resumes Fable with a stable system while appending the latest environment observation', async () => {
+  it.each([
+    'fable',
+    'opus',
+  ] as const)('resumes %s with a stable system while appending the latest environment observation', async (family) => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
     const manager = new FakeManager()
@@ -2645,7 +2705,8 @@ describe('Claude official chat runner', () => {
         projectId: workspace.id,
         cwd: '/repo',
         selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+        behaviorProfile: family === 'fable' ? FABLE_51_BEHAVIOR_PROFILE : undefined,
+        resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
         mode: 'plan',
         permMode: 'ask',
         manager: manager as unknown as ClaudeSubscriptionManager,

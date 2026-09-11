@@ -1009,6 +1009,36 @@ describe('runtime tool-image capability learning', () => {
     expect(request).not.toHaveProperty('maxThinkingTokens')
   })
 
+  it.each(['high', 'maestrly-ultra'])('applies Opus API behavior at %s with transient environment and unchanged effort', async (effort) => {
+    mocks.resolveChatModel.mockReturnValue({
+      ...mocks.resolveChatModel(),
+      transport: 'anthropic',
+    })
+    mocks.getProviderModelMetaWithStatus.mockResolvedValue({
+      status: 'available',
+      meta: { reasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], maxOutput: 128_000 },
+    })
+    mocks.streamText.mockReturnValue(fullStream([]) as never)
+    await runChat({
+      conversationId: 'c', projectId: 'w', cwd: '/tmp/w',
+      selection: { providerId: 'openai', modelId: 'claude-opus-5' },
+      reasoningOverride: effort,
+      broker: { assert: async () => undefined } as unknown as PermissionBroker,
+      questionBroker: {} as QuestionBroker,
+      emit: vi.fn(), signal: new AbortController().signal,
+      assistantMessageId: 'opus-api-assistant', assistantCreatedAt: 1, responseStartedAt: 1,
+    })
+    const request = mocks.streamText.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(request.system).toContain('maestrly-opus-5-v1')
+    expect(request.system).not.toContain('maestrly-fable-5.1-v1')
+    expect(request.system).not.toContain("Today's date:")
+    expect(request.system).not.toContain('finish with a critical review of your own changes')
+    expect(JSON.stringify(request.messages)).toContain('# Current environment')
+    expect(request.providerOptions).toEqual({ anthropic: { effort: effort === 'high' ? 'high' : 'max' } })
+    expect(request.maxOutputTokens).toBe(128_000)
+    expect(JSON.stringify(listChatMessages('c'))).not.toContain('# Current environment')
+  })
+
   it('recognizes only image, vision and multimodal rejection errors', () => {
     expect(isImageRelatedProviderError('image_url content blocks are not supported by this model')).toBe(true)
     expect(isImageRelatedProviderError('this model does not support image input')).toBe(true)

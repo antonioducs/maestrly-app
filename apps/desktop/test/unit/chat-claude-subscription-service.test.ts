@@ -330,15 +330,18 @@ describe('Claude subscription service integration', () => {
     ).toBeUndefined()
   })
 
-  it('isolates A → Fable 5.1 → A behavior without changing saved model or effort preferences', async () => {
+  it.each([
+    ['fable', 'claude-fable-5-1', 'maestrly-fable-5.1-v1'],
+    ['opus', 'claude-opus-5', 'maestrly-opus-5-v1'],
+  ])('isolates A → %s → A behavior without changing saved preferences', async (alias, modelId, profileId) => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
     h.state.models = [
       ...h.state.models,
       {
-        value: 'fable',
-        resolvedModel: 'claude-fable-5-1',
-        displayName: 'Claude Fable 5.1',
+        value: alias,
+        resolvedModel: modelId,
+        displayName: modelId,
         supportsEffort: true,
         supportedEffortLevels: ['high', 'max'],
         supportsAdaptiveThinking: true,
@@ -372,11 +375,11 @@ describe('Claude subscription service integration', () => {
     await send('First A turn.', 1)
     expect(claudeCalls[0]?.[0].behaviorProfile).toBeNull()
 
-    setModel('fable')
-    await send('Fable turn.', 2)
+    setModel(alias)
+    await send('Profile turn.', 2)
     expect(claudeCalls[1]?.[0]).toMatchObject({
-      resolvedModelId: 'claude-fable-5-1',
-      behaviorProfile: { id: 'maestrly-fable-5.1-v1' },
+      resolvedModelId: modelId,
+      behaviorProfile: { id: profileId },
     })
 
     setModel('sonnet')
@@ -389,13 +392,16 @@ describe('Claude subscription service integration', () => {
     })
   })
 
-  it('freezes the behavior version and fails closed on an incompatible frozen identity', async () => {
+  it.each([
+    ['fable', 'claude-fable-5-1', 'maestrly-fable-5.1-v1', 'chat.fable51Profile'],
+    ['opus', 'claude-opus-5', 'maestrly-opus-5-v1', 'chat.opus5Profile'],
+  ])('freezes %s behavior and fails closed on an incompatible identity', async (alias, modelId, profileId, flag) => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
     h.state.models = [
       {
-        value: 'fable',
-        resolvedModel: 'claude-fable-5-1',
+        value: alias,
+        resolvedModel: modelId,
         supportsEffort: true,
         supportedEffortLevels: ['high'],
         supportsFastMode: true,
@@ -404,7 +410,7 @@ describe('Claude subscription service integration', () => {
     patchConvUiPrefs(conversation.id, {
       chat: {
         providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-        modelId: 'fable',
+        modelId: alias,
         mode: 'agent',
         permMode: 'ask',
         reasoning: 'high',
@@ -416,9 +422,9 @@ describe('Claude subscription service integration', () => {
     expect(frozen).toMatchObject({
       ok: true,
       selection: {
-        modelId: 'fable',
-        resolvedModelId: 'claude-fable-5-1',
-        behaviorProfileId: 'maestrly-fable-5.1-v1',
+        modelId: alias,
+        resolvedModelId: modelId,
+        behaviorProfileId: profileId,
       },
     })
     if (!frozen.ok) throw new Error(frozen.error)
@@ -429,7 +435,8 @@ describe('Claude subscription service integration', () => {
       })
     ).toEqual({ ok: false, error: 'executor-unavailable' })
 
-    setAppFlag('chat.fable51Profile', false)
+    setAppFlag(flag, false)
+    expect(await revalidateReviewLoopSelection(frozen.selection)).toEqual({ ok: true })
     const disabled = await resolveReviewLoopSelection(conversation.id)
     expect(disabled).toMatchObject({ ok: true, selection: { behaviorProfileId: null } })
   })

@@ -454,6 +454,26 @@ describe('GitHub Copilot official runner', () => {
     expect(config).not.toHaveProperty('toolChoice')
   })
 
+  it('selects Opus behavior and calibrated Ultra without leaking SDK options into Copilot', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    persistUser(conversation.id, 'user-opus-copilot', 'Inspect the project.', 1)
+    const manager = new FakeManager()
+    manager.queue(() => {})
+    await runGitHubCopilotChat({
+      ...args(conversation.id, workspace.id, cwd, manager),
+      selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'claude-opus-5' },
+      maestrlyUltra: true,
+    })
+    const config = manager.createCalls[0]
+    expect(config.systemMessage?.content).toContain('maestrly-opus-5-v1')
+    expect(config.systemMessage?.content).not.toContain('critically review it before finishing')
+    expect(config.systemMessage?.content).not.toContain('maestrly-fable-5.1-v1')
+    expect(config).not.toHaveProperty('thinking')
+    expect(config).not.toHaveProperty('betas')
+    expect(config).not.toHaveProperty('toolChoice')
+  })
+
   it('offers exactly the reviewer read-only tools and terminates after accepted submit_review', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })

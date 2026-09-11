@@ -66,7 +66,43 @@ describe.skipIf(process.platform === 'win32')('Codex owned process group shutdow
 })
 
 describe('Windows Codex shutdown targeting', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it.each([true, false])('waits for delayed root exit without hiding a live root: %s', async (exits) => {
+    vi.useFakeTimers()
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const child = new childProcess.ChildProcess()
+    Object.defineProperty(child, 'pid', { value: 12345 })
+    const error = new Error('taskkill failed')
+    vi.spyOn(childProcess, 'execFile').mockImplementation((...args: unknown[]) => {
+      const complete = args.at(-1) as (error: Error, stdout: string, stderr: string) => void
+      complete(error, '', 'Reason: There is no running instance of the task.')
+      return new childProcess.ChildProcess()
+    })
+    const tree = new CodexProcessTree(child as childProcess.ChildProcessWithoutNullStreams)
+    let finished = false
+    const stopping = tree.stop(50)
+    const outcome = stopping.then(
+      () => {
+        finished = true
+        return null
+      },
+      (failure) => {
+        finished = true
+        return failure
+      }
+    )
+    await vi.advanceTimersByTimeAsync(100)
+    expect(finished).toBe(false)
+    if (exits) child.emit('exit', 0, null)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await outcome).toBe(exits ? null : error)
+    expect(child.listenerCount('exit')).toBe(exits ? 0 : 1)
+    expect(childProcess.execFile).toHaveBeenCalledTimes(1)
+  })
 
   it('awaits taskkill for only the live root tree before sending EOF', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')

@@ -89,6 +89,29 @@ describe('Claude Agent SDK query options', () => {
     expect(options).not.toHaveProperty('maxThinkingTokens')
   })
 
+  it.each([
+    'low',
+    'high',
+    'max',
+  ])('preserves Opus default thinking and selected %s effort without Fable hooks', (effort) => {
+    const options = buildClaudeChatQueryOptions({
+      abortController: new AbortController(),
+      cwd: '/project',
+      modelId: 'claude-opus-5',
+      reasoningEffort: effort,
+      systemPrompt: 'Opus system prompt',
+      bridge: bridge(),
+      disallowedNativeTools: ['Bash'],
+    })
+
+    // An omitted thinking setting retains Opus's enabled SDK default.
+    expect(options.thinking).toBeUndefined()
+    expect(options).not.toHaveProperty('maxThinkingTokens')
+    expect(options.effort).toBe(effort)
+    expect(options.hooks?.PostToolUse).toBeUndefined()
+    expect(options.hooks?.PreToolUse).toHaveLength(1)
+  })
+
   it('rejects unknown effort values', () => {
     expect(resolveClaudeEffort('invalid')).toBeUndefined()
     expect(resolveClaudeEffort('off')).toBeUndefined()

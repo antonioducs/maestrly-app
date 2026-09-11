@@ -8,8 +8,10 @@ import type { ChatAgent } from './agents'
 import { getProvider } from './catalog'
 import { chatDiag } from './diag-log'
 import { MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from './fable/profile'
-import { compileFableSubagentPrompt } from './fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from './fable/profile'
+import { OPUS_5_PROFILE_FLAG } from './opus/profile'
+import { resolveClaudeBehaviorProfile } from './behavior-profile'
+import { compileClaudeSubagentPrompt } from './behavior-prompt'
 import { isOpenAIHarnessActive, OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE, openAIHarnessProviderOptions } from './harness'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import {
@@ -337,9 +339,10 @@ export async function runSubagent(args: {
     const resolvedSubModel = resolveChatModel(usedModel.providerId, usedModel.modelId, {
       astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
     })
-    const behaviorProfile = resolveFableBehaviorProfile({
+    const behaviorProfile = resolveClaudeBehaviorProfile({
       requestedModelId: usedModel.modelId,
-      enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+      fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+      opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
     }).profile
     const provider = getProvider(usedModel.providerId)
     const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
@@ -444,7 +447,7 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = compileFableSubagentPrompt([def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n'), behaviorProfile)
+    let subSystem = compileClaudeSubagentPrompt([def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n'), behaviorProfile)
     chatDiag({
       kind: 'fable-behavior-profile',
       profile: behaviorProfile?.id ?? 'legacy',

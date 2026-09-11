@@ -6,6 +6,7 @@ import type {
   ClaudeSubscriptionAccountIdentity,
   ClaudeSubscriptionManager,
 } from '../../src/main/chat/claude-agent-sdk/manager'
+import { resolveClaudeBehaviorProfile } from '../../src/main/chat/behavior-profile'
 import { CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import type { SubagentTextUpdate } from '../../src/main/chat/subagent-text-stream'
 import { closeDb, freshDb } from '../helpers/db'
@@ -237,6 +238,40 @@ describe('Claude isolated subagent runner', () => {
     expect(options.systemPrompt).toContain('report to the parent')
     expect(options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
     expect((options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+    expect(options.allowedTools).not.toContain('mcp__maestrly__task')
+    expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
+  })
+
+  it.each([
+    'claude-opus-5',
+    'opus',
+  ])('applies Opus from the effective child model %s without Fable hooks', async (modelId) => {
+    const manager = new FakeManager()
+    manager.query = new FakeQuery([result()])
+
+    await runClaudeSubagent({
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      conversationId: 'conversation-1',
+      cwd: '/repo',
+      profile: profile({ modelId }),
+      resolvedModelId: modelId === 'opus' ? 'claude-opus-5' : undefined,
+      definition,
+      signal: new AbortController().signal,
+      agentName: 'reviewer',
+      task: 'Inspect independently.',
+      readOnly: true,
+      tools: tools(),
+    })
+
+    const options = manager.calls[0]?.options ?? {}
+    expect(options.model).toBe('claude-opus-5')
+    expect(options.systemPrompt).toContain(
+      resolveClaudeBehaviorProfile({ requestedModelId: 'claude-opus-5' }).profile!.id
+    )
+    expect(options.thinking).toBeUndefined()
+    expect(options.effort).toBe('high')
+    expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
     expect(options.allowedTools).not.toContain('mcp__maestrly__task')
     expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
   })
