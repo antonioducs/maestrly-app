@@ -52,8 +52,11 @@ export class RunnerJournal {
       await handle.close()
     }
     await rename(temporary, this.file)
-    const directory = await open(path.dirname(this.file), 'r')
-    try { await directory.sync() } finally { await directory.close() }
+    // Windows cannot fsync directories; the file itself is synced before the atomic rename.
+    if (process.platform !== 'win32') {
+      const directory = await open(path.dirname(this.file), 'r')
+      try { await directory.sync() } finally { await directory.close() }
+    }
     return next
   }
 }
