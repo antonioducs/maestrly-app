@@ -76,7 +76,7 @@ export function winSpawnArgs(
 /** Spawn a CLI with Windows shim handling and return its ChildProcess. */
 export function spawnCli(bin: string, args: string[], opts: SpawnOptions = {}): ChildProcess {
   const r = winSpawnArgs(bin, args)
-  return cpSpawn(r.file, r.args, opts)
+  return cpSpawn(r.file, r.args, { ...opts, shell: false })
 }
 
 /** Promisified execFile with Windows shim handling; return stdout/stderr. */
@@ -86,7 +86,7 @@ export function execCli(
   opts: ExecFileOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
   const r = winSpawnArgs(bin, args)
-  return execFileAsync(r.file, r.args, opts) as unknown as Promise<{ stdout: string; stderr: string }>
+  return execFileAsync(r.file, r.args, { ...opts, shell: false }) as unknown as Promise<{ stdout: string; stderr: string }>
 }
 
 // Platform-specific binary candidates and PATH lookup.

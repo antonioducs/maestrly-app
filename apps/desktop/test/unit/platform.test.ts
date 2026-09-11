@@ -38,6 +38,7 @@ import {
   killProcessTree,
   openInTerminal,
   spawnCli,
+  execCli,
   whichBin,
   whichBinAsync,
   findOnPath,
@@ -244,6 +245,20 @@ describe('spawnCli delegates the resolved file and arguments to child_process', 
     const call = h.spawn.mock.calls[0]!
     // POSIX CI preserves file and arguments; winSpawnArgs above covers Windows.
     expect(call[2]).toMatchObject({ cwd: '/tmp' })
+  })
+})
+
+describe('CLI wrappers keep arguments out of an implicit shell', () => {
+  it('forces direct spawning even when shell is requested', () => {
+    spawnCli('/tmp/tool with spaces', ['$(echo unsafe)', '&'], { shell: true })
+    expect(h.spawn).toHaveBeenCalledWith('/tmp/tool with spaces', ['$(echo unsafe)', '&'], { shell: false })
+  })
+
+  it('forces direct execFile even when shell is requested', async () => {
+    await execCli('/tmp/tool with spaces', ['$(echo unsafe)', '&'], { shell: true })
+    expect(h.execFile).toHaveBeenCalledWith(
+      '/tmp/tool with spaces', ['$(echo unsafe)', '&'], { shell: false }, expect.any(Function)
+    )
   })
 })
 
