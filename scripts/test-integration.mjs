@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 
 const name = `maestrly-integration-pg-${process.pid}`
@@ -26,7 +27,7 @@ try {
   run('docker', ['exec', name, 'psql', '-U', 'postgres', '-d', 'maestrly', '-v', 'ON_ERROR_STOP=1', '-c', "create role maestrly_runtime login password 'maestrly_integration_runtime' nosuperuser nocreatedb nocreaterole noinherit nobypassrls; grant connect on database maestrly to maestrly_runtime;"])
   const migrationUrl = `postgres://postgres:${password}@127.0.0.1:${port}/maestrly`
   const runtimeUrl = `postgres://maestrly_runtime:maestrly_integration_runtime@127.0.0.1:${port}/maestrly`
-  const env = { ...process.env, MIGRATION_DATABASE_URL: migrationUrl, DATABASE_URL: runtimeUrl, MAESTRLY_TEST_DATABASE_URL: runtimeUrl, MAESTRLY_TEST_MIGRATION_DATABASE_URL: migrationUrl, BETTER_AUTH_SECRET: 'integration-secret-0123456789abcdef' }
+  const env = { ...process.env, MIGRATION_DATABASE_URL: migrationUrl, DATABASE_URL: runtimeUrl, MAESTRLY_TEST_DATABASE_URL: runtimeUrl, MAESTRLY_TEST_MIGRATION_DATABASE_URL: migrationUrl, BETTER_AUTH_SECRET: randomBytes(32).toString('hex') }
   run(process.execPath, ['--import', 'tsx', 'apps/server/src/db/migrate.ts'], { env })
   run('npm', ['run', 'test:integration', '--workspace', '@maestrly/server'], { env })
 } finally {
