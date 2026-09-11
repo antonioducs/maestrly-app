@@ -112,8 +112,16 @@ import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolB
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
-import { fableEnvironmentContext } from '../fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import {
+  resolveClaudeBehaviorProfile,
+  isFableBehaviorProfile,
+  isOpusBehaviorProfile,
+  type ClaudeBehaviorProfile,
+} from '../behavior-profile'
+import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
+import { claudeEnvironmentContext } from '../behavior-prompt'
+import { opusUltraGuidance } from '../opus/prompt'
 import { createFablePostToolUseHook } from '../fable/sdk-hooks'
 import { estimateTextTokens, portableContextLoad } from '../portable-context'
 import { classifyClaudeQuotaFailure } from './quota-error'
@@ -137,7 +145,7 @@ export interface RunClaudeChatArgs {
   selection: ChatModelRef
   resolvedModelId?: string
   /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: FableBehaviorProfile | null
+  behaviorProfile?: ClaudeBehaviorProfile | null
   /** Runtime model id frozen for an isolated review-loop execution. */
   frozenResolvedModelId?: string
   mode: ChatBehavior
@@ -226,7 +234,7 @@ interface PreparedRuntime {
   promptHash: string
   transientContext?: string
   fablePostToolUseHook?: ReturnType<typeof createFablePostToolUseHook>
-  behaviorProfile?: FableBehaviorProfile
+  behaviorProfile?: ClaudeBehaviorProfile
   agents: ChatAgent[]
   close: () => Promise<void>
 }
@@ -717,23 +725,36 @@ async function prepareRuntime(
     ]
       .filter(Boolean)
       .join(' ')
-    const ultra = args.maestrlyUltra
-      ? args.mode === 'maestro'
-        ? 'Maximum-rigor reasoning applies only to the orchestrator. Keep the frozen Strategy and choose agents deliberately from the Pool.'
-        : args.mode === 'design'
-          ? renderDesignUltraGuidance(args.mode)
-          : args.mode === 'agent'
-            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
-            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
-      : ''
     const behaviorProfile =
       args.behaviorProfile === undefined
-        ? resolveFableBehaviorProfile({
+        ? resolveClaudeBehaviorProfile({
             requestedModelId: args.selection.modelId,
             resolvedModelId: args.frozenResolvedModelId ?? args.resolvedModelId,
-            enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
           }).profile
         : args.behaviorProfile
+    const ultra = args.maestrlyUltra
+      ? args.mode === 'maestro'
+        ? [
+            'Maximum-rigor reasoning applies only to the orchestrator. Keep the frozen Strategy and choose agents deliberately from the Pool.',
+            isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n')
+        : args.mode === 'design'
+          ? [
+              renderDesignUltraGuidance(args.mode),
+              isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          : isOpusBehaviorProfile(behaviorProfile)
+            ? opusUltraGuidance(args.mode)
+            : args.mode === 'agent'
+              ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
+              : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
+      : ''
     const systemPrompt = [
       SYSTEM_PROMPT(
         args.cwd,
@@ -762,8 +783,8 @@ async function prepareRuntime(
       bridge,
       systemPrompt,
       promptHash: createHash('sha256').update(systemPrompt).digest('hex'),
-      ...(behaviorProfile ? { transientContext: fableEnvironmentContext(env) } : {}),
-      ...(behaviorProfile ? { fablePostToolUseHook: createFablePostToolUseHook() } : {}),
+      ...(behaviorProfile ? { transientContext: claudeEnvironmentContext(env) } : {}),
+      ...(isFableBehaviorProfile(behaviorProfile) ? { fablePostToolUseHook: createFablePostToolUseHook() } : {}),
       ...(behaviorProfile ? { behaviorProfile } : {}),
       agents,
       close: async () => {

@@ -91,7 +91,10 @@ import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
+import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
+import { opusUltraGuidance } from '../opus/prompt'
+import { resolveClaudeBehaviorProfile, isOpusBehaviorProfile, type ClaudeBehaviorProfile } from '../behavior-profile'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { resolveGitHubCopilotHarness } from './harness'
@@ -135,7 +138,7 @@ interface PreparedRuntime {
   toolSignature: string
   availableTools: string[]
   systemMessage: string
-  behaviorProfile?: FableBehaviorProfile
+  behaviorProfile?: ClaudeBehaviorProfile
   takeToolOutput: (toolCallId: string) => ToolOutput | undefined
   close: () => Promise<void>
 }
@@ -172,7 +175,7 @@ export interface RunGitHubCopilotChatArgs {
   cwd: string
   selection: ChatModelRef
   /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: FableBehaviorProfile | null
+  behaviorProfile?: ClaudeBehaviorProfile | null
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
   maestroLive?: MaestroLiveRunPort
@@ -670,9 +673,10 @@ async function prepareRuntime(
     const harness = resolveGitHubCopilotHarness(args.selection.modelId)
     const behaviorProfile =
       args.behaviorProfile === undefined
-        ? resolveFableBehaviorProfile({
+        ? resolveClaudeBehaviorProfile({
             requestedModelId: args.selection.modelId,
-            enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
           }).profile
         : args.behaviorProfile
     const projectContext = await buildProjectContext(args.projectId, args.cwd)
@@ -690,8 +694,10 @@ async function prepareRuntime(
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
         : args.mode === 'design'
-          ? renderDesignUltraGuidance(args.mode)
-          : args.mode === 'agent'
+          ? [renderDesignUltraGuidance(args.mode), isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : ''].filter(Boolean).join('\n\n')
+          : isOpusBehaviorProfile(behaviorProfile)
+            ? opusUltraGuidance(args.mode)
+            : args.mode === 'agent'
             ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
             : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
       : ''

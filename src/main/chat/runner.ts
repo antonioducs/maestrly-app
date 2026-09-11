@@ -155,8 +155,12 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
   openAINativeOutputText,
 } from './openai/native-tools'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from './fable/profile'
-import { FABLE_51_STYLE_AND_WORK, fableBehaviorHeader } from './fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from './fable/profile'
+import { OPUS_5_PROFILE_FLAG } from './opus/profile'
+import { resolveClaudeBehaviorProfile, isOpusBehaviorProfile, type ClaudeBehaviorProfile } from './behavior-profile'
+import { claudeStyleAndWork, claudeBehaviorHeader } from './behavior-prompt'
+import { opusUltraGuidance } from './opus/prompt'
+import { withOpusEnvironment } from './opus/environment'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -186,7 +190,7 @@ export const SYSTEM_PROMPT = (
   appToolsEnabled: boolean,
   mode: ChatBehavior,
   hasNotesTab: boolean,
-  behaviorProfile: FableBehaviorProfile | null = null
+  behaviorProfile: ClaudeBehaviorProfile | null = null
 ) => {
   const capabilityMode = capabilityBehaviorFor(mode)
   const legacyBase = `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
@@ -203,9 +207,9 @@ Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/
   const base = behaviorProfile
     ? `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
 
-${fableBehaviorHeader(behaviorProfile)}
+${claudeBehaviorHeader(behaviorProfile)}
 
-${FABLE_51_STYLE_AND_WORK}
+${claudeStyleAndWork(behaviorProfile)}
 
 # Using your tools
 Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
@@ -429,7 +433,7 @@ export interface RunChatArgs {
   cwd: string
   selection: ChatModelRef
   /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: FableBehaviorProfile | null
+  behaviorProfile?: ClaudeBehaviorProfile | null
   broker: PermissionBroker
   questionBroker: QuestionBroker
   emit: (ev: ChatStreamEvent) => void
@@ -564,9 +568,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const resolvedModel = resolveChatModel(selection.providerId, selection.modelId, { astraHarnessEnabled })
   const behaviorProfile =
     args.behaviorProfile === undefined
-      ? resolveFableBehaviorProfile({
+      ? resolveClaudeBehaviorProfile({
           requestedModelId: selection.modelId,
-          enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
         }).profile
       : args.behaviorProfile
   const modelHarnessProfileId = resolvedModel.modelHarnessProfileId ?? 'openai-default-v1'
@@ -1426,8 +1431,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     : mode === 'maestro'
       ? '\n\n# ULTRA ORCHESTRATOR\nUse maximum rigor while coordinating. Ultra applies only to the orchestrator profile; the frozen Strategy and Pool still govern every worker.'
       : mode === 'design'
-        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}`
-        : mode === 'agent'
+        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}${isOpusBehaviorProfile(behaviorProfile) ? `\n\n${opusUltraGuidance(mode)}` : ''}`
+        : isOpusBehaviorProfile(behaviorProfile)
+          ? `\n\n# ULTRA MODE\n${opusUltraGuidance(mode)}`
+          : mode === 'agent'
           ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
             'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
             'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
@@ -1442,7 +1449,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             'and be critical of your first conclusion before finishing.'
   let system =
     SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab, behaviorProfile) +
-    envContext +
+    (isOpusBehaviorProfile(behaviorProfile) ? '' : envContext) +
     projectContext +
     skillsCatalog +
     agentsCatalog +
@@ -1677,7 +1684,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const result = streamText({
       model: streamModel,
       system,
-      messages,
+      messages: isOpusBehaviorProfile(behaviorProfile) ? withOpusEnvironment(messages, envDetails) : messages,
       tools: allTools,
       stopWhen,
       maxRetries: AI_SDK_MAX_RETRIES,

@@ -110,7 +110,9 @@ import {
   type SubagentResumeRecreateReason,
   type SubagentResumeSource,
 } from '../subagent-resume'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from '../fable/profile'
+import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
+import { resolveClaudeBehaviorProfile } from '../behavior-profile'
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
@@ -3681,17 +3683,18 @@ export async function runCodexSubscriptionChat(
               : nativeClaude
                 ? await (async () => {
                     let runtimeSignature = ''
-                    let behaviorProfile: ReturnType<typeof resolveFableBehaviorProfile>['profile'] | undefined
+                    let behaviorProfile: ReturnType<typeof resolveClaudeBehaviorProfile>['profile'] | undefined
                     const outcome = await runClaudeSubagent({
                       conversationId: args.conversationId,
                       cwd: args.cwd,
                       profile,
                       prepareTarget: (target) => {
                         if (behaviorProfile === undefined)
-                          behaviorProfile = resolveFableBehaviorProfile({
+                          behaviorProfile = resolveClaudeBehaviorProfile({
                             requestedModelId: profile.effective!.modelId,
                             resolvedModelId: target.runtimeModelId,
-                            enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+                            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+                            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
                           }).profile
                         runtimeSignature = claudeSubagentRuntimeSignature({
                           modelId: target.runtimeModelId,

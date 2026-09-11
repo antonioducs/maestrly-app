@@ -16,8 +16,10 @@ import type {
 } from './manager'
 import { queueGitHubCopilotSessionCleanup } from './session-store'
 import { COPILOT_TOOL_SEARCH_DEFER_THRESHOLD } from './tools'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile } from '../fable/profile'
-import { compileFableSubagentPrompt } from '../fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
+import { resolveClaudeBehaviorProfile } from '../behavior-profile'
+import { compileClaudeSubagentPrompt } from '../behavior-prompt'
 import { chatDiag } from '../diag-log'
 
 const SESSION_WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1_000
@@ -168,11 +170,12 @@ export async function runGitHubCopilotSubagent(
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
   ].join('\n\n')
-  const behaviorProfile = resolveFableBehaviorProfile({
+  const behaviorProfile = resolveClaudeBehaviorProfile({
     requestedModelId: effective.modelId,
-    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
   }).profile
-  const systemMessage = compileFableSubagentPrompt(legacySystemMessage, behaviorProfile)
+  const systemMessage = compileClaudeSubagentPrompt(legacySystemMessage, behaviorProfile)
   chatDiag({
     kind: 'fable-behavior-profile',
     profile: behaviorProfile?.id ?? 'legacy',

@@ -28,8 +28,10 @@ import { buildClaudeFastModeSettings } from './options'
 import { gatedClaudeHumanText } from './user-prompt'
 import { normalizeClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from '../fable/profile'
-import { compileFableSubagentPrompt } from '../fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import { resolveClaudeBehaviorProfile, isFableBehaviorProfile, type ClaudeBehaviorProfile } from '../behavior-profile'
+import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
+import { compileClaudeSubagentPrompt } from '../behavior-prompt'
 import { createFablePostToolUseHook } from '../fable/sdk-hooks'
 import { chatDiag } from '../diag-log'
 
@@ -53,7 +55,7 @@ export interface RunClaudeSubagentArgs {
   profile: SubagentExecutionSnapshotV1
   /** Canonical child identity supplied by the Claude runtime when the configured model is an alias. */
   resolvedModelId?: string
-  behaviorProfile?: FableBehaviorProfile | null
+  behaviorProfile?: ClaudeBehaviorProfile | null
   definition: ChatAgent
   signal: AbortSignal
   agentName: string
@@ -175,14 +177,15 @@ async function runClaudeSubagentAttempt(
   ].join('\n\n')
   const behaviorProfile =
     args.behaviorProfile === undefined
-      ? resolveFableBehaviorProfile({
+      ? resolveClaudeBehaviorProfile({
           requestedModelId: effective.modelId,
           resolvedModelId: args.resolvedModelId,
-          enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+          opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
         }).profile
       : args.behaviorProfile
-  const systemPrompt = compileFableSubagentPrompt(legacySystemPrompt, behaviorProfile)
-  const fablePostToolUseHook = behaviorProfile ? createFablePostToolUseHook() : null
+  const systemPrompt = compileClaudeSubagentPrompt(legacySystemPrompt, behaviorProfile)
+  const fablePostToolUseHook = isFableBehaviorProfile(behaviorProfile) ? createFablePostToolUseHook() : null
   chatDiag({
     kind: 'fable-behavior-profile',
     profile: behaviorProfile?.id ?? 'legacy',
@@ -588,10 +591,11 @@ export async function runClaudeSubagent(
         if (frozenBehavior === undefined)
           frozenBehavior =
             prepared?.behaviorProfile === undefined
-              ? resolveFableBehaviorProfile({
+              ? resolveClaudeBehaviorProfile({
                   requestedModelId: effective.modelId,
                   resolvedModelId: runtimeModelId,
-                  enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+                  fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+                  opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
                 }).profile
               : prepared.behaviorProfile
         let resume = prepared ? prepared.resume : args.resume

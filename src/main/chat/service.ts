@@ -358,8 +358,10 @@ import {
   setImageInterpreter,
 } from './image-interpreter'
 import { recordIpcSend } from '../performance/metrics'
-import { FABLE_51_PROFILE_FLAG, resolveFableBehaviorProfile, type FableBehaviorProfile } from './fable/profile'
-import { compileFableCompactionSystem } from './fable/prompt'
+import { FABLE_51_PROFILE_FLAG } from './fable/profile'
+import { OPUS_5_PROFILE_FLAG } from './opus/profile'
+import { resolveClaudeBehaviorProfile, type ClaudeBehaviorProfile } from './behavior-profile'
+import { compileClaudeCompactionSystem } from './behavior-prompt'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -3533,11 +3535,12 @@ async function startSend(
       !!internalLoop && internalLoop.contextPolicy === 'isolated' && internalLoop.providerSessionPolicy === 'ephemeral'
     const frozenProfile = internalLoop?.selectionOverride
     const behaviorRequestedModelId = selection.modelId
-    const behaviorProfileFor = (resolvedModelId?: string | null): FableBehaviorProfile | null => {
-      const resolution = resolveFableBehaviorProfile({
+    const behaviorProfileFor = (resolvedModelId?: string | null): ClaudeBehaviorProfile | null => {
+      const resolution = resolveClaudeBehaviorProfile({
         requestedModelId: behaviorRequestedModelId,
         resolvedModelId,
-        enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+        fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+        opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
         frozen: isolated && frozenProfile != null,
         frozenProfileId: frozenProfile?.behaviorProfileId,
       })
@@ -5707,7 +5710,7 @@ interface CompactOpts {
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
   /** Behavior and canonical identity already frozen by an active turn admission. */
-  behaviorProfile?: FableBehaviorProfile | null
+  behaviorProfile?: ClaudeBehaviorProfile | null
   resolvedModelId?: string
   /** Never retires the main conversation's native binding. */
   skipRetireBinding?: boolean
@@ -5805,10 +5808,11 @@ export async function compactReserved(
       getSubscriptionFailoverRouter().confirmAttemptOther(resolved.target.providerId, resolved.target.availabilityLease)
     compactResolvedModelId = resolved.target.runtimeModelId
   }
-  const compactBehaviorResolution = resolveFableBehaviorProfile({
+  const compactBehaviorResolution = resolveClaudeBehaviorProfile({
     requestedModelId: selection.modelId,
     resolvedModelId: compactResolvedModelId,
-    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
     frozen: frozen != null,
     frozenProfileId: frozen?.behaviorProfileId,
   })
@@ -5817,7 +5821,7 @@ export async function compactReserved(
   }
   const compactBehaviorProfile =
     opts.behaviorProfile === undefined ? compactBehaviorResolution.profile : opts.behaviorProfile
-  const compactSystem = compileFableCompactionSystem(COMPACT_SYSTEM, compactBehaviorProfile)
+  const compactSystem = compileClaudeCompactionSystem(COMPACT_SYSTEM, compactBehaviorProfile)
   const history = opts.executionId
     ? listExecutionContextMessages(conversationId, opts.executionId)
     : listConversationContextMessages(conversationId)
@@ -6276,10 +6280,11 @@ export async function resolveReviewLoopSelection(
     if (frozenEffort === null) return { ok: false, error: 'no-model' }
     reasoningEffort = frozenEffort
   }
-  const behaviorProfile = resolveFableBehaviorProfile({
+  const behaviorProfile = resolveClaudeBehaviorProfile({
     requestedModelId: modelId,
     resolvedModelId,
-    enabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
+    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
   }).profile
   return {
     ok: true,
@@ -6397,7 +6402,7 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 export async function revalidateReviewLoopSelection(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const behaviorResolution = resolveFableBehaviorProfile({
+  const behaviorResolution = resolveClaudeBehaviorProfile({
     requestedModelId: frozen.modelId,
     resolvedModelId: frozen.resolvedModelId,
     frozen: true,

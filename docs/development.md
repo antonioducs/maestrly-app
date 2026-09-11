@@ -58,6 +58,39 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
 go run github.com/zricethezav/gitleaks/v8@v8.30.1 git . --config .gitleaks.toml --no-banner --redact
 ```
 
+### Opus 5 harness evaluation
+
+The versioned `maestrly-opus-5-v1` profile applies to exact `claude-opus-5`
+identities, including aliases resolved to that identity by the Claude runtime.
+The internal `chat.opus5Profile` flag defaults to enabled. Disabling it selects
+the legacy prompt for new admissions; frozen review executions retain their
+recorded profile. Fable and Astra keep their own profiles.
+
+The Opus profile calibrates scope, narration, delegation, and Ultra instructions.
+Required user/project checks still apply. It does not change selected effort,
+provider permissions, or concurrency limits. Claude SDK sessions carry changing
+environment data in transient turn context; API requests add it to the latest
+user message without persisting it or changing the system prompt.
+
+For an opt-in live comparison, use a disposable repository and the same starting
+commit, task, provider, model, effort, and tool catalog for both flag values.
+Start fresh conversations after toggling the flag; do not reuse frozen executions
+or warmed sessions across variants. Include a small bug fix, a multi-file feature,
+a code review, and a long task continued after compaction. Repeat each variant
+at `low`, `medium`, `high`, and `xhigh`; measure Ultra separately because it also
+changes orchestration. Record:
+
+- Completion against task acceptance checks and unintended changes.
+- Wall time and total tokens/cost, including subagents and cache usage.
+- Delegation count, repeated checks, and unnecessary user interruptions.
+- Continuity of constraints, completed work, and rejected attempts after resume.
+
+Unit tests cover profile selection, frozen identity, prompt isolation, and
+session continuity. They do not measure model quality or establish a cost or
+latency improvement. The prompting basis is Anthropic's
+[Opus 5 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)
+and [effort guidance](https://platform.claude.com/docs/en/build-with-claude/effort).
+
 ## Runtimes and icons
 
 Optional provider assets can be installed through app settings or the scripts
