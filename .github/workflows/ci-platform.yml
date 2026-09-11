@@ -41,8 +41,10 @@ jobs:
           DISPLAY: ""
       - name: Check web dashboard
         run: npm run check:web
-      - name: Install browser
-        run: npx playwright install --with-deps chromium
+      - name: Install browsers for each workspace
+        run: |
+          npm exec --workspace @maestrly/web -- playwright install --with-deps chromium
+          npm exec --workspace @maestrly/desktop -- playwright install --with-deps chromium
       - name: Run browser flows
         run: npm run test:e2e:platform
       - name: Run real desktop project chat
