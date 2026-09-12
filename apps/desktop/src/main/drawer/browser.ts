@@ -63,8 +63,10 @@ function enqueueBrowserCapture<T>(wc: WebContents, operation: () => Promise<T>):
 
 function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<NativeImage> {
   return new Promise((resolve, reject) => {
+    const maxCaptureAttempts = 3
     let settled = false
     let subscribed = false
+    let captureAttempts = 0
     const finish = (complete: () => void) => {
       if (settled) return
       settled = true
@@ -92,12 +94,25 @@ function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<Na
       })
       wc.invalidate()
       // capturePage keeps the hidden compositor active; invalidation alone may never present a frame.
-      void wc.capturePage(undefined, { stayHidden: true, stayAwake: true }).then(
-        (image) => {
-          if (!image.isEmpty()) finish(() => resolve(image))
-        },
-        (error) => finish(() => reject(error))
-      )
+      // macOS may transiently reject a hidden frame with UnknownVizError while WindowServer wakes it.
+      const requestFrame = () => {
+        if (settled || signal.aborted) return
+        captureAttempts += 1
+        void wc.capturePage(undefined, { stayHidden: true, stayAwake: true }).then(
+          (image) => {
+            if (!image.isEmpty()) finish(() => resolve(image))
+          },
+          (error) => {
+            if (/UnknownVizError/i.test(String((error as Error)?.message ?? error)) && captureAttempts < maxCaptureAttempts) {
+              wc.invalidate()
+              setTimeout(requestFrame, 75)
+              return
+            }
+            finish(() => reject(error))
+          }
+        )
+      }
+      requestFrame()
     } catch (error) {
       finish(() => reject(error))
     }
