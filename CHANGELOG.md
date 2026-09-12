@@ -5,6 +5,21 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+### Added
+
+- Multi-tenant Kanban platform with audited execution, project chat, scoped
+  permissions, OAuth Device Flow, and self-hosting support.
+- Opus 5 behavior profile across Claude, Copilot, subagents, resumes, and review
+  executions.
+
+### Fixed
+
+- Shut down delayed Codex processes reliably on Windows.
+- Accept ephemeral Claude sessions in paired review loops and release the split
+  view when a loop reaches a terminal state.
+
 ## [0.3.0] - 2026-09-09
 
 ### Added
