@@ -67,6 +67,7 @@ afterPack: ../../scripts/after-pack.mjs
 
 deb:
   packageName: maestrly-app
+  artifactName: maestrly-app_${version}_${arch}.${ext}
 
 linux:
   executableName: maestrly-app
