@@ -6,6 +6,7 @@ import { PanelRight, PanelLeft, MessagesSquare, ScanSearch } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import type { Conversation, Workspace, FloatTab, ReviewLoopInfo } from '../preload'
 import { cn } from '@/lib/utils'
+import { findActivePairedReviewLoop } from '@/lib/review-loop-split'
 import { Sidebar } from '@/components/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
@@ -112,15 +113,7 @@ export function DesktopApp() {
   )
   const allConversations = useMemo(() => workspaces.flatMap((workspace) => workspace.conversations), [workspaces])
   const pairedLoopForActive = useMemo(
-    () =>
-      active
-        ? (reviewLoops.find(
-            (loop) =>
-              loop.driver === 'maestrly-pair' &&
-              (loop.participants.executor.conversationId === active.id ||
-                loop.participants.reviewer?.conversationId === active.id)
-          ) ?? null)
-        : null,
+    () => findActivePairedReviewLoop(reviewLoops, active?.id),
     [active, reviewLoops]
   )
   const runningReviewLoopForActive = useMemo(
@@ -278,14 +271,7 @@ export function DesktopApp() {
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
       acknowledgeConversation(conv.id)
-      if (
-        reviewLoops.some(
-          (loop) =>
-            loop.driver === 'maestrly-pair' &&
-            (loop.participants.executor.conversationId === conv.id ||
-              loop.participants.reviewer?.conversationId === conv.id)
-        )
-      ) {
+      if (findActivePairedReviewLoop(reviewLoops, conv.id)) {
         setDismissedSplitLoopId(null)
       }
       handleSelect(conv)

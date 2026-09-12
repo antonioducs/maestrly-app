@@ -25,11 +25,17 @@ describe('paired review renderer contract', () => {
     expect(app).toContain('handleSelect(conversation)')
   })
 
-  it('keeps terminal split state until explicit dismiss and allows Stop from either pane', () => {
+  it('allows explicit split dismissal and Stop from either pane', () => {
     expect(app).toContain('pairedLoopForActive.loopId !== dismissedSplitLoopId')
-    expect(split).toContain('onDismiss()')
+    expect(app).toContain('onDismiss={() => setDismissedSplitLoopId(splitReviewLoop.loopId)}')
+    expect(split).toContain('onClick={onDismiss}')
     expect(banner).toContain('chatReviewLoopStop(conversationId)')
     expect(chatView).toContain("reviewLoop?.driver === 'maestrly-pair'")
+  })
+
+  it('uses only active pairs for automatic split and sidebar reopening', () => {
+    expect(app).toContain('() => findActivePairedReviewLoop(reviewLoops, active?.id)')
+    expect(app).toContain('if (findActivePairedReviewLoop(reviewLoops, conv.id))')
   })
 
   it('hides the start-review action while either review driver owns the active conversation', () => {
