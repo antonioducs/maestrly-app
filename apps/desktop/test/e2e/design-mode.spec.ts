@@ -460,17 +460,24 @@ test('Design app tools navigate a local prototype and capture fresh state eviden
       callDesignAppTool(app, 'browser_click', { ref: snapshotRef(details, 'Open prototype') })
     ).resolves.toMatchObject({ isError: false })
     await expect(
-      callDesignAppTool(app, 'browser_wait_for', { text: 'Fictional prototype preview', timeout_ms: 5_000 })
+      callDesignAppTool(app, 'browser_wait_for', {
+        selector: 'body[data-state="prototype-open"]',
+        timeout_ms: 5_000,
+      })
     ).resolves.toMatchObject({ isError: false, text: expect.stringMatching(/^OK:/) })
 
     const modalOpen = await callDesignSnapshot(app)
     expect(snapshotElements(modalOpen).map((element) => element.name)).toContain('Close prototype')
-    const after = saveScreenshot(
-      testInfo,
-      'design-prototype-open.png',
-      await callDesignAppTool(app, 'browser_screenshot')
-    )
-    expect(after.hash).not.toBe(before.hash)
+    let renderedModal: ToolResult | null = null
+    await expect
+      .poll(async () => {
+        const screenshot = await callDesignAppTool(app, 'browser_screenshot')
+        if (screenshot.isError || screenshot.images.length !== 1) return before.hash
+        renderedModal = screenshot
+        return createHash('sha256').update(Buffer.from(screenshot.images[0]!.data, 'base64')).digest('hex')
+      })
+      .not.toBe(before.hash)
+    const after = saveScreenshot(testInfo, 'design-prototype-open.png', renderedModal!)
 
     await expect(
       callDesignAppTool(app, 'browser_click', { ref: snapshotRef(modalOpen, 'Close prototype') })
