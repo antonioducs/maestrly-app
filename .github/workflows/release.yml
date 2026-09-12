@@ -108,7 +108,7 @@ jobs:
       - name: Smoke packaged Local ML
         run: xvfb-run -a npm run smoke:packaged-local-ml-runtime
       - name: Stage Linux release assets
-        run: node scripts/stage-release-assets.mjs linux dist .release-local-staging/linux
+        run: node scripts/stage-release-assets.mjs linux apps/desktop/dist .release-local-staging/linux
       - name: Upload Linux release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -142,7 +142,7 @@ jobs:
       - name: Smoke packaged Local ML
         run: npm run smoke:packaged-local-ml-runtime
       - name: Stage Windows release assets
-        run: node scripts/stage-release-assets.mjs windows dist .release-local-staging/windows
+        run: node scripts/stage-release-assets.mjs windows apps/desktop/dist .release-local-staging/windows
       - name: Upload Windows release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -236,7 +236,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apps=(dist/mac-arm64/*.app)
+          apps=(apps/desktop/dist/mac-arm64/*.app)
           if [[ "${#apps[@]}" -ne 1 ]]; then
             echo "Expected exactly one packaged macOS app; found ${#apps[@]}."
             exit 1
@@ -259,7 +259,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
-          dmgs=(dist/*.dmg)
+          dmgs=(apps/desktop/dist/*.dmg)
           if [[ "${#dmgs[@]}" -ne 1 ]]; then
             echo "Expected exactly one macOS DMG; found ${#dmgs[@]}."
             exit 1
@@ -281,7 +281,7 @@ jobs:
       - name: Smoke packaged Local ML
         run: npm run smoke:packaged-local-ml-runtime
       - name: Stage macOS release assets
-        run: node scripts/stage-release-assets.mjs macos dist .release-local-staging/macos
+        run: node scripts/stage-release-assets.mjs macos apps/desktop/dist .release-local-staging/macos
       - name: Upload macOS release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

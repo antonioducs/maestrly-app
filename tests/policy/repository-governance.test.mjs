@@ -81,6 +81,11 @@ test('release workflow publishes verified native artifacts only from version tag
   assert.match(source, /name: release-linux/)
   assert.match(source, /name: release-windows/)
   assert.match(source, /name: release-macos/)
+  assert.equal((source.match(/apps\/desktop\/dist/g) ?? []).length, 5)
+  assert.doesNotMatch(source, /stage-release-assets\.mjs (?:linux|windows|macos) dist\b/)
+
+  const desktopBuilder = read('apps/desktop/electron-builder.yml')
+  assert.match(desktopBuilder, /^linux:\n  packageName: maestrly-app$/m)
 
   assert.match(source, /^  publish:\n    name: Publish GitHub Release\n    needs: \[validate, linux, windows, macos\]$/m)
   assert.match(source, /^  publish:\n[\s\S]*?^    permissions:\n      contents: write$/m)

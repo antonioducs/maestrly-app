@@ -5,6 +5,13 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-12
+
+### Fixed
+
+- Use a Debian-safe package name and the desktop workspace artifact paths in
+  native release builds.
+
 ## [0.4.1] - 2026-09-12
 
 ### Fixed

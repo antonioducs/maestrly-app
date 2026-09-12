@@ -66,6 +66,7 @@ toolsets:
 afterPack: ../../scripts/after-pack.mjs
 
 linux:
+  packageName: maestrly-app
   executableName: maestrly-app
   icon: resources/icons
   category: Development
