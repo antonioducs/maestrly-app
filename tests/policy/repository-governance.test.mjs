@@ -57,6 +57,7 @@ test('package smoke runs only on schedule or manual dispatch and cannot publish'
 
 test('release workflow publishes verified native artifacts only from version tags', () => {
   const source = read('.github/workflows/release.yml')
+  const manifest = JSON.parse(read('package.json'))
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
   const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
 
@@ -71,6 +72,10 @@ test('release workflow publishes verified native artifacts only from version tag
   assert.match(source, /npm run package:linux/)
   assert.match(source, /npm run package:win/)
   assert.match(source, /npm run package:release/)
+  const invokedScripts = [...source.matchAll(/npm run ([A-Za-z0-9:_-]+)/g)].map((match) => match[1])
+  for (const script of invokedScripts) {
+    assert.ok(manifest.scripts?.[script], `release workflow references missing root script: ${script}`)
+  }
   assert.equal((source.match(/npm run smoke:packaged-desktop/g) ?? []).length, 3)
   assert.equal((source.match(/npm run smoke:packaged-local-ml-runtime/g) ?? []).length, 3)
   assert.match(source, /name: release-linux/)
