@@ -44,6 +44,7 @@
     "test:integration": "node scripts/test-integration.mjs",
     "test:e2e": "npm run test:e2e --workspace @maestrly/desktop",
     "test:e2e:platform": "npm run build:sdk && npm run test:e2e --workspace @maestrly/web",
+    "package": "npm run package --workspace @maestrly/desktop",
     "package:linux": "npm run package:linux --workspace @maestrly/desktop",
     "package:win": "npm run package:win --workspace @maestrly/desktop",
     "package:release": "npm run package:release --workspace @maestrly/desktop",

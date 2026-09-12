@@ -54,6 +54,11 @@ test('package smoke validates packaging changes and cannot publish', () => {
   assert.deepEqual(triggers, ['pull_request', 'schedule', 'workflow_dispatch'])
   assert.match(triggerBlock, /^  pull_request:\n    branches: \[main\]\n    paths:/m)
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
+  const manifest = JSON.parse(read('package.json'))
+  const packageScripts = [...source.matchAll(/^\s+package-script: ([A-Za-z0-9:_-]+)$/gm)].map((match) => match[1])
+  for (const script of packageScripts) {
+    assert.ok(manifest.scripts?.[script], `package smoke references missing root script: ${script}`)
+  }
 
   const packagedDesktopSmoke = read('scripts/smoke-packaged-desktop.mjs')
   assert.match(packagedDesktopSmoke, /process\.platform === 'win32' \? 300_000 : 180_000/)
