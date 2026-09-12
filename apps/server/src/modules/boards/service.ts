@@ -1,3 +1,4 @@
+import type { Actor } from '@maestrly/protocol'
 import { boardLock, fail } from '../kanban/service.js'
 import type { Board, BoardColumn, Card } from '@maestrly/protocol'
 import type { DatabasePool } from '../../db/pool.js'
@@ -49,12 +50,12 @@ export async function listBoards(
 
 export async function createBoard(
   pool: DatabasePool,
-  input: { organizationId: string; projectId: string; userId: string; name: string; template?: 'complete' | 'simple' | 'blank'; locale?: 'en' | 'pt-BR' },
+  input: { organizationId: string; projectId: string; userId: string; actor?: Actor; name: string; template?: 'complete' | 'simple' | 'blank'; locale?: 'en' | 'pt-BR' },
 ): Promise<Board> {
-  return inTenantTransaction(pool, { organizationId: input.organizationId, projectId: input.projectId, actor: { type: 'human', userId: input.userId } }, async (client) => {
+  return inTenantTransaction(pool, { organizationId: input.organizationId, projectId: input.projectId, actor: input.actor ?? { type: 'human', userId: input.userId } }, async (client) => {
     await authorizeProject(client, input.organizationId, input.projectId, input.userId, 'work:write')
     const result = await client.query<BoardRow>('insert into boards(organization_id, project_id, name) values ($1,$2,$3) returning *', [input.organizationId, input.projectId, input.name])
-    await appendDomainEvent(client, { organizationId: input.organizationId, projectId: input.projectId, type: 'board.created', aggregateType: 'board', aggregateId: result.rows[0]!.id, actor: { type: 'human', userId: input.userId } })
+    await appendDomainEvent(client, { organizationId: input.organizationId, projectId: input.projectId, type: 'board.created', aggregateType: 'board', aggregateId: result.rows[0]!.id, actor: input.actor ?? { type: 'human', userId: input.userId } })
     const names = input.template === 'blank' || !input.template ? [] : input.template === 'simple'
       ? input.locale === 'pt-BR' ? ['A fazer','Concluído'] : ['To do','Done']
       : input.locale === 'pt-BR' ? ['Backlog','Em andamento','Em revisão','Concluído'] : ['Backlog','In progress','Review','Done']
