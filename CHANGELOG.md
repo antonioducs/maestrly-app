@@ -5,6 +5,13 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-12
+
+### Fixed
+
+- Restore native packaging and packaged smoke commands used by the release
+  workflow after the monorepo workspace migration.
+
 ## [0.4.0] - 2026-09-12
 
 ### Added

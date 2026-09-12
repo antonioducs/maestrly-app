@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A local AI workspace with chat, Maestro orchestration, and developer tools",
   "author": "Maestrly contributors",
   "license": "MIT",
