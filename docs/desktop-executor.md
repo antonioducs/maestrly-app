@@ -10,6 +10,16 @@ The Maestrly app can execute Kanban jobs using its normal chat engine. It includ
 4. Select the connected accounts to make available. **Accounts, skills and MCPs** opens the existing chat settings, including subscription login. Refresh accounts after connecting one. Credentials, provider endpoints and native account state remain local; the platform receives opaque model identifiers, model labels, supported effort/Fast capabilities and the operator-configured provider display label so the authorized user can distinguish available account slots.
 5. Choose allowed tools and press **Start executor**. Enable **Continue in background** to keep work running after closing the window. **Start with login** starts the installed app and its saved executor configuration at operating-system login.
 
+## Workspace link and agent tools
+
+The linked project appears below the workspace name and above its chats. **Open Kanban** opens the selected project and board directly. The link applies to all conversations and worktrees owned by that workspace, even when their folders are outside the original checkout. Cached labels remain visible offline, with a reconnect indication.
+
+Local agents can discover boards, search active/completed/archived cards, create and update cards and subtasks, manage comments, move/archive/restore/delete cards, inspect history, restore descriptions, and manage boards and columns. The executor does not need to be running for these tools. Code execution requires a repository binding separately; **Board access · Code execution not configured** means the board tools are available without enabling code jobs.
+
+For **GPT Web**, choose **Linked Kanban → Read & write** in the conversation access controls to allow changes; the default is **Read**. Refresh the Maestrly app's tool catalog in ChatGPT when prompted, then reconnect the companion. Ask/Plan modes stay read-only. Removing or changing the link or account invalidates already-created tool access; start a new turn or reconnect GPT Web after linking again.
+
+Every operation checks the signed-in user's current project permissions. Mutations require an idempotency key, and updates require the current resource version. Agent actions are attributed to their conversation and never start an automation chain merely by moving a card. Completing an agent response does not mark the card done.
+
 Use the tray/menu-bar icon to reopen Maestrly or pause execution. **Pause executor** cancels active work and stops taking jobs. Quitting the app waits for runner/chat cleanup. Provider authentication and initial Kanban authorization still require the account owner; they are setup steps, never questions left waiting inside a job.
 
 For a personal computer, configure a column with automatic entry disabled and use **Run on my computer** on a card. Only your own enabled devices contribute personal models to your configuration catalog. They remain excluded from team destinations and automatic claims. For team automation, select a published Maestrly model from an authorized team executor and configure the column normally.

@@ -110,14 +110,15 @@ function Workspace({ session, onSignedOut }: { session: Session; onSignedOut(): 
   }
   // A keyboard-focus tooltip must survive stray mouse events caused by the rail resizing under a still cursor.
   const hideSidebarTooltip=(source?:'hover'|'focus')=>setSidebarTooltip(current=>current&&(!source||current.source===source)?null:current)
+  const [linkedLocation] = useState(() => new URLSearchParams(window.location.search))
   const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [organizationId, setOrganizationId] = useState('')
+  const [organizationId, setOrganizationId] = useState(linkedLocation.get('organization') ?? '')
   const [projects, setProjects] = useState<Array<Project & { currentRole?: 'maintainer' | 'contributor' | 'viewer' }>>(
     []
   )
-  const [projectId, setProjectId] = useState('')
+  const [projectId, setProjectId] = useState(linkedLocation.get('project') ?? '')
   const [boards, setBoards] = useState<Board[]>([])
-  const [boardId, setBoardId] = useState('')
+  const [boardId, setBoardId] = useState(linkedLocation.get('board') ?? '')
   const [loadError, setLoadError] = useState('')
   const [snapshot, setSnapshot] = useState<BoardSnapshot | null>(null)
   const [executions, setExecutions] = useState<Operation[]>([])
@@ -159,7 +160,7 @@ function Workspace({ session, onSignedOut }: { session: Session; onSignedOut(): 
   useEffect(() => {
     void api<Organization[]>('/api/v1/organizations').then((items) => {
       setOrganizations(items)
-      setOrganizationId((current) => current || items[0]?.id || '')
+      setOrganizationId((current) => items.some((item) => item.id === current) ? current : items[0]?.id || '')
     })
   }, [])
   useEffect(() => {

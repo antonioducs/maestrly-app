@@ -519,7 +519,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                             {r.baseBranch ? ` · ${r.baseBranch}` : ''}
                           </SelectItem>
                         ))}
-                        <SelectItem value={WITHOUT_CODE}>{L('Tasks without code', 'Tarefas sem código')}</SelectItem>
+                        <SelectItem value={WITHOUT_CODE}>{L('Board access · Code execution not configured', 'Acesso ao board · Execução de código não configurada')}</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs leading-relaxed text-muted-foreground">
@@ -564,8 +564,8 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                 ) : (
                   <p className="text-xs text-muted-foreground">
                     {L(
-                      'Ready. Linking only saves this pairing; nothing runs yet.',
-                      'Tudo pronto. Vincular só salva essa relação; nada roda ainda.'
+                      'Ready. The project will appear in your workspace and its agents can access the board.',
+                      'Tudo pronto. O projeto aparecerá no workspace e seus agentes terão acesso ao board.'
                     )}
                   </p>
                 )}
@@ -575,8 +575,8 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
           {notice ? (
             <p role="status" className="text-xs text-emerald-600 dark:text-emerald-400">
               {L(
-                'Project linked. You can now start the executor below.',
-                'Projeto vinculado. Agora você pode iniciar o executor abaixo.'
+                'Project linked to all workspace conversations and worktrees. Start the executor below when you want to run Kanban jobs.',
+                'Projeto vinculado às conversas e worktrees do workspace. Inicie o executor abaixo quando quiser executar tarefas do Kanban.'
               )}
             </p>
           ) : null}
@@ -604,7 +604,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                         {b.repositoryBindingId
                           ? (p?.repositories?.find((r) => r.id === b.repositoryBindingId)?.name ??
                             L('Code repository', 'Repositório de código'))
-                          : L('Tasks without code', 'Tarefas sem código')}
+                          : L('Board access · Code execution not configured', 'Acesso ao board · Execução de código não configurada')}
                       </p>
                     </div>
                     <Button
