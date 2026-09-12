@@ -5,12 +5,12 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
 const mainEntry = path.join(repoRoot, 'out', 'main', 'index.js')
@@ -230,8 +230,7 @@ test('direct Chat: the dialog transfers Git, notes, and ignored files and comple
     expect(await win.evaluate(() => window.api.listConversationMigrationRecoveries())).toEqual([])
   } finally {
     if (app) await app.close().catch(() => {})
-    // Electron helpers may briefly finish writing the profile after app.close().
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    await removeTempDirEventually(root)
   }
 })
 
@@ -285,7 +284,6 @@ test('direct Chat: new work at the destination does not reopen recovery after re
     expect(git(repo, ['stash', 'list'])).toBe('')
   } finally {
     if (app) await app.close().catch(() => {})
-    // Electron helpers may briefly finish writing the profile after app.close().
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    await removeTempDirEventually(root)
   }
 })
