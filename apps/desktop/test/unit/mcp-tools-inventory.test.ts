@@ -99,6 +99,9 @@ const EXPECTED_TOOL_NAMES = [
 ] as const
 
 const LINKED_BOARD_TOOL_NAMES = [
+  'board_list_members',
+  'get_linked_kanban', 'board_card_events', 'board_update_comment', 'board_card_lifecycle',
+  'board_restore_description', 'board_create_board', 'board_update_board', 'board_manage_columns',
   'board_list_boards', 'board_get_board', 'board_search_cards', 'board_card_history', 'board_create_card',
   'board_comment',
   'board_create_subtask',

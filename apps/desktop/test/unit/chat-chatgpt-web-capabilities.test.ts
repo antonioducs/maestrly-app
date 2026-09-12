@@ -24,6 +24,7 @@ const servers: McpServer[] = [
 describe('ChatGPT Web capability policy', () => {
   it('defaults to read-only and never grants a globally disabled server', () => {
     expect(resolveChatGptWebCapabilities(undefined, servers)).toEqual({
+      kanban: 'read',
       git: 'read',
       gh: 'read',
       conversation: 'off',

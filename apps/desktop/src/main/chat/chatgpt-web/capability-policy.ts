@@ -27,6 +27,7 @@ export function resolveChatGptWebCapabilities(
     mcp[server.id] = server.enabled ? (validMcpScope(requested) ? requested : 'read') : 'off'
   }
   return {
+    kanban: stored?.kanban === 'off' || stored?.kanban === 'write' ? stored.kanban : 'read',
     git: stored?.git === 'off' ? 'off' : 'read',
     gh: stored?.gh === 'off' ? 'off' : 'read',
     conversation: stored?.conversation === 'read' ? 'read' : 'off',
@@ -65,7 +66,8 @@ export function chatGptWebCapabilityFingerprint(
     .update(
       JSON.stringify([
         'chatgpt-web-capabilities',
-        6,
+        7,
+        capabilities.kanban ?? 'read',
         capabilities.git,
         capabilities.gh,
         capabilities.conversation,

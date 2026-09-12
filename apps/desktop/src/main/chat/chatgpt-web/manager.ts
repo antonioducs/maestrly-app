@@ -11,6 +11,7 @@
  * with an organization holding NO API credits: the tunnel incurred no charge.
  */
 import { createHash, randomBytes } from 'node:crypto'
+import { createLinkedBoardAccess, linkedConversationBinding, linkedBoardScopeIdentity } from '../../platform/linked-board'
 import { app, net } from 'electron'
 import { acquireRuntimeAssetLease } from '../../runtime-assets/app-service'
 import {
@@ -610,11 +611,11 @@ export function listSessions(): ChatGptWebSession[] {
 
 export function capabilitiesForConversation(conversationId: string): ChatGptWebCapabilitiesInfo {
   const prefs = getConvUiPrefs(conversationId)
-  return chatGptWebCapabilitiesInfo(
-    prefs.chatGptWebCapabilities,
-    listMcpServers(),
-    sessionForConversation(conversationId) === null
-  )
+  const info = chatGptWebCapabilitiesInfo(prefs.chatGptWebCapabilities, listMcpServers(), sessionForConversation(conversationId) === null)
+  const binding = linkedConversationBinding(conversationId)
+  if (binding && info.capabilities.kanban !== 'off') info.fingerprint = createHash('sha256')
+    .update(JSON.stringify([info.fingerprint, linkedBoardScopeIdentity(conversationId)])).digest('hex')
+  return info
 }
 
 /** Main-validated persistence boundary. A live session is immutable and cannot be escalated in place. */
@@ -627,7 +628,7 @@ export function setCapabilitiesForConversation(
   const sanitized = resolveChatGptWebCapabilities(input, servers)
   patchConvUiPrefs(conversationId, { chatGptWebCapabilities: sanitized })
   emitChange()
-  return chatGptWebCapabilitiesInfo(sanitized, servers, true)
+  return capabilitiesForConversation(conversationId)
 }
 
 export interface StartSessionInput {
@@ -711,11 +712,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
     const conversation = getConversation(input.conversationId)
     if (!conversation) throw new Error('invalid-conversation')
     const repositoryScope = await createRepositoryScope(conversation)
-    const capabilityInfo = chatGptWebCapabilitiesInfo(
-      getConvUiPrefs(input.conversationId).chatGptWebCapabilities,
-      mcpServers,
-      false
-    )
+    const capabilityInfo = capabilitiesForConversation(input.conversationId)
     const memoryRoots = repositoryScope.repositories.map((repository) => ({
       root: repository.realWorktreePath,
       linkName: repository.linkName,
@@ -917,6 +914,9 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         }
       },
       bridge: {
+        ...(capabilityInfo.capabilities.kanban !== 'off' && linkedConversationBinding(input.conversationId)
+          ? { kanban: createLinkedBoardAccess(input.conversationId, capabilityInfo.capabilities.kanban === 'write' ? 'write' : 'read') }
+          : {}),
         deliver: async (delivery) => {
           if (!hooks) throw new Error('delivery-unavailable')
           if (delivery.destination === 'plan') {

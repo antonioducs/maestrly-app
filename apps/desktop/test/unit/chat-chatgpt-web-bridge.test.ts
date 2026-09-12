@@ -223,6 +223,13 @@ describe('bridge MCP companion — protocolo', () => {
     // The catalog remains complete even without a review controller;
     // tools/call validates availability instead of hiding schemas.
     expect(list.result.tools.map((tool) => tool.name)).toEqual([
+      'get_linked_kanban',
+      'board_list_members',
+      'board_list_boards', 'board_get_board', 'board_list_cards', 'board_search_cards',
+      'board_get_card', 'board_card_history', 'board_card_events',
+      'board_create_card', 'board_create_subtask', 'board_update_card', 'board_comment',
+      'board_update_comment', 'board_move_card', 'board_card_lifecycle', 'board_restore_description',
+      'board_create_board', 'board_update_board', 'board_manage_columns',
       'discover_frontend_previews',
       'browser_list_tabs',
       'browser_attach',

@@ -75,7 +75,7 @@ function bridge(label: string, overrides: Partial<Parameters<typeof createChatGp
 
 describe('multi-session companion router', () => {
   it('publishes one gateway catalog version bump', () => {
-    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('11')
+    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('12')
   })
   it('supports stateless MCP discovery probes', async () => {
     const router = createBridgeRouter()
@@ -151,7 +151,8 @@ describe('multi-session companion router', () => {
       expect(list.result.tools.some((tool) => tool.name === name)).toBe(true)
     }
     expect(list.result.tools.some((tool) => tool.name === 'read_file')).toBe(true)
-    expect(list.result.tools.some((tool) => tool.name.startsWith('board_'))).toBe(false)
+    expect(list.result.tools.some((tool) => tool.name === 'board_create_card')).toBe(true)
+    expect(list.result.tools.some((tool) => tool.name === 'get_linked_kanban')).toBe(true)
     expect(router.size()).toBe(0)
   })
 

@@ -236,7 +236,7 @@ describe('ChatGPT Web companion lifecycle contract', () => {
     expect(drawerSave).toBeGreaterThanOrEqual(0)
     expect(drawerStart).toBeGreaterThan(drawerSave)
     expect(manager).toContain("if (sessionForConversation(conversationId)) throw new Error('companion-session-active')")
-    expect(manager).toContain('const capabilityInfo = chatGptWebCapabilitiesInfo(')
+    expect(manager).toContain('const capabilityInfo = capabilitiesForConversation(input.conversationId)')
     expect(manager).toContain('browserCapability: capabilityInfo.capabilities.browser')
     expect(accessEditor).toContain("t('chatGptWebAccess.conversationTitle')")
     expect(accessEditor).toContain("(['off', 'read'] as const)")

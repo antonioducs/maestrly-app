@@ -96,6 +96,20 @@ export function ChatGptWebAccessEditor({
         </div>
       )}
 
+      <section className="rounded-lg border border-border p-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-medium">{t('kanban.accessTitle')}</span>
+          <OptionSelect aria-label={t('kanban.accessTitle')} className={selectClassName}
+            value={capabilities.kanban ?? 'read'} disabled={controlsDisabled}
+            onValueChange={(value) => { if (!controlsDisabled) onChange({ ...capabilities, kanban: value as ChatGptWebCapabilityScope }) }}>
+            <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
+            <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
+            <SelectOption value="write">{t('chatGptWebAccess.scopeWrite')}</SelectOption>
+          </OptionSelect>
+        </div>
+        <p className="mt-1 text-[10px] text-muted-foreground">{t('kanban.accessDescription')}</p>
+      </section>
+
       {showBrowser && (
         <section className="rounded-lg border border-violet-400/20 bg-violet-500/[0.07] p-2.5">
           <div className="flex items-start gap-2">
