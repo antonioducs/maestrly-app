@@ -195,9 +195,18 @@ import {
   subscriptionProviderIdFor,
   CLAUDE_SUBSCRIPTION_PROVIDER_ID,
 } from '../../src/main/chat/catalog'
-import { compactReserved, registerChatIpc, stopChatAndWait, type ChatIpcDeps } from '../../src/main/chat/service'
+import {
+  compactReserved,
+  registerChatIpc,
+  resolveReviewLoopSelection,
+  startInternalChatTurn,
+  stopChat,
+  stopChatAndWait,
+  type ChatIpcDeps,
+} from '../../src/main/chat/service'
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
+import { reserveReviewLoop, releaseReviewLoop } from '../../src/main/chat/review-loop/registry'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -337,6 +346,67 @@ describe('Claude physical account service ownership', () => {
     vi.useRealTimers()
     for (const attempt of listClaudeAttempts()) attempt.abort(new Error('test cleanup'))
     closeDb()
+  })
+
+  it.each([
+    'complete',
+    'cancel',
+    'close',
+    'identity-change',
+  ])('accepts an ephemeral review-loop session without persistence and guards %s', async (ending) => {
+    const conv = conversation()
+    register()
+    const frozen = await resolveReviewLoopSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    const loopId = `claude-loop-${conv.id}`
+    expect(
+      reserveReviewLoop({
+        loopId,
+        driver: 'chatgpt-web',
+        cwd: conv.cwd!,
+        participants: { executor: conv.id },
+      }).ok
+    ).toBe(true)
+    const finished = deferred<any>()
+    h.runClaude.mockImplementationOnce(() => finished.promise)
+    const controller = new AbortController()
+    const result = await startInternalChatTurn({
+      conversationId: conv.id,
+      prompt: 'Apply review findings.',
+      selection: frozen.selection,
+      source: 'chatgpt-web-review-loop',
+      loopId,
+      iteration: 1,
+      maxIterations: 3,
+      signal: controller.signal,
+    })
+    let closing: Promise<void> | undefined
+    try {
+      if (!result.ok) throw new Error(result.error)
+      await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+      const args = (h.runClaude.mock.calls as any)[0][0]
+      expect(args.ephemeralSession).toBe(true)
+      expect(args.executionScope).toMatchObject({ kind: 'review-loop', loopId })
+      expect(args.canPersistSession()).toBe(false)
+      expect(args.onSessionReady('ephemeral-session')).toBe(true)
+      if (ending === 'cancel') controller.abort()
+      if (ending === 'close') {
+        closing = stopChat(conv.id)
+        await vi.waitFor(() => expect(args.signal.aborted).toBe(true))
+      }
+      if (ending === 'identity-change') {
+        h.manager.assertAccountIdentity.mockImplementation(() => {
+          throw new Error('account changed')
+        })
+      }
+      expect(args.onSessionReady('late-session')).toBe(ending === 'complete')
+      expect(args.canPersistSession()).toBe(false)
+    } finally {
+      finished.resolve({ planSubmitted: false, sessionId: 'ephemeral-session' })
+      if (result.ok) await result.handle.done
+      await closing
+      releaseReviewLoop(loopId)
+    }
   })
 
   it.each([

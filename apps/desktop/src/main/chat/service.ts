@@ -4545,12 +4545,8 @@ async function startSend(
             ? frozenProfile.resolvedModelId
             : (claudeModel.resolvedModel ?? claudeModel.value)
         let effectiveTarget = claudeRuntimeTarget
-        const canPersist = (target = effectiveTarget): boolean => {
-          if (
-            !run.allowClaudePersistence ||
-            claudePhysicalIdentityIsChanging(target?.providerId ?? selectedClaudeProviderId)
-          )
-            return false
+        const hasCurrentSessionIdentity = (target = effectiveTarget): boolean => {
+          if (claudePhysicalIdentityIsChanging(target?.providerId ?? selectedClaudeProviderId)) return false
           if (
             target &&
             (target.providerId !== run.effectiveProviderId ||
@@ -4567,6 +4563,9 @@ async function startSend(
             return false
           }
         }
+        // Isolated rounds own an ephemeral session without owning the conversation binding.
+        const canPersist = (target = effectiveTarget): boolean =>
+          run.allowClaudePersistence && hasCurrentSessionIdentity(target)
         const initialTarget = claudeRuntimeTarget
         const promise = runClaudeChat({
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
@@ -4649,7 +4648,12 @@ async function startSend(
             owner.observeModelContextWindow(target?.runtimeModelId ?? resolvedClaudeModelId, contextWindow)
           },
           onSessionReady: (sessionId, target = effectiveTarget) => {
-            if (!canPersist(target)) return false
+            if (
+              controller.signal.aborted ||
+              (!isolated && !run.allowClaudePersistence) ||
+              !hasCurrentSessionIdentity(target)
+            )
+              return false
             run.claudeSessionId = sessionId
             run.claudeSessionProviderId = target?.providerId ?? selectedClaudeProviderId
             run.claudeSessionAccountId = target ? target.accountId : selectionAccountId
