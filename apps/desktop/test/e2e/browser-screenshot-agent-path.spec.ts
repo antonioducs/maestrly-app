@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron, type ElectronApplication, type Page, type TestInfo } from '@playwright/test'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
 const mainEntry = path.join(repoRoot, 'out', 'main', 'index.js')
@@ -127,7 +128,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await new Promise<void>((resolve) => fixtureServer.close(() => resolve()))
-  rmSync(userDataDir, { recursive: true, force: true })
+  await removeTempDirEventually(userDataDir)
 })
 
 test('agent app-tool captures the hidden browser before and after a real scroll', async ({ browserName: _browserName }, testInfo) => {
