@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron, type ElectronApplication, type TestInfo } from '@playwright/test'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
 const mainEntry = path.join(repoRoot, 'out', 'main', 'index.js')
@@ -303,7 +304,7 @@ test.afterAll(async () => {
   if (fixtureServer?.listening) {
     await new Promise<void>((resolve, reject) => fixtureServer!.close((error) => (error ? reject(error) : resolve())))
   }
-  if (rootDir) rmSync(rootDir, { recursive: true, force: true })
+  if (rootDir) await removeTempDirEventually(rootDir)
 })
 
 test('Standard conversations persist independent modes and cycle Design through the composer shortcut', async (
@@ -374,9 +375,12 @@ test('Standard conversations persist independent modes and cycle Design through 
     const rejected = await createStandardConversationThroughUi(win, path.basename(projectDir), 'design-e2e-rejected')
     await expectMode(win, rejected.id, 'agent')
     const db = new DatabaseSync(path.join(modeUserData, 'maestrly-agents.db'))
-    db.exec('PRAGMA foreign_keys = ON;')
-    db.prepare('DELETE FROM conversations WHERE id = ?').run(rejected.id)
-    db.close()
+    try {
+      db.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;')
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(rejected.id)
+    } finally {
+      db.close()
+    }
     await chooseMode(win, 'design')
     await expect(win.getByRole('alert')).toContainText('The mode could not be saved')
     await expect(modeTrigger(win)).toContainText('Agent')
@@ -456,17 +460,24 @@ test('Design app tools navigate a local prototype and capture fresh state eviden
       callDesignAppTool(app, 'browser_click', { ref: snapshotRef(details, 'Open prototype') })
     ).resolves.toMatchObject({ isError: false })
     await expect(
-      callDesignAppTool(app, 'browser_wait_for', { text: 'Fictional prototype preview', timeout_ms: 5_000 })
+      callDesignAppTool(app, 'browser_wait_for', {
+        selector: 'body[data-state="prototype-open"]',
+        timeout_ms: 5_000,
+      })
     ).resolves.toMatchObject({ isError: false, text: expect.stringMatching(/^OK:/) })
 
     const modalOpen = await callDesignSnapshot(app)
     expect(snapshotElements(modalOpen).map((element) => element.name)).toContain('Close prototype')
-    const after = saveScreenshot(
-      testInfo,
-      'design-prototype-open.png',
-      await callDesignAppTool(app, 'browser_screenshot')
-    )
-    expect(after.hash).not.toBe(before.hash)
+    let renderedModal: ToolResult | null = null
+    await expect
+      .poll(async () => {
+        const screenshot = await callDesignAppTool(app, 'browser_screenshot')
+        if (screenshot.isError || screenshot.images.length !== 1) return before.hash
+        renderedModal = screenshot
+        return createHash('sha256').update(Buffer.from(screenshot.images[0]!.data, 'base64')).digest('hex')
+      })
+      .not.toBe(before.hash)
+    const after = saveScreenshot(testInfo, 'design-prototype-open.png', renderedModal!)
 
     await expect(
       callDesignAppTool(app, 'browser_click', { ref: snapshotRef(modalOpen, 'Close prototype') })
