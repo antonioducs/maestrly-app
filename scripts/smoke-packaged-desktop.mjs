@@ -33,7 +33,8 @@ const executablePath = path.resolve(process.argv[2] ?? target)
 let app
 let failure
 const diagnostics = []
-const deadline = setTimeout(() => app?.process().kill('SIGKILL'), 60000)
+const launchTimeoutMs = process.platform === 'win32' ? 300_000 : 180_000
+const deadline = setTimeout(() => app?.process().kill('SIGKILL'), launchTimeoutMs + 60_000)
 deadline.unref()
 
 async function removeTemporaryTree() {
@@ -51,6 +52,7 @@ async function removeTemporaryTree() {
 try {
   app = await electron.launch({
     executablePath,
+    timeout: launchTimeoutMs,
     args: process.platform === 'darwin' ? ['--use-mock-keychain'] : [],
     env: {
       ...process.env,

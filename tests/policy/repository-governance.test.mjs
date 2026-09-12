@@ -53,6 +53,10 @@ test('package smoke runs only on schedule or manual dispatch and cannot publish'
 
   assert.deepEqual(triggers, ['schedule', 'workflow_dispatch'])
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
+
+  const packagedDesktopSmoke = read('scripts/smoke-packaged-desktop.mjs')
+  assert.match(packagedDesktopSmoke, /process\.platform === 'win32' \? 300_000 : 180_000/)
+  assert.match(packagedDesktopSmoke, /timeout: launchTimeoutMs/)
 })
 
 test('release workflow publishes verified native artifacts only from version tags', () => {

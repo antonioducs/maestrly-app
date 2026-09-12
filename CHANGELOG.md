@@ -11,6 +11,8 @@ User-visible changes by version. Downloads are on
 
 - Use a Debian-safe package name and the desktop workspace artifact paths in
   native release builds.
+- Allow additional startup time for the larger packaged desktop smoke on
+  Windows CI runners.
 
 ## [0.4.1] - 2026-09-12
 
