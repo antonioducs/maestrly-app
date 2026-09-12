@@ -1,0 +1,31 @@
+{
+  "name": "@maestrly/runner",
+  "version": "0.1.0",
+  "description": "Headless Maestrly runner",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "maestrly-runner": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts run",
+    "start": "node dist/cli.js run",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@maestrly/client-sdk": "0.1.0",
+    "@maestrly/protocol": "0.1.0",
+    "@maestrly/runner-core": "0.1.0",
+    "zod": "4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

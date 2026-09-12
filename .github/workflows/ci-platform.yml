@@ -1,0 +1,60 @@
+name: Platform CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  platform:
+    name: Platform / Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check boundaries and public contracts
+        run: npm run check:boundaries && npm run check:protocol && npm run check:sdk
+      - name: Check server and real PostgreSQL isolation
+        run: npm run check:server && npm run test:integration
+      - name: Check headless runner without Electron
+        run: npm run check:runner
+        env:
+          DISPLAY: ""
+      - name: Check web dashboard
+        run: npm run check:web
+      - name: Install browsers for each workspace
+        run: |
+          npm exec --workspace @maestrly/web -- playwright install --with-deps chromium
+          npm exec --workspace @maestrly/desktop -- playwright install --with-deps chromium
+      - name: Run browser flows
+        run: npm run test:e2e:platform
+      - name: Run real desktop project chat
+        run: xvfb-run -a node scripts/test-project-chat-e2e.mjs
+      - name: Preserve project chat evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: project-chat-evidence
+          path: apps/desktop/test-results/
+          if-no-files-found: ignore
+      - name: Run complete deterministic smoke
+        run: npm run smoke:platform

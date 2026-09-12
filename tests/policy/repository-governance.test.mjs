@@ -114,13 +114,13 @@ test('contribution policy preserves truthful authorship and standard commit meta
 })
 
 test('packages include synchronized project and runtime license notices', () => {
-  const builder = read('electron-builder.yml')
-  assert.match(builder, /- from: LICENSE\n\s+to: LICENSE\.txt/)
-  assert.match(builder, /- from: THIRD_PARTY_NOTICES\.md\n\s+to: THIRD_PARTY_NOTICES\.md/)
+  const builder = read('apps/desktop/electron-builder.yml')
+  assert.match(builder, /- from: \.\.\/\.\.\/LICENSE\n\s+to: LICENSE\.txt/)
+  assert.match(builder, /- from: \.\.\/\.\.\/THIRD_PARTY_NOTICES\.md\n\s+to: THIRD_PARTY_NOTICES\.md/)
 
-  const manifest = JSON.parse(read('package.json'))
+  const manifest = JSON.parse(read('apps/desktop/package.json'))
   const notices = read('THIRD_PARTY_NOTICES.md')
-  const codexNotice = read('resources/licenses/openai-codex-runtime-NOTICE.txt')
+  const codexNotice = read('apps/desktop/resources/licenses/openai-codex-runtime-NOTICE.txt')
   const codexFetcher = read('scripts/fetch-codex-runtime.mjs')
   assert.ok(notices.includes('`@openai/codex` ' + manifest.devDependencies['@openai/codex']))
   assert.ok(codexNotice.includes('Version: ' + manifest.devDependencies['@openai/codex']))
@@ -129,9 +129,9 @@ test('packages include synchronized project and runtime license notices', () => 
 
 test('dependency policy covers the packaged local ML closure', () => {
   const manifest = JSON.parse(read('package.json'))
-  assert.match(manifest.scripts['audit:dependencies'], /--prefix runtime-assets\/local-ml/)
+  assert.match(manifest.scripts['audit:dependencies'], /--prefix apps\/desktop\/runtime-assets\/local-ml/)
 
-  const runtimeManifest = JSON.parse(read('runtime-assets/local-ml/package.json'))
+  const runtimeManifest = JSON.parse(read('apps/desktop/runtime-assets/local-ml/package.json'))
   assert.equal(runtimeManifest.overrides.sharp, '0.35.4')
 })
 
@@ -140,9 +140,9 @@ test('Gitleaks uses only constrained current-tree exceptions', () => {
   assert.match(source, /^\[extend\]\nuseDefault = true$/m)
   assert.doesNotMatch(source, /^commits\s*=/m)
   assert.equal(existsSync(path.join(root, '.gitleaksignore')), false)
-  assert.equal((source.match(/targetRules = \["generic-api-key"\]/g) ?? []).length, 2)
-  assert.equal((source.match(/condition = "AND"/g) ?? []).length, 2)
-  assert.equal((source.match(/regexTarget = "line"/g) ?? []).length, 2)
+  assert.equal((source.match(/targetRules = \["generic-api-key"\]/g) ?? []).length, 3)
+  assert.equal((source.match(/condition = "AND"/g) ?? []).length, 3)
+  assert.equal((source.match(/regexTarget = "line"/g) ?? []).length, 3)
   assert.match(source, /chat-chatgpt-web-\(\?:bridge\|router\)/)
   assert.doesNotMatch(source, /paths\s*=\s*\[\s*'''\^test\/\.\*'''/)
 })

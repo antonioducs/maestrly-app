@@ -10,7 +10,7 @@ import { signMacRuntimeEntries } from './sign-macos-runtime.mjs'
 import tar from 'tar-stream'
 
 export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-1'
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
 const hostTarget = `${hostOs}-${process.arch}`
 const requested = process.argv.includes('--target') ? process.argv[process.argv.indexOf('--target') + 1] : hostTarget

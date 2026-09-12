@@ -1,0 +1,28 @@
+@layer motion {
+  @keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes dialog-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+  @keyframes cue-sweep { to { transform: translateX(320%); } }
+  @keyframes cue-flash {
+    0% { box-shadow: 0 0 0 0 transparent; }
+    18% { box-shadow: 0 0 22px 3px color-mix(in srgb, var(--cue) 70%, transparent); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  /* Orchestrated entry: columns stagger 40ms apart, cards rise with them, then everything settles. */
+  .board-column { animation: rise-in var(--dur) var(--ease-out) both; animation-delay: calc(var(--i, 0) * 40ms); }
+  .work-card { animation: rise-in var(--dur) var(--ease-out) both; }
+  .view-content > *, .board-pulse { animation: fade-in var(--dur) var(--ease-out) both; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0s !important;
+      animation-delay: 0s !important;
+      transition-duration: 0s !important;
+      scroll-behavior: auto !important;
+    }
+    /* Still indicates activity, statically. */
+    .board-column[data-cue="live"] .cue-rail::after { opacity: 1; transform: none; width: 100%; }
+    .empty:hover .empty-art-dot { animation: none; }
+  }
+}

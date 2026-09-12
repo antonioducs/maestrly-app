@@ -1,0 +1,7 @@
+services:
+  server:
+    ports: []
+    expose: ["4310"]
+  web:
+    ports: []
+    expose: ["8080"]

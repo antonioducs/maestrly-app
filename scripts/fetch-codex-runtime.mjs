@@ -70,7 +70,8 @@ const TARGETS = [
   },
 ]
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const repositoryRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = path.join(repositoryRoot, 'apps', 'desktop')
 const outRoot = path.join(root, 'resources', 'codex')
 const MANIFEST_FILE = '.manifest-sha512.json'
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
@@ -184,7 +185,7 @@ function finalizeTarget(target, temporary, destination, source) {
 }
 
 function tryInstalledPackage(target, temporary) {
-  const packageRoot = path.join(root, 'node_modules', '@openai', `codex-${target.npmSuffix}`)
+  const packageRoot = path.join(repositoryRoot, 'node_modules', '@openai', `codex-${target.npmSuffix}`)
   const packageJson = path.join(packageRoot, 'package.json')
   if (!existsSync(packageJson)) return false
 

@@ -1,0 +1,39 @@
+{
+  "name": "@maestrly/server",
+  "version": "0.1.0",
+  "description": "Maestrly API, authorization, durable queue and audit service",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": "./src/app.ts",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --exclude 'test/integration/**'",
+    "test:integration": "vitest run test/integration",
+    "migrate": "tsx src/db/migrate.ts",
+    "auth:generate": "npx auth generate --yes --config src/modules/auth/auth.config.ts --output migrations/000_better_auth.sql",
+    "bootstrap-admin": "MAESTRLY_BOOTSTRAP_MODE=true tsx src/modules/auth/bootstrap.ts",
+    "register-desktop-client": "tsx src/modules/auth/register-desktop-client.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@better-auth/oauth-provider": "1.7.3",
+    "@fastify/cors": "11.3.0",
+    "@fastify/rate-limit": "11.2.0",
+    "@maestrly/protocol": "0.1.0",
+    "better-auth": "1.7.3",
+    "fastify": "5.12.3",
+    "pg": "8.23.0",
+    "zod": "4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "@types/pg": "8.15.5",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

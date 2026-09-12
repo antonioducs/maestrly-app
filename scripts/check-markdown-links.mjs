@@ -77,7 +77,7 @@ function trackedMarkdownFiles(root) {
   })
   if (result.error) throw new Error(`git ls-files could not start: ${result.error.message}`)
   if (result.status !== 0) throw new Error(`git ls-files failed with status ${result.status}: ${result.stderr.trim()}`)
-  return result.stdout.split('\0').filter(Boolean)
+  return result.stdout.split('\0').filter((file) => file && existsSync(path.join(root, file)))
 }
 
 function main() {

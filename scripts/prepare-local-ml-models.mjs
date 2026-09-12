@@ -10,7 +10,7 @@ if (cacheIndex < 0 || !args[cacheIndex + 1] || args[cacheIndex + 1].startsWith('
   throw new Error('Usage: node scripts/prepare-local-ml-models.mjs --cache-dir <directory> [--offline]')
 }
 const cacheDir = path.resolve(args[cacheIndex + 1])
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')
 const { env, pipeline } = await import(
   pathToFileURL(path.join(root, 'runtime-assets/local-ml/node_modules/@xenova/transformers/src/transformers.js')).href
 )

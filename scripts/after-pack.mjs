@@ -130,7 +130,7 @@ export default async function afterPack(context) {
   console.log('[after-pack] legal resources verified')
 
   const manifest = JSON.parse(
-    await readFile(new URL('../runtime-assets/local-ml/manifest.json', import.meta.url), 'utf8')
+    await readFile(new URL('../apps/desktop/runtime-assets/local-ml/manifest.json', import.meta.url), 'utf8')
   )
   const target = `${platform}-${arch}`
   const expected = manifest.targets[target]

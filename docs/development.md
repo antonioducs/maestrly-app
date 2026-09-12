@@ -25,13 +25,17 @@ and build caches. See [Local data](local-data.md) before resetting or moving pro
 
 | Path | Purpose |
 | --- | --- |
-| `src/main/` | Electron services, IPC validation, persistence, processes, providers |
-| `src/preload/` | Typed bridge to the renderer |
-| `src/renderer/` | React desktop and styles |
-| `src/shared/` | Shared types, schemas, rules, and translation catalogs |
-| `test/unit/`, `test/e2e/`, `tests/policy/` | Unit, Electron, and repository checks |
+| `apps/desktop/src/main/` | Electron services, IPC validation, persistence, processes, providers |
+| `apps/desktop/src/preload/` | Typed bridge to the renderer |
+| `apps/desktop/src/renderer/` | React desktop and styles |
+| `apps/desktop/src/shared/` | Shared types, schemas, rules, and translation catalogs |
+| `apps/desktop/test/unit/`, `apps/desktop/test/e2e/`, `tests/policy/` | Unit, Electron, and repository checks |
 | `scripts/` | Development, runtime, packaging, and verification tools |
-| `runtime-assets/`, `resources/`, `config/` | Runtime inputs, packaged assets, and configuration |
+| `apps/desktop/runtime-assets/`, `apps/desktop/resources/`, `config/` | Runtime inputs, packaged assets, and configuration |
+
+## Platform workspaces
+
+`apps/web`, `apps/server`, and `apps/runner` build independently. Use the root `dev:web`, `dev:server`, `dev:runner`, and corresponding `build:*` commands. Contracts live in `packages/protocol`, `packages/client-sdk`, and `packages/runner-core`. See [self-hosting](self-hosting.md). Desktop-only commands below can be invoked with `--workspace @maestrly/desktop` from the repository root.
 
 ## Checks
 
@@ -97,14 +101,14 @@ Optional provider assets can be installed through app settings or the scripts
 `fetch-codex-runtime.mjs`, `fetch-github-copilot-runtime.mjs`, and
 `fetch-tunnel-client.mjs` in `scripts/`. These select a target and verify pinned
 metadata or integrity. For models and offline setup, see the
-[Local ML guide](../runtime-assets/local-ml/README.md).
+[Local ML guide](../apps/desktop/runtime-assets/local-ml/README.md).
 
 Copilot login needs a distributor-owned public OAuth Client ID:
 `MAIN_VITE_GITHUB_COPILOT_CLIENT_ID` at package build time, or
 `MAESTRLY_GITHUB_COPILOT_CLIENT_ID` for unpackaged development.
 
 Icons are checked in. Regenerate on macOS with `npm run icon`, `icon:beta`, or
-`icon:dev`; the converter uses `resources/icon.png` or `MAESTRLY_ICON_SOURCE`.
+`icon:dev`; the converter uses `apps/desktop/resources/icon.png` or `MAESTRLY_ICON_SOURCE`.
 Preserve asset licenses and attribution.
 
 ## Packaging

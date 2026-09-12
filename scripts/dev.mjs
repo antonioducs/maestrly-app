@@ -21,6 +21,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
+const desktopRoot = path.join(root, 'apps', 'desktop')
 
 function resolveBin(name) {
   const exe = process.platform === 'win32' ? `${name}.cmd` : name
@@ -92,7 +93,7 @@ const env = {
 }
 
 const child = spawn(electronVite, ['dev'], {
-  cwd: root,
+  cwd: desktopRoot,
   env,
   stdio: 'inherit',
   shell: process.platform === 'win32',

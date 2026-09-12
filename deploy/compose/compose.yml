@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    environment:
+      POSTGRES_DB: maestrly
+      POSTGRES_USER: maestrly_migrator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      MAESTRLY_DB_RUNTIME_PASSWORD: ${MAESTRLY_DB_RUNTIME_PASSWORD:?set MAESTRLY_DB_RUNTIME_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-runtime.sh:/docker-entrypoint-initdb.d/10-runtime.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestrly_migrator -d maestrly"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/images/server.Dockerfile
+    command: ["node", "apps/server/dist/db/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://maestrly_runtime:${MAESTRLY_DB_RUNTIME_PASSWORD}@postgres:5432/maestrly
+      MIGRATION_DATABASE_URL: postgresql://maestrly_migrator:${POSTGRES_PASSWORD}@postgres:5432/maestrly
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  server:
+    build:
+      context: ../..
+      dockerfile: deploy/images/server.Dockerfile
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4310
+      DATABASE_URL: postgresql://maestrly_runtime:${MAESTRLY_DB_RUNTIME_PASSWORD}@postgres:5432/maestrly
+      MIGRATION_DATABASE_URL: postgresql://maestrly_migrator:${POSTGRES_PASSWORD}@postgres:5432/maestrly
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      MAESTRLY_CANONICAL_URL: ${MAESTRLY_CANONICAL_URL:?set MAESTRLY_CANONICAL_URL}
+      MAESTRLY_WEB_ORIGIN: ${MAESTRLY_WEB_ORIGIN:?set MAESTRLY_WEB_ORIGIN}
+      MAESTRLY_INSTANCE_NAME: ${MAESTRLY_INSTANCE_NAME:-Maestrly}
+      MAESTRLY_STORAGE_DIR: ${MAESTRLY_STORAGE_DIR:-/var/lib/maestrly/attachments}
+    ports: ["127.0.0.1:${MAESTRLY_API_PORT:-4310}:4310"]
+    volumes: ["attachments:/var/lib/maestrly/attachments"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/images/web.Dockerfile
+    ports: ["127.0.0.1:${MAESTRLY_WEB_PORT:-4173}:8080"]
+    depends_on:
+      server: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  attachments:

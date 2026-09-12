@@ -57,7 +57,7 @@ const assetURL = (asset) =>
 
 const LICENSE_URL = `https://raw.githubusercontent.com/openai/tunnel-client/v${TUNNEL_CLIENT_VERSION}/LICENSE`
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')
 const outRoot = path.join(root, 'resources', 'tunnel-client')
 
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'

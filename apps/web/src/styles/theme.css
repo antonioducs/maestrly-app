@@ -1,0 +1,10 @@
+/* Maestrly web stylesheet manifest. Layers win in this order; each file owns one area. */
+@layer tokens, base, shell, board, panels, dialogs, motion;
+@import "./tokens.css";
+@import "./base.css";
+@import "./shell.css";
+@import "./board.css";
+@import "./panels.css";
+@import "./dialogs.css";
+@import "./motion.css";
+@import "./chat.css";

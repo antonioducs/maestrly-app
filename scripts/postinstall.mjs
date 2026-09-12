@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const desktopRoot = path.join(root, 'apps', 'desktop')
 const electronDir = path.join(root, 'node_modules', 'electron')
 const pathFile = path.join(electronDir, 'path.txt')
 const installScript = path.join(electronDir, 'install.js')
@@ -44,7 +45,7 @@ function ensureElectron() {
 function runNodeScript(script, args) {
   const result = spawnSync(process.execPath, [path.join(root, script), ...args], {
     stdio: 'inherit',
-    cwd: root,
+    cwd: desktopRoot,
     shell: false,
   })
   if (result.status !== 0) process.exit(result.status ?? 1)

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { DEV_USER_DATA_BASE, appDataRoot, displayPath } from './instance-shared.mjs'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const desktopRoot = path.join(root, 'apps', 'desktop')
 const devDirPrefix = DEV_USER_DATA_BASE
 
 function listDevUserDataDirs() {
@@ -50,7 +51,7 @@ if (removed === 0) {
 }
 
 console.log('[clean:dev] cleaning local artifacts…')
-removePath(path.join(root, 'out'), 'out/')
+removePath(path.join(desktopRoot, 'out'), 'apps/desktop/out/')
 removePath(path.join(root, 'node_modules', '.vite'), 'node_modules/.vite')
 
 console.log('[clean:dev] done.')

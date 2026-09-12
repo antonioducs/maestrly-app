@@ -7,8 +7,11 @@
   },
   "files": {
     "includes": [
-      "src/**",
-      "test/**",
+      "apps/**/src/**",
+      "apps/**/test/**",
+      "packages/**/src/**",
+      "packages/**/test/**",
+      "tests/**",
       "scripts/**",
       "*.ts",
       "!**/*.d.ts",

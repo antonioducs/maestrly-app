@@ -6,6 +6,7 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const desktopRoot = path.join(root, 'apps', 'desktop')
 const [channel, ...builderArgs] = process.argv.slice(2)
 
 const CHANNELS = new Set(['prod', 'beta', 'dev'])
@@ -23,17 +24,17 @@ class CommandFailure extends Error {
   }
 }
 
-function run(cmd, args) {
-  const result = spawnSync(cmd, args, { stdio: 'inherit', cwd: root, env, shell: false })
+function run(cmd, args, cwd = root) {
+  const result = spawnSync(cmd, args, { stdio: 'inherit', cwd, env, shell: false })
   if (result.error) {
     throw new Error(`[package] failed to invoke ${cmd}: ${result.error.message}`)
   }
   if (result.status !== 0) throw new CommandFailure(result.status ?? 1)
 }
 
-function runPackageBin(packageName, bin, args) {
+function runPackageBin(packageName, bin, args, cwd = root) {
   const packageFile = path.join(root, 'node_modules', packageName, bin)
-  run(process.execPath, [packageFile, ...args])
+  run(process.execPath, [packageFile, ...args], cwd)
 }
 
 function nativeRuntimeTargets(args) {
@@ -75,21 +76,21 @@ let failure = null
 
 try {
   run(process.execPath, ['scripts/build-local-ml-runtime.mjs', ...runtimeFetchArgs])
-  const manifest = JSON.parse(readFileSync(path.join(root, 'runtime-assets/local-ml/manifest.json'), 'utf8'))
+  const manifest = JSON.parse(readFileSync(path.join(desktopRoot, 'runtime-assets/local-ml/manifest.json'), 'utf8'))
   const archive = `local-ml-runtime-${manifest.version}-${runtimeTargets[0]}.tar.gz`
-  const archivePath = path.join(root, 'runtime-assets/local-ml/archives', archive)
+  const archivePath = path.join(desktopRoot, 'runtime-assets/local-ml/archives', archive)
   if (runtimeTargets[0] === hostTarget) {
     run(process.execPath, ['scripts/smoke-local-ml-runtime.mjs', archivePath])
   } else {
     run(process.execPath, ['scripts/verify-cross-local-ml-runtime.mjs', archivePath, '--target', runtimeTargets[0]])
   }
-  const bundle = path.join(root, 'runtime-assets/local-ml/bundle')
+  const bundle = path.join(desktopRoot, 'runtime-assets/local-ml/bundle')
   rmSync(bundle, { recursive: true, force: true })
   mkdirSync(bundle, { recursive: true })
   copyFileSync(archivePath, path.join(bundle, archive))
 
-  runPackageBin('electron-vite', 'bin/electron-vite.js', ['build'])
-  runPackageBin('electron-builder', 'cli.js', builderArgs)
+  runPackageBin('electron-vite', 'bin/electron-vite.js', ['build'], desktopRoot)
+  runPackageBin('electron-builder', 'cli.js', builderArgs, desktopRoot)
 
   const platform = builderArgs.includes('--mac')
     ? 'mac'
@@ -108,7 +109,7 @@ try {
           : []
   run(process.execPath, [
     'scripts/verify-packaged-sounds.mjs',
-    'dist',
+    path.join(desktopRoot, 'dist'),
     ...(platform ? [`--platform=${platform}`] : []),
     ...requiredArtifacts.map((format) => `--require-artifact=${format}`),
   ])
@@ -119,8 +120,8 @@ try {
       : process.arch === 'arm64'
         ? 'arm64'
         : 'x64'
-  const reportFile = `dist/bundle-size-${platform ?? process.platform}-${arch}.json`
-  run(process.execPath, ['scripts/report-bundle-size.mjs', 'dist', `--arch=${arch}`, `--json=${reportFile}`])
+  const reportFile = path.join(desktopRoot, 'dist', `bundle-size-${platform ?? process.platform}-${arch}.json`)
+  run(process.execPath, ['scripts/report-bundle-size.mjs', path.join(desktopRoot, 'dist'), `--arch=${arch}`, `--json=${reportFile}`])
   run(process.execPath, ['scripts/check-bundle-size.mjs', `--report=${reportFile}`])
 } catch (error) {
   failure = error

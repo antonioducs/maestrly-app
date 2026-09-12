@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { buildIco } from './icon-encoders.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const RES = path.resolve(__dirname, '..', 'resources')
+const RES = path.resolve(__dirname, '..', 'apps', 'desktop', 'resources')
 const SRC = process.env.MAESTRLY_ICON_SOURCE || path.join(RES, 'icon.png')
 
 const CHANNELS = ['prod', 'beta', 'dev']

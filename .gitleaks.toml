@@ -20,3 +20,11 @@ regexTarget = "line"
 regexes = [
   '''DEFAULT_XAI_OAUTH_CLIENT_ID\s*=\s*['"]b1a00492-073a-47ea-816f-4c329264a828['"]''',
 ]
+
+[[allowlists]]
+description = "Exact dummy auth secret in the disposable PostgreSQL integration harness history"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^scripts/test-integration\.mjs$''']
+regexTarget = "line"
+regexes = ['''BETTER_AUTH_SECRET: 'integration-secret-0123456789abcdef'''']
