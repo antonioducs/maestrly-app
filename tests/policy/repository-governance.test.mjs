@@ -46,12 +46,13 @@ test('main ruleset has no bypass and requires every stable check', () => {
   assert.deepEqual(contexts, ['Dependency policy', 'Linux', 'Secret history', 'Windows', 'macOS'].sort())
 })
 
-test('package smoke runs only on schedule or manual dispatch and cannot publish', () => {
+test('package smoke validates packaging changes and cannot publish', () => {
   const source = read('.github/workflows/package-smoke.yml')
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
   const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
 
-  assert.deepEqual(triggers, ['schedule', 'workflow_dispatch'])
+  assert.deepEqual(triggers, ['pull_request', 'schedule', 'workflow_dispatch'])
+  assert.match(triggerBlock, /^  pull_request:\n    branches: \[main\]\n    paths:/m)
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
 
   const packagedDesktopSmoke = read('scripts/smoke-packaged-desktop.mjs')
