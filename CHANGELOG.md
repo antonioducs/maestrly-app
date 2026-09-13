@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-13
+
+### Fixed
+
+- Compile internal workspace packages before creating desktop installers, fixing
+  the missing module error on startup in v0.4.2.
+- Reject desktop packages that omit compiled workspace entry points.
+
 ## [0.4.2] - 2026-09-12
 
 ### Fixed
