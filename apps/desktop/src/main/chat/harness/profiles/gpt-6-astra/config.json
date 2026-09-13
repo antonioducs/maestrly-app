@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "openai-gpt-6-astra",
+  "profileVersion": 1,
+  "match": { "caseInsensitive": true },
+  "featureFlag": { "key": "chat.astraHarness", "default": true },
+  "bindings": [
+    {
+      "providerKind": "openai-responses",
+      "endpoint": "official-openai",
+      "overrides": {
+        "identity": {
+          "harnessProfileId": "openai-gpt-6-astra-v1",
+          "compatibilityGroup": "openai-gpt-6-astra-v1",
+          "promptIdentity": "maestrly-openai-gpt-6-astra@v1"
+        },
+        "prompts": { "layout": "openai-astra", "base": "prompt.md" },
+        "reasoning": {
+          "manifestEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "nonSerializableEfforts": ["none", "minimal"],
+          "nativeUltra": true
+        },
+        "capabilities": {
+          "responsesTools": true,
+          "persistedReasoning": true,
+          "encryptedReasoning": true,
+          "reasoningContext": true,
+          "compaction": true,
+          "parallelTools": true,
+          "steering": true,
+          "asyncTools": true,
+          "configurationUpdates": true,
+          "experimentalContext": true
+        },
+        "runtime": { "promptCacheTtl": "30m" }
+      }
+    },
+    {
+      "providerKind": "codex-subscription",
+      "overrides": {
+        "identity": {
+          "harnessProfileId": "openai-gpt-6-astra-v1",
+          "compatibilityGroup": "openai-gpt-6-astra-v1",
+          "promptIdentity": "maestrly-openai-gpt-6-astra@v1"
+        },
+        "prompts": { "developerPrefix": { "base": "codex-host.md", "asyncTools": "codex-host-async.md" } },
+        "reasoning": {
+          "manifestEfforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "nonSerializableEfforts": ["none", "minimal"],
+          "nativeUltra": true
+        },
+        "capabilities": {
+          "responsesTools": true,
+          "persistedReasoning": true,
+          "encryptedReasoning": true,
+          "reasoningContext": true,
+          "compaction": true,
+          "parallelTools": true,
+          "steering": true,
+          "asyncTools": true,
+          "configurationUpdates": true,
+          "experimentalContext": true
+        },
+        "runtime": {
+          "personality": null,
+          "nativeCompactionFirst": true,
+          "experimentalContext": true,
+          "codexPromptVersion": "astra-codex-host-v1"
+        }
+      }
+    }
+  ]
+}

@@ -11,5 +11,11 @@
     "types": ["node"],
     "lib": ["ES2022"]
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts"]
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "electron.vite.config.ts",
+    "build/**/*"
+  ]
 }

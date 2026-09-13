@@ -1,0 +1,119 @@
+[
+  {
+    "input": {
+      "requestedModelId": "claude-fable-5-1"
+    },
+    "reason": "matched-requested-model",
+    "profile": {
+      "id": "maestrly-fable-5.1-v1",
+      "targetModelId": "claude-fable-5-1",
+      "progressMode": "summarized"
+    }
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-opus-5"
+    },
+    "reason": "matched-requested-model",
+    "profile": {
+      "id": "maestrly-opus-5-v1",
+      "targetModelId": "claude-opus-5",
+      "progressMode": "prompt-only"
+    }
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-sonnet-4"
+    },
+    "reason": "model-not-target",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "x",
+      "resolvedModelId": "claude-fable-5-1"
+    },
+    "reason": "matched-resolved-model",
+    "profile": {
+      "id": "maestrly-fable-5.1-v1",
+      "targetModelId": "claude-fable-5-1",
+      "progressMode": "summarized"
+    }
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-fable-5-1",
+      "fableEnabled": false
+    },
+    "reason": "disabled",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-opus-5",
+      "opusEnabled": false
+    },
+    "reason": "disabled",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "anthropic/claude-fable-5-1"
+    },
+    "reason": "model-not-target",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-fable-5-1",
+      "frozen": true,
+      "frozenProfileId": null
+    },
+    "reason": "frozen-legacy",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-fable-5-1",
+      "frozen": true,
+      "frozenProfileId": "maestrly-fable-5.1-v1"
+    },
+    "reason": "matched-requested-model",
+    "profile": {
+      "id": "maestrly-fable-5.1-v1",
+      "targetModelId": "claude-fable-5-1",
+      "progressMode": "summarized"
+    }
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-fable-5-1",
+      "frozen": true,
+      "frozenProfileId": "maestrly-opus-5-v1"
+    },
+    "reason": "frozen-profile-mismatch",
+    "profile": null
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-opus-5",
+      "frozen": true,
+      "frozenProfileId": "maestrly-opus-5-v1"
+    },
+    "reason": "matched-requested-model",
+    "profile": {
+      "id": "maestrly-opus-5-v1",
+      "targetModelId": "claude-opus-5",
+      "progressMode": "prompt-only"
+    }
+  },
+  {
+    "input": {
+      "requestedModelId": "claude-opus-5",
+      "frozen": true,
+      "frozenProfileId": "unknown-v9"
+    },
+    "reason": "frozen-profile-mismatch",
+    "profile": null
+  }
+]

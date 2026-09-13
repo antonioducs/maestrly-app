@@ -5,8 +5,25 @@ import {
   isOpenAIHarnessActive,
   isOpenAIResponsesHarness,
   openAIHarnessProviderOptions,
-  resolveChatHarness,
-} from '../../src/main/chat/harness'
+} from '../../src/main/chat/harness/adapters/responses'
+import { resolveChatHarness as resolveExecution } from '../../src/main/chat/harness/execution'
+import type { ChatProviderKind } from '../../src/shared/chat'
+
+/** Legacy-shaped view of the execution contract, so this suite keeps asserting the same facts. */
+const resolveChatHarness = (
+  kind: ChatProviderKind,
+  modelId: string,
+  baseURL?: string,
+  options: { flags?: Readonly<Record<string, boolean>> } = {}
+) => {
+  const execution = resolveExecution(kind, modelId, baseURL, options)
+  return {
+    profile: execution.transport,
+    modelHarnessProfileId: execution.modelHarnessProfileId,
+    promptProfile: execution.promptProfile,
+    capabilities: execution.capabilities,
+  }
+}
 
 describe('OpenAI harness profile', () => {
   const openAIBaseURL = 'https://api.openai.com/v1'
@@ -194,8 +211,9 @@ describe('OpenAI harness profile', () => {
 
   it('restores the generic profile when the Astra switch is disabled or endpoint is custom', () => {
     expect(
-      resolveChatHarness('openai-responses', 'gpt-6-astra', openAIBaseURL, { astraHarnessEnabled: false })
-        .modelHarnessProfileId
+      resolveChatHarness('openai-responses', 'gpt-6-astra', openAIBaseURL, {
+        flags: { 'chat.astraHarness': false },
+      }).modelHarnessProfileId
     ).toBe('openai-default-v1')
     expect(
       resolveChatHarness('openai-responses', 'gpt-6-astra', 'https://gateway.example/v1').modelHarnessProfileId

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "maestrly-opus-5",
+  "profileVersion": 1,
+  "featureFlag": { "key": "chat.opus5Profile", "default": true },
+  "bindings": [
+    {
+      "providerKind": "*",
+      "overrides": {
+        "identity": { "behaviorProfileId": "maestrly-opus-5-v1" },
+        "prompts": {
+          "styleAndWork": "prompt.md",
+          "behaviorHeader": true,
+          "subagent": "subagent.md",
+          "compaction": "compaction.md",
+          "ultra": {
+            "base": "ultra.md",
+            "byMode": {
+              "agent": "ultra.agent.md",
+              "ask": "ultra.ask.md",
+              "plan": "ultra.plan.md",
+              "design": "ultra.design.md",
+              "maestro": "ultra.maestro.md"
+            }
+          },
+          "environment": { "placement": "last-user-message", "transient": true }
+        },
+        "progress": "prompt-only"
+      }
+    }
+  ]
+}

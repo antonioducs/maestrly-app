@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { openai } from '@ai-sdk/openai'
 import type { ToolSet } from 'ai'
-import type { ChatHarnessCapabilities } from '../harness'
+import type { ChatHarnessCapabilities } from '../harness/adapters/responses'
 import { bashTool } from '../tools/bash'
 import {
   boundText,

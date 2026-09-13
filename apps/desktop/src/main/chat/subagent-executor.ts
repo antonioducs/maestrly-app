@@ -34,10 +34,9 @@ import {
   type SubagentResumeRecreateReason,
   type SubagentResumeSource,
 } from './subagent-resume'
-import { getAppFlag } from '../store'
-import { FABLE_51_PROFILE_FLAG } from './fable/profile'
-import { OPUS_5_PROFILE_FLAG } from './opus/profile'
-import { resolveClaudeBehaviorProfile } from './behavior-profile'
+import { harnessFor } from './harness/execution'
+import { captureHarnessFlags } from './harness/flags'
+import type { ResolvedHarness } from './harness/types'
 import { resolveCodexSubagentServiceTier } from './subscription-failover/codex-adapter'
 import type { GitHubCopilotAccountIdentity, GitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
@@ -281,23 +280,22 @@ export async function executeSubagent(args: {
     if(!autonomousProviderAllowed(effective.providerId,args.conversationId))throw new Error('This provider account is not authorized for the desktop executor.')
     if (isClaudeSubscriptionProvider(effective.providerId)) {
       let runtimeSignature = ''
-      let behaviorProfile: ReturnType<typeof resolveClaudeBehaviorProfile>['profile'] | undefined
+      let childHarness: ResolvedHarness | undefined
       const result = await runClaudeSubagent({
         ...args,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
         prepareTarget: (target) => {
-          if (behaviorProfile === undefined)
-            behaviorProfile = resolveClaudeBehaviorProfile({
-              requestedModelId: effective.modelId,
+          // The child resolves its own contract from its own model; it never inherits the parent's.
+          if (childHarness === undefined)
+            childHarness = harnessFor('claude-subscription', effective.modelId, {
               resolvedModelId: target.runtimeModelId,
-              fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-              opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-            }).profile
+              flags: captureHarnessFlags(),
+            })
           runtimeSignature = claudeSubagentRuntimeSignature({
             modelId: target.runtimeModelId,
             accountIdentity: target.accountIdentity,
-            behaviorProfileId: behaviorProfile?.id ?? null,
+            behaviorProfileId: childHarness.identity.behaviorProfileId,
             prompt: effectiveDefinition.prompt,
             readOnly: effectiveReadOnly,
             sentEffort: effective.sentEffort,
@@ -306,12 +304,12 @@ export async function executeSubagent(args: {
           })
           const resume = resumeFor(target.providerId, target.accountId, undefined, {
             modelId: target.runtimeModelId,
-            behaviorProfileId: behaviorProfile?.id ?? null,
+            behaviorProfileId: childHarness.identity.behaviorProfileId,
             runtimeSignature,
           })
           return {
             task: resume.task,
-            behaviorProfile,
+            harness: childHarness,
             ...(resume.handle?.kind === 'claude-session'
               ? {
                   resume: {
@@ -336,7 +334,7 @@ export async function executeSubagent(args: {
             cwd: args.cwd,
             accountId: target.accountId,
             modelId: target.runtimeModelId,
-            behaviorProfileId: behaviorProfile?.id ?? null,
+            behaviorProfileId: childHarness?.identity.behaviorProfileId ?? null,
             runtimeSignature,
           })
           queueClaudeSessionCleanup(args.conversationId, sessionId, args.cwd, target.accountId)

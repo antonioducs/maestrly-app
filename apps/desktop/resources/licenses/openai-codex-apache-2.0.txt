@@ -7,8 +7,9 @@ Copyright 2025 OpenAI
 
 Derived material included in Maestrly:
 
-1. The OpenAI model instructions in src/main/chat/openai/prompt.ts, adapted
-   from codex-rs/models-manager/models.json at the pinned commit.
+1. The OpenAI model instructions in
+   src/main/chat/harness/profiles/gpt-5.6-sol/prompt.md, adapted from
+   codex-rs/models-manager/models.json at the pinned commit.
 2. The V4A diff parser/application semantics in
    src/main/chat/openai/v4a-diff.ts, adapted from
    codex-rs/apply-patch/src/parser.rs at the pinned commit.

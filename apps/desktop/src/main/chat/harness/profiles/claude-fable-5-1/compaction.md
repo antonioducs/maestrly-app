@@ -1,0 +1,1 @@
+For this Fable 5.1 execution, explicitly preserve successful solutions and rejected attempts, user constraints and decisions, completed progress, remaining work, and exact references that would be difficult to reconstruct. Never invent facts, commands, edits, or passing checks. When consolidating summaries, retain every unique fact.

@@ -1553,6 +1553,7 @@ describe('Codex subscription runner', () => {
       toolSignature: expect.any(String),
       instructionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       harnessProfile: 'openai-default-v1',
+      harnessSnapshot: expect.objectContaining({ snapshotVersion: 1, profileId: 'default' }),
       lastMessageId: assistant.id,
       usage: {
         inputTokens: 120,

@@ -1,12 +1,16 @@
 import { getDb, transaction } from '../../store'
+import { readHarnessSnapshotJson, type HarnessSnapshotState, type HarnessSnapshotV1 } from '../../../shared/harness'
 
-export type GitHubCopilotHarnessProfile = 'copilot-openai-v1' | 'copilot-anthropic-v1' | 'copilot-generic-v1'
+export type { GitHubCopilotHarnessProfile } from '../harness/adapters/copilot'
+import type { GitHubCopilotHarnessProfile } from '../harness/adapters/copilot'
 
 export interface GitHubCopilotSessionBinding {
   conversationId: string
   sessionId: string
   modelId: string
   harnessProfile: GitHubCopilotHarnessProfile
+  /** Versioned harness contract of the execution that created the session. Absent on legacy rows. */
+  harnessSnapshot: HarnessSnapshotState
   toolSignature: string
   lastMessageId: string
   accountFingerprint: string
@@ -31,6 +35,7 @@ interface BindingRow {
   session_id: string
   model_id: string
   harness_profile: GitHubCopilotHarnessProfile
+  harness_snapshot_json: string | null
   tool_signature: string
   last_message_id: string
   account_fingerprint: string
@@ -54,6 +59,7 @@ function bindingFromRow(row: BindingRow): GitHubCopilotSessionBinding {
     sessionId: row.session_id,
     modelId: row.model_id,
     harnessProfile: row.harness_profile,
+    harnessSnapshot: readHarnessSnapshotJson(row.harness_snapshot_json),
     toolSignature: row.tool_signature,
     lastMessageId: row.last_message_id,
     accountFingerprint: row.account_fingerprint,
@@ -77,27 +83,36 @@ export function listGitHubCopilotSessionBindings(): GitHubCopilotSessionBinding[
 }
 
 export function putGitHubCopilotSessionBinding(
-  input: Omit<GitHubCopilotSessionBinding, 'updatedAt' | 'accountId'> & { accountId?: string | null }
+  input: Omit<GitHubCopilotSessionBinding, 'updatedAt' | 'accountId' | 'harnessSnapshot'> & {
+    accountId?: string | null
+    harnessSnapshot?: HarnessSnapshotV1 | null
+  }
 ): void {
-  const { accountId, ...row } = input
+  const { accountId, harnessSnapshot, ...row } = input
   getDb()
     .prepare(
       `INSERT INTO chat_github_copilot_sessions
-         (conversation_id, session_id, model_id, harness_profile, tool_signature, last_message_id,
-          account_fingerprint, account_id, updated_at)
-       VALUES (@conversationId, @sessionId, @modelId, @harnessProfile, @toolSignature, @lastMessageId,
-               @accountFingerprint, @accountId, @updatedAt)
+         (conversation_id, session_id, model_id, harness_profile, harness_snapshot_json, tool_signature,
+          last_message_id, account_fingerprint, account_id, updated_at)
+       VALUES (@conversationId, @sessionId, @modelId, @harnessProfile, @harnessSnapshotJson, @toolSignature,
+               @lastMessageId, @accountFingerprint, @accountId, @updatedAt)
        ON CONFLICT(conversation_id) DO UPDATE SET
          session_id = excluded.session_id,
          model_id = excluded.model_id,
          harness_profile = excluded.harness_profile,
+         harness_snapshot_json = excluded.harness_snapshot_json,
          tool_signature = excluded.tool_signature,
          last_message_id = excluded.last_message_id,
          account_fingerprint = excluded.account_fingerprint,
          account_id = excluded.account_id,
          updated_at = excluded.updated_at`
     )
-    .run({ ...row, accountId: accountId ?? '', updatedAt: Date.now() })
+    .run({
+      ...row,
+      harnessSnapshotJson: harnessSnapshot ? JSON.stringify(harnessSnapshot) : null,
+      accountId: accountId ?? '',
+      updatedAt: Date.now(),
+    })
 }
 
 export function queueGitHubCopilotSessionCleanup(

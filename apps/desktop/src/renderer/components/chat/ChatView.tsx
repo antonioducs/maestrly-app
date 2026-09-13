@@ -48,7 +48,6 @@ import type {
   ChatStreamEvent,
   ChatSubscriptionFailoverEvent,
   ChatConfig,
-  ChatActiveHarnessProfile,
   ChatUserPrompt,
   MessagePart,
   ReviewLoopInfo,
@@ -94,7 +93,7 @@ import type { DelegatePart } from './OrchestrationRun'
 import { SubagentSessionPanel } from './SubagentSessionPanel'
 import { SubagentSessionContext, SubagentSessionsContext, type OpenSubagentSession } from './SubagentSessionContext'
 import { SubagentActivityPill } from './SubagentActivityPill'
-import { routeAstraComposerSubmit, routeAstraReasoningChange } from './astra-turn-controls'
+import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
   conversationId: string
@@ -225,9 +224,10 @@ export function ChatView({
   const modeChangeRequestRef = useRef<{ id: number; conversationId: string } | null>(null)
   const modeChangeSeqRef = useRef(0)
   const [reasoning, setReasoning] = useState<ChatReasoningEffort>('off')
-  const [activeHarnessProfile, setActiveHarnessProfile] = useState<ChatActiveHarnessProfile | null>(null)
   const [midTurnSteering, setMidTurnSteering] = useState(false)
   const [liveReasoningUpdate, setLiveReasoningUpdate] = useState(false)
+  const [liveReasoningEfforts, setLiveReasoningEfforts] = useState<readonly string[]>([])
+  const [liveReasoningReset, setLiveReasoningReset] = useState(false)
 
   const [subagents, setSubagents] = useState<SubagentAgentDto[] | null>(null)
   const [fontScale, setFontScaleState] = useState<number>(() => {
@@ -787,9 +787,11 @@ export function ChatView({
       const event = ev as ChatStreamEvent
 
       if (kind === 'done') {
-        setActiveHarnessProfile(null)
+        // The turn ended: drop every live capability before any further action can be routed.
         setMidTurnSteering(false)
         setLiveReasoningUpdate(false)
+        setLiveReasoningEfforts([])
+        setLiveReasoningReset(false)
         runtimeQuestionRevisionRef.current += 1
         setRuntimeQuestionState([])
         finishTurn(hidden)
@@ -801,9 +803,10 @@ export function ChatView({
       }
 
       if (event.kind === 'runtime-capabilities') {
-        setActiveHarnessProfile(event.activeHarnessProfile)
         setMidTurnSteering(event.midTurnSteering)
         setLiveReasoningUpdate(event.liveReasoningUpdate)
+        setLiveReasoningEfforts(event.liveReasoningEfforts)
+        setLiveReasoningReset(event.liveReasoningReset)
         return
       }
       if (event.kind === 'steering-accepted') {
@@ -899,9 +902,10 @@ export function ChatView({
       streamingRef.current = runtime.streaming
       setStreaming(runtime.streaming)
       setPending(runtime.pendingPermissions)
-      setActiveHarnessProfile(runtime.activeHarnessProfile)
       setMidTurnSteering(runtime.midTurnSteering)
       setLiveReasoningUpdate(runtime.liveReasoningUpdate)
+      setLiveReasoningEfforts(runtime.liveReasoningEfforts)
+      setLiveReasoningReset(runtime.liveReasoningReset)
       if (maestroRevision === maestroLiveRevisionRef.current) {
         const live = runtime.maestroLive ?? null
         maestroLiveRef.current = live
@@ -1058,24 +1062,19 @@ export function ChatView({
     (r: ChatReasoningEffort) => {
       setReasoning(r)
       void window.api.chatSetReasoning(conversationId, r)
-      const supportedEfforts = modelMeta?.reasoning
-        ? modelMeta.reasoningEfforts?.length
-          ? modelMeta.reasoningEfforts
-          : [...DEFAULT_REASONING_EFFORTS]
-        : []
       if (
-        routeAstraReasoningChange({
+        routeHarnessReasoningChange({
           streaming: streamingRef.current,
-          activeHarnessProfile,
           liveReasoningUpdate,
           effort: r,
-          supportedEfforts,
+          liveReasoningEfforts,
+          liveReasoningReset,
         }) === 'live-and-next-turn'
       ) {
         void window.api.chatUpdateLiveReasoning(conversationId, r)
       }
     },
-    [activeHarnessProfile, conversationId, liveReasoningUpdate, modelMeta]
+    [conversationId, liveReasoningEfforts, liveReasoningReset, liveReasoningUpdate]
   )
 
   const applyMode = useCallback(
@@ -1189,9 +1188,8 @@ export function ChatView({
           invocation && remoteCmdsRef.current.skills.some((skill) => skill.name === invocation.name)
         )
         if (
-          routeAstraComposerSubmit({
+          routeHarnessComposerSubmit({
             streaming: true,
-            activeHarnessProfile,
             midTurnSteering,
             text,
             attachmentCount: atts.length,
@@ -1222,7 +1220,6 @@ export function ChatView({
       void doSend(text, atts, agentMentions)
     },
     [
-      activeHarnessProfile,
       applyMaestroLiveEvent,
       attachments,
       conversationId,
@@ -1883,7 +1880,7 @@ export function ChatView({
                 onMentionsChange={setDraftMentions}
                 structuredAgentMentions={draftMentions}
                 streaming={streaming}
-                sendWhileStreaming={maestroLiveActive || (midTurnSteering && activeHarnessProfile === 'openai-gpt-6-astra-v1')}
+                sendWhileStreaming={maestroLiveActive || midTurnSteering}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
                 disabled={keyMissing || reviewLoopActive}
                 onSend={submitDraft}

@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { deleteConversation, getDb } from '../../src/main/store'
+import { snapshotAllowsResume } from '../../src/main/chat/harness/compatibility'
+import { resolveChatHarness } from '../../src/main/chat/harness/execution'
+import { INVALID_HARNESS_SNAPSHOT } from '../../src/shared/harness'
 import {
   clearAllCodexThreadBindings,
   clearAllCodexThreadCleanup,
@@ -33,6 +36,7 @@ describe('Codex thread store', () => {
       toolSignature: 'tools-sha256',
       instructionHash: 'instructions-sha256',
       harnessProfile: 'openai-gpt-6-astra-v1',
+      harnessSnapshot: null,
       lastMessageId: 'message_456',
       usage: {
         inputTokens: 1_234,
@@ -49,6 +53,7 @@ describe('Codex thread store', () => {
       toolSignature: 'tools-sha256',
       instructionHash: 'instructions-sha256',
       harnessProfile: 'openai-gpt-6-astra-v1',
+      harnessSnapshot: null,
       lastMessageId: 'message_456',
       usage: {
         inputTokens: 1_234,
@@ -60,6 +65,29 @@ describe('Codex thread store', () => {
       updatedAt: expect.any(Number),
     })
     expect(getCodexThreadBinding(conversation.id)!.updatedAt).toBeGreaterThanOrEqual(writtenAt)
+  })
+
+  it('blocks resume when the stored snapshot is corrupt or has an unsupported version', () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    putCodexThreadBinding({
+      conversationId: conversation.id,
+      threadId: 'thread-corrupt',
+      modelId: 'gpt-5.6-sol',
+      toolSignature: 'tools-sha256',
+      lastMessageId: 'message_456',
+      usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+    })
+    const harness = resolveChatHarness('codex-subscription', 'gpt-5.6-sol').harness
+
+    for (const snapshotJson of ['{bad', '{"snapshotVersion":99}']) {
+      getDb()
+        .prepare('UPDATE chat_codex_threads SET harness_snapshot_json = ? WHERE conversation_id = ?')
+        .run(snapshotJson, conversation.id)
+      const binding = getCodexThreadBinding(conversation.id)
+      expect(binding?.harnessSnapshot).toBe(INVALID_HARNESS_SNAPSHOT)
+      expect(snapshotAllowsResume(binding?.harnessSnapshot ?? null, harness)).toBe(false)
+    }
   })
 
   it('clears only the selected conversation binding', () => {

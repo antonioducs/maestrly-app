@@ -4,7 +4,11 @@ import {
   buildClaudeCompactionQueryOptions,
   resolveClaudeEffort,
 } from '../../src/main/chat/claude-agent-sdk/options'
-import { createFablePostToolUseHook } from '../../src/main/chat/fable/sdk-hooks'
+import { createHarnessPostToolUseHooks } from '../../src/main/chat/harness/adapters/claude'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+
+const createFablePostToolUseHook = () =>
+  createHarnessPostToolUseHooks(harnessFor('claude-subscription', 'claude-fable-5-1'))!
 
 function bridge() {
   return {
@@ -79,6 +83,7 @@ describe('Claude Agent SDK query options', () => {
       systemPrompt: 'Fable system prompt',
       bridge: bridge(),
       postToolUseHook,
+      progressMode: 'summarized',
       disallowedNativeTools: ['Bash'],
     })
 

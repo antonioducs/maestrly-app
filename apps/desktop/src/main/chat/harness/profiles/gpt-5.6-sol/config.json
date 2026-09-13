@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "openai-gpt-5-6-sol",
+  "profileVersion": 1,
+  "match": { "caseInsensitive": true },
+  "source": {
+    "repository": "https://github.com/openai/codex",
+    "commit": "5bed6447998c754d154dbd796517310b8f04d4ce",
+    "model": "gpt-5.6-sol",
+    "path": "codex-rs/models-manager/models.json#/models/0/model_messages/instructions_template",
+    "sourceUrl": "https://github.com/openai/codex/blob/5bed6447998c754d154dbd796517310b8f04d4ce/codex-rs/models-manager/models.json",
+    "upstreamSha256": "e9778714d505f3dd04d44db4394024c5fab5bf6554fc9faa3cdf9cf776b63bb9",
+    "adaptedSha256": "943523f664292da3295a28f49db749a11a9d01702280d0b77a3cd6527f77900a",
+    "license": "Apache-2.0",
+    "adaptations": [
+      "Replaced the Codex product identity with the Maestrly app identity.",
+      "Mapped commentary/final channel wording to Maestrly progress updates and final responses.",
+      "Mapped upstream tool guidance to native apply_patch/local_shell when exposed and Maestrly legacy fallbacks otherwise.",
+      "Removed the Codex-specific skill loader protocol and replaced it with the Maestrly use_skill overlay.",
+      "Mapped Codex file-link and visualization wording to the Maestrly Markdown and Mermaid renderer.",
+      "Condensed repetitive autonomy and progress wording without changing its authorization boundaries.",
+      "Kept mode, drawer-tool, project, skill, subagent, and environment context in explicit Maestrly overlays."
+    ]
+  },
+  "bindings": [
+    {
+      "providerKind": "openai-responses",
+      "overrides": {
+        "identity": { "promptIdentity": "codex-gpt-5.6-sol@5bed644" },
+        "prompts": { "layout": "openai-codex-port", "base": "prompt.md" }
+      }
+    },
+    {
+      "providerKind": "openai-responses",
+      "endpoint": "official-openai",
+      "overrides": { "identity": { "harnessProfileId": "openai-gpt-5.6-sol-v1" } }
+    },
+    {
+      "providerKind": "github-copilot-subscription",
+      "overrides": { "identity": { "promptIdentity": "codex-gpt-5.6-sol@5bed644" } }
+    }
+  ]
+}

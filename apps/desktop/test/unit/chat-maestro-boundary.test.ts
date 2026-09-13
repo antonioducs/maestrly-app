@@ -2,12 +2,32 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_AGENTS } from '../../src/main/chat/agents'
 import { approvalConfig } from '../../src/main/chat/codex-subscription/runner'
-import { SYSTEM_PROMPT } from '../../src/main/chat/runner'
 import { builtinToolNamesForMode, isSubagentReadOnly } from '../../src/main/chat/tools'
 import { APP_TOOL_POLICY, appToolAllowed, externalMcpToolAllowed } from '../../src/main/chat/tool-policy'
 import { MAESTRO_DELEGATE_TOOL_SCHEMA, maestroAgentsFromTurn } from '../../src/main/chat/maestro-delegation'
 import { resolveChatBehavior } from '../../src/shared/conversation-experience'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
+
+import { buildMaestrlyBasePrompt } from '../../src/main/chat/harness/host-contracts'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+import type { ChatBehavior } from '../../src/shared/conversation-experience'
+
+/** Host base prompt for an unspecialized model: the declarative equivalent of the legacy SYSTEM_PROMPT. */
+const SYSTEM_PROMPT = (
+  cwd: string,
+  appToolsEnabled: boolean,
+  mode: ChatBehavior,
+  hasNotesTab: boolean,
+  modelId = 'generic-model'
+): string =>
+  buildMaestrlyBasePrompt({
+    harness: harnessFor('openai', modelId),
+    cwd,
+    appToolsEnabled,
+    mode,
+    hasNotesTab,
+  })
+
 
 describe('Maestro parent/worker capability boundary', () => {
   it('gives the parent only read-only built-ins and no shell/write/edit/artifact tools', () => {

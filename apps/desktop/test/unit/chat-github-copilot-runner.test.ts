@@ -30,7 +30,7 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { patchConvUiPrefs } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
-import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
+import { harnessFor } from '../../src/main/chat/harness/execution'
 
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
 
@@ -443,7 +443,7 @@ describe('GitHub Copilot official runner', () => {
     await runGitHubCopilotChat({
       ...args(conversation.id, workspace.id, cwd, manager),
       selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'claude-fable-5-1' },
-      behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
+      harness: harnessFor('github-copilot-subscription', 'claude-fable-5-1'),
     })
 
     const config = manager.createCalls[0]

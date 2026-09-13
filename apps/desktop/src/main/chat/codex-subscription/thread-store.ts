@@ -1,5 +1,13 @@
 import { getDb, transaction } from '../../store'
-import type { ModelHarnessProfileId } from '../model-harness-profile'
+import {
+  isHarnessProfileIdentity,
+  readHarnessSnapshotJson,
+  type HarnessSnapshotState,
+  type HarnessSnapshotV1,
+} from '../../../shared/harness'
+
+/** Identity recorded before the versioned model-harness contract existed. */
+const LEGACY_DEFAULT_HARNESS_PROFILE = 'openai-default-v1'
 
 export interface CodexThreadBinding {
   conversationId: string
@@ -8,7 +16,9 @@ export interface CodexThreadBinding {
   toolSignature: string
   /** Hash of the canonical AGENTS.override.md/AGENTS.md/CLAUDE.md block used to create the thread. */
   instructionHash: string
-  harnessProfile: ModelHarnessProfileId
+  harnessProfile: string
+  /** Versioned harness contract of the execution that created the thread. Absent on legacy rows. */
+  harnessSnapshot: HarnessSnapshotState
   lastMessageId: string
   usage: CodexUsageTotals
   /** Subscription account slot owning the thread; null means the default account. */
@@ -41,6 +51,7 @@ interface BindingRow {
   tool_signature: string
   instruction_hash: string
   harness_profile: string
+  harness_snapshot_json: string | null
   last_message_id: string
   usage_json: string
   account_id: string
@@ -85,12 +96,12 @@ function fromRow(row: BindingRow): CodexThreadBinding {
     modelId: row.model_id,
     toolSignature: row.tool_signature,
     instructionHash: row.instruction_hash,
-    harnessProfile:
-      row.harness_profile === 'openai-gpt-6-astra-v1'
-        ? 'openai-gpt-6-astra-v1'
-        : row.harness_profile === 'openai-gpt-5.6-sol-v1'
-          ? 'openai-gpt-5.6-sol-v1'
-          : 'openai-default-v1',
+    // Syntactic validation only: an unknown but well-formed identity is preserved, never rewritten
+    // into the default profile, so a newer profile round-trips through an older reader untouched.
+    harnessProfile: isHarnessProfileIdentity(row.harness_profile)
+      ? row.harness_profile
+      : LEGACY_DEFAULT_HARNESS_PROFILE,
+    harnessSnapshot: readHarnessSnapshotJson(row.harness_snapshot_json),
     lastMessageId: row.last_message_id,
     usage: parseUsage(row.usage_json),
     accountId: row.account_id || null,
@@ -113,26 +124,31 @@ export function listCodexThreadBindings(): CodexThreadBinding[] {
 }
 
 export function putCodexThreadBinding(
-  input: Omit<CodexThreadBinding, 'updatedAt' | 'accountId' | 'instructionHash' | 'harnessProfile'> & {
+  input: Omit<
+    CodexThreadBinding,
+    'updatedAt' | 'accountId' | 'instructionHash' | 'harnessProfile' | 'harnessSnapshot'
+  > & {
     accountId?: string | null
     instructionHash?: string
-    harnessProfile?: ModelHarnessProfileId
+    harnessProfile?: string
+    harnessSnapshot?: HarnessSnapshotV1 | null
   }
 ): void {
-  const { usage, accountId, instructionHash, harnessProfile, ...row } = input
+  const { usage, accountId, instructionHash, harnessProfile, harnessSnapshot, ...row } = input
   getDb()
     .prepare(
       `INSERT INTO chat_codex_threads
-         (conversation_id, thread_id, model_id, tool_signature, instruction_hash, harness_profile, last_message_id, usage_json,
-          account_id, updated_at)
-       VALUES (@conversationId, @threadId, @modelId, @toolSignature, @instructionHash, @harnessProfile, @lastMessageId, @usageJson,
-               @accountId, @updatedAt)
+         (conversation_id, thread_id, model_id, tool_signature, instruction_hash, harness_profile, harness_snapshot_json,
+          last_message_id, usage_json, account_id, updated_at)
+       VALUES (@conversationId, @threadId, @modelId, @toolSignature, @instructionHash, @harnessProfile, @harnessSnapshotJson,
+               @lastMessageId, @usageJson, @accountId, @updatedAt)
        ON CONFLICT(conversation_id) DO UPDATE SET
          thread_id = excluded.thread_id,
          model_id = excluded.model_id,
          tool_signature = excluded.tool_signature,
          instruction_hash = excluded.instruction_hash,
          harness_profile = excluded.harness_profile,
+         harness_snapshot_json = excluded.harness_snapshot_json,
          last_message_id = excluded.last_message_id,
          usage_json = excluded.usage_json,
          account_id = excluded.account_id,
@@ -141,7 +157,8 @@ export function putCodexThreadBinding(
     .run({
       ...row,
       instructionHash: instructionHash ?? '',
-      harnessProfile: harnessProfile ?? 'openai-default-v1',
+      harnessProfile: harnessProfile ?? LEGACY_DEFAULT_HARNESS_PROFILE,
+      harnessSnapshotJson: harnessSnapshot ? JSON.stringify(harnessSnapshot) : null,
       usageJson: JSON.stringify(usage),
       accountId: accountId ?? '',
       updatedAt: Date.now(),

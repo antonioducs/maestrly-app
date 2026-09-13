@@ -113,9 +113,7 @@ import {
   type SubagentResumeRecreateReason,
   type SubagentResumeSource,
 } from '../subagent-resume'
-import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
-import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
-import { resolveClaudeBehaviorProfile } from '../behavior-profile'
+import { harnessFor } from '../harness/execution'
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
@@ -135,15 +133,12 @@ import {
 import type { CodexAppServerClient } from './client'
 import { generateImageForConversation } from './image-generation'
 import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './manager'
-import {
-  astraDeveloperInstructions,
-  buildAstraCodexThreadProfile,
-  type AstraCodexThreadProfile,
-} from './astra-runtime-profile'
-import {
-  serializableReasoningEffortForProfile,
-  type ModelHarnessProfileId,
-} from '../model-harness-profile'
+import { buildCodexThreadHarness, type CodexThreadHarness } from '../harness/adapters/codex'
+import { buildHarnessDeveloperInstructions } from '../harness/prompt-builder'
+import { serializableReasoningEffort } from '../harness/policies'
+import { captureHarnessFlags } from '../harness/flags'
+import { createHarnessSnapshot, snapshotAllowsResume } from '../harness/compatibility'
+import type { ResolvedHarness } from '../harness/types'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
 import {
   dynamicToolRegistrations,
@@ -378,9 +373,14 @@ export interface RunCodexSubscriptionChatArgs {
 }
 
 export interface CodexActiveTurnControlPort {
-  harnessProfile: ModelHarnessProfileId
+  /** Diagnostic identity of the running contract; the host authorizes by capability, not by name. */
+  harnessProfile: string
   midTurnSteering: boolean
   liveReasoningUpdate: boolean
+  /** Efforts this execution accepts for a live change. */
+  liveReasoningEfforts: readonly string[]
+  /** Whether this execution accepts clearing the override back to the provider default. */
+  liveReasoningReset: boolean
   steer(text: string, clientUserMessageId: string): Promise<'accepted' | 'target-unavailable'>
   updateReasoning(effort: string): Promise<'applied' | 'target-unavailable' | 'invalid-effort'>
 }
@@ -2005,8 +2005,9 @@ function bindingCanResume(
   previousMessageId: string | null,
   signature: string,
   instructionHash: string,
-  harnessProfile: ModelHarnessProfileId,
-  accountId: string | null
+  harnessProfile: string,
+  accountId: string | null,
+  harness: ResolvedHarness
 ): binding is CodexThreadBinding {
   // Model is not part of identity: `thread/resume` accepts the official `model` override. Sol/Luna changes
   // preserve server-side context; the binding records the new model after the next turn.
@@ -2018,7 +2019,9 @@ function bindingCanResume(
     binding.instructionHash === instructionHash &&
     binding.harnessProfile === harnessProfile &&
     // Multiple accounts: a thread lives in its owner's CODEX_HOME; another account must never resume it.
-    binding.accountId === accountId
+    binding.accountId === accountId &&
+    // Contract hash: model name alone never breaks Sol/Luna continuity, a changed prompt/policy does.
+    snapshotAllowsResume(binding.harnessSnapshot, harness)
   )
 }
 
@@ -2163,17 +2166,26 @@ export async function runCodexSubscriptionChat(
   let currentLease = args.availabilityLease
   let currentRequestedContextWindow = positiveContextWindow(args.requestedContextWindow) || null
   let experimentalContextFallbackDisabled = false
-  const astraHarnessEnabledAtAdmission = getAppFlag('chat.astraHarness', true)
+  // Flags are captured once, at admission: a later toggle never mutates this execution.
+  const harnessFlagsAtAdmission = captureHarnessFlags()
   const profileFor = (
     model: Partial<CodexSubscriptionModel> | null | undefined,
     client: CodexAppServerClient,
     eligibleChatGptSession = args.eligibleChatGptSession === true
-  ): AstraCodexThreadProfile => {
+  ): CodexThreadHarness => {
     const session = client.initializeResult?.capabilities
-    return buildAstraCodexThreadProfile({
+    return buildCodexThreadHarness({
       modelId: currentModelId,
-      model,
-      astraHarnessEnabled: astraHarnessEnabledAtAdmission,
+      flags: harnessFlagsAtAdmission,
+      runtimeCapabilities: {
+        ...(model?.supportsExperimentalContext !== null && model?.supportsExperimentalContext !== undefined
+          ? { experimentalContext: model.supportsExperimentalContext }
+          : {}),
+        ...(model?.supportsParallelToolCalls !== null && model?.supportsParallelToolCalls !== undefined
+          ? { parallelTools: model.supportsParallelToolCalls }
+          : {}),
+      },
+      runtimeReasoningEfforts: model?.supportedReasoningEfforts?.map((entry) => entry.reasoningEffort),
       eligibleChatGptSession,
       ephemeral: Boolean(args.ephemeralSession),
       reviewer: Boolean(args.reviewerRuntime),
@@ -2198,8 +2210,8 @@ export async function runCodexSubscriptionChat(
     liveReasoning: runtimeProfile.capabilities.configurationUpdates,
     asyncQuestions: runtimeProfile.asyncQuestionGuidance,
     nativeMultiAgent: 'disabled-host-task',
-    modelCapabilities: runtimeProfile.modelCapabilities,
-    adapterCapabilities: runtimeProfile.adapterCapabilities,
+    modelCapabilities: runtimeProfile.harness.modelCapabilities,
+    adapterCapabilities: runtimeProfile.harness.adapterCapabilities,
     effectiveCapabilities: runtimeProfile.capabilities,
   })
   let currentObserveContextWindow: ((contextWindow: number) => void) | undefined
@@ -2458,8 +2470,8 @@ export async function runCodexSubscriptionChat(
   const toolProfile = profileDynamicTools(specs)
   const signature = dynamicToolSignature(specs)
   const projectContext = await buildProjectContext(args.projectId, args.cwd)
-  const developerInstructionsFor = (profile: AstraCodexThreadProfile): string => {
-    const base = profile.isAstra
+  const developerInstructionsFor = (profile: CodexThreadHarness): string => {
+    const base = profile.usesNativeOperatingPrompt
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
           maestro: args.maestro,
@@ -2468,7 +2480,11 @@ export async function runCodexSubscriptionChat(
           conversationId: args.conversationId,
           maestro: args.maestro,
         })
-    return (profile.isAstra ? astraDeveloperInstructions(base, profile) : base) + projectContext + (autonomousPolicy(args.conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : "")
+    return (
+      buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance }) +
+      projectContext +
+      (autonomousPolicy(args.conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : "")
+    )
   }
   let developerInstructions = developerInstructionsFor(runtimeProfile)
   const structuralInstructionHash = (): string =>
@@ -2501,7 +2517,8 @@ export async function runCodexSubscriptionChat(
       signature,
       instructionHash,
       runtimeProfile.modelHarnessProfileId,
-      threadAccountId
+      threadAccountId,
+      runtimeProfile.harness
     )
   // Isolated: neither resume NOR retire the main conversation binding.
   if (existingThreadId && !canResume && !args.ephemeralSession) {
@@ -2534,7 +2551,7 @@ export async function runCodexSubscriptionChat(
       ...(runtimeProfile.nativeCompactionFirst ? {} : ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG),
       ...(runtimeProfile.experimentalContextEnabled
         ? { 'features.context_management.experimental_mode': true }
-        : runtimeProfile.isAstra
+        : runtimeProfile.declaresExperimentalContext
           ? { 'features.context_management.experimental_mode': false }
           : {}),
       // Maestrly discovers and budgets project docs for all runtimes. Zero prevents Codex from injecting
@@ -2629,7 +2646,7 @@ export async function runCodexSubscriptionChat(
     threadOptions.developerInstructions = developerInstructions
     if (runtimeProfile.personality) threadOptions.personality = runtimeProfile.personality
     else delete (threadOptions as { personality?: string }).personality
-    if (runtimeProfile.isAstra) {
+    if (runtimeProfile.declaresExperimentalContext) {
       baseThreadConfig['features.context_management.experimental_mode'] = runtimeProfile.experimentalContextEnabled
     } else {
       delete baseThreadConfig['features.context_management.experimental_mode']
@@ -3454,7 +3471,7 @@ export async function runCodexSubscriptionChat(
                             ? profile.effective!.sentEffort
                             : undefined,
                       fastMode: effectiveProfile.fastMode === true,
-                      astraHarnessEnabled: astraHarnessEnabledAtAdmission,
+                      harnessFlags: harnessFlagsAtAdmission,
                       chain,
                       attemptedProviderIds: attempted,
                       signal,
@@ -3693,23 +3710,21 @@ export async function runCodexSubscriptionChat(
               : nativeClaude
                 ? await (async () => {
                     let runtimeSignature = ''
-                    let behaviorProfile: ReturnType<typeof resolveClaudeBehaviorProfile>['profile'] | undefined
+                    let childHarness: ReturnType<typeof harnessFor> | undefined
                     const outcome = await runClaudeSubagent({
                       conversationId: args.conversationId,
                       cwd: args.cwd,
                       profile,
                       prepareTarget: (target) => {
-                        if (behaviorProfile === undefined)
-                          behaviorProfile = resolveClaudeBehaviorProfile({
-                            requestedModelId: profile.effective!.modelId,
+                        if (childHarness === undefined)
+                          childHarness = harnessFor('claude-subscription', profile.effective!.modelId, {
                             resolvedModelId: target.runtimeModelId,
-                            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-                            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-                          }).profile
+                            flags: harnessFlagsAtAdmission,
+                          })
                         runtimeSignature = claudeSubagentRuntimeSignature({
                           modelId: target.runtimeModelId,
                           accountIdentity: target.accountIdentity,
-                          behaviorProfileId: behaviorProfile?.id ?? null,
+                          behaviorProfileId: childHarness.identity.behaviorProfileId,
                           prompt: effectiveDefinition.prompt,
                           readOnly: codexReadOnly,
                           sentEffort: profile.effective!.sentEffort,
@@ -3718,12 +3733,12 @@ export async function runCodexSubscriptionChat(
                         })
                         const resume = resumeFor(target.providerId, target.accountId, undefined, {
                           modelId: target.runtimeModelId,
-                          behaviorProfileId: behaviorProfile?.id ?? null,
+                          behaviorProfileId: childHarness.identity.behaviorProfileId,
                           runtimeSignature,
                         })
                         return {
                           task: resume.task,
-                          behaviorProfile,
+                          harness: childHarness,
                           ...(resume.handle?.kind === 'claude-session'
                             ? {
                                 resume: {
@@ -3753,7 +3768,7 @@ export async function runCodexSubscriptionChat(
                           cwd: args.cwd,
                           accountId: target.accountId,
                           modelId: target.runtimeModelId,
-                          behaviorProfileId: behaviorProfile?.id ?? null,
+                          behaviorProfileId: childHarness?.identity.behaviorProfileId ?? null,
                           runtimeSignature,
                         })
                         queueClaudeSessionCleanup(args.conversationId, sessionId, args.cwd, target.accountId)
@@ -4295,6 +4310,8 @@ export async function runCodexSubscriptionChat(
               harnessProfile: controlledProfile.modelHarnessProfileId,
               midTurnSteering: controlledProfile.capabilities.steering,
               liveReasoningUpdate: controlledProfile.capabilities.configurationUpdates,
+              liveReasoningEfforts: controlledProfile.validReasoningEfforts,
+              liveReasoningReset: controlledProfile.capabilities.configurationUpdates,
               steer: async (text, clientUserMessageId) => {
                 if (
                   !controlledProfile.capabilities.steering ||
@@ -4332,9 +4349,9 @@ export async function runCodexSubscriptionChat(
                   currentClient !== controlledClient
                 )
                   return 'target-unavailable'
-                const sent = serializableReasoningEffortForProfile(controlledProfile.modelHarnessProfileId, effort)
+                const sent = serializableReasoningEffort(controlledProfile.harness.reasoning, effort)
                 if (effort !== 'off' && effort !== 'default' && !sent) return 'invalid-effort'
-                if (sent && !controlledProfile.capabilities.validReasoningEfforts.includes(sent)) {
+                if (sent && !controlledProfile.validReasoningEfforts.includes(sent)) {
                   return 'invalid-effort'
                 }
                 const result = await controlledClient.updateTurnSettings(
@@ -5422,6 +5439,7 @@ export async function runCodexSubscriptionChat(
           toolSignature: signature,
           instructionHash,
           harnessProfile: runtimeProfile.modelHarnessProfileId,
+          harnessSnapshot: createHarnessSnapshot(runtimeProfile.harness),
           lastMessageId: lastBindingMessageId,
           usage: finalUsage ? usageTotals(finalUsage.tokenUsage.total) : baseline,
           accountId: threadAccountId,

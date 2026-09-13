@@ -109,9 +109,11 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import type { ClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
-import { resolveClaudeBehaviorProfile } from '../../src/main/chat/behavior-profile'
-import { opusUltraGuidance } from '../../src/main/chat/opus/prompt'
-import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+import { harnessUltraGuidance } from '../../src/main/chat/harness/host-contracts'
+
+const opusUltraGuidance = (mode: Parameters<typeof harnessUltraGuidance>[1]) =>
+  harnessUltraGuidance(harnessFor('claude-subscription', 'claude-opus-5'), mode)!
 
 const identity: ClaudeSubscriptionAccountIdentity = {
   fingerprint: 'sha256:claude-account',
@@ -1518,7 +1520,7 @@ describe('Claude official chat runner', () => {
         projectId: workspace.id,
         cwd: '/repo',
         selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        behaviorProfile: family === 'fable' ? FABLE_51_BEHAVIOR_PROFILE : undefined,
+        harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
         resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
         mode: 'plan',
         permMode: 'ask',
@@ -1558,7 +1560,7 @@ describe('Claude official chat runner', () => {
       expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
     } else {
       expect(clean.options.systemPrompt).toContain(
-        resolveClaudeBehaviorProfile({ requestedModelId: 'claude-opus-5' }).profile!.id
+        harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
       )
       expect(clean.options.thinking).toBeUndefined() // Preserve Opus's enabled SDK default.
       expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
@@ -2705,7 +2707,7 @@ describe('Claude official chat runner', () => {
         projectId: workspace.id,
         cwd: '/repo',
         selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        behaviorProfile: family === 'fable' ? FABLE_51_BEHAVIOR_PROFILE : undefined,
+        harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
         resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
         mode: 'plan',
         permMode: 'ask',

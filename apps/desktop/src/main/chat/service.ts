@@ -73,7 +73,13 @@ import {
   resolveChatHarnessMetadata,
   ChatConfigError,
 } from './provider'
-import { isOpenAIHarnessActive } from './harness'
+import { isHarnessReasoningReset } from '../../shared/harness'
+import { isOpenAIHarnessActive } from './harness/adapters/responses'
+import { harnessFor, resolveHarnessContract } from './harness/execution'
+import { captureHarnessFlags } from './harness/flags'
+import { harnessCompactionSystem } from './harness/host-contracts'
+import { createHarnessSnapshot } from './harness/compatibility'
+import type { ResolvedHarness } from './harness/types'
 import {
   PermissionBroker,
   AUTO_RULESET,
@@ -220,7 +226,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { generateText } from 'ai'
 import type { ModelInfo as GitHubCopilotModelInfo } from '@github/copilot-sdk'
 import type { ModelInfo as ClaudeModelInfo } from '@anthropic-ai/claude-agent-sdk'
-import { OPENAI_GPT6_ASTRA_MANIFEST, resolveModelHarnessProfile } from './model-harness-profile'
 import { searchFiles } from './file-search'
 import { listUserPrompts, addUserPrompt, updateUserPrompt, removeUserPrompt, listProjectCommands } from './commands'
 import {
@@ -361,10 +366,6 @@ import {
   setImageInterpreter,
 } from './image-interpreter'
 import { recordIpcSend } from '../performance/metrics'
-import { FABLE_51_PROFILE_FLAG } from './fable/profile'
-import { OPUS_5_PROFILE_FLAG } from './opus/profile'
-import { resolveClaudeBehaviorProfile, type ClaudeBehaviorProfile } from './behavior-profile'
-import { compileClaudeCompactionSystem } from './behavior-prompt'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -614,6 +615,8 @@ interface ActiveRun {
   activeHarnessProfile: import('../../shared/chat').ChatActiveHarnessProfile | null
   midTurnSteering: boolean
   liveReasoningUpdate: boolean
+  liveReasoningEfforts: readonly string[]
+  liveReasoningReset: boolean
   codexTurnControl?: CodexActiveTurnControlPort
   acceptedSteeringMessageIds: Set<string>
 }
@@ -1738,16 +1741,18 @@ function defaultReasoningEffort(): string {
   return typeof r === 'string' && r.trim() ? r : 'off'
 }
 
+/** Transport kind of a selection, used to resolve the harness contract outside the model factory. */
+function providerKindOf(providerId: string): ChatProviderKind {
+  return getProviderKind(getProvider(providerId))
+}
+
+/** Single filter for the Codex effort axis: the profile manifest, or the catalog when none is declared. */
 function codexSerializableReasoningEfforts(modelId: string, efforts: readonly string[]): string[] {
-  const astra =
-    resolveModelHarnessProfile({
-      providerKind: 'codex-subscription',
-      modelId,
-      astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
-    }).id === 'openai-gpt-6-astra-v1'
-  return astra
-    ? efforts.filter((effort) => OPENAI_GPT6_ASTRA_MANIFEST.validReasoningEfforts.includes(effort))
-    : [...efforts]
+  const reasoning = harnessFor('codex-subscription', modelId, {
+    flags: captureHarnessFlags(),
+    runtimeReasoningEfforts: efforts,
+  }).reasoning
+  return reasoning.manifestEfforts ? [...reasoning.effectiveEfforts] : [...efforts]
 }
 
 function makeSafeSend(wc: WebContents): SafeSend {
@@ -1947,11 +1952,8 @@ async function runnerCapabilityMetaFallback(providerId: string, modelId: string)
       reasoningEfforts,
       fastModeCapability,
       nativeUltraMode:
-        resolveModelHarnessProfile({
-          providerKind: 'codex-subscription',
-          modelId,
-          astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
-        }).id === 'openai-gpt-6-astra-v1' && reasoningEfforts.includes('ultra'),
+        harnessFor('codex-subscription', modelId, { flags: captureHarnessFlags() }).reasoning.nativeUltra &&
+        reasoningEfforts.includes('ultra'),
     }
   }
   if (isGitHubCopilotSubscriptionProvider(providerId)) {
@@ -2186,6 +2188,8 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
     maestroLive: maestroLiveState(run?.maestroLive),
     midTurnSteering: run?.midTurnSteering === true,
     liveReasoningUpdate: run?.liveReasoningUpdate === true,
+    liveReasoningEfforts: run?.liveReasoningEfforts ?? [],
+    liveReasoningReset: run?.liveReasoningReset === true,
     activeHarnessProfile: run?.activeHarnessProfile ?? null,
   }
 }
@@ -2564,16 +2568,13 @@ async function effectiveModelMeta(
     const providerWindow = resolvedContext.maxNominal ?? undefined
     const effective = resolvedContext.effectiveEstimate ?? undefined
     const reasoningEfforts = codexModel?.supportedReasoningEfforts?.map((option) => option.reasoningEffort) ?? []
-    const astraProfileActive =
-      resolveModelHarnessProfile({
-        providerKind: 'codex-subscription',
-        modelId: codexModel?.model ?? modelId,
-        astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
-      }).id === 'openai-gpt-6-astra-v1'
+    const nativeUltraProfile = harnessFor('codex-subscription', codexModel?.model ?? modelId, {
+      flags: captureHarnessFlags(),
+    }).reasoning.nativeUltra
     const nativeUltraMode = Boolean(
       codexModel?.supportedReasoningEfforts?.some(
         (option) =>
-          option.reasoningEffort === 'ultra' && (astraProfileActive || /delegat|subagent/i.test(option.description))
+          option.reasoningEffort === 'ultra' && (nativeUltraProfile || /delegat|subagent/i.test(option.description))
       )
     )
     const fastModeCapability = Boolean(
@@ -2749,9 +2750,7 @@ async function effectiveModelMeta(
   if (outMeta?.reasoningEfforts?.includes('ultra')) {
     try {
       if (
-        resolveChatHarnessMetadata(providerId, modelId, {
-          astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
-        }).modelHarnessProfileId === 'openai-gpt-6-astra-v1'
+        resolveChatHarnessMetadata(providerId, modelId, { flags: captureHarnessFlags() }).harness.reasoning.nativeUltra
       ) {
         outMeta.nativeUltraMode = true
       }
@@ -3008,7 +3007,7 @@ async function currentChatHistoryStats(
     if (runtimeReusable) {
       try {
         const resolved = resolveChatModel(selection!.providerId, selection!.modelId, {
-          astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
+          flags: captureHarnessFlags(),
         })
         runtimeReusable = stats.lastUsage?.contextIdentity === resolved.providerFingerprint
         if (
@@ -3024,6 +3023,7 @@ async function currentChatHistoryStats(
               modelId: selection!.modelId,
               providerFingerprint: resolved.providerFingerprint,
               modelHarnessProfileId: resolved.modelHarnessProfileId,
+              harnessSnapshot: createHarnessSnapshot(resolved.harness),
             })
           )
         }
@@ -3554,17 +3554,20 @@ async function startSend(
       !!internalLoop && internalLoop.contextPolicy === 'isolated' && internalLoop.providerSessionPolicy === 'ephemeral'
     const frozenProfile = internalLoop?.selectionOverride
     const behaviorRequestedModelId = selection.modelId
-    const behaviorProfileFor = (resolvedModelId?: string | null): ClaudeBehaviorProfile | null => {
-      const resolution = resolveClaudeBehaviorProfile({
-        requestedModelId: behaviorRequestedModelId,
+    // Flags captured once per admission; no execution helper rereads live preferences afterwards.
+    const harnessFlagsAtAdmission = captureHarnessFlags()
+    const frozenHarnessOptions =
+      isolated && frozenProfile != null
+        ? { frozen: true as const, frozenBehaviorProfileId: frozenProfile.behaviorProfileId ?? null }
+        : {}
+    const admittedHarnessFor = (providerKind: ChatProviderKind, resolvedModelId?: string | null): ResolvedHarness => {
+      const resolution = resolveHarnessContract(providerKind, behaviorRequestedModelId, {
         resolvedModelId,
-        fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-        opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-        frozen: isolated && frozenProfile != null,
-        frozenProfileId: frozenProfile?.behaviorProfileId,
+        flags: harnessFlagsAtAdmission,
+        ...frozenHarnessOptions,
       })
-      if (resolution.reason === 'frozen-profile-mismatch') throw new Error('executor-unavailable')
-      return resolution.profile
+      if (!resolution.ok) throw new Error('executor-unavailable')
+      return resolution.harness
     }
     const executionScope: ChatExecutionScope | undefined =
       isolated && internalLoop
@@ -3704,7 +3707,7 @@ async function startSend(
         logicalProviderId: codexSelection.providerId,
         modelId: codexSelection.modelId,
         reasoningEffort: codexRequestedEffort && codexRequestedEffort !== 'off' ? codexRequestedEffort : undefined,
-        astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
+        harnessFlags: captureHarnessFlags(),
         fastMode: codexFastMode,
         configureContextWindow: true,
         chain,
@@ -3955,6 +3958,8 @@ async function startSend(
       activeHarnessProfile: null,
       midTurnSteering: false,
       liveReasoningUpdate: false,
+      liveReasoningEfforts: [],
+      liveReasoningReset: false,
       acceptedSteeringMessageIds: new Set(),
       ...(maestroLive ? { maestroLive } : {}),
     }
@@ -4045,14 +4050,19 @@ async function startSend(
     }
     const applyCodexTurnControl = (control: CodexActiveTurnControlPort | null): void => {
       if (active.get(conversationId) !== run) return
+      // Ending or replacing a turn clears the previous capabilities before any new action is accepted.
       run.codexTurnControl = control ?? undefined
       run.activeHarnessProfile = control?.harnessProfile ?? null
       run.midTurnSteering = control?.midTurnSteering === true
       run.liveReasoningUpdate = control?.liveReasoningUpdate === true
+      run.liveReasoningEfforts = control?.liveReasoningEfforts ?? []
+      run.liveReasoningReset = control?.liveReasoningReset === true
       send(`chat:delta:${conversationId}`, {
         kind: 'runtime-capabilities',
         midTurnSteering: run.midTurnSteering,
         liveReasoningUpdate: run.liveReasoningUpdate,
+        liveReasoningEfforts: run.liveReasoningEfforts,
+        liveReasoningReset: run.liveReasoningReset,
         activeHarnessProfile: run.activeHarnessProfile,
       } satisfies ChatStreamEvent)
     }
@@ -4088,7 +4098,14 @@ async function startSend(
       : useGitHubCopilot
         ? githubCopilotModelAtAdmission?.id
         : undefined
-    const admittedBehaviorProfile = behaviorProfileFor(admittedBehaviorResolvedModelId)
+    const admittedHarness = admittedHarnessFor(
+      useClaudeSubscription
+        ? 'claude-subscription'
+        : useGitHubCopilot
+          ? 'github-copilot-subscription'
+          : 'openai',
+      admittedBehaviorResolvedModelId
+    )
     const compactActiveHistory = (claudeTarget?: ClaudeRuntimeTarget) =>
       compact(conversationId, {
         allowActive: true,
@@ -4100,7 +4117,7 @@ async function startSend(
             : claudeTarget.contextWindow
           : turnContextWindow,
         ...(useClaudeSubscription ? { claudeFailoverChain, claudeExecutionAxes: initialClaudeAxes } : {}),
-        behaviorProfile: admittedBehaviorProfile,
+        harness: admittedHarness,
         ...(admittedBehaviorResolvedModelId ? { resolvedModelId: admittedBehaviorResolvedModelId } : {}),
         ...(isolated && internalLoop && frozenProfile
           ? {
@@ -4334,7 +4351,7 @@ async function startSend(
               logicalProviderId: selection!.providerId,
               modelId: selectedModelId,
               reasoningEffort: requestedEffort && requestedEffort !== 'off' ? requestedEffort : undefined,
-              astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
+              harnessFlags: harnessFlagsAtAdmission,
               fastMode,
               configureContextWindow: true,
               chain,
@@ -4460,7 +4477,7 @@ async function startSend(
           projectId: conv.workspaceId,
           cwd: conv.cwd,
           selection,
-          behaviorProfile: admittedBehaviorProfile,
+          harness: admittedHarness,
           mode: turnBehavior,
           maestro: maestroTurn,
           maestroLive: run.maestroLive,
@@ -4614,7 +4631,7 @@ async function startSend(
           cwd: conv.cwd,
           selection,
           resolvedModelId: resolvedClaudeModelId,
-          behaviorProfile: admittedBehaviorProfile,
+          harness: admittedHarness,
           ...(isolated && frozenProfile?.resolvedModelId
             ? { frozenResolvedModelId: frozenProfile.resolvedModelId }
             : {}),
@@ -4691,7 +4708,10 @@ async function startSend(
         projectId: conv.workspaceId,
         cwd: conv.cwd,
         selection,
-        behaviorProfile: admittedBehaviorProfile,
+        harnessFlags: harnessFlagsAtAdmission,
+        ...(isolated && frozenProfile != null
+          ? { frozenBehaviorProfileId: frozenProfile.behaviorProfileId ?? null }
+          : {}),
         broker: getBroker(),
         questionBroker: getQuestionBroker(),
         emit,
@@ -5734,7 +5754,7 @@ interface CompactOpts {
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
   /** Behavior and canonical identity already frozen by an active turn admission. */
-  behaviorProfile?: ClaudeBehaviorProfile | null
+  harness?: ResolvedHarness
   resolvedModelId?: string
   /** Never retires the main conversation's native binding. */
   skipRetireBinding?: boolean
@@ -5832,20 +5852,17 @@ export async function compactReserved(
       getSubscriptionFailoverRouter().confirmAttemptOther(resolved.target.providerId, resolved.target.availabilityLease)
     compactResolvedModelId = resolved.target.runtimeModelId
   }
-  const compactBehaviorResolution = resolveClaudeBehaviorProfile({
-    requestedModelId: selection.modelId,
-    resolvedModelId: compactResolvedModelId,
-    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-    frozen: frozen != null,
-    frozenProfileId: frozen?.behaviorProfileId,
-  })
-  if (compactBehaviorResolution.reason === 'frozen-profile-mismatch') {
-    return { ok: false, error: 'executor-unavailable' }
+  let compactHarness = opts.harness
+  if (compactHarness === undefined) {
+    const resolution = resolveHarnessContract(providerKindOf(selection.providerId), selection.modelId, {
+      resolvedModelId: compactResolvedModelId,
+      flags: captureHarnessFlags(),
+      ...(frozen != null ? { frozen: true, frozenBehaviorProfileId: frozen.behaviorProfileId ?? null } : {}),
+    })
+    if (!resolution.ok) return { ok: false, error: 'executor-unavailable' }
+    compactHarness = resolution.harness
   }
-  const compactBehaviorProfile =
-    opts.behaviorProfile === undefined ? compactBehaviorResolution.profile : opts.behaviorProfile
-  const compactSystem = compileClaudeCompactionSystem(COMPACT_SYSTEM, compactBehaviorProfile)
+  const compactSystem = harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
   const history = opts.executionId
     ? listExecutionContextMessages(conversationId, opts.executionId)
     : listConversationContextMessages(conversationId)
@@ -6304,12 +6321,10 @@ export async function resolveReviewLoopSelection(
     if (frozenEffort === null) return { ok: false, error: 'no-model' }
     reasoningEffort = frozenEffort
   }
-  const behaviorProfile = resolveClaudeBehaviorProfile({
-    requestedModelId: modelId,
+  const frozenHarness = harnessFor(providerKindOf(selection.providerId), modelId, {
     resolvedModelId,
-    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-  }).profile
+    flags: captureHarnessFlags(),
+  })
   return {
     ok: true,
     selection: {
@@ -6321,7 +6336,7 @@ export async function resolveReviewLoopSelection(
       fastMode,
       ...(serviceTier ? { serviceTier } : {}),
       ...(resolvedModelId ? { resolvedModelId } : {}),
-      behaviorProfileId: behaviorProfile?.id ?? null,
+      behaviorProfileId: frozenHarness.identity.behaviorProfileId,
       ...(identityFingerprint ? { identityFingerprint } : {}),
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
@@ -6407,12 +6422,11 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
     const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
     const meta = await getProviderModelMeta(frozen.modelId, catalogProviderId)
     const advertised = meta?.reasoningEfforts ?? []
-    const efforts =
-      resolveChatHarnessMetadata(frozen.providerId, frozen.modelId, {
-        astraHarnessEnabled: getAppFlag('chat.astraHarness', true),
-      }).modelHarnessProfileId === 'openai-gpt-6-astra-v1'
-        ? advertised.filter((effort) => OPENAI_GPT6_ASTRA_MANIFEST.validReasoningEfforts.includes(effort))
-        : advertised
+    const reasoning = resolveChatHarnessMetadata(frozen.providerId, frozen.modelId, {
+      flags: captureHarnessFlags(),
+      runtimeReasoningEfforts: advertised,
+    }).harness.reasoning
+    const efforts = reasoning.manifestEfforts ? [...reasoning.effectiveEfforts] : advertised
     return meta?.reasoning === true && frozenEffortMatchesLiveCapabilities(frozen, efforts)
   } catch {
     return false
@@ -6426,15 +6440,13 @@ async function revalidateGenericFrozenEffort(frozen: FrozenChatSelection): Promi
 export async function revalidateReviewLoopSelection(
   frozen: FrozenChatSelection
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const behaviorResolution = resolveClaudeBehaviorProfile({
-    requestedModelId: frozen.modelId,
+  const behaviorResolution = resolveHarnessContract(providerKindOf(frozen.providerId), frozen.modelId, {
     resolvedModelId: frozen.resolvedModelId,
+    flags: captureHarnessFlags(),
     frozen: true,
-    frozenProfileId: frozen.behaviorProfileId,
+    frozenBehaviorProfileId: frozen.behaviorProfileId ?? null,
   })
-  if (behaviorResolution.reason === 'frozen-profile-mismatch') {
-    return { ok: false, error: 'executor-unavailable' }
-  }
+  if (!behaviorResolution.ok) return { ok: false, error: 'executor-unavailable' }
   const accountId = subscriptionAccountId(frozen.providerId)
   if (isCodexSubscriptionProvider(frozen.providerId)) {
     const status = await codexAuthStatus(false, undefined, accountId)
@@ -7457,6 +7469,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
           pendingQuestions: [],
           midTurnSteering: false,
           liveReasoningUpdate: false,
+          liveReasoningEfforts: [],
+          liveReasoningReset: false,
           activeHarnessProfile: null,
         }
   )
@@ -7477,7 +7491,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
       const run = active.get(conversationId)
       const control = run?.codexTurnControl
-      if (!run || !control || run.activeHarnessProfile !== 'openai-gpt-6-astra-v1' || !run.midTurnSteering) {
+      // Capability of the active execution, validated in the host: never a renderer-declared profile.
+      if (!run || !control || !run.midTurnSteering) {
         return { ok: false as const, error: 'target-unavailable' as const }
       }
       const existing = getChatMessage(conversationId, clientUserMessageId)
@@ -7536,8 +7551,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       !effort ||
       !run ||
       !control ||
-      run.activeHarnessProfile !== 'openai-gpt-6-astra-v1' ||
-      !run.liveReasoningUpdate
+      !run.liveReasoningUpdate ||
+      (isHarnessReasoningReset(effort) ? !run.liveReasoningReset : !run.liveReasoningEfforts.includes(effort))
     ) {
       return { ok: false as const, error: 'target-unavailable' as const }
     }

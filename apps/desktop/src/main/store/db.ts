@@ -527,6 +527,7 @@ function initializeSchema(): void {
       tool_signature  TEXT NOT NULL,
       instruction_hash TEXT NOT NULL DEFAULT '',
       harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1',
+      harness_snapshot_json TEXT,
       last_message_id TEXT NOT NULL,
       usage_json      TEXT NOT NULL DEFAULT '{}',
       account_id      TEXT NOT NULL DEFAULT '',
@@ -578,6 +579,7 @@ function initializeSchema(): void {
       session_id         TEXT NOT NULL,
       model_id           TEXT NOT NULL,
       harness_profile    TEXT NOT NULL,
+      harness_snapshot_json TEXT,
       tool_signature     TEXT NOT NULL,
       last_message_id    TEXT NOT NULL,
       account_fingerprint TEXT NOT NULL,
@@ -631,6 +633,7 @@ function initializeSchema(): void {
       fast_mode           INTEGER NOT NULL DEFAULT 0,
       cwd                 TEXT NOT NULL,
       harness_profile     TEXT NOT NULL,
+      harness_snapshot_json TEXT,
       prompt_hash         TEXT NOT NULL,
       tool_signature      TEXT NOT NULL,
       last_message_id     TEXT NOT NULL,
@@ -754,6 +757,15 @@ function initializeSchema(): void {
     db.exec(
       "ALTER TABLE chat_codex_threads ADD COLUMN harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1';"
     )
+  }
+
+  // Versioned harness contract of the execution that created each native binding. Additive and nullable:
+  // legacy rows keep their transport-specific compatibility proof instead of faking a current hash.
+  for (const table of ['chat_codex_threads', 'chat_github_copilot_sessions', 'chat_claude_sessions']) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    if (!columns.some((column) => column.name === 'harness_snapshot_json')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN harness_snapshot_json TEXT;`)
+    }
   }
 
   // Subscription bindings/tombstones add account slots, defaulting to the empty slot. Check columns per

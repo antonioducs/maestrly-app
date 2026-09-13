@@ -1,4 +1,7 @@
 import type { ChatMessage } from '../../../shared/chat'
+import type { HarnessSnapshotV1 } from '../../../shared/harness'
+import { snapshotAllowsResume } from '../harness/compatibility'
+import type { ResolvedHarness } from '../harness/types'
 import { droppedImageText, renderNativeSeedTranscript } from '../message'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import type { ClaudeSubscriptionAccountIdentity } from './manager'
@@ -20,6 +23,8 @@ export interface ClaudeSessionCompatibility {
   accountIdentity: ClaudeSubscriptionAccountIdentity
   /** Subscription account slot; absent/null means the default account. */
   accountId?: string | null
+  /** Current harness contract. A recorded snapshot must match it; legacy rows keep the prompt-hash proof. */
+  harness?: ResolvedHarness
 }
 
 export function isClaudeSessionBindingCompatible(
@@ -38,7 +43,8 @@ export function isClaudeSessionBindingCompatible(
       binding.accountFingerprint === expected.accountIdentity.fingerprint &&
       binding.accountEpoch === expected.accountIdentity.epoch &&
       // Multiple accounts: a session lives in its owner's CLAUDE_CONFIG_DIR; another account must never resume it.
-      binding.accountId === (expected.accountId ?? null)
+      binding.accountId === (expected.accountId ?? null) &&
+      (!expected.harness || snapshotAllowsResume(binding.harnessSnapshot, expected.harness))
   )
 }
 
@@ -144,11 +150,15 @@ export interface BuildClaudeSessionBindingArgs {
   accountId?: string | null
   usage: ClaudeSessionUsageSnapshot
   context: ClaudeContextSnapshot | null
+  /** Versioned harness contract of the execution that created this session. */
+  harnessSnapshot?: HarnessSnapshotV1 | null
 }
 
 export function buildClaudeSessionBinding(
   args: BuildClaudeSessionBindingArgs
-): Omit<ClaudeSessionBinding, 'updatedAt'> {
+): Omit<ClaudeSessionBinding, 'updatedAt' | 'harnessSnapshot'> & {
+  harnessSnapshot: HarnessSnapshotV1 | null
+} {
   if (!args.accountIdentity.fingerprint) throw new Error('Claude is not authenticated.')
   return {
     conversationId: args.conversationId,
@@ -158,6 +168,7 @@ export function buildClaudeSessionBinding(
     fastMode: Boolean(args.fastMode),
     cwd: args.cwd,
     harnessProfile: CLAUDE_HARNESS_PROFILE,
+    harnessSnapshot: args.harnessSnapshot ?? null,
     promptHash: args.promptHash,
     toolSignature: args.toolSignature,
     lastMessageId: args.lastMessageId,

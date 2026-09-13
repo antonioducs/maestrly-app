@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolveGitHubCopilotHarness } from '../../src/main/chat/github-copilot/harness'
+import { resolveGitHubCopilotHarness as resolve } from '../../src/main/chat/harness/adapters/copilot'
+import { harnessRegistry } from '../../src/main/chat/harness/catalog'
+
+/** The transport axis of the Copilot adapter, without the prompt-axis contract it also returns. */
+const resolveGitHubCopilotHarness = (modelId: string) => {
+  const { family, profile, promptProfile } = resolve(modelId, harnessRegistry())
+  return { family, profile, promptProfile }
+}
 
 describe('GitHub Copilot model-aware harness', () => {
   it.each([

@@ -1,14 +1,15 @@
 import { getDb, transaction } from '../../store'
 import { updateChatMessageParts, upsertChatMessage, type StoredChatMessage } from '../chat-store'
-import {
-  OPENAI_DEFAULT_MODEL_HARNESS_PROFILE,
-  type ModelHarnessProfileId,
-} from '../model-harness-profile'
+import { isHarnessProfileIdentity, type HarnessSnapshotV1 } from '../../../shared/harness'
+import { parseHarnessSnapshot } from '../../../shared/harness'
 import { parseOpenAIResponsesLedger, toOpenAILedgerValue } from './ledger'
 import type { OpenAICanonicalCompactionWindow, OpenAILedgerObject, OpenAIResponsesLedger } from './types'
 import type { MessagePart } from '../../../shared/chat'
 
 export const OPENAI_INFERENCE_STATE_VERSION = 4 as const
+
+/** Identity recorded before the versioned model-harness contract existed. */
+const LEGACY_DEFAULT_HARNESS_PROFILE = 'openai-default-v1'
 
 export interface OpenAIInferenceState {
   /** v2/v3 remain readable and normalize to the pre-Astra model profile. */
@@ -17,7 +18,9 @@ export interface OpenAIInferenceState {
   modelId: string
   /** SHA-256 of endpoint + protocol + credential hash; prevents opaque replay on another backend/account. */
   providerFingerprint: string
-  modelHarnessProfileId?: ModelHarnessProfileId
+  modelHarnessProfileId?: string
+  /** Versioned contract of the execution that produced these items. Absent on legacy rows. */
+  harnessSnapshot?: HarnessSnapshotV1
   /** @deprecated v2/v3 compatibility fixture; parsed as openai-default-v1. */
   harnessProfile?: 'openai-responses-v1'
   /** Provider-generated items in order; never includes the caller's input messages. */
@@ -57,18 +60,19 @@ export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState 
   const state = value as Partial<OpenAIInferenceState> & { harnessProfile?: unknown }
   // v2 had no canonicalWindow; v2/v3 used the transport profile as their sidecar identity.
   if (![2, 3, OPENAI_INFERENCE_STATE_VERSION].includes(Number(state.version))) return null
+  // Syntactic validation of the identity, never recognition from a closed list: an unknown but
+  // well-formed id round-trips untouched instead of silently becoming the default profile.
   const modelHarnessProfileId =
     typeof state.modelHarnessProfileId === 'string'
       ? state.modelHarnessProfileId
       : state.harnessProfile === 'openai-responses-v1'
-        ? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE
+        ? LEGACY_DEFAULT_HARNESS_PROFILE
         : null
-  if (
-    modelHarnessProfileId !== 'openai-default-v1' &&
-    modelHarnessProfileId !== 'openai-gpt-5.6-sol-v1' &&
-    modelHarnessProfileId !== 'openai-gpt-6-astra-v1'
-  )
-    return null
+  if (!isHarnessProfileIdentity(modelHarnessProfileId)) return null
+  // A present-but-corrupt snapshot is not the same as a legacy row without one.
+  const harnessSnapshot =
+    state.harnessSnapshot === undefined ? undefined : parseHarnessSnapshot(state.harnessSnapshot)
+  if (state.harnessSnapshot !== undefined && !harnessSnapshot) return null
   if (typeof state.providerId !== 'string' || !state.providerId) return null
   if (typeof state.modelId !== 'string' || !state.modelId) return null
   if (typeof state.providerFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(state.providerFingerprint)) return null
@@ -85,6 +89,7 @@ export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState 
       ...(typeof state.modelHarnessProfileId === 'string'
         ? { modelHarnessProfileId }
         : { harnessProfile: 'openai-responses-v1' as const }),
+      ...(harnessSnapshot ? { harnessSnapshot } : {}),
       ledger: parseOpenAIResponsesLedger(state.ledger),
       ...(canonicalWindow ? { canonicalWindow } : {}),
     }
@@ -96,14 +101,25 @@ export function parseOpenAIInferenceState(value: unknown): OpenAIInferenceState 
 /** Minimum identity required before inserting opaque items into another request's input. */
 export function canReplayOpenAIInferenceState(
   state: OpenAIInferenceState,
-  current: Pick<OpenAIInferenceState, 'providerId' | 'modelId' | 'providerFingerprint' | 'modelHarnessProfileId'>
+  current: Pick<
+    OpenAIInferenceState,
+    'providerId' | 'modelId' | 'providerFingerprint' | 'modelHarnessProfileId' | 'harnessSnapshot'
+  >
 ): boolean {
   return (
     state.providerId === current.providerId &&
     state.modelId === current.modelId &&
     state.providerFingerprint === current.providerFingerprint &&
-    (state.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE) ===
-      (current.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE)
+    (state.modelHarnessProfileId ?? LEGACY_DEFAULT_HARNESS_PROFILE) ===
+      (current.modelHarnessProfileId ?? LEGACY_DEFAULT_HARNESS_PROFILE) &&
+    // A legacy row without a snapshot stays replayable; a recorded contract must still match.
+    (state.harnessSnapshot == null ||
+      current.harnessSnapshot == null ||
+      (state.harnessSnapshot.profileId === current.harnessSnapshot.profileId &&
+        state.harnessSnapshot.profileVersion === current.harnessSnapshot.profileVersion &&
+        state.harnessSnapshot.contractId === current.harnessSnapshot.contractId &&
+        state.harnessSnapshot.compatibilityGroup === current.harnessSnapshot.compatibilityGroup &&
+        state.harnessSnapshot.definitionHash === current.harnessSnapshot.definitionHash))
   )
 }
 
@@ -138,7 +154,7 @@ export function putOpenAIInferenceState(messageId: string, state: OpenAIInferenc
       messageId,
       state.providerId,
       state.modelId,
-      state.modelHarnessProfileId ?? OPENAI_DEFAULT_MODEL_HARNESS_PROFILE,
+      state.modelHarnessProfileId ?? LEGACY_DEFAULT_HARNESS_PROFILE,
       JSON.stringify(state),
       Date.now()
     )

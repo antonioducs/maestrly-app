@@ -265,7 +265,12 @@ vi.mock('../../src/main/chat/model-meta', () => ({
 vi.mock('../../src/main/chat/provider', () => ({
   ChatConfigError: class ChatConfigError extends Error {},
   invalidateProvider: vi.fn(),
-  resolveChatHarnessMetadata: vi.fn(() => ({ harnessProfile: 'legacy', capabilities: {} })),
+  resolveChatHarnessMetadata: vi.fn(() => ({
+    harnessProfile: 'legacy',
+    capabilities: {},
+    // No reasoning manifest: the catalog metadata stays authoritative for the effort axis.
+    harness: { reasoning: { manifestEfforts: null, nonSerializableEfforts: [], nativeUltra: false, effectiveEfforts: [] } },
+  })),
   resolveLanguageModel: vi.fn(),
 }))
 
@@ -313,7 +318,10 @@ vi.mock('../../src/main/plan-broker', () => ({
   stagePlan: vi.fn(),
   getPending: h.getPendingPlan,
 }))
-vi.mock('../../src/main/chat/harness', () => ({ isOpenAIHarnessActive: vi.fn(() => false) }))
+vi.mock('../../src/main/chat/harness/adapters/responses', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/harness/adapters/responses')>()),
+  isOpenAIHarnessActive: vi.fn(() => false),
+}))
 vi.mock('../../src/main/chat/openai/inference-store', () => ({
   canReplayOpenAIInferenceState: vi.fn(() => false),
   getOpenAIInferenceState: vi.fn(() => null),

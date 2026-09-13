@@ -1,3 +1,4 @@
+import type { HarnessProfileIdentity } from './harness'
 import type { JSONObject, JSONValue, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
 import type { MaestroDelegationSnapshotV1 } from './maestro'
@@ -309,6 +310,7 @@ export interface SubagentSessionUsage {
   cacheRead: number
   cacheCreate: number
 }
+
 
 export type SubagentResumeStatus = 'resumed' | 'recreated'
 
@@ -986,6 +988,11 @@ export type ChatStreamEvent =
       kind: 'runtime-capabilities'
       midTurnSteering: boolean
       liveReasoningUpdate: boolean
+      /** Efforts the active execution accepts for a live change. Empty when unknown or unsupported. */
+      liveReasoningEfforts: readonly string[]
+      /** Whether the active execution accepts clearing the effort back to the provider default. */
+      liveReasoningReset: boolean
+      /** Diagnostic identity of the active harness. Never an authorization signal. */
       activeHarnessProfile: ChatActiveHarnessProfile | null
     }
   | { kind: 'steering-accepted'; message: ChatMessage }
@@ -1063,13 +1070,16 @@ export interface ChatRuntimeState {
 
   midTurnSteering: boolean
   liveReasoningUpdate: boolean
+  liveReasoningEfforts: readonly string[]
+  liveReasoningReset: boolean
   activeHarnessProfile: ChatActiveHarnessProfile | null
 }
 
-export type ChatActiveHarnessProfile =
-  | 'openai-default-v1'
-  | 'openai-gpt-5.6-sol-v1'
-  | 'openai-gpt-6-astra-v1'
+/**
+ * Validated, extensible identity of the active harness. It exists for diagnostics: the interface must
+ * consult effective capabilities, never compare this value to decide what an action may do.
+ */
+export type ChatActiveHarnessProfile = HarnessProfileIdentity
 
 export type ChatProviderKind =
   | 'anthropic'

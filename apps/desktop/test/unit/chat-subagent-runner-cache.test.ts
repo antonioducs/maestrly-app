@@ -15,9 +15,18 @@ vi.mock('ai', async (importOriginal) => {
   return { ...actual, streamText: vi.fn() }
 })
 
-vi.mock('../../src/main/chat/provider', () => ({
-  resolveChatModel: mocks.resolveChatModel,
-}))
+vi.mock('../../src/main/chat/provider', async () => {
+  const { harnessFor } = await import('../../src/main/chat/harness/execution')
+  return {
+    // The real factory always returns the execution contract; derive it from the requested model.
+    resolveChatModel: (providerId: string, modelId: string, options?: unknown) => {
+      const resolved = mocks.resolveChatModel(providerId, modelId, options)
+      return resolved && !resolved.harness
+        ? { ...resolved, harness: harnessFor(resolved.transport ?? 'openai', modelId) }
+        : resolved
+    },
+  }
+})
 
 vi.mock('../../src/main/chat/catalog', () => ({
   getProvider: () => ({ id: 'anthropic-proxy', baseURL: 'http://localhost:9095/v1' }),

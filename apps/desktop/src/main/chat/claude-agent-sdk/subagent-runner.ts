@@ -15,7 +15,6 @@ import type { ToolSet } from 'ai'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
 import type { ChatAgent } from '../agents'
-import { getAppFlag } from '../../store'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
@@ -28,11 +27,11 @@ import { buildClaudeFastModeSettings } from './options'
 import { gatedClaudeHumanText } from './user-prompt'
 import { normalizeClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
-import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
-import { resolveClaudeBehaviorProfile, isFableBehaviorProfile, type ClaudeBehaviorProfile } from '../behavior-profile'
-import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
-import { compileClaudeSubagentPrompt } from '../behavior-prompt'
-import { createFablePostToolUseHook } from '../fable/sdk-hooks'
+import { harnessFor } from '../harness/execution'
+import { captureHarnessFlags } from '../harness/flags'
+import { harnessSubagentPrompt } from '../harness/host-contracts'
+import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
+import type { ResolvedHarness } from '../harness/types'
 import { chatDiag } from '../diag-log'
 
 const FORBIDDEN_CHILD_TOOLS = new Set([
@@ -56,7 +55,8 @@ export interface RunClaudeSubagentArgs {
   profile: SubagentExecutionSnapshotV1
   /** Canonical child identity supplied by the Claude runtime when the configured model is an alias. */
   resolvedModelId?: string
-  behaviorProfile?: ClaudeBehaviorProfile | null
+  /** Harness contract of this child. A subagent resolves its own model, never the parent's. */
+  harness?: ResolvedHarness
   definition: ChatAgent
   signal: AbortSignal
   agentName: string
@@ -81,7 +81,7 @@ export interface RunClaudeSubagentArgs {
   onSessionStarted?: (info: { sessionId: string; resumed: boolean; target: ClaudeRuntimeTarget }) => void
   onJournalEntry?: (entry: ClaudeToolJournalEntry) => void
   /** Called after account/model admission, before resume and prompt construction. */
-  prepareTarget?: (target: ClaudeRuntimeTarget) => Pick<RunClaudeSubagentArgs, 'task' | 'resume' | 'behaviorProfile'>
+  prepareTarget?: (target: ClaudeRuntimeTarget) => Pick<RunClaudeSubagentArgs, 'task' | 'resume' | 'harness'>
 }
 
 function childToolNames(
@@ -176,25 +176,22 @@ async function runClaudeSubagentAttempt(
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
   ].join('\n\n')
-  const behaviorProfile =
-    args.behaviorProfile === undefined
-      ? resolveClaudeBehaviorProfile({
-          requestedModelId: effective.modelId,
-          resolvedModelId: args.resolvedModelId,
-          fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-          opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-        }).profile
-      : args.behaviorProfile
-  const systemPrompt = compileClaudeSubagentPrompt(legacySystemPrompt, behaviorProfile)
-  const fablePostToolUseHook = isFableBehaviorProfile(behaviorProfile) ? createFablePostToolUseHook() : null
+  const harness =
+    args.harness ??
+    harnessFor('claude-subscription', effective.modelId, {
+      resolvedModelId: args.resolvedModelId,
+      flags: captureHarnessFlags(),
+    })
+  const systemPrompt = harnessSubagentPrompt(legacySystemPrompt, harness)
+  const postToolUseHook = createHarnessPostToolUseHooks(harness)
   chatDiag({
-    kind: 'fable-behavior-profile',
-    profile: behaviorProfile?.id ?? 'legacy',
+    kind: 'harness-behavior-profile',
+    profile: harness.identity.behaviorProfileId ?? 'legacy',
     requestedModel: effective.modelId,
     resolvedModel: args.resolvedModelId ?? effective.modelId,
     transport: 'claude-agent-sdk',
     effort: effective.sentEffort ?? 'default',
-    progressMode: behaviorProfile?.progressMode ?? 'prompt-only',
+    progressMode: harness.progress,
     agent: args.agentName,
     conv: args.conversationId,
   })
@@ -273,9 +270,11 @@ async function runClaudeSubagentAttempt(
           agents: {},
           hooks: {
             PreToolUse: [bridge.preToolUseHook],
-            ...(fablePostToolUseHook ? { PostToolUse: [fablePostToolUseHook] } : {}),
+            ...(postToolUseHook ? { PostToolUse: [postToolUseHook] } : {}),
           },
-          ...(fablePostToolUseHook ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
+          ...(harness.progress === 'summarized'
+            ? { thinking: { type: 'adaptive' as const, display: 'summarized' as const } }
+            : {}),
           permissionMode: 'dontAsk',
           includePartialMessages: false,
           persistSession: args.persistRuntime === true,
@@ -496,7 +495,7 @@ export async function runClaudeSubagent(
   )
   const attemptedProviderIds = new Set<string>()
   let runtimeModelId = args.resolvedModelId
-  let frozenBehavior = args.behaviorProfile
+  let frozenHarness = args.harness
   let task = args.task
   let usage: NormalizedAiUsage | undefined
   let cost: number | undefined
@@ -589,16 +588,13 @@ export async function runClaudeSubagent(
           abort: (reason) => host.abort(reason),
         })
         const prepared = args.prepareTarget?.(target)
-        if (frozenBehavior === undefined)
-          frozenBehavior =
-            prepared?.behaviorProfile === undefined
-              ? resolveClaudeBehaviorProfile({
-                  requestedModelId: effective.modelId,
-                  resolvedModelId: runtimeModelId,
-                  fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-                  opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-                }).profile
-              : prepared.behaviorProfile
+        if (frozenHarness === undefined)
+          frozenHarness =
+            prepared?.harness ??
+            harnessFor('claude-subscription', effective.modelId, {
+              resolvedModelId: runtimeModelId,
+              flags: captureHarnessFlags(),
+            })
         let resume = prepared ? prepared.resume : args.resume
         resumeRequested ||= Boolean(resume)
         if (attemptedProviderIds.size === 1 && resume) resumeFallbackTask = resume.fallbackTask
@@ -638,7 +634,7 @@ export async function runClaudeSubagent(
           target,
           journal,
           resolvedModelId: runtimeModelId,
-          behaviorProfile: frozenBehavior,
+          harness: frozenHarness,
           onQuota: (classification) => {
             if (classification.kind === 'quota') {
               quota = true

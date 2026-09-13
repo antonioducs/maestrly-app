@@ -1,6 +1,6 @@
 import type { ModelMessage } from 'ai'
 import { describe, expect, it } from 'vitest'
-import { withOpusEnvironment } from '../../src/main/chat/opus/environment'
+import { withEnvironmentOnLastUserMessage as withOpusEnvironment } from '../../src/main/chat/harness/strategies/environment'
 
 describe('Opus transient API environment', () => {
   it('updates only the latest user request without changing history or tool pairs', () => {

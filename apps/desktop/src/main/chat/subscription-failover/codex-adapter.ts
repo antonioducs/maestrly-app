@@ -11,7 +11,7 @@ import { getContextLimit } from '../context-limits'
 import { getProactiveRateLimitExhaustion } from '../codex-subscription/rate-limits'
 import type { CodexAccountRateLimits } from '../codex-subscription/protocol'
 import { failoverDiag } from './diag'
-import { OPENAI_GPT6_ASTRA_MANIFEST, resolveModelHarnessProfile } from '../model-harness-profile'
+import { harnessFor } from '../harness/execution'
 import {
   getSubscriptionFailoverRouter,
   type AvailabilityLease,
@@ -74,7 +74,8 @@ export interface ResolveCodexTargetArgs {
    * leave this false so their current runtime-owned context policy is unchanged.
    */
   configureContextWindow?: boolean
-  astraHarnessEnabled?: boolean
+  /** Flags frozen at the originating attempt; failover never re-reads live preferences. */
+  harnessFlags?: Readonly<Record<string, boolean>>
   signal?: AbortSignal
   now?: number
 }
@@ -158,23 +159,23 @@ function contextWindowForTarget(
   }
 }
 
+/**
+ * Reasoning support of a candidate account. The frozen policy of the attempt is re-evaluated against
+ * the account/transport actually chosen; an account missing a specific effort is skipped, never degraded.
+ */
 function resolveReasoningEffort(
   requested: string | undefined,
   model: CodexSubscriptionModel,
-  astraHarnessEnabled = true
+  harnessFlags?: Readonly<Record<string, boolean>>
 ): { ok: true; effort?: string } | { ok: false } {
   if (!requested || requested === 'off') return { ok: true, effort: undefined }
 
   const advertised = model.supportedReasoningEfforts.map((option) => option.reasoningEffort)
-  const astra =
-    resolveModelHarnessProfile({
-      providerKind: 'codex-subscription',
-      modelId: model.model,
-      astraHarnessEnabled,
-    }).id === 'openai-gpt-6-astra-v1'
-  const supported = astra
-    ? advertised.filter((effort) => OPENAI_GPT6_ASTRA_MANIFEST.validReasoningEfforts.includes(effort))
-    : advertised
+  const harness = harnessFor('codex-subscription', model.model, {
+    ...(harnessFlags ? { flags: harnessFlags } : {}),
+    runtimeReasoningEfforts: advertised,
+  })
+  const supported = harness.reasoning.manifestEfforts ? [...harness.reasoning.effectiveEfforts] : advertised
 
   if (isMaestrlyUltraEffort(requested, supported)) {
     if (supported.length === 0) {
@@ -465,7 +466,7 @@ export async function resolveCodexRuntimeTarget(args: ResolveCodexTargetArgs): P
       continue
     }
 
-    const reasoning = resolveReasoningEffort(args.reasoningEffort, model, args.astraHarnessEnabled)
+    const reasoning = resolveReasoningEffort(args.reasoningEffort, model, args.harnessFlags)
     if (!reasoning.ok) {
       releaseLease('other')
       recordFailure('incompatible')

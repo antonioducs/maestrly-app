@@ -30,7 +30,6 @@ import type {
   SubagentRunMeta,
 } from '../../shared/chat'
 import { chatDiag } from './diag-log'
-import { MEMORY_TOOL_GUIDANCE } from './memory-tool-guidance'
 import { makeContextGuard } from './context-guard'
 import {
   runnerContextHistory,
@@ -107,7 +106,7 @@ import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from './maestro-prompt'
 import type { MaestroLiveRunPort } from './maestro-live'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { applyFastModeServiceTier } from './fast-mode'
-import { renderDesignModePrompt, renderDesignUltraGuidance } from './design-mode-prompt'
+import { renderDesignUltraGuidance } from './design-mode-prompt'
 export {
   canReplayOpenAILedger,
   hasSubagentMutationInLedger,
@@ -120,13 +119,14 @@ export { isRetryableStreamError } from './retry-policy'
 import { gitEnvInfo } from '../git-service'
 import { stagePlan } from '../plan-broker'
 import type { PermissionBroker } from './permission'
-import { isOpenAIHarnessActive, OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE, openAIHarnessProviderOptions } from './harness'
-import { compileOpenAIPrompt, openAINativeToolsPromptOverlay } from './openai/prompt'
-import { compileOpenAIAstraPrompt } from './openai/astra-prompt'
-import {
-  isAstraHarnessProfile,
-  OPENAI_GPT6_ASTRA_PROMPT_PROFILE,
-} from './model-harness-profile'
+import { isOpenAIHarnessActive, openAIHarnessProviderOptions } from './harness/adapters/responses'
+import { buildHarnessPrompt } from './harness/prompt-builder'
+import { buildMaestrlyBasePrompt, harnessUltraGuidance } from './harness/host-contracts'
+import { openAINativeToolsPromptOverlay } from './harness/strategies/prompt-layout'
+import { withEnvironmentOnLastUserMessage } from './harness/strategies/environment'
+import { captureHarnessFlags } from './harness/flags'
+import { createHarnessSnapshot } from './harness/compatibility'
+import type { ResolvedHarness } from './harness/types'
 import { buildOpenAIModelMessages } from './openai/history'
 import {
   advanceOpenAICompactionLifecycle,
@@ -156,12 +156,6 @@ import {
   OPENAI_LOCAL_SHELL_TOOL_NAME,
   openAINativeOutputText,
 } from './openai/native-tools'
-import { FABLE_51_PROFILE_FLAG } from './fable/profile'
-import { OPUS_5_PROFILE_FLAG } from './opus/profile'
-import { resolveClaudeBehaviorProfile, isOpusBehaviorProfile, type ClaudeBehaviorProfile } from './behavior-profile'
-import { claudeStyleAndWork, claudeBehaviorHeader } from './behavior-prompt'
-import { opusUltraGuidance } from './opus/prompt'
-import { withOpusEnvironment } from './opus/environment'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -184,81 +178,8 @@ const MAX_TOTAL_CONTINUES = 24
 export const IN_TURN_COMPACT_RATIO = 0.9
 const MAX_IN_TURN_COMPACTS = 2
 
-// MODE-AWARE prompt: tool descriptions must match the ACTUAL toolset, otherwise models
-// (e.g. MiMo) assume tools exist and try calling them (or emit tool calls as text). See runChat modes.
-export const SYSTEM_PROMPT = (
-  cwd: string,
-  appToolsEnabled: boolean,
-  mode: ChatBehavior,
-  hasNotesTab: boolean,
-  behaviorProfile: ClaudeBehaviorProfile | null = null
-) => {
-  const capabilityMode = capabilityBehaviorFor(mode)
-  const legacyBase = `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
-
-# Style
-Be concise, direct and objective — like a senior engineer pairing, not a tutorial. Lead with the answer or the result. No preamble ("Sure, here's…", "Let me…") and no postamble ("Let me know if…", "Hope this helps"); don't restate the question or narrate routine steps. Match the length to the request: a simple question gets a sentence or two; a real task gets the detail it needs and no more. What matters is the user understanding you without re-reading — clear beats merely short, so don't be terse to the point of being cryptic. Explain your reasoning only when it isn't obvious or the user asks; after a change, say what you did and the outcome in a line or two and don't re-explain code you just wrote. Stop once the question is answered — don't pad with caveats, recaps or repetition. No emojis unless the user uses them first. Reference code as \`file_path:line_number\` so the user can jump to it.
-
-# Working on the project
-Read a file before editing it or proposing changes to it — understand the existing code first. Match the conventions already in the file (naming, formatting, libraries, patterns); don't impose your own style. Prefer editing an existing file over creating a new one; create files only when truly necessary. Add a comment only when the WHY is non-obvious — don't narrate WHAT the code does. After a change, verify it actually works when you can (run the test/build/script) and report the result FAITHFULLY: if something fails or you didn't verify, say so plainly — never imply a success you didn't check. When something fails, diagnose the cause before retrying or switching tactics, and don't bypass safety checks (e.g. --no-verify) to make an error go away. You're a collaborator, not just an executor: if the request rests on a wrong assumption or you spot an adjacent bug, say so. Don't pad with flattery or time estimates. For non-trivial multi-step work, keep a running to-do list with the \`todo_write\` tool (one item in_progress at a time) so you stay organized and the user can follow along.
-
-# Using your tools
-Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
-
-  const base = behaviorProfile
-    ? `You are a coding assistant inside the Maestrly app, working with the user on the project at ${cwd}. Reply in the user's language, in Markdown.
-
-${claudeBehaviorHeader(behaviorProfile)}
-
-${claudeStyleAndWork(behaviorProfile)}
-
-# Using your tools
-Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
-    : legacyBase
-
-  const restrictedCapabilities =
-    'Besides read/search tools, you may receive external MCP tools explicitly declared read-only and permitted ' +
-    'Maestrly app tools for notes, memory search/list/read, web navigation/read, and terminal output. ' +
-    'Those catalogs remain permission-gated. Do NOT edit project files or run commands: code/file writes, shell ' +
-    'execution, page interaction through click/type/drag/key/mouse/evaluate, debug, implementation delegation, ' +
-    'Git/PR changes are unavailable.'
-  const capability =
-    mode === 'maestro'
-      ? `\n\nMAESTRO EXPERIENCE: the parent is structurally read-only. You may inspect with read/search tools and coordinate through delegate, but you cannot edit, write, run shell commands, test, build, generate mutable artifacts, or invoke mutating MCP/app tools directly.\n\n${MAESTRO_SYSTEM_SPEC}`
-      : mode === 'ask'
-        ? `\n\nASK MODE (restricted tools): use the available read and safe-recording tools to ground your answer in real project context. ${restrictedCapabilities} If the task requires changing the project or running commands, tell the user to switch to Agent mode (they toggle it with Shift+Tab).`
-        : mode === 'plan'
-          ? `\n\nPLAN MODE (restricted tools): investigate with the available read and safe-recording tools. ${restrictedCapabilities} Record the final plan by calling review_plan ("plan" argument in Markdown + a short "title"): that submits it to the "Plan" tab in the drawer for the user to review, edit and approve or discard. Calling review_plan ENDS your turn — do NOT keep writing or call other tools after it. If the user approves, a new turn starts to implement the plan. Do NOT dump the plan in the text only: leave at most a 1-2 line summary and ALWAYS finish by calling review_plan.`
-          : `\n\nYou have tools to read/search/edit files and run commands. Prefer small, verifiable actions. Before editing, read the relevant snippet. Dangerous actions (bash, writing/editing files, fetching URLs) ask for the user's approval — briefly explain why before calling them.`
-
-  const render = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
-
-  const appToolGroups = hasNotesTab ? 'terminal, browser, notes, memory, debug' : 'terminal, browser, memory, debug'
-  const appToolPrefixes = hasNotesTab
-    ? 'terminal_*, browser_*, notes_*, memory_*, debug_*'
-    : 'terminal_*, browser_*, memory_*, debug_*'
-  const preferredDrawerTools = hasNotesTab ? 'terminal_*/memory_*/notes_*' : 'terminal_*/memory_*'
-  const restrictedAppTools =
-    mode === 'maestro'
-      ? hasNotesTab
-        ? 'notes list/read, memory search/list/read, browser inspection/read, and terminal read'
-        : 'memory search/list/read, browser inspection/read, and terminal read'
-      : hasNotesTab
-        ? 'notes list/read/create/write/append, memory search/list/read, browser navigation/read, and terminal read'
-        : 'memory search/list/read, browser navigation/read, and terminal read'
-  const appTools = `\n\nMaestrly app tools (${appToolGroups}): ${
-    appToolsEnabled
-      ? capabilityMode === 'agent'
-        ? `ON — you receive them NATIVELY in your tool set (${appToolPrefixes}). Use them directly. PREFER ${preferredDrawerTools} over your equivalent native tools (bash/read/edit and your own memory) when the user should see, follow or edit the result in the drawer — running a server, a long build, a script, recording a decision or a durable project rule: that way they follow along in the UI. A quick internal one-off (e.g. git status) can stay on the native tools.`
-        : `ON with this mode's restricted catalog: ${restrictedAppTools}. Use only the tools actually exposed; mutating tools outside this list remain unavailable.`
-      : 'OFF right now. If you need them, ASK the user to enable "Maestrly tools" in Settings › Maestrly Chat.'
-  }\nNEVER try to reach the app via curl/HTTP or inspect legacy local credentials. The app tools, when on, already arrive ready in your toolset (no network, no token).`
-
-  const designPrompt = renderDesignModePrompt(mode)
-  return (
-    base + capability + render + appTools + `\n\n${MEMORY_TOOL_GUIDANCE}` + (designPrompt ? `\n\n${designPrompt}` : '')
-  )
-}
+// The mode-aware base prompt is a host contract composed outside the replaceable profile text.
+export { buildMaestrlyBasePrompt } from './harness/host-contracts'
 
 const PERMISSION_ERROR_NAMES = new Set(['PermissionRejectedError', 'PermissionCorrectedError', 'PermissionDeniedError'])
 
@@ -433,8 +354,10 @@ export interface RunChatArgs {
   projectId: string
   cwd: string
   selection: ChatModelRef
-  /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: ClaudeBehaviorProfile | null
+  /** Flags captured once at turn admission. undefined keeps direct-call compatibility by capturing locally. */
+  harnessFlags?: Readonly<Record<string, boolean>>
+  /** Frozen behavioral identity of a review-loop execution, when one applies. */
+  frozenBehaviorProfileId?: string | null
   broker: PermissionBroker
   questionBroker: QuestionBroker
   emit: (ev: ChatStreamEvent) => void
@@ -565,17 +488,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Resolve transport + profile once. Internal kill switch enables immediate rollback without changing
   // HTTP provider; unknown IDs/formats conservatively retain the legacy harness.
   const openAIHarnessEnabled = getAppFlag('chat.openAIHarness', true)
-  const astraHarnessEnabled = getAppFlag('chat.astraHarness', true)
-  const resolvedModel = resolveChatModel(selection.providerId, selection.modelId, { astraHarnessEnabled })
-  const behaviorProfile =
-    args.behaviorProfile === undefined
-      ? resolveClaudeBehaviorProfile({
-          requestedModelId: selection.modelId,
-          fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-          opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-        }).profile
-      : args.behaviorProfile
-  const modelHarnessProfileId = resolvedModel.modelHarnessProfileId ?? 'openai-default-v1'
+  const harnessFlags = args.harnessFlags ?? captureHarnessFlags()
+  const resolvedModel = resolveChatModel(selection.providerId, selection.modelId, {
+    flags: harnessFlags,
+    ...(args.frozenBehaviorProfileId !== undefined
+      ? { frozen: true, frozenBehaviorProfileId: args.frozenBehaviorProfileId }
+      : {}),
+  })
+  // Immutable for this execution: later flag changes never mutate a contract already resolved.
+  const harness: ResolvedHarness = resolvedModel.harness
+  // Identity comes from the resolved contract, the single source for every persisted sidecar.
+  const modelHarnessProfileId = harness.identity.harnessProfileId
+  const harnessSnapshot = createHarnessSnapshot(harness)
   const useOpenAIHarness = isOpenAIHarnessActive(openAIHarnessEnabled, resolvedModel.harnessProfile)
   const model = resolvedModel.model
   const assistantId = assistantMessageId
@@ -611,6 +535,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         modelId: selection.modelId,
         providerFingerprint: resolvedModel.providerFingerprint,
         modelHarnessProfileId,
+        harnessSnapshot,
         ledger: ledgerOverride ?? durableOpenAILedger(openAILifecycle),
       })
     } else upsertChatMessage(msgs[0])
@@ -722,11 +647,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 : 'no-capability',
         }),
   })
-  const astraEfforts = resolvedModel.capabilities.serializableReasoningEfforts ?? []
-  const effectiveReasoningEfforts = isAstraHarnessProfile(modelHarnessProfileId)
-    ? astraEfforts.filter((effort) => !meta?.reasoningEfforts?.length || meta.reasoningEfforts.includes(effort))
+  // A profile that publishes a reasoning manifest owns the effort axis; otherwise the catalog does.
+  const manifestEfforts = harness.reasoning.manifestEfforts != null
+  const effectiveReasoningEfforts = manifestEfforts
+    ? harness.reasoning.effectiveEfforts.filter(
+        (effort) => !meta?.reasoningEfforts?.length || meta.reasoningEfforts.includes(effort)
+      )
     : (meta?.reasoningEfforts ?? [])
-  const reasoningMeta = isAstraHarnessProfile(modelHarnessProfileId)
+  const reasoningMeta = manifestEfforts
     ? { reasoning: effectiveReasoningEfforts.length > 0, reasoningEfforts: effectiveReasoningEfforts }
     : meta
   const ultra = isMaestrlyUltraEffort(reasoningEffort, effectiveReasoningEfforts)
@@ -1352,8 +1280,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const fastMode = resolveTurnFastMode(args.fastModeOverride, getConvUiPrefs(conversationId).chat?.fastMode === true)
   providerOptions = applyFastModeServiceTier(providerOptions, fastMode, selection.providerId)
   chatDiag({
-    kind: 'fable-behavior-profile',
-    profile: behaviorProfile?.id ?? 'legacy',
+    kind: 'harness-behavior-profile',
+    profile: harness.identity.behaviorProfileId ?? 'legacy',
     requestedModel: selection.modelId,
     resolvedModel: selection.modelId,
     transport: resolvedModel.transport,
@@ -1428,6 +1356,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
   const envDetails = `OS: ${plat}. Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${cwd}.${gitLine}`
   const envContext = `\n\n# Environment\n${envDetails}`
+  // Profile-declared extended-reasoning guidance; the synthetic host blocks below stay with the runner.
+  const profileUltra = harnessUltraGuidance(harness, mode)
   // Mode-adapted ULTRA block: agent encourages full cycle (plan → decompose → delegate in
   // parallel → integrate → verify); plan/ask only parallel `explore` investigation (read-only).
   const ultraBlock = !ultra
@@ -1435,9 +1365,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     : mode === 'maestro'
       ? '\n\n# ULTRA ORCHESTRATOR\nUse maximum rigor while coordinating. Ultra applies only to the orchestrator profile; the frozen Strategy and Pool still govern every worker.'
       : mode === 'design'
-        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}${isOpusBehaviorProfile(behaviorProfile) ? `\n\n${opusUltraGuidance(mode)}` : ''}`
-        : isOpusBehaviorProfile(behaviorProfile)
-          ? `\n\n# ULTRA MODE\n${opusUltraGuidance(mode)}`
+        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}${profileUltra ? `\n\n${profileUltra}` : ''}`
+        : profileUltra
+          ? `\n\n# ULTRA MODE\n${profileUltra}`
           : mode === 'agent'
           ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
             'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
@@ -1451,9 +1381,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
             'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
             'and be critical of your first conclusion before finishing.'
+  const basePrompt = buildMaestrlyBasePrompt({ harness, cwd, appToolsEnabled, mode, hasNotesTab })
+  const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
-    SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab, behaviorProfile) +
-    (isOpusBehaviorProfile(behaviorProfile) ? '' : envContext) +
+    basePrompt +
+    systemEnvContext +
     projectContext +
     skillsCatalog +
     agentsCatalog +
@@ -1471,7 +1403,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       mode === 'maestro' ? 'ask' : mode
     )
     let promptStablePrefix =
-      SYSTEM_PROMPT(cwd, appToolsEnabled, mode, hasNotesTab, behaviorProfile) +
+      basePrompt +
       (nativeToolsPrompt ? `\n\n${nativeToolsPrompt}` : '') +
       projectContext +
       skillsCatalog +
@@ -1480,10 +1412,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       ultraBlock
     system = promptStablePrefix + envContext
     let sourceCommit: string | undefined
-    if (resolvedModel.promptProfile === OPENAI_CODEX_GPT56_SOL_PROMPT_PROFILE) {
-      const prompt = compileOpenAIPrompt({
+    if (harness.prompts.layout !== 'maestrly-base') {
+      const prompt = buildHarnessPrompt({
+        harness,
         cwd,
-        mode: mode === 'maestro' ? 'ask' : mode,
+        mode,
         appToolsEnabled,
         hasNotesTab,
         projectContext,
@@ -1492,7 +1425,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           mode === 'maestro' ? `\n\n${MAESTRO_SYSTEM_SPEC}` : ''
         }${maestroPolicyContext}`,
         envContext: envDetails,
-        ultraContext: ultraBlock.replace(/^\s*# ULTRA MODE\s*/i, ''),
+        // A profile publishing a native maximum tier never receives the synthetic Maestrly overlay.
+        ultraContext:
+          harness.reasoning.nativeUltra && reasoningEffort === 'ultra'
+            ? null
+            : ultraBlock.replace(/^\s*# ULTRA MODE\s*/i, ''),
         nativeTools: {
           localShell: allTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
           applyPatch: allTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,
@@ -1500,28 +1437,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       })
       system = prompt.instructions
       promptStablePrefix = prompt.stablePrefix
-      sourceCommit = prompt.source.commit.slice(0, 12)
-    } else if (resolvedModel.promptProfile === OPENAI_GPT6_ASTRA_PROMPT_PROFILE) {
-      const prompt = compileOpenAIAstraPrompt({
-        cwd,
-        mode: mode === 'maestro' ? 'ask' : mode,
-        appToolsEnabled,
-        hasNotesTab,
-        projectContext,
-        skillsContext: skillsCatalog,
-        agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${
-          mode === 'maestro' ? `\n\n${MAESTRO_SYSTEM_SPEC}` : ''
-        }${maestroPolicyContext}`,
-        envContext: envDetails,
-        // Astra's catalog publishes native ultra; never append the synthetic Maestrly overlay for it.
-        ultraContext: ultra && reasoningEffort !== 'ultra' ? ultraBlock.replace(/^\s*# ULTRA MODE\s*/i, '') : null,
-        nativeTools: {
-          localShell: allTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
-          applyPatch: allTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,
-        },
-      })
-      system = prompt.instructions
-      promptStablePrefix = prompt.stablePrefix
+      sourceCommit = prompt.provenance?.commit.slice(0, 12)
     }
     const promptCacheKey = `maestrly:${createHash('sha256')
       .update(promptStablePrefix)
@@ -1540,7 +1456,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             // GPT reasoning models still reason at their provider default when no explicit effort was selected.
             reasoningEnabled: resolvedModel.capabilities.encryptedReasoning,
             compactionThreshold: contextWindow ? Math.floor(contextWindow * IN_TURN_COMPACT_RATIO) : undefined,
-            ...(isAstraHarnessProfile(modelHarnessProfileId) ? { promptCacheTtl: '30m' } : {}),
+            ...(harness.runtime.promptCacheTtl ? { promptCacheTtl: harness.runtime.promptCacheTtl } : {}),
           }
         ),
       },
@@ -1585,6 +1501,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               modelId: selection.modelId,
               providerFingerprint: resolvedModel.providerFingerprint,
               modelHarnessProfileId,
+              harnessSnapshot,
               ledger: durableOpenAILedger(openAILifecycle),
             })
             chatDiag({
@@ -1611,6 +1528,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             modelId: selection.modelId,
             providerFingerprint: resolvedModel.providerFingerprint,
             modelHarnessProfileId,
+            harnessSnapshot,
           })
         )
           return null
@@ -1688,7 +1606,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const result = streamText({
       model: streamModel,
       system: system + (autonomousPolicy(conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : ""),
-      messages: isOpusBehaviorProfile(behaviorProfile) ? withOpusEnvironment(messages, envDetails) : messages,
+      messages:
+        harness.prompts.environment.placement === 'last-user-message'
+          ? withEnvironmentOnLastUserMessage(messages, envDetails)
+          : messages,
       tools: allTools,
       stopWhen,
       maxRetries: AI_SDK_MAX_RETRIES,
