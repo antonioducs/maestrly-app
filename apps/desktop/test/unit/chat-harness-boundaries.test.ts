@@ -19,7 +19,8 @@ function walk(dir: string): string[] {
   })
 }
 
-const files = walk(SRC).map((path) => ({ path, rel: relative(ROOT, path), text: readFileSync(path, 'utf8') }))
+const normalizePath = (path: string): string => path.replace(/\\/g, '/')
+const files = walk(SRC).map((path) => ({ path, rel: normalizePath(relative(ROOT, path)), text: readFileSync(path, 'utf8') }))
 const outsideHarness = files.filter((file) => !file.path.startsWith(HARNESS))
 
 /** Identity strings and legacy selector names that must not drive decisions outside the harness. */
@@ -45,6 +46,14 @@ const ALLOWED: Array<{ file: RegExp; pattern: RegExp }> = [
 ]
 
 describe('harness architectural boundaries', () => {
+  it.each(['src/main/chat/service.ts', 'src\\main\\chat\\service.ts'])(
+    'matches the allowed service path on every platform: %s',
+    (path) => {
+      expect(ALLOWED[0]!.file.test(normalizePath(path))).toBe(true)
+      expect(ALLOWED[0]!.file.test(normalizePath(path.replace('service.ts', 'runner.ts')))).toBe(false)
+    }
+  )
+
   it('keeps model-specific selectors inside the harness directory', () => {
     const violations: string[] = []
     for (const file of outsideHarness) {
