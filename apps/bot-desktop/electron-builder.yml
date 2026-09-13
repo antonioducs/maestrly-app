@@ -1,0 +1,14 @@
+appId: io.github.antonioducs.maestrly.bot
+productName: Maestrly Bot Lab
+asar: true
+npmRebuild: false
+directories:
+  output: dist/lab
+files:
+  - out/**
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  target: dir
+  identity: null
+publish: null
