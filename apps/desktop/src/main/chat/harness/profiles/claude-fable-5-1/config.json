@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "maestrly-fable-5-1",
+  "profileVersion": 1,
+  "featureFlag": { "key": "chat.fable51Profile", "default": true },
+  "bindings": [
+    {
+      "providerKind": "*",
+      "overrides": {
+        "identity": { "behaviorProfileId": "maestrly-fable-5.1-v1" },
+        "prompts": {
+          "styleAndWork": "prompt.md",
+          "behaviorHeader": true,
+          "subagent": "subagent.md",
+          "compaction": "compaction.md",
+          "environment": { "placement": "system", "transient": true }
+        },
+        "progress": "summarized",
+        "hooks": [{ "id": "post-tool-read-guidance", "text": "post-tool-read.md", "maxReminders": 24 }]
+      }
+    }
+  ]
+}

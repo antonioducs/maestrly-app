@@ -1,0 +1,1 @@
+Use Ultra effort for difficult reasoning and consequential decisions. Keep work proportional to the task while completing its full authorized scope. Honor explicit user and project checks and named agents; do not automatically add extra reviewers or repeat successful checks without new evidence or changes.

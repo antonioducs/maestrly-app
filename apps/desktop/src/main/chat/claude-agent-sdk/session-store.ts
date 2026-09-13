@@ -1,4 +1,5 @@
 import { getDb, transaction } from '../../store'
+import { readHarnessSnapshotJson, type HarnessSnapshotState, type HarnessSnapshotV1 } from '../../../shared/harness'
 
 export const CLAUDE_HARNESS_PROFILE = 'maestrly-claude-v1'
 
@@ -28,6 +29,8 @@ export interface ClaudeSessionBinding {
   fastMode: boolean
   cwd: string
   harnessProfile: string
+  /** Versioned harness contract of the execution that created the session. Absent on legacy rows. */
+  harnessSnapshot: HarnessSnapshotState
   promptHash: string
   toolSignature: string
   lastMessageId: string
@@ -90,6 +93,7 @@ interface BindingRow {
   fast_mode: number
   cwd: string
   harness_profile: string
+  harness_snapshot_json: string | null
   prompt_hash: string
   tool_signature: string
   last_message_id: string
@@ -111,6 +115,7 @@ function bindingFromRow(row: BindingRow): ClaudeSessionBinding {
     fastMode: row.fast_mode === 1,
     cwd: row.cwd,
     harnessProfile: row.harness_profile,
+    harnessSnapshot: readHarnessSnapshotJson(row.harness_snapshot_json),
     promptHash: row.prompt_hash,
     toolSignature: row.tool_signature,
     lastMessageId: row.last_message_id,
@@ -140,7 +145,10 @@ export function listClaudeSessionBindings(): ClaudeSessionBinding[] {
 }
 
 export function putClaudeSessionBinding(
-  input: Omit<ClaudeSessionBinding, 'updatedAt' | 'accountId'> & { accountId?: string | null }
+  input: Omit<ClaudeSessionBinding, 'updatedAt' | 'accountId' | 'harnessSnapshot'> & {
+    accountId?: string | null
+    harnessSnapshot?: HarnessSnapshotV1 | null
+  }
 ): void {
   transaction(() => {
     const current = getClaudeSessionBinding(input.conversationId)
@@ -150,15 +158,17 @@ export function putClaudeSessionBinding(
         .prepare('DELETE FROM chat_claude_sessions WHERE conversation_id = ? AND session_id = ?')
         .run(current.conversationId, current.sessionId)
     }
-    const { usage, context, fastMode, accountId, ...row } = input
+    const { usage, context, fastMode, accountId, harnessSnapshot, ...row } = input
     getDb()
       .prepare(
         `INSERT INTO chat_claude_sessions
-           (conversation_id, session_id, model_id, effort, fast_mode, cwd, harness_profile, prompt_hash,
+           (conversation_id, session_id, model_id, effort, fast_mode, cwd, harness_profile,
+            harness_snapshot_json, prompt_hash,
             tool_signature, last_message_id, last_assistant_uuid, account_fingerprint, account_epoch,
             account_id, usage_json, context_json, updated_at)
          VALUES
-           (@conversationId, @sessionId, @modelId, @effort, @fastMode, @cwd, @harnessProfile, @promptHash,
+           (@conversationId, @sessionId, @modelId, @effort, @fastMode, @cwd, @harnessProfile,
+            @harnessSnapshotJson, @promptHash,
             @toolSignature, @lastMessageId, @lastAssistantUuid, @accountFingerprint, @accountEpoch,
             @accountId, @usageJson, @contextJson, @updatedAt)
          ON CONFLICT(conversation_id) DO UPDATE SET
@@ -168,6 +178,7 @@ export function putClaudeSessionBinding(
            fast_mode = excluded.fast_mode,
            cwd = excluded.cwd,
            harness_profile = excluded.harness_profile,
+           harness_snapshot_json = excluded.harness_snapshot_json,
            prompt_hash = excluded.prompt_hash,
            tool_signature = excluded.tool_signature,
            last_message_id = excluded.last_message_id,
@@ -182,6 +193,7 @@ export function putClaudeSessionBinding(
       .run({
         ...row,
         fastMode: fastMode ? 1 : 0,
+        harnessSnapshotJson: harnessSnapshot ? JSON.stringify(harnessSnapshot) : null,
         accountId: accountId ?? '',
         usageJson: JSON.stringify(usage),
         contextJson: context ? JSON.stringify(context) : null,

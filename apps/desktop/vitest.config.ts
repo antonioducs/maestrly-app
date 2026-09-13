@@ -1,5 +1,9 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
+import { validateHarnessCatalog } from './build/harness-catalog'
+
+// Same validator as the main build: an invalid harness profile fails the test run before any suite.
+validateHarnessCatalog()
 
 /** Unit and contract tests run in Node with real SQLite and explicit desktop runtime stubs. */
 const here = (relativePath: string): string => fileURLToPath(new URL(relativePath, import.meta.url))

@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { ToolExecutionOptions } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatHarnessCapabilities } from '../../src/main/chat/harness'
+import type { ChatHarnessCapabilities } from '../../src/main/chat/harness/adapters/responses'
 import {
   OPENAI_APPLY_PATCH_TOOL_NAME,
   OPENAI_NATIVE_PERMISSION_DENIED_PREFIX,

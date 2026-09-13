@@ -28,6 +28,7 @@ function binding(): ClaudeSessionBinding {
     effort: 'high',
     fastMode: false,
     cwd: '/project',
+    harnessSnapshot: null,
     harnessProfile: CLAUDE_HARNESS_PROFILE,
     promptHash: 'prompt-hash',
     toolSignature: 'tool-signature',

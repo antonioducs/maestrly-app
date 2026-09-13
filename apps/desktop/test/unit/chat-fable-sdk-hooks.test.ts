@@ -1,6 +1,17 @@
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk'
 import { describe, expect, it } from 'vitest'
-import { createFablePostToolUseHook } from '../../src/main/chat/fable/sdk-hooks'
+import { createHarnessPostToolUseHooks } from '../../src/main/chat/harness/adapters/claude'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+
+/** The Fable hook is now a declarative reference to the generic post-tool-read strategy. */
+const createFablePostToolUseHook = (options: { maxReminders?: number } = {}) => {
+  const harness = harnessFor('claude-subscription', 'claude-fable-5-1')
+  const hooks = harness.hooks.map((hook) => ({
+    ...hook,
+    ...(options.maxReminders ? { maxReminders: options.maxReminders } : {}),
+  }))
+  return createHarnessPostToolUseHooks({ ...harness, hooks })!
+}
 
 const postTool = (toolName: string, toolUseId: string): HookInput =>
   ({

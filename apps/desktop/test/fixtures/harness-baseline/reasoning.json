@@ -1,0 +1,57 @@
+[
+  {
+    "effort": "off",
+    "astra": null,
+    "default": null
+  },
+  {
+    "effort": "default",
+    "astra": null,
+    "default": null
+  },
+  {
+    "effort": "none",
+    "astra": null,
+    "default": "none"
+  },
+  {
+    "effort": "minimal",
+    "astra": null,
+    "default": "minimal"
+  },
+  {
+    "effort": "low",
+    "astra": "low",
+    "default": "low"
+  },
+  {
+    "effort": "medium",
+    "astra": "medium",
+    "default": "medium"
+  },
+  {
+    "effort": "high",
+    "astra": "high",
+    "default": "high"
+  },
+  {
+    "effort": "xhigh",
+    "astra": "xhigh",
+    "default": "xhigh"
+  },
+  {
+    "effort": "max",
+    "astra": "max",
+    "default": "max"
+  },
+  {
+    "effort": "ultra",
+    "astra": "ultra",
+    "default": "ultra"
+  },
+  {
+    "effort": "weird",
+    "astra": null,
+    "default": "weird"
+  }
+]

@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
-import { compileFableCompactionSystem, compileFableSubagentPrompt } from '../../src/main/chat/fable/prompt'
-import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
-import { SYSTEM_PROMPT } from '../../src/main/chat/runner'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+import {
+  buildMaestrlyBasePrompt,
+  harnessCompactionSystem,
+  harnessSubagentPrompt,
+} from '../../src/main/chat/harness/host-contracts'
+import type { ChatBehavior } from '../../src/shared/conversation-experience'
 
+const generic = harnessFor('anthropic', 'generic-model')
+const fable = harnessFor('claude-subscription', 'claude-fable-5-1')
+
+const prompt = (
+  appToolsEnabled: boolean,
+  mode: ChatBehavior,
+  hasNotesTab: boolean,
+  harness = generic
+): string => buildMaestrlyBasePrompt({ harness, cwd: '/repo', appToolsEnabled, mode, hasNotesTab })
+
+/** Byte-level parity with the prompt shipped before the declarative harness catalog. */
 const LEGACY_PROMPT_HASHES = {
   'agent:false:false': '1b47682777a17ed9b027d8f62e1d66966981891a92bb766d5dc0cb836a607912',
   'agent:false:true': 'c757174223f0e8f1bf24585007c08970b2fa92bfaec8e35f9607531122bcd087',
@@ -29,57 +44,54 @@ describe('Fable 5.1 prompt fragments', () => {
     for (const mode of ['agent', 'ask', 'plan', 'maestro'] as const) {
       for (const appToolsEnabled of [false, true]) {
         for (const hasNotesTab of [false, true]) {
-          const key = `${mode}:${appToolsEnabled}:${hasNotesTab}`
-          hashes[key] = createHash('sha256')
-            .update(SYSTEM_PROMPT('/repo', appToolsEnabled, mode, hasNotesTab))
+          hashes[`${mode}:${appToolsEnabled}:${hasNotesTab}`] = createHash('sha256')
+            .update(prompt(appToolsEnabled, mode, hasNotesTab))
             .digest('hex')
         }
       }
     }
     expect(hashes).toEqual(LEGACY_PROMPT_HASHES)
   })
-  it('preserves legacy prompt bytes when the profile is absent', () => {
+
+  it('preserves legacy prompt bytes when no profile applies', () => {
     const legacy = 'legacy\n\nprompt'
-    expect(compileFableSubagentPrompt(legacy, null)).toBe(legacy)
-    expect(compileFableCompactionSystem(legacy, null)).toBe(legacy)
-    for (const mode of ['agent', 'ask', 'plan', 'maestro'] as const) {
-      for (const appToolsEnabled of [false, true]) {
-        expect(SYSTEM_PROMPT('/repo', appToolsEnabled, mode, false, null)).toBe(
-          SYSTEM_PROMPT('/repo', appToolsEnabled, mode, false)
-        )
-      }
-    }
+    expect(harnessSubagentPrompt(legacy, generic)).toBe(legacy)
+    expect(harnessCompactionSystem(legacy, generic)).toBe(legacy)
   })
 
   it('replaces conflicting legacy style while preserving mode capability barriers', () => {
-    const agent = SYSTEM_PROMPT('/repo', true, 'agent', false, FABLE_51_BEHAVIOR_PROFILE)
+    const agent = prompt(true, 'agent', false, fable)
     expect(agent).toContain('brief progress updates at meaningful milestones')
     expect(agent).toContain('complete closing summary')
     expect(agent).not.toContain("don't pad with caveats, recaps or repetition")
     expect(agent).not.toContain("don't restate the question or narrate routine steps")
 
-    const ask = SYSTEM_PROMPT('/repo', true, 'ask', false, FABLE_51_BEHAVIOR_PROFILE)
-    expect(ask).toContain('ASK MODE (restricted tools)')
-    expect(ask).toContain('Do NOT edit project files or run commands')
-    const plan = SYSTEM_PROMPT('/repo', true, 'plan', false, FABLE_51_BEHAVIOR_PROFILE)
-    expect(plan).toContain('Calling review_plan ENDS your turn')
-    const maestro = SYSTEM_PROMPT('/repo', true, 'maestro', false, FABLE_51_BEHAVIOR_PROFILE)
-    expect(maestro).toContain('parent is structurally read-only')
+    expect(prompt(true, 'ask', false, fable)).toContain('ASK MODE (restricted tools)')
+    expect(prompt(true, 'ask', false, fable)).toContain('Do NOT edit project files or run commands')
+    expect(prompt(true, 'plan', false, fable)).toContain('Calling review_plan ENDS your turn')
+    expect(prompt(true, 'maestro', false, fable)).toContain('parent is structurally read-only')
   })
 
   it('gives children role-appropriate instructions without user-facing progress', () => {
-    const prompt = compileFableSubagentPrompt('Base child contract.', FABLE_51_BEHAVIOR_PROFILE)
-    expect(prompt).toContain('maestrly-fable-5.1-v1')
-    expect(prompt).toContain('report to the parent')
-    expect(prompt).toContain('Do not address the user')
-    expect(prompt).not.toContain('report progress to the user')
+    const child = harnessSubagentPrompt('Base child contract.', fable)
+    expect(child).toContain('maestrly-fable-5.1-v1')
+    expect(child).toContain('report to the parent')
+    expect(child).toContain('Do not address the user')
+    expect(child).not.toContain('report progress to the user')
   })
 
   it('preserves decisions, rejected attempts, exact references and truthful checks in summaries', () => {
-    const prompt = compileFableCompactionSystem('Legacy compact.', FABLE_51_BEHAVIOR_PROFILE)
-    expect(prompt).toContain('rejected attempts')
-    expect(prompt).toContain('user constraints and decisions')
-    expect(prompt).toContain('exact references')
-    expect(prompt).toContain('Never invent')
+    const compact = harnessCompactionSystem('Legacy compact.', fable)
+    expect(compact).toContain('rejected attempts')
+    expect(compact).toContain('user constraints and decisions')
+    expect(compact).toContain('exact references')
+    expect(compact).toContain('Never invent')
+  })
+
+  it('declares the summarized progress contract and the bounded read-batching hook', () => {
+    expect(fable.progress).toBe('summarized')
+    expect(fable.hooks).toEqual([
+      { id: 'post-tool-read-guidance', text: expect.stringContaining('group them in parallel'), maxReminders: 24 },
+    ])
   })
 })

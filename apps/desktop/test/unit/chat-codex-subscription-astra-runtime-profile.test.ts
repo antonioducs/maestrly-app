@@ -1,9 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import {
-  astraDeveloperInstructions,
-  buildAstraCodexThreadProfile,
-} from '../../src/main/chat/codex-subscription/astra-runtime-profile'
+import { buildCodexThreadHarness, type CodexThreadHarness } from '../../src/main/chat/harness/adapters/codex'
+import { buildHarnessDeveloperInstructions } from '../../src/main/chat/harness/prompt-builder'
 import type { CodexSubscriptionModel } from '../../src/main/chat/codex-subscription/manager'
+
+/** Codex runtime facts now feed the declarative catalog instead of a model-specific module. */
+interface LegacyAstraInput {
+  modelId: string
+  model?: Partial<CodexSubscriptionModel> | null
+  astraHarnessEnabled: boolean
+  eligibleChatGptSession: boolean
+  ephemeral: boolean
+  reviewer: boolean
+  requestUserInputAsyncAvailable: boolean
+  reasoningEffort?: string
+}
+
+const buildAstraCodexThreadProfile = (input: LegacyAstraInput): CodexThreadHarness =>
+  buildCodexThreadHarness({
+    modelId: input.modelId,
+    flags: { 'chat.astraHarness': input.astraHarnessEnabled },
+    runtimeCapabilities: {
+      ...(input.model?.supportsExperimentalContext != null
+        ? { experimentalContext: input.model.supportsExperimentalContext }
+        : {}),
+      ...(input.model?.supportsParallelToolCalls != null
+        ? { parallelTools: input.model.supportsParallelToolCalls }
+        : {}),
+    },
+    runtimeReasoningEfforts: input.model?.supportedReasoningEfforts?.map((entry) => entry.reasoningEffort),
+    eligibleChatGptSession: input.eligibleChatGptSession,
+    ephemeral: input.ephemeral,
+    reviewer: input.reviewer,
+    requestUserInputAsyncAvailable: input.requestUserInputAsyncAvailable,
+    ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+  })
+
+const astraDeveloperInstructions = (base: string, profile: CodexThreadHarness) =>
+  buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance })
 
 const astra = (patch: Partial<CodexSubscriptionModel> = {}): CodexSubscriptionModel => ({
   id: 'gpt-6-astra',

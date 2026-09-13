@@ -6,7 +6,7 @@ import type {
   ClaudeSubscriptionAccountIdentity,
   ClaudeSubscriptionManager,
 } from '../../src/main/chat/claude-agent-sdk/manager'
-import { resolveClaudeBehaviorProfile } from '../../src/main/chat/behavior-profile'
+import { harnessFor } from '../../src/main/chat/harness/execution'
 import { CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import type { SubagentTextUpdate } from '../../src/main/chat/subagent-text-stream'
 import { closeDb, freshDb } from '../helpers/db'
@@ -267,7 +267,7 @@ describe('Claude isolated subagent runner', () => {
     const options = manager.calls[0]?.options ?? {}
     expect(options.model).toBe('claude-opus-5')
     expect(options.systemPrompt).toContain(
-      resolveClaudeBehaviorProfile({ requestedModelId: 'claude-opus-5' }).profile!.id
+      harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
     )
     expect(options.thinking).toBeUndefined()
     expect(options.effort).toBe('high')

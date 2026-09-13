@@ -66,8 +66,12 @@ import {
   GENERATE_IMAGE_TOOL_NAME,
   mergeGeneratedImageUsage,
 } from '../image-gen'
-import { IN_TURN_COMPACT_RATIO, SYSTEM_PROMPT } from '../runner'
-import { compileOpenAIPrompt } from '../openai/prompt'
+import { IN_TURN_COMPACT_RATIO } from '../runner'
+import { harnessFor } from '../harness/execution'
+import { captureHarnessFlags } from '../harness/flags'
+import { buildMaestrlyBasePrompt, harnessUltraGuidance } from '../harness/host-contracts'
+import { buildHarnessPrompt } from '../harness/prompt-builder'
+import type { ResolvedHarness } from '../harness/types'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
 import { namespaceSubagentToolSet, type NormalizedAiUsage } from '../subagent-runner'
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
@@ -92,13 +96,11 @@ import { resolveFileImageBytesSync } from '../attachment-artifacts'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
-import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
-import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
-import { opusUltraGuidance } from '../opus/prompt'
-import { resolveClaudeBehaviorProfile, isOpusBehaviorProfile, type ClaudeBehaviorProfile } from '../behavior-profile'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
-import { resolveGitHubCopilotHarness } from './harness'
+import { resolveGitHubCopilotHarness } from '../harness/adapters/copilot'
+import { harnessRegistry } from '../harness/catalog'
+import { createHarnessSnapshot, snapshotAllowsResume } from '../harness/compatibility'
 import {
   COPILOT_TOOL_SEARCH_DEFER_THRESHOLD,
   copilotTools,
@@ -139,7 +141,7 @@ interface PreparedRuntime {
   toolSignature: string
   availableTools: string[]
   systemMessage: string
-  behaviorProfile?: ClaudeBehaviorProfile
+  harness: ResolvedHarness
   takeToolOutput: (toolCallId: string) => ToolOutput | undefined
   close: () => Promise<void>
 }
@@ -176,7 +178,7 @@ export interface RunGitHubCopilotChatArgs {
   cwd: string
   selection: ChatModelRef
   /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: ClaudeBehaviorProfile | null
+  harness?: ResolvedHarness
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
   maestroLive?: MaestroLiveRunPort
@@ -360,7 +362,8 @@ function bindingCanResume(
   harnessProfile: GitHubCopilotSessionBinding['harnessProfile'],
   toolSignature: string,
   accountFingerprint: string,
-  accountId: string | null
+  accountId: string | null,
+  harness: ResolvedHarness
 ): boolean {
   return !!(
     binding &&
@@ -371,7 +374,8 @@ function bindingCanResume(
     binding.toolSignature === toolSignature &&
     binding.accountFingerprint === accountFingerprint &&
     // Multiple accounts: a session lives in its owner's COPILOT_HOME; another account must never resume it.
-    binding.accountId === accountId
+    binding.accountId === accountId &&
+    snapshotAllowsResume(binding.harnessSnapshot, harness)
   )
 }
 
@@ -672,15 +676,11 @@ async function prepareRuntime(
     const availableTools = tools.map((entry) => `custom:${entry.name}`)
     const toolProfile = profileCopilotTools(tools)
 
-    const harness = resolveGitHubCopilotHarness(args.selection.modelId)
-    const behaviorProfile =
-      args.behaviorProfile === undefined
-        ? resolveClaudeBehaviorProfile({
-            requestedModelId: args.selection.modelId,
-            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-          }).profile
-        : args.behaviorProfile
+    const copilot = resolveGitHubCopilotHarness(args.selection.modelId, harnessRegistry())
+    const harness =
+      args.harness ??
+      harnessFor('github-copilot-subscription', args.selection.modelId, { flags: captureHarnessFlags() })
+    const profileUltra = harnessUltraGuidance(harness, args.mode)
     const projectContext = await buildProjectContext(args.projectId, args.cwd)
     const skillContext = skillsCatalog(skills)
     const agentContext =
@@ -696,9 +696,9 @@ async function prepareRuntime(
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
         : args.mode === 'design'
-          ? [renderDesignUltraGuidance(args.mode), isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : ''].filter(Boolean).join('\n\n')
-          : isOpusBehaviorProfile(behaviorProfile)
-            ? opusUltraGuidance(args.mode)
+          ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
+          : profileUltra
+            ? profileUltra
             : args.mode === 'agent'
             ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
             : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
@@ -706,10 +706,10 @@ async function prepareRuntime(
     const notes = Boolean(getConversation(args.conversationId))
     const runtimeOverlay =
       `\n\n# Active runtime\nYou are running through the official GitHub Copilot SDK/CLI runtime with the ` +
-      `${harness.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
+      `${copilot.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
       `the selected model family governs behavioral instructions. Only the explicitly supplied tools are available.`
     let systemMessage =
-      SYSTEM_PROMPT(args.cwd, appToolsEnabled, args.mode, notes, behaviorProfile) +
+      buildMaestrlyBasePrompt({ harness, cwd: args.cwd, appToolsEnabled, mode: args.mode, hasNotesTab: notes }) +
       runtimeOverlay +
       projectContext +
       (skillContext ? `\n\n# Project skills\n${skillContext}` : '') +
@@ -717,10 +717,12 @@ async function prepareRuntime(
       (args.mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : '') +
       (ultra ? `\n\n# Ultra mode\n${ultra}` : '') +
       `\n\n# Environment\n${env}`
-    if (harness.promptProfile === 'codex-gpt-5.6-sol@5bed644') {
-      systemMessage = compileOpenAIPrompt({
+    // Copilot's legacy prompt key selects the textual axis only; it never enables advanced policies.
+    if (copilot.harness.prompts.layout !== 'maestrly-base') {
+      systemMessage = buildHarnessPrompt({
+        harness: copilot.harness,
         cwd: args.cwd,
-        mode: args.mode === 'maestro' ? 'ask' : args.mode,
+        mode: args.mode,
         appToolsEnabled,
         hasNotesTab: notes,
         projectContext,
@@ -744,7 +746,7 @@ async function prepareRuntime(
       toolSignature: signature,
       availableTools,
       systemMessage: systemMessage + (autonomousPolicy(args.conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : ""),
-      ...(behaviorProfile ? { behaviorProfile } : {}),
+      harness,
       takeToolOutput: (toolCallId) => {
         const output = canonicalToolOutputs.get(toolCallId)
         canonicalToolOutputs.delete(toolCallId)
@@ -971,8 +973,8 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
   try {
     runtime = await prepareRuntime(args, assistantId, state)
     chatDiag({
-      kind: 'fable-behavior-profile',
-      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      kind: 'harness-behavior-profile',
+      profile: runtime.harness.identity.behaviorProfileId ?? 'legacy',
       requestedModel: args.selection.modelId,
       resolvedModel: args.selection.modelId,
       transport: 'github-copilot',
@@ -981,7 +983,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       conv: args.conversationId,
     })
     const taskRuntime = runtime
-    const harness = resolveGitHubCopilotHarness(args.selection.modelId)
+    const copilot = resolveGitHubCopilotHarness(args.selection.modelId, harnessRegistry())
     const previousMessage = history.at(-2) ?? null
     const existing = getGitHubCopilotSessionBinding(args.conversationId)
     const canResume =
@@ -990,10 +992,11 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         existing,
         previousMessage?.id ?? null,
         args.selection.modelId,
-        harness.profile,
+        copilot.profile,
         runtime.toolSignature,
         accountFingerprint,
-        args.manager.accountId ?? null
+        args.manager.accountId ?? null,
+        runtime.harness
       )
     if (existing && !canResume && !args.ephemeralSession)
       await retireSession(args.manager, args.conversationId, existing.sessionId)
@@ -1806,7 +1809,8 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         conversationId: args.conversationId,
         sessionId,
         modelId: args.selection.modelId,
-        harnessProfile: harness.profile,
+        harnessProfile: copilot.profile,
+        harnessSnapshot: createHarnessSnapshot(runtime.harness),
         toolSignature: runtime.toolSignature,
         lastMessageId: assistantId,
         accountFingerprint,
@@ -1875,12 +1879,12 @@ export async function compactGitHubCopilotSession(
 
   const binding = getGitHubCopilotSessionBinding(args.conversationId)
   if (!binding) throw new Error('This conversation has no GitHub Copilot session to compact')
-  const harness = resolveGitHubCopilotHarness(args.selection.modelId)
+  const copilot = resolveGitHubCopilotHarness(args.selection.modelId, harnessRegistry())
   // Resume boundary = MAIN context (isolated rounds never move the conversation binding).
   const latestMessage = lastConversationContextMessage(args.conversationId)
   if (
     binding.modelId !== args.selection.modelId ||
-    binding.harnessProfile !== harness.profile ||
+    binding.harnessProfile !== copilot.profile ||
     binding.accountFingerprint !== accountFingerprint ||
     binding.accountId !== (args.manager.accountId ?? null) ||
     latestMessage?.id !== binding.lastMessageId

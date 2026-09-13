@@ -12,7 +12,10 @@ import {
   queueGitHubCopilotSessionCleanup,
   retireGitHubCopilotSessionBinding,
 } from '../../src/main/chat/github-copilot/session-store'
-import { deleteConversation } from '../../src/main/store'
+import { deleteConversation, getDb } from '../../src/main/store'
+import { snapshotAllowsResume } from '../../src/main/chat/harness/compatibility'
+import { resolveChatHarness } from '../../src/main/chat/harness/execution'
+import { INVALID_HARNESS_SNAPSHOT } from '../../src/shared/harness'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -26,6 +29,7 @@ function bind(
     sessionId,
     modelId: 'gpt-5.6-sol',
     harnessProfile: 'copilot-openai-v1',
+    harnessSnapshot: null,
     toolSignature: 'tools-sha256',
     lastMessageId: `last-${sessionId}`,
     accountFingerprint: 'sha256:account-a',
@@ -48,6 +52,7 @@ describe('GitHub Copilot session store', () => {
       sessionId: 'session-1',
       modelId: 'gpt-5.6-sol',
       harnessProfile: 'copilot-openai-v1',
+    harnessSnapshot: null,
       toolSignature: 'tools-sha256',
       lastMessageId: 'last-session-1',
       accountFingerprint: 'sha256:account-a',
@@ -71,6 +76,22 @@ describe('GitHub Copilot session store', () => {
       lastMessageId: 'assistant-2',
       accountFingerprint: 'sha256:account-b',
     })
+  })
+
+  it('blocks resume when the stored snapshot is corrupt or has an unsupported version', () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    bind(conversation.id, 'session-corrupt')
+    const harness = resolveChatHarness('github-copilot-subscription', 'gpt-5.6-sol').harness
+
+    for (const snapshotJson of ['{bad', '{"snapshotVersion":99}']) {
+      getDb()
+        .prepare('UPDATE chat_github_copilot_sessions SET harness_snapshot_json = ? WHERE conversation_id = ?')
+        .run(snapshotJson, conversation.id)
+      const binding = getGitHubCopilotSessionBinding(conversation.id)
+      expect(binding?.harnessSnapshot).toBe(INVALID_HARNESS_SNAPSHOT)
+      expect(snapshotAllowsResume(binding?.harnessSnapshot ?? null, harness)).toBe(false)
+    }
   })
 
   it('retirement uses compare-and-delete and never removes a replacement binding', () => {

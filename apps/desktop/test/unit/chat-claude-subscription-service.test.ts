@@ -368,23 +368,23 @@ describe('Claude subscription service integration', () => {
       await new Promise<void>((resolve) => setImmediate(resolve))
     }
     const claudeCalls = h.runClaude.mock.calls as unknown as Array<
-      [{ behaviorProfile?: unknown; resolvedModelId?: string }]
+      [{ harness?: { identity: { behaviorProfileId: string | null } }; resolvedModelId?: string }]
     >
 
     setModel('sonnet')
     await send('First A turn.', 1)
-    expect(claudeCalls[0]?.[0].behaviorProfile).toBeNull()
+    expect(claudeCalls[0]?.[0].harness?.identity.behaviorProfileId).toBeNull()
 
     setModel(alias)
     await send('Profile turn.', 2)
     expect(claudeCalls[1]?.[0]).toMatchObject({
       resolvedModelId: modelId,
-      behaviorProfile: { id: profileId },
+      harness: { identity: { behaviorProfileId: profileId } },
     })
 
     setModel('sonnet')
     await send('Second A turn.', 3)
-    expect(claudeCalls[2]?.[0].behaviorProfile).toBeNull()
+    expect(claudeCalls[2]?.[0].harness?.identity.behaviorProfileId).toBeNull()
     expect(getConvUiPrefs(conversation.id).chat).toMatchObject({
       modelId: 'sonnet',
       reasoning: 'high',
