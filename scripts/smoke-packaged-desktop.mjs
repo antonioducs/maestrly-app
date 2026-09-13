@@ -33,7 +33,7 @@ const executablePath = path.resolve(process.argv[2] ?? target)
 let app
 let failure
 const diagnostics = []
-const launchTimeoutMs = process.platform === 'win32' ? 300_000 : 180_000
+const launchTimeoutMs = 300_000
 const deadline = setTimeout(() => app?.process().kill('SIGKILL'), launchTimeoutMs + 60_000)
 deadline.unref()
 
@@ -68,7 +68,7 @@ try {
     if (diagnostics.length > 50) diagnostics.shift()
   })
   console.log('[packaged-desktop] PID:', app.process().pid)
-  const page = await app.firstWindow()
+  const page = await app.firstWindow({ timeout: launchTimeoutMs })
   page.on('pageerror', (error) => diagnostics.push(error.message))
   console.log('[packaged-desktop] Window:', page.url())
   await page.waitForFunction(() => !!window.api, undefined, { timeout: 15000 })

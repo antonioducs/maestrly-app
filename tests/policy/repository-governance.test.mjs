@@ -61,8 +61,9 @@ test('package smoke validates packaging changes and cannot publish', () => {
   }
 
   const packagedDesktopSmoke = read('scripts/smoke-packaged-desktop.mjs')
-  assert.match(packagedDesktopSmoke, /process\.platform === 'win32' \? 300_000 : 180_000/)
+  assert.match(packagedDesktopSmoke, /const launchTimeoutMs = 300_000/)
   assert.match(packagedDesktopSmoke, /timeout: launchTimeoutMs/)
+  assert.match(packagedDesktopSmoke, /firstWindow\(\{ timeout: launchTimeoutMs \}\)/)
 })
 
 test('release workflow publishes verified native artifacts only from version tags', () => {
