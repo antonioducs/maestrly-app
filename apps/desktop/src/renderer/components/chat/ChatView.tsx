@@ -1826,7 +1826,7 @@ export function ChatView({
             )}
 
             <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
-            {reviewLoop?.driver === 'maestrly-pair' && (
+            {reviewLoopActive && reviewLoop?.driver === 'maestrly-pair' && (
               <ReviewLoopBanner conversationId={conversationId} loop={reviewLoop} />
             )}
 
