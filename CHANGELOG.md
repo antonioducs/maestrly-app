@@ -11,8 +11,8 @@ User-visible changes by version. Downloads are on
 
 - Use a Debian-safe package name and the desktop workspace artifact paths in
   native release builds.
-- Keep packaged GUI startup checks on Linux/Xvfb, where hosted runners provide
-  a reliable graphical session.
+- Keep packaged runtime startup checks on Linux/Xvfb, where hosted runners
+  provide a reliable graphical session.
 
 ## [0.4.1] - 2026-09-12
 

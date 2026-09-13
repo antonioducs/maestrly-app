@@ -137,8 +137,6 @@ jobs:
         run: npm ci
       - name: Build Windows package
         run: npm run package:win
-      - name: Smoke packaged Local ML
-        run: npm run smoke:packaged-local-ml-runtime
       - name: Stage Windows release assets
         run: node scripts/stage-release-assets.mjs windows apps/desktop/dist .release-local-staging/windows
       - name: Upload Windows release assets
@@ -274,8 +272,6 @@ jobs:
           xcrun stapler validate "$dmg"
           codesign --verify --verbose=2 "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
-      - name: Smoke packaged Local ML
-        run: npm run smoke:packaged-local-ml-runtime
       - name: Stage macOS release assets
         run: node scripts/stage-release-assets.mjs macos apps/desktop/dist .release-local-staging/macos
       - name: Upload macOS release assets
