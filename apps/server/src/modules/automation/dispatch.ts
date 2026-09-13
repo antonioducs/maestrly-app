@@ -18,7 +18,13 @@ export async function dispatchColumnAutomation(
   client: DatabaseClient,
   scope: Scope,
   card: CardRow,
-  input: { manual: boolean; sourceEventId?: string; expectedPolicyId?: string | null; expectedOverrideVersion?: number; personalDeviceId?:string }
+  input: {
+    manual: boolean
+    sourceEventId?: string
+    expectedPolicyId?: string | null
+    expectedOverrideVersion?: number
+    personalDeviceId?: string
+  }
 ) {
   const columnResult = await client.query<ColumnConfigRow>(
     'select * from board_columns where id=$1 and deleted_at is null',
@@ -66,24 +72,38 @@ export async function dispatchColumnAutomation(
   )
   if (input.manual && input.expectedOverrideVersion !== overrideVersion)
     fail('The card override changed. Reload before saving.')
-  const selectedDevice=input.personalDeviceId?await requirePersonalDevice(client,{...scope,projectId:card.project_id,deviceId:input.personalDeviceId}):null
-  if(selectedDevice&&!input.manual)fail('Personal execution requires an explicit request.',403)
+  const selectedDevice = input.personalDeviceId
+    ? await requirePersonalDevice(client, { ...scope, projectId: card.project_id, deviceId: input.personalDeviceId })
+    : null
+  if (selectedDevice && !input.manual) fail('Personal execution requires an explicit request.', 403)
   const effective = effectiveAutomation(config, ov)
-  if(selectedDevice){effective.runnerSelector='runner';effective.targetRunnerId=selectedDevice.id}
+  if (selectedDevice) {
+    effective.runnerSelector = 'runner'
+    effective.targetRunnerId = selectedDevice.id
+  }
   const repository = await resolvedRepository(client, scope.organizationId, card.project_id, effective)
-  const catalog = selectedDevice ? (await personalDeviceRows(client,scope.organizationId,card.project_id,scope.userId)).filter(row=>row.id===selectedDevice.id) : await projectCatalog(client, scope.organizationId, card.project_id)
+  const catalog = selectedDevice
+    ? (await personalDeviceRows(client, scope.organizationId, card.project_id, scope.userId)).filter(
+        (row) => row.id === selectedDevice.id
+      )
+    : await projectCatalog(client, scope.organizationId, card.project_id)
   const matches = catalog
-    .map((row) => assessAutomationRunner(row, effective, repository, selectedDevice?false:input.manual))
+    .map((row) => assessAutomationRunner(row, effective, repository, selectedDevice ? false : input.manual))
     .filter((row) => row.compatible)
   if ((policy.automation_config || selectedDevice) && !matches.length) {
-    if (input.manual) fail(selectedDevice?'This device does not support the configured model, repository or execution options.':'No compatible runner is available for this configuration.')
+    if (input.manual)
+      fail(
+        selectedDevice
+          ? 'This device does not support the configured model, repository or execution options.'
+          : 'No compatible runner is available for this configuration.'
+      )
     await appendDomainEvent(client, {
       organizationId: scope.organizationId,
       projectId: card.project_id,
       type: 'card.automation_unavailable',
       aggregateType: 'card',
       aggregateId: card.id,
-      actor: { type: 'human', userId: scope.userId },
+      actor: scope.actor ?? { type: 'human', userId: scope.userId },
       data: { columnId: column.id },
     })
     return { jobId: null, reason: 'No compatible runner' }
@@ -112,7 +132,7 @@ export async function dispatchColumnAutomation(
         type: 'card.dispatch_blocked',
         aggregateType: 'card',
         aggregateId: card.id,
-        actor: { type: 'human', userId: scope.userId },
+        actor: scope.actor ?? { type: 'human', userId: scope.userId },
         data: { columnId: column.id, count, max: limits.maxPerCardPerColumn },
       })
     }
@@ -133,12 +153,14 @@ export async function dispatchColumnAutomation(
         type: 'card.agent_requested',
         aggregateType: 'card',
         aggregateId: card.id,
-        actor: { type: 'human', userId: scope.userId },
+        actor: scope.actor ?? { type: 'human', userId: scope.userId },
         data: { columnId: column.id, policyId: policy.id, cardVersion: Number(card.version) },
       })
     ).id
   const snapshot = {
-    ...(selectedDevice?{personalDevice:{deviceId:selectedDevice.id,ownerUserId:scope.userId,name:selectedDevice.name}}:{}),
+    ...(selectedDevice
+      ? { personalDevice: { deviceId: selectedDevice.id, ownerUserId: scope.userId, name: selectedDevice.name } }
+      : {}),
     sourceCardVersion: Number(card.version),
     title: card.title,
     description: card.description,
@@ -194,7 +216,7 @@ export async function requestColumnAgent(
     expectedVersion: number
     expectedPolicyId: string | null
     expectedOverrideVersion: number
-    personalDeviceId?:string
+    personalDeviceId?: string
   }
 ) {
   return transaction(pool, scope, async (client) => {
@@ -205,7 +227,7 @@ export async function requestColumnAgent(
       manual: true,
       expectedPolicyId: scope.expectedPolicyId,
       expectedOverrideVersion: scope.expectedOverrideVersion,
-      personalDeviceId:scope.personalDeviceId,
+      personalDeviceId: scope.personalDeviceId,
     })
   })
 }

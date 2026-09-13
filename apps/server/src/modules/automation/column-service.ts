@@ -67,7 +67,12 @@ export async function currentConfig(client: DatabaseClient, column: ColumnConfig
   const policy = rows?.rows[0]
   return { policy, config: configFromPolicy(policy) }
 }
-export async function projectCatalog(client: DatabaseClient, organizationId: string, projectId: string, ownerUserId?:string) {
+export async function projectCatalog(
+  client: DatabaseClient,
+  organizationId: string,
+  projectId: string,
+  ownerUserId?: string
+) {
   const rows = await client.query(
     `select r.id,r.name,r.status,r.last_seen_at as "lastSeenAt",r.repositories,
     r.automation_capabilities as capabilities from runners r join runner_project_bindings b
@@ -78,7 +83,14 @@ export async function projectCatalog(client: DatabaseClient, organizationId: str
     const parsed = runnerAutomationCapabilitiesSchema.safeParse(row.capabilities)
     return { ...row, capabilities: parsed.success ? parsed.data : null }
   })
-  return ownerUserId ? [...shared,...(await personalDeviceRows(client,organizationId,projectId,ownerUserId)).filter(r=>r.enabled).map(r=>({...r,personal:true}))] : shared
+  return ownerUserId
+    ? [
+        ...shared,
+        ...(await personalDeviceRows(client, organizationId, projectId, ownerUserId))
+          .filter((r) => r.enabled)
+          .map((r) => ({ ...r, personal: true })),
+      ]
+    : shared
 }
 export async function resolvedRepository(
   client: DatabaseClient,
@@ -193,7 +205,12 @@ export async function saveColumnAutomation(
     const repository = config.enabled
       ? await resolvedRepository(client, scope.organizationId, column.project_id, config)
       : { repositoryBindingId: null }
-    const catalog = await projectCatalog(client, scope.organizationId, column.project_id, !config.autoRun&&config.runnerSelector==='pool'?scope.userId:undefined)
+    const catalog = await projectCatalog(
+      client,
+      scope.organizationId,
+      column.project_id,
+      !config.autoRun && config.runnerSelector === 'pool' ? scope.userId : undefined
+    )
     if (config.enabled) {
       if (!config.model.trim()) fail('Select an available model.', 400)
       if (!catalog.some((row) => assessAutomationRunner(row, config, repository, false).compatible))
@@ -242,7 +259,7 @@ export async function saveColumnAutomation(
       type: 'column.automation_saved',
       aggregateType: 'column',
       aggregateId: column.id,
-      actor: { type: 'human', userId: scope.userId },
+      actor: scope.actor ?? { type: 'human', userId: scope.userId },
       data: { policyId: rows.rows[0].id, version: Number(rows.rows[0].version) },
     })
     return { policyId: rows.rows[0].id, version: Number(rows.rows[0].version), config }
@@ -312,10 +329,23 @@ export async function cardAutomationContext(pool: DatabasePool, scope: Scope & {
         { id: card.id, title: card.title, description: card.description },
         column.name
       ),
-      personalDevices: (await personalDeviceRows(client,scope.organizationId,card.project_id,scope.userId)).map(row=>({
-        id:row.id,enabled:row.enabled,online:row.enabled&&row.status==='online'&&!!row.lastSeenAt&&Date.now()-new Date(row.lastSeenAt).getTime()<60000,
-        ...assessAutomationRunner(row,{...effective,runnerSelector:'runner',targetRunnerId:row.id},repository,false),
-      })),
+      personalDevices: (await personalDeviceRows(client, scope.organizationId, card.project_id, scope.userId)).map(
+        (row) => ({
+          id: row.id,
+          enabled: row.enabled,
+          online:
+            row.enabled &&
+            row.status === 'online' &&
+            !!row.lastSeenAt &&
+            Date.now() - new Date(row.lastSeenAt).getTime() < 60000,
+          ...assessAutomationRunner(
+            row,
+            { ...effective, runnerSelector: 'runner', targetRunnerId: row.id },
+            repository,
+            false
+          ),
+        })
+      ),
       runners: catalog.map((row) => assessAutomationRunner(row, effective, repository)),
       error,
       blocked: !!guard.rows[0]?.blocked_at,
@@ -344,7 +374,12 @@ export async function saveCardOverride(
     const effective = effectiveAutomation(current.config, scope.config)
     if (current.config.enabled && scope.config) {
       const repository = await resolvedRepository(client, scope.organizationId, card.project_id, effective)
-      const runners = await projectCatalog(client, scope.organizationId, card.project_id, !effective.autoRun&&effective.runnerSelector==='pool'?scope.userId:undefined)
+      const runners = await projectCatalog(
+        client,
+        scope.organizationId,
+        card.project_id,
+        !effective.autoRun && effective.runnerSelector === 'pool' ? scope.userId : undefined
+      )
       if (!runners.some((row) => assessAutomationRunner(row, effective, repository, false).compatible))
         fail('No runner supports this configuration.')
     }
@@ -360,7 +395,7 @@ export async function saveCardOverride(
       type: 'card.automation_override_changed',
       aggregateType: 'card',
       aggregateId: card.id,
-      actor: { type: 'human', userId: scope.userId },
+      actor: scope.actor ?? { type: 'human', userId: scope.userId },
       data: { columnId: column.id, cleared: !scope.config },
     })
     return { ok: true }
@@ -370,6 +405,8 @@ export async function releaseDispatch(pool: DatabasePool, scope: Scope & { cardI
   return transaction(pool, scope, async (client) => {
     const card = await cardScope(client, scope, scope.cardId, true)
     await authorizeProject(client, scope.organizationId, card.project_id, scope.userId, 'execution:request')
+    const column = await columnScope(client, scope, scope.columnId)
+    if (column.board_id !== card.board_id) fail('Column belongs to another board.', 400)
     await client.query(
       'update automation_dispatch_guards set dispatch_count=0,window_started_at=now(),blocked_at=null where card_id=$1 and column_id=$2',
       [card.id, scope.columnId]
@@ -380,7 +417,7 @@ export async function releaseDispatch(pool: DatabasePool, scope: Scope & { cardI
       type: 'card.dispatch_released',
       aggregateType: 'card',
       aggregateId: card.id,
-      actor: { type: 'human', userId: scope.userId },
+      actor: scope.actor ?? { type: 'human', userId: scope.userId },
       data: { columnId: scope.columnId },
     })
     return { ok: true }
@@ -403,9 +440,125 @@ export async function saveBoardAutomationLimits(
       type: 'board.automation_limits_changed',
       aggregateType: 'board',
       aggregateId: scope.boardId,
-      actor: { type: 'human', userId: scope.userId },
+      actor: scope.actor ?? { type: 'human', userId: scope.userId },
       data: { limits: scope.limits },
     })
     return { limits: resolveAutomationLimits(scope.limits) }
+  })
+}
+
+export async function restoreColumnAutomation(
+  pool: DatabasePool,
+  s: Scope & { columnId: string; expectedPolicyId: string | null; policyId: string }
+) {
+  const history = await columnAutomationHistory(pool, s)
+  const version = history.find((p) => p.id === s.policyId)
+  if (!version) fail('Configuration version not found.', 404)
+  return saveColumnAutomation(pool, { ...s, expectedPolicyId: s.expectedPolicyId, config: version.config })
+}
+
+export async function automationCatalog(pool: DatabasePool, s: Scope & { projectId: string }) {
+  return transaction(pool, s, async (client) => {
+    await authorizeProject(client, s.organizationId, s.projectId, s.userId, 'project:read')
+    return { runners: await projectCatalog(client, s.organizationId, s.projectId, s.userId) }
+  })
+}
+
+export async function previewAutomation(
+  pool: DatabasePool,
+  s: Scope & { columnId: string; cardId: string; promptTemplate: string }
+) {
+  return transaction(pool, s, async (client) => {
+    const card = await cardScope(client, s, s.cardId),
+      column = await columnScope(client, s, s.columnId)
+    if (card.board_id !== column.board_id) fail('Column belongs to another board.', 400)
+    const prompt = renderAutomationPrompt(
+      s.promptTemplate,
+      { id: card.id, title: card.title, description: card.description },
+      column.name
+    )
+    if (prompt.length > 200000) fail('Rendered prompt is too long.', 400)
+    return { prompt }
+  })
+}
+
+export async function executionEvents(
+  pool: DatabasePool,
+  s: Scope & { cardId: string; runId: string; offset: number }
+) {
+  return transaction(pool, s, async (client) => {
+    await cardScope(client, s, s.cardId)
+    const rows = await client.query(
+      `select e.id,e.type,e.data,e.created_at as "createdAt" from execution_events e join runs r on r.id=e.run_id join jobs j on j.id=r.job_id
+      where e.organization_id=$1 and j.card_id=$2 and r.id=$3 order by e.created_at,e.id limit 51 offset $4`,
+      [s.organizationId, s.cardId, s.runId, s.offset]
+    )
+    return { items: rows.rows.slice(0, 50), more: rows.rows.length > 50 }
+  })
+}
+
+export async function defineFixedColumns(
+  pool: DatabasePool,
+  s: Scope & { boardId: string; expectedVersion: number; backlogId?: string; doneId?: string; create: boolean }
+) {
+  return transaction(pool, s, async (client) => {
+    const board = await boardLock(client, s, s.boardId, s.expectedVersion)
+    await authorizeProject(client, s.organizationId, board.project_id, s.userId, 'automation:manage')
+    const configured = (await client.query('select roles_configured from boards where id=$1', [s.boardId])).rows[0]
+    if (configured.roles_configured) fail('Fixed columns are already defined.')
+    let backlogId = s.backlogId,
+      doneId = s.doneId
+    if (s.create) {
+      for (const [role, name] of [
+        ['backlog', 'Backlog'],
+        ['done', 'Done'],
+      ]) {
+        const row = await client.query(
+          `insert into board_columns(organization_id,project_id,board_id,name,role,position)
+          values($1,$2,$3,$4,$5,(select coalesce(max(position)+1,0) from board_columns where board_id=$3)) returning id`,
+          [s.organizationId, board.project_id, s.boardId, name, role]
+        )
+        if (role === 'backlog') backlogId = row.rows[0].id
+        else doneId = row.rows[0].id
+      }
+    }
+    if (!backlogId || !doneId || backlogId === doneId) fail('Choose two different fixed columns.', 400)
+    const rows = await client.query<{ id: string }>(
+      'select id from board_columns where board_id=$1 and deleted_at is null order by position',
+      [s.boardId]
+    )
+    if (!rows.rows.some((c) => c.id === backlogId) || !rows.rows.some((c) => c.id === doneId))
+      fail('Column not found.', 404)
+    await client.query(
+      "update board_columns set role=case when id=$2 then 'backlog' when id=$3 then 'done' else 'normal' end where board_id=$1 and deleted_at is null",
+      [s.boardId, backlogId, doneId]
+    )
+    const all = await client.query<{ id: string }>(
+      'select id from board_columns where board_id=$1 order by deleted_at nulls first,position',
+      [s.boardId]
+    )
+    const order = [
+      backlogId,
+      ...rows.rows.map((r) => r.id).filter((id) => id !== backlogId && id !== doneId),
+      doneId,
+      ...all.rows.map((r) => r.id).filter((id) => !rows.rows.some((c) => c.id === id)),
+    ]
+    await client.query(
+      'update board_columns set position=position+(select max(position)+1 from board_columns where board_id=$1) where board_id=$1',
+      [s.boardId]
+    )
+    for (const [position, id] of order.entries())
+      await client.query('update board_columns set position=$2 where id=$1', [id, position])
+    await client.query('update boards set roles_configured=true,version=version+1 where id=$1', [s.boardId])
+    await appendDomainEvent(client, {
+      organizationId: s.organizationId,
+      projectId: board.project_id,
+      type: 'board.fixed_columns_defined',
+      aggregateType: 'board',
+      aggregateId: s.boardId,
+      actor: s.actor ?? { type: 'human', userId: s.userId },
+      data: { backlogId, doneId },
+    })
+    return { ok: true }
   })
 }

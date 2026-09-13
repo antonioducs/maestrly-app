@@ -1,59 +1,15 @@
 import { z } from 'zod'
 import type { FastifyInstance } from 'fastify'
-import { cardPatchSchema } from '@maestrly/protocol'
-import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
+import { linkedBoardToolSchemas, linkedBoardReadTools, type LinkedBoardToolName } from '@maestrly/protocol'
+import type { DatabasePool } from '../../db/pool.js'
 import { inTenantTransaction } from '../../db/transaction.js'
 import { authorizeProject } from '../access/authorize.js'
-import { createCard, updateCard, moveCard, getCardDetail } from '../cards/service.js'
-import { createComment } from '../comments/service.js'
-import { descriptionHistory } from '../kanban/service.js'
-import { executeIdempotent } from '../events/http-idempotency.js'
-import { chatCardSearchSchema, searchProjectCards } from '../cards/search.js'
+import { executeLinkedBoardTool } from '../kanban/agent-routes.js'
 import { chatFail, mapSession } from './service.js'
 import { tokenHash } from './dispatch.js'
 
-const id = z.string().uuid(),
-  empty = z.object({}).strict()
-export const chatToolSchemas = {
-  board_list_boards: empty,
-  board_get_board: z.object({ boardId: id }).strict(),
-  board_list_cards: chatCardSearchSchema,
-  board_search_cards: chatCardSearchSchema,
-  board_get_card: z.object({ cardId: id }).strict(),
-  board_card_history: z.object({ cardId: id }).strict(),
-  board_create_card: z
-    .object({
-      boardId: id,
-      columnId: id.optional(),
-      parentCardId: id.optional(),
-      title: z.string().min(1).max(500),
-      description: z.string().max(100000).optional(),
-    })
-    .strict(),
-  board_update_card: cardPatchSchema.omit({ archived: true }).extend({ cardId: id }).strict(),
-  board_comment: z.object({ cardId: id, body: z.string().min(1).max(100000) }).strict(),
-  board_move_card: z
-    .object({
-      cardId: id,
-      expectedVersion: z.number().int().positive(),
-      targetColumnId: id,
-      targetPosition: z.number().int().nonnegative(),
-    })
-    .strict(),
-}
-type ToolName = keyof typeof chatToolSchemas
-const writes = new Set<ToolName>(['board_create_card', 'board_update_card', 'board_comment', 'board_move_card'])
-async function projectResource(c: DatabaseClient, table: 'cards' | 'boards', projectId: string, id: string) {
-  if (
-    !(
-      await c.query(
-        `select id from ${table} where project_id=$1 and id=$2 ${table === 'cards' ? 'and deleted_at is null' : ''}`,
-        [projectId, id]
-      )
-    ).rowCount
-  )
-    chatFail('Resource is outside this conversation project.', 404)
-}
+export const chatToolSchemas = linkedBoardToolSchemas
+type ToolName = LinkedBoardToolName
 export async function executeChatTool(
   pool: DatabasePool,
   organizationId: string,
@@ -83,89 +39,20 @@ export async function executeChatTool(
       const actor = { type: 'desktop_agent' as const, userId: session.ownerUserId, conversationId: session.id }
       return inTenantTransaction(pool, { organizationId, projectId: session.projectId, actor }, async (c) => {
         await authorizeProject(c, organizationId, session.projectId, session.ownerUserId, 'execution:request')
-        if (writes.has(name)) {
-          if (session.mode !== 'agent') chatFail('This conversation is read-only.', 403)
-          await authorizeProject(c, organizationId, session.projectId, session.ownerUserId, 'work:write')
-        }
-        const body = chatToolSchemas[name].parse(input)
-        if ('cardId' in body) await projectResource(c, 'cards', session.projectId, body.cardId)
-        if ('boardId' in body && body.boardId) await projectResource(c, 'boards', session.projectId, body.boardId)
-        const run = async () => {
-          switch (name) {
-            case 'board_list_boards':
-              return (
-                await c.query(
-                  'select id,name,archived_at as "archivedAt" from boards where project_id=$1 order by name,id',
-                  [session.projectId]
-                )
-              ).rows
-            case 'board_get_board':
-              return (
-                await c.query(
-                  'select id,name,role,position,execution_policy_id as "executionPolicyId" from board_columns where board_id=$1 and deleted_at is null order by position',
-                  [chatToolSchemas.board_get_board.parse(body).boardId]
-                )
-              ).rows
-            case 'board_list_cards':
-            case 'board_search_cards':
-              return searchProjectCards(c, organizationId, session.projectId, chatCardSearchSchema.parse(body))
-            case 'board_get_card':
-              return getCardDetail(pool, {
-                organizationId,
-                cardId: chatToolSchemas.board_get_card.parse(body).cardId,
-                userId: session.ownerUserId,
-              })
-            case 'board_card_history':
-              return descriptionHistory(pool, {
-                ...scope,
-                cardId: chatToolSchemas.board_card_history.parse(body).cardId,
-              })
-            case 'board_create_card':
-              return createCard(pool, {
-                ...chatToolSchemas.board_create_card.parse(body),
-                organizationId,
-                userId: session.ownerUserId,
-                actor,
-              })
-            case 'board_update_card': {
-              const { cardId, ...patch } = chatToolSchemas.board_update_card.parse(body)
-              return updateCard(pool, { organizationId, cardId, userId: session.ownerUserId, patch, actor })
-            }
-            case 'board_comment':
-              return createComment(pool, {
-                ...chatToolSchemas.board_comment.parse(body),
-                organizationId,
-                userId: session.ownerUserId,
-                actor,
-              })
-            case 'board_move_card': {
-              const { cardId, ...move } = chatToolSchemas.board_move_card.parse(body)
-              return moveCard(pool, {
-                organizationId,
-                cardId,
-                userId: session.ownerUserId,
-                actor,
-                move: { ...move, source: 'agent', allowAutomationChain: false, chainDepth: 0 },
-              })
-            }
-          }
-        }
-        if (!writes.has(name)) return run()
-        return (
-          await executeIdempotent(
-            pool,
-            {
-              organizationId,
-              actorId: session.ownerUserId,
-              actor,
-              key: callId,
-              method: 'POST',
-              path: '/chat/' + session.id + '/turn/' + row.turnId + '/tools/' + name,
-              body,
-            },
-            async () => ({ status: 200, body: await run() })
-          )
-        ).body
+        if (!linkedBoardReadTools.has(name) && session.mode !== 'agent')
+          chatFail('This conversation is read-only.', 403)
+        return executeLinkedBoardTool(
+          pool,
+          {
+            ...scope,
+            conversationId: session.id,
+            // Preserve the historical turn path and input hash for existing callId retries.
+            idempotencyPath: '/chat/' + session.id + '/turn/' + row.turnId + '/tools/' + name,
+          },
+          name,
+          input,
+          callId
+        )
       })
     }
   )
@@ -178,10 +65,13 @@ export function registerChatToolRoutes(app: FastifyInstance, pool: DatabasePool)
       .object({
         name: z.enum(Object.keys(chatToolSchemas) as [ToolName, ...ToolName[]]),
         input: z.unknown(),
-        callId: z.string().min(1).max(191),
+        callId: z.string().min(1).max(191).optional(),
+        idempotencyKey: z.string().min(1).max(191).optional(),
       })
       .strict()
       .parse(r.body)
-    return executeChatTool(pool, org, token, body.name, body.input, body.callId)
+    const key = body.idempotencyKey ?? body.callId
+    if (!key) chatFail('A callId or idempotencyKey is required.', 400)
+    return executeChatTool(pool, org, token, body.name, body.input, key)
   })
 }

@@ -1,6 +1,15 @@
+import { requirePersonalDevice } from '../runners/personal-devices.js'
+import { columnAutomationHistory } from '../automation/column-service.js'
+import { executeAutomationTool } from './automation-tools.js'
 import { z } from 'zod'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { linkedBoardToolSchemas as schemas, linkedBoardReadTools, type LinkedBoardToolName } from '@maestrly/protocol'
+import {
+  linkedBoardToolSchemas as schemas,
+  linkedBoardReadTools,
+  linkedBoardAutomationManageTools,
+  linkedBoardExecutionTools,
+  type LinkedBoardToolName,
+} from '@maestrly/protocol'
 import type { DatabasePool } from '../../db/pool.js'
 import { inTenantTransaction } from '../../db/transaction.js'
 import { authorizeProject } from '../access/authorize.js'
@@ -21,7 +30,13 @@ import {
   fail,
 } from './service.js'
 
-type Scope = { organizationId: string; projectId: string; userId: string; conversationId: string }
+type Scope = {
+  organizationId: string
+  projectId: string
+  userId: string
+  conversationId: string
+  idempotencyPath?: string
+}
 
 /** The desktop supplies only its explicitly linked project; every resource is checked again on the server. */
 export async function executeLinkedBoardTool(
@@ -35,24 +50,148 @@ export async function executeLinkedBoardTool(
   const write = !linkedBoardReadTools.has(name)
   const body = schemas[name].parse(input)
   return inTenantTransaction(pool, { ...scope, actor }, async (client) => {
-    await authorizeProject(
+    const grants = await authorizeProject(
       client,
       scope.organizationId,
       scope.projectId,
       scope.userId,
       write ? 'work:write' : 'project:read'
     )
-    // These resources are immutable in project ownership. Validate before any domain read or mutation.
+    if (linkedBoardAutomationManageTools.has(name))
+      await authorizeProject(client, scope.organizationId, scope.projectId, scope.userId, 'automation:manage')
+    if (linkedBoardExecutionTools.has(name))
+      await authorizeProject(client, scope.organizationId, scope.projectId, scope.userId, 'execution:request')
+    // Check all resource ownership and relationships before even an idempotent replay.
+    const values = body as Record<string, unknown>
+    let boardId = values.boardId as string | undefined
     for (const field of ['boardId', 'cardId', 'parentCardId'] as const) {
-      const resourceId = field in body ? (body as Record<string, unknown>)[field] : undefined
-      if (!resourceId) continue
+      if (!values[field]) continue
       const table = field === 'boardId' ? 'boards' : 'cards'
-      const found = await client.query(`select id from ${table} where organization_id=$1 and project_id=$2 and id=$3`, [
+      const found = await client.query(`select * from ${table} where organization_id=$1 and project_id=$2 and id=$3`, [
         scope.organizationId,
         scope.projectId,
-        resourceId,
+        values[field],
       ])
-      if (!found.rowCount) fail('Resource is outside the linked project.', 404)
+      const resource = found.rows[0]
+      if (!resource) fail('Resource is outside the linked project.', 404)
+      if (field !== 'boardId') {
+        if (boardId && boardId !== resource.board_id) fail('Card belongs to another board.', 400)
+        boardId = resource.board_id
+      }
+    }
+    const columnIds = ['columnId', 'targetColumnId', 'destinationId', 'backlogId', 'doneId'].flatMap((field) =>
+      values[field] ? [values[field]] : []
+    )
+    if (Array.isArray(values.order)) columnIds.push(...values.order)
+    for (const columnId of columnIds) {
+      const found = await client.query(
+        'select board_id from board_columns where organization_id=$1 and project_id=$2 and id=$3',
+        [scope.organizationId, scope.projectId, columnId]
+      )
+      if (!found.rows[0]) fail('Column is outside the linked project.', 404)
+      if (boardId && found.rows[0].board_id !== boardId) fail('Column belongs to another board.', 400)
+    }
+    for (const [field, table] of [
+      ['commentId', 'comments'],
+      ['versionId', 'card_description_versions'],
+    ] as const) {
+      if (!values[field]) continue
+      if (
+        !(
+          await client.query(`select id from ${table} where organization_id=$1 and card_id=$2 and id=$3`, [
+            scope.organizationId,
+            values.cardId,
+            values[field],
+          ])
+        ).rowCount
+      )
+        fail('Resource does not belong to this card.', 404)
+    }
+    if (
+      values.runId &&
+      !(
+        await client.query(
+          'select r.id from runs r join jobs j on j.id=r.job_id where r.organization_id=$1 and j.project_id=$2 and j.card_id=$3 and r.id=$4',
+          [scope.organizationId, scope.projectId, values.cardId, values.runId]
+        )
+      ).rowCount
+    )
+      fail('Run does not belong to this card.', 404)
+    if (name === 'board_update_comment') {
+      const row = (
+        await client.query('select author_type,author_id from comments where id=$1 and card_id=$2', [
+          values.commentId,
+          values.cardId,
+        ])
+      ).rows[0]
+      const ownAgentComment =
+        row?.author_type === 'agent' &&
+        row.author_id === scope.conversationId &&
+        !!(
+          await client.query(
+            `select 1 from domain_events where organization_id=$1 and aggregate_id=$2 and type='comment.created' and data->>'commentId'=$3 and actor->>'userId'=$4 and actor->>'conversationId'=$5 limit 1`,
+            [scope.organizationId, values.cardId, values.commentId, scope.userId, scope.conversationId]
+          )
+        ).rowCount
+      if (
+        !(row?.author_type === 'human' && row.author_id === scope.userId) &&
+        !ownAgentComment &&
+        !['owner', 'admin'].includes(grants.organizationRole) &&
+        grants.projectRole !== 'maintainer'
+      )
+        fail('Only the author or a maintainer can change this comment.', 403)
+    }
+    if (values.personalDeviceId)
+      await requirePersonalDevice(client, { ...scope, deviceId: values.personalDeviceId as string })
+    if (
+      values.expectedPolicyId &&
+      !(
+        await client.query('select id from execution_policies where organization_id=$1 and project_id=$2 and id=$3', [
+          scope.organizationId,
+          scope.projectId,
+          values.expectedPolicyId,
+        ])
+      ).rowCount
+    )
+      fail('Policy is outside the linked project.', 404)
+    const config = values.config as Record<string, unknown> | null | undefined
+    if (
+      config?.repositoryBindingId &&
+      !(
+        await client.query('select id from repository_bindings where organization_id=$1 and project_id=$2 and id=$3', [
+          scope.organizationId,
+          scope.projectId,
+          config.repositoryBindingId,
+        ])
+      ).rowCount
+    )
+      fail('Repository is outside the linked project.', 404)
+    if (
+      config?.targetRunnerId &&
+      !(
+        await client.query(
+          'select runner_id from runner_project_bindings where organization_id=$1 and project_id=$2 and runner_id=$3',
+          [scope.organizationId, scope.projectId, config.targetRunnerId]
+        )
+      ).rowCount
+    )
+      fail('Runner is outside the linked project.', 404)
+    if (values.policyId) {
+      const history = await columnAutomationHistory(pool, { ...scope, actor, columnId: values.columnId as string })
+      if (!history.some((policy) => policy.id === values.policyId)) fail('Configuration version not found.', 404)
+    }
+    if (Array.isArray(values.expectedCardIds)) {
+      for (const cardId of values.expectedCardIds) {
+        if (
+          !(
+            await client.query(
+              'select id from cards where organization_id=$1 and project_id=$2 and board_id=$3 and id=$4',
+              [scope.organizationId, scope.projectId, values.boardId, cardId]
+            )
+          ).rowCount
+        )
+          fail('Card belongs to another board.', 404)
+      }
     }
     const s = { ...scope, actor }
     const run = async () => {
@@ -112,6 +251,8 @@ export async function executeLinkedBoardTool(
           return changeBoard(pool, { ...s, ...schemas.board_update_board.parse(body) })
         case 'board_manage_columns':
           return manageColumns(pool, { ...s, ...schemas.board_manage_columns.parse(body) })
+        default:
+          return executeAutomationTool(pool, s, name, body)
       }
     }
     if (!write) return run()
@@ -125,7 +266,7 @@ export async function executeLinkedBoardTool(
           actor,
           key: callId,
           method: 'POST',
-          path: `/projects/${s.projectId}/conversations/${s.conversationId}/board-tools/${name}`,
+          path: s.idempotencyPath ?? `/projects/${s.projectId}/conversations/${s.conversationId}/board-tools/${name}`,
           body,
         },
         async () => ({ status: 200, body: await run() })
