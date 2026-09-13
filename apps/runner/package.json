@@ -20,10 +20,10 @@
     "@maestrly/client-sdk": "0.1.0",
     "@maestrly/protocol": "0.1.0",
     "@maestrly/runner-core": "0.1.0",
-    "zod": "4.1.8"
+    "zod": "4.6.1"
   },
   "devDependencies": {
-    "@types/node": "22.18.1",
+    "@types/node": "22.20.2",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
