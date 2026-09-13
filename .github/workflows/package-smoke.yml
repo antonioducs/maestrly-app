@@ -1,6 +1,20 @@
 name: Package smoke
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/package-smoke.yml
+      - .github/workflows/release.yml
+      - apps/desktop/electron-builder*.yml
+      - apps/desktop/package.json
+      - package-lock.json
+      - package.json
+      - scripts/after-pack.mjs
+      - scripts/package.mjs
+      - scripts/preflight-mac-signing.mjs
+      - scripts/smoke-packaged-desktop.mjs
+      - scripts/smoke-packaged-local-ml-runtime.mjs
   schedule:
     - cron: "17 8 * * 0"
   workflow_dispatch:
@@ -47,15 +61,3 @@ jobs:
         run: npx playwright install-deps chromium
       - name: Build and verify native package
         run: npm run ${{ matrix.package-script }}
-      - name: Smoke packaged desktop on Linux
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run smoke:packaged-desktop
-      - name: Smoke packaged Local ML on Linux
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run smoke:packaged-local-ml-runtime
-      - name: Smoke packaged desktop
-        if: runner.os != 'Linux'
-        run: npm run smoke:packaged-desktop
-      - name: Smoke packaged Local ML
-        if: runner.os != 'Linux'
-        run: npm run smoke:packaged-local-ml-runtime

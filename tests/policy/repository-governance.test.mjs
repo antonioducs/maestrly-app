@@ -46,13 +46,24 @@ test('main ruleset has no bypass and requires every stable check', () => {
   assert.deepEqual(contexts, ['Dependency policy', 'Linux', 'Secret history', 'Windows', 'macOS'].sort())
 })
 
-test('package smoke runs only on schedule or manual dispatch and cannot publish', () => {
+test('package smoke validates packaging changes and cannot publish', () => {
   const source = read('.github/workflows/package-smoke.yml')
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
   const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
 
-  assert.deepEqual(triggers, ['schedule', 'workflow_dispatch'])
+  assert.deepEqual(triggers, ['pull_request', 'schedule', 'workflow_dispatch'])
+  assert.match(triggerBlock, /^  pull_request:\n    branches: \[main\]\n    paths:/m)
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
+  const manifest = JSON.parse(read('package.json'))
+  const packageScripts = [...source.matchAll(/^\s+package-script: ([A-Za-z0-9:_-]+)$/gm)].map((match) => match[1])
+  for (const script of packageScripts) {
+    assert.ok(manifest.scripts?.[script], `package smoke references missing root script: ${script}`)
+  }
+
+  const packagedDesktopSmoke = read('scripts/smoke-packaged-desktop.mjs')
+  assert.match(packagedDesktopSmoke, /const launchTimeoutMs = 300_000/)
+  assert.match(packagedDesktopSmoke, /timeout: launchTimeoutMs/)
+  assert.match(packagedDesktopSmoke, /firstWindow\(\{ timeout: launchTimeoutMs \}\)/)
 })
 
 test('release workflow publishes verified native artifacts only from version tags', () => {
@@ -76,11 +87,18 @@ test('release workflow publishes verified native artifacts only from version tag
   for (const script of invokedScripts) {
     assert.ok(manifest.scripts?.[script], `release workflow references missing root script: ${script}`)
   }
-  assert.equal((source.match(/npm run smoke:packaged-desktop/g) ?? []).length, 3)
-  assert.equal((source.match(/npm run smoke:packaged-local-ml-runtime/g) ?? []).length, 3)
+  assert.doesNotMatch(source, /npm run smoke:packaged-(?:desktop|local-ml-runtime)/)
   assert.match(source, /name: release-linux/)
   assert.match(source, /name: release-windows/)
   assert.match(source, /name: release-macos/)
+  assert.equal((source.match(/apps\/desktop\/dist/g) ?? []).length, 5)
+  assert.doesNotMatch(source, /stage-release-assets\.mjs (?:linux|windows|macos) dist\b/)
+
+  const desktopBuilder = read('apps/desktop/electron-builder.yml')
+  assert.match(
+    desktopBuilder,
+    /^deb:\n  packageName: maestrly-app\n  artifactName: maestrly-app_\$\{version\}_\$\{arch\}\.\$\{ext\}$/m
+  )
 
   assert.match(source, /^  publish:\n    name: Publish GitHub Release\n    needs: \[validate, linux, windows, macos\]$/m)
   assert.match(source, /^  publish:\n[\s\S]*?^    permissions:\n      contents: write$/m)

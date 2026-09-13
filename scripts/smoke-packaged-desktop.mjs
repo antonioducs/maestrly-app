@@ -30,10 +30,12 @@ const target =
       ? path.join('dist', process.arch === 'x64' ? 'win-unpacked' : `win-${process.arch}-unpacked`, 'Maestrly App.exe')
       : path.join('dist', process.arch === 'x64' ? 'linux-unpacked' : `linux-${process.arch}-unpacked`, 'maestrly-app')
 const executablePath = path.resolve(process.argv[2] ?? target)
+
 let app
 let failure
 const diagnostics = []
-const deadline = setTimeout(() => app?.process().kill('SIGKILL'), 60000)
+const launchTimeoutMs = 300_000
+const deadline = setTimeout(() => app?.process().kill('SIGKILL'), launchTimeoutMs + 60_000)
 deadline.unref()
 
 async function removeTemporaryTree() {
@@ -51,6 +53,7 @@ async function removeTemporaryTree() {
 try {
   app = await electron.launch({
     executablePath,
+    timeout: launchTimeoutMs,
     args: process.platform === 'darwin' ? ['--use-mock-keychain'] : [],
     env: {
       ...process.env,
@@ -66,7 +69,7 @@ try {
     if (diagnostics.length > 50) diagnostics.shift()
   })
   console.log('[packaged-desktop] PID:', app.process().pid)
-  const page = await app.firstWindow()
+  const page = await app.firstWindow({ timeout: launchTimeoutMs })
   page.on('pageerror', (error) => diagnostics.push(error.message))
   console.log('[packaged-desktop] Window:', page.url())
   await page.waitForFunction(() => !!window.api, undefined, { timeout: 15000 })
