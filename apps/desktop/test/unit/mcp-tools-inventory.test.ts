@@ -98,7 +98,21 @@ const EXPECTED_TOOL_NAMES = [
   'debug_evaluate',
 ] as const
 
+// Board tools register only for linked board or project-chat conversations.
 const LINKED_BOARD_TOOL_NAMES = [
+  'board_automation_catalog',
+  'board_column_config',
+  'board_set_column_agent',
+  'board_column_automation_history',
+  'board_restore_column_automation',
+  'board_preview_automation',
+  'board_card_automation',
+  'board_set_card_automation_override',
+  'board_run_card',
+  'board_release_card_automation',
+  'board_set_automation_limits',
+  'board_define_fixed_columns',
+  'board_execution_events',
   'board_list_members',
   'get_linked_kanban', 'board_card_events', 'board_update_comment', 'board_card_lifecycle',
   'board_restore_description', 'board_create_board', 'board_update_board', 'board_manage_columns',
@@ -295,11 +309,9 @@ describe('MCP app tools inventory', () => {
 
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
-    const classified = Object.keys(APP_TOOL_POLICY).filter(
-      (name) => !LINKED_BOARD_TOOL_NAMES.includes(name as (typeof LINKED_BOARD_TOOL_NAMES)[number])
-    ).sort()
+    const classified = Object.keys(APP_TOOL_POLICY).sort()
     expect(registered).toHaveLength(75)
-    expect(classified).toEqual(registered)
+    expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES].sort())
   })
 
   it('builds the exact Agent app catalog', async () => {
