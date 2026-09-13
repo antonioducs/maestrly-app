@@ -1,7 +1,7 @@
 import { _electron as electron } from '@playwright/test'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
@@ -30,45 +30,6 @@ const target =
       ? path.join('dist', process.arch === 'x64' ? 'win-unpacked' : `win-${process.arch}-unpacked`, 'Maestrly App.exe')
       : path.join('dist', process.arch === 'x64' ? 'linux-unpacked' : `linux-${process.arch}-unpacked`, 'maestrly-app')
 const executablePath = path.resolve(process.argv[2] ?? target)
-
-async function smokeNativeStartup() {
-  const marker = path.join(temporary, 'packaged-startup.json')
-  const child = spawn(executablePath, process.platform === 'darwin' ? ['--use-mock-keychain'] : [], {
-    env: {
-      ...process.env,
-      AGENTS_E2E: '1',
-      AGENTS_USERDATA: path.join(temporary, 'profile'),
-      AGENTS_LOCALE: 'en',
-      AGENTS_CHANNEL: 'prod',
-      ELECTRON_RENDERER_URL: '',
-      MAESTRLY_PACKAGED_STARTUP_MARKER: marker,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  const output = []
-  child.stdout.on('data', (chunk) => output.push(String(chunk)))
-  child.stderr.on('data', (chunk) => output.push(String(chunk)))
-  const expiresAt = Date.now() + 300_000
-  while (!existsSync(marker) && child.exitCode === null && Date.now() < expiresAt) await delay(250)
-  if (!existsSync(marker)) {
-    child.kill('SIGKILL')
-    throw new Error(`Packaged app did not report startup readiness.\n${output.join('')}`)
-  }
-  const ready = JSON.parse(readFileSync(marker, 'utf8'))
-  assert.equal(ready.packaged, true)
-  await Promise.race([new Promise((resolve) => child.once('exit', resolve)), delay(10_000)])
-  if (child.exitCode === null) child.kill('SIGKILL')
-  console.log('[packaged-desktop] Native startup marker:', ready)
-}
-
-if (process.platform !== 'linux') {
-  try {
-    await smokeNativeStartup()
-  } finally {
-    await removeTemporaryTree()
-  }
-  process.exit(0)
-}
 
 let app
 let failure

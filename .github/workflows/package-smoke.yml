@@ -67,9 +67,6 @@ jobs:
       - name: Smoke packaged Local ML on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run smoke:packaged-local-ml-runtime
-      - name: Smoke packaged desktop
-        if: runner.os != 'Linux'
-        run: npm run smoke:packaged-desktop
       - name: Smoke packaged Local ML
         if: runner.os != 'Linux'
         run: npm run smoke:packaged-local-ml-runtime

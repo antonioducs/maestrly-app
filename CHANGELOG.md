@@ -11,8 +11,8 @@ User-visible changes by version. Downloads are on
 
 - Use a Debian-safe package name and the desktop workspace artifact paths in
   native release builds.
-- Allow additional startup time for the larger packaged desktop smoke on
-  Windows CI runners.
+- Keep packaged GUI startup checks on Linux/Xvfb, where hosted runners provide
+  a reliable graphical session.
 
 ## [0.4.1] - 2026-09-12
 

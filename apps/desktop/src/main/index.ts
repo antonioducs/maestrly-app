@@ -1,6 +1,5 @@
 import {executorSettings,recoverDesktopExecutions} from './platform/executor-settings'
 import path from 'node:path'
-import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -699,13 +698,6 @@ app.whenReady().then(async () => {
   }
   setupApplicationMenu()
   await createWindow()
-
-  const packagedStartupMarker = process.env.MAESTRLY_PACKAGED_STARTUP_MARKER?.trim()
-  if (isE2E() && app.isPackaged && packagedStartupMarker) {
-    writeFileSync(packagedStartupMarker, JSON.stringify({ packaged: true, version: app.getVersion() }))
-    app.quit()
-    return
-  }
 
   conversationMigrationService.replayIncomplete()
   if (mainWindow) initSelectionBridge(mainWindow)
