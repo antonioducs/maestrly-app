@@ -3,6 +3,7 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
+  kanban: {"board": "Board", "project": "Projeto Kanban", "linked": "Vinculado a este workspace e seus worktrees", "disconnected": "Reconecte em Configurações → Plataforma", "openProject": "Abrir Kanban: {{project}}", "open": "Abrir Kanban", "openFailed": "Não foi possível abrir o Kanban.", "accessTitle": "Kanban vinculado", "accessDescription": "Acesso ao projeto vinculado a este workspace. Ask e Plan continuam somente leitura."},
   chatgptWeb: {
     notConfigured: 'O ChatGPT Web ainda não está configurado. Conclua em Configurações › Maestrly Chat.',
     starting: 'Subindo o túnel…',

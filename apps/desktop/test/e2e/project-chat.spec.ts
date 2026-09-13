@@ -267,6 +267,24 @@ test('real project chat: code, memory, skills, MCP, historic cards, streamed tur
       projectId,
       boardId,
     })
+    const linkedIndicator = local.getByTestId('workspace-kanban-link').first()
+    await expect(linkedIndicator).toContainText('Project chat fixture')
+    const links = await call('platformWorkspaceLinks')
+    const linkedUrl = new URL(links.find((link: any) => link.workspaceId === workspace.id).url)
+    expect(linkedUrl.searchParams.get('project')).toBe(projectId)
+    expect(linkedUrl.searchParams.get('board')).toBe(boardId)
+    await app.evaluate(({ shell }) => {
+      ;(globalThis as any).__kanbanOpenExternal = shell.openExternal
+      shell.openExternal = async (url: string) => { (globalThis as any).__openedKanbanUrl = url }
+    })
+    await linkedIndicator.getByRole('button').click()
+    expect(await app.evaluate(() => (globalThis as any).__openedKanbanUrl)).toBe(linkedUrl.toString())
+    await app.evaluate(({ shell }) => { shell.openExternal = (globalThis as any).__kanbanOpenExternal })
+    await call('platformRemoveProjectBinding', workspace.id)
+    await expect(local.getByTestId('workspace-kanban-link')).toHaveCount(0)
+    await call('platformSetProjectBinding', { workspaceId: workspace.id, connectionId: connection.id, organizationId: org, projectId, boardId })
+    await expect(local.getByTestId('workspace-kanban-link').first()).toContainText('Project chat fixture')
+    await local.screenshot({ path: info.outputPath('workspace-kanban-link.png') })
     await call('setMemoryEnabled', workspace.id, true)
     await call('createMemory', {
       workspaceId: workspace.id,

@@ -1,10 +1,12 @@
 import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
+import type { Actor } from '@maestrly/protocol'
 import { inTenantTransaction } from '../../db/transaction.js'
 import { authorizeProject } from '../access/authorize.js'
 import { appendDomainEvent } from '../events/store.js'
 import { mapCard, type CardRow, OptimisticConflictError } from '../cards/service.js'
 
 export interface Scope {
+  actor?: Actor
   organizationId: string
   userId: string
 }
@@ -14,7 +16,7 @@ export function fail(message: string, statusCode = 409): never {
 export const transaction = <T>(pool: DatabasePool, scope: Scope, fn: (client: DatabaseClient) => Promise<T>) =>
   inTenantTransaction(
     pool,
-    { organizationId: scope.organizationId, actor: { type: 'human', userId: scope.userId } },
+    { organizationId: scope.organizationId, actor: scope.actor ?? { type: 'human', userId: scope.userId } },
     fn
   )
 
@@ -54,7 +56,7 @@ async function record(
     aggregateType,
     aggregateId,
     data,
-    actor: { type: 'human', userId: scope.userId },
+    actor: scope.actor ?? { type: 'human', userId: scope.userId },
   })
 }
 
@@ -349,8 +351,12 @@ export async function changeComment(
     const row = comment.rows[0]
     if (!row) fail('Comment not found.', 404)
     const grants = await authorizeProject(client, scope.organizationId, card.project_id, scope.userId, 'work:write')
+    const ownAgentComment = scope.actor?.type === 'desktop_agent' && row.author_type === 'agent' && row.author_id === scope.actor.conversationId
+      && !!(await client.query(`select 1 from domain_events where organization_id=$1 and aggregate_id=$2
+        and type='comment.created' and data->>'commentId'=$3 and actor->>'userId'=$4 and actor->>'conversationId'=$5 limit 1`,
+        [scope.organizationId, card.id, scope.commentId, scope.userId, scope.actor.conversationId])).rowCount
     if (
-      !(row.author_type === 'human' && row.author_id === scope.userId) &&
+      !(row.author_type === 'human' && row.author_id === scope.userId) && !ownAgentComment &&
       !['owner', 'admin'].includes(grants.organizationRole) &&
       grants.projectRole !== 'maintainer'
     )

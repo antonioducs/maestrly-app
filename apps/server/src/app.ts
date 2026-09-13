@@ -5,6 +5,7 @@ import { registerPersonalDeviceRoutes } from './modules/runners/personal-routes.
 import { registerTeamRoutes } from './modules/access/team-routes.js'
 import { registerColumnAutomationRoutes } from './modules/automation/column-routes.js'
 import { registerKanbanRoutes } from './modules/kanban/routes.js'
+import { registerLinkedBoardToolRoutes } from './modules/kanban/agent-routes.js'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 import {
@@ -143,6 +144,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   registerBoardRoutes(app, pool, authenticate)
   registerCardRoutes(app, pool, authenticate, config)
   registerKanbanRoutes(app, pool, authenticate)
+  registerLinkedBoardToolRoutes(app, pool, authenticate)
   registerAutomationRoutes(app, pool, authenticate)
   registerColumnAutomationRoutes(app,pool,authenticate)
   registerRunnerRoutes(app, pool, authenticate, config)

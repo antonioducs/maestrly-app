@@ -5,7 +5,7 @@ export const STATELESS_MCP_PROTOCOL_VERSION = '2026-07-28'
 export const SUPPORTED_MCP_PROTOCOL_VERSIONS = [STATELESS_MCP_PROTOCOL_VERSION, LEGACY_MCP_PROTOCOL_VERSION] as const
 
 /** Static tool catalog version that ChatGPT may cache in the app. */
-export const CHATGPT_WEB_TOOL_CATALOG_VERSION = '11'
+export const CHATGPT_WEB_TOOL_CATALOG_VERSION = '12'
 export const CHATGPT_WEB_TOOL_CATALOG_META_KEY = 'com.maestrly/toolCatalogVersion'
 
 export const CHATGPT_WEB_SERVER_INFO = { name: 'maestrly-bridge', version: CHATGPT_WEB_TOOL_CATALOG_VERSION } as const

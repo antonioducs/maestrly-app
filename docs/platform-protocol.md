@@ -6,6 +6,8 @@ The additive `chat:interactive:v1` capability identifies desktop executors that 
 
 The public REST API is rooted at `/api/v1`. `GET /api/v1/meta` and liveness/readiness endpoints are available before authentication. Other API calls send `X-Maestrly-Protocol-Version: 1.0`; incompatible clients receive `PROTOCOL_INCOMPATIBLE` without disabling local desktop features.
 
+Desktop workspace tools use `POST /api/v1/organizations/:organizationId/projects/:projectId/board-tools` with `{name, input}`, a user bearer token and `X-Maestrly-Conversation-Id`. Mutations additionally require `api:write` and `Idempotency-Key`. The server rechecks project permissions and resource ownership on every call, including retries. These calls use the `desktop_agent` audit actor; web-managed project chats retain their separate short-lived `Chat` token flow. Schemas and descriptions live in the protocol package and are shared by native agents and GPT Web.
+
 The protocol deliberately separates:
 
 - a **card**, which describes work;

@@ -1117,6 +1117,8 @@ export type ChatGptWebCapabilityScope = 'off' | 'read' | 'write'
 export type ChatGptWebBrowserCapability = 'off' | 'inspect' | 'interact'
 
 export interface ChatGptWebCapabilities {
+  /** Linked Kanban project. Read by default; mutations require explicit write access. */
+  kanban?: ChatGptWebCapabilityScope
   git: 'off' | 'read'
   gh: 'off' | 'read'
   /** Read-only access to the visible main Maestrly conversation. Missing values fail closed to off. */

@@ -1,3 +1,4 @@
+import { WorkspaceKanbanLink } from '../platform/WorkspaceKanbanLink'
 /** Conversation host for provider streams, queued turns, draft attachments, and paginated history.
  * Bound hidden rendering work while preserving session state and reconciling on visibility changes. */
 import {
@@ -96,6 +97,7 @@ import { SubagentActivityPill } from './SubagentActivityPill'
 import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
+  workspaceId: string
   conversationId: string
   cwd: string
   experience: ConversationExperience
@@ -126,6 +128,7 @@ function revokeAttachmentPreviews(attachments: readonly UIAttachment[]): void {
 }
 
 export function ChatView({
+  workspaceId,
   conversationId,
   cwd: _cwd,
   experience,
@@ -1661,6 +1664,7 @@ export function ChatView({
         >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
+              <WorkspaceKanbanLink workspaceId={workspaceId} />
               {searchOpen && (
                 <ChatSearchBar
                   query={searchQuery}

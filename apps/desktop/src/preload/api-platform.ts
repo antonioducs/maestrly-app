@@ -2,6 +2,13 @@ import { ipcRenderer } from 'electron'
 import type { DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
 
 export const platformApi = {
+  platformWorkspaceLinks: (): Promise<import('../shared/platform').WorkspaceKanbanLink[]> => ipcRenderer.invoke('platform:workspace-links'),
+  platformRefreshWorkspaceLinks: (): Promise<void> => ipcRenderer.invoke('platform:refresh-workspace-links'),
+  onPlatformLinksChanged: (callback: () => void): (() => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('platform:links-changed', listener)
+    return () => ipcRenderer.removeListener('platform:links-changed', listener)
+  },
   onExecutorOpen:(callback:()=>void):(()=>void)=>{const listener=()=>callback();ipcRenderer.on('executor:open',listener);return()=>ipcRenderer.removeListener('executor:open',listener)},
   platformExecutorSettings:():Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-settings'),
   platformSaveExecutorSettings:(settings:DesktopExecutorSettings):Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-save',settings),

@@ -3,7 +3,7 @@
  *
  * The user chats directly in ChatGPT and calls these tools to inspect the local repository. To bring
  * an artifact back, they call `send_to_maestrly`. Read tools remain read-only; the bridge ceases to be
- * strictly read-only only when the user EXPLICITLY enables the review loop (`start_review_loop`):
+ * strictly read-only when explicitly granted a write capability (Kanban, MCP, browser or review loop). For review loops (`start_review_loop`):
  * `submit_review_fix` then starts ONE local Maestrly agent execution at a time, tracked through
  * `wait_review_fix` (server-side long-poll) and concluded through `finish_review_loop`.
  * Loop reasoning (review, convergence decisions) belongs to ChatGPT; this module validates, enforces
@@ -15,6 +15,8 @@ import { constants as fsConstants } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
+import { z } from 'zod'
+import { linkedBoardCatalog } from '../../platform/board-tool-catalog'
 import type { ChatGptWebBrowserCapability } from '../../../shared/chat'
 import type { BrowserSurface } from '../browser-surface'
 import { globToRegExp, shouldSkipSearchDir } from '../tools/grep'
@@ -189,6 +191,10 @@ interface InvestigationDisclosure {
 }
 
 export interface BridgeOptions {
+  kanban?: {
+    context(): unknown
+    call(name: import('@maestrly/protocol').LinkedBoardToolName, input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
+  }
   /** Repository root exposed to tools (jail). */
   cwd: string
   /** Diff base (`git diff <base>...HEAD`). */
@@ -206,7 +212,7 @@ export interface BridgeOptions {
   /** Allowed checks (tests/lint/typecheck) and their executor; user-defined allowlist. */
   listChecks?: () => BridgeCheck[]
   runCheck?: (name: string, signal?: AbortSignal) => Promise<BridgeCheckResult>
-  /** Only permitted write: publish an artifact to the originating conversation or Plan tab. */
+  /** Publish an artifact to the originating conversation or Plan tab. Other writes require their own capabilities. */
   deliver?: (delivery: BridgeDelivery) => Promise<void> | void
   /** Human Plan-tab channel, separate from the automatic code/frontend review loop. */
   planReview?: Pick<PlanReviewController, 'create' | 'isDelivered' | 'markDelivered' | 'wait'>
@@ -2323,6 +2329,22 @@ export function createChatGptWebBridge(options: BridgeOptions) {
   /** ChatGPT caches `tools/list`; the wizard prompts an app refresh after this experimental pivot. */
   const TOOLS = [
     {
+      name: 'get_linked_kanban',
+      description: 'Read the Kanban project linked to this conversation workspace and its access level. No credentials are exposed.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      run: () => options.kanban ? externalResult(options.kanban.context()) : ERR('Kanban access is off or this workspace is not linked.'),
+    },
+    ...linkedBoardCatalog.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: z.toJSONSchema(tool.schema) as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
+      annotations: { readOnlyHint: tool.readOnly, destructiveHint: !tool.readOnly, openWorldHint: true },
+      run: (args: Record<string, unknown>) => options.kanban
+        ? runExternal((signal) => options.kanban!.call(tool.name, args, signal))
+        : ERR('Kanban access is off or this workspace is not linked.'),
+    })),
+    {
       name: 'discover_frontend_previews',
       description: 'Discover allowlisted frontend previews in the workspace. Returns opaque IDs, never commands.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -3310,6 +3332,7 @@ export function createChatGptWebBridge(options: BridgeOptions) {
 
   /** Sanitized events: review tools NEVER expose findings/notes/prompts in tool-call events. */
   function sanitizedArgs(name: string, args: Record<string, unknown>): Record<string, unknown> {
+    if (name === 'get_linked_kanban' || name.startsWith('board_')) return { argument_keys: Object.keys(args).length }
     if (BROWSER_TOOL_NAMES.has(name)) {
       return {
         ...(typeof args.ref === 'number' ? { ref: args.ref } : {}),

@@ -1,3 +1,4 @@
+import { WorkspaceKanbanLink } from './platform/WorkspaceKanbanLink'
 /** Local workspaces, virtual groups, and pinned conversations.
  * Apply drag sorting only to the complete list so filtered searches cannot corrupt persisted order. */
 import { useEffect, useMemo, useState, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
@@ -370,6 +371,7 @@ export function Sidebar({
           </ContextMenuTrigger>
           <ContextMenuContent>{workspaceMenuItems(ws, contextKit)}</ContextMenuContent>
         </ContextMenu>
+        <WorkspaceKanbanLink workspaceId={ws.id} compact />
 
         {!isCollapsed && (
           <ul>

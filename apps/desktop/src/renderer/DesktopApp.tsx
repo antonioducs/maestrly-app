@@ -99,6 +99,7 @@ export function DesktopApp() {
     handleMoveWorkspaceToGroup,
     handleToggleWorkspaceCollapsed,
   } = ws
+  useEffect(() => window.api.onPlatformLinksChanged(() => { void refreshWorkspaces() }), [refreshWorkspaces])
   const handleConversationExperienceChange = useCallback(
     (conversationId: string, experience: Conversation['experience']) => {
       setActive((current) => (current?.id === conversationId ? { ...current, experience } : current))
@@ -675,6 +676,7 @@ export function DesktopApp() {
                       <ChatView
                         key={c.id}
                         conversationId={c.id}
+                        workspaceId={c.workspaceId}
                         cwd={c.cwd}
                         experience={c.experience}
                         onExperienceChange={handleConversationExperienceChange}

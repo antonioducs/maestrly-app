@@ -21,6 +21,12 @@ export interface DeviceAuthorizationView {
 }
 
 export interface PlatformProjectBinding {
+  /** Changes when the link is recreated; cached tools cannot survive unlink/relink. */
+  revision?: string
+  /** Display labels are cached for offline navigation; IDs remain authoritative. */
+  projectName?: string
+  boardName?: string
+  organizationName?: string
   workspaceId: string
   connectionId: string
   organizationId: string
@@ -28,6 +34,11 @@ export interface PlatformProjectBinding {
   boardId: string
   cardId?: string
   repositoryBindingId?: string
+}
+
+export interface WorkspaceKanbanLink extends PlatformProjectBinding {
+  url: string
+  state: 'connected' | 'disconnected' | 'unavailable'
 }
 
 export interface EmbeddedRunnerView { mode?:'personal'|'team'; deviceId?:string;ownerUserId?:string; state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'; error?: string }

@@ -1,4 +1,5 @@
 export default {
+  kanban: {"board": "Board", "project": "Kanban project", "linked": "Linked to this workspace and its worktrees", "disconnected": "Reconnect in Settings → Platform", "openProject": "Open Kanban: {{project}}", "open": "Open Kanban", "openFailed": "Could not open Kanban.", "accessTitle": "Linked Kanban", "accessDescription": "Access to the project linked to this workspace. Ask and Plan remain read-only."},
   chatgptWeb: {
     notConfigured: "ChatGPT Web isn't set up yet. Finish it in Settings › Maestrly Chat.",
     starting: 'Starting the tunnel…',
