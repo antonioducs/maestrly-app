@@ -67,7 +67,7 @@ export function BoardView({
   }
   const [personalCard,setPersonalCard]=useState<Card|null>(null)
   const [editingAutomation,setEditingAutomation]=useState<string|null>(null)
-  const [selected, setSelected] = useState<Card | null>(null),
+  const [selectedId, setSelectedId] = useState<string | null>(null),
     [creatingColumn, setCreatingColumn] = useState<string | null>(null)
   const [description, setDescription] = useState(''),
     [query, setQuery] = useState(''),
@@ -76,6 +76,8 @@ export function BoardView({
     [showArchived, setShowArchived] = useState(false),
     [error, setError] = useState(''),
     [moving, setMoving] = useState(false)
+  const selected = [...snapshot.cards, ...(snapshot.archivedCards ?? [])].find((card) => card.id === selectedId)
+  if (selectedId && !selected) setSelectedId(null)
   const allCards = showArchived ? (snapshot.archivedCards ?? []) : snapshot.cards
   const cardsByColumn = useMemo(
     () =>
@@ -270,7 +272,7 @@ export function BoardView({
                       }
                     }}
                   >
-                    <button className="card-main" onClick={() => setSelected(card)}>
+                    <button className="card-main" onClick={() => setSelectedId(card.id)}>
                       <span>{card.title}</span>
                     </button>
                     <div className="card-meta">
@@ -382,11 +384,13 @@ export function BoardView({
       {selected ? (
         <CardDialog
           organizationId={organizationId}
+          key={selected.id}
           card={selected}
+          refreshToken={snapshot}
           readOnly={readOnly}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedId(null)}
           onChanged={(card) => {
-            setSelected(card)
+            setSelectedId(card.id)
             onReload()
           }}
         />

@@ -129,3 +129,55 @@ test('real API: columns, Markdown, history, subtasks, lifecycle and repositories
   await dialog.getByRole('button',{name:L('Restore'),exact:true}).click()
   await expect(page.locator('.board-tabs').getByRole('button',{name:'Empty pipeline',exact:true})).toHaveAttribute('aria-pressed','true')
 })
+
+test('real API: authenticated chat mutation reaches the visible board through SSE', async ({ page }, info) => {
+  test.skip(!process.env.MAESTRLY_LIVE_E2E, 'Requires the isolated kanban fixture.')
+  const L = (key: string) => translate(key, info.project.name as Locale)
+  await page.goto('/')
+  await page.getByRole('textbox', { name: L('Email'), exact: true }).fill(process.env.MAESTRLY_E2E_EMAIL!)
+  await page.getByLabel(L('Password'), { exact: true }).fill(process.env.MAESTRLY_E2E_PASSWORD!)
+  await page.getByRole('button', { name: L('Sign in'), exact: true }).click()
+  await expect(page.getByRole('navigation', { name: L('Workspace') })).toBeVisible()
+  const protocol = { 'x-maestrly-protocol-version': '1.0' }
+  const post = async (url: string, data: unknown, headers: Record<string, string> = {}) => {
+    const response = await page.request.post(url, { headers: { ...protocol, 'idempotency-key': crypto.randomUUID(), ...headers }, data })
+    expect(response.ok(), await response.text()).toBe(true)
+    return response.json()
+  }
+  const org = (await (await page.request.get('/api/v1/organizations', { headers: protocol })).json())[0].id
+  const name = 'Chat live ' + crypto.randomUUID()
+  const created = await post(`/api/v1/organizations/${org}/projects`, { name })
+  const projectId = created.project.id
+  const boardId = created.boardId
+  const base = `/api/v1/organizations/${org}`
+  const snapshot = await (await page.request.get(`${base}/boards/${boardId}`, { headers: protocol })).json()
+  const target = snapshot.columns.find((column: { role: string }) => column.role === 'done')
+  const card = await post(`${base}/boards/${boardId}/cards`, { title: 'Chat moved this card' })
+  const enrollment = await post('/api/v1/runner-enrollments', { organizationId: org, projectIds: [projectId] })
+  const runner = await post('/api/v1/runners/enroll', { organizationId: org, token: enrollment.token, name: 'Live chat fixture', protocolVersion: '1.0', capabilities: [] })
+  const runnerHeaders = { authorization: 'Runner ' + runner.credential, 'x-maestrly-organization-id': org, 'x-maestrly-runner-id': runner.runnerId }
+  try {
+  await post('/api/v1/runners/presence', { online: true }, runnerHeaders)
+  await post('/api/v1/runners/chat/inventory', {
+    capability: 'chat:interactive:v1', enabled: true,
+    workspaces: [{ key: 'local', projectId, label: 'Fixture', branches: ['main'] }],
+    models: [{ id: 'fixture', label: 'Fixture' }], integrations: { memory: true, skills: true, mcp: true },
+  }, runnerHeaders)
+  const chatBase = `${base}/projects/${projectId}/chat`
+  const session = await post(chatBase + '/sessions', { runnerId: runner.runnerId, workspaceKey: 'local', model: 'fixture', title: 'Live mutation', baseBranch: 'main', mode: 'agent', boardId, cardId: null })
+  await post(`${chatBase}/sessions/${session.id}/messages`, { text: 'Move the card', clientMessageId: crypto.randomUUID() })
+  const claim = await post('/api/v1/runners/chat/claim', {}, runnerHeaders)
+  await page.reload()
+  await page.getByRole('combobox', { name: L('Project'), exact: true }).click()
+  await page.getByRole('option', { name, exact: true }).click()
+  await expect(page.getByRole('button', { name: card.title, exact: true })).toBeVisible()
+  await post('/api/v1/runners/chat/tools', {
+    name: 'board_move_card', callId: crypto.randomUUID(),
+    input: { cardId: card.id, expectedVersion: card.version, targetColumnId: target.id, targetPosition: 0 },
+  }, { authorization: 'Chat ' + claim.token, 'x-maestrly-organization-id': org })
+  await expect(page.locator('.board-column').filter({ has: page.getByRole('heading', { name: target.name, exact: true }) }).getByRole('button', { name: card.title, exact: true })).toBeVisible()
+  } finally {
+    const revoked = await page.request.post(`${base}/projects/${projectId}/runners/${runner.runnerId}/revoke`, { headers: { ...protocol, 'idempotency-key': crypto.randomUUID() }, data: {} })
+    expect(revoked.ok()).toBe(true)
+  }
+})

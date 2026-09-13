@@ -65,12 +65,14 @@ const tabs = ['General', 'Events', 'Comments', 'History', 'Executions'] as const
 export function CardDialog({
   organizationId,
   card,
+  refreshToken,
   readOnly = false,
   onClose,
   onChanged,
 }: {
   organizationId: string
   card: Card
+  refreshToken?: unknown
   readOnly?: boolean
   onClose(): void
   onChanged(card: Card): void
@@ -78,9 +80,12 @@ export function CardDialog({
   useLocale()
   const [detail, setDetail] = useState<Detail | null>(null),
     [error, setError] = useState('')
+  const request = useRef(0)
   const reload = useCallback(async () => {
+    const generation = ++request.current
     try {
       const data = await api<Detail>(`/api/v1/organizations/${organizationId}/cards/${card.id}`)
+      if (generation !== request.current) return
       setDetail({
         ...data,
         subtasks: data.subtasks ?? [],
@@ -92,12 +97,13 @@ export function CardDialog({
       })
       setError('')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not load this card.')
+      if (generation === request.current) setError(caught instanceof Error ? caught.message : 'Could not load this card.')
     }
   }, [organizationId, card.id])
   useEffect(() => {
     void reload()
-  }, [reload, card.version])
+    return () => { request.current++ }
+  }, [reload, card.version, refreshToken])
   if (!detail || detail.card.id !== card.id)
     return (
       <Modal title={card.title} onClose={onClose} wide>
@@ -146,6 +152,19 @@ function CardEditor({
     [criteria, setCriteria] = useState(card.acceptanceCriteria.join('\n'))
   const [assignees, setAssignees] = useState(card.assigneeUserIds),
     [members, setMembers] = useState<Array<{ id: string; name: string }>>([])
+  const metadataBase = useRef(card)
+  const metadataDirty = title !== metadataBase.current.title || labels !== metadataBase.current.labels.join(', ') ||
+    priority !== metadataBase.current.priority || criteria !== metadataBase.current.acceptanceCriteria.join('\n') ||
+    JSON.stringify(assignees) !== JSON.stringify(metadataBase.current.assigneeUserIds)
+  useEffect(() => {
+    if (metadataDirty) return
+    metadataBase.current = card
+    setTitle(card.title)
+    setLabels(card.labels.join(', '))
+    setPriority(card.priority)
+    setCriteria(card.acceptanceCriteria.join('\n'))
+    setAssignees(card.assigneeUserIds)
+  }, [card, metadataDirty])
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState('')
@@ -174,16 +193,21 @@ function CardEditor({
       .then(setMembers)
       .catch(() => setMembers([]))
   }, [card.organizationId, card.projectId])
+  const eventsRequest = useRef(0)
   useEffect(() => {
+    let active = true
     if (tab === 'History')
       void api<Version[]>(base + '/history')
-        .then(setHistory)
+        .then((items) => { if (active) setHistory(items) })
         .catch((e) => setError(e.message))
     if (tab === 'Events') void loadEvents(0)
-  }, [tab, base, card.version])
+    return () => { active = false; eventsRequest.current++ }
+  }, [tab, base, detail, card.version])
   async function loadEvents(from: number) {
+    const generation = ++eventsRequest.current
     try {
       const page = await api<{ items: EventItem[]; nextCursor: number | null }>(base + '/events?cursor=' + from)
+      if (generation !== eventsRequest.current) return
       setEvents((current) => (from === 0 ? page.items : [...current, ...page.items]))
       setCursor(page.nextCursor)
     } catch (caught) {
@@ -211,11 +235,11 @@ function CardEditor({
     const latest = await api<Detail>(base)
     // If metadata changed, do not silently overwrite it.
     if (
-      latest.card.title !== card.title ||
-      JSON.stringify(latest.card.labels) !== JSON.stringify(card.labels) ||
-      latest.card.priority !== card.priority ||
-      JSON.stringify(latest.card.assigneeUserIds) !== JSON.stringify(card.assigneeUserIds) ||
-      JSON.stringify(latest.card.acceptanceCriteria) !== JSON.stringify(card.acceptanceCriteria)
+      latest.card.title !== metadataBase.current.title ||
+      JSON.stringify(latest.card.labels) !== JSON.stringify(metadataBase.current.labels) ||
+      latest.card.priority !== metadataBase.current.priority ||
+      JSON.stringify(latest.card.assigneeUserIds) !== JSON.stringify(metadataBase.current.assigneeUserIds) ||
+      JSON.stringify(latest.card.acceptanceCriteria) !== JSON.stringify(metadataBase.current.acceptanceCriteria)
     )
       throw new Error('The card changed after it was loaded.')
     const updated = await write<Card>(base, 'PATCH', {
@@ -232,6 +256,7 @@ function CardEditor({
         .filter(Boolean),
       assigneeUserIds: assignees,
     })
+    metadataBase.current = updated
     changed(updated)
     setNotice('Changes saved.')
   }
@@ -831,6 +856,7 @@ function CardEditor({
         <CardDialog
           organizationId={card.organizationId}
           card={nested}
+          refreshToken={detail}
           readOnly={readOnly}
           onClose={() => {
             setNested(null)

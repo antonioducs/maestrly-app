@@ -112,3 +112,95 @@ test('respects reduced motion', async ({ page }) => {
   expect(await column.evaluate((el) => getComputedStyle(el).animationDuration)).toBe('0s')
   expect(await page.locator('.work-card').first().evaluate((el) => getComputedStyle(el).transitionDuration)).toMatch(/^0s/)
 })
+
+test('live snapshots refresh an open card while preserving metadata drafts', async ({ page }, info) => {
+  const L = (key: string) => translate(key, info.project.name as Locale)
+  let current: Omit<typeof card, 'archivedAt'> & { archivedAt: string | null } = { ...card }
+  let comments: unknown[] = []
+  let events: unknown[] = []
+  let history: unknown[] = []
+  let detailReads = 0
+  let deleted = false
+  await page.addInitScript(() => {
+    class Stream {
+      onopen: (() => void) | null = null
+      onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null
+      constructor() { Reflect.set(window, 'refreshBoard', () => this.onmessage?.({ data: '{"type":"card.updated"}', lastEventId: '1' })) }
+      addEventListener() {}
+      close() {}
+    }
+    Reflect.set(window, 'EventSource', Stream)
+  })
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/get-session')) return route.fulfill({ json: { user: { id: 'owner', name: 'Ada', email: 'ada@example.test' } } })
+    if (path === '/api/v1/organizations') return route.fulfill({ json: [{ id: 'org', name: 'Acme', role: 'owner' }] })
+    if (path.endsWith('/projects')) return route.fulfill({ json: [project] })
+    if (path.endsWith('/boards')) return route.fulfill({ json: [board, { ...board, id: 'other-board', name: 'Other board' }] })
+    if (path.endsWith('/boards/other-board')) return route.fulfill({ json: { board: { ...board, id: 'other-board', name: 'Other board' }, columns: [], cards: [] } })
+    if (path.endsWith('/boards/board')) return route.fulfill({ json: { board, columns, cards: deleted || current.archivedAt ? [] : [current], archivedCards: current.archivedAt ? [current] : [] } })
+    if (path.endsWith('/cards/card')) {
+      if (route.request().method() === 'PATCH') {
+        const { expectedVersion, ...patch } = route.request().postDataJSON()
+        expect(expectedVersion).toBe(current.version)
+        current = { ...current, ...patch, version: current.version + 1 }
+        return route.fulfill({ json: current })
+      }
+      detailReads++
+      return route.fulfill({ json: { card: current, comments, attachments: [], executions: [], artifacts: [] } })
+    }
+    if (path.endsWith('/events')) return route.fulfill({ json: { items: events, nextCursor: null } })
+    if (path.endsWith('/history')) return route.fulfill({ json: history })
+    return route.fulfill({ json: [] })
+  })
+  const refresh = () => page.evaluate(() => Reflect.get(window, 'refreshBoard')())
+  await page.goto('/')
+  await page.getByRole('button', { name: card.title, exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('[contenteditable=true]').first()).toBeVisible()
+  await dialog.getByRole('textbox', { name: L('Title'), exact: true }).fill('My unsaved title')
+  await dialog.getByRole('tab', { name: new RegExp('^' + L('Comments')) }).click()
+  await dialog.getByRole('button', { name: L('Write'), exact: true }).last().click()
+  await dialog.getByRole('textbox', { name: L('Comment'), exact: true }).fill('My unsent comment')
+  const before = detailReads
+  comments = [{ id: 'comment', body: 'Remote comment', authorType: 'human', authorId: 'owner', createdAt: now, version: 1 }]
+  await refresh()
+  await expect(dialog.locator('.comment-entry')).toContainText('Remote comment')
+  expect(detailReads).toBeGreaterThan(before)
+  await expect(dialog.getByRole('textbox', { name: L('Comment'), exact: true })).toHaveValue('My unsent comment')
+  await dialog.getByRole('tab', { name: L('Events'), exact: true }).click()
+  await expect(dialog.locator('.timeline-entry')).toHaveCount(0)
+  events = [{ id: 'event', type: 'card.updated', actor: { type: 'human' }, data: {}, createdAt: now, reason: 'Remote activity' }]
+  await refresh()
+  await expect(dialog.locator('.timeline-entry')).toContainText('Remote activity')
+  await dialog.getByRole('tab', { name: L('History'), exact: true }).click()
+  await expect(dialog.locator('.history-list button')).toHaveCount(0)
+  history = [{ id: 'version', body: 'Remote description', version: 1, actor: {}, createdAt: now }]
+  await refresh()
+  await expect(dialog.locator('.history-list button')).toHaveCount(1)
+  current = { ...current, title: 'Remote title', version: 2, columnId: 'review' }
+  await refresh()
+  await expect(dialog.getByRole('heading', { name: 'Remote title', exact: true })).toBeVisible()
+  await dialog.getByRole('tab', { name: L('General'), exact: true }).click()
+  await expect(dialog.getByRole('textbox', { name: L('Title'), exact: true })).toHaveValue('My unsaved title')
+  await dialog.getByRole('button', { name: L('Save changes'), exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText(L('The card changed after it was loaded.'))
+  // A navigation update can replace the board while its modal is still open.
+  await page.locator('.board-tabs').getByRole('button', { name: 'Other board', exact: true }).evaluate(button => (button as HTMLButtonElement).click())
+  await expect(page.getByText(L('No columns yet.'), { exact: true })).toBeVisible()
+  await page.locator('.board-tabs').getByRole('button', { name: board.name, exact: true }).click()
+  await expect(page.getByRole('button', { name: current.title, exact: true })).toBeVisible()
+  await expect(dialog).toHaveCount(0)
+  await page.getByRole('button', { name: current.title, exact: true }).click()
+  await expect(dialog.getByRole('tab', { name: L('General'), exact: true })).toBeVisible()
+  current = { ...current, archivedAt: now, version: 3 }
+  await refresh()
+  await expect(dialog.getByRole('button', { name: L('Restore'), exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: L('Save changes'), exact: true })).toHaveCount(0)
+  current = { ...current, archivedAt: null, version: 4 }
+  deleted = true
+  await refresh()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator('.work-card')).toHaveCount(0)
+
+})

@@ -76,9 +76,10 @@ try {
     for(const locale of ['en','pt-BR']) {
       if(locale==='pt-BR')await restartApi()
       const args=process.argv.slice(2)
-      // Independent auth-heavy scenarios get a fresh rate-limit window; production limits stay enabled.
-      command('npm',['run','test:e2e','--workspace','@maestrly/web','--','--project='+locale,...(args.length?args:['--grep-invert','real team:'])],env)
-      if(!args.length){await restartApi();command('npm',['run','test:e2e','--workspace','@maestrly/web','--','--project='+locale,'--grep','real team:'],env)}
+      // Independent API-heavy scenarios get fresh rate-limit windows; production limits stay enabled.
+      const isolatedScenarios=['real API: removing a runner','real team:']
+      command('npm',['run','test:e2e','--workspace','@maestrly/web','--','--project='+locale,...(args.length?args:['--grep-invert',isolatedScenarios.join('|')])],env)
+      if(!args.length)for(const scenario of isolatedScenarios){await restartApi();command('npm',['run','test:e2e','--workspace','@maestrly/web','--','--project='+locale,'--grep',scenario],env)}
     }
   }
   if(['1','only'].includes(process.env.MAESTRLY_DESKTOP_E2E)){
