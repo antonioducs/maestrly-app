@@ -64,6 +64,9 @@ go run github.com/zricethezav/gitleaks/v8@v8.30.1 git . --config .gitleaks.toml 
 
 ### Opus 5 harness evaluation
 
+Model-specific harness behavior is declared in profile folders; see
+[Harness profiles](harness-profiles.md) for the format and how to add a model.
+
 The versioned `maestrly-opus-5-v1` profile applies to exact `claude-opus-5`
 identities, including aliases resolved to that identity by the Claude runtime.
 The internal `chat.opus5Profile` flag defaults to enabled. Disabling it selects

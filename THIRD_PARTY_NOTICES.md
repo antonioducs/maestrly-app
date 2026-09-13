@@ -23,7 +23,8 @@ distributed beside it as
 
 Portions of the OpenAI-specific chat harness are adapted from
 [OpenAI Codex](https://github.com/openai/codex), including the pinned model
-instructions in `apps/desktop/src/main/chat/openai/prompt.ts` and the V4A apply-patch parser
+instructions in `apps/desktop/src/main/chat/harness/profiles/gpt-5.6-sol/prompt.md` (provenance,
+hashes and adaptations in the adjacent `config.json`) and the V4A apply-patch parser
 used by the native patch tool.
 
 Copyright 2025 OpenAI
