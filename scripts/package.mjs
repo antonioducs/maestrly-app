@@ -75,6 +75,13 @@ const hostTarget = `${hostOs}-${process.arch}`
 let failure = null
 
 try {
+  // Release jobs start from a fresh checkout; validation builds live in a different job.
+  const npmArgs = ['run', 'build:runner-core']
+  const npmCli =
+    process.env.npm_execpath ??
+    (process.platform === 'win32' ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : null)
+  if (npmCli) run(process.execPath, [npmCli, ...npmArgs])
+  else run('npm', npmArgs)
   run(process.execPath, ['scripts/build-local-ml-runtime.mjs', ...runtimeFetchArgs])
   const manifest = JSON.parse(readFileSync(path.join(desktopRoot, 'runtime-assets/local-ml/manifest.json'), 'utf8'))
   const archive = `local-ml-runtime-${manifest.version}-${runtimeTargets[0]}.tar.gz`
@@ -121,7 +128,12 @@ try {
         ? 'arm64'
         : 'x64'
   const reportFile = path.join(desktopRoot, 'dist', `bundle-size-${platform ?? process.platform}-${arch}.json`)
-  run(process.execPath, ['scripts/report-bundle-size.mjs', path.join(desktopRoot, 'dist'), `--arch=${arch}`, `--json=${reportFile}`])
+  run(process.execPath, [
+    'scripts/report-bundle-size.mjs',
+    path.join(desktopRoot, 'dist'),
+    `--arch=${arch}`,
+    `--json=${reportFile}`,
+  ])
   run(process.execPath, ['scripts/check-bundle-size.mjs', `--report=${reportFile}`])
 } catch (error) {
   failure = error

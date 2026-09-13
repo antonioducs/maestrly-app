@@ -7,6 +7,7 @@ import { chmod, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { listPackage } from '@electron/asar'
+import { missingWorkspaceBuilds } from './verify-packaged-workspaces.mjs'
 
 export const FORBIDDEN_RESOURCE_DIRECTORIES = ['codex', 'github-copilot', 'tunnel-client', 'local-ml-runtime']
 export const REQUIRED_LEGAL_RESOURCES = [
@@ -119,6 +120,11 @@ export default async function afterPack(context) {
     platform === 'mac'
       ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
       : path.join(context.appOutDir, 'resources')
+  const missingBuilds = missingWorkspaceBuilds(listPackage(path.join(resources, 'app.asar')))
+  if (missingBuilds.length > 0) {
+    throw new Error(`[after-pack] missing compiled workspace packages:\n- ${missingBuilds.join('\n- ')}`)
+  }
+  console.log('[after-pack] compiled workspace packages verified')
   const leaks = await findLeanCoreLeaks(resources, platform, arch)
   if (leaks.length > 0) throw new Error(`[after-pack] lean-core leakage:\n- ${leaks.join('\n- ')}`)
   console.log('[after-pack] lean-core leakage gate ok')
