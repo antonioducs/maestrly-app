@@ -29,3 +29,5 @@ apps/desktop/resources/github-copilot/
 *.cer
 *.certSigningRequest
 *.mobileprovision
+.maestrly-host-lab.json
+.host-lab/

@@ -88,3 +88,26 @@ The archive preserves the license files shipped by those upstream packages.
 Models are obtained separately and remain subject to their own model-card
 licenses and terms. See
 [`apps/desktop/runtime-assets/local-ml/README.md`](apps/desktop/runtime-assets/local-ml/README.md).
+
+## Maestrly Host and Bot Desktop laboratory
+
+The Bot uses the repository's Electron, React, TypeScript and Zod dependencies.
+The Host uses Node.js (MIT and bundled dependency notices), SQLite (public domain),
+and QEMU (GPL-2.0 with component-specific licenses). Firmware such as EDK II has
+its own BSD/Apache and bundled component notices. Ubuntu 24.04 images contain
+individually licensed packages including cloud-init (Apache-2.0/GPL-3.0) and QEMU
+Guest Agent (GPL-2.0). libguestfs build tools are GPL/LGPL; they are not Host runtime dependencies.
+
+No QEMU/firmware/Linux binary is committed or claimed qualified here. The runtime
+builder requires explicit source URLs, versions, SHA256 digests and license data
+for every supplied file and records a package manifest after signing. Distributors
+must include each component's actual license notices and fulfill corresponding
+source obligations for the versions they distribute. Image builds record the dated
+Ubuntu source, input digest, complete installed package inventory and output digest.
+No public distribution is performed by the laboratory packaging commands.
+
+Primary references: [QEMU licenses](https://www.qemu.org/docs/master/about/license.html),
+[Node licenses](https://github.com/nodejs/node/blob/main/LICENSE),
+[Ubuntu cloud images](https://cloud-images.ubuntu.com/releases/noble/),
+[NoCloud provisioning](https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html),
+[libguestfs customization](https://libguestfs.org/virt-customize.1.html).

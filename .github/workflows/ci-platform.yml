@@ -45,6 +45,10 @@ jobs:
         run: |
           npm exec --workspace @maestrly/web -- playwright install --with-deps chromium
           npm exec --workspace @maestrly/desktop -- playwright install --with-deps chromium
+      - name: Check Host and Bot deterministic suites (no remote hardware)
+        run: npm run check:host-phase1
+      - name: Test Bot local UI
+        run: xvfb-run -a npm run test:e2e:bot
       - name: Run browser flows
         run: npm run test:e2e:platform
       - name: Run real desktop project chat

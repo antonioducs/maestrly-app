@@ -33,11 +33,11 @@
     "check:sdk": "npm run build:protocol && npm run check --workspace @maestrly/client-sdk",
     "check:runner-core": "npm run build:sdk && npm run check --workspace @maestrly/runner-core",
     "check:boundaries": "node scripts/check-boundaries.mjs",
-    "check": "npm run check:boundaries && npm run check:protocol && npm run check:sdk && npm run check:runner-core && npm run check:server && npm run check:runner && npm run check:web && npm run check:desktop",
+    "check": "npm run check:boundaries && npm run check:protocol && npm run check:sdk && npm run check:runner-core && npm run check:server && npm run check:runner && npm run check:web && npm run check:desktop && npm run check:host-phase1",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
-    "test": "npm run test:unit && npm run test:policy && npm run test:docs",
+    "test": "npm run test:unit && npm run test:policy && npm run test:docs && npm run test:host-phase1",
     "test:unit": "npm run test:unit --workspace @maestrly/desktop",
     "test:policy": "node --test tests/policy/*.test.mjs",
     "test:docs": "node scripts/check-markdown-links.mjs",
@@ -49,11 +49,26 @@
     "audit:dependencies": "node scripts/audit-dependencies.mjs && npm audit --omit=dev --prefix apps/desktop/runtime-assets/local-ml",
     "check:history": "node scripts/check-commits.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs"
+    "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs",
+    "build:host-protocol": "npm run build --workspace @maestrly/host-protocol",
+    "build:host-core": "npm run build:host-protocol && npm run build --workspace @maestrly/host-core",
+    "build:host": "npm run build:host-core && npm run build --workspace @maestrly/host",
+    "build:bot": "npm run build:host-protocol && npm run build --workspace @maestrly/bot-desktop",
+    "check:host-phase1": "npm run build:host-protocol && npm run check --workspace @maestrly/host-protocol && npm run check --workspace @maestrly/host-core && npm run check --workspace @maestrly/host && npm run check --workspace @maestrly/bot-desktop && node --test tests/host-artifacts.test.mjs",
+    "test:host-phase1": "npm run build:host-core && npm test --workspace @maestrly/host-protocol && npm test --workspace @maestrly/host-core && npm test --workspace @maestrly/host && npm test --workspace @maestrly/bot-desktop && node --test tests/host-artifacts.test.mjs",
+    "test:e2e:bot": "npm run build:bot && npm run test:e2e --workspace @maestrly/bot-desktop",
+    "package:bot:lab": "node scripts/package-bot-lab.mjs",
+    "package:host:lab": "node scripts/build-host-runtime.mjs",
+    "build:host:image": "node scripts/build-host-image.mjs",
+    "lab:host:doctor": "node scripts/host-lab.mjs doctor",
+    "lab:host:deploy": "node scripts/host-lab.mjs deploy",
+    "lab:host:smoke": "node scripts/host-lab.mjs smoke",
+    "test:lab:host": "npm run build:host && npm run test:lab --workspace @maestrly/host"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "esbuild": "0.25.12"
   },
   "repository": {
     "type": "git",
