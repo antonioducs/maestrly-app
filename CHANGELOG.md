@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-13
+
+### Added
+
+- Give project chat scoped control over boards, columns, cards, comments, and
+  column automations, with versioned and idempotent mutations.
+- Refresh board and open-card details in web clients through live server events
+  without overwriting in-progress drafts.
+
+### Fixed
+
+- Use a properly sized macOS template icon for the menu bar, removing the white
+  square while preserving platform-specific colored icons elsewhere.
+
 ## [0.5.0] - 2026-09-13
 
 ### Added
