@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="resources/icon.png" width="112" alt="Maestrly App icon">
+  <img src="apps/desktop/resources/icon.png" width="112" alt="Maestrly App icon">
 </p>
 
 <h1 align="center">Maestrly App</h1>
