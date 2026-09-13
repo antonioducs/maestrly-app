@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-12",
+  "scope": "explicitly authorized physical Mac mini; identifying configuration kept private",
+  "architecture": "arm64",
+  "macOS": "26.6.2",
+  "physicalMemoryGiB": 32,
+  "physicalCpus": 10,
+  "service": {
+    "systemLaunchDaemon": true,
+    "dedicatedNonrootAccount": true,
+    "graphicalSessionRequired": false
+  },
+  "budget": {
+    "cpus": 4,
+    "memoryMiB": 8192,
+    "diskGiB": 40
+  },
+  "guests": {
+    "count": 2,
+    "each": {
+      "cpus": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 12
+    },
+    "finalState": "running",
+    "health": "ready",
+    "network": "no NIC; loopback only"
+  },
+  "verified": [
+    "package integrity before installation",
+    "HVF under service identity",
+    "two concurrent Linux guests",
+    "installed desktop SSH connection and actual inventory",
+    "bounded guest boot logs through installed desktop",
+    "SSH disconnect and reconnect without guest restart",
+    "guest reboot and cold-start markers",
+    "installed desktop closed without guest restart"
+  ],
+  "notExecuted": [
+    "physical reboot",
+    "forced daemon crash/restart",
+    "remote data deletion"
+  ],
+  "hostPackageManifestSha256": "4dee5e88a90cc2a78af6e6dec30aba80880cb4a25e1dc63b042ab3399cbfdd23"
+}

@@ -1,0 +1,62 @@
+{
+  "date": "2026-09-12",
+  "scope": "Local controller only; remote Mac mini unconfigured",
+  "core": "bundled HostService loaded using bundled Node outside repository with minimal environment",
+  "guestCount": 2,
+  "resourcesPerGuest": {
+    "cpus": 1,
+    "memoryMiB": 1024,
+    "diskGiB": 12
+  },
+  "network": "No NIC; guest agent observed loopback only",
+  "stages": [
+    {
+      "stage": "marker-written",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "marker-written",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "core-closed-reopened-guests-survived"
+    },
+    {
+      "stage": "reboot-marker-persisted",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "cold-start-marker-persisted",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "reboot-marker-persisted",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "cold-start-marker-persisted",
+      "ready": true,
+      "markerMatches": true,
+      "networkIsolated": true
+    },
+    {
+      "stage": "removal-retains-first-disk-second-guest-intact"
+    },
+    {
+      "stage": "passed"
+    }
+  ],
+  "cleanup": "both disposable test guests stopped and purged using recorded IDs; earlier failed test guests explicitly cleaned after QMP identity verification",
+  "remoteQualification": "blocked: no explicit SSH alias, expected physical identity or authorized remote resource caps supplied",
+  "testedHostManifestSha256": "4dee5e88a90cc2a78af6e6dec30aba80880cb4a25e1dc63b042ab3399cbfdd23"
+}

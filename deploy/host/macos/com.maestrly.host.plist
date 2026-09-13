@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+ <key>Label</key><string>com.maestrly.host</string>
+ <key>ProgramArguments</key><array><string>/Library/MaestrlyHost/bin/maestrly-host</string><string>daemon</string></array>
+ <key>UserName</key><string>_maestrlyhost</string>
+ <key>GroupName</key><string>_maestrlyhost</string>
+ <key>WorkingDirectory</key><string>/Library/MaestrlyHost</string>
+ <key>EnvironmentVariables</key><dict><key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string><key>HOME</key><string>/var/empty</string></dict>
+ <key>Umask</key><integer>7</integer>
+ <key>RunAtLoad</key><true/>
+ <key>KeepAlive</key><true/>
+ <key>ThrottleInterval</key><integer>30</integer>
+ <key>ExitTimeOut</key><integer>30</integer>
+ <key>AbandonProcessGroup</key><true/>
+ <key>ProcessType</key><string>Background</string>
+ <key>StandardOutPath</key><string>/dev/null</string>
+ <key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>
