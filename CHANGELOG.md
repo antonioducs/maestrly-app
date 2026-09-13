@@ -5,6 +5,24 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-13
+
+### Added
+
+- Link desktop workspaces and conversations to Kanban projects and boards, with
+  scoped read and write tools for local agents, Maestro, and GPT Web.
+- Enforce project permissions, resource versions, idempotency, and audit
+  attribution for agent-driven board mutations.
+
+### Changed
+
+- Replace model-specific harness branching with versioned declarative profiles
+  shared across providers, prompts, sessions, subagents, and live controls.
+
+### Fixed
+
+- Hide the paired review loop badge after the loop reaches a terminal state.
+
 ## [0.4.3] - 2026-09-13
 
 ### Fixed
