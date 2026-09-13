@@ -3,7 +3,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { buildIco } from './icon-encoders.mjs'
+import { buildIco, cropToContent, decodePng, downsample, encodePng, toTemplateMask } from './icon-encoders.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const RES = path.resolve(__dirname, '..', 'apps', 'desktop', 'resources')
@@ -72,6 +72,22 @@ async function genChannel(channel) {
   console.log(`✓ ${channel}: resources/icon${suffix}.{png,ico,icns} + icons${suffix}/`)
 }
 
+// macOS tray (menu bar) template icon — shared across channels: 18pt + @2x, black glyph on alpha.
+// The app icon has generous inner padding, so the glyph is cropped to its bounding box first.
+const TRAY_SIZES = [
+  [18, 'trayTemplate.png'],
+  [36, 'trayTemplate@2x.png'],
+]
+async function genTrayTemplate() {
+  const { rgba, width, height } = decodePng(await fs.readFile(SRC))
+  if (width !== height) throw new Error(`convert-icon: source must be square (got ${width}x${height})`)
+  const { rgba: mask, size } = cropToContent(toTemplateMask(rgba, width), width)
+  for (const [px, name] of TRAY_SIZES) {
+    await fs.writeFile(path.join(RES, name), encodePng(downsample(mask, size, px), px))
+  }
+  console.log('✓ tray: resources/trayTemplate.png + trayTemplate@2x.png')
+}
+
 async function main() {
   try {
     await fs.access(SRC)
@@ -85,6 +101,7 @@ async function main() {
   }
   await fs.mkdir(RES, { recursive: true })
   for (const c of targets) await genChannel(c)
+  await genTrayTemplate()
   console.log(`✓ Maestrly icons generated (${targets.join(', ')}) — shared artwork across channels.`)
 }
 

@@ -707,9 +707,13 @@ app.whenReady().then(async () => {
 
   if (mainWindow) void initAppImageIntegration(mainWindow)
 
-  const trayIcon=nativeImage.createFromPath(path.join(__dirname,'../../resources/icon.png')).resize({width:18,height:18})
+  // macOS: template image (alpha-only glyph, auto-adapts to light/dark menu bar; @2x picked up by name).
+  // Elsewhere: the coloured app icon — template images would render as a solid square.
+  const trayIcon=process.platform==='darwin'
+    ?nativeImage.createFromPath(path.join(__dirname,'../../resources/trayTemplate.png'))
+    :nativeImage.createFromPath(path.join(__dirname,'../../resources/icon.png')).resize({width:process.platform==='win32'?16:22,height:process.platform==='win32'?16:22})
   if(!trayIcon.isEmpty()){
-    trayIcon.setTemplateImage(true)
+    if(process.platform==='darwin')trayIcon.setTemplateImage(true)
     executorTray=new Tray(trayIcon)
     executorTray.setToolTip('Maestrly')
     const reveal=()=>{if(mainWindow&&!mainWindow.isDestroyed()){mainWindow.show();mainWindow.focus();mainWindow.webContents.send('executor:open')}else void createWindow()}
