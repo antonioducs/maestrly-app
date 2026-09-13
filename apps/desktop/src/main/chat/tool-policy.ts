@@ -25,6 +25,19 @@ const policy = (allowedInPlanAsk: boolean, readOnly: boolean, parallelSafe: bool
 
 /** Exhaustive product policy for the app-tool universe registered by buildServer. */
 export const APP_TOOL_POLICY = {
+  board_automation_catalog: policy(true, true, true),
+  board_column_config: policy(true, true, true),
+  board_set_column_agent: policy(false, false, false),
+  board_column_automation_history: policy(true, true, true),
+  board_restore_column_automation: policy(false, false, false),
+  board_preview_automation: policy(true, true, true),
+  board_card_automation: policy(true, true, true),
+  board_set_card_automation_override: policy(false, false, false),
+  board_run_card: policy(false, false, false),
+  board_release_card_automation: policy(false, false, false),
+  board_set_automation_limits: policy(false, false, false),
+  board_define_fixed_columns: policy(false, false, false),
+  board_execution_events: policy(true, true, true),
   board_list_members: policy(true, true, true),
   get_linked_kanban: policy(true, true, true),
   board_card_events: policy(true, true, true),

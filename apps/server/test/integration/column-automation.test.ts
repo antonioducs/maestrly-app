@@ -1,3 +1,4 @@
+import { executeLinkedBoardTool } from '../../src/modules/kanban/agent-routes.js'
 import { describe,it,expect } from 'vitest'
 import { columnAutomationSchema } from '@maestrly/protocol'
 import { integrationAvailable,runtimePool,seedOrganization } from './helpers.js'
@@ -44,7 +45,12 @@ describe.skipIf(!integrationAvailable)('column automation lifecycle',()=>{
       expect(preview.renderedPrompt).toBe('Review Card {column_name} in In progress: Markdown body')
       expect(preview.effective.effort).toBe('high')
       await expect(requestColumnAgent(pool,{...scope,cardId:card.id,expectedVersion:card.version,expectedPolicyId:restored.policyId,expectedOverrideVersion:0})).rejects.toThrow(/override changed/)
-      const requested=await requestColumnAgent(pool,{...scope,cardId:card.id,expectedVersion:card.version,expectedPolicyId:restored.policyId,expectedOverrideVersion:1})
+      const toolScope={...scope,projectId:project.project.id,conversationId:crypto.randomUUID()}
+      const runInput={cardId:card.id,expectedVersion:card.version,expectedPolicyId:restored.policyId,expectedOverrideVersion:1},runKey=crypto.randomUUID()
+      const requested=await executeLinkedBoardTool(pool,toolScope,'board_run_card',runInput,runKey) as {jobId:string}
+      expect(await executeLinkedBoardTool(pool,toolScope,'board_run_card',runInput,runKey)).toEqual(requested)
+      const audit=await transaction(pool,scope,c=>c.query("select actor from domain_events where aggregate_id=$1 and type='card.agent_requested'",[card.id]))
+      expect(audit.rows[0].actor).toMatchObject({type:'desktop_agent',conversationId:toolScope.conversationId,userId})
       expect(requested.jobId).toBeTruthy()
       await expect(requestColumnAgent(pool,{...scope,cardId:card.id,expectedVersion:card.version,expectedPolicyId:restored.policyId,expectedOverrideVersion:1})).rejects.toThrow(/already queued/)
       expect(await claimJob(pool,{...identity,automationCapabilities:{...caps,models:[{...caps.models[0]!,fastMode:false}]}})).toBeNull()

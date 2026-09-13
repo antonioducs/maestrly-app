@@ -488,8 +488,8 @@ function Workspace({ session, onSignedOut }: { session: Session; onSignedOut(): 
           ) : null}
           {projectId && view === 'board' && snapshot && snapshot.board.id === boardId ? (
             <BoardView
+              key={organizationId + ":" + boardId}
               canManageAutomation={canManage}
-              key={boardId}
               organizationId={organizationId}
               snapshot={snapshot}
               executions={executions}

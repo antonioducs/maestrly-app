@@ -11,7 +11,7 @@ import {
   chatConversation,
 } from '../../src/main/platform/project-chat-store'
 import { publicChatText } from '../../src/main/platform/project-chat-projection'
-import { projectChatPreferences } from '../../src/main/platform/project-chat-worker'
+import { projectChatPreferences, projectChatContextText } from '../../src/main/platform/project-chat-worker'
 import { desktopExecutorSettingsSchema } from '../../src/main/platform/executor-settings'
 beforeEach(freshDb)
 afterEach(closeDb)
@@ -65,4 +65,16 @@ it('maps persisted web settings to native preferences for every turn', () => {
   expect(
     projectChatPreferences({ mode: 'chat', reasoning: null, fastMode: false, permMode: 'ask' }, settings, [])
   ).toMatchObject({ mode: 'ask', reasoning: 'off', fastMode: false, permMode: 'ask' })
+})
+
+it('instructs project chat to execute authorized changes with discovered IDs and verify persisted state', () => {
+  const prompt = projectChatContextText({ projectId: 'project', boardId: 'board', cardId: 'card', baseBranch: 'main' })
+  expect(prompt).toContain('Project: project. Board context: board. Card context: card. Code base: main.')
+  expect(prompt).toContain('perform the actual mutation with the scoped board tools')
+  expect(prompt).toContain('Read current records and versions')
+  expect(prompt).toContain('board_automation_catalog')
+  expect(prompt).toContain('reuse it on retries')
+  expect(prompt).toContain('In Ask or Plan mode, inspect and explain only; mutations are denied')
+  expect(prompt).toContain('Verify persisted state with the read tools before reporting completion')
+  expect(prompt).toContain('Never assume a completed answer means a card is done')
 })
