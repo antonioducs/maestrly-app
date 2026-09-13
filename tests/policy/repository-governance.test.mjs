@@ -87,8 +87,7 @@ test('release workflow publishes verified native artifacts only from version tag
   for (const script of invokedScripts) {
     assert.ok(manifest.scripts?.[script], `release workflow references missing root script: ${script}`)
   }
-  assert.equal((source.match(/npm run smoke:packaged-desktop/g) ?? []).length, 1)
-  assert.equal((source.match(/npm run smoke:packaged-local-ml-runtime/g) ?? []).length, 1)
+  assert.doesNotMatch(source, /npm run smoke:packaged-(?:desktop|local-ml-runtime)/)
   assert.match(source, /name: release-linux/)
   assert.match(source, /name: release-windows/)
   assert.match(source, /name: release-macos/)

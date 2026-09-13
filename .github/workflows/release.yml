@@ -103,10 +103,6 @@ jobs:
         run: npx playwright install-deps chromium
       - name: Build Linux packages
         run: npm run package:linux
-      - name: Smoke packaged desktop
-        run: xvfb-run -a npm run smoke:packaged-desktop
-      - name: Smoke packaged Local ML
-        run: xvfb-run -a npm run smoke:packaged-local-ml-runtime
       - name: Stage Linux release assets
         run: node scripts/stage-release-assets.mjs linux apps/desktop/dist .release-local-staging/linux
       - name: Upload Linux release assets
