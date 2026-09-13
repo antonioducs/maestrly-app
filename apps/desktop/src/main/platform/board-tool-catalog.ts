@@ -15,7 +15,8 @@ export const linkedBoardCatalog = Object.entries(linkedBoardToolSchemas).map(([k
     name,
     readOnly,
     description:
-      linkedBoardToolDescriptions[name] + (readOnly ? '' : ' Reuse idempotencyKey when retrying the same change.'),
+      linkedBoardToolDescriptions[name] +
+      (readOnly ? '' : ' Supply a stable idempotencyKey for each change and reuse it when retrying that same change.'),
     schema: readOnly
       ? schema
       : schema.extend({
