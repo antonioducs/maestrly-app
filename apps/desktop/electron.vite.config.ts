@@ -2,10 +2,12 @@ import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { harnessValidationPlugin } from './build/harness-validation-plugin'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // The harness catalog is validated before bundling: an invalid profile never reaches a build.
+    plugins: [externalizeDepsPlugin(), harnessValidationPlugin()],
     build: {
       rollupOptions: {
         // Keep ML inference in utility processes so it does not block the main process.

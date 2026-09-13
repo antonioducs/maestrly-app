@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "maestrly-default-harness",
+  "profileVersion": 1,
+  "bindings": [
+    {
+      "providerKind": "*",
+      "overrides": {
+        "identity": {
+          "harnessProfileId": "openai-default-v1",
+          "behaviorProfileId": null,
+          "compatibilityGroup": "openai-current-v1",
+          "promptIdentity": "maestrly-legacy"
+        },
+        "prompts": {
+          "layout": "maestrly-base",
+          "styleAndWork": "style.md",
+          "behaviorHeader": false,
+          "environment": { "placement": "system", "transient": false }
+        },
+        "reasoning": { "manifestEfforts": null, "nonSerializableEfforts": [], "nativeUltra": false },
+        "capabilities": {
+          "responsesTools": false,
+          "persistedReasoning": false,
+          "encryptedReasoning": false,
+          "reasoningContext": false,
+          "compaction": false,
+          "parallelTools": false,
+          "steering": false,
+          "asyncTools": false,
+          "configurationUpdates": false,
+          "experimentalContext": false
+        },
+        "runtime": {
+          "promptCacheTtl": null,
+          "personality": "pragmatic",
+          "nativeCompactionFirst": false,
+          "experimentalContext": false,
+          "codexPromptVersion": "codex-current-v1"
+        },
+        "progress": "default",
+        "hooks": []
+      }
+    },
+    {
+      "providerKind": "openai-responses",
+      "overrides": { "identity": { "promptIdentity": "maestrly-openai-generic-v1" } }
+    },
+    {
+      "providerKind": "codex-subscription",
+      "overrides": { "identity": { "promptIdentity": "maestrly-openai-generic-v1" } }
+    }
+  ]
+}
