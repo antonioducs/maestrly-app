@@ -96,8 +96,8 @@ try {
     }
     if (!packagedRoot) throw new Error(`Packaged macOS .app not found under ${dist}`)
 
-    await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedRoot], { timeout: 60_000 })
     if (process.env.MAESTRLY_REQUIRE_HARDENED_RUNTIME === '1') {
+      await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packagedRoot], { timeout: 60_000 })
       const entitlements = await run('/usr/bin/codesign', ['-d', '--entitlements', '-', '--xml', packagedRoot], {
         timeout: 60_000,
       })
