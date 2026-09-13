@@ -45,7 +45,7 @@ import { clipPersistedToolOutput, renderTranscript } from '../message'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
-import { IN_TURN_COMPACT_RATIO, SYSTEM_PROMPT, type NormalizedAiUsage } from '../runner'
+import { IN_TURN_COMPACT_RATIO, type NormalizedAiUsage } from '../runner'
 import { renderSkillContext, skillCatalogLine, type ChatSkill } from '../skills'
 import { effectiveSkills, findEffectiveSkill } from '../skill-state'
 import { SubagentCoordinator } from '../subagent-coordinator'
@@ -113,17 +113,16 @@ import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolB
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
-import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
+import { harnessFor } from '../harness/execution'
+import { captureHarnessFlags } from '../harness/flags'
 import {
-  resolveClaudeBehaviorProfile,
-  isFableBehaviorProfile,
-  isOpusBehaviorProfile,
-  type ClaudeBehaviorProfile,
-} from '../behavior-profile'
-import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
-import { claudeEnvironmentContext } from '../behavior-prompt'
-import { opusUltraGuidance } from '../opus/prompt'
-import { createFablePostToolUseHook } from '../fable/sdk-hooks'
+  buildMaestrlyBasePrompt,
+  harnessEnvironmentContext,
+  harnessUltraGuidance,
+} from '../harness/host-contracts'
+import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
+import { createHarnessSnapshot } from '../harness/compatibility'
+import type { ResolvedHarness } from '../harness/types'
 import { estimateTextTokens, portableContextLoad } from '../portable-context'
 import { classifyClaudeQuotaFailure } from './quota-error'
 import { createClaudeToolJournal, type ClaudeToolJournal } from './tool-journal'
@@ -145,8 +144,8 @@ export interface RunClaudeChatArgs {
   cwd: string
   selection: ChatModelRef
   resolvedModelId?: string
-  /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
-  behaviorProfile?: ClaudeBehaviorProfile | null
+  /** Harness contract resolved once at turn admission; undefined resolves locally for direct calls. */
+  harness?: ResolvedHarness
   /** Runtime model id frozen for an isolated review-loop execution. */
   frozenResolvedModelId?: string
   mode: ChatBehavior
@@ -234,8 +233,8 @@ interface PreparedRuntime {
   systemPrompt: string
   promptHash: string
   transientContext?: string
-  fablePostToolUseHook?: ReturnType<typeof createFablePostToolUseHook>
-  behaviorProfile?: ClaudeBehaviorProfile
+  postToolUseHook?: ReturnType<typeof createHarnessPostToolUseHooks>
+  harness: ResolvedHarness
   agents: ChatAgent[]
   close: () => Promise<void>
 }
@@ -727,44 +726,42 @@ async function prepareRuntime(
     ]
       .filter(Boolean)
       .join(' ')
-    const behaviorProfile =
-      args.behaviorProfile === undefined
-        ? resolveClaudeBehaviorProfile({
-            requestedModelId: args.selection.modelId,
-            resolvedModelId: args.frozenResolvedModelId ?? args.resolvedModelId,
-            fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-            opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-          }).profile
-        : args.behaviorProfile
+    const harness =
+      args.harness ??
+      harnessFor('claude-subscription', args.selection.modelId, {
+        resolvedModelId: args.frozenResolvedModelId ?? args.resolvedModelId,
+        flags: captureHarnessFlags(),
+      })
+    const profileUltra = harnessUltraGuidance(harness, args.mode)
     const ultra = args.maestrlyUltra
       ? args.mode === 'maestro'
         ? [
             'Maximum-rigor reasoning applies only to the orchestrator. Keep the frozen Strategy and choose agents deliberately from the Pool.',
-            isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : '',
+            profileUltra ?? '',
           ]
             .filter(Boolean)
             .join('\n\n')
         : args.mode === 'design'
           ? [
               renderDesignUltraGuidance(args.mode),
-              isOpusBehaviorProfile(behaviorProfile) ? opusUltraGuidance(args.mode) : '',
+              profileUltra ?? '',
             ]
               .filter(Boolean)
               .join('\n\n')
-          : isOpusBehaviorProfile(behaviorProfile)
-            ? opusUltraGuidance(args.mode)
+          : profileUltra
+            ? profileUltra
             : args.mode === 'agent'
               ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
               : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
       : ''
     const systemPrompt = [
-      SYSTEM_PROMPT(
-        args.cwd,
+      buildMaestrlyBasePrompt({
+        harness,
+        cwd: args.cwd,
         appToolsEnabled,
-        args.mode,
-        Boolean(getConversation(args.conversationId)),
-        behaviorProfile
-      ),
+        mode: args.mode,
+        hasNotesTab: Boolean(getConversation(args.conversationId)),
+      }),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,
       skills.length ? `# Project skills\n${skillsCatalog(skills)}` : '',
@@ -775,20 +772,21 @@ async function prepareRuntime(
         : '',
       args.mode === 'maestro' && args.maestro ? renderMaestroTurnPolicy(args.maestro) : '',
       ultra ? `# Ultra mode\n${ultra}` : '',
-      behaviorProfile ? '' : `# Environment\n${env}`,
+      harness.prompts.environment.transient ? '' : `# Environment\n${env}`,
       autonomousPolicy(args.conversationId) ? AUTONOMOUS_INSTRUCTIONS : '',
     ]
       .filter(Boolean)
       .join('\n\n')
+    const postToolUseHook = createHarnessPostToolUseHooks(harness)
     return {
       tools: hostTools,
       rawTools,
       bridge,
       systemPrompt,
       promptHash: createHash('sha256').update(systemPrompt).digest('hex'),
-      ...(behaviorProfile ? { transientContext: claudeEnvironmentContext(env) } : {}),
-      ...(isFableBehaviorProfile(behaviorProfile) ? { fablePostToolUseHook: createFablePostToolUseHook() } : {}),
-      ...(behaviorProfile ? { behaviorProfile } : {}),
+      ...(harness.prompts.environment.transient ? { transientContext: harnessEnvironmentContext(env) } : {}),
+      ...(postToolUseHook ? { postToolUseHook } : {}),
+      harness,
       agents,
       close: async () => {
         await Promise.all([mcp.close(), app.close()])
@@ -834,6 +832,7 @@ export async function inspectClaudeSessionCompatibility(args: InspectClaudeSessi
         toolSignature: runtime.bridge.toolSignature,
         accountIdentity: args.accountIdentity,
         accountId: args.manager.accountId,
+        harness: runtime.harness,
       })
     ) {
       return false
@@ -1178,13 +1177,13 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     if (!runtime) throw new Error('Claude runtime preparation failed.')
     runtime = runtime as PreparedRuntime
     chatDiag({
-      kind: 'fable-behavior-profile',
-      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      kind: 'harness-behavior-profile',
+      profile: runtime.harness.identity.behaviorProfileId ?? 'legacy',
       requestedModel: args.selection.modelId,
       resolvedModel: runtimeModelId,
       transport: 'claude-agent-sdk',
       effort: args.reasoningEffort ?? 'default',
-      progressMode: runtime.behaviorProfile?.progressMode ?? 'prompt-only',
+      progressMode: runtime.harness.progress,
       conv: args.conversationId,
     })
     args.signal.throwIfAborted()
@@ -1240,6 +1239,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         toolSignature: runtime.bridge.toolSignature,
         accountIdentity: args.accountIdentity,
         accountId: args.manager.accountId,
+        harness: runtime.harness,
       })
     const mapping = previousMessage ? getClaudeMessageMapping(args.conversationId, previousMessage.id) : null
     const resolution = resolveClaudeSession({
@@ -1251,7 +1251,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     })
     chatDiag({
       kind: 'claude-session-resolution',
-      profile: runtime.behaviorProfile?.id ?? 'legacy',
+      profile: runtime.harness.identity.behaviorProfileId ?? 'legacy',
       model: runtimeModelId,
       conv: args.conversationId,
       resume: Boolean(resolution.resume),
@@ -1499,7 +1499,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             fastMode: args.fastMode,
             systemPrompt: runtime.systemPrompt,
             bridge: runtime.bridge,
-            postToolUseHook: runtime.fablePostToolUseHook,
+            ...(runtime.postToolUseHook ? { postToolUseHook: runtime.postToolUseHook } : {}),
+            progressMode: runtime.harness.progress,
             disallowedNativeTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
             ...nextResume,
           }),
@@ -2140,6 +2141,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           lastAssistantUuid: mapperState.lastAssistantUuid,
           accountIdentity: args.accountIdentity,
           accountId: args.manager.accountId,
+          harnessSnapshot: createHarnessSnapshot(runtime.harness),
           usage: usageSnapshot(
             result,
             fallbackMainUsage,
@@ -2339,6 +2341,7 @@ export async function compactClaudeSession(args: CompactClaudeSessionArgs): Prom
       toolSignature: runtime.bridge.toolSignature,
       accountIdentity: args.accountIdentity,
       accountId: args.manager.accountId,
+      harness: runtime.harness,
     })
   ) {
     await runtime.close()

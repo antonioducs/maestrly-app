@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { compileOpenAIAstraPrompt } from '../../src/main/chat/openai/astra-prompt'
+import { buildHarnessPrompt, type BuildHarnessPromptInput } from '../../src/main/chat/harness/prompt-builder'
+import { resolveChatHarness } from '../../src/main/chat/harness/execution'
+
+/** The concise Astra layout now comes from the gpt-6-astra profile folder. */
+const compileOpenAIAstraPrompt = (value: Omit<BuildHarnessPromptInput, 'harness'>) =>
+  buildHarnessPrompt({ ...value, harness: astraHarness })
+const astraHarness = resolveChatHarness('openai-responses', 'gpt-6-astra', 'https://api.openai.com/v1').harness
 
 describe('OpenAI Astra prompt profile', () => {
   it.each(['agent', 'plan', 'ask'] as const)('compiles a concise %s prompt with a stable prefix', (mode) => {
@@ -25,7 +31,7 @@ describe('OpenAI Astra prompt profile', () => {
       envContext: 'ENV-B',
       nativeTools: { localShell: true, applyPatch: true },
     })
-    expect(first.profile.id).toBe('maestrly-openai-gpt-6-astra@v1')
+    expect(astraHarness.identity.promptIdentity).toBe('maestrly-openai-gpt-6-astra@v1')
     expect(first.stablePrefix).toBe(second.stablePrefix)
     expect(first.volatileSuffix).not.toBe(second.volatileSuffix)
     expect(first.instructions).toContain('Maestrly\'s task tool is the only delegation surface')

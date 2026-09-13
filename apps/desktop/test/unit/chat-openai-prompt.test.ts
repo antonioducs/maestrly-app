@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import {
-  OPENAI_CODEX_BASE_INSTRUCTIONS,
-  OPENAI_CODEX_PROMPT_SOURCE,
-  compileOpenAIPrompt,
-  openAINativeToolsPromptOverlay,
-  type CompileOpenAIPromptInput,
-} from '../../src/main/chat/openai/prompt'
+import { openAINativeToolsPromptOverlay } from '../../src/main/chat/harness/strategies/prompt-layout'
+import { buildHarnessPrompt, type BuildHarnessPromptInput } from '../../src/main/chat/harness/prompt-builder'
+import { resolveChatHarness } from '../../src/main/chat/harness/execution'
+
+/** The Codex-derived port now lives in the gpt-5.6-sol profile folder; identity and bytes are unchanged. */
+const solHarness = resolveChatHarness('openai-responses', 'gpt-5.6-sol', 'https://api.openai.com/v1').harness
+const OPENAI_CODEX_BASE_INSTRUCTIONS = solHarness.prompts.base!
+const OPENAI_CODEX_PROMPT_SOURCE = solHarness.source!
+type CompileOpenAIPromptInput = Omit<BuildHarnessPromptInput, 'harness'>
+const compileOpenAIPrompt = (value: CompileOpenAIPromptInput) =>
+  buildHarnessPrompt({ ...value, harness: solHarness })
 
 const input = (overrides: Partial<CompileOpenAIPromptInput> = {}): CompileOpenAIPromptInput => ({
   cwd: '/repo',

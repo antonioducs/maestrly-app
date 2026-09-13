@@ -1,0 +1,50 @@
+[
+  {
+    "modelId": "gpt-5.6-sol",
+    "family": "openai",
+    "profile": "copilot-openai-v1",
+    "promptProfile": "codex-gpt-5.6-sol@5bed644"
+  },
+  {
+    "modelId": "openai/gpt-5.6-sol",
+    "family": "openai",
+    "profile": "copilot-openai-v1",
+    "promptProfile": "codex-gpt-5.6-sol@5bed644"
+  },
+  {
+    "modelId": "GPT-5.6-SOL",
+    "family": "openai",
+    "profile": "copilot-openai-v1",
+    "promptProfile": "codex-gpt-5.6-sol@5bed644"
+  },
+  {
+    "modelId": "openai/gpt-4.1",
+    "family": "openai",
+    "profile": "copilot-openai-v1",
+    "promptProfile": "maestrly-openai-generic-v1"
+  },
+  {
+    "modelId": "gpt-6-astra",
+    "family": "openai",
+    "profile": "copilot-openai-v1",
+    "promptProfile": "maestrly-openai-generic-v1"
+  },
+  {
+    "modelId": "claude-fable-5-1",
+    "family": "anthropic",
+    "profile": "copilot-anthropic-v1",
+    "promptProfile": "maestrly-legacy"
+  },
+  {
+    "modelId": "anthropic/claude-opus-5",
+    "family": "anthropic",
+    "profile": "copilot-anthropic-v1",
+    "promptProfile": "maestrly-legacy"
+  },
+  {
+    "modelId": "gemini-3",
+    "family": "generic",
+    "profile": "copilot-generic-v1",
+    "promptProfile": "maestrly-legacy"
+  }
+]

@@ -1,8 +1,9 @@
-import type { ChatActiveHarnessProfile, ChatReasoningEffort } from '../../../shared/chat'
+import type { ChatReasoningEffort } from '../../../shared/chat'
+import { isHarnessReasoningReset } from '../../../shared/harness'
 
-export interface AstraComposerRouteInput {
+export interface HarnessComposerRouteInput {
   streaming: boolean
-  activeHarnessProfile: ChatActiveHarnessProfile | null
+  /** Effective capability published by the active execution, not a model or profile name. */
   midTurnSteering: boolean
   text: string
   attachmentCount: number
@@ -11,11 +12,10 @@ export interface AstraComposerRouteInput {
   maestro: boolean
 }
 
-/** Renderer routing is capability-based; it never infers Astra from the selected model string. */
-export function routeAstraComposerSubmit(input: AstraComposerRouteInput): 'steer' | 'queue' | 'send' {
+/** Composer routing is capability-based: it never infers a harness from the selected model string. */
+export function routeHarnessComposerSubmit(input: HarnessComposerRouteInput): 'steer' | 'queue' | 'send' {
   if (!input.streaming) return 'send'
   if (
-    input.activeHarnessProfile === 'openai-gpt-6-astra-v1' &&
     input.midTurnSteering &&
     input.text.trim() &&
     input.attachmentCount === 0 &&
@@ -27,20 +27,23 @@ export function routeAstraComposerSubmit(input: AstraComposerRouteInput): 'steer
   return 'queue'
 }
 
-export function routeAstraReasoningChange(input: {
+export interface HarnessReasoningRouteInput {
   streaming: boolean
-  activeHarnessProfile: ChatActiveHarnessProfile | null
   liveReasoningUpdate: boolean
   effort: ChatReasoningEffort
-  supportedEfforts: readonly string[]
-}): 'live-and-next-turn' | 'next-turn-only' {
-  const valid = input.effort === 'off' || input.effort === 'default' || input.supportedEfforts.includes(input.effort)
-  return input.streaming &&
-    input.activeHarnessProfile === 'openai-gpt-6-astra-v1' &&
-    input.liveReasoningUpdate &&
-    valid &&
-    input.effort !== 'minimal' &&
-    input.effort !== 'none'
-    ? 'live-and-next-turn'
-    : 'next-turn-only'
+  /** Efforts the active execution accepts right now. Empty means no live change is possible. */
+  liveReasoningEfforts: readonly string[]
+  /** Whether the active execution accepts clearing the override back to the provider default. */
+  liveReasoningReset: boolean
+}
+
+/** A live effort change requires a running execution that actually accepts that exact value. */
+export function routeHarnessReasoningChange(
+  input: HarnessReasoningRouteInput
+): 'live-and-next-turn' | 'next-turn-only' {
+  if (!input.streaming || !input.liveReasoningUpdate) return 'next-turn-only'
+  const accepted = isHarnessReasoningReset(input.effort)
+    ? input.liveReasoningReset
+    : input.liveReasoningEfforts.includes(input.effort)
+  return accepted ? 'live-and-next-turn' : 'next-turn-only'
 }

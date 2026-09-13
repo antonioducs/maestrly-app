@@ -1,4 +1,5 @@
 import type { HookCallbackMatcher, Options } from '@anthropic-ai/claude-agent-sdk'
+import type { HarnessProgressMode } from '../harness/types'
 import type { ClaudeToolBridge } from './tools'
 
 const CLAUDE_EFFORT_LEVELS = new Set<NonNullable<Options['effort']>>(['low', 'medium', 'high', 'xhigh', 'max'])
@@ -25,6 +26,8 @@ export interface BuildClaudeChatQueryOptionsArgs {
   systemPrompt: string
   bridge: ClaudeToolBridge
   postToolUseHook?: HookCallbackMatcher
+  /** Progress contract declared by the resolved harness; it is not implied by hook presence. */
+  progressMode?: HarnessProgressMode
   disallowedNativeTools: readonly string[]
   resume?: string
   resumeSessionAt?: string
@@ -66,7 +69,7 @@ export function buildClaudeChatQueryOptions(args: BuildClaudeChatQueryOptionsArg
       PreToolUse: [args.bridge.preToolUseHook],
       ...(args.postToolUseHook ? { PostToolUse: [args.postToolUseHook] } : {}),
     },
-    ...(args.postToolUseHook ? { thinking: { type: 'adaptive', display: 'summarized' } } : {}),
+    ...(args.progressMode === 'summarized' ? { thinking: { type: 'adaptive' as const, display: 'summarized' as const } } : {}),
     permissionMode: 'dontAsk',
     includePartialMessages: true,
     promptSuggestions: false,

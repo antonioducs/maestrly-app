@@ -1,0 +1,446 @@
+[
+  {
+    "name": "astra/full",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": true,
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": true
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled. The runtime exposes request_user_input_async for non-blocking questions; its input is text-only.\n\nBASE"
+  },
+  {
+    "name": "astra/ephemeral",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": false,
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": true
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled. The runtime exposes request_user_input_async for non-blocking questions; its input is text-only.\n\nBASE"
+  },
+  {
+    "name": "astra/reviewer",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": false,
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": true
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled. The runtime exposes request_user_input_async for non-blocking questions; its input is text-only.\n\nBASE"
+  },
+  {
+    "name": "astra/ineligible",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": false,
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": true
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled. The runtime exposes request_user_input_async for non-blocking questions; its input is text-only.\n\nBASE"
+  },
+  {
+    "name": "astra/no-async",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": false,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": false,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": true,
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": false
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled.\n\nBASE"
+  },
+  {
+    "name": "astra/flag-off",
+    "profile": {
+      "modelHarnessProfileId": "openai-default-v1",
+      "promptVersion": "codex-current-v1",
+      "isAstra": false,
+      "capabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false,
+        "validReasoningEfforts": []
+      },
+      "modelCapabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false
+      },
+      "adapterCapabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false
+      },
+      "nativeCompactionFirst": false,
+      "experimentalContextEnabled": false,
+      "personality": "pragmatic",
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": false
+    },
+    "developer": "BASE"
+  },
+  {
+    "name": "astra/minimal-effort",
+    "profile": {
+      "modelHarnessProfileId": "openai-gpt-6-astra-v1",
+      "promptVersion": "astra-codex-host-v1",
+      "isAstra": true,
+      "capabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true,
+        "validReasoningEfforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "modelCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "adapterCapabilities": {
+        "responsesTools": true,
+        "persistedReasoning": true,
+        "encryptedReasoning": true,
+        "reasoningContext": true,
+        "compaction": true,
+        "parallelTools": true,
+        "steering": true,
+        "asyncTools": true,
+        "configurationUpdates": true,
+        "experimentalContext": true
+      },
+      "nativeCompactionFirst": true,
+      "experimentalContextEnabled": true,
+      "reasoningEffort": null,
+      "asyncQuestionGuidance": true
+    },
+    "developer": "Use the native Astra operating prompt. Apply only these Maestrly host contracts: explicit user and host instructions outrank non-mandatory skill guidance; complete authorized work autonomously; communicate directly with proportional formatting; delegate only through Maestrly task, using parallel task calls when useful; and verify in proportion to risk. Native multi-agent tools are disabled. The runtime exposes request_user_input_async for non-blocking questions; its input is text-only.\n\nBASE"
+  },
+  {
+    "name": "sol",
+    "profile": {
+      "modelHarnessProfileId": "openai-default-v1",
+      "promptVersion": "codex-current-v1",
+      "isAstra": false,
+      "capabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false,
+        "validReasoningEfforts": []
+      },
+      "modelCapabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false
+      },
+      "adapterCapabilities": {
+        "responsesTools": false,
+        "persistedReasoning": false,
+        "encryptedReasoning": false,
+        "reasoningContext": false,
+        "compaction": false,
+        "parallelTools": false,
+        "steering": false,
+        "asyncTools": false,
+        "configurationUpdates": false,
+        "experimentalContext": false
+      },
+      "nativeCompactionFirst": false,
+      "experimentalContextEnabled": false,
+      "personality": "pragmatic",
+      "reasoningEffort": "high",
+      "asyncQuestionGuidance": false
+    },
+    "developer": "BASE"
+  }
+]

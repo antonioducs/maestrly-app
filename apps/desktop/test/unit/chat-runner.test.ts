@@ -26,7 +26,6 @@ import {
   resolveTurnReasoning,
   runChat,
   subagentPermissionAssertInput,
-  SYSTEM_PROMPT,
 } from '../../src/main/chat/runner'
 import { frozenEffortReproducible, resolveFrozenSentEffort, toolOutputImages } from '../../src/shared/chat'
 import {
@@ -46,7 +45,6 @@ import { clearEphemeralToolImages } from '../../src/main/chat/tool-output'
 import { freshDb, closeDb } from '../helpers/db'
 import type { PermissionBroker } from '../../src/main/chat/permission'
 import type { QuestionBroker } from '../../src/main/chat/question-broker'
-import { FABLE_51_BEHAVIOR_PROFILE } from '../../src/main/chat/fable/profile'
 
 const mocks = vi.hoisted(() => ({
   streamText: vi.fn(),
@@ -69,11 +67,20 @@ vi.mock('ai', async (importOriginal) => {
 })
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: mocks.chatDiag }))
 vi.mock('../../src/main/chat/usage-diagnostics', () => ({ recordModelCallUsage: mocks.recordModelCallUsage }))
-vi.mock('../../src/main/chat/provider', () => ({
-  resolveChatModel: mocks.resolveChatModel,
-  resolveLanguageModel: () => ({ modelId: 'vision-model' }),
-  buildOpenAIProviderFingerprint: () => 'fp:test',
-}))
+vi.mock('../../src/main/chat/provider', async () => {
+  const { harnessFor } = await import('../../src/main/chat/harness/execution')
+  return {
+    // The real factory always returns the execution contract; derive it from the requested model.
+    resolveChatModel: (providerId: string, modelId: string, options?: unknown) => {
+      const resolved = mocks.resolveChatModel(providerId, modelId, options)
+      return resolved && !resolved.harness
+        ? { ...resolved, harness: harnessFor(resolved.transport ?? 'openai', modelId) }
+        : resolved
+    },
+    resolveLanguageModel: () => ({ modelId: 'vision-model' }),
+    buildOpenAIProviderFingerprint: () => 'fp:test',
+  }
+})
 vi.mock('../../src/main/chat/credentials', () => ({
   hasApiKey: (providerId: string) => mocks.hasApiKey(providerId),
   getApiKey: (providerId: string) => (mocks.hasApiKey(providerId) ? mocks.getApiKey(providerId) : null),
@@ -104,8 +111,8 @@ vi.mock('../../src/main/chat/skill-state', () => ({
   findEffectiveSkill: async () => null,
 }))
 vi.mock('../../src/main/chat/virtual-subagents', () => ({ listEffectiveAgents: async () => [] }))
-vi.mock('../../src/main/chat/harness', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/main/chat/harness')>()
+vi.mock('../../src/main/chat/harness/adapters/responses', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/chat/harness/adapters/responses')>()
   return {
     ...actual,
     isOpenAIHarnessActive: (enabled: boolean, resolution: unknown) => mocks.isHarnessActive(enabled, resolution),
@@ -116,6 +123,27 @@ vi.mock('../../src/main/chat/image-gen', async (importOriginal) => {
   return { ...actual, generateImageToolEnabled: async () => false }
 })
 vi.mock('../../src/main/chat/git-service', () => ({ gitEnvInfo: async () => null }))
+
+import { buildMaestrlyBasePrompt } from '../../src/main/chat/harness/host-contracts'
+import { harnessFor } from '../../src/main/chat/harness/execution'
+import type { ChatBehavior } from '../../src/shared/conversation-experience'
+
+/** Host base prompt for an unspecialized model: the declarative equivalent of the legacy SYSTEM_PROMPT. */
+const SYSTEM_PROMPT = (
+  cwd: string,
+  appToolsEnabled: boolean,
+  mode: ChatBehavior,
+  hasNotesTab: boolean,
+  modelId = 'generic-model'
+): string =>
+  buildMaestrlyBasePrompt({
+    harness: harnessFor('openai', modelId),
+    cwd,
+    appToolsEnabled,
+    mode,
+    hasNotesTab,
+  })
+
 
 describe('chat runner helpers', () => {
   it('describes restricted catalogs without weakening code or shell policy', () => {
@@ -990,7 +1018,6 @@ describe('runtime tool-image capability learning', () => {
       projectId: 'w',
       cwd: '/tmp/w',
       selection: { providerId: 'openai', modelId: 'claude-fable-5-1' },
-      behaviorProfile: FABLE_51_BEHAVIOR_PROFILE,
       broker: { assert: async () => undefined } as unknown as PermissionBroker,
       questionBroker: {} as QuestionBroker,
       emit: vi.fn(),

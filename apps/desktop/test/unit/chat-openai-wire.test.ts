@@ -1,7 +1,14 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { jsonSchema, Output, stepCountIs, streamText, tool } from 'ai'
 import { describe, expect, it } from 'vitest'
-import { openAIHarnessProviderOptions, resolveChatHarness } from '../../src/main/chat/harness'
+import { openAIHarnessProviderOptions } from '../../src/main/chat/harness/adapters/responses'
+import { resolveChatHarness as resolveExecution } from '../../src/main/chat/harness/execution'
+import type { ChatProviderKind } from '../../src/shared/chat'
+
+const resolveChatHarness = (kind: ChatProviderKind, modelId: string, baseURL?: string) => {
+  const execution = resolveExecution(kind, modelId, baseURL)
+  return { profile: execution.transport, capabilities: execution.capabilities }
+}
 import {
   createOpenAIResponsesLedger,
   reduceOpenAIResponsesStreamEvent,

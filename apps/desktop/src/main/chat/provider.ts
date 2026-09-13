@@ -23,13 +23,13 @@ import {
   type ChatProvider,
 } from './catalog'
 import { getApiKey } from './credentials'
+import type { ChatHarnessCapabilities, ChatHarnessProfile } from './harness/adapters/responses'
 import {
-  resolveChatHarness,
-  type ChatHarnessCapabilities,
-  type ChatHarnessProfile,
-  type ChatPromptProfile,
-} from './harness'
-import type { ModelHarnessProfileId, RuntimeModelCapabilities } from './model-harness-profile'
+  resolveChatHarnessExecution,
+  type HarnessExecutionFailure,
+  type ResolveChatHarnessOptions,
+} from './harness/execution'
+import type { ResolvedHarness } from './harness/types'
 import { openAIResponsesFetch } from './openai/raw-input'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
 import { GrokNotAuthenticatedError } from './grok-subscription/manager'
@@ -161,14 +161,24 @@ export interface ResolvedChatModel {
   model: LanguageModelV4
   transport: ChatProviderKind
   harnessProfile: ChatHarnessProfile
-  modelHarnessProfileId: ModelHarnessProfileId
-  promptProfile: ChatPromptProfile
+  /** Whole harness contract for this execution: prompts, policies, capabilities and compatibility. */
+  harness: ResolvedHarness
+  modelHarnessProfileId: string
+  promptProfile: string
+  behaviorProfileId: string | null
   capabilities: ChatHarnessCapabilities
   /** Bind opaque sidecars to their originating endpoint, protocol and credential without persisting the key. */
   providerFingerprint: string
 }
 
 export type ResolvedChatHarness = Omit<ResolvedChatModel, 'model' | 'providerFingerprint'>
+
+export class FrozenHarnessUnavailableError extends Error {
+  constructor(readonly reason: HarnessExecutionFailure) {
+    super(`Frozen harness contract is no longer reproducible: ${reason}`)
+    this.name = 'FrozenHarnessUnavailableError'
+  }
+}
 
 /**
  * Resolve harness metadata without instantiating the provider or requiring a configured key;
@@ -177,30 +187,29 @@ export type ResolvedChatHarness = Omit<ResolvedChatModel, 'model' | 'providerFin
 export function resolveChatHarnessMetadata(
   providerId: string,
   modelId: string,
-  options: {
-    astraHarnessEnabled?: boolean
-    runtimeModelCapabilities?: RuntimeModelCapabilities
-    adapterCapabilities?: RuntimeModelCapabilities
-    runtimeReasoningEfforts?: readonly string[]
-  } = {}
+  options: ResolveChatHarnessOptions = {}
 ): ResolvedChatHarness {
   const descriptor = getProvider(providerId)
   if (!descriptor) throw new ChatConfigError(`Unknown provider: ${providerId}`, 'unknown-provider')
   // Harness transport: Grok stays on legacy (openai-compat). Official OpenAI Responses stays Responses.
   const transport = isGrokSubscriptionProvider(providerId) ? 'openai' : getProviderKind(descriptor)
-  const harness = resolveChatHarness(
+  const result = resolveChatHarnessExecution(
     // Pass the catalog kind for non-Grok so Responses still activates for openai-responses providers.
-    isGrokSubscriptionProvider(providerId) ? 'openai' : getProviderKind(descriptor),
+    transport,
     modelId,
     descriptor.baseURL,
     options
   )
+  // A frozen contract that cannot be reproduced fails explicitly; it never degrades to another profile.
+  if (!result.ok) throw new FrozenHarnessUnavailableError(result.reason)
   return {
     transport,
-    harnessProfile: harness.profile,
-    modelHarnessProfileId: harness.modelHarnessProfileId,
-    promptProfile: harness.promptProfile,
-    capabilities: harness.capabilities,
+    harnessProfile: result.execution.transport,
+    harness: result.execution.harness,
+    modelHarnessProfileId: result.execution.modelHarnessProfileId,
+    promptProfile: result.execution.promptProfile,
+    behaviorProfileId: result.execution.behaviorProfileId,
+    capabilities: result.execution.capabilities,
   }
 }
 

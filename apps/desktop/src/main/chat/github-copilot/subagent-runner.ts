@@ -2,7 +2,6 @@ import type { CopilotSession, SessionEvent, Tool as CopilotTool } from '@github/
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
 import type { ChatAgent } from '../agents'
-import { getAppFlag } from '../../store'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
@@ -16,10 +15,9 @@ import type {
 } from './manager'
 import { queueGitHubCopilotSessionCleanup } from './session-store'
 import { COPILOT_TOOL_SEARCH_DEFER_THRESHOLD } from './tools'
-import { FABLE_51_PROFILE_FLAG } from '../fable/profile'
-import { OPUS_5_PROFILE_FLAG } from '../opus/profile'
-import { resolveClaudeBehaviorProfile } from '../behavior-profile'
-import { compileClaudeSubagentPrompt } from '../behavior-prompt'
+import { harnessFor } from '../harness/execution'
+import { captureHarnessFlags } from '../harness/flags'
+import { harnessSubagentPrompt } from '../harness/host-contracts'
 import { chatDiag } from '../diag-log'
 
 const SESSION_WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1_000
@@ -170,20 +168,17 @@ export async function runGitHubCopilotSubagent(
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
   ].join('\n\n')
-  const behaviorProfile = resolveClaudeBehaviorProfile({
-    requestedModelId: effective.modelId,
-    fableEnabled: getAppFlag(FABLE_51_PROFILE_FLAG, true),
-    opusEnabled: getAppFlag(OPUS_5_PROFILE_FLAG, true),
-  }).profile
-  const systemMessage = compileClaudeSubagentPrompt(legacySystemMessage, behaviorProfile)
+  // The child resolves its own model; it never inherits the parent's contract.
+  const harness = harnessFor('github-copilot-subscription', effective.modelId, { flags: captureHarnessFlags() })
+  const systemMessage = harnessSubagentPrompt(legacySystemMessage, harness)
   chatDiag({
-    kind: 'fable-behavior-profile',
-    profile: behaviorProfile?.id ?? 'legacy',
+    kind: 'harness-behavior-profile',
+    profile: harness.identity.behaviorProfileId ?? 'legacy',
     requestedModel: effective.modelId,
     resolvedModel: effective.modelId,
     transport: 'github-copilot',
     effort: effective.sentEffort ?? 'default',
-    progressMode: 'prompt-only',
+    progressMode: harness.progress,
     agent: args.agentName,
     conv: args.conversationId,
   })
