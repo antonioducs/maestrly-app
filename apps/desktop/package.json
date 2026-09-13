@@ -100,7 +100,7 @@
     "@electron/rebuild": "4.2.0",
     "@openai/codex": "0.153.4",
     "@playwright/test": "^1.62.1",
-    "@types/diff": "^7.0.2",
+    "@types/diff": "^8.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
