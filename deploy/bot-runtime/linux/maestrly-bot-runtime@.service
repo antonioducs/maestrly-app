@@ -1,0 +1,8 @@
+[Unit]
+Description=Maestrly bot runtime %i
+
+[Service]
+User=nobody
+Group=nogroup
+Environment=MAESTRLY_BOT_SESSION_REQUIRED=1
+ExecStart=/opt/maestrly-bot/runtime/bin/node /opt/maestrly-bot/app/main.js

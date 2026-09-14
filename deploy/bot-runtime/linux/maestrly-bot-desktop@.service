@@ -1,0 +1,9 @@
+[Unit]
+Description=Maestrly bot desktop %i
+
+[Service]
+User=nobody
+Group=nogroup
+Environment=MAESTRLY_BOT_SESSION_REQUIRED=1
+ExecStart=/bin/sh /opt/maestrly-bot/install/desktop-session.sh
+ExecStartPost=/bin/sh /opt/maestrly-bot/install/wait-desktop.sh

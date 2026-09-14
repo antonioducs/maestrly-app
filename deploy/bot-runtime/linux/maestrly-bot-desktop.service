@@ -1,0 +1,16 @@
+[Unit]
+Description=Maestrly bot Chromium display
+PartOf=maestrly-bot-runtime.service
+Before=maestrly-bot-runtime.service
+
+[Service]
+User=maestrlybot
+Group=maestrlybot
+Environment=DISPLAY=:10
+ExecStart=/bin/sh /opt/maestrly-bot/install/desktop-session.sh
+Restart=always
+RestartSec=2
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

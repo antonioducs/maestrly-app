@@ -1,0 +1,26 @@
+[Unit]
+Description=Maestrly bot runtime
+After=maestrly-bot-desktop.service
+Wants=maestrly-bot-desktop.service
+JoinsNamespaceOf=maestrly-bot-desktop.service
+
+[Service]
+User=maestrlybot
+Group=maestrlybot
+ExecStart=/opt/maestrly-bot/runtime/bin/node /opt/maestrly-bot/app/main.js
+Restart=always
+RestartSec=2
+Environment=MAESTRLY_BOT_PACKAGED=1
+Environment=MAESTRLY_BOT_DESKTOP_MANAGED=1
+Environment=MAESTRLY_BOT_MCP_MAIN=/opt/maestrly-bot/app/tools/mcp-main.js
+Environment=MAESTRLY_CODEX_BINARY=/opt/maestrly-bot/codex/bin/codex
+NoNewPrivileges=false
+ProtectSystem=strict
+ReadWritePaths=/var/lib/maestrly-bot /home/maestrlybot
+PrivateTmp=true
+DevicePolicy=closed
+DeviceAllow=/dev/virtio-ports/org.maestrly.bot.control.0 rw
+DeviceAllow=/dev/virtio-ports/org.maestrly.bot.egress.0 rw
+
+[Install]
+WantedBy=multi-user.target

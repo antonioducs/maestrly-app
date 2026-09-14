@@ -1,0 +1,14 @@
+[Unit]
+Description=Maestrly VM session supervisor
+After=local-fs.target
+
+[Service]
+User=root
+ExecStart=/opt/maestrly-bot/runtime/bin/node /opt/maestrly-bot/app/vm/main.js
+Restart=on-failure
+RestartSec=2
+UMask=0077
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

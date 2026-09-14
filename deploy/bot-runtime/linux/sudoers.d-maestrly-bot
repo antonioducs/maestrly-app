@@ -1,0 +1,3 @@
+# No sudo privileges are granted to maestrlybot.
+# Native provider shells run as this user and cannot authenticate Host approvals.
+# Elevated operations are unsupported in both ask and full-vm modes.

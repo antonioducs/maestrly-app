@@ -1,0 +1,9 @@
+# Ubuntu 24.04 restricts unprivileged user namespaces by executable profile.
+# Keep the system-wide restriction; permit the packaged Chromium sandbox only.
+# This is a userns compatibility profile, not an additional browser confinement policy.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile maestrly-chromium /opt/maestrly-bot/chromium/chrome flags=(unconfined) {
+  userns,
+}
