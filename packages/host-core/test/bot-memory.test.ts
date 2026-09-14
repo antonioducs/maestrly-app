@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
-import { readyBot, setup, until } from './bot-helpers.js'
+import { readyBot, setup, template, until } from './bot-helpers.js'
 const skipWindows = process.platform === 'win32'
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -8,7 +8,7 @@ afterEach(async () => {
 })
 describe.skipIf(skipWindows)('bot memory', () => {
   it('is per bot, revisioned, inspectable and feeds only active items into the next snapshot', async () => {
-    const ctx = await setup()
+    const ctx = await setup({ templates: [{ ...template, recommended: { cpus: 2, memoryMiB: 2048, diskGiB: 12 } }] })
     cleanups.push(async () => {
       await ctx.service.close()
       await rm(ctx.dir, { recursive: true, force: true })
