@@ -10,3 +10,10 @@ it('builds a CommonJS preload for sandboxed Electron', () => {
   expect(readFileSync('electron.vite.config.ts', 'utf8')).toContain("format: 'cjs'")
   expect(readFileSync('src/main/index.ts', 'utf8')).toContain('../preload/index.cjs')
 })
+
+it('isolates each automated fixture session without accepting a profile path', () => {
+  const session = '5391e270-ed54-4a84-b0d7-bc4e7b34b06a'
+  expect(identity('/data', false, true, session).userData).toBe('/data/io.github.antonioducs.maestrly.bot.fixture/' + session)
+  expect(() => identity('/data', false, true, '../dev')).toThrow()
+  expect(() => identity('/data', true, false, session)).toThrow()
+})

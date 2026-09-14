@@ -1,3 +1,5 @@
+import { Button, Input, Select } from '../../ui'
+import { useAdminT } from '../../i18n/admin'
 import type { Host, Method } from '../../../shared/types'
 type Props = {
   host?: Host
@@ -8,6 +10,7 @@ type Props = {
   mutation: (method: Method, params: Record<string, unknown>) => Promise<void>
 }
 export function CreateComputer({ host, images, disabled, setCreating, run, mutation }: Props) {
+  const a = useAdminT()
   return (
     <div className="backdrop">
       <dialog
@@ -17,7 +20,7 @@ export function CreateComputer({ host, images, disabled, setCreating, run, mutat
         onCancel={() => setCreating(false)}
         aria-labelledby="create-title"
       >
-        <h2 id="create-title">Create a virtual machine</h2>
+        <h2 id="create-title">{a('Create a virtual machine')}</h2>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -36,12 +39,11 @@ export function CreateComputer({ host, images, disabled, setCreating, run, mutat
           }}
         >
           <label>
-            Name
-            <input name="name" required maxLength={80} autoFocus />
+            {a('Name')} <Input name="name" required maxLength={80} autoFocus />
           </label>
           <label>
-            Image
-            <select name="image" required>
+            {a('Image')}{' '}
+            <Select aria-label="Image" name="image" required>
               {images
                 .filter((i) => i.available !== false)
                 .map((i) => (
@@ -49,26 +51,26 @@ export function CreateComputer({ host, images, disabled, setCreating, run, mutat
                     {i.name ?? i.id}
                   </option>
                 ))}
-            </select>
+            </Select>
           </label>
           <label>
-            Runtime
-            <select name="runtime" required>
+            {a('Runtime')}{' '}
+            <Select aria-label="Runtime" name="runtime" required>
               {host?.runtimes
                 .filter((r) => r.available)
                 .map((r) => (
                   <option key={r.id}>{r.id}</option>
                 ))}
-            </select>
+            </Select>
           </label>
           <div className="resource-fields">
             <label>
-              CPU cores
-              <input name="cpus" type="number" min="1" max={host?.capacity.cpus ?? 128} defaultValue="2" required />
+              {a('CPU cores')}{' '}
+              <Input name="cpus" type="number" min="1" max={host?.capacity.cpus ?? 128} defaultValue="2" required />
             </label>
             <label>
-              Memory (MiB)
-              <input
+              {a('Memory (MiB)')}{' '}
+              <Input
                 name="memory"
                 type="number"
                 min="256"
@@ -78,17 +80,17 @@ export function CreateComputer({ host, images, disabled, setCreating, run, mutat
               />
             </label>
             <label>
-              Disk (GiB)
-              <input name="disk" type="number" min="1" max={host?.capacity.diskGiB} defaultValue="20" required />
+              {a('Disk (GiB)')}{' '}
+              <Input name="disk" type="number" min="1" max={host?.capacity.diskGiB} defaultValue="20" required />
             </label>
           </div>
           <div className="actions">
-            <button type="button" onClick={() => setCreating(false)}>
-              Cancel
-            </button>
-            <button className="primary" disabled={disabled || !images.length}>
-              Create VM
-            </button>
+            <Button type="button" onClick={() => setCreating(false)}>
+              {a('Cancel')}{' '}
+            </Button>
+            <Button className="primary" disabled={disabled || !images.length}>
+              {a('Create VM')}{' '}
+            </Button>
           </div>
         </form>
       </dialog>

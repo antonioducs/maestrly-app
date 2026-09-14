@@ -1,0 +1,30 @@
+import { expect, test } from '@playwright/test'
+import { launchBot } from './bot-helpers'
+test('custom selectors use Maestrly menus and support keyboard selection and dismissal', async () => {
+  const { app, page } = await launchBot()
+  try {
+    await page.getByRole('button', { name: 'Configurações', exact: true }).click()
+    const theme = page.getByRole('combobox', { name: 'Aparência', exact: true })
+    await theme.click()
+    await expect(page.getByRole('listbox')).toBeVisible()
+    await expect(page.getByRole('option', { name: 'Escura', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await page.screenshot({ animations: 'disabled', path: 'test-results/dropdown-dark.png' })
+    await page.keyboard.press('Home')
+    await expect(page.getByRole('option', { name: 'Sistema', exact: true })).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.getByRole('option', { name: 'Clara', exact: true })).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await expect(theme).toBeFocused()
+    const language = page.getByRole('combobox', { name: 'Idioma', exact: true })
+    await language.click()
+    await page.screenshot({ animations: 'disabled', path: 'test-results/dropdown-light.png' })
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await expect(language).toBeFocused()
+    await language.click()
+    await page.getByRole('option', { name: 'English', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+  } finally { await app.close() }
+})

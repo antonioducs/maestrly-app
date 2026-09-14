@@ -45,9 +45,12 @@ export class SshTransport {
     return { ...this.state }
   }
   connect(alias: string): void {
-    const args = sshArgs(alias)
+    this.launchFixed('/usr/bin/ssh', sshArgs(alias), alias)
+  }
+  /** Fixed launcher and argument list only; callers never pass renderer-controlled commands. */
+  protected launchFixed(command: string, args: string[], alias: string): void {
     this.disconnect()
-    const child = this.launch('/usr/bin/ssh', args)
+    const child = this.launch(command, args)
     this.child = child
     this.state = { connected: true, alias }
     let buffer = ''
@@ -98,7 +101,11 @@ export class SshTransport {
     })
     child.on('close', () => {
       if (this.child === child)
-        this.fail(`SSH disconnected. ${stderr || 'Check the alias, known_hosts, and host installation.'}`)
+        this.fail(
+          alias === 'local'
+            ? `O Host local encerrou a conexão. ${stderr || 'Verifique se o serviço está em execução.'}`
+            : `SSH disconnected. ${stderr || 'Check the alias, known_hosts, and host installation.'}`
+        )
     })
   }
   request(method: string, params: Record<string, unknown>): Promise<unknown> {

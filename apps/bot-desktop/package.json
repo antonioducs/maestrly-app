@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/bot-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local Maestrly VM host console",
   "author": "Maestrly contributors",
@@ -20,7 +20,9 @@
   "dependencies": {
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "@maestrly/host-protocol": "0.1.0"
+    "@maestrly/host-protocol": "0.2.0",
+    "@maestrly/ui": "0.1.0",
+    "lucide-react": "1.41.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

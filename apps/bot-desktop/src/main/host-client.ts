@@ -3,6 +3,8 @@ import {
   vmSchema,
   operationSchema,
   verifyResultSchema,
+  botResultSchemas,
+  type BotMethod,
   type Host,
   type Vm,
   type Operation,
@@ -29,6 +31,12 @@ export function sanitize(value: unknown, depth = 0): unknown {
   return value
 }
 export function validateResult(method: string, value: unknown): unknown {
+  // Bot results are typed projections: chat content, code and guest paths pass through intact.
+  if (method.startsWith('bot.') || method.startsWith('account.') || method.startsWith('environment.')) {
+    const schema = botResultSchemas[method as BotMethod]
+    if (!schema) throw new Error('Unsupported bot result')
+    return schema.parse(value)
+  }
   if (method === 'host.inspect') {
     const host = hostSchema.parse(value)
     return {

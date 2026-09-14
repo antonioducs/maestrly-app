@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { HostRequestError } from './host-client'
+import { FixtureBots } from './fixture-bots'
 import type { Host, Vm, Operation } from '@maestrly/host-protocol'
 // Explicit local UI fixture; never hardware evidence and disabled in packaged builds.
 const timestamp = '2026-01-01T00:00:00.000Z'
@@ -24,29 +26,48 @@ export class FixtureHost {
       identity: '6dc3300d-5547-4e38-8caf-89a229f29bd8',
     },
   ]
-  constructor(private options: { lostReply?: string; retained?: boolean } = {}) {
+  readonly bots: FixtureBots
+  constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
+    if (options.readyEnvironment) { this.vms[0].state = 'running'; this.vms[0].health = 'ready'; this.vms[0].desiredState = 'running' }
     if (options.retained) this.vms[0].state = 'removed'
+    this.bots = new FixtureBots(
+      () => this.hostInfo(),
+      () => this.vms,
+      (name) => {
+        const vm: Vm = { ...this.vms[0], id: `vm-${this.vms.length}`, name, state: 'running', desiredState: 'running', health: 'ready', startupPolicy: 'always', revision: 1, identity: randomUUID() }
+        this.vms.push(vm)
+        return vm
+      },
+      { slowSetup: options.slowSetup, autoLoginMs: options.autoLoginMs, readyEnvironment: options.readyEnvironment, connectedAccount: options.connectedAccount }
+    )
   }
   operations = new Map<string, Operation>()
   private keys = new Map<string, Operation>()
   private removals = new Map<string, boolean>()
+  private hostInfo(): Host {
+    const active = this.vms.filter((v) => v.state !== 'removed')
+    return {
+      id: 'd9a02e5b-0c12-4411-9393-b5106ecff181',
+      serviceVersion: '0.2.0',
+      protocolVersion: 1,
+      capabilities: this.options.noBots ? ['fixture'] : ['fixture', 'environments.v1', 'accounts.v1', 'bot.runtime.v1', 'bot.setup', 'bot.sessions.v1'],
+      health: 'ready',
+      observedMemoryMiB: 4096,
+      platform: 'darwin',
+      arch: 'arm64',
+      supported: true,
+      capacity: { cpus: 12, memoryMiB: 32768, diskGiB: 500 },
+      allocated: { cpus: active.reduce((s, v) => s + v.cpus, 0), memoryMiB: active.reduce((s, v) => s + v.memoryMiB, 0), diskGiB: this.vms.reduce((s, v) => s + (v.diskRetained ? v.diskGiB : 0), 0) },
+      runtimes: [{ id: 'qemu', available: true }],
+    }
+  }
   async request(method: string, p: Record<string, unknown>): Promise<unknown> {
     if (!this.connected) throw new Error('Fixture disconnected')
-    if (method === 'host.inspect')
-      return {
-        id: 'd9a02e5b-0c12-4411-9393-b5106ecff181',
-        serviceVersion: '0.1.0',
-        protocolVersion: 1,
-        capabilities: ['fixture'],
-        health: 'ready',
-        observedMemoryMiB: 4096,
-        platform: 'darwin',
-        arch: 'arm64',
-        supported: true,
-        capacity: { cpus: 12, memoryMiB: 32768, diskGiB: 500 },
-        allocated: { cpus: 2, memoryMiB: 2048, diskGiB: 20 },
-        runtimes: [{ id: 'qemu', available: true }],
-      } satisfies Host
+    if (method.startsWith('bot.') || method.startsWith('account.') || method.startsWith('environment.')) {
+      if (this.options.noBots) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      return this.bots.request(method, p)
+    }
+    if (method === 'host.inspect') return this.hostInfo()
     if (method === 'vm.list')
       return this.vms.filter((v) => v.state !== 'removed' || (p.includeRetained === true && v.diskRetained))
     if (method === 'image.list') return [{ id: 'fixture-linux', name: 'Linux fixture', available: true }]

@@ -1,9 +1,11 @@
+import { useAdminT } from '../../i18n/admin'
 import type { Host } from '../../../shared/types'
 export function HostResources({ host }: { host: Host }) {
+  const a = useAdminT()
   return (
     <>
       {' '}
-      <section className="capacity" aria-label="Host resources">
+      <section className="capacity" aria-label={a('Host resources')}>
         {(
           [
             ['CPU', host.allocated.cpus, host.capacity.cpus, 'cores'],
@@ -11,20 +13,22 @@ export function HostResources({ host }: { host: Host }) {
             ['Storage', host.allocated.diskGiB, host.capacity.diskGiB, 'GiB'],
           ] as const
         ).map(([label, used, total, unit]) => (
-          <div key={label}>
-            <span>{label}</span>
+          <div key={a(label)}>
+            <span>{a(label)}</span>
             <p>
-              <strong>{used}</strong> / {total} <small>{unit}</small>
+              <strong>{used}</strong> / {total} <small>{a(unit)}</small>
             </p>
             <progress value={used} max={total || 1} />
           </div>
         ))}
       </section>
       <p className="health">
-        Host {host.id} · Observed memory {host.observedMemoryMiB} MiB · Capabilities: {host.capabilities.join(', ')}
+        Host {host.id}
+        {a('· Observed memory')} {host.observedMemoryMiB}
+        {a('MiB · Capabilities:')} {host.capabilities.join(', ')}
         <br />
-        {host.supported ? 'Host supported' : 'Host unsupported'} ·{' '}
-        {host.runtimes.map((r) => `${r.id}: ${r.available ? 'ready' : (r.reason ?? 'unavailable')}`).join(' · ')}
+        {host.supported ? a('Host supported') : a('Host unsupported')} ·{' '}
+        {host.runtimes.map((r) => `${r.id}: ${r.available ? a('ready') : (r.reason ?? a('unavailable'))}`).join(' · ')}
       </p>
     </>
   )
