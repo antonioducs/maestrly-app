@@ -25,6 +25,12 @@ export function validateConfig(config) {
     'manifestSha256',
     'authorizeDeleteData',
     'operator',
+    // Phase 2 bot laboratory (opt-in): explicit VM selection and guest preparation consent.
+    'botVmId',
+    'allowGuestPreparation',
+    'authorizeBotSmoke',
+    'botBundlePath',
+    'botBundleSha256',
   ])
   if (Object.keys(config).some((k) => !allowed.has(k))) throw Error('Unknown lab configuration key')
   if (typeof config.sshAlias !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(config.sshAlias))
@@ -63,6 +69,13 @@ export function validateConfig(config) {
     (typeof config.operator !== 'string' || !/^[a-z][a-z0-9_-]{0,30}$/.test(config.operator))
   )
     throw Error('Invalid local operator')
+  if (config.botVmId !== undefined && (typeof config.botVmId !== 'string' || !/^[0-9a-f-]{36}$/i.test(config.botVmId)))
+    throw Error('botVmId must be the exact VM identifier chosen for preparation')
+  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke'])
+    if (config[key] !== undefined && typeof config[key] !== 'boolean') throw Error('Authorization must be boolean')
+  if (config.botBundlePath !== undefined && (typeof config.botBundlePath !== 'string' || !config.botBundlePath.startsWith('/')))
+    throw Error('Explicit absolute bot bundle path required')
+  if (config.botBundleSha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.botBundleSha256)) throw Error('Invalid bot bundle SHA256')
   return config
 }
 export function sshArguments(config) {
@@ -89,7 +102,7 @@ export function sshArguments(config) {
     '/bin/sh -s',
   ]
 }
-function ssh(config, command, input, timeout = 30000) {
+export function ssh(config, command, input, timeout = 30000) {
   return new Promise((resolveResult, reject) => {
     const args = sshArguments(config)
     args[args.length - 1] = command
@@ -126,14 +139,14 @@ function ssh(config, command, input, timeout = 30000) {
     } else child.stdin.end(input)
   })
 }
-async function remoteDoctor(config) {
+export async function remoteDoctor(config) {
   const result = await ssh(config, '/bin/sh -s', DOCTOR_SCRIPT)
   const report = JSON.parse(result.stdout)
   if (report.facts?.identity?.toUpperCase() !== config.expectedIdentity.toUpperCase())
     throw Error('Remote hardware identity mismatch')
   return report
 }
-async function rpc(config, method, params) {
+export async function rpc(config, method, params) {
   const id = randomUUID()
   const request = { version: 1, id, method, params }
   const { stdout, code } = await ssh(
@@ -148,7 +161,7 @@ async function rpc(config, method, params) {
   return reply.result
 }
 // Each journal entry is fsynced before the next remote effect or poll.
-async function record(directory, name, value) {
+export async function record(directory, name, value) {
   const file = await open(resolve(directory, `${name}.json`), 'wx', 0o600)
   try {
     await file.writeFile(`${JSON.stringify(value, null, 2)}\n`)

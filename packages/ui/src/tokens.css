@@ -1,0 +1,18 @@
+:root {
+  --m-font: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --m-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --m-canvas: #0a0a0b;
+  --m-primary: #edeae3;
+  --m-text: rgba(237, 234, 227, .96);
+  --m-secondary-text: #a9a59c;
+  --m-surface: rgba(20, 20, 22, .62);
+  --m-surface-elevated: rgba(30, 30, 33, .82);
+  --m-border: rgba(255, 255, 255, .08);
+  --m-border-strong: rgba(255, 255, 255, .16);
+  --m-hover: rgba(255, 255, 255, .06);
+  --m-indigo: #6366f1;
+  --m-ready: #5bd6a0;
+  --m-radius: 12px;
+  --m-motion: 160ms;
+  --m-ease: cubic-bezier(.2,.8,.2,1);
+}

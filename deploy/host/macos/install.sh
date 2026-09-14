@@ -117,7 +117,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const [path,cpus,memoryMiB,diskGiB]=process.argv.slice(2);
 const value=JSON.parse(readFileSync(path,'utf8'));
 if(!Array.isArray(value.runtimes)||!Array.isArray(value.images))throw Error('Explicit asset catalogues required');
-if(Object.keys(value).some(key=>!['runtimes','images','stateDirectory','capacity'].includes(key)))throw Error('Unknown service option');
+if(Object.keys(value).some(key=>!['runtimes','images','templates','accounts','stateDirectory','capacity'].includes(key)))throw Error('Unknown service option');
 value.stateDirectory='/Library/MaestrlyHost/state';
 value.capacity={cpus:Number(cpus),memoryMiB:Number(memoryMiB),diskGiB:Number(diskGiB)};
 writeFileSync(path,JSON.stringify(value,null,2)+'\n',{mode:0o644});

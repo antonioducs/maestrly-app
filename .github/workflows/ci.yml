@@ -51,6 +51,8 @@ jobs:
         run: node scripts/check-commits.mjs --subject-env PR_TITLE
       - name: Check application
         run: npm run check
+      - name: Test VM session contracts without remote credentials
+        run: npm run test:bot-sessions
       - name: Install Electron system libraries
         if: runner.os == 'Linux'
         run: npx playwright install-deps chromium
@@ -60,3 +62,9 @@ jobs:
       - name: Test Electron on desktop
         if: runner.os != 'Linux'
         run: npm run test:e2e
+      - name: Test Maestrly Bot app with fixtures (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:bot
+      - name: Test Maestrly Bot app with fixtures (macOS)
+        if: runner.os == 'macOS'
+        run: npm run test:e2e:bot

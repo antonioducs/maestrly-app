@@ -111,3 +111,24 @@ Primary references: [QEMU licenses](https://www.qemu.org/docs/master/about/licen
 [Ubuntu cloud images](https://cloud-images.ubuntu.com/releases/noble/),
 [NoCloud provisioning](https://docs.cloud-init.io/en/latest/reference/datasources/nocloud.html),
 [libguestfs customization](https://libguestfs.org/virt-customize.1.html).
+
+## Maestrly Bot Linux runtime bundle
+
+The optional Linux Arm64 bundle built by `scripts/build-bot-runtime.mjs` packages only
+inputs whose paths, SHA-256 digests, licenses and sources are declared in the private
+`MAESTRLY_BOT_BUILD_CONFIG` manifest: Node.js (MIT), the OpenAI Codex CLI app-server
+(Apache-2.0), a Chromium build (BSD-3-Clause and the licenses bundled in its
+`LICENSES` file) and [`playwright-core`](https://github.com/microsoft/playwright)
+(Apache-2.0), whose license file is copied beside the bundled module. The bundle
+manifest records every declared input; nothing is downloaded at build or install
+time. Xvfb, Openbox and other packages present in the prepared guest image keep the
+licenses recorded in that image's package inventory.
+
+### Per-bot Linux desktop input and capture
+
+The session bundle adds Ubuntu ARM64 packages `xdotool` and `libxdo3`
+(1:3.20160805.1-5build1, BSD-3-Clause) and `scrot` (1.10-1build2,
+MIT-feh/BSD-3-Clause). `xauth` (1:1.1.2-1build1) comes from the pinned Ubuntu
+X11 closure. Exact `.deb` hashes accompany the offline addon. The packages retain
+their original copyright files under `/usr/share/doc` in the guest; no desktop
+input or capture binary is executed on the controller Mac.

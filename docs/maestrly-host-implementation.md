@@ -1,5 +1,9 @@
 # Implementação da Fase 1 — evidências em 12/09/2026
 
+**Fase 2:** bots conversacionais sobre este Host estão descritos em
+[Maestrly Bot](maestrly-bot.md), com [laboratório](maestrly-bot-lab.md) e
+[validação física](maestrly-bot-physical-validation.md) próprios.
+
 **Atualização:** o Host foi instalado e a operação básica foi validada no Mac mini,
 inclusive conexão pelo aplicativo instalado e duas VMs reais. Veja a
 [validação do equipamento físico](maestrly-host-physical-validation.md). O relatório

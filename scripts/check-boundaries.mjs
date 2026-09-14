@@ -22,7 +22,7 @@ function files(directory) {
   })
 }
 
-for (const scope of ['apps/server/src', 'apps/runner/src', 'apps/web/src', 'packages/protocol/src', 'packages/client-sdk/src', 'packages/runner-core/src', 'apps/host/src', 'packages/host-core/src', 'packages/host-protocol/src']) {
+for (const scope of ['apps/server/src', 'apps/runner/src', 'apps/web/src', 'packages/protocol/src', 'packages/client-sdk/src', 'packages/runner-core/src', 'apps/host/src', 'packages/host-core/src', 'packages/host-protocol/src', 'packages/codex-client/src', 'packages/guest-transport/src', 'apps/bot-runtime/src']) {
   for (const file of files(path.join(root, scope))) {
     const source = readFileSync(file, 'utf8')
     if (/(?:from\s*|import\s*\()['"]electron/.test(source)) failures.push(`${path.relative(root, file)} imports Electron`)
@@ -34,9 +34,15 @@ for (const file of [...files(path.join(root, 'packages/protocol/src')), ...files
   if (usesNode(readFileSync(file, 'utf8'))) failures.push(`${path.relative(root, file)} is not browser-importable`)
 }
 
+for (const file of files(path.join(root, 'packages/ui/src'))) {
+  const source = readFileSync(file, 'utf8')
+  if (usesNode(source) || importedSpecifiers(source).some(specifier => /electron|apps\/|@maestrly\/(?!ui)/.test(specifier)))
+    failures.push(`${path.relative(root, file)} imports application or privileged code into shared UI`)
+}
+
 const runnerManifest = JSON.parse(readFileSync(path.join(root, 'apps/runner/package.json'), 'utf8'))
 const serverManifest = JSON.parse(readFileSync(path.join(root, 'apps/server/package.json'), 'utf8'))
-for (const [name, manifest] of [['runner', runnerManifest], ['server', serverManifest], ...['apps/host', 'packages/host-core', 'packages/host-protocol'].map(scope => [scope, JSON.parse(readFileSync(path.join(root, scope, 'package.json'), 'utf8'))])]) {
+for (const [name, manifest] of [['runner', runnerManifest], ['server', serverManifest], ...['apps/host', 'packages/host-core', 'packages/host-protocol', 'packages/codex-client', 'packages/guest-transport', 'apps/bot-runtime'].map(scope => [scope, JSON.parse(readFileSync(path.join(root, scope, 'package.json'), 'utf8'))])]) {
   const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
   if (dependencies.electron) failures.push(`${name} declares Electron`)
   if (dependencies['@maestrly/desktop']) failures.push(`${name} declares desktop`)

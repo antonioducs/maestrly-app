@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ACCOUNT_CODEX_VERSION } from './fetch-account-runtime.mjs'
 // Package an explicitly supplied, relocatable, pinned macOS QEMU runtime.
 // This build process is intentionally independent of HostService / VM lifecycle.
 import { cp, mkdir, readFile, writeFile, chmod, rename, rm, lstat, readdir } from 'node:fs/promises'
@@ -6,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { validateBuildConfig, verifyInput, sha256, run, minimumMacOS, compareVersions } from './host-build-utils.mjs'
+import { bundleHostSource } from './host-source-bundle.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 async function build() {
@@ -17,7 +19,7 @@ async function build() {
   const config = validateBuildConfig(JSON.parse(await readFile(configPath, 'utf8')))
   if (process.platform !== 'darwin' || process.arch !== config.architecture)
     throw new Error('BUILD_ARCH: package on a native macOS machine matching the selected Host architecture')
-  const out = path.join(root, 'dist', `maestrly-host-${config.architecture}`)
+  const out = path.resolve(process.env.MAESTRLY_HOST_BUILD_OUTPUT ?? path.join(root, 'dist', `maestrly-host-${config.architecture}`))
   try {
     await lstat(out)
     throw new Error('OUTPUT_EXISTS: retain the existing package; move it before rebuilding')
@@ -77,9 +79,7 @@ async function build() {
     const entitlementOutput = run('/usr/bin/codesign', ['--display', '--entitlements', ':-', qemu])
     if (!entitlementOutput.includes('com.apple.security.hypervisor')) throw new Error('HVF_ENTITLEMENT_MISSING')
     // esbuild bundles pure JS dependencies; Node itself is supplied in runtime/bin.
-    const { build: bundle } = await import('esbuild')
-    await bundle({
-      entryPoints: [path.join(root, 'apps/host/src/cli.ts')],
+    await bundleHostSource(root, 'apps/host/src/cli.ts', {
       outfile: path.join(staging, 'app/cli.mjs'),
       bundle: true,
       platform: 'node',
@@ -87,8 +87,7 @@ async function build() {
       format: 'esm',
       packages: 'bundle',
     })
-    await bundle({
-      entryPoints: [path.join(root, 'packages/host-core/src/index.ts')],
+    await bundleHostSource(root, 'packages/host-core/src/index.ts', {
       outfile: path.join(staging, 'app/host-core.mjs'),
       bundle: true,
       platform: 'node',
@@ -155,9 +154,56 @@ async function build() {
         guestAgent: true,
       })
     }
+    // Phase 2: bot-ready templates pair an image with the verified Linux runtime bundle and its
+    // measured requirements (from the bundle manifest). Nothing is inferred or downloaded.
+    const templates = []
+    for (const entry of config.botTemplates ?? []) {
+      const bundleEntry = config.files.find((file) => file.path === entry.bundle)
+      const manifestEntry = config.files.find((file) => file.path === entry.bundleManifest)
+      if (
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(entry.id) ||
+        !images.some((image) => image.id === entry.imageId) ||
+        !bundleEntry ||
+        !manifestEntry ||
+        !/^bot\//.test(entry.bundle)
+      )
+        throw new Error('BOT_TEMPLATE_CONFIG: id, existing imageId, verified bot/ bundle and bundle manifest required')
+      const bundleManifest = JSON.parse(await readFile(path.join(staging, 'runtime', entry.bundleManifest), 'utf8'))
+      if (bundleManifest.version !== 1 || bundleManifest.architecture !== config.architecture || !bundleManifest.requirements?.minimum || !bundleManifest.requirements?.recommended)
+        throw new Error('BOT_TEMPLATE_MANIFEST: bundle manifest with measured requirements for this architecture required')
+      if (typeof bundleManifest.runtimeVersion !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(bundleManifest.runtimeVersion))
+        throw new Error('BOT_TEMPLATE_VERSION: explicit runtime version required')
+      const bundleAsset = await asset(entry.bundle)
+      if (bundleAsset.sha256 !== bundleManifest.sha256) throw new Error('BOT_TEMPLATE_DIGEST: bundle digest differs from its manifest')
+      templates.push({
+        id: entry.id,
+        imageId: entry.imageId,
+        runtimeId: runtime.id,
+        arch: config.architecture,
+        runtimeIncluded: entry.runtimeIncluded === true,
+        runtimeBundle: { ...bundleAsset, version: bundleManifest.runtimeVersion },
+        minimum: bundleManifest.requirements.minimum,
+        recommended: bundleManifest.requirements.recommended,
+        capabilities: Array.isArray(bundleManifest.capabilities) ? bundleManifest.capabilities : [],
+      })
+    }
+    let accounts
+    if (config.accounts) {
+      if (config.accounts.version !== ACCOUNT_CODEX_VERSION || config.accounts.binary !== 'bin/codex-accounts' || !config.files.some(file => file.path === config.accounts.binary))
+        throw new Error('ACCOUNT_RUNTIME_CONFIG: pinned account runtime binary and version required')
+      const accountBinary = path.join(staging, 'runtime', config.accounts.binary)
+      const probeHome = path.join(staging, 'account-probe-home')
+      await mkdir(probeHome, { mode: 0o700 })
+      const version = run(accountBinary, ['--version'], { env: { PATH: '/usr/bin:/bin', HOME: probeHome, CODEX_HOME: path.join(probeHome, 'codex') } })
+      await rm(probeHome, { recursive: true })
+      if (version !== `codex-cli ${ACCOUNT_CODEX_VERSION}`) throw new Error('ACCOUNT_RUNTIME_VERSION_MISMATCH')
+      const port = config.accounts.peerPort ?? 44953
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('ACCOUNT_PEER_PORT_INVALID')
+      accounts = { runtime: { version: ACCOUNT_CODEX_VERSION, binary: await asset(config.accounts.binary) }, peers: { host: config.accounts.peerBindAddress ?? '0.0.0.0', port } }
+    }
     await writeFile(
       path.join(staging, 'etc/host.json'),
-      JSON.stringify({ stateDirectory: '/Library/MaestrlyHost/state', runtimes: [runtime], images }, null, 2)
+      JSON.stringify({ stateDirectory: '/Library/MaestrlyHost/state', runtimes: [runtime], images, templates, ...(accounts ? { accounts } : {}) }, null, 2)
     )
 
     await cp(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(staging, 'THIRD_PARTY_NOTICES.md'))
@@ -171,8 +217,11 @@ async function build() {
       }
     }
     await collect(staging)
+    const hostManifest = JSON.parse(await readFile(path.join(root, 'apps/host/package.json'), 'utf8'))
     const manifest = {
       version: 1,
+      serviceVersion: hostManifest.version,
+      hostSchemaVersion: 4,
       architecture: config.architecture,
       nodeVersion: config.nodeVersion,
       qemuVersion: config.qemuVersion,

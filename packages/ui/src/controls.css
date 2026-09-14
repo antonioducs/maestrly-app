@@ -1,0 +1,27 @@
+/* Scoped so sharing primitives cannot override the development app's Tailwind theme. */
+.maestrly-ui .m-button {
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  min-height:34px; padding:7px 12px; border-radius:8px; font-size:13px;
+  line-height:1.3; font-weight:500; border:1px solid var(--line); background:transparent;
+  color:var(--ink); transition:background var(--m-motion),border-color var(--m-motion),box-shadow var(--m-motion),transform var(--m-motion);
+}
+.maestrly-ui .m-button:hover:enabled { background:var(--m-hover); border-color:var(--m-border-strong); }
+.maestrly-ui .m-button:active:enabled { transform:translateY(1px); }
+.maestrly-ui .m-button:disabled { opacity:.42; cursor:not-allowed; }
+.maestrly-ui .m-button.primary { background:var(--ink); color:var(--canvas); border-color:transparent; }
+.maestrly-ui .m-input:not([type='checkbox']) {
+  border:1px solid var(--field-border, var(--line)); border-radius:9px; background:var(--paper);
+  font-size:13px; line-height:1.5; padding:10px 12px; color:var(--ink);
+  transition:background var(--m-motion),border-color var(--m-motion),box-shadow var(--m-motion);
+}
+.maestrly-ui :is(.m-input,.m-button):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.maestrly-ui .m-surface { background:var(--paper); border:1px solid var(--line); border-radius:var(--m-radius); }
+.maestrly-ui .m-composer {
+  border-radius:18px; border:1px solid var(--line); background:var(--paper);
+  transition:border-color var(--m-motion),box-shadow var(--m-motion);
+}
+.maestrly-ui .m-composer:focus-within { border-color:var(--m-border-strong); box-shadow:0 0 0 3px var(--m-hover); }
+@media(prefers-reduced-motion:reduce) {
+  .maestrly-ui :is(.m-button,.m-input,.m-composer) { transition:none; }
+  .maestrly-ui .m-button:active:enabled { transform:none; }
+}
