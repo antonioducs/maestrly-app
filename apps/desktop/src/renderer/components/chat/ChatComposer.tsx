@@ -1,3 +1,4 @@
+import { ComposerSurface } from '@maestrly/ui'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp, Square, X, FileText } from 'lucide-react'
@@ -169,7 +170,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
 
   return (
     <div className="px-3 pb-3 pt-1">
-      <div className="chat-composer-shell relative mx-auto w-full max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 pb-2 pt-2.5 transition-[border-color,background,box-shadow] duration-300 focus-within:border-white/[0.16]">
+      <ComposerSurface>
         {slashOpen && (
           <div className="absolute bottom-full left-3 z-50 mb-1 max-h-72 w-96 overflow-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl">
             {filteredCommands.map((c, i) => (
@@ -303,7 +304,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
             )}
           </div>
         </div>
-      </div>
+      </ComposerSurface>
 
       {metaSlot && (
         <div className="mx-auto mt-1.5 flex w-full max-w-3xl items-center justify-between gap-2 px-1">{metaSlot}</div>
