@@ -629,7 +629,7 @@ describe('critical acceptance regressions', () => {
     expect((await call(reopened, 'host.inspect')).result).toMatchObject({
       id: host.id,
       protocolVersion: 1,
-      serviceVersion: '0.1.0',
+      serviceVersion: '0.2.0',
     })
     expect(
       (

@@ -16,7 +16,9 @@ import { constants } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Vm, VerifyResult } from '@maestrly/host-protocol'
 import { verifyAsset, type Asset } from '../../assets.js'
-import { buildQemuArgs, type VmPaths } from './arguments.js'
+import { buildQemuArgs, type LaunchProfile, type VmPaths } from './arguments.js'
+import { botChannelPaths, type BotChannelPaths } from '../../guest/profile.js'
+import { installGuestRuntime } from '../../guest/install.js'
 import { JsonChannel } from './qmp.js'
 import { writeNoCloudSeed } from '../../seed.js'
 import { verifyGuest } from './guest-agent.js'
@@ -38,12 +40,25 @@ export interface Image {
   virtualSizeGiB: number /** Must contain cloud-init and qemu-guest-agent already installed. */
   guestAgent: true
 }
-export interface Provider {
+export interface GuestPreparation {
+  /** Copy the stopped VM disk to a private backup inside the VM directory; returns its name. */
+  backupDisk(vm: Vm, signal: AbortSignal): Promise<string>
+  /** Transfer and run the verified runtime bundle over QGA. The VM must be running. */
+  prepareGuestRuntime(
+    vm: Vm,
+    bundle: Asset & { version: string },
+    signal: AbortSignal,
+    onProgress?: (written: number, total: number) => void
+  ): Promise<{ version: string; digest: string }>
+  /** Private bot channel sockets for this VM, when the provider supports them. */
+  botChannels(vm: Vm): BotChannelPaths
+}
+export interface Provider extends Partial<GuestPreparation> {
   logs?(vm: Vm): Promise<string[]>
   inspectRuntime(runtime: Runtime): Promise<{ available: boolean; reason?: string }>
   provision(vm: Vm, runtime: Runtime, image: Image, signal: AbortSignal): Promise<void>
   inspect(vm: Vm): Promise<'running' | 'stopped' | 'unknown'>
-  start(vm: Vm, runtime: Runtime, signal: AbortSignal): Promise<void>
+  start(vm: Vm, runtime: Runtime, signal: AbortSignal, profile?: LaunchProfile): Promise<void>
   shutdown(vm: Vm, signal: AbortSignal): Promise<void>
   restart(vm: Vm, signal: AbortSignal): Promise<void>
   remove(vm: Vm, signal: AbortSignal): Promise<void>
@@ -306,13 +321,53 @@ export class QemuProvider implements Provider {
       }
     }
   }
-  async start(vm: Vm, runtime: Runtime, signal: AbortSignal) {
+  botChannels(vm: Vm): BotChannelPaths {
+    return botChannelPaths(this.paths(vm).directory)
+  }
+  async backupDisk(vm: Vm, signal: AbortSignal): Promise<string> {
+    if ((await this.inspect(vm)) !== 'stopped') throw new Error('Disk backup requires a proven stopped VM')
+    const p = await this.owned(vm)
+    signal.throwIfAborted()
+    const backups = join(p.directory, 'backups')
+    await mkdir(backups, { recursive: true, mode: 0o700 })
+    const name = `disk-${new Date().toISOString().replace(/[:.]/g, '-')}.qcow2`
+    const target = join(backups, name)
+    const space = await statfs(p.directory)
+    const size = (await lstat(p.disk)).size
+    if (space.bavail * space.bsize < size + 1024 ** 3) throw new Error('Insufficient space for a consistent disk backup')
+    await copyFile(p.disk, target, constants.COPYFILE_EXCL)
+    const handle = await open(target, 'r+')
+    try {
+      await handle.chmod(0o600)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    return name
+  }
+  async prepareGuestRuntime(
+    vm: Vm,
+    bundle: Asset & { version: string },
+    signal: AbortSignal,
+    onProgress?: (written: number, total: number) => void
+  ) {
+    if ((await this.inspect(vm)) !== 'running') throw new Error('Runtime preparation requires a running VM')
+    const guest = await this.guest(await this.owned(vm), 30_000)
+    try {
+      await guest.command('guest-ping')
+      return await installGuestRuntime(guest, bundle, signal, onProgress)
+    } finally {
+      guest.close()
+    }
+  }
+  async start(vm: Vm, runtime: Runtime, signal: AbortSignal, profile: LaunchProfile = {}) {
     await this.requireRuntime(runtime)
     const state = await this.inspect(vm)
     if (state === 'running') return
     if (state !== 'stopped') throw new Error('VM identity is uncertain; refusing duplicate launch')
     const p = await this.owned(vm)
     signal.throwIfAborted()
+    for (const stale of Object.values(profile.botChannels ?? {})) await rm(stale, { force: true })
     for (const path of [p.disk, p.seed, ...(runtime.firmwareVars ? [p.firmwareVars] : [])]) {
       const stat = await lstat(path)
       if (!stat.isFile() || stat.isSymbolicLink() || (await realpath(path)) !== resolve(path))
@@ -330,7 +385,7 @@ export class QemuProvider implements Provider {
     let spawnError: Error | undefined
     const cleanup = () => cleanLaunch(p.directory, launch).catch(() => {})
     try {
-      child = spawn(runtime.qemu.path, buildQemuArgs(vm, runtime, p), {
+      child = spawn(runtime.qemu.path, buildQemuArgs(vm, runtime, p, profile), {
         stdio: ['ignore', log.fd, log.fd],
         detached: true,
         env: { PATH: '/usr/bin:/bin', HOME: p.directory },
@@ -442,10 +497,10 @@ export class QemuProvider implements Provider {
       monitor.close()
     }
   }
-  private async guest(paths: VmPaths) {
+  private async guest(paths: VmPaths, timeoutMs = 3000) {
     const stat = await lstat(paths.qga)
     if (!stat.isSocket() || stat.uid !== process.getuid?.()) throw new Error('Guest-agent socket ownership mismatch')
-    return JsonChannel.open(paths.qga, false, 3000)
+    return JsonChannel.open(paths.qga, false, timeoutMs)
   }
   async logs(vm: Vm): Promise<string[]> {
     const monitor = await this.monitor(vm)

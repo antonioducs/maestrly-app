@@ -1,5 +1,6 @@
 import type { Vm } from '@maestrly/host-protocol'
 import type { Runtime } from './provider.js'
+import { botChannelArgs, type BotChannelPaths } from '../../guest/profile.js'
 export interface VmPaths {
   directory: string
   disk: string
@@ -9,8 +10,12 @@ export interface VmPaths {
   firmwareVars: string
   log: string
 }
+export interface LaunchProfile {
+  /** Present only for VMs bound to a bot: adds the private control/egress virtio ports. */
+  botChannels?: BotChannelPaths
+}
 /** No shell interpolation and explicitly no network or default devices. */
-export function buildQemuArgs(vm: Vm, runtime: Runtime, paths: VmPaths): string[] {
+export function buildQemuArgs(vm: Vm, runtime: Runtime, paths: VmPaths, profile: LaunchProfile = {}): string[] {
   const args = [
     '-name',
     `maestrly-${vm.id}`,
@@ -77,5 +82,6 @@ export function buildQemuArgs(vm: Vm, runtime: Runtime, paths: VmPaths): string[
   if (runtime.firmwareVars) {
     args.push('-drive', `if=pflash,format=raw,file=${paths.firmwareVars}`)
   }
+  if (profile.botChannels) args.push(...botChannelArgs(profile.botChannels))
   return args
 }

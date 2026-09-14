@@ -1,5 +1,5 @@
 /**
- * HostService API: new HostService({stateDirectory, runtimes, images, capacity?}).
+ * HostService API: new HostService({stateDirectory, runtimes, images, capacity?, templates?}).
  * await service.dispatch({version:1,id,method,params}) always returns a wire Response.
  * Mutations return a durable Operation immediately; poll operation.get for completion.
  * await service.ready() performs conservative recovery. await service.close() drains
@@ -25,10 +25,27 @@
  * Unknown VM identity blocks mutations and requires administrator reconciliation.
  * No arbitrary process arguments, QMP, guest commands, paths, or network settings
  * are accepted in the wire protocol. Runtime/image catalogue is administrator input.
+ *
+ * Phase 2 (schema 2): bot.* methods are delegated to BotService. A bot binds one VM;
+ * its Linux runtime speaks over a private virtio-serial control port and reaches the
+ * internet only through the egress broker (exact hostnames, ports 80/443, no literal,
+ * private, link-local, multicast or Host addresses). Turns, interactions, memory and
+ * files persist here; provider credentials persist only inside the guest.
  */
 export { HostService, type HostServiceOptions } from './service.js'
-export { QemuProvider, type Runtime, type Image, type Provider } from './provider.js'
+export { QemuProvider, type Runtime, type Image, type Provider, type GuestPreparation } from './provider.js'
 export { stageAsset, verifyAsset, type Asset } from './assets.js'
 export { buildQemuArgs } from './qemu.js'
-
+export type { BotTemplate, ResourceSpec } from './bots/recommendations.js'
+export { recommendNewVm, assessExistingVm, pickTemplate } from './bots/recommendations.js'
+export { HOST_DB_VERSION, migrateToV2 } from './bots/migrations.js'
+export { SocketGuestSession, type GuestSession, type GuestConnector } from './guest/session.js'
+export { botChannelPaths, botChannelArgs } from './guest/profile.js'
+export { EgressBroker, type EgressBrokerOptions } from './egress/broker.js'
+export { decide, isForbiddenAddress, normalizeAddress } from './egress/policy.js'
+export { pinnedConnect } from './egress/resolver.js'
+export { guestEgressFrameSchema, hostEgressFrameSchema, LineDecoder, STREAM_WINDOW } from './egress/streams.js'
+export { resolveRecommendedModel } from './bots/accounts.js'
+export { workspacePath } from './bots/files.js'
+export { buildSnapshot, defaultInstructions, TURN_LIMITS } from './bots/context.js'
 export type { VerifyResult } from '@maestrly/host-protocol'

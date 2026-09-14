@@ -1,0 +1,359 @@
+import type { AccountAuthority } from '../accounts/authority.js'
+import { AccountDelegation } from '../accounts/delegation.js'
+import { randomUUID } from 'node:crypto'
+import {
+  BOT_MUTATIONS,
+  botResultSchemas,
+  type Bot,
+  type BotMethod,
+  type BotOperation,
+  type BotRequest,
+  type BotResult,
+} from '@maestrly/host-protocol'
+import { HostError } from '../errors.js'
+import type { GuestConnector } from '../guest/session.js'
+import { BotAccounts } from './accounts.js'
+import { BotFiles } from './files.js'
+import { fingerprint } from './interactions.js'
+import { BotMemories } from './memory.js'
+import { type BotRepository, now } from './repository.js'
+import { RuntimeCoordinator } from './runtime-coordinator.js'
+import { BotSetup, type SetupHost } from './setup.js'
+import { BotTurns } from './turns.js'
+import type { HostStore } from '../persistence/store.js'
+import { BotRepository as Repository } from './repository.js'
+import { BotSessions } from './sessions.js'
+
+export interface BotServiceOptions {
+  store: HostStore
+  sharedAccounts?: AccountAuthority
+  host: SetupHost & { hostGeneration: number }
+  connector: GuestConnector
+  /** Notifies the egress broker when a bot policy changes or is revoked. */
+  onPolicyChanged?: (botId: string, vmId: string | undefined, policy: { mode: 'offline' | 'allowlist' | 'blocklist'; domains: string[]; revision: number }) => void
+  activeStreams?: (vmId: string, botId?: string) => number
+}
+/** Bot domain façade delegated to by HostService. VM authority stays in HostService. */
+export class BotService {
+  readonly repo: BotRepository
+  readonly coordinator: RuntimeCoordinator
+  readonly setup: BotSetup
+  readonly turns: BotTurns
+  readonly memories: BotMemories
+  readonly files: BotFiles
+  readonly accounts: BotAccounts
+  readonly delegation?: AccountDelegation
+  readonly sessions: BotSessions
+  constructor(private readonly options: BotServiceOptions) {
+    this.repo = new Repository(options.store)
+    this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
+    this.sessions = new BotSessions(this.repo, options.connector, id => options.host.vm(id), {
+      backup: async (vmId, key) => {
+        if (!options.host.preparation?.backupDisk) throw new HostError('UNSUPPORTED', 'Backup de disco indisponível')
+        const wait = async (id: string) => {
+          for (let count = 0; count < 360; count++) {
+            const op = options.host.operation(id)
+            if (op.status === 'succeeded') return
+            if (['failed', 'cancelled'].includes(op.status)) throw new HostError('VM_OPERATION_FAILED', op.error?.message ?? 'A operação da VM falhou')
+            await new Promise(r => setTimeout(r, 500))
+          }
+          throw new HostError('VM_OPERATION_UNCERTAIN', 'Verifique a operação do computador antes de continuar')
+        }
+        let vm = options.host.vm(vmId)
+        if (vm.state === 'running') await wait((await options.host.admit('vm.shutdown', { vmId, expectedRevision: vm.revision, idempotencyKey: `${key}:stop` })).id)
+        vm = options.host.vm(vmId)
+        await options.host.preparation.backupDisk(vm, AbortSignal.timeout(300000))
+        await wait((await options.host.admit('vm.start', { vmId, expectedRevision: options.host.vm(vmId).revision, idempotencyKey: `${key}:start` })).id)
+      },
+      activate: async botId => { this.coordinator.dropSession(botId); await this.coordinator.session(this.repo.bot(botId)) },
+    })
+    if (options.sharedAccounts) {
+      this.delegation = new AccountDelegation(this.repo, options.sharedAccounts)
+      this.coordinator.setAccounts(this.delegation)
+    }
+    this.setup = new BotSetup(this.repo, options.host, this.coordinator, this.sessions, options.sharedAccounts ? { authority: options.sharedAccounts, connect: async botId => this.delegation!.authenticate(botId, await this.coordinator.session(this.repo.bot(botId))) } : undefined)
+    this.turns = new BotTurns(this.repo, this.coordinator)
+    this.memories = new BotMemories(this.repo)
+    const session = (bot: Bot) => this.coordinator.session(bot)
+    this.files = new BotFiles(this.repo, session)
+    this.accounts = new BotAccounts(this.repo, session, this.coordinator.events, (bot) => this.setup.accountConnected(bot), options.sharedAccounts && this.delegation ? { authority: options.sharedAccounts, delegation: this.delegation } : undefined)
+  }
+  async ready() {
+    this.sessions.recover()
+    await this.coordinator.recover()
+    this.setup.recover()
+    this.coordinator.start()
+  }
+  async close() {
+    await this.coordinator.close()
+  }
+  isMutation(method: BotMethod) {
+    return BOT_MUTATIONS.includes(method)
+  }
+  /** VM operations must not silently break a working bot; emergency administration stays possible. */
+  assertVmOperationAllowed(vmId: string, method: string, deleteData: boolean) {
+    const bots = this.repo.botsByVm(vmId)
+    if (!bots.length) {
+      const archived = this.repo.botsByVm(vmId, true)
+      if (deleteData && this.repo.bindingByVm(vmId) && (!archived.length || archived.some(b => b.status !== 'archived')))
+        throw new HostError('BOT_BOUND', 'Reconcilie os vínculos deste computador antes de apagar os dados')
+      return
+    }
+    if (deleteData) throw new HostError('BOT_BOUND', `Arquive todos os bots deste computador antes de apagar os dados: ${bots.map(b => b.name).join(', ')}.`)
+    const working = bots.filter(bot => {
+      const turn = this.repo.activeTurn(bot.id)
+      return turn && ['running', 'waiting_approval', 'waiting_input', 'starting', 'queued'].includes(turn.status)
+    })
+    if (working.length && method !== 'vm.start') throw new HostError('BOT_ACTIVE', `Pare as tarefas dos bots ${working.map(b => b.name).join(', ')} antes de alterar o computador compartilhado.`)
+  }
+  /** After a VM stops, a stuck turn cannot continue: mark it interrupted honestly. */
+  vmStopped(vmId: string) {
+    for (const bot of this.repo.botsByVm(vmId)) {
+    this.coordinator.dropSession(bot.id)
+    const session = this.repo.session(bot.id)
+    if (session && session.state !== 'archived') this.repo.saveSession({ ...session, state: 'stopped', revision: session.revision + 1, updatedAt: now() })
+    const turn = this.repo.activeTurn(bot.id)
+    if (turn)
+      this.repo.transaction(() => {
+        this.repo.saveTurn({ ...turn, status: 'interrupted', finishedAt: now(), attention: undefined, error: { code: 'VM_STOPPED', message: 'O computador do bot foi desligado durante a tarefa.' }, revision: turn.revision + 1, updatedAt: now() })
+        this.coordinator.interactions.invalidatePending(turn.id, bot.id)
+        const latest = this.repo.bot(bot.id)
+        this.repo.saveBot({ ...latest, activeTurnId: undefined, revision: latest.revision + 1, updatedAt: now() })
+        const conversation = this.repo.conversation(turn.conversationId)
+        this.repo.saveConversation({ ...conversation, activeTurnId: undefined, revision: conversation.revision + 1, updatedAt: now() })
+      })
+    }
+  }
+  /** A VM bound to a bot, or being created for one, launches with the private bot channels. */
+  launchProfileFor(vmId: string, createKey?: string) {
+    if (this.repo.bindingByVm(vmId)) return { bot: true as const }
+    return createKey && this.repo.reservation(createKey) ? { bot: true as const } : undefined
+  }
+  async handle<M extends BotMethod>(request: Extract<BotRequest, { method: M }>): Promise<BotResult<M>> {
+    const result = await this.dispatch(request as BotRequest)
+    return botResultSchemas[request.method].parse(result) as BotResult<M>
+  }
+  private async dispatch(request: BotRequest): Promise<unknown> {
+    const p = request.params as any
+    switch (request.method) {
+      case 'bot.list':
+        return this.repo.bots(p.includeArchived)
+      case 'bot.create': {
+        // Direct creation registers a bot without a computer; onboarding uses bot.setup.* instead.
+        const existing = this.repo.operationByKey(p.idempotencyKey)
+        if (existing?.operation.botId) return this.repo.bot(existing.operation.botId)
+        return this.repo.transaction(() => {
+          const bot: Bot = { id: randomUUID(), name: p.name, purpose: p.purpose, instructions: p.instructions, status: 'setup', runtimeState: 'missing', accountState: 'disconnected', permissionMode: 'ask', revision: 0, createdAt: now(), updatedAt: now() }
+          this.repo.saveBot(bot)
+          this.repo.saveNetwork(bot.id, { mode: 'blocklist', domains: [], revision: 0 })
+          const op: BotOperation = { id: randomUUID(), kind: 'setup', botId: bot.id, status: 'waiting_user', steps: [], createdAt: now(), updatedAt: now() }
+          this.repo.insertOperation(op, p.idempotencyKey, fingerprint(p), p)
+          return bot
+        })
+      }
+      case 'bot.inspect':
+        return this.repo.bot(p.botId)
+      case 'bot.session.inspect':
+        this.repo.bot(p.botId)
+        return this.repo.session(p.botId) ?? null
+      case 'bot.sessions.list':
+        return this.sessions.inspectVm(p.vmId)
+      case 'bot.update': {
+        const current = this.repo.bot(p.botId)
+        const accountId = p.accountId ?? current.accountId
+        if (accountId && (p.model || p.accountId)) {
+          if (!this.options.sharedAccounts) throw new HostError('ACCOUNT_SERVICE_UNAVAILABLE', 'O serviço de contas não está disponível')
+          p.model = await this.options.sharedAccounts.validateModel(accountId, p.model ?? current.model)
+        }
+        if (!current.accountId && p.accountId && this.delegation) await this.delegation.prepareEmpty(current.id, await this.coordinator.session(current))
+        const result = this.repo.transaction(() => {
+          const bot = this.repo.bot(p.botId)
+          if (bot.revision !== p.expectedRevision) throw new HostError('REVISION_CONFLICT', 'O bot mudou; recarregue antes de editar')
+          if (p.permissionMode === 'full-vm' && !p.confirmFullVm) throw new HostError('CONFIRMATION_REQUIRED', 'O controle administrativo completo exige confirmação explícita')
+          if ((p.model || p.accountId || p.permissionMode) && this.repo.activeTurn(bot.id)) throw new HostError('BOT_BUSY', 'Pare a tarefa atual antes de mudar modelo ou permissões')
+          if (accountId && (p.accountId || p.model)) this.options.sharedAccounts!.assertBindable(accountId)
+          const updated: Bot = {
+            ...bot,
+            ...(p.name !== undefined ? { name: p.name } : {}),
+            ...(p.purpose !== undefined ? { purpose: p.purpose } : {}),
+            ...(p.instructions !== undefined ? { instructions: p.instructions } : {}),
+            ...(p.accountId !== undefined ? { accountId: p.accountId, accountState: 'connected' as const } : {}),
+            ...(p.model !== undefined ? { model: { ...p.model, source: 'custom' as const } } : {}),
+            ...(p.permissionMode !== undefined ? { permissionMode: p.permissionMode } : {}),
+            revision: bot.revision + 1,
+            updatedAt: now(),
+          }
+          this.repo.saveBot(updated)
+          if (p.permissionMode !== undefined && p.permissionMode !== bot.permissionMode)
+            this.coordinator.events.record(bot.id, 'runtime.changed', p.permissionMode === 'full-vm' ? 'Controle administrativo completo ativado' : 'Permissões recomendadas ativadas')
+          return updated
+        })
+        if (p.accountId && this.delegation) {
+          await this.delegation.authenticate(result.id, await this.coordinator.session(result))
+          if (result.status === 'setup') this.setup.accountConnected(this.repo.bot(result.id))
+          return this.repo.bot(result.id)
+        }
+        return result
+      }
+      case 'bot.archive': {
+        const existing = this.repo.operationByKey(p.idempotencyKey)
+        if (existing) {
+          if (existing.fingerprint !== fingerprint(p)) throw new HostError('IDEMPOTENCY_CONFLICT', 'A chave já foi usada com outros parâmetros')
+          return existing.operation
+        }
+        const op = this.repo.transaction(() => {
+          const bot = this.repo.bot(p.botId)
+          if (bot.revision !== p.expectedRevision) throw new HostError('REVISION_CONFLICT', 'O bot mudou; recarregue antes de arquivar')
+          if (this.repo.activeTurn(bot.id)) throw new HostError('BOT_BUSY', 'Pare a tarefa atual antes de arquivar o bot')
+          this.repo.saveBot({ ...bot, status: 'archived', activeTurnId: undefined, revision: bot.revision + 1, updatedAt: now() })
+          const policy = this.repo.network(bot.id)
+          this.repo.saveNetwork(bot.id, { mode: 'offline', domains: [], revision: policy.revision + 1 })
+          const operation: BotOperation = { id: randomUUID(), kind: 'archive', botId: bot.id, status: 'succeeded', steps: [{ id: 'archive', label: 'Bot arquivado; computador e histórico preservados', status: 'succeeded' }], retained: { vmId: bot.vmId, diskRetained: true }, createdAt: now(), updatedAt: now() }
+          this.repo.insertOperation(operation, p.idempotencyKey, fingerprint(p), p)
+          return { operation, bot }
+        })
+        this.options.onPolicyChanged?.(op.bot.id, op.bot.vmId, this.repo.network(op.bot.id))
+        this.coordinator.dropSession(op.bot.id)
+        if (this.repo.session(op.bot.id)?.transport === 'managed') {
+          this.repo.saveOperation({ ...op.operation, status: 'running', steps: [{ id: 'archive', label: 'Parando a área de trabalho e preservando os dados', status: 'running' }] })
+          try {
+            await this.sessions.stop(op.bot.id)
+            this.repo.saveOperation(op.operation)
+          } catch {
+            const failed = { ...op.operation, status: 'failed' as const, error: { code: 'SESSION_STOP_UNCERTAIN', message: 'O bot foi arquivado e sua rede revogada, mas a parada da área de trabalho precisa ser verificada.' } }
+            this.repo.saveOperation(failed)
+            return failed
+          }
+        }
+        return op.operation
+      }
+      case 'bot.setup.preview':
+        return this.setup.preview(p)
+      case 'bot.setup.start':
+        return this.setup.start(p)
+      case 'bot.setup.inspect':
+        return this.setup.inspect(p.operationId)
+      case 'bot.setup.cancel':
+        return this.setup.cancel(p.operationId)
+      case 'bot.runtime.inspect': {
+        const bot = this.repo.bot(p.botId)
+        try {
+          const session = await this.coordinator.session(bot)
+          const info = (await session.request('runtime.inspect', {})) as Record<string, unknown>
+          return { state: 'ready', version: session.runtimeVersion, bootId: session.bootId, generation: session.generation, capabilities: session.capabilities, ...(typeof info?.reason === 'string' ? { reason: info.reason } : {}) }
+        } catch (error) {
+          const code = error instanceof HostError ? error.code : 'RUNTIME_UNREACHABLE'
+          return { state: code === 'VM_STOPPED' ? 'unreachable' : code === 'RUNTIME_INCOMPATIBLE' ? 'incompatible' : bot.runtimeState === 'ready' ? 'unreachable' : bot.runtimeState, capabilities: [], reason: error instanceof Error ? error.message : 'unreachable' }
+        }
+      }
+      case 'bot.runtime.prepare':
+        if (this.repo.operationByKey(p.idempotencyKey)?.operation.kind === 'runtime.prepare' || this.repo.session(p.botId)?.transport === 'legacy' && this.repo.bot(p.botId).conversationId) return this.sessions.adoptLegacy(p)
+        return this.setup.prepare(p)
+      case 'bot.models.list':
+        return this.accounts.models(p.botId)
+      case 'bot.auth.status':
+        return this.accounts.status(p.botId)
+      case 'bot.auth.start':
+        return this.accounts.start(p.botId)
+      case 'bot.auth.cancel':
+        return this.accounts.cancel(p.botId)
+      case 'bot.auth.logout':
+        return this.accounts.logout(p.botId)
+      case 'bot.auth.setApiKey':
+        return this.accounts.setApiKey(p.botId, p.apiKey)
+      case 'bot.messages.list': {
+        const bot = this.repo.bot(p.botId)
+        if (!bot.conversationId) return { messages: [], turns: [], hasMore: false }
+        const conversation = this.repo.conversation(bot.conversationId)
+        const messages = this.repo.messages(conversation.id, p.before, p.limit + 1)
+        const page = messages.length > p.limit ? messages.slice(1) : messages
+        const turnIds = [...new Set(page.map((m) => m.turnId).filter((id): id is string => !!id))]
+        return { conversation, messages: page, turns: this.repo.turns(conversation.id, turnIds), hasMore: messages.length > p.limit }
+      }
+      case 'bot.messages.send': {
+        const bot = this.repo.bot(p.botId)
+        if (bot.accountId && this.options.sharedAccounts && !this.turns.lookup(bot.id, p.clientMessageId)) {
+          await this.options.sharedAccounts.inspect(bot.accountId)
+          this.options.sharedAccounts.assertBindable(bot.accountId)
+        }
+        return this.turns.send(p.botId, p.clientMessageId, p.content, p.attachments)
+      }
+      case 'bot.messages.lookup':
+        return this.turns.lookup(p.botId, p.clientMessageId)
+      case 'bot.turn.get':
+        return this.turns.get(p.turnId)
+      case 'bot.turn.cancel':
+        return this.turns.cancel(p.turnId, p.expectedRevision)
+      case 'bot.interactions.list':
+        return this.repo.interactions(p.botId, p.pendingOnly)
+      case 'bot.interactions.resolve': {
+        const { interaction, turn } = this.coordinator.interactions.resolve(p.interactionId, p.expectedGeneration, p.decision, p.answer)
+        this.repo.transaction(() =>
+          this.repo.enqueue({
+            id: `${interaction.id}:resolve`,
+            botId: turn.botId,
+            turnId: turn.id,
+            kind: 'interaction.resolve',
+            body: { turnId: turn.id, generation: turn.generation, actionId: interaction.actionId, decision: p.decision, ...(p.answer ? { answer: p.answer } : {}), ...(interaction.scope ? { scope: interaction.scope } : {}) },
+            createdAt: now(),
+            attempts: 0,
+          })
+        )
+        this.coordinator.events.record(turn.botId, p.decision === 'answer' ? 'question.answered' : 'approval.resolved', p.decision === 'approve' ? 'Você permitiu desta vez' : p.decision === 'deny' ? 'Você não permitiu' : 'Você respondeu ao bot', { turnId: turn.id, conversationId: turn.conversationId, detail: { interactionId: interaction.id, decision: p.decision } })
+        void this.coordinator.drain(turn.botId).catch(() => {})
+        return interaction
+      }
+      case 'bot.memory.list':
+        return this.memories.list(p.botId, p.includeInactive)
+      case 'bot.memory.upsert':
+        return this.memories.upsert(p.botId, p)
+      case 'bot.memory.delete':
+        return this.memories.delete(p.botId, p.memoryId, p.expectedRevision)
+      case 'bot.events.list':
+        this.repo.bot(p.botId)
+        return this.coordinator.events.page(p.botId, p.after, p.limit)
+      case 'bot.network.inspect': {
+        const bot = this.repo.bot(p.botId)
+        return { policy: this.repo.network(bot.id), mediated: !!bot.vmId && this.coordinator.hasSession(bot.id), activeStreams: bot.vmId ? (this.options.activeStreams?.(bot.vmId, bot.id) ?? 0) : 0 }
+      }
+      case 'bot.network.update': {
+        const existing = this.repo.operationByKey(p.idempotencyKey)
+        const bot = this.repo.bot(p.botId)
+        if (!existing) {
+          if (p.mode === 'blocklist') {
+            const session = await this.coordinator.session(bot)
+            if (!session.capabilities.includes('network.blocklist.v1'))
+              throw new HostError('RUNTIME_UPDATE_REQUIRED', 'Atualize o ambiente do bot para usar internet pública com sites bloqueados')
+          }
+          const print = fingerprint(p)
+          this.repo.transaction(() => {
+            const policy = this.repo.network(bot.id)
+            if (policy.revision !== p.expectedRevision) throw new HostError('REVISION_CONFLICT', 'A política de rede mudou; recarregue antes de editar')
+            this.repo.saveNetwork(bot.id, { mode: p.mode, domains: p.domains, revision: policy.revision + 1 })
+            this.repo.insertOperation({ id: randomUUID(), kind: 'network.update', botId: bot.id, status: 'succeeded', steps: [], createdAt: now(), updatedAt: now() }, p.idempotencyKey, print, { ...p })
+          })
+          const policy = this.repo.network(bot.id)
+          this.options.onPolicyChanged?.(bot.id, bot.vmId, policy)
+          this.coordinator.events.record(bot.id, 'network.changed', p.mode === 'offline' ? 'Acesso à internet desativado' : p.mode === 'blocklist' ? `Internet pública; sites bloqueados: ${p.domains.length}` : `Destinos permitidos: ${p.domains.length}`, { detail: { mode: p.mode, domains: p.domains } })
+          if (this.coordinator.hasSession(bot.id))
+            await this.coordinator.session(bot).then((session) => session.request('policy.update', { network: policy, permissionMode: bot.permissionMode })).catch(() => {})
+        } else if (existing.fingerprint !== fingerprint(p)) throw new HostError('IDEMPOTENCY_CONFLICT', 'Idempotency key was used with different parameters')
+        return { policy: this.repo.network(bot.id), mediated: !!bot.vmId && this.coordinator.hasSession(bot.id), activeStreams: bot.vmId ? (this.options.activeStreams?.(bot.vmId, bot.id) ?? 0) : 0 }
+      }
+      case 'bot.files.list':
+        return this.files.list(p.botId, p.path)
+      case 'bot.files.transferBegin':
+        return this.files.begin(p.botId, p)
+      case 'bot.files.transferChunk':
+        return this.files.chunk(p.transferId, p.offset, p.dataBase64)
+      case 'bot.files.transferFinish':
+        return this.files.finish(p.transferId)
+      case 'bot.files.transferAbort':
+        return this.files.abort(p.transferId)
+      case 'bot.operation.get':
+        return this.repo.operation(p.operationId)
+      case 'bot.operation.lookup':
+        return this.repo.operationByKey(p.idempotencyKey)?.operation ?? null
+    }
+  }
+}

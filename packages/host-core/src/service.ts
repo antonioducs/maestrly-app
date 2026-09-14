@@ -1,3 +1,12 @@
+import type { SetupHost } from './bots/setup.js'
+import { EnvironmentService } from './environments/service.js'
+import { AccountAuthority } from './accounts/authority.js'
+import { AccountPeers } from './accounts/peers.js'
+import { AccountService } from './accounts/service.js'
+import { AccountMigration } from './accounts/migration.js'
+import { CodexAccountProvider, type AccountRuntime } from './accounts/codex-provider.js'
+import type { AccountProviderFactory } from './accounts/provider.js'
+import { VmGuestConnector } from './guest/session-router.js'
 import { HostStore } from './persistence/store.js'
 import { HostError } from './errors.js'
 import { randomUUID } from 'node:crypto'
@@ -16,13 +25,25 @@ import {
 } from '@maestrly/host-protocol'
 import { QemuProvider, type Provider, type Runtime, type Image } from './provider.js'
 import { verifyAsset } from './assets.js'
+import { BotService } from './bots/service.js'
+import type { BotTemplate } from './bots/recommendations.js'
+import { type GuestConnector } from './guest/session.js'
+import { EgressBroker } from './egress/broker.js'
 export interface HostServiceOptions {
   stateDirectory: string
+  accounts?: { runtime?: AccountRuntime; peers?: { host: string; port: number } }
+  accountProvider?: AccountProviderFactory
   runtimes: Runtime[]
   images: Image[]
   capacity?: { cpus: number; memoryMiB: number; diskGiB: number }
   /** Injection seam for provider conformance tests; production defaults to QEMU/HVF. */
   provider?: Provider
+  /** Bot-ready templates (image + runtime bundle + measured requirements). Administrator input. */
+  templates?: BotTemplate[]
+  /** Injection seam for guest-runtime conformance tests; production connects to the VM control socket. */
+  connector?: GuestConnector
+  /** Injection seam for egress tests; production brokers the VM egress socket with real DNS/TCP. */
+  egress?: EgressBroker
 }
 const now = () => new Date().toISOString()
 function canonical(value: unknown): string {
@@ -48,8 +69,17 @@ export class HostService {
   private closed = false
   private hostId!: string
   private verifying = new Set<string>()
+  private vmConnector?: VmGuestConnector
   private readonly provider: Provider
   private readonly options: HostServiceOptions
+  private environments!: EnvironmentService
+  private accounts!: AccountService
+  private readonly accountProvider?: AccountProviderFactory
+  private bots!: BotService
+  private egress?: EgressBroker
+  private hostGeneration = 0
+  private readonly templates: BotTemplate[]
+  private readonly connector?: GuestConnector
   constructor(options: HostServiceOptions) {
     if (!['darwin', 'linux'].includes(process.platform) || typeof process.getuid !== 'function')
       throw new Error('Host service requires POSIX ownership on macOS or Linux')
@@ -81,11 +111,24 @@ export class HostService {
     for (const dimension of ['cpus', 'memoryMiB'] as const)
       if (capacity[dimension] > physical[dimension])
         throw new Error(`Configured ${dimension} exceeds usable physical capacity`)
+    if (new Set((options.templates ?? []).map((x) => x.id)).size !== (options.templates ?? []).length)
+      throw new Error('Catalogue IDs must be unique')
+    for (const template of options.templates ?? [])
+      if (!options.images.some((image) => image.id === template.imageId) || !options.runtimes.some((runtime) => runtime.id === template.runtimeId))
+        throw new Error(`Bot template ${template.id} references an unknown image or runtime`)
     this.options = structuredClone({
       ...options,
       provider: undefined,
+      accountProvider: undefined,
+      connector: undefined,
+      egress: undefined,
+      templates: undefined,
       capacity,
     })
+    this.templates = structuredClone(options.templates ?? [])
+    this.accountProvider = options.accountProvider
+    this.connector = options.connector
+    this.egress = options.egress
     this.provider = options.provider ?? new QemuProvider(options.stateDirectory)
   }
   ready() {
@@ -96,7 +139,48 @@ export class HostService {
     this.store = new HostStore(this.options.stateDirectory)
     this.db = this.store.db
     this.hostId = this.store.hostId
+    this.hostGeneration = this.store.nextGeneration()
+    this.egress ??= new EgressBroker()
+    const accountDirectory = join(this.options.stateDirectory, 'accounts')
+    const authority = new AccountAuthority({ store: this.store, directory: accountDirectory,
+      provider: this.accountProvider ?? (this.options.accounts?.runtime ? id => CodexAccountProvider.open(join(accountDirectory, id), this.options.accounts!.runtime!) : undefined),
+      onChanged: account => this.bots?.delegation?.changed(account),
+    })
+    const peers = new AccountPeers(authority, join(accountDirectory, 'peers'), this.options.accounts?.peers)
+    this.accounts = new AccountService(authority, peers, (botId, key) => migration.migrate(botId, key))
+    const setupHost: SetupHost & { hostGeneration: number } = {
+        hostId: this.hostId,
+        hostGeneration: this.hostGeneration,
+        inspectHost: () => this.inspectHost(),
+        listImages: () => this.listImages(),
+        vm: (id) => this.store.vm(id),
+        vms: () => this.store.vms(),
+        operation: (id) => this.store.operation(id),
+        admit: (method, params) => this.admit(requestSchema.parse({ version: 1, id: randomUUID(), method, params }) as Parameters<HostService['admit']>[0]),
+        templates: this.templates,
+        preparation: this.provider,
+    }
+    this.bots = new BotService({
+      store: this.store,
+      sharedAccounts: authority,
+      connector: this.connector ?? (this.vmConnector = new VmGuestConnector(this.hostId, this.hostGeneration, vmId => {
+        const vm = this.store.vm(vmId)
+        if (!this.provider.botChannels) throw new HostError('UNSUPPORTED', 'Provider has no bot channels')
+        return this.provider.botChannels(vm)
+      }, this.egress, () => this.bots.repo)),
+      host: setupHost,
+      onPolicyChanged: (botId, vmId, policy) => {
+        const session = this.bots.repo.session(botId)
+        if (vmId) this.egress?.updatePolicy(vmId, policy, session?.transport === 'managed' ? session.id : undefined)
+      },
+      activeStreams: (vmId, botId) => { const session = botId ? this.bots.repo.session(botId) : undefined; return this.egress?.activeStreams(vmId, session?.transport === 'managed' ? session.id : undefined) ?? 0 },
+    })
+    this.environments = new EnvironmentService(this.bots.repo, setupHost, this.bots.sessions, this.bots.setup)
+    const migration = new AccountMigration(authority, this.bots.repo, this.bots.coordinator, this.bots.delegation!)
     try {
+      this.environments.recover()
+      await authority.ready()
+      await peers.ready()
       // Never replay an uncertain side effect after a crash. Keep the reservation and
       // reconcile identity through the private QMP UUID before allowing more work.
       const interrupted = new Set<string>()
@@ -149,6 +233,7 @@ export class HostService {
               updatedAt: now(),
             })
           )
+        if (state === 'running') this.attachEgress(vm)
         if (
           state === 'stopped' &&
           vm.startupPolicy === 'always' &&
@@ -168,10 +253,54 @@ export class HostService {
           })
         }
       }
+      await this.bots.ready()
     } catch (error) {
+      await this.accounts?.peers.close().catch(() => {})
+      await this.accounts?.authority.close().catch(() => {})
+      await this.bots?.close().catch(() => {})
       this.store.close()
       throw error
     }
+  }
+  private attachEgress(vm: Vm) {
+    // Managed sessions attach their own routes when connecting. Never bind a VM-wide policy to a multiplexed channel.
+    const legacy = this.bots.repo.sessionsByVm(vm.id).filter(s => s.transport === 'legacy' && !s.issue)
+    if (legacy.length !== 1 || !this.provider.botChannels || !this.egress) return
+    this.egress.attach(vm.id, this.provider.botChannels(vm).egress, this.bots.repo.network(legacy[0].botId))
+  }
+  private async inspectHost(): Promise<Host> {
+    const runtimes = await Promise.all(
+      this.options.runtimes.map(async (runtime) => ({
+        id: runtime.id,
+        ...(await this.provider.inspectRuntime(runtime)),
+      }))
+    )
+    return {
+      id: this.hostId,
+      serviceVersion: '0.2.0',
+      protocolVersion: 1,
+      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
+      health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',
+      observedMemoryMiB: observedMemoryMiB(),
+      platform: process.platform,
+      arch: process.arch,
+      supported: runtimes.some((x) => x.available),
+      capacity: this.options.capacity!,
+      allocated: this.allocated(),
+      runtimes,
+    }
+  }
+  private listImages() {
+    return Promise.all(
+      this.options.images.map(async (image) => {
+        try {
+          await verifyAsset(image.asset)
+          return { id: image.id, name: image.name, arch: image.arch, virtualSizeGiB: image.virtualSizeGiB, available: true }
+        } catch (error) {
+          return { id: image.id, name: image.name, arch: image.arch, virtualSizeGiB: image.virtualSizeGiB, available: false, reason: errorInfo(error).message }
+        }
+      })
+    )
   }
   private allocated() {
     return this.store
@@ -230,54 +359,14 @@ export class HostService {
     }
   }
   private async handle(request: Request): Promise<unknown> {
+    if (request.method.startsWith('environment.')) return this.environments.handle(request as any)
+    if (request.method.startsWith('account.')) return this.accounts.handle(request as any)
+    if (request.method.startsWith('bot.')) return this.bots.handle(request as any)
     switch (request.method) {
-      case 'host.inspect': {
-        const runtimes = await Promise.all(
-          this.options.runtimes.map(async (runtime) => ({
-            id: runtime.id,
-            ...(await this.provider.inspectRuntime(runtime)),
-          }))
-        )
-        const result: Host = {
-          id: this.hostId,
-          serviceVersion: '0.1.0',
-          protocolVersion: 1,
-          capabilities: ['vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke'],
-          health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',
-          observedMemoryMiB: observedMemoryMiB(),
-          platform: process.platform,
-          arch: process.arch,
-          supported: runtimes.some((x) => x.available),
-          capacity: this.options.capacity!,
-          allocated: this.allocated(),
-          runtimes,
-        }
-        return result
-      }
+      case 'host.inspect':
+        return this.inspectHost()
       case 'image.list':
-        return Promise.all(
-          this.options.images.map(async (image) => {
-            try {
-              await verifyAsset(image.asset)
-              return {
-                id: image.id,
-                name: image.name,
-                arch: image.arch,
-                virtualSizeGiB: image.virtualSizeGiB,
-                available: true,
-              }
-            } catch (error) {
-              return {
-                id: image.id,
-                name: image.name,
-                arch: image.arch,
-                virtualSizeGiB: image.virtualSizeGiB,
-                available: false,
-                reason: errorInfo(error).message,
-              }
-            }
-          })
-        )
+        return this.listImages()
       case 'vm.list':
         return this.store
           .vms()
@@ -372,7 +461,7 @@ export class HostService {
           return cancelled
         })
       default:
-        return this.admit(request)
+        return this.admit(request as Parameters<HostService['admit']>[0])
     }
   }
   private async admit(
@@ -447,6 +536,8 @@ export class HostService {
           this.store.operations().some((x) => x.vmId === vm.id && (x.status === 'queued' || x.status === 'running'))
         )
           throw new HostError('VM_BUSY', 'VM already has an active operation')
+        this.environments.assertVmOperationAllowed(vm.id, request.params.idempotencyKey)
+        this.bots.assertVmOperationAllowed(vm.id, request.method, request.method === 'vm.remove' && request.params.deleteData)
         if (
           (vm.state === 'removed' && !(request.method === 'vm.remove' && request.params.deleteData)) ||
           vm.state === 'unknown'
@@ -518,19 +609,27 @@ export class HostService {
           JSON.parse(this.db.prepare('SELECT request FROM operations WHERE id=?').get(op.id)!.request as string)
         )
         let readiness: Awaited<ReturnType<Provider['waitReady']>> | undefined
+        const createKey = (this.db.prepare('SELECT key FROM operations WHERE id=?').get(op.id) as { key: string } | undefined)?.key
+        const profile = (this.bots.launchProfileFor(vm.id, createKey) || this.environments.launchProfileFor(vm.id, createKey)) && this.provider.botChannels ? { botChannels: this.provider.botChannels(vm) } : {}
         switch (op.method) {
           case 'vm.create':
             await this.provider.provision(vm, this.runtime(vm.runtimeId), this.image(vm.imageId), signal)
-            await this.provider.start(vm, this.runtime(vm.runtimeId), signal)
+            await this.provider.start(vm, this.runtime(vm.runtimeId), signal, profile)
             break
           case 'vm.start':
-            await this.provider.start(vm, this.runtime(vm.runtimeId), signal)
+            await this.provider.start(vm, this.runtime(vm.runtimeId), signal, profile)
             break
           case 'vm.shutdown':
+            this.egress?.detach(vm.id)
             await this.provider.shutdown(vm, signal)
+            this.bots.vmStopped(vm.id)
+          this.vmConnector?.dropVm(vm.id)
             break
           case 'vm.restart':
+            this.egress?.detach(vm.id)
             await this.provider.restart(vm, signal)
+            this.bots.vmStopped(vm.id)
+          this.vmConnector?.dropVm(vm.id)
             break
           case 'vm.remove':
             if ((await this.provider.inspect(vm)) !== 'stopped')
@@ -562,6 +661,7 @@ export class HostService {
           })
           this.store.saveOperation({ ...op, status: 'succeeded', updatedAt: now() })
         })
+        if (state === 'running') this.attachEgress(this.store.vm(vm.id))
       } catch (error) {
         const state =
           vm.state === 'removed' ? 'removed' : await this.provider.inspect(vm).catch(() => 'unknown' as const)
@@ -588,6 +688,12 @@ export class HostService {
     this.closed = true
     await this.initialized?.catch(() => {})
     await this.worker
+    await this.environments?.close()
+    await this.accounts?.peers.close()
+    await this.accounts?.authority.close()
+    await this.bots?.close().catch(() => {})
+    this.egress?.close()
+    this.vmConnector?.close()
     this.store?.close()
   }
 }
