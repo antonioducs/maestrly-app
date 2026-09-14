@@ -4,6 +4,7 @@ import { z } from 'zod'
 // Mutations return Operation; retry with the same idempotencyKey and parameters.
 // expectedRevision is mandatory except on create. Events use an exclusive cursor.
 import { id, revision, errorSchema } from './common.js'
+import { botRequests } from './bot-rpc.js'
 const empty = z.strictObject({})
 const mutation = { vmId: id, expectedRevision: revision, idempotencyKey: id }
 const envelope = { version: z.literal(1), id }
@@ -43,6 +44,7 @@ export const requestSchema = z.discriminatedUnion('method', [
       limit: z.number().int().min(1).max(500).default(100),
     })
   ),
+  ...botRequests,
 ])
 export const responseSchema = z
   .strictObject({
