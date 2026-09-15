@@ -111,6 +111,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Development and packaging](docs/development.md)
 - [Releasing](docs/releasing.md)
 - [Local data and recovery](docs/local-data.md)
+- [Context usage and compaction](docs/chat-context.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
 - [Changelog](CHANGELOG.md)
 
