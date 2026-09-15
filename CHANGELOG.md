@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-15
+
+### Fixed
+
+- Stream live context-window usage for Codex/Astra and Claude instead of
+  showing stale measurements.
+- Show compaction progress and failures, with staged retries that reuse
+  successfully completed work.
+
 ## [0.6.0] - 2026-09-13
 
 ### Added
