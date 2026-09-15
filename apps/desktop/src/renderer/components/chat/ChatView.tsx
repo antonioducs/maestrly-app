@@ -23,7 +23,6 @@ import { cn } from '@/lib/utils'
 import {
   applyChatEvent,
   CHAT_SUBSCRIPTION_PROVIDER_KINDS,
-  contextOccupancy,
   DEFAULT_REASONING_EFFORTS,
   findPendingChatQuestion,
   isMaestrlyUltraEffort,
@@ -39,6 +38,7 @@ import type {
   ChatMessage,
   ChatMode,
   ChatModelMeta,
+  ChatModelRef,
   ChatPermissionRequest,
   PendingChatQuestion,
   ChatProjectCommand,
@@ -85,6 +85,8 @@ import { ChatReasoningPicker } from './ChatReasoningPicker'
 import { ChatFastModeToggle } from './ChatFastModeToggle'
 import { ChatPlusMenu } from './ChatPlusMenu'
 import { ChatContextMeter } from './ChatContextMeter'
+import { ContextCompactionStatus } from './ContextCompactionStatus'
+import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
@@ -149,7 +151,11 @@ export function ChatView({
   const rootRef = useRef<HTMLDivElement>(null)
 
   const [hasMore, setHasMore] = useState(false)
-  const [historyStats, setHistoryStats] = useState<ChatHistoryStats | null>(null)
+  const [historyStatsState, setHistoryStats] = useState<{
+    conversationId: string
+    model: ChatModelRef | null
+    stats: ChatHistoryStats
+  } | null>(null)
   const earliestSeqRef = useRef<number | null>(null)
   const anchoredRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -220,7 +226,26 @@ export function ChatView({
   const [compactDismissed, setCompactDismissed] = useState(false)
   const [selModelId, setSelModelId] = useState<string | null>(null)
   const [selProviderId, setSelProviderId] = useState<string | null>(null)
-  const [modelMeta, setModelMeta] = useState<ChatModelMeta | null>(null)
+  const [modelMetaState, setModelMeta] = useState<{ model: ChatModelRef; meta: ChatModelMeta | null } | null>(null)
+  const selectedContextModel = useMemo(
+    () => (selProviderId && selModelId ? { providerId: selProviderId, modelId: selModelId } : null),
+    [selProviderId, selModelId]
+  )
+  const modelMeta = sameContextModel(modelMetaState?.model, selectedContextModel)
+    ? (modelMetaState?.meta ?? null)
+    : null
+  const historyStats = useMemo(() => {
+    if (historyStatsState?.conversationId !== conversationId) return null
+    if (sameContextModel(historyStatsState.model, selectedContextModel)) return historyStatsState.stats
+    // Keep accumulated billing while the next target's context estimate is loading.
+    return { ...historyStatsState.stats, contextProjection: undefined, lastUsage: null, lastModel: null }
+  }, [conversationId, historyStatsState, selectedContextModel])
+  const contextTargetRef = useRef({ conversationId, model: selectedContextModel })
+  contextTargetRef.current = { conversationId, model: selectedContextModel }
+  const statsRequestRef = useRef(0)
+  const [contextObservationBoundary, setContextObservationBoundary] = useState({ conversationId, after: 0 })
+  const contextObservationAfter =
+    contextObservationBoundary.conversationId === conversationId ? contextObservationBoundary.after : 0
   const [modelRefresh, setModelRefresh] = useState(0)
   const [mode, setMode] = useState<ChatMode>('agent')
   const [modeChangeError, setModeChangeError] = useState<string | null>(null)
@@ -325,10 +350,20 @@ export function ChatView({
   }, [conversationId, onEvictionSafetyChange, safeToEvict])
 
   const refreshStats = useCallback(() => {
+    const target = contextTargetRef.current
+    const request = ++statsRequestRef.current
     void window.api.chatHistoryStats(conversationId).then((s) => {
-      if (convIdRef.current === conversationId) setHistoryStats(s)
+      if (
+        request === statsRequestRef.current &&
+        convIdRef.current === conversationId &&
+        sameContextModel(target.model, contextTargetRef.current.model)
+      )
+        setHistoryStats({ ...target, stats: s })
     })
   }, [conversationId])
+  useEffect(() => {
+    if (selectedContextModel) refreshStats()
+  }, [selectedContextModel, refreshStats])
 
   const normalizeHistoryWindow = useCallback(
     (
@@ -819,7 +854,13 @@ export function ChatView({
         return
       }
 
-      if (kind !== 'finish' && kind !== 'aborted' && kind !== 'error') {
+      if (
+        kind !== 'finish' &&
+        kind !== 'aborted' &&
+        kind !== 'error' &&
+        kind !== 'context-usage' &&
+        kind !== 'compaction-progress'
+      ) {
         streamingRef.current = true
         if (!hidden) setStreaming(true)
       }
@@ -944,12 +985,17 @@ export function ChatView({
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
+      if (!alive) return
       const p = sel ? cfg.providers.find((pp) => pp.id === sel.providerId) : undefined
       setKeyMissing(!p || !isChatProviderConnected(p))
       setSelModelId(sel?.modelId ?? null)
       setSelProviderId(sel?.providerId ?? null)
       setChatProviders(cfg.providers)
     })
+    let alive = true
+    return () => {
+      alive = false
+    }
   }, [conversationId, messages.length, modelRefresh])
 
   useEffect(() => {
@@ -996,7 +1042,7 @@ export function ChatView({
     let alive = true
 
     window.api.chatModelMeta(selModelId, selProviderId ?? undefined).then((m) => {
-      if (alive) setModelMeta(m)
+      if (alive && selProviderId) setModelMeta({ model: { providerId: selProviderId, modelId: selModelId }, meta: m })
     })
     return () => {
       alive = false
@@ -1523,16 +1569,21 @@ export function ChatView({
     [conversationId, pushAssistantError, subagents]
   )
 
+  const contextObservation = useMemo(
+    () =>
+      selectContextObservation(messages, {
+        conversationId,
+        model: selectedContextModel,
+        streaming,
+        compacting,
+        after: contextObservationAfter,
+      }),
+    [messages, conversationId, selectedContextModel, streaming, compacting, contextObservationAfter]
+  )
   const contextRatio = useMemo(() => {
-    const runtimeWindow = historyStats?.contextProjection?.modelContextWindow
-    const win = runtimeWindow ?? modelMeta?.contextWindow
-
-    const used =
-      historyStats?.contextProjection?.usedTokens ??
-      (historyStats?.lastUsage ? contextOccupancy(historyStats.lastUsage) : 0)
-    if (!win || !used) return null
-    return used / win
-  }, [historyStats, modelMeta, selModelId, selProviderId])
+    const reading = contextMeterReading(historyStats, modelMeta, contextObservation.snapshot, selectedContextModel)
+    return reading.window && reading.used ? reading.used / reading.window : null
+  }, [historyStats, modelMeta, contextObservation.snapshot, selectedContextModel])
   const showCompactBanner =
     contextRatio != null &&
     contextRatio >= 0.8 &&
@@ -1965,11 +2016,12 @@ export function ChatView({
                               conversationId={conversationId}
                               refreshToken={modelRefresh}
                               onChange={(selection) => {
+                                if (!sameContextModel(selection, selectedContextModel))
+                                  setContextObservationBoundary({ conversationId, after: Date.now() })
                                 setSelProviderId(selection.providerId)
                                 setSelModelId(selection.modelId)
                                 setModelMeta(null)
                                 setModelRefresh((n) => n + 1)
-                                refreshStats()
                               }}
                             />
                           </>
@@ -2001,11 +2053,12 @@ export function ChatView({
                           conversationId={conversationId}
                           refreshToken={modelRefresh}
                           onChange={(selection) => {
+                            if (!sameContextModel(selection, selectedContextModel))
+                              setContextObservationBoundary({ conversationId, after: Date.now() })
                             setSelProviderId(selection.providerId)
                             setSelModelId(selection.modelId)
                             setModelMeta(null)
                             setModelRefresh((n) => n + 1)
-                            refreshStats()
                             requestAnimationFrame(() => composerRef.current?.focus())
                           }}
                         />
@@ -2016,17 +2069,22 @@ export function ChatView({
                 metaSlot={
                   <>
                     {!isMaestro && <ChatPermModePicker conversationId={conversationId} />}
-                    <ChatContextMeter
-                      stats={historyStats}
-                      meta={modelMeta}
-                      metaByModel={metaByModel}
-                      providerId={selProviderId}
-                      modelId={selModelId}
-                      onLimitChange={() => {
-                        setModelRefresh((n) => n + 1)
-                        refreshStats()
-                      }}
-                    />
+                    <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
+                      <ContextCompactionStatus progress={contextObservation.progress} />
+                      <ChatContextMeter
+                        key={`${conversationId}:${selProviderId}:${selModelId}`}
+                        stats={historyStats}
+                        snapshot={contextObservation.snapshot}
+                        meta={modelMeta}
+                        metaByModel={metaByModel}
+                        providerId={selProviderId}
+                        modelId={selModelId}
+                        onLimitChange={() => {
+                          setModelRefresh((n) => n + 1)
+                          refreshStats()
+                        }}
+                      />
+                    </div>
                   </>
                 }
               />
