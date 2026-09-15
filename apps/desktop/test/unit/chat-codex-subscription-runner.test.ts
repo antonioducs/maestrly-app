@@ -1566,6 +1566,109 @@ describe('Codex subscription runner', () => {
     })
   })
 
+  it.each([
+    'completed',
+    'failed',
+    'aborted',
+  ] as const)('persists live root occupancy and flushes the trailing sample before %s', async (terminal) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_live_context', 'Keep working', 1)
+    const client = new FakeCodexClient()
+    const emitted: ChatStreamEvent[] = []
+    const controller = new AbortController()
+    client.queueTurn({
+      turnId: 'turn_live',
+      notifications: [
+        usageNotification('thread_1', 'turn_live', { total: breakdown(100, 80, 10), last: breakdown(100, 80, 10) }),
+      ],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.signal = controller.signal
+    const running = runCodexSubscriptionChat(args)
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(110))
+    client.emit({ method: 'thread/started', params: { thread: { id: 'child_live', parentThreadId: 'thread_1' } } })
+    client.emit(
+      usageNotification('child_live', 'turn_child', {
+        total: breakdown(90_000, 0, 100),
+        last: breakdown(90_000, 0, 100),
+      })
+    )
+    client.emit(
+      usageNotification('thread_1', 'turn_live', { total: breakdown(300, 0, 30), last: breakdown(200, 190, 20) })
+    )
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(220), {
+      timeout: 2_000,
+    })
+    expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+    client.emit(
+      usageNotification('thread_1', 'turn_live', { total: breakdown(600, 0, 60), last: breakdown(300, 290, 30) })
+    )
+    client.emit(completedNotification('child_live', 'turn_child'))
+    if (terminal === 'aborted') controller.abort()
+    client.emit(completedNotification('thread_1', 'turn_live', terminal === 'aborted' ? 'interrupted' : terminal))
+    await running
+    const samples = emitted.filter((event) => event.kind === 'context-usage')
+    expect(samples.map((event) => event.snapshot.usedTokens)).toEqual([110, 220, 330])
+    expect(assistantMessages(conversation.id)[0]?.contextSnapshot).toMatchObject({
+      usedTokens: 330,
+      model: args.selection,
+      modelContextWindow: 200_000,
+      quality: 'measured',
+    })
+    const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
+    expect(emitted.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(emitted.indexOf(samples.at(-1)!))
+    const count = samples.length
+    client.emit(usageNotification('thread_1', 'turn_live', { total: breakdown(999, 0, 1), last: breakdown(999, 0, 1) }))
+    expect(emitted.filter((event) => event.kind === 'context-usage')).toHaveLength(count)
+  })
+
+  it.each([
+    'failed',
+    'cancelled',
+  ] as const)('keeps the original context when portable compaction is %s', async (status) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_failed_context', 'Long task', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({
+      turnId: 'turn_failed_context',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_failed_context',
+          { total: breakdown(890, 100, 10), last: breakdown(890, 100, 10) },
+          1_000
+        ),
+        completedNotification('thread_1', 'turn_failed_context', 'interrupted'),
+      ],
+    })
+    const controller = new AbortController()
+    const emitted: ChatStreamEvent[] = []
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.signal = controller.signal
+    args.contextWindow = 1_000
+    args.compactHistory = async () => {
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running')
+      if (status === 'cancelled') controller.abort()
+      throw Object.assign(new Error('summarizer unavailable sk-1234567890abcdefghij'), {
+        partialUsage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
+      })
+    }
+    await runCodexSubscriptionChat(args)
+    const assistant = assistantMessages(conversation.id)[0]
+    expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 900, quality: 'measured' })
+    expect(assistant.usage).toMatchObject({ input: 797, output: 13, cachedInput: 102, cacheCreate: 1 })
+    expect(assistant.compactionProgress).toMatchObject({ status, beforeTokens: 900 })
+    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+    if (status === 'failed') {
+      expect(assistant.error).toContain('summarizer unavailable')
+      expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
+      expect(assistant.compactionProgress?.error).toBe(assistant.error)
+    }
+    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
+  })
+
   it('compacts portably at the threshold, replaces the root and continues in the same bubble with cumulative usage', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -1621,7 +1724,12 @@ describe('Codex subscription runner', () => {
         completedNotification('thread_2', 'turn_portable_2'),
       ],
     })
-    const compactHistory = vi.fn(async () => {
+    const compactHistory = vi.fn<NonNullable<RunCodexSubscriptionChatArgs['compactHistory']>>(async (onProgress) => {
+      expect(assistantMessages(conversation.id)[0].compactionProgress).toMatchObject({
+        status: 'running',
+        beforeTokens: 900,
+      })
+      onProgress?.({ status: 'running', phase: 'chunk', completed: 1, total: 2, attempt: 1 })
       expect(
         assistantMessages(conversation.id)[0].parts.some(
           (part) => part.type === 'text' && part.text.includes('Partial output before the summary.')
@@ -1697,6 +1805,15 @@ describe('Codex subscription runner', () => {
       lastMessageId: assistant.id,
       usage: { inputTokens: 50, cachedInputTokens: 10, outputTokens: 10 },
     })
+    expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 210, quality: 'measured' })
+    expect(assistant.compactionProgress).toMatchObject({
+      status: 'completed',
+      beforeTokens: 900,
+      afterTokens: 210,
+      afterQuality: 'measured',
+    })
+    const observations = emitted.filter((event) => event.kind === 'context-usage')
+    expect(observations.at(-1)!.snapshot.sequence).toBeGreaterThan(observations[0].snapshot.sequence)
     expect(listCodexThreadCleanup()).toEqual([])
   })
 
@@ -5662,6 +5779,34 @@ describe('Codex subscription runner', () => {
     expect(settled).toBe(true)
   })
 
+  it('ignores old-turn samples and completion before the native compaction turn starts', async () => {
+    const client = new FakeCodexClient()
+    const observe = vi.fn()
+    let settled = false
+    const compacting = compactCodexSubscriptionThread(
+      client as unknown as CodexAppServerClient,
+      'thread_compact',
+      new AbortController().signal,
+      observe
+    ).finally(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(client.requestCalls).toHaveLength(1))
+    client.emit(
+      usageNotification('thread_compact', 'old-turn', {
+        total: breakdown(900, 300, 200),
+        last: breakdown(800, 300, 50),
+      })
+    )
+    client.emit(completedNotification('thread_compact', 'old-turn'))
+    await waitImmediate()
+    expect(settled).toBe(false)
+    client.emit({ method: 'turn/started', params: { threadId: 'thread_compact', turn: { id: 'native-turn' } } })
+    client.emit(completedNotification('thread_compact', 'native-turn'))
+    await expect(compacting).resolves.toBeNull()
+    expect(observe).not.toHaveBeenCalled()
+  })
+
   it('injects the multi-agent mode hint into the thread (the catalog gates the process, not the thread)', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -6616,6 +6761,109 @@ describe('Codex subscription runner', () => {
       expect(clientB.startThreadCalls).toHaveLength(1)
       expect(getCodexThreadBinding(conversation.id)?.accountId).toBe('acc_b')
       expect(assistantMessages(conversation.id)).toHaveLength(1)
+    })
+
+    it('settles automatic native compaction before failover and accepts the next account lifecycle', async () => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_auto_failover', 'Continue after quota exhaustion', 1)
+      const clientA = new FakeCodexClient()
+      const clientB = new FakeCodexClient()
+      codexManagerBridge.setClient(clientA, null)
+      codexManagerBridge.setClient(clientB, 'acc_b')
+      const nativeItem = (method: string, turnId: string): CodexNotification => ({
+        method,
+        params: { threadId: 'thread_1', turnId, item: { type: 'contextCompaction', id: 'native_item' } },
+      })
+      clientA.queueTurn({
+        turnId: 'turn_auto_a',
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_auto_a',
+            { total: breakdown(800, 0, 10), last: breakdown(800, 0, 10) },
+            1_000
+          ),
+          nativeItem('item/started', 'turn_auto_a'),
+          usageNotification(
+            'thread_1',
+            'turn_auto_a',
+            { total: breakdown(900, 0, 20), last: breakdown(100, 0, 10) },
+            1_000
+          ),
+          completedNotification('thread_1', 'turn_auto_a', 'failed', 'UsageLimitExceeded: weekly quota exhausted'),
+          usageNotification(
+            'thread_1',
+            'turn_auto_a',
+            { total: breakdown(999, 0, 30), last: breakdown(1, 0, 10) },
+            1_000
+          ),
+          nativeItem('item/started', 'turn_auto_a'),
+          nativeItem('item/completed', 'turn_auto_a'),
+        ],
+      })
+      clientB.queueTurn({
+        turnId: 'turn_auto_b',
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_auto_b',
+            { total: breakdown(200, 0, 10), last: breakdown(200, 0, 10) },
+            1_000
+          ),
+          nativeItem('item/started', 'turn_auto_b'),
+          usageNotification(
+            'thread_1',
+            'turn_auto_b',
+            { total: breakdown(300, 0, 20), last: breakdown(100, 0, 10) },
+            1_000
+          ),
+          nativeItem('item/completed', 'turn_auto_b'),
+          usageNotification(
+            'thread_1',
+            'turn_auto_b',
+            { total: breakdown(500, 0, 30), last: breakdown(250, 0, 10) },
+            1_000
+          ),
+          completedNotification('thread_1', 'turn_auto_b'),
+        ],
+      })
+      const emitted: ChatStreamEvent[] = []
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, clientA, (event) => emitted.push(event))
+      args.selection = { providerId: PRIMARY, modelId: 'gpt-6-astra' }
+      args.runtimeModel = astraRuntimeModel()
+      args.contextWindow = 1_000
+      args.failoverChain = [PRIMARY, FALLBACK]
+      args.resolveNextTarget = vi.fn(async () => {
+        const assistant = assistantMessages(conversation.id)[0]
+        expect(assistant.compactionProgress).toMatchObject({
+          status: 'failed',
+          beforeTokens: 810,
+          error: 'UsageLimitExceeded: weekly quota exhausted',
+        })
+        expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+        expect(assistant.contextSnapshot?.usedTokens).toBe(810)
+        clientA.emit(nativeItem('item/completed', 'turn_auto_a'))
+        return {
+          ...failoverTarget(clientB, FALLBACK, 'acc_b', 1_000),
+          model: astraRuntimeModel(),
+          runtimeModelId: 'gpt-6-astra',
+        }
+      })
+      await runCodexSubscriptionChat(args)
+      expect(args.resolveNextTarget).toHaveBeenCalledOnce()
+      expect(
+        emitted.filter((event) => event.kind === 'compaction-progress').map((event) => event.progress.status)
+      ).toEqual(['running', 'failed', 'running', 'completed', 'completed'])
+      expect(emitted.filter((event) => event.kind === 'compaction')).toHaveLength(1)
+      expect(
+        emitted.filter((event) => event.kind === 'context-usage').some((event) => event.snapshot.usedTokens === 11)
+      ).toBe(false)
+      const assistant = assistantMessages(conversation.id)[0]
+      expect(assistant.compactionProgress).toMatchObject({ status: 'completed', beforeTokens: 210, afterTokens: 110 })
+      expect(assistant.contextSnapshot?.usedTokens).toBe(260)
+      expect(assistant.error).toBeUndefined()
+      expect(getCodexThreadBinding(conversation.id)?.accountId).toBe('acc_b')
     })
 
     it('updates and removes the nominal window before each failover thread/start and associates observations', async () => {
@@ -8625,6 +8873,254 @@ describe('Codex subscription runner', () => {
     await expect(controls[0].steer('too late', 'client-steer-2')).resolves.toBe('target-unavailable')
   })
 
+  it.each([
+    'before',
+    'after',
+  ] as const)('observes automatic native compaction with the reduction sample %s completion', async (sampleOrder) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_auto_native', 'Continue the task', 1)
+    const client = new FakeCodexClient()
+    const emitted: ChatStreamEvent[] = []
+    client.queueTurn({
+      turnId: 'turn_auto',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_auto',
+          {
+            total: breakdown(800, 0, 10),
+            last: breakdown(800, 0, 10),
+          },
+          1_000
+        ),
+      ],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+    args.contextWindow = 1_000
+    args.compactHistory = vi.fn(async () => ({ summary: 'portable fallback' }))
+    const running = runCodexSubscriptionChat(args)
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(810))
+    const itemEvent = (method: string, threadId = 'thread_1', turnId = 'turn_auto', id = 'auto_compact') => ({
+      method,
+      params: { threadId, turnId, item: { type: 'contextCompaction', id } },
+    })
+    client.emit({ method: 'thread/started', params: { thread: { id: 'auto_child', parentThreadId: 'thread_1' } } })
+    client.emit(itemEvent('item/started', 'auto_child', 'child_turn'))
+    client.emit(itemEvent('item/completed', 'auto_child', 'child_turn'))
+    client.emit(itemEvent('item/started', 'thread_1', 'stale_turn'))
+    client.emit(itemEvent('item/completed', 'thread_1', 'stale_turn'))
+    expect(assistantMessages(conversation.id)[0]?.compactionProgress).toBeUndefined()
+    client.emit(completedNotification('auto_child', 'child_turn'))
+    client.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread_1',
+        turnId: 'turn_auto',
+        item: { type: 'agentMessage', id: 'auto_text', text: 'Still working.' },
+      },
+    })
+    client.emit(itemEvent('item/started'))
+    client.emit(itemEvent('item/started'))
+    client.emit(completedNotification('thread_1', 'stale_turn', 'failed', 'stale failure'))
+    expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
+      status: 'running',
+      phase: 'native',
+      beforeTokens: 810,
+    })
+    expect(emitted.filter((event) => event.kind === 'compaction-progress')).toHaveLength(1)
+    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
+    // The native operation owns the turn even if it crosses the host's 90% threshold.
+    if (sampleOrder === 'before') {
+      client.emit(
+        usageNotification(
+          'thread_1',
+          'turn_auto',
+          {
+            total: breakdown(1_000, 0, 20),
+            last: breakdown(950, 0, 10),
+          },
+          1_000
+        )
+      )
+      client.emit(
+        usageNotification(
+          'thread_1',
+          'turn_auto',
+          {
+            total: breakdown(1_100, 0, 30),
+            last: breakdown(150, 0, 10),
+          },
+          1_000
+        )
+      )
+    }
+    client.emit(itemEvent('item/completed'))
+    client.emit(itemEvent('item/completed'))
+    client.emit(itemEvent('item/started'))
+    expect(emitted.filter((event) => event.kind === 'compaction')).toHaveLength(1)
+    expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('completed')
+    if (sampleOrder === 'after') {
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress).not.toHaveProperty('afterTokens')
+      client.emit(
+        usageNotification(
+          'thread_1',
+          'turn_auto',
+          {
+            total: breakdown(1_100, 0, 30),
+            last: breakdown(150, 0, 10),
+          },
+          1_000
+        )
+      )
+    }
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.afterTokens).toBe(160), {
+      timeout: 2_000,
+    })
+    expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+    client.emit(
+      usageNotification(
+        'thread_1',
+        'turn_auto',
+        {
+          total: breakdown(1_300, 0, 40),
+          last: breakdown(250, 0, 10),
+        },
+        1_000
+      )
+    )
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(260), {
+      timeout: 2_000,
+    })
+    client.emit(completedNotification('thread_1', 'turn_auto'))
+    await running
+    const assistant = assistantMessages(conversation.id)[0]
+    expect(assistant.parts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'text', text: 'Still working.' }),
+        expect.objectContaining({ type: 'compaction', strategy: 'codex-native' }),
+      ])
+    )
+    expect(assistant.compactionProgress).toMatchObject({
+      status: 'completed',
+      beforeTokens: 810,
+      afterTokens: 160,
+      afterQuality: 'measured',
+    })
+    expect(assistant.contextSnapshot?.usedTokens).toBe(260)
+    expect(client.interruptTurnCalls).toEqual([])
+    expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
+    expect(args.compactHistory).not.toHaveBeenCalled()
+    expect(client.startTurnCalls).toHaveLength(1)
+  })
+
+  it.each([
+    'failed',
+    'cancelled',
+    'exit',
+    'completed',
+    'interrupted',
+  ] as const)('settles pending automatic native compaction on %s without a success marker', async (terminal) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_auto_native_failure', 'Continue the task', 1)
+    const client = new FakeCodexClient()
+    const emitted: ChatStreamEvent[] = []
+    const controller = new AbortController()
+    let rejectExit!: (error: Error) => void
+    const exit = new Promise<never>((_resolve, reject) => {
+      rejectExit = reject
+    })
+    void exit.catch(() => {})
+    client.waitForExit = () => exit
+    client.queueTurn({
+      turnId: 'turn_auto_failure',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_auto_failure',
+          { total: breakdown(800, 0, 10), last: breakdown(800, 0, 10) },
+          1_000
+        ),
+        {
+          method: 'item/started',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_auto_failure',
+            item: { type: 'contextCompaction', id: 'auto_failed' },
+          },
+        },
+      ],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+    args.contextWindow = 1_000
+    args.signal = controller.signal
+    const running = runCodexSubscriptionChat(args)
+    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running'))
+    client.emit(
+      usageNotification(
+        'thread_1',
+        'turn_auto_failure',
+        {
+          total: breakdown(900, 0, 20),
+          last: breakdown(100, 0, 10),
+        },
+        1_000
+      )
+    )
+    const reason = 'native operation rejected sk-1234567890abcdefghij'
+    if (terminal === 'cancelled') controller.abort(new Error(reason))
+    if (terminal === 'exit') rejectExit(new Error(reason))
+    else
+      client.emit(
+        completedNotification(
+          'thread_1',
+          'turn_auto_failure',
+          terminal === 'cancelled' ? 'interrupted' : terminal,
+          reason
+        )
+      )
+    await running
+    const assistant = assistantMessages(conversation.id)[0]
+    expect(assistant.compactionProgress).toMatchObject({
+      status: terminal === 'cancelled' || terminal === 'interrupted' ? 'cancelled' : 'failed',
+      phase: 'native',
+      beforeTokens: 810,
+    })
+    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+    expect(assistant.contextSnapshot?.usedTokens).toBe(810)
+    expect(assistant.parts.some((part) => part.type === 'compaction')).toBe(false)
+    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
+    if (terminal === 'failed' || terminal === 'cancelled' || terminal === 'exit') {
+      expect(assistant.compactionProgress?.error).toContain('native operation rejected')
+      expect(assistant.compactionProgress?.error).not.toContain('sk-1234567890abcdefghij')
+      if (terminal !== 'cancelled') expect(assistant.error).toBe(assistant.compactionProgress?.error)
+    }
+    const count = emitted.length
+    client.emit({
+      method: 'item/completed',
+      params: {
+        threadId: 'thread_1',
+        turnId: 'turn_auto_failure',
+        item: { type: 'contextCompaction', id: 'auto_failed' },
+      },
+    })
+    client.emit(
+      usageNotification(
+        'thread_1',
+        'turn_auto_failure',
+        { total: breakdown(999, 0, 0), last: breakdown(1, 0, 0) },
+        1_000
+      )
+    )
+    expect(emitted).toHaveLength(count)
+    expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
+  })
+
   it('compacts Astra natively in the same thread and bypasses the portable fallback on success', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -8654,12 +9150,36 @@ describe('Codex subscription runner', () => {
         completedNotification('thread_1', 'turn_astra_compact_2'),
       ],
     })
+    client.startTurnHook = () => {
+      if (client.startTurnCalls.length === 2)
+        client.emit(
+          usageNotification(
+            'thread_1',
+            'turn_astra_compact_1',
+            { total: breakdown(99_000, 0, 0), last: breakdown(99_000, 0, 0) },
+            1_000
+          )
+        )
+    }
     client.requestHook = (method) => {
       if (method !== 'thread/compact/start') return
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
+        status: 'running',
+        phase: 'native',
+        beforeTokens: 960,
+      })
       setImmediate(() => {
         client.emit({
           method: 'turn/started',
           params: { threadId: 'thread_1', turn: { id: 'turn_native_compact', status: 'inProgress' } },
+        })
+        client.emit({
+          method: 'item/started',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_native_compact',
+            item: { type: 'contextCompaction', id: 'explicit_native' },
+          },
         })
         client.emit(
           usageNotification(
@@ -8669,6 +9189,14 @@ describe('Codex subscription runner', () => {
             1_000
           )
         )
+        client.emit({
+          method: 'item/completed',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_native_compact',
+            item: { type: 'contextCompaction', id: 'explicit_native' },
+          },
+        })
         client.emit(completedNotification('thread_1', 'turn_native_compact'))
       })
     }
@@ -8688,6 +9216,90 @@ describe('Codex subscription runner', () => {
     expect(client.startThreadCalls).toHaveLength(1)
     expect(client.deleteThreadCalls).toEqual([])
     expect(emitted.find((event) => event.kind === 'compaction')).toMatchObject({ strategy: 'codex-native' })
+    expect(emitted.filter((event) => event.kind === 'compaction')).toHaveLength(1)
+    expect(
+      emitted.filter((event) => event.kind === 'compaction-progress' && event.progress.status === 'running')
+    ).toHaveLength(1)
+    expect(assistantMessages(conversation.id)[0].compactionProgress).toMatchObject({
+      status: 'completed',
+      phase: 'native',
+      beforeTokens: 960,
+      afterTokens: 55,
+      afterQuality: 'measured',
+    })
+    expect(assistantMessages(conversation.id)[0].contextSnapshot).toMatchObject({
+      usedTokens: 160,
+      quality: 'measured',
+    })
+    expect(
+      emitted.filter((event) => event.kind === 'context-usage').every((event) => event.snapshot.usedTokens < 1_000)
+    ).toBe(true)
+  })
+
+  it.each([
+    'failed',
+    'cancelled',
+  ] as const)('reports native compaction %s without inventing a reduced context', async (status) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_native_failure', 'Long Astra task', 1)
+    const client = new FakeCodexClient()
+    const controller = new AbortController()
+    client.queueTurn({
+      turnId: 'turn_native_failure',
+      notifications: [
+        usageNotification(
+          'thread_1',
+          'turn_native_failure',
+          { total: breakdown(950, 100, 10), last: breakdown(950, 100, 10) },
+          1_000
+        ),
+        completedNotification('thread_1', 'turn_native_failure', 'interrupted'),
+      ],
+    })
+    client.requestHook = (method) => {
+      if (method !== 'thread/compact/start') return
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
+        status: 'running',
+        phase: 'native',
+      })
+      if (status === 'cancelled') controller.abort()
+      else
+        setImmediate(() => {
+          client.emit({ method: 'turn/started', params: { threadId: 'thread_1', turn: { id: 'native_failure' } } })
+          client.emit(
+            usageNotification(
+              'thread_1',
+              'native_failure',
+              { total: breakdown(990, 100, 10), last: breakdown(50, 0, 10) },
+              1_000
+            )
+          )
+          client.emit(
+            completedNotification(
+              'thread_1',
+              'native_failure',
+              'failed',
+              'native summary rejected sk-1234567890abcdefghij'
+            )
+          )
+        })
+    }
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+    args.runtimeModel = astraRuntimeModel()
+    args.contextWindow = 1_000
+    args.signal = controller.signal
+    await runCodexSubscriptionChat(args)
+    const assistant = assistantMessages(conversation.id)[0]
+    expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 960, quality: 'measured' })
+    expect(assistant.compactionProgress).toMatchObject({ status, phase: 'native', beforeTokens: 960 })
+    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+    if (status === 'failed') {
+      expect(assistant.error).toContain('native summary rejected')
+      expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
+      expect(assistant.compactionProgress?.error).toBe(assistant.error)
+    }
   })
 
   it('retries one fresh Astra thread with experimental context disabled when the account is ineligible', async () => {

@@ -1,5 +1,15 @@
 export default {
-  kanban: {"board": "Board", "project": "Kanban project", "linked": "Linked to this workspace and its worktrees", "disconnected": "Reconnect in Settings → Platform", "openProject": "Open Kanban: {{project}}", "open": "Open Kanban", "openFailed": "Could not open Kanban.", "accessTitle": "Linked Kanban", "accessDescription": "Access to the project linked to this workspace. Ask and Plan remain read-only."},
+  kanban: {
+    board: 'Board',
+    project: 'Kanban project',
+    linked: 'Linked to this workspace and its worktrees',
+    disconnected: 'Reconnect in Settings → Platform',
+    openProject: 'Open Kanban: {{project}}',
+    open: 'Open Kanban',
+    openFailed: 'Could not open Kanban.',
+    accessTitle: 'Linked Kanban',
+    accessDescription: 'Access to the project linked to this workspace. Ask and Plan remain read-only.',
+  },
   chatgptWeb: {
     notConfigured: "ChatGPT Web isn't set up yet. Finish it in Settings › Maestrly Chat.",
     starting: 'Starting the tunnel…',
@@ -532,6 +542,10 @@ export default {
     deny: 'Deny',
   },
   meter: {
+    lastMeasuredContext: 'Last measured context: {{used}} tokens',
+    lastEstimatedContext: 'Last context estimate: ~{{used}} tokens',
+    nextRequestEstimate: 'Next-request context estimate: ~{{used}} tokens',
+    tokenUnit: 'tokens',
     contextTip: 'Context: {{used}} tokens',
     contextEstimatedSuffix: ' (portable estimate)',
     contextWindowSuffix: ' of {{win}} ({{pct}}%)',
@@ -553,6 +567,17 @@ export default {
     limitSave: 'Save',
     limitClear: 'No limit',
     limitButtonTitle: 'Set context limit',
+  },
+  compactionStatus: {
+    running: 'Compacting',
+    step: 'Compacting — step {{step}}/{{total}}',
+    consolidating: 'Compacting — consolidating summaries',
+    retrying: 'Retrying this stage',
+    retryAttempt: 'Retrying this stage (attempt {{attempt}})',
+    completed: 'Context compacted',
+    failed: 'Context compaction failed',
+    cancelled: 'Context compaction cancelled',
+    reduction: '{{before}} → {{after}} tokens',
   },
   lightbox: {
     defaultFilename: 'image.png',

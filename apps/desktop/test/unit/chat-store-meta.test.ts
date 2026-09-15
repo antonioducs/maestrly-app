@@ -75,6 +75,58 @@ function storedWithFingerprint(overrides: Partial<StoredChatMessage> = {}): Stor
 }
 
 describe('chat-store opaque providerFingerprint provenance', () => {
+  it('reloads the final context measurement and compaction failure without billing usage', () => {
+    const conv = chatConv()
+    const message: StoredChatMessage = {
+      id: 'context-observation',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [],
+      createdAt: 1,
+      error: 'Compaction timed out',
+      contextSnapshot: {
+        usedTokens: 902_365,
+        modelContextWindow: 1_000_000,
+        sequence: 4,
+        observedAt: 100,
+        quality: 'measured',
+        model: { providerId: 'claude', modelId: 'opus' },
+      },
+      compactionProgress: {
+        id: 'compact',
+        status: 'failed',
+        phase: 'consolidate',
+        completed: 0,
+        total: 1,
+        attempt: 2,
+        error: 'Step timed out',
+        beforeTokens: 902_365,
+        updatedAt: 200,
+      },
+    }
+    upsertChatMessage(message)
+    const [loaded] = listPublicChatMessagesPage(conv.id).messages
+    expect(loaded.contextSnapshot).toEqual(message.contextSnapshot)
+    expect(loaded.compactionProgress).toEqual(message.compactionProgress)
+    expect(chatHistoryStats(conv.id).lastUsage).toBeNull()
+    expect(chatHistoryStats(conv.id).perModel).toEqual([])
+  })
+
+  it('ignores malformed context metadata in existing messages', () => {
+    const conv = chatConv()
+    insertRaw(
+      conv.id,
+      'invalid-context',
+      JSON.stringify({
+        contextSnapshot: { usedTokens: -1, model: { providerId: 'claude' } },
+        compactionProgress: { id: 'compact', status: 'invalid', updatedAt: 5 },
+      })
+    )
+    const [loaded] = listChatMessages(conv.id)
+    expect(loaded.contextSnapshot).toBeUndefined()
+    expect(loaded.compactionProgress).toBeUndefined()
+  })
+
   it('round-trips assistant fingerprints unchanged', () => {
     const conv = chatConv()
     upsertChatMessage(storedWithFingerprint({ conversationId: conv.id }))

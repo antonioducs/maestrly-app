@@ -1,4 +1,4 @@
-import { autonomousPolicy,interactiveTool,AUTONOMOUS_INSTRUCTIONS,withAutonomousPolicy } from '../autonomous'
+import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
 import { remoteChatPolicy, withRemoteChatPolicy } from '../remote-policy'
 import { emitChatHost } from '../host-events'
 import { createHash, randomUUID } from 'node:crypto'
@@ -46,7 +46,9 @@ import {
   renderNativeSeedTranscript,
   renderTranscript,
 } from '../message'
-import { estimateTextTokens, portableContextLoad } from '../portable-context'
+import { estimateTextTokens, portableContextLoad, type PortableSummaryProgress } from '../portable-context'
+import { createContextProgressPublisher, type ContextSample } from '../context-progress'
+import { redactTokens } from '../../pii-scrub'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
@@ -326,7 +328,7 @@ export interface RunCodexSubscriptionChatArgs {
   /** Nominal window requested from the runtime when the catalog advertises configurability. */
   requestedContextWindow?: number | null
   /** Summarize persisted Maestrly history and return the new portable boundary. */
-  compactHistory?: () => Promise<{
+  compactHistory?: (onProgress?: (progress: PortableSummaryProgress) => void) => Promise<{
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
@@ -833,9 +835,9 @@ function maestrlyAstraHostInstructions(
         ? 'Ask mode is read-only unless the user explicitly changes the task.'
         : mode === 'design'
           ? `Design mode has Agent-equivalent capabilities under the selected permissions.\n\n${renderDesignModePrompt(mode)}`
-        : mode === 'maestro'
-          ? MAESTRO_SYSTEM_SPEC
-          : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
+          : mode === 'maestro'
+            ? MAESTRO_SYSTEM_SPEC
+            : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
   return (
     modeBoundary +
     maestrlySkillCatalog(skills) +
@@ -1480,9 +1482,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
         toolCallId: visibleItemId,
         state: { status: 'completed', output: clipPersistedToolOutput(persistedOutput) },
       })
-      return asyncQuestion
-        ? { answers: byId, answer: answers[0]?.join('\n') ?? '' }
-        : { answers: byId }
+      return asyncQuestion ? { answers: byId, answer: answers[0]?.join('\n') ?? '' } : { answers: byId }
     } finally {
       pendingRequest.finish()
     }
@@ -1813,7 +1813,8 @@ async function buildDynamicTools(
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
     }
     const bridgeTools = bridgeNames.size
-      ? buildTools({executorReport:true,
+      ? buildTools({
+          executorReport: true,
           enabled: bridgeNames,
           makeCtx: (toolCallId, signal): ToolContext => ({
             conversationId: args.conversationId,
@@ -1978,11 +1979,22 @@ async function buildDynamicTools(
         },
       })
     }
-    if(autonomousPolicy(args.conversationId))for(let i=runtimes.length-1;i>=0;i--){if(interactiveTool(runtimes[i].spec.name))runtimes.splice(i,1)}
-    const policy=autonomousPolicy(args.conversationId)
-    const remotePolicy=remoteChatPolicy(args.conversationId)
-    if(remotePolicy)for(const runtime of runtimes){const execute=runtime.execute;runtime.execute=(...a)=>withRemoteChatPolicy(remotePolicy,()=>execute(...a))}
-    if(policy)for(const runtime of runtimes){const execute=runtime.execute;runtime.execute=(...args)=>withAutonomousPolicy(policy,()=>execute(...args))}
+    if (autonomousPolicy(args.conversationId))
+      for (let i = runtimes.length - 1; i >= 0; i--) {
+        if (interactiveTool(runtimes[i].spec.name)) runtimes.splice(i, 1)
+      }
+    const policy = autonomousPolicy(args.conversationId)
+    const remotePolicy = remoteChatPolicy(args.conversationId)
+    if (remotePolicy)
+      for (const runtime of runtimes) {
+        const execute = runtime.execute
+        runtime.execute = (...a) => withRemoteChatPolicy(remotePolicy, () => execute(...a))
+      }
+    if (policy)
+      for (const runtime of runtimes) {
+        const execute = runtime.execute
+        runtime.execute = (...args) => withAutonomousPolicy(policy, () => execute(...args))
+      }
     runtimes.sort((a, b) => a.spec.name.localeCompare(b.spec.name))
     return {
       runtimes,
@@ -2069,7 +2081,8 @@ async function retireCodexThread(
 export async function compactCodexSubscriptionThread(
   client: CodexAppServerClient,
   threadId: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onContextUsage?: (sample: ContextSample) => void
 ): Promise<CodexUsageTotals | null> {
   if (signal.aborted) throw new Error('Compaction aborted')
   let compactTurnId = ''
@@ -2080,24 +2093,28 @@ export async function compactCodexSubscriptionThread(
     resolveCompleted = resolve
     rejectCompleted = reject
   })
+  void completed.catch(() => {})
   const off = client.onNotification(({ method, params }) => {
     if (!isRecord(params) || params.threadId !== threadId) return
     if (method === 'thread/tokenUsage/updated') {
+      if (!compactTurnId || params.turnId !== compactTurnId) return
       latestUsage = params as unknown as TokenUsageNotification
       return
     }
     if (method === 'turn/started' && isRecord(params.turn) && typeof params.turn.id === 'string') {
-      compactTurnId = params.turn.id
+      if (!compactTurnId) compactTurnId = params.turn.id
       return
     }
     if (method !== 'turn/completed' || !isRecord(params.turn)) return
     const id = typeof params.turn.id === 'string' ? params.turn.id : ''
-    if (compactTurnId && id !== compactTurnId) return
+    if (!compactTurnId || id !== compactTurnId) return
     if (params.turn.status === 'failed') {
       const message = isRecord(params.turn.error) ? textOf(params.turn.error.message) : 'Codex compaction failed'
       rejectCompleted(new Error(message || 'Codex compaction failed'))
-    } else {
+    } else if (params.turn.status === 'completed') {
       resolveCompleted()
+    } else {
+      rejectCompleted(new Error('Codex compaction interrupted'))
     }
   })
   const onAbort = (): void => rejectCompleted(new Error('Compaction aborted'))
@@ -2112,7 +2129,16 @@ export async function compactCodexSubscriptionThread(
         timeout.unref()
       }),
     ])
+    signal.throwIfAborted()
     const finalUsage = latestUsage as TokenUsageNotification | null
+    if (finalUsage) {
+      const last = usageTotals(finalUsage.tokenUsage.last)
+      onContextUsage?.({
+        usedTokens: last.inputTokens + last.outputTokens,
+        modelContextWindow: positiveContextWindow(finalUsage.tokenUsage.modelContextWindow) || undefined,
+        quality: 'measured',
+      })
+    }
     return finalUsage ? usageTotals(finalUsage.tokenUsage.total) : null
   } finally {
     if (timeout) clearTimeout(timeout)
@@ -2295,11 +2321,32 @@ export async function runCodexSubscriptionChat(
   }
   const coalescer = createDeltaCoalescer(args.emit)
   const apply = (event: ChatStreamEvent, force = false): void => {
+    if (event.kind === 'finish' || event.kind === 'error' || event.kind === 'aborted') contextProgress.dispose()
+    else if (event.kind === 'compaction') contextProgress.flush()
     messages = applyChatEvent(messages, event)
     coalescer.push(event)
     if (force || Date.now() - lastPersistAt > 300) persistNow()
     else dirty = true
   }
+  const contextProgress = createContextProgressPublisher({
+    messageId: assistantId,
+    model: args.selection,
+    apply,
+    sanitizeError: (error) => redactTokens(errorMessage(error)),
+    onCompactionError: (error, cancelled) =>
+      chatDiag({
+        kind: 'codex-subscription-compaction-failed',
+        conv: args.conversationId,
+        error,
+        cancelled,
+      }),
+  })
+  const compactPortableHistory = () =>
+    contextProgress.compact((onProgress) => args.compactHistory!(onProgress), {
+      signal: args.signal,
+      validate: (result) => Boolean(result?.summary.trim()),
+      failureMessage: 'Codex portable intra-turn compaction failed',
+    })
   const isFailoverResolutionFailure = (
     value: CodexFailoverRuntimeTarget | CodexFailoverResolutionFailure | null
   ): value is CodexFailoverResolutionFailure => value !== null && 'reason' in value && 'message' in value
@@ -2483,7 +2530,7 @@ export async function runCodexSubscriptionChat(
     return (
       buildHarnessDeveloperInstructions(base, profile.harness, { asyncTools: profile.asyncQuestionGuidance }) +
       projectContext +
-      (autonomousPolicy(args.conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : "")
+      (autonomousPolicy(args.conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : '')
     )
   }
   let developerInstructions = developerInstructionsFor(runtimeProfile)
@@ -2546,8 +2593,23 @@ export async function runCodexSubscriptionChat(
     // Default modes used by Agent/Ask without duplicating it as a dynamic tool.
     config: {
       ...DEFAULT_MODE_REQUEST_USER_INPUT_CONFIG,
-      ...(remoteChatPolicy(args.conversationId)?{'features.apps':false,'features.plugins':false,'features.tool_suggest':false,'features.shell_tool':false,web_search:'disabled'}:{}),
-      ...(autonomousPolicy(args.conversationId)?{'features.default_mode_request_user_input':false,'features.apps':false,'features.plugins':false,'features.tool_suggest':false}:{}),
+      ...(remoteChatPolicy(args.conversationId)
+        ? {
+            'features.apps': false,
+            'features.plugins': false,
+            'features.tool_suggest': false,
+            'features.shell_tool': false,
+            web_search: 'disabled',
+          }
+        : {}),
+      ...(autonomousPolicy(args.conversationId)
+        ? {
+            'features.default_mode_request_user_input': false,
+            'features.apps': false,
+            'features.plugins': false,
+            'features.tool_suggest': false,
+          }
+        : {}),
       ...(runtimeProfile.nativeCompactionFirst ? {} : ROOT_THREAD_NATIVE_AUTO_COMPACTION_CONFIG),
       ...(runtimeProfile.experimentalContextEnabled
         ? { 'features.context_management.experimental_mode': true }
@@ -2696,6 +2758,7 @@ export async function runCodexSubscriptionChat(
   let routeRegistration = registerRequestRoute(currentClient, canResume ? existing.threadId : '', route)
   let offNotification: () => void = () => {}
   let onAbort: () => void = () => {}
+  let failAutomaticNativeCompaction: (error: unknown, cancelled: boolean) => void = () => {}
   // In-flight generated-image writes. Declared OUTSIDE try because `finally` must also await them: on
   // timeout/transport failure/app-server exit, the runner returns without `turn/completed`, and surviving
   // writes could recreate a deleted/wiped directory or apply an event after dispose.
@@ -2941,6 +3004,20 @@ export async function runCodexSubscriptionChat(
     let portableCompactionRequested = false
     let portableInterruptPromise: Promise<void> | null = null
     let nativeCompactionActive = false
+    let automaticNativeCompaction:
+      | {
+          itemId: string
+          lifecycle: ReturnType<typeof contextProgress.beginNative>
+          afterSample?: ContextSample
+        }
+      | undefined
+    const seenNativeCompactions = new Set<string>()
+    failAutomaticNativeCompaction = (error, cancelled): void => {
+      const pending = automaticNativeCompaction
+      automaticNativeCompaction = undefined
+      pending?.lifecycle.fail(error, cancelled)
+    }
+    let observeContext: (sample: ContextSample) => void = () => {}
     let inTurnCompactions = 0
     const carriedMainUsage = { totalInput: 0, cachedInput: 0, cacheCreate: 0, output: 0 }
     const carryCurrentAttemptUsage = (notification: TokenUsageNotification | null): void => {
@@ -2962,6 +3039,11 @@ export async function runCodexSubscriptionChat(
       carriedMainUsage.cachedInput += cachedInput
       carriedMainUsage.cacheCreate += cacheCreate
       carriedMainUsage.output += Math.max(0, Number(compacted.output) || 0)
+    }
+    const carryFailedCompactorUsage = (error: unknown): void => {
+      if (isRecord(error) && isRecord(error.partialUsage)) {
+        carryCompactorUsage(error.partialUsage as unknown as NormalizedAiUsage)
+      }
     }
     const mainUsage = (notification: TokenUsageNotification | null): ChatUsage | undefined => {
       const current = toChatUsage(notification, baseline)
@@ -3043,9 +3125,15 @@ export async function runCodexSubscriptionChat(
       route.rootThreadId = seedThreadId
       routeRegistration = registerRequestRoute(currentClient, seedThreadId, route)
       offNotification()
-      offNotification = currentClient.onNotification(handleRootNotification)
+      offNotification = subscribeRootNotifications()
     }
     let handleRootNotification!: (notification: CodexNotification) => void
+    const subscribeRootNotifications = (): (() => void) => {
+      const owner = currentClient
+      return owner.onNotification((notification) => {
+        if (owner === currentClient) handleRootNotification(notification)
+      })
+    }
 
     let planStopArmed = false
     state.requestTurnStop = () => {
@@ -3323,7 +3411,7 @@ export async function runCodexSubscriptionChat(
             })
             const inheritedChildTools = Object.fromEntries(
               Object.entries(childToolSet(signal, supportsImages)).filter(
-                ([name]) => name!=='executor_report' && (args.mode !== 'maestro' || name !== 'use_skill')
+                ([name]) => name !== 'executor_report' && (args.mode !== 'maestro' || name !== 'use_skill')
               )
             ) as ToolSet
             const childTools: ToolSet = sessionRecorder.instrumentTools({
@@ -4210,6 +4298,13 @@ export async function runCodexSubscriptionChat(
     const settleRootAfterChildren = (params: TurnCompletedParams): void => {
       if (rootCompletionCleanupStarted) return
       rootCompletionCleanupStarted = true
+      failAutomaticNativeCompaction(
+        args.signal.reason ??
+          new Error(
+            params.turn.error?.message || `Codex turn ${params.turn.status} before native compaction completed`
+          ),
+        args.signal.aborted || params.turn.status === 'interrupted'
+      )
       const classification = rootCompletedClassification
       if (classification?.kind === 'quota') {
         // Publish exhaustion before waiting so queued children also select another account.
@@ -4263,7 +4358,12 @@ export async function runCodexSubscriptionChat(
       if (!activeThreadIds.has(eventThreadId)) return
       const rootEvent = eventThreadId === threadId
       if (rootEvent && nativeCompactionActive && method !== 'thread/deleted') return
-      const eventTurnId = typeof params.turnId === 'string' ? params.turnId : ''
+      const eventTurnId =
+        typeof params.turnId === 'string'
+          ? params.turnId
+          : isRecord(params.turn) && typeof params.turn.id === 'string'
+            ? params.turn.id
+            : ''
       if (rootEvent && turnId && eventTurnId && eventTurnId !== turnId) return
 
       if (method === 'thread/deleted') {
@@ -4433,12 +4533,25 @@ export async function runCodexSubscriptionChat(
           const contextInput = Math.max(0, Number(notification.tokenUsage?.last?.inputTokens) || 0)
           const contextOutput = Math.max(0, Number(notification.tokenUsage?.last?.outputTokens) || 0)
           const contextTokens = contextInput + contextOutput
+          if (rootAttemptActive && !rootTurnTerminal && !rootCompletionDecisionStarted && turnId) {
+            const sample: ContextSample = {
+              usedTokens: contextTokens,
+              modelContextWindow: contextWindow > 0 ? contextWindow : undefined,
+              quality: 'measured',
+            }
+            // A native operation can report usage before failing. Commit its context only on item success.
+            if (automaticNativeCompaction) automaticNativeCompaction.afterSample = sample
+            else observeContext(sample)
+          }
           const compactionWindow =
             portableContextWindow > 0 && contextWindow > 0
               ? Math.min(portableContextWindow, contextWindow)
               : Math.max(portableContextWindow, contextWindow)
           if (
             rootAttemptActive &&
+            !rootTurnTerminal &&
+            !rootCompletionDecisionStarted &&
+            !automaticNativeCompaction &&
             !args.signal.aborted &&
             !state.planSubmitted &&
             !planStopArmed &&
@@ -4481,6 +4594,51 @@ export async function runCodexSubscriptionChat(
         }
         return
       }
+      if (
+        (method === 'item/started' || method === 'item/completed') &&
+        isRecord(params.item) &&
+        params.item.type === 'contextCompaction'
+      ) {
+        const item = params.item
+        if (
+          !rootAttemptActive ||
+          rootTurnTerminal ||
+          rootCompletionDecisionStarted ||
+          args.signal.aborted ||
+          !turnId ||
+          eventTurnId !== turnId ||
+          typeof item.id !== 'string'
+        )
+          return
+        const key = JSON.stringify([threadId, turnId, item.id])
+        if (method === 'item/started') {
+          if (automaticNativeCompaction || seenNativeCompactions.has(key)) return
+          seenNativeCompactions.add(key)
+          automaticNativeCompaction = { itemId: item.id, lifecycle: contextProgress.beginNative() }
+        } else if (automaticNativeCompaction?.itemId === item.id) {
+          const pending = automaticNativeCompaction
+          automaticNativeCompaction = undefined
+          pending.lifecycle.complete(pending.afterSample)
+          inTurnCompactions += 1
+          apply(
+            {
+              kind: 'compaction',
+              messageId: assistantId,
+              partId: randomUUID(),
+              text: 'Context compacted by the Codex runtime.',
+              strategy: 'codex-native',
+              usage: withSubagentUsage(
+                mainUsage(latestUsage),
+                childUsage,
+                args.selection.providerId,
+                externalSubagentUsage
+              ),
+            },
+            true
+          )
+        }
+        return
+      }
       if (method === 'item/agentMessage/delta') {
         const itemId = typeof params.itemId === 'string' ? params.itemId : 'agent-message'
         if (!startedText.has(itemId)) {
@@ -4516,7 +4674,11 @@ export async function runCodexSubscriptionChat(
         if (typeof params.delta === 'string') {
           progress.set(itemId, (progress.get(itemId) ?? '') + params.delta)
           apply({ kind: 'reasoning-delta', messageId: assistantId, partId: itemId, delta: params.delta })
-          emitChatHost(args.conversationId,'chat:public-summary',{messageId:assistantId,partId:itemId,delta:params.delta})
+          emitChatHost(args.conversationId, 'chat:public-summary', {
+            messageId: assistantId,
+            partId: itemId,
+            delta: params.delta,
+          })
         }
         return
       }
@@ -4576,7 +4738,11 @@ export async function runCodexSubscriptionChat(
             startedReasoning.add(item.id)
             apply({ kind: 'reasoning-start', messageId: assistantId, partId: item.id })
             apply({ kind: 'reasoning-delta', messageId: assistantId, partId: item.id, delta: summary })
-            emitChatHost(args.conversationId,'chat:public-summary',{messageId:assistantId,partId:item.id,delta:summary})
+            emitChatHost(args.conversationId, 'chat:public-summary', {
+              messageId: assistantId,
+              partId: item.id,
+              delta: summary,
+            })
           }
           return
         }
@@ -4611,6 +4777,18 @@ export async function runCodexSubscriptionChat(
         return
       }
       if (method === 'turn/completed') {
+        if (rootEvent && isRecord(params.turn)) {
+          const error = isRecord(params.turn.error) ? params.turn.error.message : undefined
+          failAutomaticNativeCompaction(
+            args.signal.reason ??
+              new Error(
+                typeof error === 'string' && error
+                  ? error
+                  : `Codex turn ${params.turn.status} before native compaction completed`
+              ),
+            args.signal.aborted || params.turn.status === 'interrupted'
+          )
+        }
         const rootFailureClassification = rootEvent ? classifyCodexQuotaFailure(params) : null
         const needsRootRateLimitsRead =
           rootFailureClassification?.kind === 'suspect' ||
@@ -4666,9 +4844,11 @@ export async function runCodexSubscriptionChat(
         }
       }
     }
-    offNotification = currentClient.onNotification(handleRootNotification)
+    offNotification = subscribeRootNotifications()
 
     onAbort = (): void => {
+      failAutomaticNativeCompaction(args.signal.reason ?? new Error('Codex turn interrupted'), true)
+      contextProgress.boundary()
       armRootAbortTimeout()
       if (turnId) void currentClient.interruptTurn({ threadId, turnId }).catch(() => {})
       void stopUnfinishedChildren().catch(() => {})
@@ -4811,8 +4991,9 @@ export async function runCodexSubscriptionChat(
         if (shouldCompactReplay && args.compactHistory) {
           let compacted: Awaited<ReturnType<NonNullable<RunCodexSubscriptionChatArgs['compactHistory']>>> = null
           try {
-            compacted = await args.compactHistory()
+            compacted = await compactPortableHistory()
           } catch (compactError) {
+            carryFailedCompactorUsage(compactError)
             const compactClassification = await classifyQuotaForFailover(compactError)
             if (compactClassification.kind === 'quota') {
               // Compact hit quota on a helper path — try the next account without an incomplete compaction part.
@@ -4822,7 +5003,7 @@ export async function runCodexSubscriptionChat(
                 usage: failure.usage,
               })
             }
-            compacted = null
+            throw compactError
           }
           const summary = compacted?.summary.trim()
           if (summary) {
@@ -4962,6 +5143,7 @@ export async function runCodexSubscriptionChat(
         resetRootCompletion()
         startRequested = true
         rootAttemptActive = true
+        observeContext = contextProgress.observeAttempt()
 
         // Do not cancel the RPC locally before receiving turnId: app-server may already have created the turn,
         // and aborting the promise would lose the only identifier usable for turn/interrupt. The response is local
@@ -4991,6 +5173,7 @@ export async function runCodexSubscriptionChat(
           turn = await Promise.race([startTurnRequest, rootAbortTimeout, deadline.promise])
         } catch (error) {
           rootAttemptActive = false
+          failAutomaticNativeCompaction(error, args.signal.aborted)
           if (args.signal.aborted || error === deadline.error) {
             void startTurnRequest
               .then((lateTurn) =>
@@ -5138,21 +5321,27 @@ export async function runCodexSubscriptionChat(
           const beforeNative = interruptedUsage ? usageTotals(interruptedUsage.tokenUsage.total) : baseline
           try {
             nativeCompactionActive = true
-            const nativeUsage = await compactCodexSubscriptionThread(currentClient, threadId, args.signal)
+            let nativeContext: ContextSample | undefined
+            const nativeUsage = await contextProgress.compact(
+              () =>
+                compactCodexSubscriptionThread(currentClient, threadId, args.signal, (sample) => {
+                  nativeContext = sample
+                }),
+              {
+                signal: args.signal,
+                phase: 'native',
+                failureMessage: 'Codex native compaction failed',
+                afterSample: () => nativeContext,
+              }
+            )
             const nativeBaseline = nativeUsage ?? beforeNative
             if (nativeUsage) {
-              carriedMainUsage.totalInput += nonNegativeDifference(
-                nativeUsage.inputTokens,
-                beforeNative.inputTokens
-              )
+              carriedMainUsage.totalInput += nonNegativeDifference(nativeUsage.inputTokens, beforeNative.inputTokens)
               carriedMainUsage.cachedInput += nonNegativeDifference(
                 nativeUsage.cachedInputTokens,
                 beforeNative.cachedInputTokens
               )
-              carriedMainUsage.output += nonNegativeDifference(
-                nativeUsage.outputTokens,
-                beforeNative.outputTokens
-              )
+              carriedMainUsage.output += nonNegativeDifference(nativeUsage.outputTokens, beforeNative.outputTokens)
             }
             baseline = nativeBaseline
             inTurnCompactions += 1
@@ -5179,9 +5368,11 @@ export async function runCodexSubscriptionChat(
             clientUserMessageId = continueMessageId
             latestUsage = null
             continue
-          } catch {
+          } catch (error) {
+            if (args.signal.aborted || !args.compactHistory) throw error
             chatDiag({
               kind: 'codex-subscription-native-compaction',
+              error: redactTokens(errorMessage(error)),
               profile: runtimeProfile.modelHarnessProfileId,
               model: args.selection.modelId,
               conv: args.conversationId,
@@ -5200,9 +5391,14 @@ export async function runCodexSubscriptionChat(
         }
         let compacted: Awaited<ReturnType<NonNullable<RunCodexSubscriptionChatArgs['compactHistory']>>> = null
         try {
-          compacted = await args.compactHistory!()
-        } catch {
-          compacted = null
+          compacted = await compactPortableHistory()
+        } catch (error) {
+          carryFailedCompactorUsage(error)
+          for (const activeThreadId of activeThreadIds) routeRegistration.removeThread(activeThreadId)
+          activeThreadIds = new Set()
+          await retireCodexThread(args.conversationId, threadId, threadAccountId)
+          threadDisposed = true
+          throw error
         }
         const summary = compacted?.summary.trim()
         if (!compacted || !summary) {
@@ -5413,7 +5609,7 @@ export async function runCodexSubscriptionChat(
         }
       } else {
         settleCurrentAttempt('other')
-        const message = result.turn.error?.message || 'Codex turn failed'
+        const message = redactTokens(result.turn.error?.message || 'Codex turn failed')
         apply(
           {
             kind: 'error',
@@ -5452,6 +5648,7 @@ export async function runCodexSubscriptionChat(
       }
     } catch (error) {
       rootAttemptActive = false
+      failAutomaticNativeCompaction(error, args.signal.aborted)
       settleCurrentAttempt('other')
       const usage = withSubagentUsage(
         mainUsage(latestUsage),
@@ -5474,7 +5671,7 @@ export async function runCodexSubscriptionChat(
           {
             kind: 'error',
             messageId: assistantId,
-            message: errorMessage(error),
+            message: redactTokens(errorMessage(error)),
             usage,
             responseDurationMs: responseDurationMs(responseStartedAt),
           },
@@ -5482,6 +5679,11 @@ export async function runCodexSubscriptionChat(
         )
     }
   } finally {
+    failAutomaticNativeCompaction(
+      args.signal.reason ?? new Error('Codex execution ended before native compaction completed'),
+      args.signal.aborted
+    )
+    contextProgress.dispose()
     managedTaskRecoveryStop.abort()
     args.onTurnControl?.(null)
     settleCurrentAttempt('other')

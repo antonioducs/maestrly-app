@@ -1,4 +1,4 @@
-import {governAutonomousTools,autonomousPolicy,AUTONOMOUS_INSTRUCTIONS} from '../autonomous'
+import { governAutonomousTools, autonomousPolicy, AUTONOMOUS_INSTRUCTIONS } from '../autonomous'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
   SDKCompactBoundaryMessage,
@@ -115,15 +115,12 @@ import { claudeServedModelMismatch } from './served-model'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
 import { harnessFor } from '../harness/execution'
 import { captureHarnessFlags } from '../harness/flags'
-import {
-  buildMaestrlyBasePrompt,
-  harnessEnvironmentContext,
-  harnessUltraGuidance,
-} from '../harness/host-contracts'
+import { buildMaestrlyBasePrompt, harnessEnvironmentContext, harnessUltraGuidance } from '../harness/host-contracts'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
-import { estimateTextTokens, portableContextLoad } from '../portable-context'
+import { estimateTextTokens, portableContextLoad, type PortableSummaryProgress } from '../portable-context'
+import { createContextProgressPublisher } from '../context-progress'
 import { classifyClaudeQuotaFailure } from './quota-error'
 import { createClaudeToolJournal, type ClaudeToolJournal } from './tool-journal'
 import { beginClaudeAttempt } from '../subscription-failover/claude-attempts'
@@ -178,7 +175,10 @@ export interface RunClaudeChatArgs {
   /** Effective model window. Together with compactHistory, enables portable intra-turn compaction. */
   contextWindow?: number
   /** Summarizes durable visible history; the returned boundary is persisted in the live assistant bubble. */
-  compactHistory?: (target?: ClaudeRuntimeTarget) => Promise<{
+  compactHistory?: (
+    target?: ClaudeRuntimeTarget,
+    onProgress?: (progress: PortableSummaryProgress) => void
+  ) => Promise<{
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
@@ -565,7 +565,7 @@ async function prepareRuntime(
   ) {
     enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
   }
-  const core = buildTools({executorReport:true, enabled: enabledBuiltins, makeCtx: makeContext })
+  const core = buildTools({ executorReport: true, enabled: enabledBuiltins, makeCtx: makeContext })
   const gate = (toolName: string, toolCallId: string, signal?: AbortSignal) => {
     return args.broker.assert({
       conversationId: args.conversationId,
@@ -742,12 +742,7 @@ async function prepareRuntime(
             .filter(Boolean)
             .join('\n\n')
         : args.mode === 'design'
-          ? [
-              renderDesignUltraGuidance(args.mode),
-              profileUltra ?? '',
-            ]
-              .filter(Boolean)
-              .join('\n\n')
+          ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
           : profileUltra
             ? profileUltra
             : args.mode === 'agent'
@@ -953,11 +948,32 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
   const coalescer = createDeltaCoalescer(args.emit)
   /** `publicEvent` omits contextIdentity for IPC when an event carries internal usage. */
   const apply = (event: ChatStreamEvent, force = false, publicEvent?: ChatStreamEvent): void => {
+    if (event.kind === 'finish' || event.kind === 'error' || event.kind === 'aborted') contextProgress.dispose()
+    else if (event.kind === 'compaction') contextProgress.flush()
     messages = applyChatEvent(messages, event) as StoredChatMessage[]
     coalescer.push(publicEvent ?? event)
     if (force || Date.now() - lastPersistAt > 300) persist()
     else dirty = true
   }
+  const contextProgress = createContextProgressPublisher({
+    messageId: assistantId,
+    model: args.selection,
+    apply,
+    sanitizeError: claudeSubscriptionErrorMessage,
+    onCompactionError: (error, cancelled) =>
+      chatDiag({
+        kind: 'claude-subscription-compaction-failed',
+        conv: args.conversationId,
+        error,
+        cancelled,
+      }),
+  })
+  const compactPortableHistory = (target?: ClaudeRuntimeTarget) =>
+    contextProgress.compact((onProgress) => args.compactHistory!(target, onProgress), {
+      signal: args.signal,
+      validate: (result) => Boolean(result?.summary.trim()),
+      failureMessage: 'Claude portable intra-turn compaction failed.',
+    })
   const applyWithUsage = (base: ChatStreamEvent, usage: StoredChatUsage | undefined, force = true): void => {
     const stored = { ...base, ...(usage ? { usage } : {}) } as ChatStreamEvent
     const publicUsage = toPublicChatUsage(usage)
@@ -1092,6 +1108,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     state.query?.close()
   }
   const onAbort = (): void => {
+    contextProgress.boundary()
     queryAbortController.abort(args.signal.reason ?? new Error('Claude turn aborted.'))
     abortCloseTimer = setTimeout(closeQuery, 1_000)
     abortCloseTimer.unref?.()
@@ -1346,6 +1363,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       settleAccountAttempt('quota', classification.info)
       if (!failoverEnabled) return false
       switchingAccount = true
+      contextProgress.boundary()
       const previous = currentTarget
       state.toolJournal?.stopAccepting()
       // Provider completion does not own the lifetime of admitted host tasks.
@@ -1374,7 +1392,9 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         portableContextWindow &&
         portableContextLoad(portableContextWindow, estimateTextTokens(transcript), 0).shouldCompact
       ) {
-        const compacted = await args.compactHistory?.({
+        if (!args.compactHistory)
+          throw new Error('Claude continuation requires portable compaction, which is unavailable.')
+        const compacted = await compactPortableHistory({
           ...contextual.target,
           contextWindow: portableContextWindow || null,
         })
@@ -1506,6 +1526,18 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           }),
         })
         const activeQuery = state.query
+        const observeContext = contextProgress.observeAttempt()
+        let latestContextUsage: ReturnType<typeof normalizeClaudeUsage> | undefined
+        const publishAssistantContext = (): void => {
+          if (runtimeSignal.aborted || queryClosed || state.query !== activeQuery) return
+          const usage = latestContextUsage
+          if (!usage) return
+          observeContext({
+            usedTokens: usage.totalInput + usage.output,
+            modelContextWindow: context?.maxTokens || portableContextWindow || undefined,
+            quality: 'estimated',
+          })
+        }
         try {
           const initialized = await activeQuery.initializationResult()
           args.manager.assertSubscriptionRuntimeAccount(initialized.account, args.accountIdentity)
@@ -1522,8 +1554,16 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         let portableInterruptPromise: Promise<unknown> | null = null
         const captureContext = async (): Promise<boolean> => {
           if (runtimeSignal.aborted || queryClosed) return false
-          const measured = await settleWithin(activeQuery.getContextUsage(), 1_500, runtimeSignal)
-          if (!measured) return false
+          const measured = await settleWithin(
+            Promise.resolve().then(() => activeQuery.getContextUsage()),
+            1_500,
+            runtimeSignal
+          )
+          if (runtimeSignal.aborted || queryClosed || state.query !== activeQuery) return false
+          if (!measured) {
+            publishAssistantContext()
+            return false
+          }
           const totalTokens = safeTokens(measured.totalTokens)
           const maxTokens = safeTokens(measured.maxTokens)
           context = {
@@ -1538,6 +1578,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             model: measured.model || runtimeModelId,
           }
           if (maxTokens) args.onModelContextWindow?.(maxTokens, currentTarget)
+          observeContext({ usedTokens: totalTokens, modelContextWindow: maxTokens || undefined, quality: 'measured' })
           return true
         }
         const requestPortableCompaction = (): boolean => {
@@ -1652,6 +1693,12 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             } else if (sdkMessage.type === 'assistant' && !sdkMessage.parent_tool_use_id) {
               if (sdkMessage.error) assistantFailure = sdkMessage
               const mapped = streamMapper.pushAssistant(sdkMessage)
+              // SDK error envelopes carry synthetic zero usage; they are not context observations.
+              if (!sdkMessage.error) {
+                const usage = streamMapper.state().latestAssistantUsage
+                if (usage && (usage.totalInput || usage.output)) latestContextUsage = usage
+                publishAssistantContext()
+              }
               if (sdkMessage.error && observeQuotaFailure(sdkMessage)) break
               // Local quota diagnostics are not model prose; a later rate event may
               // confirm them. Preserve usage but keep intermediate errors out of the bubble.
@@ -1803,10 +1850,12 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
 
         let compacted: Awaited<ReturnType<NonNullable<RunClaudeChatArgs['compactHistory']>>> = null
         try {
-          compacted = await args.compactHistory!()
+          compacted = await compactPortableHistory()
         } catch (error) {
           recordFailedHelper(error)
-          compacted = null
+          if (args.signal.aborted) throw error
+          fatal = claudeSubscriptionErrorMessage(error)
+          break
         }
         const summary = compacted?.summary.trim()
         if (!compacted || !summary) {
@@ -2264,6 +2313,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       sessionId,
     }
   } finally {
+    contextProgress.dispose()
     settleAccountAttempt('other')
     args.signal.removeEventListener('abort', onAbort)
     state.toolJournal?.stopAccepting()

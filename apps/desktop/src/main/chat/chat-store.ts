@@ -26,6 +26,7 @@ import { totalTokensOf, toolOutputImages } from '../../shared/chat'
 import { deleteConversationGeneratedImages, deleteGeneratedImages } from './generated-images'
 import { deleteAttachmentImages, deleteConversationAttachmentImages } from './attachment-artifacts'
 import { clipPersistedToolOutput, parseParts } from './message'
+import { parseCompactionProgress, parseContextSnapshot } from './context-metadata'
 import {
   clearConversationToolImageMetadata,
   releaseConversationToolImageMetadata,
@@ -94,6 +95,8 @@ interface MetaJson {
   executionScope?: ChatExecutionScope
   memoryContext?: ChatMessage['memoryContext']
   steering?: ChatMessage['steering']
+  contextSnapshot?: ChatMessage['contextSnapshot']
+  compactionProgress?: ChatMessage['compactionProgress']
 }
 
 function parseMemoryContext(raw: unknown): ChatMessage['memoryContext'] | undefined {
@@ -404,6 +407,8 @@ function rowToMessage(r: any): StoredChatMessage {
     ...(source ? { source } : {}),
     finishReason: meta.finishReason,
     usage: parseStoredUsage(meta.usage),
+    contextSnapshot: parseContextSnapshot(meta.contextSnapshot),
+    compactionProgress: parseCompactionProgress(meta.compactionProgress),
     error: meta.error,
     errorCode: meta.errorCode,
     ...(typeof meta.responseDurationMs === 'number' ? { responseDurationMs: meta.responseDurationMs } : {}),
@@ -427,6 +432,8 @@ function metaOf(m: StoredChatMessage): string {
   if (m.source) meta.source = m.source
   if (m.finishReason) meta.finishReason = m.finishReason
   if (m.usage) meta.usage = m.usage
+  if (m.contextSnapshot) meta.contextSnapshot = m.contextSnapshot
+  if (m.compactionProgress) meta.compactionProgress = m.compactionProgress
   if (m.error) meta.error = m.error
   if (m.errorCode) meta.errorCode = m.errorCode
   if (typeof m.responseDurationMs === 'number') meta.responseDurationMs = m.responseDurationMs
@@ -1179,6 +1186,7 @@ export function chatHistoryStats(
                      OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_comp,
               CASE WHEN parts_json LIKE '%"strategy":"openai-native"%'
                      OR parts_json LIKE '%"strategy":"claude-native"%'
+                     OR parts_json LIKE '%"strategy":"codex-native"%'
                      OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_native_comp,
               CASE WHEN json_valid(meta_json) <> 1
                      OR json_extract(meta_json, '$.executionScope.kind') IS NULL

@@ -311,7 +311,6 @@ export interface SubagentSessionUsage {
   cacheCreate: number
 }
 
-
 export type SubagentResumeStatus = 'resumed' | 'recreated'
 
 export type SubagentRuntimeHandle =
@@ -874,6 +873,35 @@ export interface ChatReviewLoopMeta {
 
 export type ChatMessageSource = 'chatgpt-web' | 'chatgpt-web-review-loop' | 'maestrly-review-loop'
 
+/** Last observed occupancy of this message's runtime, independent of billing and next-request estimates. */
+export interface ChatContextSnapshot {
+  usedTokens: number
+  modelContextWindow?: number
+  model: ChatModelRef
+  quality: 'measured' | 'estimated'
+  observedAt: number
+  /** Monotonic within the assistant message, including after compaction and account failover. */
+  sequence: number
+}
+
+export interface ChatCompactionProgress {
+  id: string
+  /** Conversation operations may attach progress to an already completed assistant message. */
+  scope?: 'turn' | 'conversation'
+  model?: ChatModelRef
+  status: 'running' | 'retrying' | 'completed' | 'failed' | 'cancelled'
+  phase?: 'chunk' | 'consolidate' | 'native'
+  completed?: number
+  total?: number
+  attempt?: number
+  beforeTokens?: number
+  afterTokens?: number
+  /** A summary estimate is replaced by a measurement on the next provider request. */
+  afterQuality?: 'measured' | 'estimated'
+  error?: string
+  updatedAt: number
+}
+
 export interface ChatMessage {
   id: string
   conversationId: string
@@ -886,6 +914,8 @@ export interface ChatMessage {
 
   finishReason?: string
   usage?: ChatUsage
+  contextSnapshot?: ChatContextSnapshot
+  compactionProgress?: ChatCompactionProgress
   error?: string
   errorCode?: ChatErrorCode
 
@@ -1006,6 +1036,8 @@ export type ChatStreamEvent =
       source?: ChatMessage['source']
       reviewLoop?: ChatReviewLoopMeta
     }
+  | { kind: 'context-usage'; messageId: string; snapshot: ChatContextSnapshot }
+  | { kind: 'compaction-progress'; messageId: string; progress: ChatCompactionProgress }
   | { kind: 'text-start'; messageId: string; partId: string }
   | { kind: 'text-delta'; messageId: string; partId: string; delta: string }
   | { kind: 'reasoning-start'; messageId: string; partId: string }
@@ -1742,6 +1774,25 @@ export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): Ch
       }
       return [...messages, msg]
     }
+    case 'context-usage':
+      return patchMessage(messages, ev.messageId, (m) =>
+        m.contextSnapshot && m.contextSnapshot.sequence >= ev.snapshot.sequence
+          ? m
+          : { ...m, contextSnapshot: ev.snapshot }
+      )
+    case 'compaction-progress':
+      return patchMessage(messages, ev.messageId, (m) => {
+        const previous = m.compactionProgress
+        if (previous && previous.updatedAt > ev.progress.updatedAt) return m
+        if (
+          previous?.id === ev.progress.id &&
+          previous.status !== 'running' &&
+          previous.status !== 'retrying' &&
+          (ev.progress.status === 'running' || ev.progress.status === 'retrying')
+        )
+          return m
+        return { ...m, compactionProgress: ev.progress }
+      })
     case 'text-start':
       return patchMessage(messages, ev.messageId, (m) => ({
         ...m,

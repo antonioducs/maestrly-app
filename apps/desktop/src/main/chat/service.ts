@@ -143,6 +143,9 @@ import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
 import { activeChatContext, renderTranscript } from './message'
+import { createContextProgressPublisher } from './context-progress'
+import { redactClaudeCredentials } from './claude-agent-sdk/errors'
+import { redactTokens } from '../pii-scrub'
 import {
   getCompanionConversationContext,
   getCompanionConversationRevision,
@@ -348,6 +351,7 @@ import {
   portableContextReserveTokens,
   preflightContextLoad,
   summarizePortableTranscript,
+  type PortableSummaryProgress,
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { invalidateUnifiedUsageCache } from '../usage/usage-service'
@@ -555,7 +559,7 @@ function chatConversationIdFromChannel(channel: string): string | null {
 /** Sends render-only events to current consumers and counts only actual sends. */
 function sendChatEvent(wc: WebContents, channel: string, payload: unknown): void {
   const conversationId = chatConversationIdFromChannel(channel)
-  if(conversationId)emitChatHost(conversationId,channel,payload)
+  if (conversationId) emitChatHost(conversationId, channel, payload)
   if (conversationId !== null && !hasChatSubscriber(wc, conversationId)) return
   if (wc.isDestroyed()) {
     if (conversationId !== null) clearChatSubscriptions(wc)
@@ -3056,9 +3060,9 @@ async function currentChatHistoryStats(
 
 /** Internal send options (used by plan decision turns; not exposed to user IPC). */
 interface StartSendOpts {
-  remoteAdmission?:boolean
-  runnerAdmission?: (run:ActiveRun)=>void
-  runnerSignal?:AbortSignal
+  remoteAdmission?: boolean
+  runnerAdmission?: (run: ActiveRun) => void
+  runnerSignal?: AbortSignal
 
   /** Marks the user message internal (sent to the model, but the renderer does NOT draw a bubble). */
   internal?: boolean
@@ -3111,9 +3115,11 @@ async function startSend(
 
   // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
   // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
-  if(opts?.runnerSignal?.aborted)return {ok:false,error:'cancelled'}
-  if(isWebManagedConversation(conversationId)&&!opts?.remoteAdmission)return {ok:false,error:'This conversation is managed in the Kanban web chat.'}
-  if(autonomousPolicy(conversationId)&&!opts?.runnerAdmission&&!opts?.internal)return {ok:false,error:'executor-active'}
+  if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
+  if (isWebManagedConversation(conversationId) && !opts?.remoteAdmission)
+    return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
+  if (autonomousPolicy(conversationId) && !opts?.runnerAdmission && !opts?.internal)
+    return { ok: false, error: 'executor-active' }
   const internalLoop = opts?.internalLoop
   const internalTurnMode = internalLoop?.turnPolicy === 'reviewer-readonly' ? ('ask' as const) : ('agent' as const)
   const turnBehavior: ChatBehavior = internalLoop ? internalTurnMode : behaviorFor(conversationId)
@@ -4099,18 +4105,18 @@ async function startSend(
         ? githubCopilotModelAtAdmission?.id
         : undefined
     const admittedHarness = admittedHarnessFor(
-      useClaudeSubscription
-        ? 'claude-subscription'
-        : useGitHubCopilot
-          ? 'github-copilot-subscription'
-          : 'openai',
+      useClaudeSubscription ? 'claude-subscription' : useGitHubCopilot ? 'github-copilot-subscription' : 'openai',
       admittedBehaviorResolvedModelId
     )
-    const compactActiveHistory = (claudeTarget?: ClaudeRuntimeTarget) =>
+    const compactActiveHistory = (
+      claudeTarget?: ClaudeRuntimeTarget,
+      onProgress?: (progress: PortableSummaryProgress) => void
+    ) =>
       compact(conversationId, {
         allowActive: true,
         signal: controller.signal,
         persist: false,
+        onProgress,
         contextWindow: claudeTarget?.contextWindow
           ? turnContextWindow
             ? Math.min(turnContextWindow, claudeTarget.contextWindow)
@@ -4126,33 +4132,24 @@ async function startSend(
               skipRetireBinding: true,
             }
           : {}),
+      }).then((result) => {
+        if (!result.ok) {
+          throw Object.assign(new Error(result.error ?? 'Portable compaction failed.'), {
+            partialUsage: result.usage,
+            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+          })
+        }
+        return result.ok && result.summary
+          ? {
+              summary: result.summary,
+              usage: result.usage,
+              // Native helper-call cost estimate → runner adds it to turn cost.
+              ...(result.runtimeEstimatedCostUsd != null
+                ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
+                : {}),
+            }
+          : null
       })
-        .then((result) => {
-          if (useClaudeSubscription && !result.ok && (result.usage || result.runtimeEstimatedCostUsd != null)) {
-            throw Object.assign(new Error(result.error ?? 'Claude portable compaction failed.'), {
-              partialUsage: result.usage,
-              runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
-            })
-          }
-          return result.ok && result.summary
-            ? {
-                summary: result.summary,
-                usage: result.usage,
-                // Native helper-call cost estimate → runner adds it to turn cost.
-                ...(result.runtimeEstimatedCostUsd != null
-                  ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
-                  : {}),
-              }
-            : null
-        })
-        .catch((error) => {
-          if (
-            useClaudeSubscription &&
-            (extractIsolatedSummaryAttemptUsage(error) || typeof error?.runtimeEstimatedCostUsd === 'number')
-          )
-            throw error
-          return null
-        })
 
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
@@ -4243,7 +4240,7 @@ async function startSend(
           ...(resolvedContext.requestedNominal != null
             ? { requestedContextWindow: resolvedContext.requestedNominal }
             : {}),
-          compactHistory: compactActiveHistory,
+          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
           initialAccountId: selectionAccountId,
           effectiveProviderId: logicalProviderId,
           onModelContextWindow: (contextWindow, requestedNominal) => {
@@ -4340,7 +4337,7 @@ async function startSend(
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           ...(target.requestedContextWindow != null ? { requestedContextWindow: target.requestedContextWindow } : {}),
-          compactHistory: compactActiveHistory,
+          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
           initialAccountId: target.accountId,
           effectiveProviderId: target.providerId,
           failoverChain: chain,
@@ -5746,6 +5743,7 @@ interface CompactOpts {
   signal?: AbortSignal
   persist?: boolean
   contextWindow?: number
+  onProgress?: (progress: PortableSummaryProgress) => void
   claudeFailoverChain?: readonly string[]
   claudeExecutionAxes?: Pick<ClaudeRuntimeTarget, 'reasoningEffort' | 'fastMode'>
   operation?: PendingConversationOperation
@@ -5758,6 +5756,20 @@ interface CompactOpts {
   resolvedModelId?: string
   /** Never retires the main conversation's native binding. */
   skipRetireBinding?: boolean
+  /** Service metadata ownership must still match before committing the summary. */
+  assertCurrent?: () => void
+}
+
+interface CompactResult {
+  ok: boolean
+  error?: string
+  summary?: string
+  usage?: NormalizedAiUsage
+  runtimeEstimatedCostUsd?: number
+}
+
+function compactionDiagnostic(error: unknown): string {
+  return redactTokens(redactClaudeCredentials(error instanceof Error ? error.message : String(error)))
 }
 
 /**
@@ -5802,16 +5814,177 @@ async function compact(
 }
 
 /** Exported for isolated compaction frozen-profile tests (review-loop). */
-export async function compactReserved(
-  conversationId: string,
-  opts: CompactOpts = {}
-): Promise<{
-  ok: boolean
-  error?: string
-  summary?: string
-  usage?: NormalizedAiUsage
-  runtimeEstimatedCostUsd?: number
-}> {
+export async function compactReserved(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
+  // Live runners own their bubble and progress publisher. Only manual/preflight work may
+  // attach observations to an existing assistant, always rereading it before a metadata write.
+  const ownsProgress = opts.persist !== false && !opts.executionId && !opts.onProgress && !active.has(conversationId)
+  const selection = opts.selectionOverride ?? selectionFor(conversationId)
+  const history = ownsProgress ? listConversationContextMessages(conversationId) : []
+  const anchor = [...history].reverse().find((message) => message.role === 'assistant' && message.model)
+  const stillOwnsOperation = () =>
+    !active.has(conversationId) &&
+    (!opts.operation || pendingConversationOperations.get(conversationId) === opts.operation)
+  const send = (event: ChatStreamEvent) => {
+    const channel = `chat:delta:${conversationId}`
+    const wc = getMainWebContents()
+    if (wc) sendChatEvent(wc, channel, event)
+    else emitChatHost(conversationId, channel, event)
+  }
+  let progressId: string | undefined
+  const sequenceBase = anchor?.contextSnapshot?.sequence ?? 0
+  const previousSnapshot =
+    anchor?.contextSnapshot?.model.providerId === selection?.providerId &&
+    anchor?.contextSnapshot?.model.modelId === selection?.modelId
+      ? anchor?.contextSnapshot
+      : undefined
+  let initializingObservation = true
+  const publisher =
+    anchor && selection?.modelId && (opts.allowActive || activeChatContext(history).messages.length >= 2)
+      ? createContextProgressPublisher({
+          messageId: anchor.id,
+          // The anchor can belong to a different model; observations describe the selected logical model.
+          model: { providerId: selection.providerId, modelId: selection.modelId },
+          apply: (event) => {
+            if (!stillOwnsOperation()) return
+            const latest = getChatMessage(conversationId, anchor.id)
+            if (!latest || (progressId && latest.compactionProgress?.id !== progressId)) return
+            if (event.kind === 'compaction-progress') {
+              progressId = event.progress.id
+              const progress = {
+                ...event.progress,
+                scope: 'conversation' as const,
+                model: { providerId: selection.providerId, modelId: selection.modelId },
+              }
+              upsertChatMessage({ ...latest, compactionProgress: progress })
+              send({ ...event, progress })
+            } else if (event.kind === 'context-usage') {
+              if (initializingObservation && previousSnapshot) return
+              const snapshot = { ...event.snapshot, sequence: sequenceBase + event.snapshot.sequence }
+              upsertChatMessage({ ...latest, contextSnapshot: snapshot })
+              send({ ...event, snapshot })
+            }
+          },
+          sanitizeError: compactionDiagnostic,
+          onCompactionError: () => {},
+        })
+      : undefined
+  let result: CompactResult | undefined
+  try {
+    if (publisher) {
+      publisher.observeAttempt()({
+        usedTokens: previousSnapshot?.usedTokens ?? estimatePortableContextTokens(history),
+        modelContextWindow: previousSnapshot?.modelContextWindow ?? opts.contextWindow,
+        quality: previousSnapshot?.quality ?? 'estimated',
+      })
+      initializingObservation = false
+      await publisher.compact(
+        async (onProgress) => {
+          result = await compactReservedWork(conversationId, {
+            ...opts,
+            onProgress,
+            assertCurrent: () => {
+              opts.assertCurrent?.()
+              if (
+                !stillOwnsOperation() ||
+                getChatMessage(conversationId, anchor!.id)?.compactionProgress?.id !== progressId
+              ) {
+                throw new Error('Conversation operation changed while context was being compacted.')
+              }
+            },
+          })
+          if (!result.ok) throw new Error(result.error ?? 'Portable compaction failed.')
+          return result
+        },
+        {
+          signal: opts.signal ?? new AbortController().signal,
+          failureMessage: 'Portable compaction failed.',
+          afterSample: () => ({
+            usedTokens: estimatePortableContextTokens(listConversationContextMessages(conversationId)),
+            ...(opts.contextWindow ? { modelContextWindow: opts.contextWindow } : {}),
+            quality: 'estimated',
+          }),
+        }
+      )
+    } else {
+      result = await compactReservedWork(conversationId, opts)
+    }
+  } catch (error) {
+    result ??= { ok: false, error: compactionDiagnostic(error) }
+  } finally {
+    publisher?.dispose()
+  }
+  result ??= { ok: false, error: 'Portable compaction failed.' }
+  if (result.error) result.error = compactionDiagnostic(result.error)
+  // The successful boundary is the newest visible message on reload; carry the finished
+  // operation there so the renderer does not need to cross an older context boundary.
+  if (result.ok && anchor && progressId && stillOwnsOperation()) {
+    const observed = getChatMessage(conversationId, anchor.id)
+    const marker = lastConversationContextMessage(conversationId)
+    if (
+      observed?.compactionProgress?.id === progressId &&
+      marker?.parts.some(
+        (part) => part.type === 'compaction' && part.strategy === 'summary' && part.text === result?.summary
+      )
+    ) {
+      upsertChatMessage({
+        ...marker,
+        contextSnapshot: observed.contextSnapshot,
+        compactionProgress: observed.compactionProgress,
+      })
+    }
+  }
+  // Failed helper calls are billable, but never form a context boundary. Active runners
+  // consume the returned usage themselves; manual/preflight operations need a durable ledger row.
+  if (
+    !result.ok &&
+    opts.persist !== false &&
+    !opts.executionId &&
+    selection &&
+    stillOwnsOperation() &&
+    (!progressId || getChatMessage(conversationId, anchor!.id)?.compactionProgress?.id === progressId) &&
+    getConversation(conversationId)
+  ) {
+    const usage = result.usage
+    if ((usage && (usage.totalInput || usage.output)) || result.runtimeEstimatedCostUsd != null) {
+      upsertChatMessage({
+        id: randomUUID(),
+        conversationId,
+        role: 'assistant',
+        parts: [],
+        createdAt: Date.now(),
+        model: { providerId: selection.providerId, modelId: selection.modelId },
+        error: result.error,
+        usage: {
+          usageVersion: 2,
+          input: usage?.input ?? 0,
+          output: usage?.output ?? 0,
+          ...(usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+          ...(usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          ...(result.runtimeEstimatedCostUsd != null
+            ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
+            : {}),
+          billingOnly: true,
+        },
+      })
+    }
+  }
+  // Completion follows the durable summary commit. Native cleanup can continue under the
+  // reservation, but a late cancellation or remote failure cannot undo that boundary or bill it twice.
+  if (result.ok && selection && opts.persist !== false && !opts.skipRetireBinding && !opts.executionId) {
+    await retireNativeBindingAfterPortableCompaction(conversationId, selection.providerId, opts.signal).catch(
+      (error) => {
+        chatDiag({
+          kind: 'portable-compaction-cleanup-failed',
+          conv: conversationId,
+          error: compactionDiagnostic(error),
+        })
+      }
+    )
+  }
+  return result
+}
+
+async function compactReservedWork(conversationId: string, opts: CompactOpts): Promise<CompactResult> {
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
   if (!opts.allowActive && active.has(conversationId)) return { ok: false, error: 'busy' }
@@ -5866,12 +6039,16 @@ export async function compactReserved(
   const history = opts.executionId
     ? listExecutionContextMessages(conversationId, opts.executionId)
     : listConversationContextMessages(conversationId)
-  const historySnapshot = JSON.stringify(history)
+  // Meter/progress observations do not change the transcript being summarized. All other
+  // message fields still participate so edits, new turns, and model changes reject the commit.
+  const historyIdentity = (messages: typeof history) =>
+    JSON.stringify(messages.map(({ contextSnapshot: _snapshot, compactionProgress: _progress, ...message }) => message))
+  const historySnapshot = historyIdentity(history)
   const assertHistoryUnchanged = () => {
     const latest = opts.executionId
       ? listExecutionContextMessages(conversationId, opts.executionId)
       : listConversationContextMessages(conversationId)
-    if (JSON.stringify(latest) !== historySnapshot) {
+    if (historyIdentity(latest) !== historySnapshot) {
       throw new Error('Conversation changed while context was being compacted; compact again on the latest history.')
     }
   }
@@ -5884,10 +6061,11 @@ export async function compactReserved(
   let observedClaudeCost = 0
   let observedClaudeCostKnown = false
   let observedClaudeCostComplete = true
+  let completedUsage: NormalizedAiUsage | undefined
+  let completedCost: number | undefined
   try {
-    const compactSignal = opts.signal
-      ? AbortSignal.any([opts.signal, AbortSignal.timeout(10 * 60_000)])
-      : AbortSignal.timeout(10 * 60_000)
+    // The staged compactor owns per-call deadlines and a bounded budget sized to the transcript.
+    const compactSignal = opts.signal ?? new AbortController().signal
     const contextWindow =
       opts.contextWindow ??
       (compactClaudeTarget
@@ -5914,11 +6092,11 @@ export async function compactReserved(
     let summarize: Parameters<typeof summarizePortableTranscript>[2]
     if (isCodexSubscriptionProvider(selection.providerId)) {
       if (!compactAccountId && codexIdentityTransitionPending) return { ok: false, error: 'no-key' }
-      summarize = (prompt) =>
+      summarize = (prompt, _phase, stageSignal = compactSignal) =>
         runCodexEphemeralWithFailover({
           logicalProviderId: selection.providerId,
           modelId: selection.modelId,
-          signal: compactSignal,
+          signal: stageSignal,
           scope: 'helper',
           conversationId,
           extractAttemptUsage: extractIsolatedSummaryAttemptUsage,
@@ -5951,7 +6129,7 @@ export async function compactReserved(
       const manager = getGitHubCopilotSubscriptionManager(compactAccountId)
       const identity = manager.getAccountIdentity()
       if (!identity.fingerprint) return { ok: false, error: 'no-key' }
-      summarize = (prompt) =>
+      summarize = (prompt, _phase, stageSignal = compactSignal) =>
         summarizeWithGitHubCopilotRuntime({
           manager,
           // Frozen profile: OPAQUE identity from freeze (summarizer aborts on account change) + round reasoning.
@@ -5966,14 +6144,14 @@ export async function compactReserved(
           modelId: selection.modelId,
           system: compactSystem,
           prompt,
-          signal: compactSignal,
+          signal: stageSignal,
           // Frozen profile: round's EFFECTIVE EFFORT (after resolving Ultra; never raw or live prefs).
           ...(frozen?.reasoningEffort ? { effort: frozen.reasoningEffort } : {}),
         })
     } else if (isClaudeSubscriptionProvider(selection.providerId)) {
       if (!frozen) {
         const chain = compactClaudeChain
-        summarize = (prompt) =>
+        summarize = (prompt, _phase, stageSignal = compactSignal) =>
           runClaudeEphemeralWithFailover({
             logicalProviderId: selection.providerId,
             modelId: selection.modelId,
@@ -5981,7 +6159,7 @@ export async function compactReserved(
             reasoningEffort: compactClaudeTarget?.reasoningEffort,
             fastMode: compactClaudeTarget?.fastMode === true,
             chain,
-            signal: compactSignal,
+            signal: stageSignal,
             conversationId,
             extractAttemptUsage: extractIsolatedSummaryAttemptUsage,
             mergeAttemptUsage: mergeIsolatedSummaryAttemptUsage,
@@ -6032,7 +6210,7 @@ export async function compactReserved(
               fingerprint: status.accountFingerprint,
               epoch: status.accountEpoch,
             }
-        summarize = (prompt) =>
+        summarize = (prompt, _phase, stageSignal = compactSignal) =>
           summarizeWithClaudeRuntime({
             manager,
             accountIdentity: identity,
@@ -6041,7 +6219,7 @@ export async function compactReserved(
             modelId: frozen?.resolvedModelId ?? selection.modelId,
             system: compactSystem,
             prompt,
-            signal: compactSignal,
+            signal: stageSignal,
             // Frozen profile: round's EFFECTIVE EFFORT (after resolving Ultra; never raw or live prefs);
             // normal path rereads prefs (current behavior).
             effort: frozen ? frozen.reasoningEffort : getConvUiPrefs(conversationId).chat?.reasoning,
@@ -6074,21 +6252,26 @@ export async function compactReserved(
       const frozenFastModeOptions = frozen
         ? applyFastModeServiceTier(compactProviderOptions, frozen.fastMode, selection.providerId)
         : compactProviderOptions
-      summarize = async (prompt) => {
+      summarize = async (prompt, _phase, stageSignal = compactSignal) => {
         const result = await generateText({
           model,
           system: compactSystem,
           prompt,
-          abortSignal: compactSignal,
+          abortSignal: stageSignal,
           ...(frozenFastModeOptions ? { providerOptions: frozenFastModeOptions } : {}),
         })
         return { text: result.text ?? '', usage: normalizeAiUsage(result.totalUsage) }
       }
     }
 
-    const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize)
+    const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
+      signal: compactSignal,
+      onProgress: opts.onProgress,
+    })
     const summary = compacted.summary
     const usage = compacted.usage
+    completedUsage = usage
+    completedCost = compacted.runtimeEstimatedCostUsd
     if (opts.persist !== false) {
       const marker: ChatMessage = {
         id: randomUUID(),
@@ -6096,41 +6279,31 @@ export async function compactReserved(
         role: 'assistant',
         parts: [{ type: 'compaction', id: randomUUID(), text: summary, strategy: 'summary' }],
         model: selection,
-        usage:
-          usage && (usage.totalInput || usage.output)
-            ? {
-                usageVersion: 2,
-                input: usage.input,
-                output: usage.output,
-                ...(usage.cacheRead ? { cachedInput: usage.cacheRead } : {}),
-                ...(usage.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
-                contextInput: estimateTextTokens(summary),
-                contextOutput: 0,
-                ...(contextWindow ? { modelContextWindow: contextWindow } : {}),
-                ...(compacted.runtimeEstimatedCostUsd != null
-                  ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
-                  : {}),
-                billingOnly: true,
-              }
-            : {
-                usageVersion: 2,
-                input: 0,
-                output: 0,
-                contextInput: estimateTextTokens(summary),
-                contextOutput: 0,
-                ...(contextWindow ? { modelContextWindow: contextWindow } : {}),
-                billingOnly: true,
-              },
+        usage: {
+          usageVersion: 2,
+          input: usage?.input ?? 0,
+          output: usage?.output ?? 0,
+          ...(usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+          ...(usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          contextInput: estimateTextTokens(summary),
+          contextOutput: 0,
+          ...(contextWindow ? { modelContextWindow: contextWindow } : {}),
+          ...(compacted.runtimeEstimatedCostUsd != null
+            ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
+            : {}),
+          billingOnly: true,
+        },
         createdAt: Date.now(),
       }
       transaction(() => {
+        compactSignal.throwIfAborted()
+        opts.assertCurrent?.()
+        if (opts.operation && !conversationOperationIsCurrent(conversationId, opts.operation)) {
+          throw new Error('Conversation operation changed while context was being compacted.')
+        }
         assertHistoryUnchanged()
         upsertChatMessage(marker)
       })
-      // Isolated compaction NEVER retires the main conversation binding (or writes a main milestone — persist:false).
-      if (!opts.skipRetireBinding && !opts.executionId) {
-        await retireNativeBindingAfterPortableCompaction(conversationId, selection.providerId, compactSignal)
-      }
     }
     return {
       ok: true,
@@ -6143,15 +6316,15 @@ export async function compactReserved(
         : {}),
     }
   } catch (e) {
-    const usage = observedClaudeUsage ?? extractIsolatedSummaryAttemptUsage(e)
+    const usage = observedClaudeUsage ?? completedUsage ?? extractIsolatedSummaryAttemptUsage(e)
     const partialCost = observedClaudeCostKnown
       ? observedClaudeCostComplete
         ? observedClaudeCost
         : undefined
-      : (e as { runtimeEstimatedCostUsd?: number } | null)?.runtimeEstimatedCostUsd
+      : (completedCost ?? (e as { runtimeEstimatedCostUsd?: number } | null)?.runtimeEstimatedCostUsd)
     return {
       ok: false,
-      error: e instanceof ChatConfigError ? e.message : e instanceof Error ? e.message : String(e),
+      error: compactionDiagnostic(e),
       ...(usage ? { usage } : {}),
       ...(typeof partialCost === 'number' && Number.isFinite(partialCost) && partialCost >= 0
         ? { runtimeEstimatedCostUsd: partialCost }
@@ -7478,7 +7651,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     'chat:steer',
     async (_e, rawConversationId: unknown, rawText: unknown, rawClientUserMessageId: unknown) => {
       const conversationId = typeof rawConversationId === 'string' ? rawConversationId : ''
-      if(isWebManagedConversation(conversationId))return {ok:false,error:'This conversation is managed in the Kanban web chat.'}
+      if (isWebManagedConversation(conversationId))
+        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       const text = typeof rawText === 'string' ? rawText : ''
       const clientUserMessageId = typeof rawClientUserMessageId === 'string' ? rawClientUserMessageId : ''
       if (
@@ -8713,7 +8887,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
     ) => {
       const { conversationId, fromMessageId, text } = payload ?? {}
-      if(isWebManagedConversation(conversationId))return {ok:false,error:'This conversation is managed in the Kanban web chat.'}
+      if (isWebManagedConversation(conversationId))
+        return { ok: false, error: 'This conversation is managed in the Kanban web chat.' }
       if (typeof conversationId !== 'string' || typeof fromMessageId !== 'string')
         return { ok: false, error: 'invalid-input' }
       const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
@@ -8752,14 +8927,21 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   deps.mon(
     'chat:permission-respond',
     (_e, requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
-      for(const conversationId of active.keys())if(isWebManagedConversation(conversationId)&&getBroker().pendingFor(conversationId).some(p=>p.id===requestId))return
+      for (const conversationId of active.keys())
+        if (
+          isWebManagedConversation(conversationId) &&
+          getBroker()
+            .pendingFor(conversationId)
+            .some((p) => p.id === requestId)
+        )
+          return
       if (typeof requestId === 'string') getBroker().reply({ requestId, reply, message })
     }
   )
   // ask_question (mark X): user answers (string[][]) → resolve the tool's blocked execute.
   deps.mon('chat:question-respond', (_e, toolCallId: string, answers: string[][]) => {
-    const owner=getQuestionBroker().conversationFor(toolCallId)
-    if(owner&&isWebManagedConversation(owner))return
+    const owner = getQuestionBroker().conversationFor(toolCallId)
+    if (owner && isWebManagedConversation(owner)) return
     if (typeof toolCallId === 'string') getQuestionBroker().reply(toolCallId, Array.isArray(answers) ? answers : [])
   })
 }
@@ -8833,22 +9015,47 @@ export function disposeChat(): Promise<void> {
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */
-export async function startExecutorChatTurn(input:{conversationId:string;prompt:string;signal:AbortSignal;remoteAdmission?:boolean}):Promise<InternalTurnHandle>{
- if(!savedDeps)throw new Error('Chat service not initialized')
- const wc=getMainWebContents();if(!wc)throw new Error('Desktop window unavailable')
- let handle:InternalTurnHandle|undefined
- let admitted:ActiveRun|undefined
- const cancel=()=>{admitted?.controller.abort();getBroker().rejectConversation(input.conversationId);getQuestionBroker().rejectConversation(input.conversationId)}
- input.signal.addEventListener('abort',cancel,{once:true})
- try{
-  if(input.remoteAdmission&&!remoteChatPolicy(input.conversationId))throw new Error('Remote chat policy is missing')
-  const result=await startSend(savedDeps,wc,input.conversationId,input.prompt,undefined,{remoteAdmission:input.remoteAdmission,runnerSignal:input.signal,runnerAdmission:run=>{
-   admitted=run
-   if(input.signal.aborted)cancel()
-   handle={executionId:input.conversationId,conversationId:input.conversationId,assistantMessageId:()=>run.messageId||null,done:run.outcome,cancel}
-  }})
-  if(!result.ok||!handle)throw new Error(!result.ok?result.error??'Execution unavailable':'Execution was not admitted')
-  void handle.done.finally(()=>input.signal.removeEventListener('abort',cancel))
-  return handle
- }catch(error){input.signal.removeEventListener('abort',cancel);throw error}
+export async function startExecutorChatTurn(input: {
+  conversationId: string
+  prompt: string
+  signal: AbortSignal
+  remoteAdmission?: boolean
+}): Promise<InternalTurnHandle> {
+  if (!savedDeps) throw new Error('Chat service not initialized')
+  const wc = getMainWebContents()
+  if (!wc) throw new Error('Desktop window unavailable')
+  let handle: InternalTurnHandle | undefined
+  let admitted: ActiveRun | undefined
+  const cancel = () => {
+    admitted?.controller.abort()
+    getBroker().rejectConversation(input.conversationId)
+    getQuestionBroker().rejectConversation(input.conversationId)
+  }
+  input.signal.addEventListener('abort', cancel, { once: true })
+  try {
+    if (input.remoteAdmission && !remoteChatPolicy(input.conversationId))
+      throw new Error('Remote chat policy is missing')
+    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
+      remoteAdmission: input.remoteAdmission,
+      runnerSignal: input.signal,
+      runnerAdmission: (run) => {
+        admitted = run
+        if (input.signal.aborted) cancel()
+        handle = {
+          executionId: input.conversationId,
+          conversationId: input.conversationId,
+          assistantMessageId: () => run.messageId || null,
+          done: run.outcome,
+          cancel,
+        }
+      },
+    })
+    if (!result.ok || !handle)
+      throw new Error(!result.ok ? (result.error ?? 'Execution unavailable') : 'Execution was not admitted')
+    void handle.done.finally(() => input.signal.removeEventListener('abort', cancel))
+    return handle
+  } catch (error) {
+    input.signal.removeEventListener('abort', cancel)
+    throw error
+  }
 }
