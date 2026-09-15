@@ -1044,6 +1044,131 @@ describe('Claude official chat runner', () => {
     )
   })
 
+  it.each([
+    { measured: true, terminal: 'completed' },
+    { measured: false, terminal: 'failed' },
+    { measured: false, terminal: 'aborted' },
+  ] as const)('publishes live Claude context and flushes before $terminal (measured=$measured)', async ({
+    measured,
+    terminal,
+  }) => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    upsertChatMessage({
+      id: 'user-live-context',
+      conversationId: conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'live-context-text', text: 'Keep working' }],
+      createdAt: 1,
+    })
+    const controller = new AbortController()
+    const events: ChatStreamEvent[] = []
+    let releaseNext!: () => void
+    let releaseFinish!: () => void
+    const next = new Promise<void>((resolve) => {
+      releaseNext = resolve
+    })
+    const finish = new Promise<void>((resolve) => {
+      releaseFinish = resolve
+    })
+    let measuredTokens = 250
+    const assistantMessage = (id: string, input: number, parent: string | null = null): SDKMessage => {
+      const base = finalAssistant(id, [{ type: 'text', text: id }]) as Extract<SDKMessage, { type: 'assistant' }>
+      return {
+        ...base,
+        parent_tool_use_id: parent,
+        message: {
+          ...base.message,
+          id,
+          usage: { ...base.message.usage, input_tokens: input, cache_read_input_tokens: 80, output_tokens: 10 },
+        },
+      }
+    }
+    const query = {
+      close: vi.fn(),
+      interrupt: vi.fn(async () => {}),
+      initializationResult: vi.fn(async () => ({ account: { apiProvider: 'firstParty' } })),
+      getContextUsage: vi.fn(async () => {
+        if (!measured) throw new Error('context control unavailable')
+        return { totalTokens: measuredTokens, maxTokens: 200_000, model: 'claude-sonnet' }
+      }),
+      async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
+        yield assistantMessage('live-first', 100)
+        await next
+        yield assistantMessage('child-usage', 99_000, 'parent-tool')
+        measuredTokens = 400
+        yield assistantMessage('live-second', 200)
+        await finish
+        measuredTokens = 450
+        yield assistantMessage('live-third', 300)
+        if (terminal === 'failed') {
+          const failure = finalAssistant('runtime-error', [{ type: 'text', text: 'Usage limit reached' }]) as Extract<
+            SDKMessage,
+            { type: 'assistant' }
+          >
+          yield {
+            ...failure,
+            error: 'rate_limit' as const,
+            message: {
+              ...failure.message,
+              usage: {
+                ...failure.message.usage,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+            },
+          }
+        }
+        if (terminal === 'aborted') controller.abort()
+        if (terminal !== 'completed') throw new Error('runtime failed')
+        yield resultMessage('claude-stream-session')
+      },
+    }
+    const manager = {
+      assertAccountIdentity: vi.fn(),
+      assertSubscriptionRuntimeAccount: vi.fn(),
+      deleteManagedSession: vi.fn(async () => {}),
+      createQuery: vi.fn(() => query),
+    }
+    const selection = { providerId: 'builtin_claude_subscription', modelId: 'sonnet' }
+    const running = runClaudeChat({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      cwd: '/repo',
+      selection,
+      mode: 'agent',
+      permMode: 'ask',
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      broker: { assert: vi.fn(), on: vi.fn() } as never,
+      questionBroker: { ask: vi.fn() } as never,
+      emit: (event) => events.push(event),
+      signal: controller.signal,
+      contextWindow: 200_000,
+    })
+    const assistant = () => listChatMessages(conversation.id).find((message) => message.role === 'assistant')
+    await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(190))
+    releaseNext()
+    await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(measured ? 400 : 290), {
+      timeout: 2_000,
+    })
+    expect(events.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+    releaseFinish()
+    await running
+    expect(assistant()?.contextSnapshot).toMatchObject({
+      usedTokens: measured ? 450 : 390,
+      model: selection,
+      modelContextWindow: 200_000,
+      quality: measured ? 'measured' : 'estimated',
+    })
+    const samples = events.filter((event) => event.kind === 'context-usage')
+    expect(samples.every((event) => event.snapshot.usedTokens < 1_000)).toBe(true)
+    const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
+    expect(events.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(events.indexOf(samples.at(-1)!))
+  })
+
   it('compacts at a folded tool-result boundary, continues in a fresh session and aggregates usage', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
@@ -1057,7 +1182,12 @@ describe('Claude official chat runner', () => {
     const manager = new PortableCompactionManager()
     const events: Array<{ kind: string; [key: string]: unknown }> = []
     let durableAssistantAtCompaction: ReturnType<typeof listChatMessages>[number] | undefined
-    const compactHistory = vi.fn(async () => {
+    const compactHistory = vi.fn<NonNullable<RunClaudeChatArgs['compactHistory']>>(async (target, onProgress) => {
+      expect(target).toBeUndefined()
+      expect(
+        listChatMessages(conversation.id).find((message) => message.role === 'assistant')?.compactionProgress
+      ).toMatchObject({ status: 'running', beforeTokens: 900 })
+      onProgress?.({ status: 'retrying', phase: 'chunk', completed: 0, total: 2, attempt: 2 })
       durableAssistantAtCompaction = listChatMessages(conversation.id).find((message) => message.role === 'assistant')
       return {
         summary: 'Portable summary of the original history and completed README inspection.',
@@ -1129,6 +1259,13 @@ describe('Claude official chat runner', () => {
         expect.objectContaining({ type: 'text', text: 'Completed after portable compaction.' }),
       ])
     )
+    expect(assistant?.contextSnapshot).toMatchObject({ usedTokens: 100, quality: 'measured' })
+    expect(assistant?.compactionProgress).toMatchObject({
+      status: 'completed',
+      beforeTokens: 900,
+      afterTokens: 100,
+      afterQuality: 'measured',
+    })
     expect(assistant?.usage).toMatchObject({
       input: 193,
       output: 23,
@@ -1305,7 +1442,7 @@ describe('Claude official chat runner', () => {
     })
     const manager = new PortableCompactionManager()
     const compactHistory = vi.fn(async () => {
-      throw new Error('summarizer unavailable')
+      throw new Error('summarizer unavailable sk-ant-1234567890abcdefghij')
     })
     const events: Array<{ kind: string; [key: string]: unknown }> = []
 
@@ -1334,7 +1471,9 @@ describe('Claude official chat runner', () => {
     expect(getClaudeSessionBinding(conversation.id)).toBeNull()
     expect(listChatMessages(conversation.id).at(-1)).toMatchObject({
       role: 'assistant',
-      error: 'Claude portable intra-turn compaction failed.',
+      error: 'summarizer unavailable [REDACTED]',
+      contextSnapshot: { usedTokens: 900, quality: 'measured' },
+      compactionProgress: { status: 'failed', beforeTokens: 900, error: 'summarizer unavailable [REDACTED]' },
     })
     expect(events.filter((event) => event.kind === 'error')).toHaveLength(1)
     expect(events.some((event) => event.kind === 'aborted' || event.kind === 'finish')).toBe(false)
@@ -3146,6 +3285,9 @@ describe('Claude account rotation', () => {
     expect(run.b.received).toHaveLength(1)
     expect(run.b.received[0]).toContain('effect-recorded')
     expect(run.b.received[0]).toContain('Work started on A.')
+    expect(
+      listChatMessages(run.conversation.id).find((message) => message.role === 'assistant')?.contextSnapshot
+    ).toMatchObject({ usedTokens: 200, model: run.args.selection, quality: 'measured' })
     expect(run.b.manager.createQuery.mock.calls[0][0].options).not.toHaveProperty('resume')
     expect(run.events.filter((e) => e.kind === 'message-start')).toHaveLength(1)
     expect(run.events.filter((e) => ['finish', 'error', 'aborted'].includes(e.kind))).toHaveLength(1)

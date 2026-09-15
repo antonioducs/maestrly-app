@@ -3,7 +3,17 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
-  kanban: {"board": "Board", "project": "Projeto Kanban", "linked": "Vinculado a este workspace e seus worktrees", "disconnected": "Reconecte em Configurações → Plataforma", "openProject": "Abrir Kanban: {{project}}", "open": "Abrir Kanban", "openFailed": "Não foi possível abrir o Kanban.", "accessTitle": "Kanban vinculado", "accessDescription": "Acesso ao projeto vinculado a este workspace. Ask e Plan continuam somente leitura."},
+  kanban: {
+    board: 'Board',
+    project: 'Projeto Kanban',
+    linked: 'Vinculado a este workspace e seus worktrees',
+    disconnected: 'Reconecte em Configurações → Plataforma',
+    openProject: 'Abrir Kanban: {{project}}',
+    open: 'Abrir Kanban',
+    openFailed: 'Não foi possível abrir o Kanban.',
+    accessTitle: 'Kanban vinculado',
+    accessDescription: 'Acesso ao projeto vinculado a este workspace. Ask e Plan continuam somente leitura.',
+  },
   chatgptWeb: {
     notConfigured: 'O ChatGPT Web ainda não está configurado. Conclua em Configurações › Maestrly Chat.',
     starting: 'Subindo o túnel…',
@@ -539,6 +549,10 @@ export default {
     deny: 'Negar',
   },
   meter: {
+    lastMeasuredContext: 'Último contexto medido: {{used}} tokens',
+    lastEstimatedContext: 'Última estimativa de contexto: ~{{used}} tokens',
+    nextRequestEstimate: 'Estimativa de contexto da próxima requisição: ~{{used}} tokens',
+    tokenUnit: 'tokens',
     contextTip: 'Contexto: {{used}} tokens',
     contextEstimatedSuffix: ' (estimativa portátil)',
     contextWindowSuffix: ' de {{win}} ({{pct}}%)',
@@ -560,6 +574,17 @@ export default {
     limitSave: 'Salvar',
     limitClear: 'Sem limite',
     limitButtonTitle: 'Definir limite de contexto',
+  },
+  compactionStatus: {
+    running: 'Compactando',
+    step: 'Compactando — etapa {{step}}/{{total}}',
+    consolidating: 'Compactando — consolidando resumos',
+    retrying: 'Tentando esta etapa novamente',
+    retryAttempt: 'Tentando esta etapa novamente (tentativa {{attempt}})',
+    completed: 'Contexto compactado',
+    failed: 'Falha ao compactar o contexto',
+    cancelled: 'Compactação do contexto cancelada',
+    reduction: '{{before}} → {{after}} tokens',
   },
   lightbox: {
     defaultFilename: 'imagem.png',

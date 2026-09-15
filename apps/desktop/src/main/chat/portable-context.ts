@@ -1,6 +1,7 @@
 import { toolOutputText, type ChatMessage, type MessagePart } from '../../shared/chat'
 import type { NormalizedAiUsage } from './runner'
 import { activeChatContext, nativeSeedContextText, renderNativeSeedTranscript } from './message'
+import { isRetryableStreamError } from './retry-policy'
 
 /** A deliberately conservative text/code heuristic. UTF-8 bytes avoid undercounting non-ASCII conversations. */
 export function estimateTextTokens(text: string): number {
@@ -169,7 +170,89 @@ export interface PortableSummaryResult {
   summary: string
   usage?: NormalizedAiUsage
   runtimeEstimatedCostUsd?: number
+  /** All dispatched attempts, including failed attempts that were retried. */
   calls: number
+}
+
+export interface PortableSummaryProgress {
+  status: 'running' | 'retrying'
+  phase: 'chunk' | 'consolidate'
+  /** Completed summaries and source groups in the current map/reduce level. */
+  completed: number
+  total: number
+  /** One-based attempt for the current source group. */
+  attempt: number
+}
+
+export interface PortableSummaryOptions {
+  signal?: AbortSignal
+  onProgress?: (progress: PortableSummaryProgress) => void
+  stepTimeoutMs?: number
+  totalTimeoutMs?: number
+  maxRetries?: number
+  /** Overrides transient-error classification; cancellation/auth/configuration remain terminal. */
+  shouldRetry?: (error: unknown) => boolean
+}
+
+const SUMMARY_STEP_TIMEOUT_MS = 3 * 60_000
+const SUMMARY_MIN_TOTAL_TIMEOUT_MS = 10 * 60_000
+const SUMMARY_MAX_TOTAL_TIMEOUT_MS = 60 * 60_000
+
+class PortableSummaryStepTimeoutError extends Error {
+  override name = 'TimeoutError'
+}
+
+class PortableSummaryEmptyError extends Error {}
+
+function summaryErrorChain(error: unknown): unknown[] {
+  const chain: unknown[] = []
+  const seen = new Set<unknown>()
+  while (error != null && !seen.has(error)) {
+    seen.add(error)
+    chain.push(error)
+    error = typeof error === 'object' ? (error as { cause?: unknown }).cause : undefined
+  }
+  return chain
+}
+
+function isTerminalSummaryError(error: unknown): boolean {
+  const detail = error as { name?: string; status?: unknown; statusCode?: unknown; message?: string } | null
+  const status = Number(detail?.statusCode ?? detail?.status)
+  if (status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status)) return true
+  if (/AbortError|Config|Authentication|Authorization|Permission|LoadAPIKey/i.test(detail?.name ?? '')) return true
+  const message = detail?.message ?? String(error)
+  return (
+    /\b(?:unauthorized|forbidden|not authenticated|no[ -]key|no[ -]model)\b/i.test(message) ||
+    /\b(?:authentication|authorization|permission)\b.{0,40}\b(?:failed|required|invalid|denied|expired)\b/i.test(
+      message
+    ) ||
+    /\b(?:missing|invalid|unknown|unsupported)\s+(?:api[ _-]?key|credentials?|configuration|model|provider)\b/i.test(
+      message
+    ) ||
+    /\b(?:api[ _-]?key|credentials?|configuration)\b.{0,40}\b(?:invalid|missing|required|expired|not configured)\b/i.test(
+      message
+    ) ||
+    /\b(?:model|provider)\b.{0,40}\b(?:not found|not configured|unsupported)\b/i.test(message) ||
+    /\b(?:account|identity|credentials?)\b.{0,40}\b(?:changed|mismatch|invalid|missing)\b/i.test(message)
+  )
+}
+
+function summaryFailure(
+  error: unknown
+): Error & { partialUsage?: NormalizedAiUsage; runtimeEstimatedCostUsd?: number } {
+  // Do not mutate a provider error or the caller's shared AbortSignal.reason.
+  const failure = new Error(error instanceof Error ? error.message : String(error), { cause: error })
+  if (error && typeof error === 'object') Object.assign(failure, error)
+  if (error instanceof Error) {
+    failure.name = error.name
+    if (!(error instanceof DOMException)) Object.setPrototypeOf(failure, Object.getPrototypeOf(error))
+  }
+  failure.cause = error
+  return failure
+}
+
+function summaryTimeoutMs(value: number | undefined, fallback: number): number {
+  return value != null && Number.isFinite(value) ? Math.max(1, Math.min(SUMMARY_MAX_TOTAL_TIMEOUT_MS, value)) : fallback
 }
 
 function addUsage(total: NormalizedAiUsage, next?: NormalizedAiUsage): void {
@@ -185,48 +268,182 @@ function addUsage(total: NormalizedAiUsage, next?: NormalizedAiUsage): void {
 export async function summarizePortableTranscript(
   transcript: string,
   maxChunkChars: number,
-  summarize: (prompt: string, phase: 'chunk' | 'consolidate') => Promise<PortableSummaryCallResult>
+  summarize: (
+    prompt: string,
+    phase: 'chunk' | 'consolidate',
+    signal?: AbortSignal
+  ) => Promise<PortableSummaryCallResult>,
+  options: PortableSummaryOptions = {}
 ): Promise<PortableSummaryResult> {
   const usage: NormalizedAiUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, totalInput: 0 }
   let runtimeEstimatedCostUsd = 0
   let runtimeCostComplete = true
+  let runtimeCostKnown = false
   let calls = 0
+  let pendingCalls = 0
+  let finished = false
   let chunks = splitPortableTranscript(transcript, maxChunkChars)
   if (chunks.length === 0) throw new Error('There is no portable transcript to compact')
+
+  const stepTimeoutMs = summaryTimeoutMs(options.stepTimeoutMs, SUMMARY_STEP_TIMEOUT_MS)
+  const maxRetries = Number.isFinite(options.maxRetries) ? Math.max(0, Math.floor(options.maxRetries!)) : 1
+  const totalTimeoutMs = summaryTimeoutMs(
+    options.totalTimeoutMs,
+    Math.min(
+      SUMMARY_MAX_TOTAL_TIMEOUT_MS,
+      Math.max(SUMMARY_MIN_TOTAL_TIMEOUT_MS, stepTimeoutMs * (maxRetries + 1) * (chunks.length + 2))
+    )
+  )
+  const controller = new AbortController()
+  const deadline = Date.now() + totalTimeoutMs
+  const totalTimeout = () =>
+    controller.abort(new DOMException('Context compaction exceeded its time budget', 'TimeoutError'))
+  const abort = () => controller.abort(options.signal!.reason)
+  options.signal?.addEventListener('abort', abort, { once: true })
+  if (options.signal?.aborted) abort()
+  const totalTimer = setTimeout(totalTimeout, totalTimeoutMs)
+  const checkActive = () => {
+    // A chain of immediately resolved calls can otherwise outrun timer delivery.
+    if (!controller.signal.aborted && Date.now() >= deadline) totalTimeout()
+    controller.signal.throwIfAborted()
+  }
+
+  const account = (value: unknown, success: boolean) => {
+    if (finished) return
+    pendingCalls -= 1
+    const detail = value as {
+      usage?: NormalizedAiUsage
+      partialUsage?: NormalizedAiUsage
+      runtimeEstimatedCostUsd?: number
+    } | null
+    const measuredUsage = success ? detail?.usage : (detail?.partialUsage ?? detail?.usage)
+    addUsage(usage, measuredUsage)
+    const cost = detail?.runtimeEstimatedCostUsd
+    if (typeof cost === 'number' && Number.isFinite(cost)) {
+      runtimeEstimatedCostUsd += Math.max(0, cost)
+      runtimeCostKnown = true
+    } else if (success || measuredUsage) {
+      runtimeCostComplete = false
+    }
+  }
+
+  const report = (progress: PortableSummaryProgress) => {
+    checkActive()
+    options.onProgress?.(progress)
+    checkActive()
+  }
+
+  const runAttempt = async (prompt: string, phase: 'chunk' | 'consolidate'): Promise<PortableSummaryCallResult> => {
+    checkActive()
+    const stage = new AbortController()
+    const abortStage = () => stage.abort(controller.signal.reason)
+    controller.signal.addEventListener('abort', abortStage, { once: true })
+    const stageTimer = setTimeout(
+      () => stage.abort(new PortableSummaryStepTimeoutError('The context compactor stage timed out')),
+      stepTimeoutMs
+    )
+    let rejectOnAbort: () => void = () => {}
+    try {
+      return await new Promise<PortableSummaryCallResult>((resolve, reject) => {
+        rejectOnAbort = () => {
+          // Let synchronous provider abort handlers publish partial usage before rejecting.
+          void Promise.resolve().then(() => reject(stage.signal.reason))
+        }
+        stage.signal.addEventListener('abort', rejectOnAbort, { once: true })
+        calls += 1
+        pendingCalls += 1
+        // Both handlers remain attached if cancellation wins, so late rejections are consumed.
+        // Service onAttemptUsage remains responsible for bills arriving after this operation ends.
+        const operation = Promise.resolve().then(() => {
+          stage.signal.throwIfAborted()
+          return summarize(prompt, phase, stage.signal)
+        })
+        void operation.then(
+          (result) => {
+            account(result, true)
+            resolve(result)
+          },
+          (error: unknown) => {
+            account(error, false)
+            reject(error)
+          }
+        )
+      })
+    } finally {
+      clearTimeout(stageTimer)
+      controller.signal.removeEventListener('abort', abortStage)
+      stage.signal.removeEventListener('abort', rejectOnAbort)
+    }
+  }
 
   const runLevel = async (source: string[], phase: 'chunk' | 'consolidate'): Promise<string[]> => {
     const output: string[] = []
     for (let index = 0; index < source.length; index += 1) {
       const label =
         phase === 'chunk' ? `Source chunk ${index + 1}/${source.length}` : `Summary group ${index + 1}/${source.length}`
-      const result = await summarize(`${label}:\n\n${source[index]}`, phase)
-      const text = result.text.trim()
-      if (!text) throw new Error('The context compactor returned an empty summary')
-      calls += 1
-      addUsage(usage, result.usage)
-      if (typeof result.runtimeEstimatedCostUsd === 'number' && Number.isFinite(result.runtimeEstimatedCostUsd)) {
-        runtimeEstimatedCostUsd += Math.max(0, result.runtimeEstimatedCostUsd)
-      } else {
-        runtimeCostComplete = false
+      for (let attempt = 1; ; attempt += 1) {
+        report({
+          status: attempt === 1 ? 'running' : 'retrying',
+          phase,
+          completed: index,
+          total: source.length,
+          attempt,
+        })
+        let text: string
+        try {
+          const result = await runAttempt(`${label}:\n\n${source[index]}`, phase)
+          checkActive()
+          text = result.text.trim()
+          if (!text) throw new PortableSummaryEmptyError('The context compactor returned an empty summary')
+        } catch (error) {
+          checkActive()
+          const chain = summaryErrorChain(error)
+          if (attempt > maxRetries || chain.some(isTerminalSummaryError)) throw error
+          const retry = options.shouldRetry
+            ? options.shouldRetry(error)
+            : error instanceof PortableSummaryStepTimeoutError ||
+              error instanceof PortableSummaryEmptyError ||
+              chain.some(isRetryableStreamError)
+          if (!retry) throw error
+          continue
+        }
+        output.push(text)
+        report({ status: 'running', phase, completed: index + 1, total: source.length, attempt })
+        break
       }
-      output.push(text)
     }
     return output
   }
 
-  chunks = await runLevel(chunks, 'chunk')
-  for (let level = 0; chunks.length > 1; level += 1) {
-    if (level >= 12) throw new Error('The context compactor did not converge')
-    const grouped = splitPortableTranscript(
-      chunks.map((chunk, index) => `Summary ${index + 1}:\n${chunk}`).join('\n\n'),
-      maxChunkChars
-    )
-    chunks = await runLevel(grouped, 'consolidate')
-  }
-  return {
-    summary: chunks[0],
-    ...(usage.totalInput || usage.output ? { usage } : {}),
-    ...(calls > 0 && runtimeCostComplete ? { runtimeEstimatedCostUsd } : {}),
-    calls,
+  const hasUsage = () => Object.values(usage).some((value) => value > 0)
+  const hasCompleteCost = () => runtimeCostKnown && runtimeCostComplete && pendingCalls === 0
+  try {
+    chunks = await runLevel(chunks, 'chunk')
+    for (let level = 0; chunks.length > 1; level += 1) {
+      checkActive()
+      if (level >= 12) throw new Error('The context compactor did not converge')
+      const grouped = splitPortableTranscript(
+        chunks.map((chunk, index) => `Summary ${index + 1}:\n${chunk}`).join('\n\n'),
+        maxChunkChars
+      )
+      chunks = await runLevel(grouped, 'consolidate')
+    }
+    checkActive()
+    return {
+      summary: chunks[0],
+      ...(hasUsage() ? { usage } : {}),
+      ...(hasCompleteCost() ? { runtimeEstimatedCostUsd } : {}),
+      calls,
+    }
+  } catch (error) {
+    const failure = summaryFailure(error)
+    if (hasUsage()) failure.partialUsage = { ...usage }
+    if (hasCompleteCost()) failure.runtimeEstimatedCostUsd = runtimeEstimatedCostUsd
+    else delete failure.runtimeEstimatedCostUsd
+    throw failure
+  } finally {
+    finished = true
+    clearTimeout(totalTimer)
+    options.signal?.removeEventListener('abort', abort)
   }
 }

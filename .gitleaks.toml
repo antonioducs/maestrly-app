@@ -28,3 +28,11 @@ condition = "AND"
 paths = ['''^scripts/test-integration\.mjs$''']
 regexTarget = "line"
 regexes = ['''BETTER_AUTH_SECRET: 'integration-secret-0123456789abcdef'''']
+
+[[allowlists]]
+description = "Exact synthetic credential used to verify compaction diagnostic redaction"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^apps/desktop/test/unit/chat-compaction-progress-service\.test\.ts$''']
+regexTarget = "line"
+regexes = ['''new Error\('Summary service rejected request: OPENAI_API_KEY=synthetic-secret-123'\)''']

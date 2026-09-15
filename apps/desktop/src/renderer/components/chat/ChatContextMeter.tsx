@@ -2,15 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { contextOccupancy, estimatedCostOfUsage, usageMetaForModel } from '../../../shared/chat'
-import type { ChatHistoryStats, ChatModelMeta } from '../../../shared/chat'
-
-const fmt = (n: number): string =>
-  n >= 1e6
-    ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`
-    : n >= 1000
-      ? `${(n / 1000).toFixed(n >= 1e5 ? 0 : 1)}k`
-      : String(n)
+import { estimatedCostOfUsage, usageMetaForModel } from '../../../shared/chat'
+import type { ChatContextSnapshot, ChatHistoryStats, ChatModelMeta } from '../../../shared/chat'
+import { contextMeterReading, formatContextTokens as fmt } from './context-observation'
 
 const fmtCost = (c: number): string =>
   c >= 1 ? `$${c.toFixed(2)}` : c >= 0.01 ? `$${c.toFixed(3)}` : `$${c.toFixed(4)}`
@@ -39,6 +33,7 @@ export function ChatContextMeter({
   metaByModel,
   providerId,
   modelId,
+  snapshot,
   onLimitChange,
 }: {
   stats: ChatHistoryStats | null
@@ -48,14 +43,12 @@ export function ChatContextMeter({
 
   providerId?: string | null
   modelId?: string | null
+  snapshot?: ChatContextSnapshot
 
   onLimitChange?: () => void
 }) {
   const { t } = useTranslation('chat')
   const stats = useMemo(() => {
-    const lu = history?.lastUsage
-
-    const used = history?.contextProjection?.usedTokens ?? (lu ? contextOccupancy(lu) : 0)
     let totalIn = 0
     let totalOut = 0
     let totalCached = 0
@@ -88,8 +81,9 @@ export function ChatContextMeter({
       else cost += modelCost
       if (pm.runtimeEstimatedCostUsd != null) hasRuntimeCost = true
     }
-    return { used, totalIn, totalOut, totalCached, cost, costAvailable, hasRuntimeCost }
+    return { totalIn, totalOut, totalCached, cost, costAvailable, hasRuntimeCost }
   }, [history, meta, metaByModel, modelId, providerId])
+  const context = contextMeterReading(history, meta, snapshot, providerId && modelId ? { providerId, modelId } : null)
 
   // Manual context-limit popover.
   const [open, setOpen] = useState(false)
@@ -146,11 +140,10 @@ export function ChatContextMeter({
     }
   }
 
-  if (stats.used === 0) return null
+  if (context.used === 0 && !context.observation) return null
 
-  const runtimeWindow = history?.contextProjection?.modelContextWindow
-  const win = runtimeWindow ?? meta?.contextWindow
-  const pct = win ? stats.used / win : null
+  const win = context.window
+  const pct = win ? context.used / win : null
 
   const hasPricing = stats.costAvailable && stats.cost > 0
 
@@ -158,9 +151,20 @@ export function ChatContextMeter({
 
   const activeLimit = info?.limit != null && ceiling != null && info.limit < ceiling ? info.limit : null
   const tip =
-    t('meter.contextTip', { used: fmt(stats.used) }) +
-    (history?.contextProjection?.quality === 'estimated' ? t('meter.contextEstimatedSuffix') : '') +
-    (win ? t('meter.contextWindowSuffix', { win: fmt(win), pct: Math.round((pct ?? 0) * 100) }) : '') +
+    t(
+      context.observation
+        ? context.quality === 'measured'
+          ? 'meter.lastMeasuredContext'
+          : 'meter.lastEstimatedContext'
+        : context.quality === 'estimated'
+          ? 'meter.nextRequestEstimate'
+          : 'meter.contextTip',
+      { used: fmt(context.used) }
+    ) +
+    (win ? t('meter.contextWindowSuffix', { win: fmt(win), pct: ((pct ?? 0) * 100).toFixed(1) }) : '') +
+    (context.observation && context.projection
+      ? '\n' + t('meter.nextRequestEstimate', { used: fmt(context.projection.usedTokens) })
+      : '') +
     (activeLimit != null ? t('meter.limitBadge', { limit: fmt(activeLimit), ceiling: fmt(ceiling as number) }) : '') +
     (hasPricing
       ? t('meter.costTip', { cost: fmtCost(stats.cost), in: fmt(stats.totalIn), out: fmt(stats.totalOut) }) +
@@ -189,10 +193,10 @@ export function ChatContextMeter({
       >
         {activeLimit != null && <Lock className="h-2.5 w-2.5 shrink-0" />}
         <span>
-          {history?.contextProjection?.quality === 'estimated' ? '~' : ''}
-          {fmt(stats.used)}
+          {context.quality === 'estimated' ? '~' : ''}
+          {fmt(context.used)}
           {win ? `/${fmt(win)}` : ''}
-          {pct != null ? ` ${Math.round(pct * 100)}%` : ' tok'}
+          {pct != null ? ` ${(pct * 100).toFixed(1)}%` : ` ${t('meter.tokenUnit')}`}
           {hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}
         </span>
       </button>

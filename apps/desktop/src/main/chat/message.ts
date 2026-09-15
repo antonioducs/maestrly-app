@@ -207,7 +207,7 @@ const zPart = z.discriminatedUnion('type', [
     type: z.literal('compaction'),
     id: z.string(),
     text: z.string(),
-    strategy: z.enum(['summary', 'openai-native', 'claude-native']).optional(),
+    strategy: z.enum(['summary', 'openai-native', 'claude-native', 'codex-native']).optional(),
   }),
   z.object({ type: z.literal('context'), id: z.string(), text: z.string(), source: z.string().optional() }),
   // OPTIONAL start/end parsing: legacy parts without ranges still load — semantic validation
@@ -299,12 +299,13 @@ export function isOpenAINativeCompactionMarker(part: MessagePart): boolean {
 }
 
 export function isProviderNativeCompactionMarker(part: MessagePart): boolean {
-  return isOpenAINativeCompactionMarker(part) || (part.type === 'compaction' && part.strategy === 'claude-native')
+  return (
+    isOpenAINativeCompactionMarker(part) ||
+    (part.type === 'compaction' && (part.strategy === 'claude-native' || part.strategy === 'codex-native'))
+  )
 }
 
-export function isPortableCompactionMarker(
-  part: MessagePart
-): part is Extract<MessagePart, { type: 'compaction' }> {
+export function isPortableCompactionMarker(part: MessagePart): part is Extract<MessagePart, { type: 'compaction' }> {
   return part.type === 'compaction' && !isProviderNativeCompactionMarker(part)
 }
 
