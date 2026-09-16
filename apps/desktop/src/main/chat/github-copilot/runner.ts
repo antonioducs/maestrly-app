@@ -1,4 +1,4 @@
-import {governAutonomousTools,autonomousPolicy,AUTONOMOUS_INSTRUCTIONS} from '../autonomous'
+import { governAutonomousTools, autonomousPolicy, AUTONOMOUS_INSTRUCTIONS } from '../autonomous'
 import { createHash, randomUUID } from 'node:crypto'
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import type {
@@ -36,7 +36,6 @@ import {
   droppedImageText,
   nativeSeedContextText,
   renderNativeSeedTranscript,
-  renderTranscript,
 } from '../message'
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
@@ -522,7 +521,7 @@ async function prepareRuntime(
   ) {
     enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
   }
-  const core = buildTools({executorReport:true, enabled: enabledBuiltins, makeCtx: makeContext })
+  const core = buildTools({ executorReport: true, enabled: enabledBuiltins, makeCtx: makeContext })
   const gate = (toolName: string, toolCallId: string, signal?: AbortSignal) => {
     return args.broker.assert({
       conversationId: args.conversationId,
@@ -700,8 +699,8 @@ async function prepareRuntime(
           : profileUltra
             ? profileUltra
             : args.mode === 'agent'
-            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
-            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
+              ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
+              : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
       : ''
     const notes = Boolean(getConversation(args.conversationId))
     const runtimeOverlay =
@@ -745,7 +744,7 @@ async function prepareRuntime(
       agents,
       toolSignature: signature,
       availableTools,
-      systemMessage: systemMessage + (autonomousPolicy(args.conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : ""),
+      systemMessage: systemMessage + (autonomousPolicy(args.conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : ''),
       harness,
       takeToolOutput: (toolCallId) => {
         const output = canonicalToolOutputs.get(toolCallId)
@@ -1650,8 +1649,6 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       throw new Error('GitHub Copilot session was discarded because the conversation is being closed')
     }
 
-    // Finite limits (same protection as the Codex runner): INFINITY here lets history containing giant tool outputs
-    // break reseeding by exceeding the API character limit.
     const seedTranscript = didResume ? '' : renderNativeSeedTranscript(history.slice(0, -1))
     let input = currentMessageInput(currentUser, seedTranscript, args.dropImages === true)
     const onAbort = (): void => {
@@ -1744,10 +1741,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       }
 
       usage.contextInput = 0
-      const continuationTranscript = renderTranscript([...history, messages[0]], {
-        maxToolOutputChars: 16_000,
-        maxChars: 800_000,
-      })
+      const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
       const continueMessage: ChatMessage = {
         id: randomUUID(),
         conversationId: args.conversationId,

@@ -648,7 +648,7 @@ function toolStateText(state: Extract<MessagePart, { type: 'tool' }>['state']): 
  */
 export function renderTranscript(
   messages: ChatMessage[],
-  opts: { maxChars?: number; maxToolOutputChars?: number } = {}
+  opts: { maxChars?: number; maxToolOutputChars?: number; includeSkillBodies?: boolean } = {}
 ): string {
   const active = activeChatContext(messages)
   const blocks: string[] = active.summary ? [`Previous summary:\n${active.summary}`] : []
@@ -674,8 +674,10 @@ export function renderTranscript(
       } else if (p.type === 'generated-image') {
         parts.push(generatedImageReference(p))
       } else if (p.type === 'skill-invocation') {
-        // Only the REFERENCE: reinjecting skill bodies into compaction summaries would waste tokens.
-        parts.push(`[invoked skill /${p.name}${p.args ? ` ${p.args}` : ''}]`)
+        // Compaction uses a reference by default; native transfer retains the available instructions.
+        parts.push(
+          `[invoked skill /${p.name}${p.args ? ` ${p.args}` : ''}]${opts.includeSkillBodies ? `\n${p.body}` : ''}`
+        )
       } else if (p.type === 'tool') {
         let input = ''
         try {
@@ -710,17 +712,15 @@ export function renderTranscript(
 
 /**
  * Single native-runtime reseed contract. Meter/preflight must project exactly this payload;
- * centralized limits prevent estimates counting outputs Codex/Copilot/Claude never receive.
+ * preserve all available portable content and let admission compact or reject oversized input.
  */
-export const NATIVE_SEED_MAX_TOOL_OUTPUT_CHARS = 16_000
-export const NATIVE_SEED_MAX_TRANSCRIPT_CHARS = 800_000
 export const NATIVE_SEED_CONTEXT_PREFIX =
   'Context imported from the existing Maestrly conversation. Treat it as prior dialogue and continue from it:\n\n'
 
 export function renderNativeSeedTranscript(messages: readonly ChatMessage[]): string {
   return renderTranscript([...messages], {
-    maxToolOutputChars: NATIVE_SEED_MAX_TOOL_OUTPUT_CHARS,
-    maxChars: NATIVE_SEED_MAX_TRANSCRIPT_CHARS,
+    maxToolOutputChars: Number.POSITIVE_INFINITY,
+    includeSkillBodies: true,
   })
 }
 

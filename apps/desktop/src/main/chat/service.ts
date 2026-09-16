@@ -144,6 +144,7 @@ import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
 import { activeChatContext, renderTranscript } from './message'
 import { createContextProgressPublisher } from './context-progress'
+import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
 import { redactTokens } from '../pii-scrub'
 import {
@@ -2825,13 +2826,41 @@ async function preflightContext(
     }
   }
   const window = hasPhysicalContextWindow ? (physicalContextWindow ?? undefined) : meta?.contextWindow
-  if (!window) return { ok: true, compacted: false }
+  if (!window && !isCodexSubscriptionProvider(selection.providerId)) return { ok: true, compacted: false }
+  const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
+    .contextProjection
+  if (!window) {
+    // A fresh Codex seed must be checked against a known destination budget. Old provider
+    // measurements cannot establish that budget, and silently accepting an unbounded transfer
+    // would leave its history at the mercy of provider-side truncation.
+    const nativeTransfer =
+      isCodexSubscriptionProvider(selection.providerId) &&
+      projection?.source === 'portable-transcript' &&
+      listConversationContextMessages(conversationId).length > 0
+    if (nativeTransfer) {
+      chatDiag({
+        kind: 'preflight-context-window-unknown',
+        conv: conversationId,
+        provider: selection.providerId,
+        model: selection.modelId,
+        usedTokens: projection?.usedTokens,
+        admitted: false,
+      })
+      return { ok: false, compacted: false, error: 'context-overflow' }
+    }
+    return { ok: true, compacted: false }
+  }
   const pending = estimatePortablePartsTokens(pendingParts) + 16
-  const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId)).contextProjection
   const before = projection?.usedTokens ?? 0
   const source = projection?.source ?? 'portable-transcript'
   const load = preflightContextLoad(window, before, pending, source, AUTO_COMPACT_RATIO)
-  if (!load.shouldCompact) return { ok: true, compacted: false }
+  const exceedsTransport = (projectionSource: string): boolean =>
+    isCodexSubscriptionProvider(selection.providerId) &&
+    codexTransferCharacters(
+      projectionSource === 'runtime-usage' ? [] : listConversationContextMessages(conversationId),
+      pendingParts
+    ) > CODEX_TRANSFER_MAX_CHARACTERS
+  if (!load.shouldCompact && !exceedsTransport(source)) return { ok: true, compacted: false }
 
   const compacted = await compactReserved(conversationId, {
     allowActive: true,
@@ -2862,10 +2891,14 @@ async function preflightContext(
     })
     return { ok: false, compacted: false, error: 'context-compaction-failed' }
   }
-  const afterProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId)).contextProjection
+  const afterProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
+    .contextProjection
   const after = afterProjection?.usedTokens ?? 0
   const afterSource = afterProjection?.source ?? 'portable-transcript'
-  if (preflightContextLoad(window, after, pending, afterSource, AUTO_COMPACT_RATIO).overflow) {
+  if (
+    preflightContextLoad(window, after, pending, afterSource, AUTO_COMPACT_RATIO).overflow ||
+    exceedsTransport(afterSource)
+  ) {
     return { ok: false, compacted: true, error: 'context-overflow' }
   }
   return { ok: true, compacted: true }
@@ -2910,9 +2943,10 @@ async function preflightIsolatedContext(
  * INTERNAL to main: `lastUsage` may contain `contextIdentity`. Project through `toPublicChatHistoryStats` for IPC. */
 async function currentChatHistoryStats(
   conversationId: string,
-  physicalClaudeProviderId?: string
+  physicalClaudeProviderId?: string,
+  selectionOverride?: ChatModelRef
 ): Promise<StoredChatHistoryStats> {
-  const selection = selectionFor(conversationId)
+  const selection = selectionOverride ?? selectionFor(conversationId)
   // Binding lastMessageId / portable projection: MAIN context only (isolated rounds do not invalidate resume
   // or inflate the reseed/preflight projection).
   const history = listConversationContextMessages(conversationId)
@@ -2938,7 +2972,7 @@ async function currentChatHistoryStats(
     runtimeWindowReusable = runtimeReusable && binding?.modelId === selection?.modelId
     stats = chatHistoryStats(conversationId, {
       // The visual marker represents a real boundary only while linked to the native Codex thread.
-      // If the binding disappears/changes account, history reverts to the bounded portable reseed projection.
+      // If the binding disappears/changes account, history reverts to the complete portable reseed projection.
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
     })
     if (runtimeWindowReusable && stats.lastUsage?.modelContextWindow && selection) {
@@ -6080,7 +6114,10 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(history, { maxToolOutputChars: Number.POSITIVE_INFINITY })
+    const transcript = renderTranscript(history, {
+      maxToolOutputChars: Number.POSITIVE_INFINITY,
+      includeSkillBodies: true,
+    })
     if (!transcript) return { ok: false, error: 'too-short' }
     const maxChunkChars = contextWindow
       ? Math.max(
