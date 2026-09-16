@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { TEAM_LIMITS, type Bot, type TeamArtifact, type TeamDetails as Details, type TeamMemory } from '@maestrly/host-protocol'
-import { Button, Input } from '../../ui'
+import { Button, Input, Select } from '../../ui'
 import { useT } from '../../i18n'
 
 /**
@@ -98,14 +98,15 @@ export function TeamDetails({
                   onChange={(event) => setMembers((current) => current.map((entry) => (entry.botId === member.botId ? { ...entry, role: event.target.value } : entry)))}
                 />
               </div>
-              <label className="team-coordinator-option">
+              <label className="team-lead">
                 <input
                   type="radio"
                   name="team-coordinator"
                   checked={member.coordinator}
+                  aria-label={`${nameOf(member.botId)} — ${t('teamOrganisesAria')}`}
                   onChange={() => setMembers((current) => current.map((entry) => ({ ...entry, coordinator: entry.botId === member.botId })))}
                 />
-                <span>{t('teamCoordinator')}</span>
+                <span>{t('teamOrganises')}</span>
               </label>
               {members.length > 2 && (
                 <Button aria-label={`${t('teamRemoveMember')} ${nameOf(member.botId)}`} onClick={() => setMembers((current) => current.filter((entry) => entry.botId !== member.botId))}>
@@ -117,11 +118,12 @@ export function TeamDetails({
         </ul>
         {/* Adding a bot is explained, not just a checkbox: it changes what that bot sees. */}
         <p className="hint">{t('teamMemberScope')}</p>
-        <select
+        {/* The same menu primitive the rest of the app uses, instead of a raw platform control. */}
+        <Select
           aria-label={t('teamAddMember')}
           value=""
-          onChange={(event) => {
-            if (event.target.value) setMembers((current) => [...current, { botId: event.target.value, role: '', coordinator: false }])
+          onValueChange={(value) => {
+            if (value) setMembers((current) => [...current, { botId: value, role: '', coordinator: false }])
           }}
         >
           <option value="">{t('teamAddMember')}</option>
@@ -132,7 +134,7 @@ export function TeamDetails({
                 {bot.name}
               </option>
             ))}
-        </select>
+        </Select>
         <Button disabled={busy || !connected || members.length < 2} onClick={() => void saveMembers()}>
           {t('teamSaveMembers')}
         </Button>

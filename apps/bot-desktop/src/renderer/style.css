@@ -30,7 +30,20 @@ button,input,select,textarea { font:inherit; color:inherit; }
 button { cursor:pointer; }
 button:disabled { cursor:not-allowed; }
 :focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
-input:not([type='checkbox']),select,textarea { display:block; width:100%; min-width:0; margin:8px 0 20px; }
+/* A checked box must keep its filled look under the cursor. In the shared stylesheet the hover
+   rule is more specific than the checked one, so hovering a ticked box paints it with the
+   unchecked colours — invisible in the light theme. Scoped here; the shared file is used by
+   another product whose own checkbox tests are red on this baseline. */
+input[type='checkbox']:not(.appearance-none):checked:hover:not(:disabled) { border-color:var(--primary); background-color:var(--primary); }
+/* Radios opt out of the full-width field rule: a 100%-wide radio pushes its own label away. */
+input:not([type='checkbox']):not([type='radio']),select,textarea { display:block; width:100%; min-width:0; margin:8px 0 20px; }
+input[type='radio'] { appearance:none; -webkit-appearance:none; display:inline-grid; place-content:center; flex:0 0 auto; width:1rem; height:1rem; margin:0; border:1px solid var(--border-strong); border-radius:50%; background:rgba(255,255,255,.035); cursor:pointer; transition:border-color 140ms ease,background-color 140ms ease; }
+input[type='radio']::after { content:''; width:.45rem; height:.45rem; border-radius:50%; background:var(--canvas); transform:scale(0); transition:transform 140ms var(--m-ease); }
+input[type='radio']:checked { border-color:var(--primary); background:var(--primary); }
+input[type='radio']:checked::after { transform:scale(1); }
+input[type='radio']:hover:not(:disabled) { border-color:var(--m-border-strong); }
+input[type='radio']:disabled { cursor:not-allowed; opacity:.42; }
+@media(prefers-reduced-motion:reduce) { input[type='radio'],input[type='radio']::after { transition:none; } }
 textarea { resize:vertical; min-height:104px; }
 label { display:block; font-size:12px; font-weight:500; }
 p { line-height:1.65; overflow-wrap:anywhere; }
@@ -339,21 +352,41 @@ progress { max-width: 100%; accent-color: var(--blue); }
 /* Teams. A compact section next to bots; the conversation reuses the chat surface. */
 .avatar.team { color:var(--muted); }
 .team-progress { color:var(--muted); }
-.team-create { max-width:640px; margin:0 auto; padding:24px 16px 48px; display:flex; flex-direction:column; gap:18px; }
-.team-create h1 { font-size:22px; font-weight:500; letter-spacing:-.5px; }
-.team-create label>span { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
-.team-create fieldset { border:1px solid var(--line); border-radius:12px; padding:14px; margin:0; }
-.team-create legend { padding:0 6px; font-size:12px; color:var(--muted); }
-.team-create .hint, .team-details .hint { font-size:11px; color:var(--muted); line-height:1.5; margin:6px 0; }
-.team-member-picker { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:10px; }
-.team-member-picker li { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.team-member-picker label { display:flex; align-items:center; gap:8px; flex:1; }
-.team-coordinator-option { display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; }
-.team-sharing { border:1px solid var(--line); border-radius:12px; padding:14px; font-size:12px; line-height:1.6; color:var(--muted); }
-.team-sharing h2 { font-size:13px; color:var(--ink); font-weight:500; margin-bottom:6px; }
+/* One column, one measure: the roster is the centre of this screen, so nothing competes with it.
+   Class-scoped selectors only — a broad `label>span` here used to hit the avatars as well. */
+.team-create { width:100%; max-width:620px; margin:0 auto; padding:26px 16px 0; display:flex; flex-direction:column; }
+.team-create-head { display:block; margin-bottom:26px; }
+.team-create h1 { font-size:22px; font-weight:500; letter-spacing:-.5px; margin:0 0 6px; }
+.team-create-head p { margin:0; font-size:12px; color:var(--muted); max-width:62ch; text-wrap:balance; }
+.team-create form { display:flex; flex-direction:column; }
+.team-create-body { display:flex; flex-direction:column; gap:22px; }
+.team-field>span { display:block; font-size:11px; letter-spacing:.3px; color:var(--muted); margin-bottom:7px; }
+/* The section owns its rhythm: the global field margin would add 28px to every row and field,
+   and it outranks a two-class selector, so these need the extra class to actually win. */
+.team-create .team-field input,.team-create .team-field textarea { margin:0; }
+.team-create .team-field textarea { min-height:62px; }
+.team-create-section h2,.team-sharing h2 { display:flex; align-items:center; gap:7px; margin:0; font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:1.1px; color:var(--muted); }
+.team-create .hint, .team-details .hint { font-size:11px; color:var(--muted); line-height:1.55; margin:7px 0 0; max-width:66ch; text-wrap:balance; }
+.team-picker { list-style:none; padding:0; margin:12px 0 0; display:flex; flex-direction:column; gap:7px; }
+.team-picker li { display:flex; align-items:center; gap:8px 14px; flex-wrap:wrap; min-height:50px; padding:8px 12px; border:1px solid var(--line); border-radius:10px; transition:border-color 140ms ease,background-color 140ms ease; }
+.team-picker li.chosen { border-color:var(--m-border-strong); background:var(--m-hover); }
+/* The organiser is marked the same way the sidebar marks the open bot. */
+.team-picker li.organises { box-shadow:inset 2px 0 0 var(--m-ready); }
+.team-picker li.organises .avatar { color:var(--m-ready); border-color:color-mix(in srgb,var(--m-ready) 35%,transparent); }
+.team-pick { display:flex; align-items:center; gap:10px; flex:1 1 160px; min-width:0; cursor:pointer; }
+.team-pick strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:500; }
+.team-create .team-picker .team-role { flex:2 1 175px; width:auto; margin:0; height:32px; font-size:12px; }
+.team-lead { display:flex; align-items:center; gap:7px; flex:0 0 auto; font-size:11px; color:var(--muted); cursor:pointer; }
+.team-picker li.organises .team-lead { color:var(--ink); }
+.team-sharing { border:1px solid var(--line); border-radius:12px; padding:15px 16px; font-size:12px; line-height:1.6; color:var(--muted); }
+.team-sharing h2 svg { opacity:.75; }
+.team-sharing p { margin:9px 0 0; text-wrap:pretty; }
 .team-sharing .caution { color:var(--ink); }
-.team-sharing-confirm { display:flex; align-items:center; gap:8px; margin-top:10px; color:var(--ink); }
-.team-create-actions { display:flex; gap:10px; justify-content:flex-end; }
+.team-sharing-confirm { display:flex; align-items:center; gap:9px; margin-top:14px; padding-top:13px; border-top:1px solid var(--line); color:var(--ink); font-size:12px; cursor:pointer; }
+/* The primary action stays reachable: this form is taller than the smallest supported window. */
+.team-create-actions { position:sticky; bottom:0; display:flex; align-items:center; gap:10px; margin-top:24px; padding:14px 0 18px; background:var(--canvas); }
+.team-create-actions::before { content:''; position:absolute; left:0; right:0; top:0; height:1px; background:var(--line); }
+.team-create-status { flex:1; min-width:0; margin:0; font-size:11px; color:var(--muted); }
 .team-message header { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; }
 .team-message header strong { font-size:12px; }
 .team-message header small { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
@@ -373,6 +406,8 @@ progress { max-width: 100%; accent-color: var(--blue); }
 .team-members, .team-files, .team-memory { list-style:none; padding:0; margin:8px 0; display:flex; flex-direction:column; gap:10px; }
 .team-members li, .team-files li, .team-memory li { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:10px; padding:10px; flex-wrap:wrap; }
 .team-members li>div, .team-files li>div, .team-memory li>div { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+/* Same rhythm as the create screen: the global field margin does not belong inside a row. */
+.team-details .team-members li .m-input { margin:0; height:32px; font-size:12px; }
 .team-memory li p { font-size:12px; line-height:1.5; margin:0; flex:1; }
 .team-memory li.proposed { border-style:dashed; }
 .team-files li small { font-size:10px; color:var(--muted); }
