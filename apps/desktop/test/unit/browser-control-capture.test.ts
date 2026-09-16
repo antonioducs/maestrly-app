@@ -7,8 +7,10 @@ vi.mock('../../src/main/performance/metrics', () => ({
 class FakeDebugger {
   private listeners = new Set<(_event: unknown, method: string, params: Record<string, unknown>) => void>()
   readonly attach = vi.fn()
+  readonly runtimeEvaluate = vi.fn(async () => ({ result: { value: true } }))
   readonly sendCommand = vi.fn(async (method: string) => {
     if (method === 'Page.addScriptToEvaluateOnNewDocument') return { identifier: 'script-1' }
+    if (method === 'Runtime.evaluate') return this.runtimeEvaluate()
     return {}
   })
 
@@ -154,5 +156,32 @@ describe('CDP capture generations', () => {
       waitFor(wc as never, { networkIdle: true, timeoutMs: 60_000, signal: controller.signal })
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(wc.debugger.attach).not.toHaveBeenCalled()
+  })
+
+  it('retries DOM polling when navigation temporarily destroys the inspected target', async () => {
+    const wc = new FakeWebContents()
+    const { setBrowserCdpActivity, waitFor } = await import('../../src/main/browser-control')
+    await setBrowserCdpActivity(wc as never, true)
+    wc.debugger.runtimeEvaluate.mockReset()
+    wc.debugger.runtimeEvaluate
+      .mockRejectedValueOnce(new Error('Inspected target navigated or closed'))
+      .mockResolvedValueOnce({ result: { value: true } })
+
+    await expect(waitFor(wc as never, { text: 'Aurora Projects', timeoutMs: 1_000 })).resolves.toMatchObject({
+      matched: true,
+    })
+    expect(wc.debugger.runtimeEvaluate).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not hide non-navigation evaluation failures while polling', async () => {
+    const wc = new FakeWebContents()
+    const { setBrowserCdpActivity, waitFor } = await import('../../src/main/browser-control')
+    await setBrowserCdpActivity(wc as never, true)
+    wc.debugger.runtimeEvaluate.mockReset()
+    wc.debugger.runtimeEvaluate.mockRejectedValueOnce(new Error('Protocol error: invalid expression'))
+
+    await expect(waitFor(wc as never, { selector: '#ready', timeoutMs: 1_000 })).rejects.toThrow(
+      'Protocol error: invalid expression'
+    )
   })
 })

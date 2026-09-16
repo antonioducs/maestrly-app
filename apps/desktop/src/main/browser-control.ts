@@ -662,6 +662,14 @@ export async function navHistory(
   return { url: await currentUrl(wc), moved: true }
 }
 
+/** CDP can reject one Runtime.evaluate while a same-tab navigation replaces its document. */
+function isTransientNavigationEvaluationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Inspected target navigated or closed|Execution context was destroyed|Cannot find (?:default )?context with specified id/i.test(
+    message
+  )
+}
+
 /**
  * Poll for a selector, body text, or roughly 450 ms of network inactivity. Return whether it matched
  * and elapsed time, avoiding premature SPA snapshots. Requests without status count as pending.
@@ -680,13 +688,21 @@ export async function waitFor(
     for (;;) {
       opts.signal?.throwIfAborted()
       if (opts.selector) {
-        if (await evalJs<boolean>(wc, `!!document.querySelector(${JSON.stringify(opts.selector)})`))
-          return { matched: true, waitedMs: Date.now() - start }
+        try {
+          if (await evalJs<boolean>(wc, `!!document.querySelector(${JSON.stringify(opts.selector)})`))
+            return { matched: true, waitedMs: Date.now() - start }
+        } catch (error) {
+          if (!isTransientNavigationEvaluationError(error)) throw error
+        }
       } else if (opts.text) {
         const expr = `!!(document.body&&document.body.innerText&&document.body.innerText.includes(${JSON.stringify(
           opts.text
         )}))`
-        if (await evalJs<boolean>(wc, expr)) return { matched: true, waitedMs: Date.now() - start }
+        try {
+          if (await evalJs<boolean>(wc, expr)) return { matched: true, waitedMs: Date.now() - start }
+        } catch (error) {
+          if (!isTransientNavigationEvaluationError(error)) throw error
+        }
       } else if (opts.networkIdle) {
         const generation = cdpCaptureGeneration.get(wc) ?? 0
         const pending = [...getBuffers(wc).reqById.values()].filter(
