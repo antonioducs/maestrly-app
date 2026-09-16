@@ -284,12 +284,12 @@ describe('Codex logical vs physical provider identity', () => {
     patchConvUiPrefs(conversation.id, {
       chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
     })
-    // estimateTextTokens uses UTF-8 bytes / 3, so this models a transcript near 400k tokens.
+    // About 300k tokens: above bootstrap capacity but within the separate text transport limit.
     upsertChatMessage({
       id: 'long-context-history',
       conversationId: conversation.id,
       role: 'user',
-      parts: [{ type: 'text', id: 'long-context-history-text', text: 'x'.repeat(1_200_000) }],
+      parts: [{ type: 'text', id: 'long-context-history-text', text: 'x'.repeat(900_000) }],
       createdAt: 1,
     })
     h.resolveCodexRuntimeTarget.mockResolvedValue(

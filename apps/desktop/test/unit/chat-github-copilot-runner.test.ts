@@ -166,6 +166,45 @@ describe('GitHub Copilot official runner', () => {
     rmSync(cwd, { recursive: true, force: true })
   })
 
+  it('preserves full transferred history and tool output in the native request', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    const historyText = 'a'.repeat(450_000) + 'MIDDLE_HISTORY_SENTINEL' + 'z'.repeat(450_000)
+    const toolOutput =
+      'tool output: '.repeat(1_500) + 'MIDDLE_TOOL_SENTINEL' + 'more output: '.repeat(1_500) + 'END_TOOL'
+    upsertChatMessage({
+      id: 'prior',
+      conversationId: conversation.id,
+      role: 'assistant',
+      createdAt: 1,
+      parts: [
+        { type: 'text', id: 'prior-text', text: historyText },
+        {
+          type: 'tool',
+          id: 'prior-tool',
+          toolCallId: 'prior-call',
+          toolName: 'read',
+          input: {},
+          state: { status: 'completed', output: toolOutput },
+        },
+      ],
+    })
+    upsertChatMessage({
+      id: 'current',
+      conversationId: conversation.id,
+      role: 'user',
+      createdAt: 2,
+      parts: [{ type: 'text', id: 'current-text', text: 'Continue' }],
+    })
+    const manager = new FakeManager()
+    manager.queue((onEvent) => onEvent(event('assistant.message', { messageId: 'answer', content: 'Done' })))
+    await runGitHubCopilotChat(args(conversation.id, workspace.id, cwd, manager))
+    const prompt = (manager.sessions[0].sendCalls[0].input as { prompt: string }).prompt
+    expect(prompt.length).toBeGreaterThan(800_000)
+    expect(prompt.includes(historyText)).toBe(true)
+    expect(prompt.includes(toolOutput)).toBe(true)
+  })
+
   it('translates streaming, tools, subagents, and usage without duplicating final envelopes', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })
