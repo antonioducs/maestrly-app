@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { HostRequestError } from './host-client'
 import { FixtureBots } from './fixture-bots'
+import { FixtureTeams } from './fixture-teams'
 import type { Host, Vm, Operation } from '@maestrly/host-protocol'
 // Explicit local UI fixture; never hardware evidence and disabled in packaged builds.
 const timestamp = '2026-01-01T00:00:00.000Z'
@@ -27,7 +28,8 @@ export class FixtureHost {
     },
   ]
   readonly bots: FixtureBots
-  constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
+  readonly teams: FixtureTeams
+  constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; noTeams?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
     if (options.readyEnvironment) { this.vms[0].state = 'running'; this.vms[0].health = 'ready'; this.vms[0].desiredState = 'running' }
     if (options.retained) this.vms[0].state = 'removed'
     this.bots = new FixtureBots(
@@ -40,6 +42,7 @@ export class FixtureHost {
       },
       { slowSetup: options.slowSetup, autoLoginMs: options.autoLoginMs, readyEnvironment: options.readyEnvironment, connectedAccount: options.connectedAccount }
     )
+    this.teams = new FixtureTeams((id) => this.bots.bots.get(id))
   }
   operations = new Map<string, Operation>()
   private keys = new Map<string, Operation>()
@@ -50,7 +53,9 @@ export class FixtureHost {
       id: 'd9a02e5b-0c12-4411-9393-b5106ecff181',
       serviceVersion: '0.2.0',
       protocolVersion: 1,
-      capabilities: this.options.noBots ? ['fixture'] : ['fixture', 'environments.v1', 'accounts.v1', 'bot.runtime.v1', 'bot.setup', 'bot.sessions.v1'],
+      capabilities: this.options.noBots
+        ? ['fixture']
+        : ['fixture', 'environments.v1', 'accounts.v1', 'bot.runtime.v1', 'bot.setup', 'bot.sessions.v1', ...(this.options.noTeams ? [] : ['teams.v1'])],
       health: 'ready',
       observedMemoryMiB: 4096,
       platform: 'darwin',
@@ -71,6 +76,10 @@ export class FixtureHost {
     if (method.startsWith('bot.') || method.startsWith('account.') || method.startsWith('environment.')) {
       if (this.options.noBots) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
       return this.bots.request(method, p)
+    }
+    if (method.startsWith('team.')) {
+      if (this.options.noBots || this.options.noTeams) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      return this.teams.request(method, p)
     }
     if (method === 'host.inspect') return this.hostInfo()
     if (method === 'vm.list')

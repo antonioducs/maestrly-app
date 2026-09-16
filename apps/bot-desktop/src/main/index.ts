@@ -1,4 +1,4 @@
-import { DESKTOP_LIVE_CAPABILITY, modelSelectionSchema } from '@maestrly/host-protocol'
+import { DESKTOP_LIVE_CAPABILITY, TEAM_HOST_CAPABILITY, modelSelectionSchema } from '@maestrly/host-protocol'
 import { GlobalAccounts } from './global-accounts'
 import { accountEndpointFor } from './account-endpoint'
 import { HostConnections } from './host-connections'
@@ -20,6 +20,7 @@ import { HostTargets } from './host-targets'
 import { LocalTransport, inspectLocalHost } from './local-transport'
 import { BotJournal } from './bot-journal'
 import { BotClient } from './bot-client'
+import { TeamClient } from './team-client'
 import { installLocalHost } from './host-installation'
 import type { Connection, HostTarget, OnboardingDraft, UiPreferences } from '../shared/types'
 const fixtureEnabled = !app.isPackaged && process.env.MAESTRLY_BOT_FIXTURE === '1'
@@ -38,6 +39,7 @@ const fixture = fixtureEnabled
       slowSetup: process.env.MAESTRLY_BOT_FIXTURE_SLOW_SETUP === '1',
       autoLoginMs: process.env.MAESTRLY_BOT_FIXTURE_AUTOLOGIN_MS ? Number(process.env.MAESTRLY_BOT_FIXTURE_AUTOLOGIN_MS) : undefined,
       noBots: process.env.MAESTRLY_BOT_FIXTURE_NO_BOTS === '1',
+      noTeams: process.env.MAESTRLY_BOT_FIXTURE_NO_TEAMS === '1',
       readyEnvironment: process.env.MAESTRLY_BOT_FIXTURE_READY_ENVIRONMENT === '1',
       connectedAccount: process.env.MAESTRLY_BOT_FIXTURE_CONNECTED_ACCOUNT === '1',
     })
@@ -111,7 +113,10 @@ if (!app.requestSingleInstanceLock()) {
       join(profile.userData, fixture ? `pending-fixture-${process.pid}.json` : 'pending-operations.json'),
       request
     )
-    const bots = new BotClient(new BotJournal(join(profile.userData, fixture ? `bot-journal-fixture-${process.pid}.json` : 'bot-journal.json')), request)
+    const journal = new BotJournal(join(profile.userData, fixture ? `bot-journal-fixture-${process.pid}.json` : 'bot-journal.json'))
+    const bots = new BotClient(journal, request)
+    // Teams share the journal file but keep their own namespace, lookups and receipts.
+    const teams = new TeamClient(journal, request)
     const desktop = new DesktopClient({
       target: () => (fixture ? (fixture.connected ? { kind: 'local' as const, id: 'local' as const, displayName: 'Este Mac (fixture)', hostId: 'd9a02e5b-0c12-4411-9393-b5106ecff181' } : undefined) : active),
       // A dedicated control connection: screen input never waits behind chat requests.
@@ -181,6 +186,7 @@ if (!app.requestSingleInstanceLock()) {
         ...connections.status(),
         accountSupport: !base.connected ? 'unknown' : hostCapabilities.includes('accounts.v1') ? 'available' : 'host-outdated',
         botSupport: !base.connected ? 'unknown' : hostCapabilities.includes('bot.runtime.v1') ? 'available' : 'host-outdated',
+        teamSupport: !base.connected ? 'unknown' : hostCapabilities.includes(TEAM_HOST_CAPABILITY) ? 'available' : 'host-outdated',
       }
     }
     const jsonFile = async <T>(name: string, fallback: T): Promise<T> => {
@@ -246,7 +252,10 @@ if (!app.requestSingleInstanceLock()) {
           hostCapabilities = host.capabilities
           await connections.connect(target.id, host)
           bots.connected(host.id)
+          teams.connected(host.id)
           if (hostCapabilities.includes('bot.runtime.v1')) await bots.recover()
+          // Only a Host that knows teams can answer team lookups; an older one is left alone.
+          if (hostCapabilities.includes(TEAM_HOST_CAPABILITY)) await teams.recover()
           active = { ...target, hostId: host.id, lastConnectedAt: new Date().toISOString() }
           if (!fixture) await targets.upsert(active)
           if (hostCapabilities.includes('accounts.v1')) void accountDirectory.sync(active).catch(() => {})
@@ -273,6 +282,15 @@ if (!app.requestSingleInstanceLock()) {
           await accountDirectory.ensure(call.params.accountId, target)
         if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
         return bots.call(call)
+      },
+      team: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(TEAM_HOST_CAPABILITY))
+          throw new Error('Atualize este computador para usar equipes de bots')
+        const result = await teams.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
       },
       syncAccounts: async () => {
         if (!active) throw new Error('Conecte-se a um computador antes de continuar')

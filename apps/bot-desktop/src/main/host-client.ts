@@ -4,7 +4,9 @@ import {
   operationSchema,
   verifyResultSchema,
   botResultSchemas,
+  teamResultSchemas,
   type BotMethod,
+  type TeamMethod,
   type Host,
   type Vm,
   type Operation,
@@ -35,6 +37,13 @@ export function validateResult(method: string, value: unknown): unknown {
   if (method.startsWith('bot.') || method.startsWith('account.') || method.startsWith('environment.')) {
     const schema = botResultSchemas[method as BotMethod]
     if (!schema) throw new Error('Unsupported bot result')
+    return schema.parse(value)
+  }
+  // Team results are typed projections too: their text must not pass through the
+  // diagnostic sanitizer, which would strip exactly the content the person asked for.
+  if (method.startsWith('team.')) {
+    const schema = teamResultSchemas[method as TeamMethod]
+    if (!schema) throw new Error('Unsupported team result')
     return schema.parse(value)
   }
   if (method === 'host.inspect') {

@@ -156,6 +156,9 @@ export const teamDetailsSchema = z.strictObject({
   conversation: teamConversationSchema,
   activeRun: teamRunSchema.nullable(),
 })
+export type TeamDetails = z.infer<typeof teamDetailsSchema>
+export type TeamMessagesPage = z.infer<typeof teamMessagesPageSchema>
+export type TeamTasksPage = z.infer<typeof teamTasksPageSchema>
 export const teamMessagesPageSchema = z.strictObject({
   conversation: teamConversationSchema,
   messages: z.array(teamMessageSchema),

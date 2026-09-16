@@ -335,3 +335,47 @@ progress { max-width: 100%; accent-color: var(--blue); }
   .desktop-panel.expanded { width:100vw; }
 }
 @media(prefers-reduced-motion:reduce) { .desktop-panel { animation:none; } }
+
+/* Teams. A compact section next to bots; the conversation reuses the chat surface. */
+.avatar.team { color:var(--muted); }
+.team-progress { color:var(--muted); }
+.team-create { max-width:640px; margin:0 auto; padding:24px 16px 48px; display:flex; flex-direction:column; gap:18px; }
+.team-create h1 { font-size:22px; font-weight:500; letter-spacing:-.5px; }
+.team-create label>span { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+.team-create fieldset { border:1px solid var(--line); border-radius:12px; padding:14px; margin:0; }
+.team-create legend { padding:0 6px; font-size:12px; color:var(--muted); }
+.team-create .hint, .team-details .hint { font-size:11px; color:var(--muted); line-height:1.5; margin:6px 0; }
+.team-member-picker { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:10px; }
+.team-member-picker li { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.team-member-picker label { display:flex; align-items:center; gap:8px; flex:1; }
+.team-coordinator-option { display:flex; align-items:center; gap:8px; font-size:13px; padding:4px 0; }
+.team-sharing { border:1px solid var(--line); border-radius:12px; padding:14px; font-size:12px; line-height:1.6; color:var(--muted); }
+.team-sharing h2 { font-size:13px; color:var(--ink); font-weight:500; margin-bottom:6px; }
+.team-sharing .caution { color:var(--ink); }
+.team-sharing-confirm { display:flex; align-items:center; gap:8px; margin-top:10px; color:var(--ink); }
+.team-create-actions { display:flex; gap:10px; justify-content:flex-end; }
+.team-message header { display:flex; align-items:baseline; gap:8px; margin-bottom:4px; }
+.team-message header strong { font-size:12px; }
+.team-message header small { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
+.team-message-files { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-wrap:wrap; gap:6px; font-size:11px; color:var(--muted); }
+.team-activity { font-size:11px; color:var(--muted); max-width:760px; margin:12px auto; }
+.maestrly-ui .team-activity>button { width:100%; justify-content:flex-start; text-align:left; color:var(--muted); padding:10px 14px; border-radius:10px; }
+.team-tasks { list-style:none; padding:0; margin:8px 0; }
+.team-tasks li { display:flex; align-items:center; gap:10px; padding:9px 14px; margin:4px 0; border:1px solid var(--line); border-radius:8px; line-height:1.5; }
+.team-tasks li>div { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.team-tasks li strong { color:var(--ink); font-size:12px; }
+.team-tasks li small { font-size:10px; text-transform:uppercase; letter-spacing:1px; }
+.team-tasks li small.attention { text-transform:none; letter-spacing:0; color:var(--ink); }
+.team-tasks li[data-status='succeeded'] { border-color:color-mix(in srgb,var(--m-ready) 35%,transparent); }
+.team-tasks li[data-status='failed'], .team-tasks li[data-status='needs_attention'] { border-color:color-mix(in srgb,var(--m-attention,#b45309) 40%,transparent); }
+.team-details { display:flex; flex-direction:column; gap:22px; }
+.team-details h3 { font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); font-weight:500; }
+.team-members, .team-files, .team-memory { list-style:none; padding:0; margin:8px 0; display:flex; flex-direction:column; gap:10px; }
+.team-members li, .team-files li, .team-memory li { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:10px; padding:10px; flex-wrap:wrap; }
+.team-members li>div, .team-files li>div, .team-memory li>div { flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; }
+.team-memory li p { font-size:12px; line-height:1.5; margin:0; flex:1; }
+.team-memory li.proposed { border-style:dashed; }
+.team-files li small { font-size:10px; color:var(--muted); }
+.team-limits { display:grid; grid-template-columns:1fr auto; gap:6px 12px; font-size:12px; margin:8px 0; }
+.team-limits dt { color:var(--muted); }
+.team-limits dd { margin:0; text-align:right; }

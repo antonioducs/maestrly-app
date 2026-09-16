@@ -1,10 +1,12 @@
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { BOT_SECRET_METHODS, type BotMethod } from '@maestrly/host-protocol'
+import { BOT_SECRET_METHODS, type BotMethod, type TeamMethod } from '@maestrly/host-protocol'
 
+/** Methods whose durable key the Host can be asked about after a lost reply. */
+export type JournaledMethod = BotMethod | TeamMethod
 export type BotJournalEntry = {
   hostId: string
-  method: BotMethod
+  method: JournaledMethod
   key: string
   /** Minimal, secret-free reference to what was sent (botId/clientMessageId/operationId). */
   reference: Record<string, string>
@@ -12,7 +14,16 @@ export type BotJournalEntry = {
   createdAt: string
 }
 /** Mutation keys that the Host can look up after a lost reply. Secret-bearing methods are never journaled. */
-export const journaled: Partial<Record<BotMethod, (params: Record<string, unknown>) => { key: string; reference: Record<string, string> } | undefined>> = {
+export const journaled: Partial<Record<JournaledMethod, (params: Record<string, unknown>) => { key: string; reference: Record<string, string> } | undefined>> = {
+  // Team mutations use the team namespace explicitly: bot.operation.lookup cannot answer
+  // for them, so their keys are prefixed and resolved by team.operation.lookup.
+  'team.messages.send': (p) => ({ key: `team:${p.teamId}:${p.clientMessageId}`, reference: { teamId: String(p.teamId), clientMessageId: String(p.clientMessageId) } }),
+  'team.create': (p) => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
+  'team.archive': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
+  'team.members.set': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
+  'team.run.cancel': (p) => ({ key: String(p.idempotencyKey), reference: { runId: String(p.runId), idempotencyKey: String(p.idempotencyKey) } }),
+  'team.artifacts.share': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
+  'team.artifacts.revoke': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
   'environment.create': p => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
   'environment.prepare': p => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
   'bot.messages.send': (p) => ({ key: `${p.botId}:${p.clientMessageId}`, reference: { botId: String(p.botId), clientMessageId: String(p.clientMessageId) } }),
@@ -35,15 +46,15 @@ export class BotJournal {
       if (Array.isArray(data))
         this.entries = data.filter(
           (e): e is BotJournalEntry =>
-            !!e && typeof e === 'object' && typeof e.hostId === 'string' && typeof e.method === 'string' && typeof e.key === 'string' && !BOT_SECRET_METHODS.includes(e.method)
+            !!e && typeof e === 'object' && typeof e.hostId === 'string' && typeof e.method === 'string' && typeof e.key === 'string' && !BOT_SECRET_METHODS.includes(e.method as BotMethod)
         )
     } catch {
       this.entries = []
     }
   }
   /** Records the durable key before the wire write. Returns undefined for methods that are not journaled. */
-  async begin(hostId: string, method: BotMethod, params: Record<string, unknown>): Promise<BotJournalEntry | undefined> {
-    if (BOT_SECRET_METHODS.includes(method)) return undefined
+  async begin(hostId: string, method: JournaledMethod, params: Record<string, unknown>): Promise<BotJournalEntry | undefined> {
+    if (BOT_SECRET_METHODS.includes(method as BotMethod)) return undefined
     const derive = journaled[method]?.(params)
     if (!derive) return undefined
     await this.load()

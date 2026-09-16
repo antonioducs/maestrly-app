@@ -13,8 +13,13 @@ import { BotDetails } from './features/bots/BotDetails'
 import { Settings } from './features/settings/Settings'
 import { ComputersPage } from './features/computers/ComputersPage'
 import { BotDesktopPanel } from './features/desktop/BotDesktopPanel'
+import { TeamsList } from './features/teams/TeamsList'
+import { CreateTeam } from './features/teams/CreateTeam'
+import { TeamChat, createTeamChatState, type TeamChatState } from './features/teams/TeamChat'
+import { TeamDetails } from './features/teams/TeamDetails'
+import type { Team, TeamDetails as TeamDetailsShape } from '@maestrly/host-protocol'
 import './style.css'
-type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments'
+type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments' | 'team' | 'team-create'
 export function App() {
   const [preferences, setPreferences] = useState<UiPreferences>({ theme: 'system', locale: 'pt-BR', advanced: false })
   return (
@@ -40,11 +45,15 @@ function Shell({
   const [error, setError] = useState('')
   const [failedTarget, setFailedTarget] = useState<HostTarget>()
   const [booting, setBooting] = useState(true)
-  const [panel, setPanel] = useState<{ kind: 'details' } | { kind: 'preview'; name: string; text: string }>()
+  const [panel, setPanel] = useState<{ kind: 'details' } | { kind: 'team-details' } | { kind: 'preview'; name: string; text: string }>()
+  const [teams, setTeams] = useState<Team[]>([])
+  const [teamId, setTeamId] = useState<string>()
+  const [teamDetails, setTeamDetails] = useState<TeamDetailsShape>()
   const [desktopBotId, setDesktopBotId] = useState<string>()
   const [desktopExpanded, setDesktopExpanded] = useState(false)
   const desktopOpener = useRef<HTMLElement | null>(null)
   const chatStates = useRef(new Map<string, ChatState>())
+  const teamStates = useRef(new Map<string, TeamChatState>())
   const retries = useRef(0)
   const reconnectTarget = useRef<HostTarget | undefined>(undefined)
   const connecting = useRef(false)
@@ -72,6 +81,29 @@ function Shell({
     }
   }
   const refreshHosts = async () => setHosts(await window.bot.hosts())
+  /** Teams exist only on a Host that knows about them; an older one simply shows no section. */
+  const teamsSupported = connection.teamSupport === 'available'
+  const refreshTeams = async (preferred?: string) => {
+    if (!teamsSupported) return
+    const next = await window.bot.team({ method: 'team.list', params: {} })
+    setTeams(next)
+    const chosen = next.find((team) => team.id === (preferred ?? teamId))?.id
+    if (chosen) setTeamId(chosen)
+    else if (preferred) setTeamId(undefined)
+  }
+  const openTeam = async (team: Team) => {
+    // Switching away from a bot closes its screen: one member's pixels never appear elsewhere.
+    setDesktopBotId(undefined)
+    setDesktopExpanded(false)
+    setPanel(undefined)
+    setTeamId(team.id)
+    setView('team')
+    try {
+      setTeamDetails(await window.bot.team({ method: 'team.inspect', params: { teamId: team.id } }))
+    } catch (error) {
+      setError(String(error))
+    }
+  }
   const refreshBots = async (preferred?: string) => {
     const next = await window.bot.bot({ method: 'bot.list', params: {} })
     setBots(next)
@@ -87,6 +119,7 @@ function Shell({
       setFailedTarget(undefined)
       setError('')
       if (next.botSupport !== 'host-outdated') await refreshBots(preferences.lastBotId)
+      if (next.teamSupport === 'available') await refreshTeams().catch(() => undefined)
     } finally {
       connecting.current = false
     }
@@ -119,6 +152,9 @@ function Shell({
             if (!next.connected) throw new Error(next.error ?? t('connectionReason'))
             setConnection(next)
             if (next.botSupport !== 'host-outdated') await refreshBots(savedPreferences.lastBotId)
+            // Teams must reappear after a restart, not only after a reconnection.
+            if (next.teamSupport === 'available')
+              await window.bot.team({ method: 'team.list', params: {} }).then(setTeams).catch(() => undefined)
           } catch (error) {
             setFailedTarget(target)
             setError(String(error))
@@ -220,6 +256,8 @@ function Shell({
     setView('computers')
   }
   if (bot && !chatStates.current.has(bot.id)) chatStates.current.set(bot.id, createChatState(bot.id))
+  if (teamDetails && !teamStates.current.has(teamDetails.team.id))
+    teamStates.current.set(teamDetails.team.id, createTeamChatState(teamDetails.team.id))
   const openDesktop = () => {
     if (!bot) return
     desktopOpener.current = document.activeElement as HTMLElement
@@ -231,7 +269,8 @@ function Shell({
     setDesktopExpanded(false)
     desktopOpener.current?.focus()
   }
-  const desktopVisible = !!bot && desktopBotId === bot.id && connection.connected
+  const desktopBot = bots.find((value) => value.id === desktopBotId)
+  const desktopVisible = !!desktopBot && connection.connected && (view === 'team' || desktopBotId === bot?.id)
   return (
     <div className="app-shell maestrly-ui">
       <aside className="bot-sidebar">
@@ -255,6 +294,7 @@ function Shell({
                 }
                 setBotId(value.id)
                 setView('chat')
+                setTeamId(undefined)
                 setPanel(undefined)
                 void savePreferences({ lastBotId: value.id })
               }}
@@ -287,6 +327,19 @@ function Shell({
           <Plus size={16} aria-hidden="true" />
           <span className="bot-label">{t('newBot')}</span>
         </Button>
+        {teamsSupported && (
+          <TeamsList
+            teams={teams}
+            selectedId={view === 'team' ? teamId : undefined}
+            disabled={booting || !connection.connected}
+            onSelect={(team) => void openTeam(team)}
+            onCreate={() => {
+              setPanel(undefined)
+              setDesktopBotId(undefined)
+              setView('team-create')
+            }}
+          />
+        )}
         <footer>
           <Button aria-label={t('environments')} disabled={booting} onClick={openEnvironments}><Monitor size={16} aria-hidden="true" /><span className="bot-label">{t('environments')}</span></Button>
           <Button aria-label={t('accounts')} disabled={booting} onClick={openAccounts}><UserRound size={16} aria-hidden="true" /><span className="bot-label">{t('accounts')}</span></Button>
@@ -377,6 +430,39 @@ function Shell({
                 refreshHosts={refreshHosts}
                 onReady={(value) => void openBot(value)}
               />
+            ) : view === 'team-create' ? (
+              <CreateTeam
+                bots={bots}
+                onCancel={() => setView(teamId ? 'team' : 'chat')}
+                onCreated={(created) => {
+                  void refreshTeams(created).then(async () => {
+                    setTeamId(created)
+                    setView('team')
+                    setTeamDetails(await window.bot.team({ method: 'team.inspect', params: { teamId: created } }))
+                  })
+                }}
+              />
+            ) : view === 'team' && teamDetails ? (
+              <div className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}>
+                <TeamChat
+                  key={teamDetails.team.id}
+                  details={teamDetails}
+                  bots={bots}
+                  connected={connection.connected}
+                  state={teamStates.current.get(teamDetails.team.id)!}
+                  onDetails={() => openPanel({ kind: 'team-details' })}
+                  onRefreshed={setTeamDetails}
+                  onOpenScreen={(memberId) => {
+                    // The member's own screen, opened under that member's identity.
+                    desktopOpener.current = document.activeElement as HTMLElement
+                    setBotId(memberId)
+                    setDesktopBotId(memberId)
+                  }}
+                />
+                {desktopVisible && desktopBot && (
+                  <BotDesktopPanel key={desktopBot.id} bot={desktopBot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />
+                )}
+              </div>
             ) : bot ? (
               <div className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}>
                 <BotChat
@@ -418,6 +504,23 @@ function Shell({
           </header>
           {panel.kind === 'preview' ? (
             <pre>{panel.text}</pre>
+          ) : panel.kind === 'team-details' ? (
+            teamDetails && (
+              <TeamDetails
+                details={teamDetails}
+                bots={bots}
+                advanced={preferences.advanced}
+                connected={connection.connected}
+                onChanged={setTeamDetails}
+                onArchived={() => {
+                  closePanel()
+                  setView('chat')
+                  setTeamId(undefined)
+                  setTeamDetails(undefined)
+                  void refreshTeams()
+                }}
+              />
+            )
           ) : (
             bot && (
               <BotDetails

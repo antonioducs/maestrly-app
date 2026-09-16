@@ -1,5 +1,5 @@
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
-import type { BotMethod, BotResult, DesktopInput, DesktopState, Operation } from '@maestrly/host-protocol'
+import type { BotMethod, BotResult, DesktopInput, DesktopState, Operation, TeamMethod, TeamResult } from '@maestrly/host-protocol'
 export type HostEvent = { seq: number; kind: string; createdAt: string; value: unknown }
 export const vmMethods = [
   'host.inspect',
@@ -21,6 +21,7 @@ export const methods = vmMethods
 export type Method = (typeof vmMethods)[number]
 export type Call = { method: Method; params: Record<string, unknown> }
 export type BotCall<M extends BotMethod = BotMethod> = { method: M; params: Record<string, unknown> }
+export type TeamCall<M extends TeamMethod = TeamMethod> = { method: M; params: Record<string, unknown> }
 /** Where a Host runs: this Mac through the fixed local command, or a remote alias already trusted in SSH config. */
 export type HostTarget =
   | { kind: 'local'; id: 'local'; displayName: string; hostId?: string; lastConnectedAt?: string }
@@ -38,6 +39,7 @@ export type Connection = {
   retainedVmIds?: string[]
   accountSupport?: 'available' | 'host-outdated' | 'unknown'
   botSupport?: 'available' | 'host-outdated' | 'unknown'
+  teamSupport?: 'available' | 'host-outdated' | 'unknown'
 }
 export type LocalHostStatus =
   | { state: 'installed'; version?: string }
@@ -74,6 +76,7 @@ export interface BotApi {
   retry(idempotencyKey: string): Promise<Operation>
   call(call: Call): Promise<unknown>
   bot<M extends BotMethod>(call: BotCall<M>): Promise<BotResult<M>>
+  team<M extends TeamMethod>(call: TeamCall<M>): Promise<TeamResult<M>>
   syncAccounts(): Promise<{ unavailableHosts: string[] }>
   localHost(): Promise<LocalHostStatus>
   installLocalHost(): Promise<InstallOutcome>

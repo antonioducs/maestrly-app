@@ -10,6 +10,7 @@ const api: BotApi = {
   retry: (key) => ipcRenderer.invoke('bot:retry', key),
   call: (call) => ipcRenderer.invoke('bot:call', call),
   bot: (call) => ipcRenderer.invoke('bot:bot', call),
+  team: (call) => ipcRenderer.invoke('bot:team', call),
   syncAccounts: () => ipcRenderer.invoke('bot:syncAccounts'),
   localHost: () => ipcRenderer.invoke('bot:localHost'),
   installLocalHost: () => ipcRenderer.invoke('bot:installLocalHost'),
