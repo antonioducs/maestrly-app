@@ -2,7 +2,8 @@ import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { TEAM_LIMITS } from '@maestrly/host-protocol'
-import { ask, collaborate, createTeam, finishTurn, teamBot, teamLab, turnOf, until, type TeamLab } from './team-helpers.js'
+import { ask, collaborate, createTeam, finishTurn, runOf, teamBot, teamLab, turnOf, until, type TeamLab } from './team-helpers.js'
+import { HostError } from '../src/errors.js'
 
 const labs: TeamLab[] = []
 afterEach(async () => {
@@ -200,4 +201,63 @@ it.skipIf(skip)('discards an upload whose content does not match the declared di
   await lab.call('team.artifacts.transferChunk', { transferId: begin.transferId, offset: 0, dataBase64: sent.toString('base64') })
   await expect(lab.call('team.artifacts.transferFinish', { transferId: begin.transferId })).rejects.toMatchObject({ code: 'FILE_CHANGED' })
   expect(await lab.call('team.artifacts.list', { teamId: team.id })).toEqual([])
+})
+
+it.skipIf(skip)('retries a delivery while the computer is still waking up, instead of asking for help', async () => {
+  const { lab, ana, bruno, team } = await trio()
+  const csv = Buffer.from('produto,valor\na,10\nb,32\n')
+  lab.guest(ana.id).files.set('dados.csv', csv)
+  await lab.call('team.artifacts.share', { teamId: team.id, idempotencyKey: 'share-slow', botId: ana.id, path: 'dados.csv' })
+  const artifact = (await lab.call('team.artifacts.list', { teamId: team.id }))[0]
+  // The graphical session of a bot starts on demand: the first attempts find nothing listening.
+  let refusals = 0
+  lab.connector.handler = (method) => {
+    if (method === 'files.write' && refusals < 1) {
+      refusals++
+      throw new HostError('RUNTIME_UNREACHABLE', 'Guest control channel closed')
+    }
+    return undefined
+  }
+  const receipt = await ask(lab, team.id, 'analise o csv', [artifact.id])
+
+  // The work proceeds once the session answers; a person is never asked to fix a transient wait.
+  // Retries are spaced by the scheduler tick, so this waits longer than an immediate dispatch.
+  const planning = await until(
+    async () => (await lab.call('team.tasks.list', { runId: receipt.run.id })).turns.find((turn: any) => turn.botId === ana.id),
+    (turn) => !!turn,
+    20_000
+  )
+  expect(refusals).toBeGreaterThan(0)
+  const tasks = (await lab.call('team.tasks.list', { runId: receipt.run.id })).tasks
+  expect(tasks.every((task: any) => task.status !== 'needs_attention')).toBe(true)
+  expect((await runOf(lab, receipt.run.id)).status).toBe('planning')
+  // The copy that finally arrived is the verified one, not a half-written retry.
+  expect(lab.guest(ana.id).files.get(`equipe/${receipt.run.id.slice(0, 8)}/${artifact.id.slice(0, 8)}-dados.csv`)).toEqual(csv)
+
+  await collaborate(lab, ana.id, planning.id, 'team_delegate', { tasks: [{ localKey: 'a', assigneeBotId: bruno.id, goal: 'some', inputArtifactIds: [artifact.id] }] })
+  finishTurn(lab, ana.id, planning.id, 'distribuí')
+  const worker = await turnOf(lab, receipt.run.id, bruno.id)
+  expect(worker).toBeTruthy()
+})
+
+it.skipIf(skip)('gives up with the real reason when the delivery keeps failing', async () => {
+  const { lab, ana, team } = await trio()
+  const csv = Buffer.from('produto,valor\na,10\n')
+  lab.guest(ana.id).files.set('dados.csv', csv)
+  await lab.call('team.artifacts.share', { teamId: team.id, idempotencyKey: 'share-broken', botId: ana.id, path: 'dados.csv' })
+  const artifact = (await lab.call('team.artifacts.list', { teamId: team.id }))[0]
+  // A refusal that is not transient must be reported at once, with its stable code.
+  lab.connector.handler = (method) => {
+    if (method === 'files.write') throw new HostError('FILE_EXISTS', 'Já existe um arquivo com este nome')
+    return undefined
+  }
+  const receipt = await ask(lab, team.id, 'analise o csv', [artifact.id])
+  const stuck = await until(
+    async () => (await lab.call('team.tasks.list', { runId: receipt.run.id })).tasks[0],
+    (task: any) => task?.status === 'needs_attention'
+  )
+  // The message names the next step instead of a generic failure.
+  expect(stuck.attention).toContain('Já existe um arquivo com este nome')
+  const events = (await lab.call('team.events.list', { teamId: team.id, limit: 50 })).events
+  expect(events.find((event: any) => event.kind === 'attention')?.detail?.code).toBe('FILE_EXISTS')
 })

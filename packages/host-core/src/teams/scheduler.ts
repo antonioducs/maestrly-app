@@ -373,7 +373,19 @@ export class TeamScheduler {
         this.deps.sharing.authorize(run, task, inputs)
         const staged = await this.deps.sharing.stage(run, task)
         if (staged.failed) {
-          this.attention(this.deps.teams.task(task.id), 'Não foi possível entregar um arquivo compartilhado a este membro.')
+          // A graphical session starts on demand and takes a while: a transport failure here
+          // means "not yet", not "never". Asking a person to act would be wrong, so the task
+          // goes back to the queue and is retried a bounded number of times before giving up.
+          const current = this.deps.teams.task(task.id)
+          if (TRANSIENT_DELIVERY.has(staged.failed.code) && current.attempts < TEAM_STAGING_ATTEMPTS) {
+            this.deps.teams.transaction(() =>
+              this.deps.teams.saveTask({ ...current, status: 'planned', attempts: current.attempts + 1, revision: current.revision + 1, updatedAt: now() })
+            )
+            return
+          }
+          // The stable code travels with the message: a failure that only says "it did not work"
+          // leaves the person — and whoever supports them — with no next step at all.
+          this.attention(current, deliveryReason(staged.failed.code), { code: staged.failed.code, artifactId: staged.failed.artifactId })
           return
         }
       }
@@ -399,10 +411,15 @@ export class TeamScheduler {
     } catch (error) {
       const code = error instanceof HostError ? error.code : 'TEAM_DISPATCH_FAILED'
       const message = error instanceof HostError ? error.message : 'Não foi possível iniciar esta tarefa agora.'
-      this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'planned', revision: task.revision + 2, updatedAt: now() }))
+      const current = this.deps.teams.task(task.id)
+      const retry = TRANSIENT_DELIVERY.has(code) && current.attempts < TEAM_STAGING_ATTEMPTS
+      this.deps.teams.transaction(() =>
+        this.deps.teams.saveTask({ ...current, status: 'planned', ...(retry ? { attempts: current.attempts + 1 } : {}), revision: current.revision + 1, updatedAt: now() })
+      )
       // A busy bot simply waits its turn; it is not an error and never interrupts its work.
-      if (code === 'BOT_BUSY' || code === 'BOT_PAUSED_BY_USER') return
-      this.attention(this.deps.teams.task(task.id), message)
+      // A computer still waking up is the same kind of "not yet" and is retried, not reported.
+      if (code === 'BOT_BUSY' || code === 'BOT_PAUSED_BY_USER' || retry) return
+      this.attention(this.deps.teams.task(task.id), message, { code })
     }
   }
 
@@ -422,13 +439,13 @@ export class TeamScheduler {
     return undefined
   }
 
-  private attention(task: TeamTask, message: string) {
+  private attention(task: TeamTask, message: string, detail: Record<string, unknown> = {}) {
     this.deps.teams.transaction(() => {
       const current = this.deps.teams.task(task.id)
       if (TEAM_TASK_TERMINAL.has(current.status)) return
       this.deps.teams.saveTask({ ...current, status: 'needs_attention', attention: message, revision: current.revision + 1, updatedAt: now() })
     })
-    this.event({ teamId: task.teamId, runId: task.runId, taskId: task.id, botId: task.assigneeBotId, kind: 'attention', summary: message, detail: { status: 'needs_attention' } })
+    this.event({ teamId: task.teamId, runId: task.runId, taskId: task.id, botId: task.assigneeBotId, kind: 'attention', summary: message, detail: { status: 'needs_attention', ...detail } })
   }
 
   /**
@@ -639,5 +656,44 @@ export class TeamScheduler {
     }
     this.advance(this.deps.teams.run(runId))
     return this.deps.teams.run(runId)
+  }
+}
+
+/**
+ * A computer that is still waking up, a channel that dropped or a request that timed out are all
+ * "not yet": the graphical session of a bot starts on demand and is not instantaneous. Asking a
+ * person to intervene for these would be wrong, so the Host retries them instead.
+ */
+export const TRANSIENT_DELIVERY: ReadonlySet<string> = new Set([
+  'RUNTIME_UNREACHABLE',
+  'RUNTIME_TIMEOUT',
+  'RUNTIME_BUSY',
+  'RUNTIME_RESTARTED',
+  'VM_STOPPED',
+  'SESSION_STARTING',
+  'TEAM_DISPATCH_FAILED',
+])
+/**
+ * How many times a task may go back to the queue before the person is actually told. Retries are
+ * spaced by the scheduler tick, so this is a waiting budget rather than a tight loop: on the
+ * measured laboratory a graphical session took around forty seconds to answer after a restart,
+ * and this leaves room for a slower one without ever waiting indefinitely.
+ */
+export const TEAM_STAGING_ATTEMPTS = 24
+/** Turns a delivery failure into the next step a person can act on. */
+export function deliveryReason(code: string): string {
+  switch (code) {
+    case 'TEAM_GRANT_REVOKED':
+      return 'O acesso a um arquivo compartilhado foi revogado antes da entrega.'
+    case 'FILE_EXISTS':
+      return 'Já existe um arquivo com este nome no espaço de trabalho deste bot.'
+    case 'FILE_CHANGED':
+      return 'O arquivo mudou durante a cópia; compartilhe novamente.'
+    case 'LIMIT':
+      return 'O arquivo compartilhado passou do limite permitido.'
+    case 'INVALID_PATH':
+      return 'O destino do arquivo compartilhado não é válido neste espaço de trabalho.'
+    default:
+      return `Não foi possível entregar um arquivo compartilhado a este membro (${code}).`
   }
 }
