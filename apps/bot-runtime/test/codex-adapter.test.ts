@@ -162,3 +162,46 @@ it('answers unsupported server methods with wire -32601 and a diagnostic', async
   expect(log.find((row) => row.serverResponse)?.serverResponse.error.code).toBe(-32601)
   expect(events.some((event) => event.kind === 'diagnostic')).toBe(true)
 })
+
+it('tells a member where its shared files actually are, instead of making it search', () => {
+  const team = {
+    teamId: 'team-1',
+    teamName: 'Relatórios',
+    runId: 'run-1',
+    taskId: 'task-1',
+    round: 1,
+    stage: 'working' as const,
+    role: 'member' as const,
+    objective: 'Relatório mensal',
+    members: [
+      { botId: 'bot', name: 'Assistente', role: 'execução', coordinator: false, assignable: false },
+      { botId: 'other', name: 'Ana', role: 'coordenação', coordinator: true, assignable: false },
+    ],
+    memory: [{ id: 'm1', content: 'Sempre citar a fonte dos números.' }],
+    resources: [
+      { artifactId: 'art-1', name: 'dados.csv', path: 'equipe/run-1/art-1-dados.csv', digest: 'a'.repeat(64), size: 42, origin: 'compartilhado pela pessoa' },
+    ],
+    dependencyResults: [{ taskId: 'task-0', localKey: 'analise', botName: 'Ana', status: 'succeeded' as const, summary: 'Total conferido: 1234.' }],
+    remaining: { toolCalls: 70, activeMs: 600_000, rounds: 2, tasks: 10 },
+    tools: ['team_members', 'team_publish_file'] as never,
+  }
+  const instructions = configuration(snapshot({ instructions: 'Seja breve.', team }), '/tmp/workspace', false).thread.developerInstructions ?? ''
+  // The exact relative path of every delivered copy, so the member reads it instead of hunting.
+  expect(instructions).toContain('equipe/run-1/art-1-dados.csv')
+  expect(instructions).toContain('dados.csv')
+  expect(instructions).toContain('compartilhado pela pessoa')
+  // Who else is on the team, and what a dependency already produced.
+  expect(instructions).toContain('Ana')
+  expect(instructions).toContain('Total conferido: 1234.')
+  // Team memory the person approved reaches the turn as well.
+  expect(instructions).toContain('Sempre citar a fonte dos números.')
+  // The bot's own instructions still come first and nothing private leaks in.
+  expect(instructions.startsWith('Seja breve.')).toBe(true)
+  expect(instructions).not.toContain('team-1')
+})
+
+it('keeps a solo turn free of any team section', () => {
+  const instructions = configuration(snapshot({ instructions: 'Seja breve.' }), '/tmp/workspace', false).thread.developerInstructions ?? ''
+  expect(instructions).not.toContain('## Equipe')
+  expect(instructions).not.toContain('Arquivos compartilhados')
+})

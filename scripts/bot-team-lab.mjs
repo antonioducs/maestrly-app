@@ -40,6 +40,13 @@ export const READ_ONLY_METHODS = [
 /** A synthetic CSV whose expected result is known without trusting the model's claim. */
 export const SAMPLE_CSV = 'produto,valor\ncaneta,120\ncaderno,340\nmochila,774\n'
 export const SAMPLE_TOTAL = 1234
+/**
+ * Checks the arithmetic the way a person reads it: a model may write 1.234, 1 234 or 1,234 and be
+ * exactly right. Comparing raw substrings would report a correct answer as wrong, which is a worse
+ * failure than no check at all — it would make the report lie in the safe-looking direction.
+ */
+export const statesTotal = (text, total = SAMPLE_TOTAL) =>
+  new RegExp(`(^|[^0-9])${String(total).split('').join('[.,\\u00a0\\u202f ]?')}([^0-9]|$)`).test(String(text))
 export const TASK = `Some a coluna "valor" do arquivo compartilhado e escreva uma recomendação curta. Responda com o total exato.`
 /**
  * A request the coordinator is expected to split, because the person asked for the work to be
@@ -256,7 +263,7 @@ export async function smoke(session, options = {}) {
       membersWorked: [...new Set(workers.map((task) => task.assigneeBotId))].length,
       physicalTurns: run.budget.turns,
       // Arithmetic is checked against the known sample, not against the model's claim.
-      arithmetic: answers.slice(answersBefore).some((message) => message.content.includes(String(SAMPLE_TOTAL))),
+      arithmetic: answers.slice(answersBefore).some((message) => statesTotal(message.content)),
       // Exactly one consolidated answer per request, never one per member.
       singleAnswer: answers.length === answersBefore + 1,
       // Unknown token usage stays unknown; the lab never reports it as zero.

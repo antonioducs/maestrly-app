@@ -34,6 +34,10 @@ export function configuration(
         .join('\n')
         .slice(0, 32 * 1024)}`
     )
+  // A team turn carries the roster, the copies already delivered to this workspace and what
+  // dependencies produced. Without this block the model would know it has a shared file but not
+  // where it is, and would burn its whole tool allowance searching for it.
+  if (snapshot.team) blocks.push(teamBlock(snapshot.team))
   if (snapshot.contextSummary) blocks.push(snapshot.contextSummary)
   if (recreated && snapshot.recentMessages.length)
     blocks.push(
@@ -76,4 +80,45 @@ export function configuration(
           excludeSlashTmp: false,
         },
   }
+}
+
+/**
+ * The team section of a turn, in plain words. It names only what this bot may already see: the
+ * roster, the copies delivered to its own workspace, approved team memory and the results of the
+ * tasks it depends on. Identifiers are deliberately absent — the model acts through the
+ * collaboration tools, which the Host authorizes from the session, never from text it wrote.
+ */
+export function teamBlock(team: NonNullable<TurnSnapshot['team']>): string {
+  const lines = [`## Equipe ${team.teamName}`]
+  if (team.objective) lines.push(`Objetivo: ${team.objective}`)
+  lines.push(
+    team.role === 'coordinator'
+      ? 'Você coordena este trabalho.'
+      : 'Você executa uma tarefa desta equipe.'
+  )
+  if (team.members.length)
+    lines.push(
+      '',
+      'Participantes:',
+      ...team.members.map((member) => `- ${member.name}${member.role ? ` (${member.role})` : ''}${member.coordinator ? ' — coordena' : ''}`)
+    )
+  if (team.resources.length)
+    lines.push(
+      '',
+      'Arquivos compartilhados já copiados para o seu espaço de trabalho (use estes caminhos, não procure em outro lugar):',
+      ...team.resources.map((resource) => `- ${resource.path} — ${resource.name}, ${resource.size} bytes, ${resource.origin}`)
+    )
+  const useful = team.dependencyResults.filter((dependency) => dependency.summary)
+  if (useful.length)
+    lines.push(
+      '',
+      'Resultados que você recebeu:',
+      ...useful.map((dependency) => `- ${dependency.botName} (${dependency.status}): ${dependency.summary}`)
+    )
+  if (team.memory.length) lines.push('', 'Anotações da equipe:', ...team.memory.map((item) => `- ${item.content}`))
+  lines.push(
+    '',
+    `Orçamento restante deste trabalho: cerca de ${team.remaining.toolCalls} ações. Trabalhe direto ao ponto e não repita buscas.`
+  )
+  return lines.join('\n').slice(0, 32 * 1024)
 }

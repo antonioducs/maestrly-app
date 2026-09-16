@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { HostSession, READ_ONLY_METHODS, SAMPLE_CSV, SAMPLE_TOTAL, doctor, guardTeamLab, main, selectTeam, smoke } from '../bot-team-lab.mjs'
+import { HostSession, READ_ONLY_METHODS, SAMPLE_CSV, SAMPLE_TOTAL, doctor, guardTeamLab, main, selectTeam, smoke, statesTotal } from '../bot-team-lab.mjs'
 import { validateConfig } from '../host-lab.mjs'
 
 const a = '11111111-1111-1111-1111-111111111111'
@@ -216,4 +216,13 @@ test('the persistent Host session keeps only stable error codes and refuses muta
   } finally {
     session.close()
   }
+})
+
+test('the arithmetic check reads a total the way a person writes it', () => {
+  // A correct answer written with a separator must not be reported as wrong.
+  for (const text of [`O total é ${SAMPLE_TOTAL}.`, 'Total exato: **1.234**.', 'soma: 1 234', 'total de 1,234 no período'])
+    assert.equal(statesTotal(text), true, text)
+  // A different number, or no number at all, is never accepted.
+  for (const text of ['o total é 12345', 'total 123', 'somei 2468', 'não consegui abrir o arquivo'])
+    assert.equal(statesTotal(text), false, text)
 })
