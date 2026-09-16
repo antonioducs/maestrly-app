@@ -102,6 +102,17 @@ guardada para a consolidação, para o trabalho sempre conseguir contar o que ac
 agregados quando o provedor informa; quando não informa, aparecem como **desconhecido**, nunca
 como zero.
 
+O tempo de execução conta **só enquanto o bot trabalha**. Quando ele para para pedir uma permissão
+ou fazer uma pergunta, o relógio pausa e volta a correr quando a pessoa responde: demorar para
+decidir nunca pode matar uma tarefa, ainda mais sendo `ask` o modo padrão. Enquanto isso, o
+trabalho da equipe aparece como **esperando a sua resposta**, e não como "membros trabalhando".
+
+Um computador que ainda está acordando não é uma falha: a área de trabalho de um bot sobe sob
+demanda e pode levar dezenas de segundos. Uma entrega de arquivo que falhe por transporte nesse
+intervalo volta para a fila e é repetida, dentro de um limite. Uma recusa real — nome já existente,
+arquivo alterado, acesso revogado, limite de tamanho — avisa na hora, com o motivo e o próximo
+passo, em vez de repetir em silêncio.
+
 ## Intervenção humana
 
 Assumir a tela de um membro pausa **apenas a tarefa dele**; as outras seguem. Devolver com

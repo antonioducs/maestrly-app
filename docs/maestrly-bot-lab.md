@@ -59,6 +59,12 @@ operador. Sem Mac mini, `node scripts/verify-bot-desktop.mjs --local-container` 
   exatos** dos bots que podem formar a equipe de teste. O laboratório nunca escolhe "o primeiro bot
   livre", nunca cria bot ou conta e nunca desliga um computador. Ele compartilha um CSV sintético,
   pede um relatório e **confere a aritmética e os digests**, em vez de acreditar no texto do modelo.
+  São dois pedidos: um pequeno, que o coordenador pode responder sozinho, e um que a pessoa manda
+  distribuir, para exercitar a delegação de verdade. Com dois bots isso prova delegação, nunca dois
+  membros trabalhando ao mesmo tempo — o relatório diz isso em `concurrencyProven`.
+  Um membro em `ask` pede permissão; o laboratório responde no papel da pessoa e **registra no
+  relatório o comando exato que autorizou**, porque aprovar sem dizer o quê seria pior que não
+  aprovar. Sem `allowTeamSmoke` nada disso acontece.
 
 Relatórios ficam em `.host-lab/bot-*/` e `.host-lab/desktop-lab-*/` (ignorados pelo Git). O laboratório não executa reboot
 físico, não altera cotas, não instala pacotes no controlador e não copia credenciais.
