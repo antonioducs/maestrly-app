@@ -25,6 +25,10 @@ interface Active {
     { kind: 'approval' | 'question'; resolve: (value: string) => void; reject: (error: Error) => void }
   >
   timer?: NodeJS.Timeout
+  /** Execution time still available to this turn, excluding any wait for a person. */
+  budgetMs: number
+  /** When the running budget started being spent, or undefined while it is held. */
+  spendingSince?: number
   deltaTimer?: NodeJS.Timeout
   delta: string
   bytes: number
@@ -75,22 +79,38 @@ export class TurnService {
       finalMessage: false,
       running: false,
       produced: new Set(),
+      budgetMs: snapshot.limits.activeMs,
     }
     this.active = active
     this.leases.renew(snapshot.turnId, snapshot.leaseMs, () => {
       void this.cancel(snapshot.turnId, snapshot.generation, { code: 'LEASE_EXPIRED', message: 'Host lease expired' })
     })
-    active.timer = setTimeout(
-      () => {
-        void this.cancel(snapshot.turnId, snapshot.generation, {
-          code: 'TIME_LIMIT',
-          message: 'Active time limit exceeded',
-        })
-      },
-      Math.min(snapshot.limits.activeMs, 2_147_483_647)
-    )
+    this.spend(active)
     active.done = this.run(active)
     return { accepted: true }
+  }
+  /**
+   * Starts (or resumes) spending the execution budget. The limit covers the time the agent
+   * actually works; time a person spends deciding is held separately by the Host, which allows
+   * far longer. Charging a human's thinking time to the agent would kill a task for being
+   * answered slowly — and with `ask` as the default permission mode, that is the common case.
+   */
+  private spend(active: Active) {
+    clearTimeout(active.timer)
+    active.spendingSince = Date.now()
+    const { turnId, generation } = active.snapshot
+    active.timer = setTimeout(
+      () => void this.cancel(turnId, generation, { code: 'TIME_LIMIT', message: 'Active time limit exceeded' }),
+      Math.max(0, Math.min(active.budgetMs, 2_147_483_647))
+    )
+  }
+  /** Stops the clock and keeps what is left, so waiting costs the task nothing. */
+  private hold(active: Active) {
+    if (active.spendingSince === undefined) return
+    active.budgetMs = Math.max(0, active.budgetMs - (Date.now() - active.spendingSince))
+    active.spendingSince = undefined
+    clearTimeout(active.timer)
+    active.timer = undefined
   }
   reconcile(turnId: string, generation: number) {
     return this.journal.reconcile(turnId, generation)
@@ -142,6 +162,8 @@ export class TurnService {
       decision: input.decision,
     })
     active.actions.delete(input.actionId)
+    // The person answered: the agent is working again, so the clock starts again as well.
+    if (!active.actions.size) this.spend(active)
     action.resolve(input.decision === 'answer' ? (input.answer ?? '') : input.decision)
     this.emit(active, { kind: 'turn.status', summary: 'O bot voltou a trabalhar', detail: { status: 'running' } })
     return { applied: true }
@@ -157,6 +179,8 @@ export class TurnService {
     this.journal.append('action.intent', { turnId, generation, actionId: req.actionId, kind })
     return new Promise((resolve, reject) => {
       active.actions.set(req.actionId, { kind, resolve, reject })
+      // From here the turn waits for a person, not for the model: hold the execution budget.
+      this.hold(active)
       this.emit(active, {
         kind: 'turn.status',
         summary: req.title,

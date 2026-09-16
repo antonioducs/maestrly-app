@@ -180,10 +180,15 @@ it.skipIf(skip)('shows a member approval in the team and never lets the coordina
   expect(request.summary).toContain('Bruno')
   expect(request.botId).toBe(bruno.id)
 
+  // The work says it is blocked on the person, instead of reporting that the members are working.
+  expect((await runOf(lab, run.id)).status).toBe('waiting_user')
+
   const interaction = (await lab.call('bot.interactions.list', { botId: bruno.id }))[0]
   // The decision belongs to the person, on the member that asked; the coordinator has none.
   expect(await lab.call('bot.interactions.list', { botId: ana.id })).toEqual([])
   const resolved = await lab.call('bot.interactions.resolve', { interactionId: interaction.id, expectedGeneration: interaction.generation, decision: 'approve' })
   expect(resolved.status).toBe('approved')
   await until(() => taskOf(lab, run.id, 'analise'), (task: any) => task.status === 'running')
+  // Once answered, the work goes back to reporting what it is actually doing.
+  expect((await runOf(lab, run.id)).status).toBe('working')
 })

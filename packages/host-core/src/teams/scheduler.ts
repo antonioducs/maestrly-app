@@ -149,6 +149,12 @@ export class TeamScheduler {
     const status = turn.status === 'waiting_approval' ? 'waiting_approval' : turn.status === 'waiting_input' ? 'waiting_input' : 'running'
     if (task.status === status || TEAM_TASK_TERMINAL.has(task.status)) return
     this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...task, status, revision: task.revision + 1, updatedAt: now() }))
+    // The whole work is blocked on the person, so it must say so instead of reporting that the
+    // members are working: someone watching the team would wait for a bot that is waiting for them.
+    const run = this.deps.teams.run(task.runId)
+    if (status !== 'running' && ['planning', 'working', 'reviewing'].includes(run.status)) this.setStatus(run, 'waiting_user')
+    else if (status === 'running' && run.status === 'waiting_user' && !this.deps.teams.tasks(run.id).some((other) => other.id !== task.id && (other.status === 'waiting_approval' || other.status === 'waiting_input')))
+      this.setStatus(run, this.busyStatus(run))
     this.event({
       teamId: task.teamId,
       runId: task.runId,
@@ -165,6 +171,12 @@ export class TeamScheduler {
     })
   }
 
+  /** What the work is doing when nobody is waiting on a person, derived from its own tasks. */
+  private busyStatus(run: TeamRun): TeamRun['status'] {
+    const tasks = this.deps.teams.tasks(run.id).filter((task) => TEAM_TASK_ACTIVE.has(task.status))
+    if (tasks.some((task) => task.kind === 'work')) return 'working'
+    return run.round === 0 ? 'planning' : 'reviewing'
+  }
   private name(botId: string) {
     try {
       return this.deps.bots.bot(botId).name
@@ -563,6 +575,7 @@ export class TeamScheduler {
       planning: 'A equipe está organizando o trabalho',
       working: 'Os membros estão trabalhando',
       reviewing: 'A equipe está juntando os resultados',
+      waiting_user: 'A equipe está esperando a sua resposta',
       paused: 'O trabalho está pausado enquanto você usa a tela',
       cancelling: 'Parando o trabalho da equipe…',
       succeeded: 'A equipe concluiu o trabalho',

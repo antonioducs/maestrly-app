@@ -234,6 +234,13 @@ export class BotRepository {
       .all(botId)
       .map((row) => parseRow(botInteractionSchema, row))
   }
+  /** Every request this turn made to the person, used to tell working time from waiting time. */
+  interactionsOfTurn(turnId: string): BotInteraction[] {
+    return this.db
+      .prepare('SELECT body FROM bot_interactions WHERE turn_id=? ORDER BY rowid')
+      .all(turnId)
+      .map((row) => parseRow(botInteractionSchema, row))
+  }
   interactionByAction(turnId: string, actionId: string): BotInteraction | undefined {
     const row = this.db.prepare('SELECT body FROM bot_interactions WHERE turn_id=? AND action_id=?').get(turnId, actionId)
     return row ? parseRow(botInteractionSchema, row) : undefined

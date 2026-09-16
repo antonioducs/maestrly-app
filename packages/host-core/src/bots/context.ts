@@ -1,4 +1,4 @@
-import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotMemory, type BotMessage, type NetworkPolicy, type TeamTurnContext, type TurnSnapshot } from '@maestrly/host-protocol'
+import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotInteraction, type BotMemory, type BotMessage, type BotTurn, type NetworkPolicy, type TeamTurnContext, type TurnSnapshot } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 
 export const TURN_LIMITS = { activeMs: 30 * 60_000, maxTools: 100, maxLogBytes: 10 * 1024 * 1024, leaseMs: 30_000, renewMs: 10_000, humanWaitMs: 24 * 3_600_000, dispatchAttentionMs: 60_000 }
@@ -65,4 +65,31 @@ export function buildSnapshot(input: {
     limits: input.limits ?? { activeMs: TURN_LIMITS.activeMs, maxTools: TURN_LIMITS.maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes },
     ...(input.team ? { team: input.team } : {}),
   }
+}
+
+/**
+ * How long a turn actually worked: wall time since it started, minus every stretch it spent
+ * waiting for a person to approve or answer. A human deciding slowly must never consume the
+ * agent's execution allowance, or a task would die for being answered late rather than for
+ * running too long. Overlapping requests are counted once, and a request still pending is
+ * counted up to now. The guest enforces the same budget; the Host is only a safety net.
+ */
+export function workedMs(turn: Pick<BotTurn, 'startedAt'>, interactions: readonly BotInteraction[], now = Date.now()): number {
+  if (!turn.startedAt) return 0
+  const started = new Date(turn.startedAt).getTime()
+  const waits = interactions
+    .map((interaction) => ({
+      from: Math.max(new Date(interaction.createdAt).getTime(), started),
+      to: Math.min(interaction.status === 'pending' ? now : new Date(interaction.updatedAt).getTime(), now),
+    }))
+    .filter((wait) => wait.to > wait.from)
+    .sort((a, b) => a.from - b.from)
+  let waited = 0
+  let end = started
+  for (const wait of waits) {
+    const from = Math.max(wait.from, end)
+    if (wait.to > from) waited += wait.to - from
+    end = Math.max(end, wait.to)
+  }
+  return Math.max(0, now - started - waited)
 }

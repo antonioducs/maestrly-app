@@ -192,13 +192,34 @@ export async function doctor(session) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-async function until(fn, predicate, timeoutMs = 300_000) {
+async function until(fn, predicate, timeoutMs = 300_000, each) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const value = await fn()
     if (predicate(value)) return value
     if (Date.now() > deadline) throw Object.assign(Error('Timed out waiting for the team'), { code: 'TIMEOUT' })
+    await each?.()
     await sleep(2_000)
+  }
+}
+/**
+ * Answers, as the person, every permission a member asked for, and records exactly what was
+ * allowed. A member working under `ask` will request permission, and a laboratory that ignored it
+ * would simply time out and report nothing — while a laboratory that approved silently would hide
+ * what it consented to on the operator's machine.
+ */
+async function answerApprovals(session, members, granted) {
+  for (const bot of members) {
+    const pending = await session.request('bot.interactions.list', { botId: bot.id, pendingOnly: true }).catch(() => [])
+    for (const interaction of pending) {
+      if (interaction.kind !== 'approval') continue
+      await session.request('bot.interactions.resolve', {
+        interactionId: interaction.id,
+        expectedGeneration: interaction.generation,
+        decision: 'approve',
+      })
+      granted.push({ member: bot.name, title: interaction.title, command: String(interaction.parameters?.command ?? '').slice(0, 200) })
+    }
   }
 }
 
@@ -246,10 +267,12 @@ export async function smoke(session, options = {}) {
       content,
       artifactIds: artifactId ? [artifactId] : [],
     })
+    const granted = []
     const run = await until(
       () => session.request('team.run.get', { runId: receipt.run.id }),
       (value) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(value.status),
-      options.timeoutMs ?? 600_000
+      options.timeoutMs ?? 900_000,
+      () => answerApprovals(session, members, granted)
     )
     const work = await session.request('team.tasks.list', { runId: run.id })
     const page = await session.request('team.messages.list', { teamId, limit: 50 })
@@ -266,10 +289,12 @@ export async function smoke(session, options = {}) {
       arithmetic: answers.slice(answersBefore).some((message) => statesTotal(message.content)),
       // Exactly one consolidated answer per request, never one per member.
       singleAnswer: answers.length === answersBefore + 1,
+      // Everything the lab allowed on the operator's machine, in full.
+      approvals: granted,
       // Unknown token usage stays unknown; the lab never reports it as zero.
       tokens: run.budget.tokensObserved ? { input: run.budget.inputTokens, output: run.budget.outputTokens } : 'unknown',
     })
-    return { run, workers }
+    return { run, workers, granted }
   }
   // A small request the coordinator may legitimately answer alone.
   const direct = await workOn(TASK, 'run.direct')

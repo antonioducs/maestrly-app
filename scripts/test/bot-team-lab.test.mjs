@@ -226,3 +226,50 @@ test('the arithmetic check reads a total the way a person writes it', () => {
   for (const text of ['o total é 12345', 'total 123', 'somei 2468', 'não consegui abrir o arquivo'])
     assert.equal(statesTotal(text), false, text)
 })
+
+test('the smoke answers a member permission and records exactly what it allowed', async () => {
+  const answers = [{ kind: 'request', content: 'pedido' }]
+  let runs = 0
+  let polls = 0
+  const pending = [
+    { id: 'int-1', kind: 'approval', generation: 1, title: 'Executar um comando', parameters: { command: '/usr/bin/bash -lc "sed -n 1,10p equipe/x/dados.csv"' } },
+  ]
+  const session = fakeSession(
+    authorized,
+    {
+      'host.inspect': { id: 'host-1', serviceVersion: '0.3.0', capabilities: ['teams.v1'] },
+      'bot.list': [ready(a, 'Ana'), ready(b, 'Bruno')],
+      'team.list': [],
+      'vm.list': [{ id: 'vm-1', state: 'running', health: 'ready' }],
+      'bot.inspect': ({ botId }) => ready(botId, 'X'),
+      'team.create': { team: { id: 'team-1' }, members: [{}, {}] },
+      'team.artifacts.transferBegin': { transferId: 't-1' },
+      'team.artifacts.transferChunk': { offset: SAMPLE_CSV.length, done: true },
+      'team.artifacts.transferFinish': { artifact: { id: 'art-1', artifactId: 'art-1', digest: 'a'.repeat(64) } },
+      'team.messages.send': () => {
+        answers.push({ kind: 'answer', content: `O total é ${SAMPLE_TOTAL}.` })
+        return { run: { id: `run-${++runs}` } }
+      },
+      // The work stays blocked on the person until the permission is answered.
+      'team.run.get': () => ({ id: `run-${runs}`, status: pending.length && polls++ < 3 ? 'waiting_user' : 'succeeded', budget: { turns: 2, tokensObserved: false } }),
+      'team.tasks.list': { tasks: [{ kind: 'planning', assigneeBotId: a }] },
+      'team.messages.list': () => ({ messages: answers }),
+      'bot.interactions.list': ({ botId }) => (botId === b ? pending.slice() : []),
+      'bot.interactions.resolve': ({ interactionId }) => {
+        const index = pending.findIndex((item) => item.id === interactionId)
+        assert.notEqual(index, -1, 'resolved an interaction that was not pending')
+        pending.splice(index, 1)
+        return { id: interactionId, status: 'approved' }
+      },
+    },
+    ['--authorize-team-smoke']
+  )
+  const report = await smoke(session)
+  const approvals = report.steps.find((entry) => entry.step === 'run.direct').approvals
+  // The report names the member and the exact command that was allowed, never just a count.
+  assert.equal(approvals.length, 1)
+  assert.equal(approvals[0].member, 'Bruno')
+  assert.match(approvals[0].command, /sed -n 1,10p/)
+  assert.equal(pending.length, 0)
+  assert.equal(report.status, 'succeeded')
+})

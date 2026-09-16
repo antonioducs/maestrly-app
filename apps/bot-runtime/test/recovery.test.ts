@@ -112,21 +112,54 @@ describe('turn limits and cancellation', () => {
     expect(journal.pendingEvents().at(-1)?.detail?.status).toBe('cancelled')
     expect(await turns.cancel(input.turnId, 2)).toEqual({ cancelled: false })
   })
-  it('enforces active time and invalidates approvals on expiry', async () => {
+  it('enforces active time while the bot is actually working', async () => {
     const root = await temporary()
     const journal = new Journal(join(root, 'state'))
     const files = new FileService(join(root, 'workspace'))
     const turns = new TurnService(journal, new FixtureProvider(files.workspace), files)
-    const input = snapshot({ message: '#approve', limits: { activeMs: 50, maxTools: 10, maxLogBytes: 10000 } })
+    const input = snapshot({ message: '#slow', limits: { activeMs: 50, maxTools: 10, maxLogBytes: 10000 } })
     turns.start(input)
     await turns.idle()
     expect(journal.pendingEvents().at(-1)?.detail).toMatchObject({
       status: 'interrupted',
       error: { code: 'TIME_LIMIT' },
     })
-    const actionId = String(
-      journal.pendingEvents().find((event) => event.kind === 'approval.requested')?.detail?.actionId
-    )
+  })
+  it('does not spend the execution budget while a person decides', async () => {
+    const root = await temporary()
+    const journal = new Journal(join(root, 'state'))
+    const files = new FileService(join(root, 'workspace'))
+    const turns = new TurnService(journal, new FixtureProvider(files.workspace), files)
+    const input = snapshot({ message: '#approve', limits: { activeMs: 300, maxTools: 10, maxLogBytes: 10000 } })
+    turns.start(input)
+    const actionId = await vi.waitFor(() => {
+      const id = journal.pendingEvents().find((event) => event.kind === 'approval.requested')?.detail?.actionId
+      expect(id).toBeTruthy()
+      return String(id)
+    })
+    // The person takes longer than the whole execution budget to answer, as people do.
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    // Waiting is not working: the turn must still be alive and the approval still valid.
+    expect(turns.reconcile(input.turnId, 1).status).toBe('waiting_approval')
+    expect(turns.resolve({ turnId: input.turnId, generation: 1, actionId, decision: 'approve' })).toEqual({ applied: true })
+    await turns.idle()
+    expect(journal.pendingEvents().at(-1)?.detail).toMatchObject({ status: 'succeeded' })
+    // The approved action really ran instead of being thrown away with the turn.
+    expect(await readFile(join(files.workspace, 'approved.txt'), 'utf8')).toBe('')
+  })
+  it('invalidates a pending approval once the turn ends', async () => {
+    const root = await temporary()
+    const journal = new Journal(join(root, 'state'))
+    const files = new FileService(join(root, 'workspace'))
+    const turns = new TurnService(journal, new FixtureProvider(files.workspace), files)
+    const input = snapshot({ message: '#approve', limits: { activeMs: 5000, maxTools: 10, maxLogBytes: 10000 } })
+    turns.start(input)
+    const actionId = await vi.waitFor(() => {
+      const id = journal.pendingEvents().find((event) => event.kind === 'approval.requested')?.detail?.actionId
+      expect(id).toBeTruthy()
+      return String(id)
+    })
+    await turns.cancel(input.turnId, 1)
     expect(() => turns.resolve({ turnId: input.turnId, generation: 1, actionId, decision: 'approve' })).toThrow(
       'Unknown'
     )

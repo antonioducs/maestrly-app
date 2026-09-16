@@ -13,7 +13,7 @@ import { HostError } from '../errors.js'
 import type { GuestConnector, GuestSession } from '../guest/session.js'
 import { BotEvents } from './events.js'
 import { BotInteractions } from './interactions.js'
-import { TURN_LIMITS } from './context.js'
+import { TURN_LIMITS, workedMs } from './context.js'
 import { type BotRepository, now } from './repository.js'
 
 export interface CoordinatorHost {
@@ -399,11 +399,14 @@ export class RuntimeCoordinator {
           /* lost lease renewals surface through session close or reconcile */
         }
       }
-      if (turn.status === 'running' && turn.startedAt && Date.now() - new Date(turn.startedAt).getTime() > this.limits.activeMs && session?.alive)
+      if (turn.status === 'running' && turn.startedAt && this.workedMs(turn) > this.limits.activeMs && session?.alive)
         await this.requestCancel(turn.botId, turn.id, 'Tempo máximo de execução atingido').catch(() => {})
       if (turn.status === 'needs_attention' || (turn.status === 'queued' && !this.draining.has(turn.botId)))
         void this.reconcile(turn.botId).catch(() => {})
     }))
+  }
+  private workedMs(turn: BotTurn): number {
+    return workedMs(turn, this.repo.interactionsOfTurn(turn.id))
   }
   async requestCancel(botId: string, turnId: string, reason: string) {
     const turn = this.repo.turn(turnId)
