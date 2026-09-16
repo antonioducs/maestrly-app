@@ -1,4 +1,4 @@
-import { accountCredentialResponseSchema, type DelegatedCredential } from '@maestrly/host-protocol'
+import { TEAM_LIMITS, accountCredentialResponseSchema, collaborationResponseSchema, type CollaborationMethod, type DelegatedCredential } from '@maestrly/host-protocol'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import type { Duplex } from 'node:stream'
@@ -30,6 +30,7 @@ export class ControlSession {
   private requests = 0
   private accountPromise?: Promise<DelegatedCredential>
   private accountRequests = new Map<string, { resolve: (value: DelegatedCredential) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
+  private collaborationRequests = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
   readonly nonce = randomBytes(16).toString('hex')
   readonly done: Promise<void>
   private finish!: () => void
@@ -99,6 +100,18 @@ export class ControlSession {
       clearTimeout(pending.timer)
       if (parsed.data.credential && !parsed.data.error) pending.resolve(parsed.data.credential)
       else pending.reject(Object.assign(new Error('Shared account is unavailable'), { code: parsed.data.error?.code ?? 'ACCOUNT_UNAVAILABLE' }))
+      return
+    }
+    if (frame.type === 'collaboration.response') {
+      const parsed = collaborationResponseSchema.safeParse(frame)
+      if (!parsed.success) return this.close()
+      const pending = this.collaborationRequests.get(parsed.data.id)
+      if (!pending) return
+      this.collaborationRequests.delete(parsed.data.id)
+      clearTimeout(pending.timer)
+      if (parsed.data.error)
+        pending.reject(Object.assign(new Error(parsed.data.error.message), { code: parsed.data.error.code }))
+      else pending.resolve((parsed.data.result ?? {}) as Record<string, unknown>)
       return
     }
     if (frame.type === 'ack') {
@@ -180,6 +193,27 @@ export class ControlSession {
     void pending.finally(() => { if (this.accountPromise === pending) this.accountPromise = undefined }).catch(() => {})
     return pending
   }
+  /**
+   * Asks the Host to perform a collaboration action for the turn currently running. The
+   * frame never names a bot, a team or a role: the Host decides who is acting from this
+   * authenticated session and the turn it registered. Concurrency is bounded so this lane
+   * cannot starve account renewal, leases, cancellation or the live screen.
+   */
+  requestCollaboration(input: { turnId: string; generation: number; method: CollaborationMethod; params: Record<string, unknown> }): Promise<Record<string, unknown>> {
+    if (!this.ready || this.closed) return Promise.reject(Object.assign(new Error('Collaboration channel unavailable'), { code: 'TEAM_UNAVAILABLE' }))
+    if (this.collaborationRequests.size >= TEAM_LIMITS.requestsInFlightMax)
+      return Promise.reject(Object.assign(new Error('Too many collaboration requests in flight'), { code: 'TEAM_BUSY' }))
+    const id = randomUUID()
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.collaborationRequests.delete(id)
+        // The Host may still have accepted it: the caller consults the receipt, never retries blindly.
+        reject(Object.assign(new Error('Collaboration request timed out; consult the receipt'), { code: 'TEAM_TIMEOUT', requestId: id }))
+      }, TEAM_LIMITS.requestTimeoutMs)
+      this.collaborationRequests.set(id, { resolve, reject, timer })
+      this.send({ type: 'collaboration.request', id, turnId: input.turnId, generation: input.generation, method: input.method, params: input.params })
+    })
+  }
   close() {
     if (this.closed) return
     this.closed = true
@@ -187,6 +221,8 @@ export class ControlSession {
     this.unsubscribe()
     for (const pending of this.accountRequests.values()) { clearTimeout(pending.timer); pending.reject(new Error('Account channel closed')) }
     this.accountRequests.clear()
+    for (const pending of this.collaborationRequests.values()) { clearTimeout(pending.timer); pending.reject(Object.assign(new Error('Collaboration channel closed'), { code: 'TEAM_UNAVAILABLE' })) }
+    this.collaborationRequests.clear()
     this.stream.destroy()
     this.finish()
   }

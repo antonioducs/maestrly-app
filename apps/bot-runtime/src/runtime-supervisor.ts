@@ -8,13 +8,14 @@ import { LocalDesktopTools, type DesktopTools } from './desktop/desktop-tools.js
 import { ManagedDesktopClient } from './desktop/managed-client.js'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import type { NetworkPolicy } from '@maestrly/host-protocol'
+import { TEAM_CAPABILITY, type NetworkPolicy } from '@maestrly/host-protocol'
 import { Journal } from './control/journal.js'
 import { ControlSession, type HandlerMap } from './control/session.js'
 import { openControlTransport } from './control/transport.js'
 import { FileService } from './files/service.js'
 import type { ProviderAdapter } from './providers/provider.js'
 import { recoverTurns } from './turns/recovery.js'
+import { CollaborationClient } from './teams/client.js'
 import { runtimeError, TurnService } from './turns/service.js'
 export async function runtimeVersion() {
   return (
@@ -31,8 +32,19 @@ export class RuntimeSupervisor {
   readonly proxy = new LocalProxy(this.egress)
   private desktop!: DesktopTools
   private tools!: ToolRegistry
+  private collaboration!: CollaborationClient
   private bridge!: ToolsBridge
-  private capabilities = ['account.delegation.v1', 'network.blocklist.v1', 'network.proxy', 'tools.system', 'tools.memory']
+  private capabilities = [
+    'account.delegation.v1',
+    'network.blocklist.v1',
+    'network.proxy',
+    'tools.system',
+    'tools.memory',
+    // Collaboration exists only when the Host also knows about teams; an older Host simply
+    // never sends a team context and no team tool is ever offered.
+    TEAM_CAPABILITY,
+    'teams.collaboration',
+  ]
   private provider!: ProviderAdapter
   private session?: ControlSession
   private stopped = new AbortController()
@@ -71,12 +83,24 @@ export class RuntimeSupervisor {
     this.desktop = services
       ? new ManagedDesktopClient(services, this.files, () => this.tools?.invalidate())
       : new LocalDesktopTools(new BrowserSession(this.options.state, this.files, new DesktopSession(), () => this.tools?.invalidate()), this.files)
+    this.collaboration = new CollaborationClient(
+      (input) => {
+        const session = this.session
+        if (!session) throw runtimeError('TEAM_UNAVAILABLE', 'O canal com o Host não está disponível')
+        return session.requestCollaboration(input)
+      },
+      () => {
+        const snapshot = this.turns.toolContext().snapshot
+        return { turnId: snapshot.turnId, generation: snapshot.generation, team: snapshot.team }
+      }
+    )
     this.tools = new ToolRegistry(
       this.journal,
       this.files,
       this.desktop,
       () => this.turns.toolContext(),
-      () => this.policy?.permissionMode ?? this.turns.toolContext().snapshot.permissionMode
+      () => this.policy?.permissionMode ?? this.turns.toolContext().snapshot.permissionMode,
+      this.collaboration
     )
     this.bridge = new ToolsBridge(this.options.state, this.tools)
     await this.bridge.start()

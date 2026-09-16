@@ -12,6 +12,8 @@ import { LocalDesktopTools, type DesktopTools } from '../desktop/desktop-tools.j
 import { approveSystem } from './policy.js'
 import { systemExec } from './system.js'
 import { proposeMemory } from './memory.js'
+import type { CollaborationClient } from '../teams/client.js'
+import { COLLABORATION_SUMMARIES, collaborationTools, isCollaborationTool } from '../teams/tools.js'
 
 const empty = z.strictObject({})
 const ref = { ref: z.number().int().positive(), observationId: z.string().uuid() }
@@ -100,7 +102,9 @@ export class ToolRegistry {
     private files: FileService,
     target: BrowserSession | DesktopTools,
     private context: () => ToolContext,
-    private mode: () => 'ask' | 'full-vm'
+    private mode: () => 'ask' | 'full-vm',
+    /** Present only when this runtime can collaborate; otherwise no team tool exists. */
+    private collaboration?: CollaborationClient
   ) {
     this.tools = target instanceof BrowserSession ? new LocalDesktopTools(target, files) : target
   }
@@ -109,11 +113,16 @@ export class ToolRegistry {
     this.observationKind = undefined
   }
   list() {
-    return Object.entries(schemas).map(([name, schema]) => ({
-      name,
-      description: descriptions[name as keyof typeof schemas],
-      inputSchema: z.toJSONSchema(schema),
-    }))
+    return [
+      ...Object.entries(schemas).map(([name, schema]) => ({
+        name,
+        description: descriptions[name as keyof typeof schemas],
+        inputSchema: z.toJSONSchema(schema),
+      })),
+      // Collaboration tools belong to the turn, not to the runtime: outside a team task
+      // this list is empty and the names do not exist.
+      ...(this.collaboration ? collaborationTools(this.collaboration) : []),
+    ]
   }
   call(turnId: string, requestId: string, name: string, args: unknown): Promise<ToolResult> {
     const key = turnId + ':' + requestId
@@ -147,7 +156,9 @@ export class ToolRegistry {
     const summary = (
       name === 'browser_navigate' && args && typeof args === 'object' && 'url' in args
         ? 'Abrindo a página ' + String(args.url)
-        : (summaries[name as keyof typeof schemas] ?? 'Ferramenta desconhecida')
+        : isCollaborationTool(name)
+          ? COLLABORATION_SUMMARIES[name]
+          : (summaries[name as keyof typeof schemas] ?? 'Ferramenta desconhecida')
     ).slice(0, 400)
     hooks.emit({ kind: 'tool.started', summary, detail: { name, requestId } })
     let result: ToolResult
@@ -159,6 +170,13 @@ export class ToolRegistry {
     signal.addEventListener('abort', cancelBrowser, { once: true })
     try {
       signal.throwIfAborted()
+      if (isCollaborationTool(name)) {
+        if (!this.collaboration) throw runtimeError('TEAM_UNAVAILABLE', 'Collaboration is not available in this environment')
+        // The Host validates origin, stage, membership, grants and budget again.
+        const value = await this.collaboration.call(name, (args ?? {}) as Record<string, unknown>)
+        signal.removeEventListener('abort', cancelBrowser)
+        return this.finish(record, hooks, summary, { content: [{ type: 'text', text: JSON.stringify(value) }] })
+      }
       if (!Object.hasOwn(schemas, name)) throw runtimeError('UNKNOWN_TOOL', 'Tool is not in the allowlist')
       const schema = schemas[name as keyof typeof schemas]
       const parsed = schema.parse(args ?? {}) as Record<string, unknown>
