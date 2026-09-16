@@ -41,6 +41,13 @@ export const READ_ONLY_METHODS = [
 export const SAMPLE_CSV = 'produto,valor\ncaneta,120\ncaderno,340\nmochila,774\n'
 export const SAMPLE_TOTAL = 1234
 export const TASK = `Some a coluna "valor" do arquivo compartilhado e escreva uma recomendação curta. Responda com o total exato.`
+/**
+ * A request the coordinator is expected to split, because the person asked for the work to be
+ * distributed. The small task above is legitimately answered alone; this one exercises the
+ * delegation path end to end instead of hoping the model decides to use it.
+ */
+export const DELEGATION_TASK =
+  'Distribua este trabalho entre a equipe: peça a outro membro que confira a soma da coluna "valor" do arquivo compartilhado e escreva a recomendação. Depois consolide a resposta dele, informando o total exato.'
 
 export function guardTeamLab(config, method, flags) {
   if (READ_ONLY_METHODS.includes(method)) return
@@ -222,33 +229,52 @@ export async function smoke(session, options = {}) {
   const shared = await session.request('team.artifacts.transferFinish', { transferId: upload.transferId })
   steps.push({ step: 'artifact.shared', digest: shared.artifact?.digest?.slice(0, 12) })
 
-  const receipt = await session.request('team.messages.send', {
-    teamId,
-    clientMessageId: randomUUID(),
-    content: TASK,
-    artifactIds: shared.artifact ? [shared.artifact.artifactId ?? shared.artifact.id] : [],
-  })
-  const run = await until(
-    () => session.request('team.run.get', { runId: receipt.run.id }),
-    (value) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(value.status),
-    options.timeoutMs ?? 600_000
-  )
-  const work = await session.request('team.tasks.list', { runId: run.id })
-  const page = await session.request('team.messages.list', { teamId, limit: 50 })
-  const answer = page.messages.filter((message) => message.kind === 'answer')
-  // Arithmetic is checked against the known sample, not against the model's claim.
-  const arithmetic = answer.some((message) => message.content.includes(String(SAMPLE_TOTAL)))
+  const artifactId = shared.artifact ? (shared.artifact.artifactId ?? shared.artifact.id) : undefined
+  /** Sends one request and waits for its durable outcome, then reports what actually happened. */
+  const workOn = async (content, label) => {
+    const answersBefore = (await session.request('team.messages.list', { teamId, limit: 50 })).messages.filter((message) => message.kind === 'answer').length
+    const receipt = await session.request('team.messages.send', {
+      teamId,
+      clientMessageId: randomUUID(),
+      content,
+      artifactIds: artifactId ? [artifactId] : [],
+    })
+    const run = await until(
+      () => session.request('team.run.get', { runId: receipt.run.id }),
+      (value) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(value.status),
+      options.timeoutMs ?? 600_000
+    )
+    const work = await session.request('team.tasks.list', { runId: run.id })
+    const page = await session.request('team.messages.list', { teamId, limit: 50 })
+    const answers = page.messages.filter((message) => message.kind === 'answer')
+    const workers = work.tasks.filter((task) => task.kind === 'work')
+    steps.push({
+      step: label,
+      status: run.status,
+      delegatedTasks: workers.length,
+      // Members that actually received a turn, which is what proves work left the coordinator.
+      membersWorked: [...new Set(workers.map((task) => task.assigneeBotId))].length,
+      physicalTurns: run.budget.turns,
+      // Arithmetic is checked against the known sample, not against the model's claim.
+      arithmetic: answers.slice(answersBefore).some((message) => message.content.includes(String(SAMPLE_TOTAL))),
+      // Exactly one consolidated answer per request, never one per member.
+      singleAnswer: answers.length === answersBefore + 1,
+      // Unknown token usage stays unknown; the lab never reports it as zero.
+      tokens: run.budget.tokensObserved ? { input: run.budget.inputTokens, output: run.budget.outputTokens } : 'unknown',
+    })
+    return { run, workers }
+  }
+  // A small request the coordinator may legitimately answer alone.
+  const direct = await workOn(TASK, 'run.direct')
+  // A request the person explicitly asked to be split: this exercises real delegation.
+  const delegated = await workOn(DELEGATION_TASK, 'run.delegated')
   steps.push({
-    step: 'run.finished',
-    status: run.status,
-    tasks: work.tasks.filter((task) => task.kind === 'work').length,
-    physicalTurns: run.budget.turns,
-    answers: answer.length,
-    arithmetic,
-    // Unknown token usage stays unknown; the lab never reports it as zero.
-    tokens: run.budget.tokensObserved ? { input: run.budget.inputTokens, output: run.budget.outputTokens } : 'unknown',
+    step: 'delegation.exercised',
+    ok: delegated.workers.length > 0,
+    // With two bots this proves delegation, never two workers running at the same time.
+    concurrencyProven: false,
   })
-  steps.push({ step: 'single.answer', ok: answer.length === 1 })
+  const run = delegated.run.status === 'succeeded' ? delegated.run : direct.run
   const finalInventory = await session.request('vm.list', { includeRetained: false })
   steps.push({ step: 'computers.intact', ok: finalInventory.length === before.computers.length })
   return { teamId, runId: run.id, status: run.status, steps }

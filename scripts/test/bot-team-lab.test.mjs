@@ -131,6 +131,9 @@ test('doctor reports readiness once the configured bots are ready and idle', asy
 
 test('an authorized smoke proves the arithmetic and leaves the computers untouched', async () => {
   const digest = 'a'.repeat(64)
+  // A Host that answers each request once, so the smoke can tell the two runs apart.
+  const answers = [{ kind: 'request', content: 'pedido' }]
+  let runs = 0
   const session = fakeSession(
     authorized,
     {
@@ -143,10 +146,14 @@ test('an authorized smoke proves the arithmetic and leaves the computers untouch
       'team.artifacts.transferBegin': { transferId: 't-1' },
       'team.artifacts.transferChunk': { offset: SAMPLE_CSV.length, done: true },
       'team.artifacts.transferFinish': { artifact: { id: 'art-1', artifactId: 'art-1', digest } },
-      'team.messages.send': { run: { id: 'run-1' } },
+      'team.messages.send': () => {
+        answers.push({ kind: 'answer', content: `O total é ${SAMPLE_TOTAL}.` })
+        return { run: { id: `run-${++runs}` } }
+      },
       'team.run.get': { id: 'run-1', status: 'succeeded', budget: { turns: 4, tokensObserved: false } },
-      'team.tasks.list': { tasks: [{ kind: 'work' }, { kind: 'work' }] },
-      'team.messages.list': { messages: [{ kind: 'request', content: 'pedido' }, { kind: 'answer', content: `O total é ${SAMPLE_TOTAL}.` }] },
+      // The first request is answered by the coordinator alone; the second is delegated.
+      'team.tasks.list': () => (runs > 1 ? { tasks: [{ kind: 'planning', assigneeBotId: a }, { kind: 'work', assigneeBotId: b }] } : { tasks: [{ kind: 'planning', assigneeBotId: a }] }),
+      'team.messages.list': () => ({ messages: answers }),
     },
     ['--authorize-team-smoke']
   )
@@ -155,11 +162,20 @@ test('an authorized smoke proves the arithmetic and leaves the computers untouch
   assert.equal(report.status, 'succeeded')
   assert.equal(step('inventory.unchanged').ok, true)
   assert.equal(step('computers.intact').ok, true)
-  assert.equal(step('single.answer').ok, true)
+  // One consolidated answer per request, never one per member.
+  assert.equal(step('run.direct').singleAnswer, true)
+  assert.equal(step('run.delegated').singleAnswer, true)
+  // Answering alone is valid for a small task; the delegated request really left the coordinator.
+  assert.equal(step('run.direct').delegatedTasks, 0)
+  assert.equal(step('run.delegated').delegatedTasks, 1)
+  assert.equal(step('run.delegated').membersWorked, 1)
+  assert.equal(step('delegation.exercised').ok, true)
+  // Two bots prove delegation, never two workers running at the same time.
+  assert.equal(step('delegation.exercised').concurrencyProven, false)
   // The arithmetic is checked against the known sample, not against the model's claim.
-  assert.equal(step('run.finished').arithmetic, true)
+  assert.equal(step('run.direct').arithmetic, true)
   // Unknown token usage stays unknown instead of being reported as zero.
-  assert.equal(step('run.finished').tokens, 'unknown')
+  assert.equal(step('run.direct').tokens, 'unknown')
   // The lab never turns a computer off, removes it or archives a bot.
   for (const forbidden of ['vm.shutdown', 'vm.remove', 'vm.restart', 'bot.archive', 'environment.prepare'])
     assert.ok(!session.calls.includes(forbidden), forbidden)
