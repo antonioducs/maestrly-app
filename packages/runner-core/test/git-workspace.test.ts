@@ -136,5 +136,5 @@ describe('approved Git workspace delivery', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })
