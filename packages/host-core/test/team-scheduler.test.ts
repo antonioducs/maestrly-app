@@ -206,3 +206,35 @@ it.skipIf(skip)('stops only this run when the person stops the team', async () =
   const carlaBot = await lab.call('bot.inspect', { botId: carla.id })
   expect(carlaBot.status).toBe('ready')
 })
+
+it.skipIf(skip)('stops a run whose task never reached a bot, instead of hanging in cancelling', async () => {
+  const { lab, ana, bruno, team } = await trio()
+  const csv = Buffer.from('produto,valor\na,10\n')
+  lab.guest(ana.id).files.set('dados.csv', csv)
+  await lab.call('team.artifacts.share', { teamId: team.id, idempotencyKey: 'share-stuck', botId: ana.id, path: 'dados.csv' })
+  const artifact = (await lab.call('team.artifacts.list', { teamId: team.id }))[0]
+  // The guest refuses to receive the copy, exactly as a real one does when it dislikes the request.
+  lab.connector.handler = (method) => {
+    if (method === 'files.write') throw new Error('RUNTIME_PROTOCOL')
+    return undefined
+  }
+  const receipt = await ask(lab, team.id, 'trabalho travado', [artifact.id])
+  // The task asks for attention without ever becoming a turn: nothing is running on any bot.
+  const stuck = await until(
+    async () => (await lab.call('team.tasks.list', { runId: receipt.run.id })).tasks[0],
+    (task: any) => task?.status === 'needs_attention'
+  )
+  expect(stuck.attention).toBeTruthy()
+  expect((await lab.call('team.tasks.list', { runId: receipt.run.id })).turns).toHaveLength(0)
+  expect((await lab.call('bot.inspect', { botId: ana.id })).activeTurnId).toBeUndefined()
+
+  const current = await runOf(lab, receipt.run.id)
+  await lab.call('team.run.cancel', { runId: receipt.run.id, expectedRevision: current.revision, idempotencyKey: 'stop-stuck' })
+  // Stopping has to reach a terminal result: a task with nothing to stop ends with the run.
+  const stopped = await until(() => runOf(lab, receipt.run.id), (value: any) => value.status === 'cancelled')
+  expect(stopped.status).toBe('cancelled')
+  expect((await lab.call('team.tasks.list', { runId: receipt.run.id })).tasks[0].status).toBe('cancelled')
+  // The conversation is free again: the person can ask for something else right away.
+  expect((await lab.call('team.inspect', { teamId: team.id })).activeRun).toBeNull()
+  expect((await lab.call('bot.inspect', { botId: bruno.id })).status).toBe('ready')
+})

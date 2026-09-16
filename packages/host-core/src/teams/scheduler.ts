@@ -608,7 +608,13 @@ export class TeamScheduler {
         continue
       }
       const attempt = [...this.deps.teams.attempts(task.id)].reverse().find((candidate) => !candidate.settled)
-      if (!attempt) continue
+      // No unsettled attempt: this task never reached a bot (it was waiting, staging files or
+      // asking for attention), so nothing is running to stop and it ends here. Leaving it active
+      // would keep the run in `cancelling` forever, since finishing waits for every active task.
+      if (!attempt) {
+        this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'cancelled', attention: undefined, revision: task.revision + 1, updatedAt: now() }))
+        continue
+      }
       const turn = this.deps.bots.turn(attempt.turnId)
       if (TURN_TERMINAL.has(turn.status)) {
         this.settle(turn)
