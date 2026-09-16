@@ -11,6 +11,7 @@ import {
 import { inspectRepositories } from '@maestrly/runner-core'
 import { getWorkspace, getConversation, patchConvUiPrefs } from '../store'
 import { observeChatHost } from '../chat/host-events'
+import { lastConversationContextMessage } from '../chat/chat-store'
 import { registerRemoteChatPolicy, withRemoteChatPolicy, type RemoteChatPolicy } from '../chat/remote-policy'
 import { listMcpServers } from '../chat/mcp'
 import { listSkills } from '../chat/skills'
@@ -48,6 +49,14 @@ export function projectChatContextText(
   session: Pick<ProjectChatSession, 'projectId' | 'boardId' | 'cardId' | 'baseBranch'>
 ): string {
   return `You are participating in a persistent Kanban project chat. Project: ${session.projectId}. Board context: ${session.boardId ?? 'all project boards'}. Card context: ${session.cardId ?? 'none'}. Code base: ${session.baseBranch}. Use the scoped board tools to inspect current work, search completed/archived cards and follow card IDs. When the user authorizes a board change, perform the actual mutation with the scoped board tools. Read current records and versions before changing them; use board_automation_catalog to discover valid agents, skills, models and automation options instead of inventing IDs. Supply a stable idempotencyKey per change and reuse it on retries. In Ask or Plan mode, inspect and explain only; mutations are denied. Verify persisted state with the read tools before reporting completion. Use project memory and enabled skills when relevant. Questions, permissions and plan reviews are answered by the person in the web chat. Never assume a completed answer means a card is done.\n\n`
+}
+export function projectChatPrompt(
+  conversationId: string,
+  session: Pick<ProjectChatSession, 'projectId' | 'boardId' | 'cardId' | 'baseBranch'>,
+  prompt: string
+): string {
+  // Persisted history also covers resumed sessions and retries after worker restarts.
+  return lastConversationContextMessage(conversationId) ? prompt : projectChatContextText(session) + prompt
 }
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const terminalError = (e: unknown) => [401, 403, 404, 409].includes((e as { status?: number }).status ?? 0)
@@ -377,9 +386,8 @@ export class ProjectChatWorker {
                 decision.feedback
         }
       }
-      const contextText = projectChatContextText(session)
       handle = await withRemoteChatPolicy(policy, () =>
-        this.host.start(conversationId, contextText + prompt, abort.signal)
+        this.host.start(conversationId, projectChatPrompt(conversationId, session, prompt), abort.signal)
       )
       if (abort.signal.aborted) handle.cancel()
       const result = await handle.done
