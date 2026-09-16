@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../src/shared/chat'
 import {
   estimateNativeSeedContextTokens,
   estimatePortableContextTokens,
+  estimateTextTokens,
   portableContextLoad,
   portableContextOutputReserveTokens,
   portableContextReserveTokens,
@@ -12,7 +13,12 @@ import {
   type PortableSummaryCallResult,
   type PortableSummaryProgress,
 } from '../../src/main/chat/portable-context'
-import { openAINativeCompactionMarkerPart } from '../../src/main/chat/message'
+import {
+  nativeSeedContextText,
+  openAINativeCompactionMarkerPart,
+  renderNativeSeedTranscript,
+  renderTranscript,
+} from '../../src/main/chat/message'
 
 function message(id: string, role: 'user' | 'assistant', text: string, createdAt: number): ChatMessage {
   return {
@@ -53,7 +59,7 @@ describe('portable context', () => {
     expect(estimatePortableContextTokens([prefix, marker, suffix])).toBeLessThan(100)
   })
 
-  it('projects native reseeding with the same limits applied to tool outputs', () => {
+  it('projects complete native tool outputs without silent clipping', () => {
     const toolHeavy: ChatMessage = {
       id: 'assistant-tool-heavy',
       conversationId: 'conversation',
@@ -65,14 +71,57 @@ describe('portable context', () => {
           toolCallId: 'tool-call',
           toolName: 'bash',
           input: { command: 'huge-output' },
-          state: { status: 'completed', output: 'x'.repeat(1_200_000) },
+          state: { status: 'completed', output: 'x'.repeat(600_000) + 'TOOL-MIDDLE' + 'y'.repeat(600_000) },
         },
       ],
       createdAt: 1,
     }
 
     expect(estimatePortableContextTokens([toolHeavy])).toBeGreaterThan(390_000)
-    expect(estimateNativeSeedContextTokens([toolHeavy])).toBeLessThan(6_000)
+    const transcript = renderNativeSeedTranscript([toolHeavy])
+    expect(transcript).toContain('x'.repeat(600_000) + 'TOOL-MIDDLE' + 'y'.repeat(600_000))
+    expect(transcript).not.toContain('truncated')
+    expect(estimateNativeSeedContextTokens([toolHeavy])).toBeGreaterThan(400_000)
+    expect(estimateNativeSeedContextTokens([toolHeavy])).toBe(estimateTextTokens(nativeSeedContextText(transcript)))
+    expect(renderTranscript([toolHeavy])).toContain('tool output truncated for compaction')
+  })
+
+  it('retains the middle of large active histories and estimates the full wrapped seed', () => {
+    const text = 'a'.repeat(500_000) + 'TEXT-MIDDLE' + '終'.repeat(500_000)
+    const history = [message('large', 'user', text, 1)]
+    const transcript = renderNativeSeedTranscript(history)
+    expect(transcript).toBe('User: ' + text)
+    expect(estimateNativeSeedContextTokens(history)).toBe(
+      Math.ceil(Buffer.byteLength(nativeSeedContextText('User: ' + text), 'utf8') / 3)
+    )
+  })
+
+  it('preserves available skill bodies while excluding reasoning and opaque native checkpoints', () => {
+    const active = message('active', 'user', 'visible', 2)
+    active.parts.push(
+      { type: 'skill-invocation', id: 'skill', name: 'deploy', args: 'prod', body: 'STORED SKILL BODY' },
+      { type: 'reasoning', id: 'reasoning', text: 'PRIVATE REASONING' },
+      openAINativeCompactionMarkerPart('native')
+    )
+    const history = [message('before-native', 'assistant', 'still portable', 1), active]
+    const transcript = renderNativeSeedTranscript(history)
+    expect(transcript).toContain('still portable')
+    expect(transcript).toContain('visible')
+    expect(transcript).toContain('[invoked skill /deploy prod]\nSTORED SKILL BODY')
+    expect(transcript).not.toContain('PRIVATE REASONING')
+    expect(renderTranscript(history)).not.toContain('STORED SKILL BODY')
+  })
+
+  it('seeds only the current summary and suffix after portable compaction without mutating history', () => {
+    const compacted = message('compacted', 'assistant', 'obsolete', 2)
+    compacted.parts.push(
+      { type: 'compaction', id: 'summary', text: 'current summary' },
+      { type: 'text', id: 'suffix', text: 'active suffix' }
+    )
+    const history = [message('old', 'user', 'old prefix', 1), compacted]
+    const snapshot = structuredClone(history)
+    expect(renderNativeSeedTranscript(history)).toBe('Previous summary:\ncurrent summary\n\nAssistant: active suffix')
+    expect(history).toEqual(snapshot)
   })
 
   it('splits without losing or duplicating the middle', () => {

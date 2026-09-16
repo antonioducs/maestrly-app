@@ -929,6 +929,66 @@ describe('Claude official chat runner', () => {
   })
   afterEach(closeDb)
 
+  it('preserves full transferred history and tool output in the native request', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    const historyText = 'a'.repeat(450_000) + 'MIDDLE_HISTORY_SENTINEL' + 'z'.repeat(450_000)
+    const toolOutput =
+      'tool output: '.repeat(1_500) + 'MIDDLE_TOOL_SENTINEL' + 'more output: '.repeat(1_500) + 'END_TOOL'
+    upsertChatMessage({
+      id: 'prior',
+      conversationId: conversation.id,
+      role: 'assistant',
+      createdAt: 1,
+      parts: [
+        { type: 'text', id: 'prior-text', text: historyText },
+        {
+          type: 'tool',
+          id: 'prior-tool',
+          toolCallId: 'prior-call',
+          toolName: 'read',
+          input: {},
+          state: { status: 'completed', output: toolOutput },
+        },
+      ],
+    })
+    upsertChatMessage({
+      id: 'current',
+      conversationId: conversation.id,
+      role: 'user',
+      createdAt: 2,
+      parts: [{ type: 'text', id: 'current-text', text: 'Continue' }],
+    })
+    const manager = new StreamingTextManager()
+    await runClaudeChat({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      cwd: '/repo',
+      selection: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus-5' },
+      mode: 'ask',
+      permMode: 'ask',
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      broker: { assert: vi.fn(), on: vi.fn() } as never,
+      questionBroker: { ask: vi.fn() } as never,
+      emit: vi.fn(),
+      signal: new AbortController().signal,
+    })
+    const structured = (
+      await (
+        manager.calls[0].prompt as AsyncIterable<{
+          message: { content: Array<{ text?: string }> }
+        }>
+      )
+        [Symbol.asyncIterator]()
+        .next()
+    ).value
+    const prompt = structured.message.content.map((p: { text?: string }) => p.text ?? '').join('')
+    expect(prompt.length).toBeGreaterThan(800_000)
+    expect(prompt.includes(historyText)).toBe(true)
+    expect(prompt.includes(toolOutput)).toBe(true)
+  })
+
   it.each([
     'agent',
     'design',
@@ -3374,6 +3434,24 @@ describe('Claude account rotation', () => {
     expect(run.b.received[0]).toContain('Finish the existing work.')
     expect(run.events.filter((event) => event.kind === 'message-start')).toHaveLength(1)
     expect(run.events.filter((event) => event.kind === 'finish')).toHaveLength(1)
+  })
+
+  it.each(['unavailable', 'empty'] as const)('blocks overfull failover when compaction is %s', async (failure) => {
+    const run = await setupRotation(quotaAfterTool)
+    run.targetB.contextWindow = 24_000
+    run.effect.mockResolvedValue('recorded-effect '.repeat(5_000))
+    await runClaudeChat({
+      ...run.args,
+      ...(failure === 'empty' ? { compactHistory: async () => ({ summary: '' }) } : {}),
+    })
+    expect(run.b.manager.createQuery).not.toHaveBeenCalled()
+    expect(run.resolve.mock.calls.every(([input]) => input.admit === false)).toBe(true)
+    expect(run.events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('compaction'),
+      })
+    )
   })
 
   it('compacts the full checkpoint before admitting a smaller fallback', async () => {

@@ -26,3 +26,18 @@ all stages finish successfully; original messages remain in visible history.
 These observations and progress states are saved with messages. Existing
 conversations remain readable; older messages without observations use the
 existing context estimate until the runtime reports a new sample.
+
+When a provider change requires a fresh native session, Maestrly transfers the
+available active conversation as text, including stored tool results and skill
+instructions. It no longer cuts the middle of the transcript or caps each tool
+result just to make the transfer smaller. Previous successful portable summaries
+remain context boundaries; provider-private reasoning and session state cannot
+be transferred between providers.
+
+The next-request estimate covers this complete transfer. If it exceeds the
+destination's admission budget, Maestrly first summarizes the history and checks
+the result again. Codex also has a 1,048,576-character text-input limit, which
+includes the imported history and pending message; exceeding that limit also
+triggers compaction. A failed compaction blocks the request and preserves the
+original history. A fresh Codex transfer is blocked if its context window is
+unknown. Token estimates can differ from the provider's actual count.

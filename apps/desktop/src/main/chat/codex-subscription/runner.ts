@@ -44,10 +44,10 @@ import {
   droppedImageText,
   nativeSeedContextText,
   renderNativeSeedTranscript,
-  renderTranscript,
 } from '../message'
 import { estimateTextTokens, portableContextLoad, type PortableSummaryProgress } from '../portable-context'
 import { createContextProgressPublisher, type ContextSample } from '../context-progress'
+import { CODEX_TRANSFER_MAX_CHARACTERS } from '../native-transfer'
 import { redactTokens } from '../../pii-scrub'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
@@ -590,8 +590,9 @@ function positiveContextWindow(value: unknown): number {
   return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : 0
 }
 
-/** Checks the bounded text sent to a fresh Codex thread against Maestrly's shared 90% admission policy. */
+/** Checks the full text sent to a fresh Codex thread against Maestrly's shared 90% admission policy. */
 function replayFitsContextWindow(transcript: string, pendingText: string, contextWindow: number): boolean {
+  if (nativeSeedContextText(transcript).length + pendingText.length + 2 > CODEX_TRANSFER_MAX_CHARACTERS) return false
   if (contextWindow <= 0) return true
   const load = portableContextLoad(
     contextWindow,
@@ -1019,7 +1020,17 @@ function currentUserInputs(message: ChatMessage, seedTranscript: string, dropIma
       text.push(`${label}:\n\n${part.data}`)
     }
   }
-  if (text.length) inputs.unshift(codexTextInput(text.join('\n\n')))
+  if (text.length) {
+    const inputText = text.join('\n\n')
+    // The runtime rejects strings above this limit. Multiple input blocks are not known to bypass it.
+    // Stop before dispatch rather than silently discard history.
+    if (inputText.length > CODEX_TRANSFER_MAX_CHARACTERS) {
+      throw new Error(
+        'Codex input exceeds the 1,048,576-character transport limit. Compact the conversation before retrying; no history was truncated.'
+      )
+    }
+    inputs.unshift(codexTextInput(inputText))
+  }
   return inputs
 }
 
@@ -4855,9 +4866,7 @@ export async function runCodexSubscriptionChat(
     }
     args.signal.addEventListener('abort', onAbort, { once: true })
     try {
-      // Finite limits: tool outputs use the default 16k cap; total transcript stays well below the API's
-      // 1,048,576-character limit, leaving room for system prompt, current message, and attachments. INFINITY here
-      // broke a production conversation ("Input exceeds the maximum length of 1048576 characters.").
+      // Preserve the full portable history; transport limits are checked without clipping below.
       const seedTranscript = seeded ? renderNativeSeedTranscript(history.slice(0, -1)) : ''
       let input = currentUserInputs(currentUser, seedTranscript, currentDropImages)
       if (!input.length) input.push(codexTextInput('(continue)'))
@@ -4953,7 +4962,6 @@ export async function runCodexSubscriptionChat(
           throw error
         }
 
-        const previousPortableContextWindow = portableContextWindow
         applyTarget(next)
         notifyEffectiveTargetChanged(next)
 
@@ -4961,26 +4969,19 @@ export async function runCodexSubscriptionChat(
 
         const useOriginalInput = !hasAssistantOutput()
         const failoverContextWindow = targetEffectiveContextWindow(next)
-        const failoverNarrowedContext =
-          failoverContextWindow != null &&
-          (previousPortableContextWindow <= 0 || failoverContextWindow < previousPortableContextWindow)
         let seedTranscript = ''
         let continuationTranscript = ''
         if (!useOriginalInput) {
-          continuationTranscript = renderTranscript([...history, messages[0]], {
-            maxToolOutputChars: 16_000,
-            maxChars: 800_000,
-          })
+          continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
         } else {
           // A failover always creates a fresh thread. Even when the original attempt resumed a native thread,
           // the fallback account cannot see that server-side history and must receive the portable seed.
           seedTranscript = renderNativeSeedTranscript(history.slice(0, -1))
         }
         const pendingReplayText = useOriginalInput
-          ? renderTranscript([currentUser], { maxToolOutputChars: 16_000, maxChars: 800_000 })
+          ? renderNativeSeedTranscript([currentUser])
           : PORTABLE_CONTINUE_PROMPT
         const replayNeedsCompaction =
-          failoverNarrowedContext &&
           failoverContextWindow != null &&
           !replayFitsContextWindow(
             useOriginalInput ? seedTranscript : continuationTranscript,
@@ -5022,10 +5023,7 @@ export async function runCodexSubscriptionChat(
             if (useOriginalInput) {
               seedTranscript = renderNativeSeedTranscript([...history.slice(0, -1), messages[0]])
             } else {
-              continuationTranscript = renderTranscript([...history, messages[0]], {
-                maxToolOutputChars: 16_000,
-                maxChars: 800_000,
-              })
+              continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
             }
             if (
               replayNeedsCompaction &&
@@ -5440,10 +5438,7 @@ export async function runCodexSubscriptionChat(
           conv: args.conversationId,
         })
 
-        const continuationTranscript = renderTranscript([...history, messages[0]], {
-          maxToolOutputChars: 16_000,
-          maxChars: 800_000,
-        })
+        const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
         const continueMessage: ChatMessage = {
           id: randomUUID(),
           conversationId: args.conversationId,

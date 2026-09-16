@@ -64,7 +64,7 @@ export function estimatePortableContextTokens(messages: readonly ChatMessage[]):
   return tokens
 }
 
-/** Estimates the bounded textual payload used to seed a fresh native runtime session/thread. */
+/** Estimates the complete textual payload, including its wrapper, used to seed a fresh native runtime session/thread. */
 export function estimateNativeSeedContextTokens(messages: readonly ChatMessage[]): number {
   const transcript = renderNativeSeedTranscript(messages)
   return estimateTextTokens(nativeSeedContextText(transcript))

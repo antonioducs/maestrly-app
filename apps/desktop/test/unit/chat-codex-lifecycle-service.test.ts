@@ -61,7 +61,7 @@ const h = vi.hoisted(() => {
     retryCleanup: vi.fn(async () => []),
     clearAllBindings: vi.fn(() => 0),
     getBinding: vi.fn(() => state.binding),
-    summarizeCodex: vi.fn(async () => ({ text: 'portable summary' })),
+    summarizeCodex: vi.fn(async (_args: { prompt: string }) => ({ text: 'portable summary' })),
     emitAccountUpdated: () => accountUpdated?.(),
   }
 })
@@ -104,6 +104,7 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { MAESTRLY_ULTRA_EFFORT } from '../../src/shared/chat'
 import { addProvider, getProviderKind } from '../../src/main/chat/catalog'
 import { clearApiKey, setApiKey } from '../../src/main/chat/credentials'
+import { renderNativeSeedTranscript } from '../../src/main/chat/message'
 import { buildOpenAIProviderFingerprint } from '../../src/main/chat/provider'
 
 type Handler = (event: any, ...args: any[]) => unknown
@@ -431,6 +432,182 @@ describe('Codex lifecycle chat IPC integration', () => {
       conversation.id,
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
+  })
+
+  describe('Claude Opus to Codex Luna transfer admission', () => {
+    const middleMarker = 'KEEP-MIDDLE-DECISION-7f31'
+    const toolMarker = 'KEEP-TOOL-RESULT-8b42'
+
+    async function prepare(contextWindow?: number, halfCharacters = 750_000) {
+      const handlers = register()
+      const conversation = makeConversation(makeWorkspace().id)
+      const source = { providerId: 'builtin_claude_subscription', modelId: 'claude-opus' }
+      patchConvUiPrefs(conversation.id, { chat: source })
+      upsertChatMessage({
+        id: 'transfer-user',
+        conversationId: conversation.id,
+        role: 'user',
+        createdAt: 1,
+        parts: [
+          { type: 'text', id: 'request', text: 'a'.repeat(halfCharacters) + middleMarker + 'b'.repeat(halfCharacters) },
+        ],
+      })
+      upsertChatMessage({
+        id: 'transfer-assistant',
+        conversationId: conversation.id,
+        role: 'assistant',
+        createdAt: 2,
+        model: source,
+        // The old provider's small measured occupancy cannot authorize this fresh seed.
+        usage: {
+          usageVersion: 2,
+          input: 100,
+          output: 10,
+          contextInput: 100,
+          contextOutput: 10,
+          modelContextWindow: 1_000_000,
+        },
+        parts: [
+          {
+            type: 'tool',
+            id: 'read',
+            toolCallId: 'read',
+            toolName: 'read_file',
+            input: { path: 'synthetic.txt' },
+            state: {
+              status: 'completed',
+              output: 'tool before '.repeat(1_700) + toolMarker + 'tool after '.repeat(1_700),
+            },
+          },
+        ],
+      })
+      h.manager.getStatus.mockResolvedValue({
+        state: 'ready',
+        available: true,
+        connected: true,
+        authenticated: true,
+        account: { type: 'chatgpt', email: 'synthetic@example.test', planType: 'pro' },
+        requiresOpenaiAuth: true,
+        runtime: null,
+        error: null,
+      })
+      h.manager.listModels.mockResolvedValue([
+        {
+          id: 'gpt-luna',
+          model: 'gpt-luna',
+          contextWindow,
+          supportedReasoningEfforts: [],
+          serviceTiers: [],
+          legacySpeedTiers: [],
+          inputModalities: ['text'],
+        },
+      ])
+      h.manager.getClient.mockResolvedValue({})
+      expect(
+        await handlers.get('chat:set-selection')?.({}, conversation.id, {
+          providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+          modelId: 'gpt-luna',
+        })
+      ).toEqual({ ok: true })
+      const send = () =>
+        handlers.get('chat:send')?.(
+          { sender: { isDestroyed: () => false, send: vi.fn() } },
+          { conversationId: conversation.id, text: 'Continue from the complete transcript' }
+        )
+      return { handlers, conversation, send }
+    }
+
+    it('admits a fitting full seed above 800k characters with middle decisions and tool results intact', async () => {
+      const { handlers, conversation, send } = await prepare(1_000_000, 450_000)
+      const stats = (await handlers.get('chat:history:stats')?.({}, conversation.id)) as any
+      expect(stats.contextProjection).toMatchObject({ source: 'portable-transcript', quality: 'estimated' })
+      expect(stats.contextProjection.usedTokens).toBeGreaterThan(310_000)
+      let seed = ''
+      h.runCodex.mockImplementationOnce(async (args) => {
+        seed = renderNativeSeedTranscript(listChatMessages(args.conversationId))
+        expect(args.selection).toEqual({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-luna' })
+        return { planSubmitted: false, threadId: 'transfer-thread' }
+      })
+      expect(await send()).toEqual({ ok: true })
+      await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
+      expect(seed.length).toBeGreaterThan(930_000)
+      expect(seed).toContain(middleMarker)
+      expect(seed).toContain(toolMarker)
+      expect(h.summarizeCodex).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      500_000, 1_000_000,
+    ])('compacts the entire seed exceeding token or transport capacity (%i window)', async (window) => {
+      const { conversation, send } = await prepare(window)
+      h.summarizeCodex.mockImplementation(async () => {
+        expect(h.runCodex).not.toHaveBeenCalled()
+        expect(listChatMessages(conversation.id)).toHaveLength(2)
+        return { text: 'portable summary' }
+      })
+      expect(await send()).toEqual({ ok: true })
+      await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
+      const prompts = h.summarizeCodex.mock.calls.map(([args]) => args.prompt).join('')
+      expect(prompts).toContain(middleMarker)
+      expect(prompts).toContain(toolMarker)
+      const rows = listChatMessages(conversation.id)
+      const marker = rows.findIndex((row) => row.parts.some((part) => part.type === 'compaction'))
+      const pending = rows.findIndex((row) =>
+        row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
+      )
+      expect(marker).toBeGreaterThan(0)
+      expect(pending).toBeGreaterThan(marker)
+      expect(rows[marker].model).toEqual({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-luna' })
+      const seed = renderNativeSeedTranscript(rows)
+      expect(seed).toContain('portable summary')
+      expect(seed.length).toBeLessThan(10_000)
+    })
+
+    it('blocks a failed transfer compaction without changing transcript parts or saving pending input', async () => {
+      const { conversation, send } = await prepare(500_000)
+      const original = listChatMessages(conversation.id).map(({ id, parts }) => ({ id, parts }))
+      h.summarizeCodex.mockRejectedValue(Object.assign(new Error('Synthetic summary rejection'), { status: 400 }))
+      expect(await send()).toEqual({ ok: false, error: 'context-compaction-failed' })
+      expect(h.runCodex).not.toHaveBeenCalled()
+      expect(listChatMessages(conversation.id).map(({ id, parts }) => ({ id, parts }))).toEqual(original)
+      expect(hDiag.chatDiag).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'preflight-compact-failed',
+          source: 'portable-transcript',
+          overflow: true,
+          reserveTokens: expect.any(Number),
+          admitted: false,
+        })
+      )
+    })
+
+    it.each([
+      500_000, 1_000_000,
+    ])('blocks a summary still exceeding token or transport capacity (%i window)', async (window) => {
+      const { conversation, send } = await prepare(window)
+      h.summarizeCodex.mockImplementation(async ({ prompt }) => ({
+        text: prompt.startsWith('Summary group') ? 's'.repeat(1_500_000) : 'Small intermediate summary',
+      }))
+      expect(await send()).toEqual({ ok: false, error: 'context-overflow' })
+      expect(h.runCodex).not.toHaveBeenCalled()
+      expect(
+        listChatMessages(conversation.id).some((row) => row.parts.some((part) => part.type === 'compaction'))
+      ).toBe(true)
+      expect(
+        listChatMessages(conversation.id).some((row) =>
+          row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
+        )
+      ).toBe(false)
+    })
+
+    it('blocks a transfer when the destination window is unknown without modifying history', async () => {
+      const { conversation, send } = await prepare()
+      const original = listChatMessages(conversation.id)
+      expect(await send()).toEqual({ ok: false, error: 'context-overflow' })
+      expect(h.runCodex).not.toHaveBeenCalled()
+      expect(h.summarizeCodex).not.toHaveBeenCalled()
+      expect(listChatMessages(conversation.id)).toEqual(original)
+    })
   })
 
   it('blocks oversized sends when portable compaction fails', async () => {

@@ -41,7 +41,7 @@ import { chatDiag } from '../diag-log'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { describeEphemeralToolImage } from '../image-interpreter'
 import { adaptToolSetForModel } from '../tool-capabilities'
-import { clipPersistedToolOutput, renderTranscript } from '../message'
+import { clipPersistedToolOutput, renderNativeSeedTranscript } from '../message'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
@@ -1353,8 +1353,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       }
       currentAttemptUsageArchived = true
     }
-    const fullTranscript = (): string =>
-      renderTranscript([...history, messages[0]], { maxToolOutputChars: Number.POSITIVE_INFINITY })
+    const fullTranscript = (): string => renderNativeSeedTranscript([...history, messages[0]])
     const performFailover = async (error: unknown): Promise<boolean> => {
       if (args.signal.aborted || state.planSubmitted || switchingAccount) return false
       if (!accountAttempt) return false
@@ -1800,10 +1799,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             const delegations = await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
             for (const delegation of delegations) markDelegationObserved(delegation.id)
             persist()
-            const continuationTranscript = renderTranscript([...history, messages[0]], {
-              maxToolOutputChars: 16_000,
-              maxChars: 800_000,
-            })
+            const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
             const guardMessage: ChatMessage = {
               id: randomUUID(),
               conversationId: args.conversationId,
@@ -1963,10 +1959,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           )
           .digest('hex')
 
-        const continuationTranscript = renderTranscript([...history, messages[0]], {
-          maxToolOutputChars: 16_000,
-          maxChars: 800_000,
-        })
+        const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
         const continueMessage: ChatMessage = {
           id: randomUUID(),
           conversationId: args.conversationId,

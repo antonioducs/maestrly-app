@@ -631,6 +631,66 @@ describe('Codex subscription runner', () => {
   })
   afterEach(closeDb)
 
+  it('stops before dispatch when the full input exceeds the Codex transport limit', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'prior', 'a'.repeat(1_048_577), 1)
+    persistUser(conversation.id, 'current', 'Continue', 2)
+    const client = new FakeCodexClient()
+    const emitted: ChatStreamEvent[] = []
+    await runCodexSubscriptionChat(
+      runArgs(conversation.id, workspace.id, conversation.cwd, client, (e) => emitted.push(e))
+    )
+    expect(client.startTurnCalls).toHaveLength(0)
+    expect(emitted).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        message: expect.stringContaining('transport limit'),
+      })
+    )
+  })
+
+  it('preserves full transferred history and tool output in the native request', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    const historyText = 'a'.repeat(450_000) + 'MIDDLE_HISTORY_SENTINEL' + 'z'.repeat(450_000)
+    const toolOutput =
+      'tool output: '.repeat(1_500) + 'MIDDLE_TOOL_SENTINEL' + 'more output: '.repeat(1_500) + 'END_TOOL'
+    upsertChatMessage({
+      id: 'prior',
+      conversationId: conversation.id,
+      role: 'assistant',
+      createdAt: 1,
+      parts: [
+        { type: 'text', id: 'prior-text', text: historyText },
+        {
+          type: 'tool',
+          id: 'prior-tool',
+          toolCallId: 'prior-call',
+          toolName: 'read',
+          input: {},
+          state: { status: 'completed', output: toolOutput },
+        },
+      ],
+    })
+    upsertChatMessage({
+      id: 'current',
+      conversationId: conversation.id,
+      role: 'user',
+      createdAt: 2,
+      parts: [{ type: 'text', id: 'current-text', text: 'Continue' }],
+    })
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'full-seed', notifications: [completedNotification('thread_1', 'full-seed')] })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    const prompt = (client.startTurnCalls[0] as { input: Array<{ text?: string }> }).input
+      .map((p) => p.text ?? '')
+      .join('')
+    expect(prompt.length).toBeGreaterThan(800_000)
+    expect(prompt.includes(historyText)).toBe(true)
+    expect(prompt.includes(toolOutput)).toBe(true)
+  })
+
   it('propagates deferLoading by effective origin and preserves bridge > app > MCP precedence and dispatch', async () => {
     const makeTool = (source: string) =>
       tool({
@@ -6709,6 +6769,56 @@ describe('Codex subscription runner', () => {
       }
     }
 
+    it.each(['fits', 'tokens', 'transport'])('preserves a full failover continuation (%s)', async (limit) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      const historyText = 'a'.repeat(450_000) + 'MIDDLE_HISTORY_SENTINEL' + 'z'.repeat(450_000)
+      persistUser(conversation.id, 'prior', historyText, 1)
+      persistUser(conversation.id, 'current', 'Continue', 2)
+      const clientA = new FakeCodexClient()
+      const clientB = new FakeCodexClient()
+      codexManagerBridge.setClient(clientB, 'acc_b')
+      clientA.queueTurn({
+        turnId: 'failed',
+        notifications: [
+          {
+            method: 'item/agentMessage/delta',
+            params: {
+              threadId: 'thread_1',
+              turnId: 'failed',
+              itemId: 'partial',
+              delta: limit === 'transport' ? 'Partial output'.repeat(20_000) : 'Partial output',
+            },
+          },
+          completedNotification('thread_1', 'failed', 'failed', 'UsageLimitExceeded: weekly'),
+        ],
+      })
+      clientB.queueTurn({ turnId: 'replay', notifications: [completedNotification('thread_1', 'replay')] })
+      const emitted: ChatStreamEvent[] = []
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, clientA, (e) => emitted.push(e))
+      // Equal windows must still check the full replay, including output from the interrupted turn.
+      args.contextWindow = limit === 'tokens' ? 100_000 : 1_000_000
+      args.failoverChain = [PRIMARY, FALLBACK]
+      args.resolveNextTarget = vi.fn(async () => failoverTarget(clientB, FALLBACK, 'acc_b', args.contextWindow))
+      await runCodexSubscriptionChat(args)
+      if (limit !== 'fits') {
+        expect(clientB.startThreadCalls).toHaveLength(0)
+        expect(clientB.startTurnCalls).toHaveLength(0)
+        expect(emitted).toContainEqual(
+          expect.objectContaining({
+            kind: 'error',
+            message: expect.stringContaining('compaction is unavailable'),
+          })
+        )
+      } else {
+        const prompt = (clientB.startTurnCalls[0] as { input: Array<{ text?: string }> }).input
+          .map((p) => p.text ?? '')
+          .join('')
+        expect(prompt.includes(historyText)).toBe(true)
+        expect(prompt).toContain('Partial output')
+      }
+    })
+
     it('quota before output switches to B with one bubble and binding accountId B', async () => {
       const workspace = makeWorkspace()
       const conversation = makeConversation(workspace.id, {})
@@ -6845,7 +6955,7 @@ describe('Codex subscription runner', () => {
         expect(assistant.contextSnapshot?.usedTokens).toBe(810)
         clientA.emit(nativeItem('item/completed', 'turn_auto_a'))
         return {
-          ...failoverTarget(clientB, FALLBACK, 'acc_b', 1_000),
+          ...failoverTarget(clientB, FALLBACK, 'acc_b', 100_000),
           model: astraRuntimeModel(),
           runtimeModelId: 'gpt-6-astra',
         }
