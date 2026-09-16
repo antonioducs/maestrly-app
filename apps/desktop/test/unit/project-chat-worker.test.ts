@@ -11,10 +11,31 @@ import {
   chatConversation,
 } from '../../src/main/platform/project-chat-store'
 import { publicChatText } from '../../src/main/platform/project-chat-projection'
-import { projectChatPreferences, projectChatContextText } from '../../src/main/platform/project-chat-worker'
+import {
+  projectChatPreferences,
+  projectChatContextText,
+  projectChatPrompt,
+} from '../../src/main/platform/project-chat-worker'
+import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { desktopExecutorSettingsSchema } from '../../src/main/platform/executor-settings'
 beforeEach(freshDb)
 afterEach(closeDb)
+it('prefixes only the first message, using persisted conversation history', () => {
+  const conv = makeConversation(makeWorkspace().id)
+  const session = { projectId: 'project', boardId: 'board', cardId: null, baseBranch: 'main' }
+  const first = projectChatPrompt(conv.id, session, 'Create columns')
+  expect(first).toBe(projectChatContextText(session) + 'Create columns')
+  upsertChatMessage({
+    id: crypto.randomUUID(),
+    conversationId: conv.id,
+    role: 'user',
+    createdAt: Date.now(),
+    parts: [{ id: 'text', type: 'text', text: first }],
+  })
+  expect(projectChatPrompt(conv.id, session, 'Now add a card')).toBe('Now add a card')
+  const other = makeConversation(conv.workspaceId)
+  expect(projectChatPrompt(other.id, session, 'Hello')).toBe(projectChatContextText(session) + 'Hello')
+})
 it('journals admission and unacknowledged events and reuses the native conversation identity', () => {
   const conv = makeConversation(makeWorkspace().id)
   bindChatConversation('instance', 'remote', conv.id)
