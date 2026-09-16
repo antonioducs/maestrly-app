@@ -49,6 +49,17 @@ operador. Sem Mac mini, `node scripts/verify-bot-desktop.mjs --local-container` 
 `--local-vm` validam a pilha em contêiner e em VM Linux local sem rede
 ([tela ao vivo](bot-runtime/live-desktop.md)).
 
+## Equipes de bots (fase 4)
+
+- `npm run lab:bot:teams` — inventário **somente leitura**: bots, computadores, se o Host anuncia
+  `teams.v1` e se a equipe configurada pode rodar. Não cria, não prepara e não apaga nada. Num Host
+  anterior à fase 4 ele reporta `teams: false` em vez de falhar.
+- `node scripts/bot-team-lab.mjs smoke --authorize-team-smoke` — prova ponta a ponta. Exige, no
+  `.maestrly-host-lab.json` privado, `allowTeamSmoke: true` e `teamBotIds` com os **identificadores
+  exatos** dos bots que podem formar a equipe de teste. O laboratório nunca escolhe "o primeiro bot
+  livre", nunca cria bot ou conta e nunca desliga um computador. Ele compartilha um CSV sintético,
+  pede um relatório e **confere a aritmética e os digests**, em vez de acreditar no texto do modelo.
+
 Relatórios ficam em `.host-lab/bot-*/` e `.host-lab/desktop-lab-*/` (ignorados pelo Git). O laboratório não executa reboot
 físico, não altera cotas, não instala pacotes no controlador e não copia credenciais.
 

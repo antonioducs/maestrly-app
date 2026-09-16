@@ -31,6 +31,9 @@ interrompe o bot; o computador que executa a VM precisa continuar ligado.
   Outros Hosts cadastrados usam vínculos explícitos e revogáveis. O login usa o fluxo oficial
   de dispositivo; a chave de API é alternativa explícita, enviada pelo canal privado sem journal.
   Veja [autenticação compartilhada](bot-runtime/shared-accounts.md).
+- Vários bots podem formar uma **equipe** que recebe um pedido só e devolve um resultado
+  consolidado, com delegação em lotes, compartilhamento explícito e controle humano preservado.
+  Veja [equipes de bots](bot-runtime/teams.md).
 - Permissões: `ask` (recomendado: usuário Linux não-root, workspace, aprovações para ações elevadas,
   novos destinos e exclusões protegidas) e `full-vm` (controle administrativo completo dentro da VM,
   confirmação explícita, sem acesso ao Host nem alteração de egress). Nenhuma delas é isolamento

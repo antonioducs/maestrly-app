@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { record, sshArguments, validateConfig } from './host-lab.mjs'
 
 export const HOST_COMMAND = '/Library/MaestrlyHost/bin/maestrly-host'
@@ -149,8 +150,9 @@ export async function loadConfig(directory = process.cwd()) {
 export async function doctor(session) {
   const host = await session.request('host.inspect', {})
   const bots = await session.request('bot.list', { includeArchived: false })
-  const teams = await session.request('team.list', { includeArchived: false })
   const supported = host.capabilities.includes('teams.v1')
+  // An older Host has no team namespace at all: report that instead of failing.
+  const teams = supported ? await session.request('team.list', { includeArchived: false }) : []
   let target
   let blocker
   try {
@@ -272,7 +274,8 @@ export async function main(argv, deps = {}) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare real paths: a repository path with spaces is percent-encoded in import.meta.url.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2))
     .then((report) => console.log(JSON.stringify(report, null, 2)))
     .catch((error) => {

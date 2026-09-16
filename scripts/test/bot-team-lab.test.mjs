@@ -90,6 +90,22 @@ test('doctor only reads, reports the blocker and never mutates anything', async 
   assert.ok(session.calls.every((method) => READ_ONLY_METHODS.includes(method)))
 })
 
+test('doctor degrades honestly on a Host that predates teams', async () => {
+  const session = fakeSession(authorized, {
+    // No teams.v1: the team namespace does not exist on this Host at all.
+    'host.inspect': { id: 'host-1', serviceVersion: '0.2.0', capabilities: ['bot.runtime.v1', 'desktop.live.v1'] },
+    'bot.list': [ready(a, 'Ana'), ready(b, 'Bruno')],
+    'vm.list': [{ id: 'vm-1', state: 'running', health: 'ready' }],
+    'bot.inspect': ({ botId }) => ready(botId, 'X'),
+  })
+  const report = await doctor(session)
+  assert.equal(report.host.teams, false)
+  assert.equal(report.ready, false)
+  // It reports instead of failing, and never asks an older Host for a team method.
+  assert.ok(!session.calls.includes('team.list'))
+  assert.equal(report.computers.length, 1)
+})
+
 test('doctor reports readiness once the configured bots are ready and idle', async () => {
   const session = fakeSession(authorized, {
     'host.inspect': { id: 'host-1', serviceVersion: '0.3.0', capabilities: ['teams.v1'] },
