@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { toolOutputImages } from '../../src/shared/chat'
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
+import { linkedBoardCatalog } from '../../src/main/platform/board-tool-catalog'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 
 function namedTool(description: string) {
   return tool({
@@ -18,6 +21,27 @@ function namedTool(description: string) {
 }
 
 describe('Claude in-process MCP bridge', () => {
+  it('publishes the board catalog through the actual SDK MCP tools/list transport', async () => {
+    const tools: ToolSet = Object.fromEntries(
+      linkedBoardCatalog.map(({ name, description, schema }) => [
+        name,
+        tool({ description, inputSchema: schema, execute: async () => 'ok' }),
+      ])
+    )
+    const bridge = await buildClaudeToolBridge(tools, new AbortController().signal)
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'claude-schema-regression', version: '1' })
+    try {
+      await bridge.server.instance.connect(serverTransport)
+      await client.connect(clientTransport)
+      const listed = await client.listTools()
+      expect(listed.tools.map(({ name }) => name).sort()).toEqual(linkedBoardCatalog.map(({ name }) => name).sort())
+    } finally {
+      await client.close()
+      await bridge.server.instance.close()
+    }
+  })
+
   it('qualifies Maestrly tools, aliases native names and blocks competing Claude mechanisms', async () => {
     const tools: ToolSet = {
       read: namedTool('Read through the Maestrly permission broker.'),

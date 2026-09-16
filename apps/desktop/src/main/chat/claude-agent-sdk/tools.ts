@@ -9,7 +9,9 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { Tool as AiTool, ToolSet } from 'ai'
-import { z } from 'zod'
+// The SDK bundles its own Zod v4 serializer, which is incompatible with newer
+// external v4 schema internals. Its supported v3 bridge avoids that coupling.
+import { z } from 'zod/v3'
 import {
   modelOutputToChatToolOutput,
   stripToolOutputMetadata,
@@ -144,7 +146,7 @@ function jsonSchemaToZod(raw: unknown): z.ZodType {
         shape[name] = required.has(name) ? converted : converted.optional()
       }
       const object = z.object(shape)
-      result = schema.additionalProperties === false ? object.strict() : object.loose()
+      result = schema.additionalProperties === false ? object.strict() : object.passthrough()
       break
     }
   }
