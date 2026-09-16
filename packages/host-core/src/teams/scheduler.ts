@@ -441,7 +441,11 @@ export class TeamScheduler {
     const tasks = this.deps.teams.tasks(run.id)
     const active = tasks.filter((task) => TEAM_TASK_ACTIVE.has(task.status))
     if (run.status === 'cancelling') {
-      if (!active.length) this.finish(run, 'cancelled', run.summary ?? '', 'Trabalho interrompido por você.')
+      // A task with nothing left running cannot stop by itself. Ending it here also recovers a
+      // Host that restarted mid-cancellation, which would otherwise wait for it forever.
+      const pending = active.filter((task) => this.stoppable(task))
+      for (const task of active.filter((task) => !this.stoppable(task))) this.endUnstarted(task)
+      if (!pending.length) this.finish(run, 'cancelled', run.summary ?? '', 'Trabalho interrompido por você.')
       return
     }
     const coordination = tasks.find((task) => task.localKey === coordinatorKey(run.round) && task.kind !== 'work')
@@ -585,6 +589,23 @@ export class TeamScheduler {
     this.event({ teamId: finished.teamId, runId: finished.id, kind: 'run.status', summary: this.runSummary(status), detail: { status, tasks: this.deps.teams.tasks(finished.id).length } })
   }
 
+  /** The attempt that may still be running for this task, if the Host ever started one. */
+  private unsettled(task: TeamTask) {
+    return [...this.deps.teams.attempts(task.id)].reverse().find((candidate) => !candidate.settled)
+  }
+  /**
+   * A task the Host can still ask a bot to stop: it has a live attempt, and a member a person is
+   * driving is already stopped — taking its desktop away to cancel would be a second harm.
+   */
+  private stoppable(task: TeamTask) {
+    return task.status !== 'paused_human' && !!this.unsettled(task)
+  }
+  /** Ends a task that never produced work, without inventing a result for it. */
+  private endUnstarted(task: TeamTask) {
+    this.deps.teams.transaction(() =>
+      this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'cancelled', attention: undefined, revision: task.revision + 1, updatedAt: now() })
+    )
+  }
   /**
    * Stopping a team records the intent first, so no new delegation or admission is accepted,
    * then cancels only the turns of this run. The VM stays on, other bots keep working, and a
@@ -598,23 +619,17 @@ export class TeamScheduler {
     const tasks = this.deps.teams.tasks(runId)
     for (const task of tasks) {
       if (task.status === 'planned') {
-        this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'cancelled', revision: task.revision + 1, updatedAt: now() }))
+        this.endUnstarted(task)
         continue
       }
       if (!TEAM_TASK_ACTIVE.has(task.status)) continue
-      // A paused member is already stopped; taking its desktop away would be a second harm.
-      if (task.status === 'paused_human') {
-        this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'cancelled', revision: task.revision + 1, updatedAt: now() }))
+      // Nothing left to ask a bot to stop: a paused member is already stopped, and a task that
+      // never reached one has no turn at all. Both end here instead of holding the run open.
+      if (!this.stoppable(task)) {
+        this.endUnstarted(task)
         continue
       }
-      const attempt = [...this.deps.teams.attempts(task.id)].reverse().find((candidate) => !candidate.settled)
-      // No unsettled attempt: this task never reached a bot (it was waiting, staging files or
-      // asking for attention), so nothing is running to stop and it ends here. Leaving it active
-      // would keep the run in `cancelling` forever, since finishing waits for every active task.
-      if (!attempt) {
-        this.deps.teams.transaction(() => this.deps.teams.saveTask({ ...this.deps.teams.task(task.id), status: 'cancelled', attention: undefined, revision: task.revision + 1, updatedAt: now() }))
-        continue
-      }
+      const attempt = this.unsettled(task)!
       const turn = this.deps.bots.turn(attempt.turnId)
       if (TURN_TERMINAL.has(turn.status)) {
         this.settle(turn)

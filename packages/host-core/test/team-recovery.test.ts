@@ -1,5 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { HostService } from '../src/index.js'
 import { ask, collaborate, createTeam, finishTurn, runOf, taskOf, teamBot, teamLab, turnOf, until, waitRunning, type TeamLab } from './team-helpers.js'
@@ -132,4 +134,43 @@ it.skipIf(skip)('never lets a repeated human request open a second run', async (
   })
   expect((await lab.call('team.messages.list', { teamId: team.id })).messages).toHaveLength(1)
   void taskOf
+})
+
+it.skipIf(skip)('finishes a cancellation that was interrupted by a Host restart', async () => {
+  const lab = await teamLab()
+  labs.push(lab)
+  const ana = await teamBot(lab, 'Ana')
+  const bruno = await teamBot(lab, 'Bruno', ana.vmId)
+  const team = (await createTeam(lab, { name: 'Parada', members: [{ botId: ana.id, coordinator: true }, { botId: bruno.id }] })).team
+  const csv = Buffer.from('produto,valor\na,10\n')
+  lab.guest(ana.id).files.set('dados.csv', csv)
+  await lab.call('team.artifacts.share', { teamId: team.id, idempotencyKey: 'share-restart', botId: ana.id, path: 'dados.csv' })
+  const artifact = (await lab.call('team.artifacts.list', { teamId: team.id }))[0]
+  // The guest refuses the copy, so the task asks for attention without ever becoming a turn.
+  lab.connector.handler = (method) => {
+    if (method === 'files.write') throw new Error('RUNTIME_PROTOCOL')
+    return undefined
+  }
+  const receipt = await ask(lab, team.id, 'trabalho a parar', [artifact.id])
+  await until(
+    async () => (await lab.call('team.tasks.list', { runId: receipt.run.id })).tasks[0],
+    (task: any) => task?.status === 'needs_attention'
+  )
+  // The Host goes down between recording the intent to stop and finishing it.
+  const run = await runOf(lab, receipt.run.id)
+  await lab.service.close()
+  const db = new DatabaseSync(join(lab.dir, 'host.sqlite'))
+  const row = db.prepare('SELECT body FROM team_runs WHERE id=?').get(run.id) as { body: string }
+  const durable = { ...JSON.parse(row.body), status: 'cancelling', revision: run.revision + 1 }
+  db.prepare('UPDATE team_runs SET status=?, body=? WHERE id=?').run('cancelling', JSON.stringify(durable), run.id)
+  db.close()
+
+  const call = await restart(lab)
+  // Recovery has to complete the stop instead of waiting forever for a task with nothing running.
+  const stopped = await until(() => call('team.run.get', { runId: run.id }), (value: any) => value.status === 'cancelled', 15_000)
+  expect(stopped.status).toBe('cancelled')
+  expect((await call('team.tasks.list', { runId: run.id })).tasks[0].status).toBe('cancelled')
+  // The conversation is usable again and the bots were never touched.
+  expect((await call('team.inspect', { teamId: team.id })).activeRun).toBeNull()
+  expect((await call('bot.inspect', { botId: bruno.id })).status).toBe('ready')
 })
