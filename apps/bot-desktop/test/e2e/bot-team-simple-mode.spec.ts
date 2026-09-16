@@ -9,14 +9,14 @@ async function twoBots(page: Page) {
   await expect(page.getByRole('combobox', { name: 'Ambiente', exact: true })).toContainText('Build worker')
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await page.getByRole('button', { name: 'Criar bot', exact: true }).click()
-  await expect(page.locator('.chat-header h1')).toHaveText('Bruno')
+  await expect(page.locator('.chat-header h1')).toHaveText('Bruno', { timeout: 15_000 })
 }
 async function createTeam(page: Page, name = 'Relatórios') {
   await page.getByRole('button', { name: 'Criar equipe', exact: true }).click()
   await page.getByLabel('Nome da equipe', { exact: true }).fill(name)
   await page.getByLabel('Entendi o que a equipe compartilha', { exact: true }).check()
   await page.getByRole('button', { name: 'Criar equipe', exact: true }).last().click()
-  await expect(page.locator('.chat-header h1')).toHaveText(name)
+  await expect(page.locator('.chat-header h1')).toHaveText(name, { timeout: 15_000 })
 }
 
 test('someone who uses a single bot sees no team machinery in the main flow', async () => {

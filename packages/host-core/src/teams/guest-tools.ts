@@ -14,7 +14,7 @@ import type { TeamAccess } from './access.js'
 import type { TeamArtifacts } from './artifacts.js'
 import type { TeamMemories } from './memory.js'
 import { remainingOf, toolsFor } from './context.js'
-import { TeamRepository, now } from './repository.js'
+import { type TeamRepository, now } from './repository.js'
 import type { TeamScheduler } from './scheduler.js'
 
 const canonical = (value: unknown): string => {

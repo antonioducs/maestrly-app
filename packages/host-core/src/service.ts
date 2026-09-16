@@ -309,7 +309,7 @@ export class HostService {
     )
     return {
       id: this.hostId,
-      serviceVersion: '0.2.0',
+      serviceVersion: '0.3.0',
       protocolVersion: 1,
       capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY, TEAM_HOST_CAPABILITY, 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
       health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',

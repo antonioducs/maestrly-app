@@ -58,7 +58,7 @@ export class TeamAccess {
 
   member(teamId: string, botId: string): TeamMember {
     const member = this.teams.member(teamId, botId)
-    if (!member || !member.active) throw new HostError('TEAM_NOT_MEMBER', 'Este bot não participa desta equipe')
+    if (!member?.active) throw new HostError('TEAM_NOT_MEMBER', 'Este bot não participa desta equipe')
     return member
   }
 

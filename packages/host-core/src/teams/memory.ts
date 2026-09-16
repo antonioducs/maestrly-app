@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { type TeamMemory } from '@maestrly/host-protocol'
+import type { TeamMemory } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
-import { TeamRepository, now } from './repository.js'
+import { type TeamRepository, now } from './repository.js'
 
 /**
  * Team memory is versioned text owned by the person. A bot can only propose; a proposal is

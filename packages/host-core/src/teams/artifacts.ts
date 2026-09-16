@@ -14,7 +14,7 @@ import { HostError } from '../errors.js'
 import type { GuestSession } from '../guest/session.js'
 import type { BotRepository } from '../bots/repository.js'
 import { workspacePath } from '../bots/files.js'
-import { TeamRepository, now } from './repository.js'
+import { type TeamRepository, now } from './repository.js'
 
 /** Names that reach a guest workspace are generated, never echoed from a model or a path. */
 export function safeName(value: string): string {

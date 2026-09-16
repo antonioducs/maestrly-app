@@ -1,5 +1,5 @@
 {
-  "name": "@maestrly/guest-transport", "version": "0.1.0", "private": true, "type": "module", "license": "MIT",
+  "name": "@maestrly/guest-transport", "version": "0.2.0", "private": true, "type": "module", "license": "MIT",
   "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc --noEmit", "test": "vitest run" },
   "dependencies": { "@maestrly/host-protocol": "0.2.0" },

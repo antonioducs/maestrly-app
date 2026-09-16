@@ -15,8 +15,8 @@ import { now as botNow } from '../bots/repository.js'
 import type { BotTurns, ContinuationScope } from '../bots/turns.js'
 import type { RuntimeCoordinator } from '../bots/runtime-coordinator.js'
 import { buildTeamContext, effectivePermissionMode, stageOf, teamInstructions } from './context.js'
-import type { TeamBudgets, TurnReservation } from './budgets.js'
-import { TeamRepository, now } from './repository.js'
+import type { TeamBudgets } from './budgets.js'
+import { type TeamRepository, now } from './repository.js'
 
 /**
  * A run keeps one coordination thread and one thread per worker task. The identifiers are

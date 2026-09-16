@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/bot-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Local Maestrly VM host console",
   "author": "Maestrly contributors",
@@ -15,7 +15,8 @@
     "test:unit": "vitest run",
     "test:e2e": "npm run build && playwright test",
     "check": "npm run typecheck && npm test && npm run build",
-    "package:lab": "node ../../scripts/package-bot-lab.mjs"
+    "package:lab": "node ../../scripts/package-bot-lab.mjs",
+    "test:e2e:teams": "playwright test test/e2e/bot-teams.spec.ts test/e2e/bot-team-simple-mode.spec.ts test/e2e/bot-team-handoff.spec.ts"
   },
   "dependencies": {
     "@maestrly/host-protocol": "0.2.0",

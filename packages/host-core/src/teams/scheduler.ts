@@ -20,7 +20,7 @@ import type { TeamAccess } from './access.js'
 import type { TeamArtifacts } from './artifacts.js'
 import type { TeamBudgets } from './budgets.js'
 import { dependencyState, runOutcome, taskStatusForTurn, validateBatch } from './reducer.js'
-import { TeamRepository, now } from './repository.js'
+import { type TeamRepository, now } from './repository.js'
 import type { TeamSharing } from './sharing.js'
 import type { TeamTurnAdapter } from './turn-adapter.js'
 
@@ -412,7 +412,7 @@ export class TeamScheduler {
     const team = this.deps.teams.team(run.teamId)
     if (team.status === 'archived') return 'A equipe foi arquivada.'
     const member = this.deps.teams.member(run.teamId, task.assigneeBotId)
-    if (!member || !member.active) return 'Este bot não participa mais da equipe.'
+    if (!member?.active) return 'Este bot não participa mais da equipe.'
     if (member.grantRevision !== run.memberGrantRevision) return 'A composição da equipe mudou durante o trabalho.'
     if (this.deps.coordinator.held(task.assigneeBotId)) return 'wait'
     const bot = this.deps.bots.bot(task.assigneeBotId)

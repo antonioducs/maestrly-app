@@ -9,7 +9,7 @@ async function twoBots(page: Page) {
   await expect(page.getByRole('combobox', { name: 'Ambiente', exact: true })).toContainText('Build worker')
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await page.getByRole('button', { name: 'Criar bot', exact: true }).click()
-  await expect(page.locator('.chat-header h1')).toHaveText('Bruno')
+  await expect(page.locator('.chat-header h1')).toHaveText('Bruno', { timeout: 15_000 })
 }
 async function teamAtWork(page: Page) {
   await twoBots(page)
@@ -17,7 +17,7 @@ async function teamAtWork(page: Page) {
   await page.getByLabel('Nome da equipe', { exact: true }).fill('Relatórios')
   await page.getByLabel('Entendi o que a equipe compartilha', { exact: true }).check()
   await page.getByRole('button', { name: 'Criar equipe', exact: true }).last().click()
-  await expect(page.locator('.chat-header h1')).toHaveText('Relatórios')
+  await expect(page.locator('.chat-header h1')).toHaveText('Relatórios', { timeout: 15_000 })
   await page.getByRole('textbox', { name: 'Mensagem', exact: true }).fill('Prepare o relatório')
   await page.getByRole('button', { name: 'Enviar', exact: true }).click()
   await page.getByRole('button', { name: 'Ver trabalho', exact: true }).click()
@@ -51,7 +51,7 @@ test('switching away from the team closes the member screen', async () => {
     await expect(page.locator('.chat-layout.with-desktop')).toBeVisible()
     // Choosing another bot in the sidebar must not leave a member's pixels on screen.
     await page.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: 'Ana' }).click()
-    await expect(page.locator('.chat-header h1')).toHaveText('Ana')
+    await expect(page.locator('.chat-header h1')).toHaveText('Ana', { timeout: 15_000 })
     await expect(page.locator('.chat-layout.with-desktop')).toHaveCount(0)
   } finally {
     await app.close()

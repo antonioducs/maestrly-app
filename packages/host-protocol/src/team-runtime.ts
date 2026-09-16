@@ -14,9 +14,10 @@ import {
 
 /**
  * Private collaboration lane between a working guest and the Host, carried on the same
- * authenticated control channel as turns and account renewal but discriminated apart from
- * them. The Host derives the acting bot, team and run from the session it authenticated
- * and the turn it registered: a model-supplied source, role or team never selects anything.
+ * control channel as turns and account renewal but discriminated apart from them. The Host
+ * derives the acting bot, team and run from the authenticated session the frame arrived on
+ * and from the turn it registered: a model-supplied source, role or team never selects
+ * anything, which is why no such field exists in this contract at all.
  */
 export const COLLABORATION_METHODS = [
   'team_members',

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { TeamArtifact, TeamArtifactGrant, TeamRun, TeamTask } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
-import { TeamArtifacts, deliveryPath } from './artifacts.js'
-import { TeamRepository, now } from './repository.js'
+import { type TeamArtifacts, deliveryPath } from './artifacts.js'
+import { type TeamRepository, now } from './repository.js'
 
 /**
  * Turns an authorization into delivered copies. A grant is created before anything is

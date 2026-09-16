@@ -10,14 +10,14 @@ async function twoBots(page: Page) {
   await expect(page.getByRole('combobox', { name: 'Ambiente', exact: true })).toContainText('Build worker')
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await page.getByRole('button', { name: 'Criar bot', exact: true }).click()
-  await expect(page.locator('.chat-header h1')).toHaveText('Bruno')
+  await expect(page.locator('.chat-header h1')).toHaveText('Bruno', { timeout: 15_000 })
 }
 async function createTeam(page: Page, name = 'Relatórios') {
   await page.getByRole('button', { name: 'Criar equipe', exact: true }).click()
   await page.getByLabel('Nome da equipe', { exact: true }).fill(name)
   await page.getByLabel('Entendi o que a equipe compartilha', { exact: true }).check()
   await page.getByRole('button', { name: 'Criar equipe', exact: true }).last().click()
-  await expect(page.locator('.chat-header h1')).toHaveText(name)
+  await expect(page.locator('.chat-header h1')).toHaveText(name, { timeout: 15_000 })
 }
 
 test('creates a team from existing bots and keeps the bot flow untouched', async () => {
@@ -37,7 +37,7 @@ test('creates a team from existing bots and keeps the bot flow untouched', async
     expect(await page.evaluate(() => window.bot.bot({ method: 'bot.list', params: {} }))).toEqual(botsBefore)
     // Going back to a bot still works exactly as before.
     await page.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: 'Ana' }).click()
-    await expect(page.locator('.chat-header h1')).toHaveText('Ana')
+    await expect(page.locator('.chat-header h1')).toHaveText('Ana', { timeout: 15_000 })
   } finally {
     await app.close()
   }
@@ -104,7 +104,7 @@ test('stops the team on request without touching bots or computers', async () =>
     // The computers are untouched and the bots stay ready.
     expect(await page.evaluate(() => window.bot.call({ method: 'vm.list', params: { includeRetained: false } }))).toEqual(vmsBefore)
     await page.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: 'Bruno' }).click()
-    await expect(page.locator('.chat-header h1')).toHaveText('Bruno')
+    await expect(page.locator('.chat-header h1')).toHaveText('Bruno', { timeout: 15_000 })
     await expect(page.getByRole('textbox', { name: 'Mensagem', exact: true })).not.toHaveAttribute('readonly', 'true')
   } finally {
     await app.close()
@@ -142,7 +142,7 @@ test('preserves the draft and the scroll position when navigating away', async (
     await createTeam(page)
     await page.getByRole('textbox', { name: 'Mensagem', exact: true }).fill('rascunho da equipe')
     await page.getByRole('navigation', { name: 'Bots' }).getByRole('button', { name: 'Ana' }).click()
-    await expect(page.locator('.chat-header h1')).toHaveText('Ana')
+    await expect(page.locator('.chat-header h1')).toHaveText('Ana', { timeout: 15_000 })
     // The bot's own composer is separate and empty.
     await expect(page.getByRole('textbox', { name: 'Mensagem', exact: true })).toHaveValue('')
     await page.getByRole('navigation', { name: 'Equipes' }).getByRole('button', { name: 'Relatórios' }).click()

@@ -51,7 +51,7 @@ export class FixtureHost {
     const active = this.vms.filter((v) => v.state !== 'removed')
     return {
       id: 'd9a02e5b-0c12-4411-9393-b5106ecff181',
-      serviceVersion: '0.2.0',
+      serviceVersion: '0.3.0',
       protocolVersion: 1,
       capabilities: this.options.noBots
         ? ['fixture']
