@@ -1,12 +1,15 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { cpus, totalmem } from 'node:os'
-import { lstat, mkdir, open, rename, chmod, chown, readFile, statfs } from 'node:fs/promises'
+import { access, lstat, mkdir, open, rename, chmod, chown, readFile, statfs } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { SessionDriver } from './supervisor.js'
+import { DESKTOP_HANDOFF_CAPABILITY, DESKTOP_LIVE_CAPABILITY, desktopGenerationSchema } from '@maestrly/host-protocol'
+import type { SessionDriver, UnitState } from './supervisor.js'
 import type { SessionRecord } from './catalog.js'
 import { sessionDropIn, sessionPaths, sessionSlice } from './session-profile.js'
+import { probeVnc } from '../desktop/vnc-server.js'
 
 const execute = promisify(execFile)
 async function command(path: string, args: string[]) {
@@ -29,6 +32,22 @@ export async function writeOwned(path: string, bytes: string, mode = 0o644) {
   await rename(temp, path)
   const parent = await open(dirname(path), 'r')
   try { await parent.sync() } finally { await parent.close() }
+}
+const SERVICES_TEMPLATES = ['/etc/systemd/system/maestrly-bot-desktop-services@.service', '/etc/systemd/system/maestrly-bot-desktop-services@.socket']
+function unitState(value: string): UnitState {
+  if (value === 'active') return 'running'
+  if (['inactive', 'failed'].includes(value)) return 'stopped'
+  return 'unknown'
+}
+/** `systemctl show a b c --property=Id,ActiveState`: one block per unit, matched by Id. */
+export function parseUnitStates(stdout: string, units: string[]): UnitState[] {
+  const states = new Map<string, string>()
+  for (const block of stdout.split(/\n\s*\n/)) {
+    const id = /^Id=(.+)$/m.exec(block)?.[1]?.trim()
+    const state = /^ActiveState=(.*)$/m.exec(block)?.[1]?.trim()
+    if (id && state !== undefined) states.set(id, state)
+  }
+  return units.map((unit) => unitState(states.get(unit) ?? ''))
 }
 export class SystemdSessionDriver implements SessionDriver {
   constructor(private endpoints: (record: SessionRecord) => Promise<void>) {
@@ -69,37 +88,90 @@ export class SystemdSessionDriver implements SessionDriver {
       await writeOwned(join(p.state, 'installed.json'), JSON.stringify({ version: installed.version }), 0o600)
       await chown(join(p.state, 'installed.json'), uid, gid)
     }
-    await writeOwned(`/etc/systemd/system/${p.slice}`, sessionSlice(prepared))
-    await writeOwned(`/etc/systemd/system/${p.runtimeUnit}.d/session.conf`, sessionDropIn(prepared, false))
-    await writeOwned(`/etc/systemd/system/${p.desktopUnit}.d/session.conf`, sessionDropIn(prepared, true))
-    await command('/bin/systemctl', ['daemon-reload'])
+    await this.writeUnits(prepared)
     await this.endpoints(prepared)
     return prepared
   }
-  async start(record: SessionRecord) {
+  private async writeUnits(record: SessionRecord) {
+    const p = sessionPaths(record)
+    await writeOwned(`/etc/systemd/system/${p.slice}`, sessionSlice(record))
+    await writeOwned(`/etc/systemd/system/${p.runtimeUnit}.d/session.conf`, sessionDropIn(record, 'runtime'))
+    await writeOwned(`/etc/systemd/system/${p.desktopUnit}.d/session.conf`, sessionDropIn(record, 'desktop'))
+    await writeOwned(`/etc/systemd/system/${p.servicesUnit}.d/session.conf`, sessionDropIn(record, 'services'))
+    await command('/bin/systemctl', ['daemon-reload'])
+  }
+  /** Rewrites generated units after an authorized package update; it starts nothing. */
+  async refresh(record: SessionRecord) {
+    if (!record.uid || !record.gid) return
+    await this.writeUnits(record)
+  }
+  async start(record: SessionRecord, options: { automation?: boolean } = {}) {
+    await this.endpoints(record)
+    const p = sessionPaths(record)
+    await command('/bin/systemctl', ['start', p.desktopUnit, p.servicesSocketUnit, p.servicesUnit, ...(options.automation === false ? [] : [p.runtimeUnit])])
+  }
+  /** Emergency, archive and cancellation: every component, proven by an empty slice. */
+  async stop(record: SessionRecord) {
+    const p = sessionPaths(record)
+    await command('/bin/systemctl', ['stop', p.runtimeUnit, p.servicesUnit, p.servicesSocketUnit, p.desktopUnit])
+    // Empty slice proves detached children did not survive cancellation/archival.
+    await this.assertEmpty(p.slice, 'Session processes remain; stop not confirmed')
+  }
+  /** Human takeover: only the automation unit stops; display, browser and proxy remain. */
+  async stopAutomation(record: SessionRecord) {
+    const p = sessionPaths(record)
+    await command('/bin/systemctl', ['stop', p.runtimeUnit])
+    const state = unitState((await command('/bin/systemctl', ['show', p.runtimeUnit, '--property=ActiveState', '--value'])).stdout.trim())
+    if (state !== 'stopped') throw Object.assign(new Error('Automation did not stop'), { code: 'HANDOFF_UNCERTAIN' })
+    // Codex, MCP bridges, native shells and detached descendants all live in this cgroup.
+    await this.assertEmpty(p.runtimeUnit, 'Automation processes remain; handoff not confirmed')
+  }
+  async startAutomation(record: SessionRecord) {
     await this.endpoints(record)
     const p = sessionPaths(record)
     await command('/bin/systemctl', ['start', p.runtimeUnit])
+    const state = unitState((await command('/bin/systemctl', ['show', p.runtimeUnit, '--property=ActiveState', '--value'])).stdout.trim())
+    if (state !== 'running') throw Object.assign(new Error('Automation did not start'), { code: 'SESSION_RESULT_UNCERTAIN' })
   }
-  async stop(record: SessionRecord) {
+  private async assertEmpty(unit: string, message: string) {
+    const group = (await command('/bin/systemctl', ['show', unit, '--property=ControlGroup', '--value'])).stdout.trim()
+    if (group && !/^\/[-a-zA-Z0-9._/@\\]+$/.test(group)) throw new Error('Unexpected session cgroup path')
+    if (!group) return
+    const events = await readFile(`/sys/fs/cgroup${group}/cgroup.events`, 'utf8').catch(e => { if (e.code !== 'ENOENT') throw e; return '' })
+    if (/populated 1/.test(events)) throw Object.assign(new Error(message), { code: 'HANDOFF_UNCERTAIN' })
+  }
+  /** One systemctl process for the three units: this runs on the 2 s desktop timer. */
+  async units(record: SessionRecord) {
     const p = sessionPaths(record)
-    await command('/bin/systemctl', ['stop', p.runtimeUnit, p.desktopUnit])
-    // Empty slice proves detached children did not survive cancellation/archival.
-    const group = (await command('/bin/systemctl', ['show', p.slice, '--property=ControlGroup', '--value'])).stdout.trim()
-    if (group && !/^\/[-a-zA-Z0-9._/]+$/.test(group)) throw new Error('Unexpected session cgroup path')
-    if (group) {
-      const events = await readFile(`/sys/fs/cgroup${group}/cgroup.events`, 'utf8').catch(e => { if (e.code !== 'ENOENT') throw e; return '' })
-      if (/populated 1/.test(events)) throw new Error('Session processes remain; stop not confirmed')
-    }
+    const names = [p.desktopUnit, p.servicesUnit, p.runtimeUnit]
+    const [desktop, services, automation] = parseUnitStates((await command('/bin/systemctl', ['show', ...names, '--property=Id,ActiveState'])).stdout, names)
+    return { desktop, services, automation }
   }
   async inspect(record: SessionRecord): Promise<'running' | 'stopped' | 'unknown'> {
-    const p = sessionPaths(record)
-    const values = await Promise.all([p.runtimeUnit, p.desktopUnit].map(async unit => {
-      const result = await command('/bin/systemctl', ['show', unit, '--property=ActiveState', '--value'])
-      return result.stdout.trim()
-    }))
-    if (values.every(v => v === 'active')) return 'running'
-    if (values.every(v => ['inactive', 'failed'].includes(v))) return 'stopped'
+    const units = Object.values(await this.units(record))
+    if (units.every(v => v === 'running')) return 'running'
+    if (units.every(v => v === 'stopped')) return 'stopped'
     return 'unknown'
+  }
+  async desktopGeneration(record: SessionRecord) {
+    return desktopGenerationSchema.parse((await readFile(sessionPaths(record).desktopGeneration, 'utf8')).trim())
+  }
+  private vncProbe?: ReturnType<typeof probeVnc>
+  /** Advertised only when the supervised units and a verified read-only screen server exist. */
+  async capabilities(): Promise<string[]> {
+    try {
+      for (const path of SERVICES_TEMPLATES) await access(path, constants.R_OK)
+      // The pinned binary does not change while the supervisor runs; vm.inspect is frequent
+      // and each probe starts two processes. A failed probe is retried on the next call.
+      this.vncProbe ??= probeVnc().catch((error) => {
+        this.vncProbe = undefined
+        throw error
+      })
+      await this.vncProbe
+      await access('/usr/bin/Xvfb', constants.X_OK)
+      return [DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY]
+    } catch {
+      return []
+    }
   }
 }

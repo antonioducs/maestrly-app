@@ -4,6 +4,8 @@ import { DesktopSession } from './desktop/session.js'
 import { BrowserSession } from './tools/browser.js'
 import { ToolRegistry } from './tools/registry.js'
 import { ToolsBridge } from './tools/bridge.js'
+import { LocalDesktopTools, type DesktopTools } from './desktop/desktop-tools.js'
+import { ManagedDesktopClient } from './desktop/managed-client.js'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type { NetworkPolicy } from '@maestrly/host-protocol'
@@ -27,7 +29,7 @@ export class RuntimeSupervisor {
   turns!: TurnService
   readonly egress = new EgressTransport()
   readonly proxy = new LocalProxy(this.egress)
-  private browser!: BrowserSession
+  private desktop!: DesktopTools
   private tools!: ToolRegistry
   private bridge!: ToolsBridge
   private capabilities = ['account.delegation.v1', 'network.blocklist.v1', 'network.proxy', 'tools.system', 'tools.memory']
@@ -49,6 +51,8 @@ export class RuntimeSupervisor {
       version: string
       bootId?: string
       providerFactory: () => Promise<ProviderAdapter>
+      /** Agent socket of the session graphical services; absent in unmanaged workers. */
+      desktopServices?: string
     }
   ) {
     this.journal = new Journal(options.state)
@@ -57,21 +61,26 @@ export class RuntimeSupervisor {
   async initialize() {
     await this.files.init()
     recoverTurns(this.journal)
-    await this.egress.start()
-    await this.proxy.start()
-    this.browser = new BrowserSession(this.options.state, this.files, new DesktopSession(), () =>
-      this.tools?.invalidate()
-    )
+    // Managed sessions: browser, egress and proxy belong to the persistent graphical
+    // services, so stopping automation never closes them.
+    const services = this.options.desktopServices
+    if (!services) {
+      await this.egress.start()
+      await this.proxy.start()
+    }
+    this.desktop = services
+      ? new ManagedDesktopClient(services, this.files, () => this.tools?.invalidate())
+      : new LocalDesktopTools(new BrowserSession(this.options.state, this.files, new DesktopSession(), () => this.tools?.invalidate()), this.files)
     this.tools = new ToolRegistry(
       this.journal,
       this.files,
-      this.browser,
+      this.desktop,
       () => this.turns.toolContext(),
       () => this.policy?.permissionMode ?? this.turns.toolContext().snapshot.permissionMode
     )
     this.bridge = new ToolsBridge(this.options.state, this.tools)
     await this.bridge.start()
-    if (await BrowserSession.available()) this.capabilities.push('tools.browser', 'tools.computer', 'desktop.session')
+    if (await this.desktop.available()) this.capabilities.push('tools.browser', 'tools.computer', 'desktop.session')
     this.provider = await this.connectProvider()
     this.turns = new TurnService(this.journal, this.provider, this.files)
     this.accountTimer = setInterval(() => {
@@ -146,11 +155,11 @@ export class RuntimeSupervisor {
         this.secrets.clear()
         return this.provider.auth.logout()
       },
-      'turn.start': (snapshot) => {
+      'turn.start': async (snapshot) => {
         if (process.env.MAESTRLY_BOT_ID && snapshot.botId !== process.env.MAESTRLY_BOT_ID)
           throw runtimeError('SESSION_CONFLICT', 'This task belongs to another bot')
         this.tools.invalidate()
-        this.proxy.updatePolicy(this.policy?.network ?? snapshot.network)
+        await this.applyNetwork(this.policy?.network ?? snapshot.network)
         return this.turns.start(
           this.policy
             ? { ...snapshot, network: this.policy.network, permissionMode: this.policy.permissionMode }
@@ -161,9 +170,9 @@ export class RuntimeSupervisor {
       'turn.cancel': ({ turnId, generation }) => this.turns.cancel(turnId, generation),
       'turn.lease': ({ turnId, generation, leaseMs }) => this.turns.lease(turnId, generation, leaseMs),
       'interaction.resolve': (input) => this.turns.resolve(input),
-      'policy.update': (policy) => {
+      'policy.update': async (policy) => {
         this.policy = policy
-        this.proxy.updatePolicy(policy.network)
+        await this.applyNetwork(policy.network)
         return { applied: true }
       },
       'files.list': (params) => this.files.list(params),
@@ -172,6 +181,11 @@ export class RuntimeSupervisor {
       'files.write': (params) => this.files.write(params),
       'files.abort': (params) => this.files.abort(params),
     }
+  }
+  /** The guest proxy is a first filter; the Host egress broker remains the authority. */
+  private async applyNetwork(network: NetworkPolicy) {
+    if (this.desktop?.managed && this.desktop.updatePolicy) await this.desktop.updatePolicy(network)
+    else this.proxy.updatePolicy(network)
   }
   private async pause(ms: number) {
     if (this.stopped.signal.aborted) return
@@ -270,7 +284,7 @@ export class RuntimeSupervisor {
     await this.provider?.dispose()
     await this.monitor
     await this.bridge?.close()
-    await this.browser?.close()
+    await this.desktop?.close()
     await this.proxy.close()
     this.egress.close()
   }

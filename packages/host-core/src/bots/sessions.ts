@@ -19,6 +19,11 @@ export function availableSessions(vm: Vm, capacity: SessionCapacity, sessions: r
 }
 export class BotSessions {
   private inspections = new Map<string, { revision: number; inventory: SessionsInventory }>()
+  /** Runtime version each VM supervisor last announced; Host-internal, never sent to clients. */
+  private versions = new Map<string, string>()
+  runtimeVersion(vmId: string) {
+    return this.versions.get(vmId)
+  }
   constructor(private repo: BotRepository, private connector: GuestConnector, private vm: (id: string) => Vm,
     private maintenance?: { backup(vmId: string, key: string): Promise<void>; activate(botId: string): Promise<void> }) {}
   snapshot(vmId: string): SessionsInventory {
@@ -44,6 +49,8 @@ export class BotSessions {
     if (vm.state !== 'running') return { ...base, reason: 'Ligue o computador para verificar as áreas de trabalho disponíveis.' }
     try {
       const info = await this.connector.inspectVm?.(vmId)
+      if (info?.runtimeVersion) this.versions.set(vmId, info.runtimeVersion)
+      else this.versions.delete(vmId)
       if (!info?.capacity) return { ...base, reason: 'Atualize o ambiente deste computador para criar áreas de trabalho independentes.' }
       const capacity = sessionCapacitySchema.parse(info.capacity)
       this.repo.saveSessionCapacity(vmId, capacity)

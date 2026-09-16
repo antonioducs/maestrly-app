@@ -2,7 +2,8 @@ import { lstat, readFile } from 'node:fs/promises'
 import { userInfo } from 'node:os'
 import { RotatingLog } from './log.js'
 import { startSocket } from './rpc-server.js'
-import { SOCKET_PATH } from './transport.js'
+import { startDesktopSocket } from './desktop-server.js'
+import { DESKTOP_SOCKET_PATH, SOCKET_PATH } from './transport.js'
 
 export async function daemon() {
   if (process.platform !== 'darwin') throw Error('daemon requires macOS')
@@ -20,13 +21,17 @@ export async function daemon() {
   await service.ready()
   const log = new RotatingLog('/Library/MaestrlyHost/log/host.jsonl')
   let closeSocket: () => Promise<void>
+  let closeDesktop: () => Promise<void> = async () => {}
   try {
     closeSocket = await startSocket(
       SOCKET_PATH,
-      (request) => service.dispatch(request),
-      (event) => log.write(event)
+      (request, context) => service.dispatch(request, context),
+      (event) => log.write(event),
+      (connectionId) => void service.disconnect(connectionId).catch(() => {})
     )
+    closeDesktop = await startDesktopSocket(DESKTOP_SOCKET_PATH, (ticket) => service.attachDesktop(ticket), (event) => log.write(event))
   } catch (error) {
+    await closeDesktop()
     await service.close()
     throw error
   }
@@ -35,6 +40,7 @@ export async function daemon() {
   const stop = async () => {
     if (stopping) return
     stopping = true
+    await closeDesktop()
     await closeSocket()
     await service.close()
     log.write('stopped')

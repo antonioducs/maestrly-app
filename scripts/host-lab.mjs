@@ -31,6 +31,8 @@ export function validateConfig(config) {
     'authorizeBotSmoke',
     'botBundlePath',
     'botBundleSha256',
+    // Phase 3 live desktop laboratory (opt-in): viewing, takeover and hand-back on the namespace bot.
+    'authorizeDesktopLab',
   ])
   if (Object.keys(config).some((k) => !allowed.has(k))) throw Error('Unknown lab configuration key')
   if (typeof config.sshAlias !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(config.sshAlias))
@@ -71,7 +73,7 @@ export function validateConfig(config) {
     throw Error('Invalid local operator')
   if (config.botVmId !== undefined && (typeof config.botVmId !== 'string' || !/^[0-9a-f-]{36}$/i.test(config.botVmId)))
     throw Error('botVmId must be the exact VM identifier chosen for preparation')
-  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke'])
+  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke', 'authorizeDesktopLab'])
     if (config[key] !== undefined && typeof config[key] !== 'boolean') throw Error('Authorization must be boolean')
   if (config.botBundlePath !== undefined && (typeof config.botBundlePath !== 'string' || !config.botBundlePath.startsWith('/')))
     throw Error('Explicit absolute bot bundle path required')

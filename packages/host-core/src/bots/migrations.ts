@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 
-export const HOST_DB_VERSION = 4
+export const HOST_DB_VERSION = 5
 /**
  * Schema 1 → 2 adds the Bot domain next to the phase-one VM catalogue. The migration is
  * one transaction; hostId, VMs, operations and events are untouched. A binary rolled
@@ -89,6 +89,26 @@ export function migrateToV4(db: DatabaseSync) {
       CREATE TABLE environment_operations(id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, request TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE environment_vms(vm_id TEXT PRIMARY KEY, state TEXT NOT NULL, operation_id TEXT NOT NULL);
       PRAGMA user_version=4;`)
+    db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
+}
+
+/**
+ * Schema 4 → 5 adds live-desktop control: one durable control record per session and
+ * idempotent handoff operations. Nothing existing is rewritten. Tokens, pixels and
+ * input never enter the database; continuation turns are unique per return operation
+ * and per interrupted turn.
+ */
+export function migrateToV5(db: DatabaseSync) {
+  const version = db.prepare('PRAGMA user_version').get()!.user_version as number
+  if (version >= 5) return
+  if (version !== 4) throw new Error('Desktop migration requires host schema version 4')
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`CREATE TABLE bot_desktop_control(session_id TEXT PRIMARY KEY REFERENCES bot_sessions(id), bot_id TEXT NOT NULL UNIQUE REFERENCES bots(id), mode TEXT NOT NULL, body TEXT NOT NULL);
+      CREATE TABLE bot_desktop_operations(id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, fingerprint TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES bot_sessions(id), kind TEXT NOT NULL, resume_of_turn_id TEXT, continuation_turn_id TEXT UNIQUE, body TEXT NOT NULL);
+      CREATE UNIQUE INDEX bot_desktop_one_continuation ON bot_desktop_operations(resume_of_turn_id) WHERE continuation_turn_id IS NOT NULL;
+      PRAGMA user_version=5;`)
     db.exec('COMMIT')
   } catch (error) { db.exec('ROLLBACK'); throw error }
 }

@@ -32,6 +32,24 @@ export class RuntimeCoordinator {
   private closed = false
   private accounts?: AccountDelegation
   setAccounts(accounts: AccountDelegation) { this.accounts = accounts }
+  private takeovers = new Set<string>()
+  private holdCheck?: (botId: string) => boolean
+  /** While a person holds the desktop, nothing connects, dispatches or reconciles bot work. */
+  setDesktopHold(check: (botId: string) => boolean) { this.holdCheck = check }
+  held(botId: string) { return this.holdCheck?.(botId) === true }
+  /** The next terminal cancel/interrupt of this turn comes from a human takeover. */
+  markTakeover(turnId: string) { this.takeovers.add(turnId) }
+  liveSession(botId: string) {
+    const session = this.sessions.get(botId)
+    return session?.alive ? session : undefined
+  }
+  /** After automation is proven stopped: an unfinished turn is interrupted, a finished one keeps its real result. */
+  interruptForHandoff(turnId: string): BotTurn {
+    const turn = this.repo.turn(turnId)
+    if (!TURN_TERMINAL.has(turn.status)) this.finish(turn, 'interrupted', { code: 'HUMAN_TAKEOVER', message: 'Tarefa pausada para você usar a tela. Ela pode continuar quando você devolver o controle.' })
+    this.takeovers.delete(turnId)
+    return this.repo.turn(turnId)
+  }
   readonly events: BotEvents
   readonly interactions: BotInteractions
   constructor(
@@ -48,6 +66,43 @@ export class RuntimeCoordinator {
     this.timer.unref?.()
     // Reconcile uncertain work right away instead of waiting for the first lease tick.
     for (const turn of this.repo.activeTurns()) this.scheduleReconcile(turn.botId, 50)
+  }
+  /** First failed attempt to open the session of a queued turn, per turn. */
+  private dispatchFailures = new Map<string, { botId: string; first: number }>()
+  /** Starts queued work now; when the bot's session cannot open, the turn never waits silently. */
+  kick(botId: string) {
+    void this.drain(botId).then(
+      () => this.dispatchSucceeded(botId),
+      (error) => this.dispatchFailed(botId, error)
+    )
+  }
+  private dispatchSucceeded(botId: string) {
+    for (const [turnId, entry] of this.dispatchFailures) if (entry.botId === botId) this.dispatchFailures.delete(turnId)
+  }
+  /**
+   * A queued turn whose session keeps failing to open asks for attention with a stable code. It
+   * stays durable: its outbox item is kept, and the next successful reconcile starts it once.
+   */
+  private dispatchFailed(botId: string, error: unknown) {
+    const turn = this.repo.activeTurn(botId)
+    if (turn?.status !== 'queued' || this.held(botId) || this.closed) return
+    const first = this.dispatchFailures.get(turn.id)?.first ?? Date.now()
+    this.dispatchFailures.set(turn.id, { botId, first })
+    if (Date.now() - first < this.limits.dispatchAttentionMs) return
+    const code = error instanceof HostError ? error.code : 'RUNTIME_UNREACHABLE'
+    const marked = this.repo.transaction(() => {
+      const current = this.repo.turn(turn.id)
+      if (current.status !== 'queued') return false
+      this.repo.saveTurn({
+        ...current,
+        status: 'needs_attention',
+        attention: 'Não foi possível abrir a área de trabalho do bot. A tarefa continua guardada e começa sozinha quando o computador responder; se isso persistir, verifique Ambientes.',
+        revision: current.revision + 1,
+        updatedAt: now(),
+      })
+      return true
+    })
+    if (marked) this.events.record(botId, 'attention', 'A área de trabalho do bot não abriu; a tarefa aguarda', { turnId: turn.id, conversationId: turn.conversationId, detail: { code } })
   }
   private scheduleReconcile(botId: string, delayMs: number) {
     const timer = setTimeout(() => void this.reconcile(botId).catch(() => this.scheduleReconcile(botId, Math.min(delayMs * 2, this.limits.renewMs))), delayMs)
@@ -87,6 +142,7 @@ export class RuntimeCoordinator {
   }
   async session(bot: Bot): Promise<GuestSession> {
     if (this.closed) throw new HostError('CLOSED', 'Host service is closed')
+    if (this.held(bot.id)) throw new HostError('BOT_PAUSED_BY_USER', 'O bot está pausado enquanto você usa a tela')
     const existing = this.sessions.get(bot.id)
     if (existing?.alive) return existing
     if (!bot.vmId) throw new HostError('RUNTIME_UNREACHABLE', 'O bot ainda não tem um computador')
@@ -150,7 +206,7 @@ export class RuntimeCoordinator {
   }
   private onSessionLost(botId: string) {
     const turn = this.repo.activeTurn(botId)
-    if (!turn || turn.status === 'queued' || turn.status === 'needs_attention') return
+    if (!turn || turn.status === 'queued' || turn.status === 'needs_attention' || this.takeovers.has(turn.id)) return
     this.repo.transaction(() =>
       this.repo.saveTurn({
         ...turn,
@@ -173,7 +229,14 @@ export class RuntimeCoordinator {
       return
     }
     if (turn.status === 'queued') {
-      await this.drain(botId)
+      try {
+        await this.drain(botId)
+      } catch (error) {
+        // The session did not open: the turn stays durable but asks for attention after a while.
+        this.dispatchFailed(botId, error)
+        throw error
+      }
+      this.dispatchSucceeded(botId)
       return
     }
     const session = await this.session(bot)
@@ -202,7 +265,7 @@ export class RuntimeCoordinator {
     await this.drain(botId)
   }
   async drain(botId: string) {
-    if (this.draining.has(botId)) return
+    if (this.draining.has(botId) || this.held(botId)) return
     this.draining.add(botId)
     try {
       for (;;) {
@@ -275,6 +338,7 @@ export class RuntimeCoordinator {
   private async tick() {
     if (this.closed) return
     await Promise.allSettled(this.repo.activeTurns().map(async turn => {
+      if (this.held(turn.botId)) return
       const session = this.sessions.get(turn.botId)
       if (['running', 'waiting_approval', 'waiting_input', 'cancelling'].includes(turn.status) && session?.alive) {
         try {
@@ -303,7 +367,9 @@ export class RuntimeCoordinator {
       const next: BotTurn = { ...current, status: 'cancelling', cancelRequestedAt: current.cancelRequestedAt ?? now(), attention: undefined, revision: current.revision + 1, updatedAt: now() }
       this.repo.saveTurn(next)
       this.interactions.invalidatePending(turnId, botId)
-      if (current.status === 'queued') {
+      // Never dispatched: queued, or waiting for attention before its first start (startedAt is
+      // persisted before any turn.start is written to the guest). The computer never saw it.
+      if (current.status === 'queued' || (current.status === 'needs_attention' && !current.startedAt)) {
         for (const item of this.repo.outbox(botId)) if (item.turnId === turnId) this.repo.dequeue(item.id)
         this.finish(next, 'cancelled')
         return this.repo.turn(turnId)
@@ -349,7 +415,7 @@ export class RuntimeCoordinator {
     const identity = this.repo.session(turn.botId)
     if (identity?.transport === 'managed') void this.connector.releaseSessionLease?.(identity, turn.id).catch(() => {})
     const labels: Record<string, string> = { succeeded: 'Tarefa concluída', failed: 'A tarefa falhou', cancelled: 'Tarefa interrompida', interrupted: 'A tarefa foi interrompida' }
-    this.events.record(turn.botId, 'turn.status', labels[status] ?? status, { turnId: turn.id, conversationId: turn.conversationId, detail: { status, ...(error ? { error } : {}) } })
+    this.events.record(turn.botId, 'turn.status', error?.code === 'HUMAN_TAKEOVER' ? 'Tarefa pausada para você usar a tela' : labels[status] ?? status, { turnId: turn.id, conversationId: turn.conversationId, detail: { status, ...(error ? { error } : {}) } })
   }
   /** Events are persisted first; ACK follows the commit so a crash re-delivers instead of losing. */
   private handleEvent(botId: string, event: GuestEvent, ack: () => void) {
@@ -367,6 +433,11 @@ export class RuntimeCoordinator {
           const parsed = turnStatusSchema.safeParse(event.detail?.status)
           if (!parsed.success) break
           if (TURN_TERMINAL.has(parsed.data)) {
+            if (this.takeovers.has(turn.id) && (parsed.data === 'cancelled' || parsed.data === 'interrupted')) {
+              this.takeovers.delete(turn.id)
+              this.finish(turn, 'interrupted', { code: 'HUMAN_TAKEOVER', message: 'Tarefa pausada para você usar a tela. Ela pode continuar quando você devolver o controle.' }, event.detail)
+              break
+            }
             // Worker cancellation alone cannot prove a detached process left its session cgroup.
             if (parsed.data === 'cancelled' && turn.cancelRequestedAt && this.repo.session(botId)?.transport === 'managed' && this.connector.stopSession) break
             const error = event.detail?.error && typeof event.detail.error === 'object' ? (event.detail.error as { code: string; message: string }) : undefined

@@ -22,6 +22,9 @@ import type {
 } from '@maestrly/host-protocol'
 import { permissionSummary } from '@maestrly/host-protocol'
 import { HostRequestError } from './host-client'
+import { FixtureDesktops } from './fixture-desktop'
+// 1x1 PNG standing in for the fresh capture attached to a continuation.
+const FIXTURE_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64')
 // Development-only in-memory Bot domain for UI work. Never hardware evidence; disabled when packaged.
 const now = () => new Date().toISOString()
 const fail = (code: string, message: string) => new HostRequestError(message, code)
@@ -47,6 +50,30 @@ export class FixtureBots {
   files = new Map<string, Map<string, Buffer>>()
   transfers = new Map<string, TransferState & { botId: string }>()
   private timers = new Set<ReturnType<typeof setTimeout>>()
+  private fixtureSessions = new Map<string, string>()
+  readonly desktop = new FixtureDesktops({
+    later: (ms, fn) => this.later(ms, fn),
+    sessionId: (botId) => {
+      const known = this.sessions.get(botId)?.id
+      if (known) return known
+      if (!this.fixtureSessions.has(botId)) this.fixtureSessions.set(botId, randomUUID())
+      return this.fixtureSessions.get(botId)!
+    },
+    activeTurn: (botId) => {
+      const id = this.bot(botId).activeTurnId
+      return id ? this.turns.get(id) : undefined
+    },
+    turn: (turnId) => this.turns.get(turnId),
+    interrupt: (turnId) => {
+      const turn = this.updateTurn(turnId, { status: 'interrupted', finishedAt: now(), error: { code: 'HUMAN_TAKEOVER', message: 'Tarefa pausada para você usar a tela. Ela pode continuar quando você devolver o controle.' } })
+      this.save({ ...this.bot(turn.botId), activeTurnId: undefined })
+      this.emit(turn.botId, 'turn.status', 'Tarefa pausada para você usar a tela', { turnId, detail: { status: 'interrupted' } })
+    },
+    continueTask: (botId, interruptedTurnId, operationId) => this.continueAfterHandoff(botId, interruptedTurnId, operationId),
+    event: (botId, summary) => {
+      this.emit(botId, 'runtime.changed', summary, { detail: { kind: 'desktop' } })
+    },
+  })
   constructor(
     private readonly host: () => Host,
     private readonly vms: () => Vm[],
@@ -61,6 +88,27 @@ export class FixtureBots {
   }
   dispose() {
     for (const timer of this.timers) clearTimeout(timer)
+    this.desktop.dispose()
+  }
+  private continueAfterHandoff(botId: string, interruptedTurnId: string, operationId: string) {
+    const bot = this.bot(botId)
+    const conversation = this.conversations.get(bot.conversationId!)!
+    const original = (this.messages.get(conversation.id) ?? []).find((m) => m.turnId === interruptedTurnId)
+    const capture = '.maestrly/screens/fixture-continuation.png'
+    this.files.get(botId)?.set(capture, FIXTURE_PNG)
+    const turn: BotTurn = { id: randomUUID(), botId, conversationId: conversation.id, messageId: randomUUID(), status: 'running', generation: 1, revision: 0, startedAt: now(), createdAt: now(), updatedAt: now() }
+    const message: BotMessage = {
+      id: turn.messageId, conversationId: conversation.id, clientMessageId: `desktop-return:${operationId}`, role: 'system',
+      content: `Continuação após intervenção humana.\n\nA pessoa assumiu o controle da área de trabalho, fez alterações e devolveu o controle.\n\nTarefa original:\n${original?.content ?? ''}`,
+      turnId: turn.id, sequence: ++conversation.lastSequence, attachments: [{ path: capture, name: 'tela-atual.png', size: FIXTURE_PNG.length }], createdAt: now(),
+    }
+    this.messages.get(conversation.id)!.push(message)
+    this.turns.set(turn.id, turn)
+    this.save({ ...bot, activeTurnId: turn.id })
+    this.emit(botId, 'turn.status', 'Tarefa retomada a partir do estado atual da tela', { turnId: turn.id, detail: { status: 'running' } })
+    this.desktop.screen(botId).setActivity(true)
+    this.later(1200, () => this.finish(turn.id, 'succeeded', 'Continuei a partir do que você deixou na tela e concluí a tarefa.'))
+    return turn.id
   }
   private later(ms: number, fn: () => void) {
     const timer = setTimeout(() => {
@@ -89,6 +137,7 @@ export class FixtureBots {
     { id: 'fixture-large', displayName: 'Fixture large', efforts: ['medium', 'high'], defaultEffort: 'high', recommended: false },
   ] }
   async request(method: string, p: Record<string, unknown>): Promise<unknown> {
+    if (method.startsWith('bot.desktop.')) return this.desktop.request(method, p)
     switch (method) {
       case 'account.list': return [...this.sharedAccounts.values()]
       case 'account.create': {
@@ -526,6 +575,7 @@ export class FixtureBots {
     const list = this.messages.get(bot.conversationId)!
     const existing = list.find((m) => m.clientMessageId === clientMessageId)
     if (existing) return { message: existing, turn: this.turns.get(existing.turnId!) }
+    if (this.desktop.held(botId)) throw fail('BOT_PAUSED_BY_USER', 'O bot está pausado enquanto você usa a tela. Devolva o controle para enviar novas tarefas.')
     if (bot.accountState !== 'connected') throw fail('ACCOUNT_REQUIRED', 'Conecte a conta de IA do bot antes de enviar tarefas')
     if (bot.activeTurnId) throw fail('BOT_BUSY', 'O bot ainda está trabalhando na tarefa anterior. Aguarde ou pare a tarefa.')
     const conversation = this.conversations.get(bot.conversationId)!
@@ -536,7 +586,9 @@ export class FixtureBots {
     this.save({ ...bot, activeTurnId: turn.id })
     this.emit(botId, 'turn.status', 'Tarefa recebida', { turnId: turn.id, detail: { status: 'queued' } })
     this.later(200, () => {
+      if (this.turns.get(turn.id)?.status !== 'queued') return
       this.updateTurn(turn.id, { status: 'running', startedAt: now() })
+      this.desktop.screen(botId).setActivity(true)
       this.emit(botId, 'turn.status', 'O bot começou a trabalhar', { turnId: turn.id, detail: { status: 'running' } })
       this.emit(botId, 'tool.started', 'Lendo os arquivos do espaço de trabalho', { turnId: turn.id })
       this.later(400, () => {
@@ -569,6 +621,7 @@ export class FixtureBots {
   private finish(turnId: string, status: 'succeeded' | 'failed' | 'cancelled', reply?: string, attachments: BotMessage['attachments'] = []) {
     const turn = this.turns.get(turnId)
     if (!turn || ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(turn.status)) return
+    this.desktop.screen(turn.botId).setActivity(false)
     const bot = this.bot(turn.botId)
     const conversation = this.conversations.get(turn.conversationId)!
     if (reply) {

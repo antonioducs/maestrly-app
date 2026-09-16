@@ -221,7 +221,7 @@ async function build() {
     const manifest = {
       version: 1,
       serviceVersion: hostManifest.version,
-      hostSchemaVersion: 4,
+      hostSchemaVersion: 5,
       architecture: config.architecture,
       nodeVersion: config.nodeVersion,
       qemuVersion: config.qemuVersion,

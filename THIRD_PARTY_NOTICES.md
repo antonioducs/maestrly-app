@@ -132,3 +132,18 @@ MIT-feh/BSD-3-Clause). `xauth` (1:1.1.2-1build1) comes from the pinned Ubuntu
 X11 closure. Exact `.deb` hashes accompany the offline addon. The packages retain
 their original copyright files under `/usr/share/doc` in the guest; no desktop
 input or capture binary is executed on the controller Mac.
+
+### Live desktop (phase 3)
+
+The read-only live screen adds Ubuntu ARM64 packages `tigervnc-scraping-server` and
+`tigervnc-common` (1.13.1+dfsg-2build2, GPL-2.0-or-later with the component notices in
+their Debian copyright files) and `libfile-readbackwards-perl` (1.06-2, Artistic or
+GPL-1.0-or-later). Only `/usr/bin/X0tigervnc` runs, inside the guest, listening on a
+private Unix socket with keyboard, pointer, clipboard and resize refused. Exact `.deb`
+hashes accompany the offline addon; distributors must honor the corresponding source
+obligations for these exact Ubuntu versions.
+
+The Maestrly Bot app bundles [noVNC](https://github.com/novnc/noVNC) 1.7.0
+(`@novnc/novnc`; core library MPL-2.0, incorporated files listed in its `LICENSE.txt`)
+as a view-only decoder in the renderer. The app ships none of noVNC's HTML, CSS, fonts
+or images; the unmodified MPL-2.0 sources are those of the pinned npm package.

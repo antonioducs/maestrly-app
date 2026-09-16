@@ -23,6 +23,7 @@ import { BotTurns } from './turns.js'
 import type { HostStore } from '../persistence/store.js'
 import { BotRepository as Repository } from './repository.js'
 import { BotSessions } from './sessions.js'
+import { DesktopService, DIRECT_CONTEXT, type DesktopContext } from '../desktop/service.js'
 
 export interface BotServiceOptions {
   store: HostStore
@@ -44,6 +45,7 @@ export class BotService {
   readonly accounts: BotAccounts
   readonly delegation?: AccountDelegation
   readonly sessions: BotSessions
+  readonly desktop: DesktopService
   constructor(private readonly options: BotServiceOptions) {
     this.repo = new Repository(options.store)
     this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
@@ -72,7 +74,20 @@ export class BotService {
       this.coordinator.setAccounts(this.delegation)
     }
     this.setup = new BotSetup(this.repo, options.host, this.coordinator, this.sessions, options.sharedAccounts ? { authority: options.sharedAccounts, connect: async botId => this.delegation!.authenticate(botId, await this.coordinator.session(this.repo.bot(botId))) } : undefined)
-    this.turns = new BotTurns(this.repo, this.coordinator)
+    this.turns = new BotTurns(this.repo, this.coordinator, (botId) => this.desktop.held(botId))
+    this.desktop = new DesktopService({
+      repo: this.repo,
+      coordinator: this.coordinator,
+      connector: options.connector,
+      vm: (id) => options.host.vm(id),
+      hostGeneration: options.host.hostGeneration,
+      continueTask: (input) => {
+        const bot = this.repo.bot(input.botId)
+        if (bot.accountId && options.sharedAccounts) options.sharedAccounts.assertBindable(bot.accountId)
+        return this.turns.createContinuation(input)
+      },
+    })
+    this.coordinator.setDesktopHold((botId) => this.desktop.held(botId))
     this.memories = new BotMemories(this.repo)
     const session = (bot: Bot) => this.coordinator.session(bot)
     this.files = new BotFiles(this.repo, session)
@@ -80,11 +95,15 @@ export class BotService {
   }
   async ready() {
     this.sessions.recover()
+    // No controller survives a Host restart; held bots stay held until an explicit return.
+    this.desktop.recover()
     await this.coordinator.recover()
     this.setup.recover()
     this.coordinator.start()
+    this.desktop.start()
   }
   async close() {
+    this.desktop.shutdown()
     await this.coordinator.close()
   }
   isMutation(method: BotMethod) {
@@ -108,6 +127,7 @@ export class BotService {
   }
   /** After a VM stops, a stuck turn cannot continue: mark it interrupted honestly. */
   vmStopped(vmId: string) {
+    this.desktop.vmStopped(vmId)
     for (const bot of this.repo.botsByVm(vmId)) {
     this.coordinator.dropSession(bot.id)
     const session = this.repo.session(bot.id)
@@ -129,11 +149,11 @@ export class BotService {
     if (this.repo.bindingByVm(vmId)) return { bot: true as const }
     return createKey && this.repo.reservation(createKey) ? { bot: true as const } : undefined
   }
-  async handle<M extends BotMethod>(request: Extract<BotRequest, { method: M }>): Promise<BotResult<M>> {
-    const result = await this.dispatch(request as BotRequest)
+  async handle<M extends BotMethod>(request: Extract<BotRequest, { method: M }>, context: DesktopContext = DIRECT_CONTEXT): Promise<BotResult<M>> {
+    const result = await this.dispatch(request as BotRequest, context)
     return botResultSchemas[request.method].parse(result) as BotResult<M>
   }
-  private async dispatch(request: BotRequest): Promise<unknown> {
+  private async dispatch(request: BotRequest, context: DesktopContext): Promise<unknown> {
     const p = request.params as any
     switch (request.method) {
       case 'bot.list':
@@ -213,6 +233,8 @@ export class BotService {
           return { operation, bot }
         })
         this.options.onPolicyChanged?.(op.bot.id, op.bot.vmId, this.repo.network(op.bot.id))
+        // Viewers and controllers are revoked before the session is stopped or retained.
+        this.desktop.closeBot(op.bot.id)
         this.coordinator.dropSession(op.bot.id)
         if (this.repo.session(op.bot.id)?.transport === 'managed') {
           this.repo.saveOperation({ ...op.operation, status: 'running', steps: [{ id: 'archive', label: 'Parando a área de trabalho e preservando os dados', status: 'running' }] })
@@ -287,6 +309,8 @@ export class BotService {
       case 'bot.interactions.list':
         return this.repo.interactions(p.botId, p.pendingOnly)
       case 'bot.interactions.resolve': {
+        if (this.desktop.held(this.repo.interaction(p.interactionId).botId))
+          throw new HostError('BOT_PAUSED_BY_USER', 'Pedidos feitos antes de você assumir a tela deixaram de valer')
         const { interaction, turn } = this.coordinator.interactions.resolve(p.interactionId, p.expectedGeneration, p.decision, p.answer)
         this.repo.transaction(() =>
           this.repo.enqueue({
@@ -300,7 +324,7 @@ export class BotService {
           })
         )
         this.coordinator.events.record(turn.botId, p.decision === 'answer' ? 'question.answered' : 'approval.resolved', p.decision === 'approve' ? 'Você permitiu desta vez' : p.decision === 'deny' ? 'Você não permitiu' : 'Você respondeu ao bot', { turnId: turn.id, conversationId: turn.conversationId, detail: { interactionId: interaction.id, decision: p.decision } })
-        void this.coordinator.drain(turn.botId).catch(() => {})
+        this.coordinator.kick(turn.botId)
         return interaction
       }
       case 'bot.memory.list':
@@ -337,6 +361,11 @@ export class BotService {
           this.coordinator.events.record(bot.id, 'network.changed', p.mode === 'offline' ? 'Acesso à internet desativado' : p.mode === 'blocklist' ? `Internet pública; sites bloqueados: ${p.domains.length}` : `Destinos permitidos: ${p.domains.length}`, { detail: { mode: p.mode, domains: p.domains } })
           if (this.coordinator.hasSession(bot.id))
             await this.coordinator.session(bot).then((session) => session.request('policy.update', { network: policy, permissionMode: bot.permissionMode })).catch(() => {})
+          // While automation is stopped for a person, the graphical services still apply the policy.
+          const managed = this.repo.session(bot.id)
+          const connector = this.options.connector
+          if (this.desktop.held(bot.id) && managed?.transport === 'managed' && connector.desktop && connector.inspectSession)
+            await connector.inspectSession(managed).then((info) => connector.desktop!(managed, 'desktop.policy', { sessionId: managed.id, generation: info.generation, network: policy })).catch(() => {})
         } else if (existing.fingerprint !== fingerprint(p)) throw new HostError('IDEMPOTENCY_CONFLICT', 'Idempotency key was used with different parameters')
         return { policy: this.repo.network(bot.id), mediated: !!bot.vmId && this.coordinator.hasSession(bot.id), activeStreams: bot.vmId ? (this.options.activeStreams?.(bot.vmId, bot.id) ?? 0) : 0 }
       }
@@ -354,6 +383,26 @@ export class BotService {
         return this.repo.operation(p.operationId)
       case 'bot.operation.lookup':
         return this.repo.operationByKey(p.idempotencyKey)?.operation ?? null
+      case 'bot.desktop.inspect':
+        return this.desktop.inspect(p.botId)
+      case 'bot.desktop.open':
+        return this.desktop.open(p.botId, p.clientInstanceId, context)
+      case 'bot.desktop.close':
+        return this.desktop.close(p.viewId, context)
+      case 'bot.desktop.acquire':
+        return this.desktop.acquire(p, context)
+      case 'bot.desktop.operation.get':
+        return this.desktop.operationGet(p.operationId)
+      case 'bot.desktop.operation.lookup':
+        return this.desktop.operationLookup(p.idempotencyKey)
+      case 'bot.desktop.claimControl':
+        return this.desktop.claimControl(p, context)
+      case 'bot.desktop.renew':
+        return this.desktop.renew(p, context)
+      case 'bot.desktop.input':
+        return this.desktop.input(p, context)
+      case 'bot.desktop.return':
+        return this.desktop.return(p, context)
     }
   }
 }

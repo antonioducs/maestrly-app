@@ -2,16 +2,19 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   statSync,
   truncateSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   guestEventSchema,
   TURN_TERMINAL,
@@ -22,6 +25,31 @@ import {
 } from '@maestrly/host-protocol'
 import type { ProviderEvent } from '../providers/provider.js'
 import { encodeFrame } from './framing.js'
+
+/** Writes every byte: a short write is continued, and any error surfaces to the caller. */
+function writeAll(fd: number, bytes: Buffer) {
+  for (let offset = 0; offset < bytes.length; ) offset += writeSync(fd, bytes, offset, bytes.length - offset)
+}
+function parseRecord(text: string): JournalRecord | undefined {
+  try {
+    const value = JSON.parse(text) as JournalRecord
+    return value && typeof value === 'object' && typeof value.kind === 'string' && value.data && typeof value.data === 'object' ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+/**
+ * A write that failed midway (for example on a full disk) can leave a torn prefix that the next
+ * append completes into one line: `{"kind":"event.pe{"kind":"turn.status",...}`. The torn record
+ * was never acknowledged (append throws before applying it); the complete record after it is kept.
+ */
+function afterTornPrefix(line: string): JournalRecord | undefined {
+  for (let start = line.indexOf('{"kind":"', 1); start > 0; start = line.indexOf('{"kind":"', start + 1)) {
+    const record = parseRecord(line.slice(start))
+    if (record) return record
+  }
+  return undefined
+}
 type RecordKind =
   | 'generation'
   | 'turn.accepted'
@@ -72,13 +100,44 @@ export class Journal {
     }
     const bytes = readFileSync(this.path)
     const end = bytes.lastIndexOf(10) + 1
-    // A crash may leave a partial final record; completed malformed records are fatal.
+    // A crash may leave a partial final record; it was never acknowledged and is dropped.
     if (end !== bytes.length) truncateSync(this.path, end)
+    const records: JournalRecord[] = []
+    let torn = 0
     for (const line of bytes.subarray(0, end).toString('utf8').split('\n').filter(Boolean)) {
-      const record = JSON.parse(line) as JournalRecord
+      const whole = parseRecord(line)
+      const record = whole ?? afterTornPrefix(line)
+      // Anything other than a torn prefix completed by the next append stays fatal.
+      if (!record) throw new Error('JOURNAL_CORRUPT: a completed journal record is malformed')
+      if (!whole) torn++
+      records.push(record)
+    }
+    if (torn) this.replace(bytes, records, torn)
+    for (const record of records) {
       this.records.push(record)
       this.apply(record)
     }
+  }
+  /** Keeps the damaged original beside the journal and atomically replaces it with the repair. */
+  private replace(original: Buffer, records: JournalRecord[], torn: number) {
+    const kept = `${this.path}.torn-${Date.now()}`
+    writeFileSync(kept, original, { mode: 0o600, flag: 'wx' })
+    const temporary = `${this.path}.${randomUUID()}.tmp`
+    const fd = openSync(temporary, 'wx', 0o600)
+    try {
+      writeAll(fd, Buffer.from(records.map((record) => `${JSON.stringify(record)}\n`).join('')))
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(temporary, this.path)
+    const directory = openSync(this.state, 'r')
+    try {
+      fsyncSync(directory)
+    } finally {
+      closeSync(directory)
+    }
+    process.stderr.write(`Journal: dropped ${torn} torn record prefix(es) left by a failed write; the original is kept as ${basename(kept)}\n`)
   }
   private key(turnId: string, generation: number) {
     return `${turnId}:${generation}`
@@ -87,8 +146,21 @@ export class Journal {
     const record = { kind, data }
     const fd = openSync(this.path, 'a', 0o600)
     try {
-      writeSync(fd, `${JSON.stringify(record)}\n`)
-      fsyncSync(fd)
+      const size = fstatSync(fd).size
+      try {
+        writeAll(fd, Buffer.from(`${JSON.stringify(record)}\n`))
+        fsyncSync(fd)
+      } catch (error) {
+        // A failed or short write (for example a full disk) must not leave a torn record that the
+        // next append would complete into a malformed line. The record was never acknowledged.
+        try {
+          ftruncateSync(fd, size)
+          fsyncSync(fd)
+        } catch {
+          /* the loader still recognises a torn prefix */
+        }
+        throw error
+      }
     } finally {
       closeSync(fd)
     }

@@ -18,11 +18,12 @@
     "package:lab": "node ../../scripts/package-bot-lab.mjs"
   },
   "dependencies": {
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
     "@maestrly/host-protocol": "0.2.0",
     "@maestrly/ui": "0.1.0",
-    "lucide-react": "1.41.0"
+    "@novnc/novnc": "1.7.0",
+    "lucide-react": "1.41.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

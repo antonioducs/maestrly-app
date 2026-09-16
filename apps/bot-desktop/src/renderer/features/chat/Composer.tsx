@@ -13,6 +13,7 @@ export function Composer({
   active,
   cancelling,
   disabled,
+  reason,
   busy,
 }: {
   value: string
@@ -25,6 +26,7 @@ export function Composer({
   active: boolean
   cancelling: boolean
   disabled: boolean
+  reason?: string
   busy: boolean
 }) {
   const t = useT()
@@ -72,7 +74,7 @@ export function Composer({
           </Button>
         )}
       </div>
-      {disabled && <p id="composer-reason">{t('connectionReason')}</p>}
+      {disabled && <p id="composer-reason">{reason ?? t('connectionReason')}</p>}
     </ComposerSurface>
   )
 }

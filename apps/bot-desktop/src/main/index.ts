@@ -1,10 +1,14 @@
-import { modelSelectionSchema } from '@maestrly/host-protocol'
+import { DESKTOP_LIVE_CAPABILITY, modelSelectionSchema } from '@maestrly/host-protocol'
 import { GlobalAccounts } from './global-accounts'
 import { accountEndpointFor } from './account-endpoint'
 import { HostConnections } from './host-connections'
 import { registerIpc } from './ipc'
 import { validateResult, type Host } from './host-client'
-import { app, BrowserWindow, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell, webContents, type IpcMainInvokeEvent } from 'electron'
+import { randomUUID } from 'node:crypto'
+import { DesktopViewServer, VIEW_HEADER } from './desktop-view-server'
+import { DesktopClient, type DesktopRpc } from './desktop-client'
+import { openMedia } from './desktop-transport'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
@@ -74,6 +78,26 @@ if (!app.requestSingleInstanceLock()) {
       if (url !== expectedUrl) event.preventDefault()
     })
     win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    // Loopback-only socket feeding noVNC. Tickets travel in the subprotocol, and only this
+    // window's own WebSocket requests carry the binding header.
+    const rendererOrigins = () => {
+      const url = new URL(expectedUrl)
+      return url.protocol === 'file:' ? ['file://', 'null'] : [url.origin]
+    }
+    const viewServer = new DesktopViewServer({
+      origins: rendererOrigins,
+      alive: (id) => {
+        const contents = webContents.fromId(id)
+        return !!contents && !contents.isDestroyed() && id === win.webContents.id
+      },
+    })
+    await viewServer.start()
+    win.webContents.session.webRequest.onBeforeSendHeaders({ urls: [`ws://127.0.0.1:${viewServer.port}/*`] }, (details, callback) => {
+      const headers = { ...details.requestHeaders }
+      for (const name of Object.keys(headers)) if (name.toLowerCase() === VIEW_HEADER) delete headers[name]
+      if (details.webContentsId === win.webContents.id) headers[VIEW_HEADER] = viewServer.binding(win.webContents.id)
+      callback({ requestHeaders: headers })
+    })
     await mkdir(profile.userData, { recursive: true })
     const targets = new HostTargets(join(profile.userData, 'hosts.json'))
     let active: HostTarget | undefined
@@ -88,6 +112,36 @@ if (!app.requestSingleInstanceLock()) {
       request
     )
     const bots = new BotClient(new BotJournal(join(profile.userData, fixture ? `bot-journal-fixture-${process.pid}.json` : 'bot-journal.json')), request)
+    const desktop = new DesktopClient({
+      target: () => (fixture ? (fixture.connected ? { kind: 'local' as const, id: 'local' as const, displayName: 'Este Mac (fixture)', hostId: 'd9a02e5b-0c12-4411-9393-b5106ecff181' } : undefined) : active),
+      // A dedicated control connection: screen input never waits behind chat requests.
+      connect: async (target): Promise<DesktopRpc> => {
+        if (fixture) return { request: (method, params) => fixture.request(method, params).then((result) => validateResult(method, result)), disconnect: () => {} }
+        const transport = target.kind === 'local' ? new LocalTransport() : new SshTransport()
+        if (target.kind === 'local') await (transport as LocalTransport).connectLocal()
+        else transport.connect(target.alias)
+        try {
+          const host = (await transport.request('host.inspect', {})) as Host
+          if (!target.hostId || host.id !== target.hostId) throw new Error('A identidade deste computador mudou. Confirme o destino antes de abrir a tela.')
+          if (!host.capabilities.includes(DESKTOP_LIVE_CAPABILITY)) throw Object.assign(new Error('Atualize o Host para ver a tela'), { code: 'DESKTOP_UPDATE_REQUIRED' })
+          return transport
+        } catch (error) {
+          transport.disconnect()
+          throw error
+        }
+      },
+      openMedia: (target, ticket) => (fixture ? fixture.desktopMedia(ticket) : openMedia(target, ticket)),
+      server: viewServer,
+      emit: (id, event) => {
+        const contents = webContents.fromId(id)
+        if (contents && !contents.isDestroyed()) contents.send('bot:desktop-event', event)
+      },
+      clientInstanceId: randomUUID(),
+    })
+    app.on('before-quit', () => {
+      desktop.reset('CLOSED')
+      void viewServer.close()
+    })
     const accountTransports = new Map<string, SshTransport>()
     const accountConnections = new Map<string, Promise<SshTransport>>()
     const accountDirectory = new GlobalAccounts(join(profile.userData, fixture ? `accounts-fixture-${process.pid}.json` : 'accounts.json'), {
@@ -138,7 +192,15 @@ if (!app.requestSingleInstanceLock()) {
     }
     const saveJson = (name: string, value: unknown) => writeFile(join(profile.userData, name), JSON.stringify(value), { mode: 0o600 })
     const fixtureTargets = (): HostTarget[] => (fixtureNoHost ? [] : [{ kind: 'local', id: 'local', displayName: 'Este Mac (fixture)' }])
-    const handlers: Record<string, (arg: unknown) => unknown> = {
+    const botIdOf = (value: unknown) => {
+      if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) throw new Error('Invalid bot')
+      return value
+    }
+    const handleOf = (value: unknown) => {
+      if (typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value)) throw new Error('Invalid desktop view')
+      return value
+    }
+    const handlers: Record<string, (arg: unknown, event: IpcMainInvokeEvent) => unknown> = {
       hosts: async () => (fixture ? fixtureTargets() : targets.list()),
       status: () => status(),
       localHost: async () => (fixture ? (fixtureNoHost ? { state: 'missing' } : { state: 'installed', version: 'fixture' }) : inspectLocalHost()),
@@ -151,6 +213,7 @@ if (!app.requestSingleInstanceLock()) {
         return installLocalHost({ namespace: staged.namespace, identity: staged.identity, caps: staged.caps, operator: staged.operator ?? null })
       },
       disconnect: () => {
+        desktop.reset('DISCONNECTED')
         connections.disconnect()
         if (fixture) fixture.connected = false
         else if (active) transportFor(active).disconnect()
@@ -169,6 +232,7 @@ if (!app.requestSingleInstanceLock()) {
         if (typeof value !== 'string') throw new Error('Invalid target')
         const target = fixture ? fixtureTargets().find((t) => t.id === value) : value === 'local' ? { kind: 'local' as const, id: 'local' as const, displayName: 'Este Mac' } : await targets.get(value)
         if (!target) throw new Error(fixtureNoHost ? 'Nenhum computador configurado' : 'Computador desconhecido')
+        if (active?.id !== target.id) desktop.reset('TARGET_CHANGED')
         // Only a chosen, trusted target is ever contacted; never a scan or a fallback host.
         if (fixture) fixture.connected = true
         else if (target.kind === 'local') await local.connectLocal()
@@ -256,6 +320,26 @@ if (!app.requestSingleInstanceLock()) {
         await writeFile(result.filePath, Buffer.from(input.dataBase64, 'base64'), { mode: 0o600 })
         return { saved: true }
       },
+      // Inspection has no secrets and uses the main connection; opening a screen uses the
+      // dedicated desktop connection. Handles are bound to the invoking renderer.
+      desktopInspect: async (value) => {
+        if (!fixture && !hostCapabilities.includes(DESKTOP_LIVE_CAPABILITY)) throw Object.assign(new Error('Atualize o Host para ver a tela'), { code: 'DESKTOP_UPDATE_REQUIRED' })
+        return request('bot.desktop.inspect', { botId: botIdOf(value) })
+      },
+      desktopOpen: async (value, event) => desktop.open(event.sender.id, botIdOf(value)),
+      desktopClose: async (value, event) => desktop.close(event.sender.id, handleOf(value)),
+      desktopAcquire: async (value, event) => desktop.acquire(event.sender.id, handleOf(value)),
+      desktopInput: async (value, event) => {
+        const input = value as { handle?: unknown; events?: unknown }
+        if (!input || typeof input !== 'object' || Object.keys(input).some((key) => !['handle', 'events'].includes(key))) throw new Error('Invalid desktop input')
+        return desktop.input(event.sender.id, handleOf(input.handle), input.events)
+      },
+      desktopReturn: async (value, event) => {
+        const input = value as { botId?: unknown; handle?: unknown; continueTask?: unknown }
+        if (!input || typeof input !== 'object' || Object.keys(input).some((key) => !['botId', 'handle', 'continueTask'].includes(key)) || typeof input.continueTask !== 'boolean')
+          throw new Error('Invalid desktop return')
+        return desktop.returnControl(event.sender.id, { botId: botIdOf(input.botId), ...(input.handle !== undefined ? { handle: handleOf(input.handle) } : {}) }, input.continueTask)
+      },
       pickFile: async () => {
         const result = await dialog.showOpenDialog(win, { properties: ['openFile'] })
         const path = result.filePaths[0]
@@ -266,6 +350,11 @@ if (!app.requestSingleInstanceLock()) {
       },
     }
     registerIpc(win, expectedUrl, handlers)
+    // A reload, crash or close ends the renderer's views; a controller becomes a pause.
+    const revokeViews = () => desktop.revoke(win.webContents.id)
+    win.webContents.on('did-start-loading', revokeViews)
+    win.webContents.on('render-process-gone', revokeViews)
+    win.on('closed', () => desktop.reset('CLOSED'))
     if (expectedUrl.startsWith('file:')) await win.loadFile(rendererFile)
     else await win.loadURL(expectedUrl)
     app.on('second-instance', () => {

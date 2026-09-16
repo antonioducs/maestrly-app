@@ -98,6 +98,18 @@ export function FileCard({
     </article>
   )
 }
+function SystemNotice({ content }: { content: string }) {
+  const t = useT()
+  return (
+    <>
+      <p className="system-title">{t('continuationNotice')}</p>
+      <details>
+        <summary>{t('continuationDetails')}</summary>
+        <p>{content}</p>
+      </details>
+    </>
+  )
+}
 export function MessageList({
   botId,
   messages,
@@ -111,7 +123,7 @@ export function MessageList({
     <>
       {messages.map((message) => (
         <article className={`message ${message.role}`} key={message.id}>
-          {message.role === 'assistant' ? <Markdown text={message.content} /> : <p>{message.content}</p>}
+          {message.role === 'assistant' ? <Markdown text={message.content} /> : message.role === 'system' ? <SystemNotice content={message.content} /> : <p>{message.content}</p>}
           {message.attachments.map((file) => (
             <FileCard key={file.path} botId={botId} file={file} onPreview={onPreview} />
           ))}

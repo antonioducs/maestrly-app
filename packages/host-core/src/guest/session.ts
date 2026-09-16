@@ -1,4 +1,4 @@
-import { delegatedCredentialSchema, type DelegatedCredential } from '@maestrly/host-protocol'
+import { delegatedCredentialSchema, type DelegatedCredential, type VmRequest, type VmSessionInfo } from '@maestrly/host-protocol'
 import { connect } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
@@ -33,12 +33,20 @@ export interface GuestSession {
 }
 export interface GuestConnector {
   connect(input: { vmId: string; sessionId: string; hostGeneration: number; transport: 'legacy' | 'managed' }): Promise<GuestSession>
-  inspectVm?(vmId: string): Promise<{ capacity?: SessionCapacity; capabilities?: string[] }>
+  inspectVm?(vmId: string): Promise<{ capacity?: SessionCapacity; capabilities?: string[]; runtimeVersion?: string }>
   createSession?(session: BotSession, idempotencyKey: string): Promise<{ id: string; botId: string; generation: number }>
   stopSession?(session: BotSession, idempotencyKey: string): Promise<void>
   renewSessionLease?(session: BotSession, turnId: string, leaseMs: number): Promise<void>
   releaseSessionLease?(session: BotSession, turnId: string): Promise<void>
+  /** Live supervisor view of a managed session (generation and state). */
+  inspectSession?(session: BotSession): Promise<VmSessionInfo>
+  /** Fixed desktop requests to the guest supervisor; there is no generic passthrough. */
+  desktop?(session: BotSession, method: DesktopVmMethod, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>
+  /** Opens one RFB stream on the private media lane for a grant created by desktop.viewer.open. */
+  openDesktopMedia?(session: BotSession, generation: number, grantId: string): Promise<Duplex>
+  dropDesktop?(vmId: string): void
 }
+export type DesktopVmMethod = Extract<VmRequest['method'], `desktop.${string}`>
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 
 /** Host side of the private virtio-serial control channel. Rejects stale or foreign frames. */

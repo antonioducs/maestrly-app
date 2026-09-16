@@ -22,6 +22,8 @@ import {
   type Vm,
   type Host,
   type Operation,
+  DESKTOP_HANDOFF_CAPABILITY,
+  DESKTOP_LIVE_CAPABILITY,
 } from '@maestrly/host-protocol'
 import { QemuProvider, type Provider, type Runtime, type Image } from './provider.js'
 import { verifyAsset } from './assets.js'
@@ -29,6 +31,8 @@ import { BotService } from './bots/service.js'
 import type { BotTemplate } from './bots/recommendations.js'
 import { type GuestConnector } from './guest/session.js'
 import { EgressBroker } from './egress/broker.js'
+import { DesktopMediaConnector } from './desktop/media-connector.js'
+import type { DesktopContext } from './desktop/service.js'
 export interface HostServiceOptions {
   stateDirectory: string
   accounts?: { runtime?: AccountRuntime; peers?: { host: string; port: number } }
@@ -167,7 +171,10 @@ export class HostService {
         const vm = this.store.vm(vmId)
         if (!this.provider.botChannels) throw new HostError('UNSUPPORTED', 'Provider has no bot channels')
         return this.provider.botChannels(vm)
-      }, this.egress, () => this.bots.repo)),
+      }, this.egress, () => this.bots.repo, new DesktopMediaConnector(this.hostId, this.hostGeneration, (vmId) => {
+        const vm = this.store.vm(vmId)
+        return this.provider.botChannels?.(vm).desktop
+      }))),
       host: setupHost,
       onPolicyChanged: (botId, vmId, policy) => {
         const session = this.bots.repo.session(botId)
@@ -268,18 +275,41 @@ export class HostService {
     if (legacy.length !== 1 || !this.provider.botChannels || !this.egress) return
     this.egress.attach(vm.id, this.provider.botChannels(vm).egress, this.bots.repo.network(legacy[0].botId))
   }
+  private runtimeChecks = new Map<string, { at: number; value: Promise<{ available: boolean; reason?: string }> }>()
+  /**
+   * host.inspect is how clients confirm identity (the screen channel does it on open), and a
+   * full runtime check hashes QEMU and firmware and boots a probe VM (~0.8 s). A successful
+   * check is reused for a minute; failures are rechecked every time. Starting a VM still
+   * verifies the runtime in full.
+   */
+  private runtimeAvailability(runtime: Runtime) {
+    const cached = this.runtimeChecks.get(runtime.id)
+    if (cached && Date.now() - cached.at < 60_000) return cached.value
+    const value = this.provider.inspectRuntime(runtime)
+    const entry = { at: Date.now(), value }
+    this.runtimeChecks.set(runtime.id, entry)
+    void value.then(
+      (result) => {
+        if (!result.available && this.runtimeChecks.get(runtime.id) === entry) this.runtimeChecks.delete(runtime.id)
+      },
+      () => {
+        if (this.runtimeChecks.get(runtime.id) === entry) this.runtimeChecks.delete(runtime.id)
+      }
+    )
+    return value
+  }
   private async inspectHost(): Promise<Host> {
     const runtimes = await Promise.all(
       this.options.runtimes.map(async (runtime) => ({
         id: runtime.id,
-        ...(await this.provider.inspectRuntime(runtime)),
+        ...(await this.runtimeAvailability(runtime)),
       }))
     )
     return {
       id: this.hostId,
       serviceVersion: '0.2.0',
       protocolVersion: 1,
-      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
+      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY, 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
       health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',
       observedMemoryMiB: observedMemoryMiB(),
       platform: process.platform,
@@ -325,7 +355,8 @@ export class HostService {
     if (!value) throw new HostError('IMAGE_UNAVAILABLE', 'Unknown image')
     return value
   }
-  async dispatch(input: unknown): Promise<Response> {
+  /** @param context the Host connection the request arrived on; viewers are bound to it. */
+  async dispatch(input: unknown, context?: DesktopContext): Promise<Response> {
     const parsed = requestSchema.safeParse(input)
     const candidate = input as { id?: unknown } | null
     const id =
@@ -352,16 +383,27 @@ export class HostService {
       return {
         version: 1,
         id: parsed.data.id,
-        result: await this.handle(parsed.data),
+        result: await this.handle(parsed.data, context),
       }
     } catch (error) {
       return { version: 1, id: parsed.data.id, error: errorInfo(error) }
     }
   }
-  private async handle(request: Request): Promise<unknown> {
+  /** desktop-stdio: a single-use ticket becomes one RFB stream on the private media lane. */
+  async attachDesktop(ticket: string) {
+    await this.ready()
+    return this.bots.desktop.attach(ticket)
+  }
+  /** A Host socket closed: its desktop viewers end and a controller becomes a pause. */
+  async disconnect(connectionId: string) {
+    if (!this.initialized) return
+    await this.initialized.catch(() => {})
+    await this.bots?.desktop.disconnect(connectionId)
+  }
+  private async handle(request: Request, context?: DesktopContext): Promise<unknown> {
     if (request.method.startsWith('environment.')) return this.environments.handle(request as any)
     if (request.method.startsWith('account.')) return this.accounts.handle(request as any)
-    if (request.method.startsWith('bot.')) return this.bots.handle(request as any)
+    if (request.method.startsWith('bot.')) return this.bots.handle(request as any, context)
     switch (request.method) {
       case 'host.inspect':
         return this.inspectHost()

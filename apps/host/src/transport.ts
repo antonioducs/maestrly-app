@@ -2,6 +2,7 @@ import { requestSchema, responseSchema, type Request, type Response } from '@mae
 export const MAX_FRAME_BYTES = 1024 * 1024
 export const MAX_PENDING_REQUESTS = 16
 export const SOCKET_PATH = '/Library/MaestrlyHost/run/host.sock'
+export const DESKTOP_SOCKET_PATH = '/Library/MaestrlyHost/run/desktop.sock'
 export const EXECUTABLE_PATH = '/Library/MaestrlyHost/bin/maestrly-host'
 export class FrameDecoder {
   private pending = Buffer.alloc(0)

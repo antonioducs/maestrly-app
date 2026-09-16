@@ -38,11 +38,11 @@
     "check:sdk": "npm run build:protocol && npm run check --workspace @maestrly/client-sdk",
     "check:runner-core": "npm run build:sdk && npm run check --workspace @maestrly/runner-core",
     "check:boundaries": "node scripts/check-boundaries.mjs",
-    "check": "npm run check:boundaries && npm run check:protocol && npm run check:sdk && npm run check:runner-core && npm run check:server && npm run check:runner && npm run check:web && npm run check:desktop && npm run check:host-phase1 && npm run check:bot-phase2 && npm run check:bot-sessions",
+    "check": "npm run check:boundaries && npm run check:protocol && npm run check:sdk && npm run check:runner-core && npm run check:server && npm run check:runner && npm run check:web && npm run check:desktop && npm run check:host-phase1 && npm run check:bot-phase2 && npm run check:bot-sessions && npm run check:bot-phase3",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "format": "biome format --write .",
-    "test": "npm run test:unit && npm run test:policy && npm run test:docs && npm run test:host-phase1 && npm run test:bot-phase2 && npm run test:bot-sessions",
+    "test": "npm run test:unit && npm run test:policy && npm run test:docs && npm run test:host-phase1 && npm run test:bot-phase2 && npm run test:bot-sessions && npm run test:bot-phase3",
     "test:unit": "npm run test:unit --workspace @maestrly/desktop",
     "test:policy": "node --test tests/policy/*.test.mjs",
     "test:docs": "node scripts/check-markdown-links.mjs",
@@ -85,7 +85,11 @@
     "test:bot-sessions": "npm run build:host-core && npm run build:codex-client && npm test --workspace @maestrly/guest-transport && npm test --workspace @maestrly/host-protocol -- test/bot-sessions.test.ts && npm test --workspace @maestrly/host-core -- test/bot-sessions.test.ts test/bot-session-channel.test.ts test/bot-shared-turns.test.ts && npm test --workspace @maestrly/bot-runtime -- test/vm-supervisor.test.ts test/vm-routing.test.ts && node --test tests/bot-session-artifacts.test.mjs",
     "lab:bot:sessions": "node scripts/bot-lab.mjs sessions",
     "fetch:account-runtime": "node scripts/fetch-account-runtime.mjs",
-    "verify:account-runtime": "node scripts/verify-account-runtime.mjs"
+    "verify:account-runtime": "node scripts/verify-account-runtime.mjs",
+    "check:bot-phase3": "npm run build:host-core && npm run typecheck --workspace @maestrly/guest-transport && npm run typecheck --workspace @maestrly/host-core && npm run typecheck --workspace @maestrly/host && npm run typecheck --workspace @maestrly/bot-runtime && npm run typecheck --workspace @maestrly/bot-desktop && node --test tests/bot-desktop-artifacts.test.mjs scripts/test/verify-bot-desktop.test.mjs scripts/test/build-bot-desktop-dependencies.test.mjs scripts/test/bot-desktop-lab.test.mjs",
+    "test:bot-phase3": "npm run build:host-core && npm test --workspace @maestrly/host-protocol -- test/desktop.test.ts && npm test --workspace @maestrly/guest-transport -- test/media.test.ts && npm test --workspace @maestrly/host-core -- test/desktop-state.test.ts test/desktop-gateway.test.ts test/desktop-handoff.test.ts && npm test --workspace @maestrly/bot-runtime -- test/desktop-control.test.ts test/desktop-input.test.ts test/desktop-process-boundaries.test.ts test/desktop-services.test.ts test/desktop-supervisor.test.ts test/desktop-viewer.test.ts && npm exec --workspace @maestrly/host -- vitest run test/desktop-transport.test.ts test/cli-platform.test.ts && npm test --workspace @maestrly/bot-desktop -- test/desktop-client.test.ts test/desktop-input.test.ts test/desktop-view-server.test.ts && node --test tests/bot-desktop-artifacts.test.mjs scripts/test/verify-bot-desktop.test.mjs scripts/test/build-bot-desktop-dependencies.test.mjs scripts/test/bot-desktop-lab.test.mjs",
+    "lab:bot:desktop": "node scripts/bot-desktop-lab.mjs",
+    "build:bot:desktop-dependencies": "node scripts/build-bot-desktop-dependencies.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",

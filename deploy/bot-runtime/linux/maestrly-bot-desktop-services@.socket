@@ -1,0 +1,14 @@
+[Unit]
+Description=Maestrly bot desktop services administrative socket %i
+
+[Socket]
+# Root-only. The automation worker runs as the same session user, so this socket is
+# the boundary that keeps gate, human input and viewers out of its reach.
+ListenStream=/run/maestrly-vm/%i/desktop-admin.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0710
+RemoveOnStop=yes
+Accept=no
+Service=maestrly-bot-desktop-services@%i.service

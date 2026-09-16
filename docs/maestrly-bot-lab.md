@@ -29,7 +29,27 @@ explícito. As duas VMs existentes são preservadas: uma só é preparada quando
   tarefa verificável ao bot pronto do namespace e confere o arquivo produzido no workspace.
 - `npm run test:lab:bot` — wrapper Vitest do smoke, pulado sem `MAESTRLY_BOT_LAB_TEST=1`.
 
-Relatórios ficam em `.host-lab/bot-*/` (ignorado pelo Git). O laboratório não executa reboot
+## Fase 3 — tela ao vivo e intervenção humana
+
+- `npm run lab:bot:desktop` — somente consulta, sem flags: capacidades `desktop.live.v1` e
+  `desktop.handoff.v1` do Host, a VM selecionada por `botVmId`, os bots dessa VM, o estado da
+  tela de cada um e o próximo passo (atualizar o Host; atualizar o ambiente e reiniciar a VM
+  selecionada em janela autorizada; ou pronto). Não muta nada.
+- `npm run lab:bot:desktop -- run --authorize-desktop-lab` — exige `"authorizeDesktopLab": true`
+  na configuração privada **e** a flag. Pelo mesmo caminho do aplicativo (`rpc-stdio` persistente
+  e `desktop-stdio` com o ticket só no stdin) mede o primeiro quadro, abre dois visualizadores e,
+  se existir, a tela de um segundo bot; envia uma tarefa real, assume o controle no meio dela,
+  mede entrada→pixel, derruba um visualizador, deixa o lease expirar e devolve com continuação.
+  Não prepara, não reinicia, não arquiva e não apaga nada.
+- `MAESTRLY_BOT_DESKTOP_LAB_TEST=1 npx --workspace @maestrly/bot-runtime vitest run test/lab/live-desktop.test.ts`
+  — wrapper Vitest do comando acima.
+
+A porta virtio da tela só existe depois que a VM reinicia com o novo perfil; essa janela é do
+operador. Sem Mac mini, `node scripts/verify-bot-desktop.mjs --local-container` e
+`--local-vm` validam a pilha em contêiner e em VM Linux local sem rede
+([tela ao vivo](bot-runtime/live-desktop.md)).
+
+Relatórios ficam em `.host-lab/bot-*/` e `.host-lab/desktop-lab-*/` (ignorados pelo Git). O laboratório não executa reboot
 físico, não altera cotas, não instala pacotes no controlador e não copia credenciais.
 
 ## Pré-requisitos do Host

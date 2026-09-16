@@ -70,6 +70,19 @@ test.each(['ask', 'full-vm'] as const)('%s rejects elevated execution even with 
     vi.unstubAllEnvs()
   }
 })
+test('the model reads what each tool is for; people keep the short activity summary', async () => {
+  const f = await fixture()
+  const tools = new Map(f.registry.list().map((tool) => [tool.name, tool.description]))
+  expect(tools.get('browser_navigate')).toMatch(/Chromium/)
+  expect(tools.get('browser_navigate')).toMatch(/Chrome/)
+  expect(tools.get('browser_navigate')).toMatch(/Não procure nem instale outro navegador/)
+  expect(tools.get('computer_screenshot')).toMatch(/área de trabalho inteira/)
+  for (const [name, description] of tools) expect(description.length, name).toBeGreaterThan(20)
+  // Activity shown to people is unchanged.
+  vi.spyOn(f.browser, 'navigate').mockResolvedValue({ url: 'https://example.com/' })
+  await f.call('browser_navigate', { url: 'https://example.com/' })
+  expect(f.events.find((event) => event.kind === 'tool.started')?.summary).toBe('Abrindo a página https://example.com/')
+})
 test('observations expire after an action and duplicate request ids never repeat clicks', async () => {
   const f = await fixture()
   vi.spyOn(f.browser, 'snapshot').mockResolvedValue({

@@ -1,12 +1,10 @@
 import { createConnection, createServer, type Socket } from 'node:net'
+import { randomUUID } from 'node:crypto'
 import { chmod, lstat, unlink } from 'node:fs/promises'
 import type { Request, Response } from '@maestrly/host-protocol'
 import { FrameDecoder, handleFrame, MAX_PENDING_REQUESTS } from './transport.js'
-export async function startSocket(
-  path: string,
-  dispatch: (request: Request) => Promise<Response>,
-  log: (event: 'connection_rejected' | 'protocol_rejected' | 'request_completed') => void = () => {}
-) {
+/** Removes a stale, owned, refused socket path; refuses anything live or untrusted. */
+export async function recoverSocketPath(path: string) {
   // Caller holds the HostService ready lock before attempting recovery.
   try {
     const owned = await lstat(path)
@@ -37,6 +35,16 @@ export async function startSocket(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+}
+export type ConnectionContext = { connectionId: string }
+export async function startSocket(
+  path: string,
+  dispatch: (request: Request, context: ConnectionContext) => Promise<Response>,
+  log: (event: 'connection_rejected' | 'protocol_rejected' | 'request_completed') => void = () => {},
+  /** A closed connection ends everything bound to it, such as desktop viewers. */
+  onClose: (connectionId: string) => void = () => {}
+) {
+  await recoverSocketPath(path)
   const sockets = new Set<Socket>()
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     if (sockets.size >= 32) {
@@ -45,9 +53,13 @@ export async function startSocket(
       return
     }
     sockets.add(socket)
+    const context: ConnectionContext = { connectionId: randomUUID() }
     socket.setTimeout(30000, () => socket.destroy())
     socket.on('error', () => socket.destroy())
-    socket.on('close', () => sockets.delete(socket))
+    socket.on('close', () => {
+      sockets.delete(socket)
+      onClose(context.connectionId)
+    })
     const decoder = new FrameDecoder()
     let pending = 0
     let chain = Promise.resolve()
@@ -64,7 +76,7 @@ export async function startSocket(
           chain = chain
             .then(async () => {
               if (socket.destroyed) return
-              const response = await handleFrame(frame, dispatch)
+              const response = await handleFrame(frame, (request) => dispatch(request, context))
               if (!socket.destroyed)
                 await new Promise<void>((resolve, reject) =>
                   socket.write(`${JSON.stringify(response)}\n`, (error) => (error ? reject(error) : resolve()))

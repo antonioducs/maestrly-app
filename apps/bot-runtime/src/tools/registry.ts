@@ -7,12 +7,11 @@ import type { FileService } from '../files/service.js'
 import type { TurnHooks } from '../providers/provider.js'
 import type { ProcessRegistry } from '../turns/leases.js'
 import { runtimeError } from '../turns/service.js'
-import type { BrowserSession } from './browser.js'
-import { Computer } from './computer.js'
+import { BrowserSession } from './browser.js'
+import { LocalDesktopTools, type DesktopTools } from '../desktop/desktop-tools.js'
 import { approveSystem } from './policy.js'
 import { systemExec } from './system.js'
 import { proposeMemory } from './memory.js'
-import { captureDesktop } from '../desktop/capture.js'
 
 const empty = z.strictObject({})
 const ref = { ref: z.number().int().positive(), observationId: z.string().uuid() }
@@ -57,6 +56,28 @@ const summaries: Record<keyof typeof schemas, string> = {
   memory_propose: 'Propondo uma memória',
   files_deliver: 'Entregando um arquivo',
 }
+/**
+ * What the model reads in tools/list. The summaries above are for people watching the task;
+ * these tell the model what each tool is for, so a request like "abre o Chrome" maps to the
+ * managed Chromium instead of a search for a browser binary on the PATH.
+ */
+const descriptions: Record<keyof typeof schemas, string> = {
+  browser_navigate:
+    'Abre uma URL (http, https ou arquivo do workspace) no navegador Chromium já instalado nesta área de trabalho; a janela aparece na tela do bot. Use para qualquer pedido de abrir o navegador, o Chrome ou pesquisar na web (por exemplo https://www.google.com/search?q=termos). Não procure nem instale outro navegador.',
+  browser_snapshot: 'Lê a página aberta no Chromium: título, URL, texto e elementos interativos numerados (ref). Necessário antes de browser_click e browser_type.',
+  browser_click: 'Clica no elemento de número ref da última leitura da página no Chromium.',
+  browser_type: 'Preenche o campo de número ref da última leitura da página no Chromium com o texto.',
+  browser_key: 'Pressiona uma tecla na página aberta no Chromium (por exemplo Enter, Tab ou Escape).',
+  browser_screenshot: 'Captura como imagem a página aberta no Chromium.',
+  browser_downloads: 'Lista os arquivos que o Chromium baixou para downloads/ no workspace.',
+  computer_screenshot: 'Captura a área de trabalho inteira (1280×800), inclusive janelas fora do navegador. Necessário antes de computer_click, computer_type e computer_key.',
+  computer_click: 'Clica na área de trabalho nas coordenadas da última captura (computer_screenshot).',
+  computer_type: 'Digita texto na janela em foco da área de trabalho.',
+  computer_key: 'Pressiona uma tecla ou combinação na janela em foco da área de trabalho.',
+  system_exec: summaries.system_exec,
+  memory_propose: 'Propõe uma memória para o bot guardar entre conversas.',
+  files_deliver: 'Entrega à pessoa um arquivo do workspace, que aparece na conversa para baixar.',
+}
 export interface ToolContext {
   snapshot: TurnSnapshot
   hooks: TurnHooks
@@ -73,15 +94,15 @@ export class ToolRegistry {
   private desktopGeneration?: string
   private requests = new Map<string, Promise<ToolResult>>()
   private queue: Promise<unknown> = Promise.resolve()
-  private computer: Computer
+  readonly tools: DesktopTools
   constructor(
     private journal: Journal,
     private files: FileService,
-    readonly browser: BrowserSession,
+    target: BrowserSession | DesktopTools,
     private context: () => ToolContext,
     private mode: () => 'ask' | 'full-vm'
   ) {
-    this.computer = new Computer(browser)
+    this.tools = target instanceof BrowserSession ? new LocalDesktopTools(target, files) : target
   }
   invalidate() {
     this.observationId = undefined
@@ -90,7 +111,7 @@ export class ToolRegistry {
   list() {
     return Object.entries(schemas).map(([name, schema]) => ({
       name,
-      description: summaries[name as keyof typeof schemas],
+      description: descriptions[name as keyof typeof schemas],
       inputSchema: z.toJSONSchema(schema),
     }))
   }
@@ -130,9 +151,10 @@ export class ToolRegistry {
     ).slice(0, 400)
     hooks.emit({ kind: 'tool.started', summary, detail: { name, requestId } })
     let result: ToolResult
+    // Managed sessions keep the browser: the handoff gate drains started work instead.
     const cancelBrowser = () => {
       this.invalidate()
-      void this.browser.close()
+      this.tools.abort()
     }
     signal.addEventListener('abort', cancelBrowser, { once: true })
     try {
@@ -146,25 +168,25 @@ export class ToolRegistry {
       )
         throw runtimeError('STALE_OBSERVATION', 'Observe the current page before acting')
       if (['computer_click', 'computer_type', 'computer_key'].includes(name) &&
-        (this.observationKind !== 'computer' || this.desktopGeneration !== await this.browser.desktop.generation()))
+        (this.observationKind !== 'computer' || this.desktopGeneration !== await this.tools.generation()))
         throw runtimeError('STALE_OBSERVATION', 'Observe this desktop before acting; its session may have restarted')
       const observe = ['browser_snapshot', 'browser_screenshot', 'computer_screenshot'].includes(name)
       if (!observe) this.invalidate()
       let value: unknown
       switch (name) {
         case 'browser_navigate':
-          value = await this.browser.navigate(String(parsed.url))
+          value = await this.tools.navigate(String(parsed.url))
           break
         case 'browser_snapshot':
-          value = await this.browser.snapshot()
+          value = await this.tools.snapshot()
           break
         case 'browser_screenshot':
         case 'computer_screenshot': {
           const observationId = randomUUID()
-          const shot = name === 'computer_screenshot' ? await captureDesktop(this.browser.desktop, this.files, observationId, hooks, signal) : await this.browser.screenshot(observationId, hooks)
+          const shot = name === 'computer_screenshot' ? await this.tools.captureDesktop(observationId, hooks, signal) : await this.tools.screenshot(observationId, hooks)
           this.observationId = observationId
           this.observationKind = name === 'computer_screenshot' ? 'computer' : 'browser'
-          this.desktopGeneration = name === 'computer_screenshot' ? await this.browser.desktop.generation() : undefined
+          this.desktopGeneration = name === 'computer_screenshot' ? (shot as { generation?: string }).generation ?? await this.tools.generation() : undefined
           result = {
             content: [
               { type: 'text', text: JSON.stringify({ observationId, path: shot.path }) },
@@ -175,19 +197,19 @@ export class ToolRegistry {
           return this.finish(record, hooks, summary, result)
         }
         case 'browser_click':
-          await this.browser.click(Number(parsed.ref))
+          await this.tools.click(Number(parsed.ref))
           break
         case 'browser_type':
-          await this.browser.type(Number(parsed.ref), String(parsed.text))
+          await this.tools.type(Number(parsed.ref), String(parsed.text))
           break
         case 'browser_key':
-          await this.browser.key(String(parsed.key))
+          await this.tools.key(String(parsed.key))
           break
         case 'browser_downloads':
-          value = this.browser.listDownloads()
+          value = await this.tools.downloads()
           break
         case 'computer_click':
-          await this.computer.click(
+          await this.tools.computerClick(
             Number(parsed.x),
             Number(parsed.y),
             parsed.button as 'left' | 'right' | 'middle' | undefined,
@@ -195,10 +217,10 @@ export class ToolRegistry {
           )
           break
         case 'computer_type':
-          await this.computer.type(String(parsed.text), signal)
+          await this.tools.computerType(String(parsed.text), signal)
           break
         case 'computer_key':
-          await this.computer.key(String(parsed.key), signal)
+          await this.tools.computerKey(String(parsed.key), signal)
           break
         case 'system_exec': {
           const command = parsed.command as string[]

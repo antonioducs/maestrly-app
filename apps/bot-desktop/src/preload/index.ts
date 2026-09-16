@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron'
-import type { BotApi } from '../shared/types'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { BotApi, DesktopViewEvent } from '../shared/types'
 const api: BotApi = {
   hosts: () => ipcRenderer.invoke('bot:hosts'),
   connect: (targetId) => ipcRenderer.invoke('bot:connect', targetId),
@@ -20,5 +20,21 @@ const api: BotApi = {
   savePreferences: (preferences) => ipcRenderer.invoke('bot:savePreferences', preferences),
   saveFile: (input) => ipcRenderer.invoke('bot:saveFile', input),
   pickFile: () => ipcRenderer.invoke('bot:pickFile'),
+  // Opaque handles only: the main process keeps tickets and control capabilities.
+  desktop: {
+    inspect: (botId) => ipcRenderer.invoke('bot:desktopInspect', botId),
+    open: (botId) => ipcRenderer.invoke('bot:desktopOpen', botId),
+    close: (handle) => ipcRenderer.invoke('bot:desktopClose', handle),
+    acquire: (handle) => ipcRenderer.invoke('bot:desktopAcquire', handle),
+    input: (handle, events) => ipcRenderer.invoke('bot:desktopInput', { handle, events }),
+    returnControl: (input) => ipcRenderer.invoke('bot:desktopReturn', input),
+    onEvent: (listener) => {
+      const handler = (_event: IpcRendererEvent, value: DesktopViewEvent) => listener(value)
+      ipcRenderer.on('bot:desktop-event', handler)
+      return () => {
+        ipcRenderer.removeListener('bot:desktop-event', handler)
+      }
+    },
+  },
 }
 contextBridge.exposeInMainWorld('bot', api)

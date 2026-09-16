@@ -360,6 +360,8 @@ export const requiredBotPackages = [
   'xauth',
   'xdotool',
   'scrot',
+  // Read-only live screen: X0tigervnc scrapes the session display into a private Unix socket.
+  'tigervnc-scraping-server',
   'fonts-liberation',
   'libnss3',
   'libnspr4',

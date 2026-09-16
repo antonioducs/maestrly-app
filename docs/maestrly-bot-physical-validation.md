@@ -20,7 +20,7 @@ Intel, reboot físico, capacidade ilimitada ou proteção contra um guest root m
 | Runtime Linux (`bot-runtime`) | 55 testes: framing/handshake/ack, journal e recuperação, leases e limites, adapter Codex contra app-server fixture (thread persistente, aprovação, cancelamento, env mínimo, -32601), auth (device/apiKey, URL não confiável), arquivos, proxy/egress (CONNECT, negação, offline, loopback, backpressure, 17º stream), ferramentas (registro, aprovação elevada, observação obsoleta, dedupe), MCP, instalador (sintaxe e SHA-256). Browser/Xvfb pulados sem binários |
 | Cliente Codex (`codex-client`) | 20 testes, incluindo regressões do desktop antigo (24 testes) |
 | Aplicativo (`bot-desktop`) | 43 unitários (journal sem segredos, alvos, transporte local fixo, instalação fail-closed, projeções tipadas) e 14 e2e Electron com fixtures (onboarding sem escolhas técnicas, Host ausente, retomada, chat/aprovação/pergunta/parar/falha, markdown malicioso, reconexão, modo simples sem infraestrutura, administração no avançado, temas, teclado, janela mínima) |
-| Artefatos e scripts | `tests/bot-artifacts.test.mjs`, `apps/host/test/{bot-lab,upgrade}.test.mjs`: instaladores sem `--no-sandbox`/CDP/VNC, sudoers restrito, builder exige manifesto pinado, laboratório opt-in não muta sem consentimento, preflight de upgrade |
+| Artefatos e scripts | `tests/bot-artifacts.test.mjs`, `apps/host/test/{bot-lab,upgrade}.test.mjs`: instaladores sem `--no-sandbox`/CDP e sem VNC em rede (a tela ao vivo da fase 3 usa TigerVNC somente leitura em socket Unix privado, coberto por `tests/bot-desktop-artifacts.test.mjs`), sudoers restrito, builder exige manifesto pinado, laboratório opt-in não muta sem consentimento, preflight de upgrade |
 
 ## Implementado, não homologado no Mac mini
 

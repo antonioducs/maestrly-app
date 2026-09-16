@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
-import type { AuthStatus, DelegatedCredential, LegacyCredential } from '@maestrly/host-protocol'
+import type { AuthStatus, LegacyCredential } from '@maestrly/host-protocol'
 import type { AccountProvider } from '../src/accounts/provider.js'
 import { setup, FakeConnector, until, readyBot } from './bot-helpers.js'
 const contexts: Awaited<ReturnType<typeof setup>>[] = []

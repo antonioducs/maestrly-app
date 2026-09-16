@@ -1,4 +1,6 @@
-import { vmInfoSchema, vmSessionInfoSchema, type BotSession } from '@maestrly/host-protocol'
+import { vmInfoSchema, vmSessionInfoSchema, type BotSession, type VmRequest } from '@maestrly/host-protocol'
+import type { DesktopMediaConnector } from '../desktop/media-connector.js'
+import type { DesktopVmMethod } from './session.js'
 import { HostError } from '../errors.js'
 import { VmSession } from './vm-session.js'
 import { SocketGuestSession, type GuestConnector } from './session.js'
@@ -9,7 +11,7 @@ import type { BotRepository } from '../bots/repository.js'
 export class VmGuestConnector implements GuestConnector {
   private channels = new Map<string, Promise<VmSession>>()
   private generations = new Map<string, number>()
-  constructor(private hostId: string, private hostGeneration: number, private paths: (vmId: string) => BotChannelPaths, private broker: EgressBroker, private repository: () => BotRepository) {}
+  constructor(private hostId: string, private hostGeneration: number, private paths: (vmId: string) => BotChannelPaths, private broker: EgressBroker, private repository: () => BotRepository, private media?: DesktopMediaConnector) {}
   private channel(vmId: string, lane: 'control' | 'egress') {
     const key = `${vmId}:${lane}`
     const old = this.channels.get(key)
@@ -24,7 +26,7 @@ export class VmGuestConnector implements GuestConnector {
   async inspectVm(vmId: string) {
     const connection = await this.channel(vmId, 'control')
     if (!connection.managed) return {}
-    return vmInfoSchema.parse(await connection.request('vm.inspect', {}))
+    return { ...vmInfoSchema.parse(await connection.request('vm.inspect', {})), ...(connection.runtimeVersion ? { runtimeVersion: connection.runtimeVersion } : {}) }
   }
   async createSession(session: BotSession, idempotencyKey: string) {
     if (!session.profile) throw new HostError('SESSION_PROFILE_REQUIRED', 'Perfil de sessão ausente')
@@ -82,7 +84,32 @@ export class VmGuestConnector implements GuestConnector {
     const channel = await this.channel(session.vmId, 'control')
     await channel.request('session.release', { sessionId: session.id, generation: this.generations.get(session.id) ?? session.generation, turnId }, 5000)
   }
+  async inspectSession(session: BotSession) {
+    if (session.transport !== 'managed') throw new HostError('DESKTOP_UPDATE_REQUIRED', 'Atualize o ambiente para ver a tela')
+    const connection = await this.channel(session.vmId, 'control')
+    if (!connection.managed) throw new HostError('DESKTOP_UPDATE_REQUIRED', 'Atualize o ambiente para ver a tela')
+    const info = vmSessionInfoSchema.parse(await connection.request('session.inspect', { sessionId: session.id }))
+    if (info.botId !== session.botId) throw new HostError('SESSION_CONFLICT', 'O supervisor apresentou outro bot')
+    this.generations.set(session.id, info.generation)
+    return info
+  }
+  /** Fixed desktop methods only, on the administrative lane of the exact VM. */
+  async desktop(session: BotSession, method: DesktopVmMethod, params: Record<string, unknown>, timeoutMs = 30_000) {
+    if (session.transport !== 'managed') throw new HostError('DESKTOP_UPDATE_REQUIRED', 'Atualize o ambiente para ver a tela')
+    const connection = await this.channel(session.vmId, 'control')
+    if (!connection.managed) throw new HostError('DESKTOP_UPDATE_REQUIRED', 'Atualize o ambiente para ver a tela')
+    // The supervisor request schema validates these params before anything is sent.
+    return connection.request(method as VmRequest['method'], params as never, timeoutMs)
+  }
+  async openDesktopMedia(session: BotSession, generation: number, grantId: string) {
+    if (!this.media) throw new HostError('DESKTOP_UPDATE_REQUIRED', 'Atualize o Host para ver a tela')
+    return this.media.open(session.vmId, { sessionId: session.id, generation, grantId })
+  }
+  dropDesktop(vmId: string) {
+    this.media?.dropVm(vmId)
+  }
   dropVm(vmId: string) {
+    this.media?.dropVm(vmId)
     for (const lane of ['control', 'egress']) {
       const key = `${vmId}:${lane}`
       const pending = this.channels.get(key)
@@ -92,6 +119,7 @@ export class VmGuestConnector implements GuestConnector {
     this.broker.detach(vmId)
   }
   close() {
+    this.media?.close()
     for (const pending of this.channels.values()) void pending.then(c => c.close()).catch(() => {})
     this.channels.clear()
   }

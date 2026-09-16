@@ -9,6 +9,8 @@ export const environmentSchema = z.strictObject({
   inventory: sessionsInventorySchema,
   reason: z.string().max(500).optional(),
   operationId: id.optional(),
+  /** Optional update: the environment works, but the Host has a runtime with the live screen. */
+  updateAvailable: z.enum(['desktop']).optional(),
 })
 export type BotEnvironment = z.infer<typeof environmentSchema>
 export const environmentOperationSchema = z.strictObject({

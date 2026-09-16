@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { ACCOUNT_CODEX_VERSION } from './fetch-account-runtime.mjs'

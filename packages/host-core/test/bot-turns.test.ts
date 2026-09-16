@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
 import { HostService } from '../src/index.js'
 import { readyBot, setup, until } from './bot-helpers.js'
+import { TURN_LIMITS } from '../src/bots/context.js'
 const skipWindows = process.platform === 'win32'
 const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
@@ -24,6 +25,53 @@ describe.skipIf(skipWindows)('turns, approvals and recovery', () => {
     ctx.guest().capabilities = ['provider.codex', 'tools.files']
     await expect(ctx.call('bot.network.update', { botId: ctx.bot.id, mode: 'blocklist', domains: [], expectedRevision: legacy.policy.revision, idempotencyKey: 'public-on-old-runtime' })).rejects.toMatchObject({ code: 'RUNTIME_UPDATE_REQUIRED' })
     expect((await ctx.call('bot.network.inspect', { botId: ctx.bot.id })).policy).toEqual(legacy.policy)
+  })
+  it('a turn whose session cannot open asks for attention instead of waiting silently, then starts once the computer answers', async () => {
+    const ctx = await context()
+    const coordinator = (ctx.service as any).bots.coordinator
+    coordinator.limits = { ...TURN_LIMITS, dispatchAttentionMs: 0 }
+    coordinator.dropSession(ctx.bot.id)
+    ctx.connector.fail = true
+    const receipt = await ctx.call('bot.messages.send', { botId: ctx.bot.id, clientMessageId: 'blocked', content: 'abre o navegador' })
+    const waiting = await until(() => ctx.call('bot.turn.get', { turnId: receipt.turn.id }), (t: any) => t.status === 'needs_attention')
+    expect(waiting.attention).toMatch(/área de trabalho do bot/)
+    const page = await ctx.call('bot.events.list', { botId: ctx.bot.id })
+    expect(page.events.some((event: any) => event.kind === 'attention' && event.turnId === receipt.turn.id && event.detail?.code === 'RUNTIME_UNREACHABLE')).toBe(true)
+    // The task was kept, not failed: when the computer answers it starts exactly once.
+    ctx.connector.fail = false
+    await coordinator.reconcile(ctx.bot.id)
+    await until(() => ctx.call('bot.turn.get', { turnId: receipt.turn.id }), (t: any) => t.status === 'running')
+    expect(ctx.guest().turns.size).toBe(1)
+  })
+  it('cancels a queued turn that never started without contacting the computer, and frees the bot', async () => {
+    const ctx = await context()
+    const coordinator = (ctx.service as any).bots.coordinator
+    coordinator.dropSession(ctx.bot.id)
+    ctx.connector.fail = true
+    const receipt = await ctx.call('bot.messages.send', { botId: ctx.bot.id, clientMessageId: 'queued', content: 'nunca começa' })
+    const queued = await ctx.call('bot.turn.get', { turnId: receipt.turn.id })
+    expect(queued.status).toBe('queued')
+    const cancelled = await ctx.call('bot.turn.cancel', { turnId: receipt.turn.id, expectedRevision: queued.revision })
+    expect(cancelled.status).toBe('cancelled')
+    expect((await ctx.call('bot.inspect', { botId: ctx.bot.id })).activeTurnId).toBeUndefined()
+    // Nothing is left to dispatch once the computer answers again.
+    ctx.connector.fail = false
+    await coordinator.reconcile(ctx.bot.id)
+    expect((await ctx.call('bot.turn.get', { turnId: receipt.turn.id })).status).toBe('cancelled')
+    expect(ctx.guest().turns.size).toBe(0)
+  })
+  it('a never-started turn waiting for attention is still cancelled locally, without a guest round trip', async () => {
+    const ctx = await context()
+    const coordinator = (ctx.service as any).bots.coordinator
+    coordinator.limits = { ...TURN_LIMITS, dispatchAttentionMs: 0 }
+    coordinator.dropSession(ctx.bot.id)
+    ctx.connector.fail = true
+    const receipt = await ctx.call('bot.messages.send', { botId: ctx.bot.id, clientMessageId: 'attention', content: 'x' })
+    const waiting = await until(() => ctx.call('bot.turn.get', { turnId: receipt.turn.id }), (t: any) => t.status === 'needs_attention')
+    expect(waiting.startedAt).toBeUndefined()
+    const cancelled = await ctx.call('bot.turn.cancel', { turnId: receipt.turn.id, expectedRevision: waiting.revision })
+    expect(cancelled.status).toBe('cancelled')
+    expect((await ctx.call('bot.inspect', { botId: ctx.bot.id })).activeTurnId).toBeUndefined()
   })
   it('sends the persisted policy before login and restores offline policy after reconnect', async () => {
     const ctx = await context()

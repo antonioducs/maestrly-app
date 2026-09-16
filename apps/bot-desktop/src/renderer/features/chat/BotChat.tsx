@@ -9,6 +9,8 @@ import { Activity } from './Activity'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
+import { Monitor } from 'lucide-react'
+import { useDesktopState } from '../desktop/useDesktopState'
 
 export type ChatState = {
   text: string
@@ -58,6 +60,8 @@ export function BotChat({
   details,
   onPreview,
   onBotUpdate,
+  onOpenDesktop,
+  desktopOpen = false,
 }: {
   bot: Bot
   onBotUpdate: (bot: Bot) => void
@@ -65,6 +69,8 @@ export function BotChat({
   state: ChatState
   details: () => void
   onPreview: (name: string, text: string) => void
+  onOpenDesktop?: () => void
+  desktopOpen?: boolean
 }) {
   const t = useT()
   const [, render] = useState(0)
@@ -76,6 +82,21 @@ export function BotChat({
   const scroll = useRef<HTMLDivElement>(null)
   const alive = useRef(true)
   const active = !!state.turn && !terminal.has(state.turn.status)
+  const [desktop, setDesktop] = useDesktopState(bot.id, connected, desktopOpen)
+  const held = !!desktop && desktop.mode !== 'bot'
+  const continueBot = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await window.bot.desktop.returnControl({ botId: bot.id, continueTask: true })
+      setDesktop(result.state)
+      await refresh()
+    } catch (error) {
+      setError(String(error))
+    } finally {
+      setBusy(false)
+    }
+  }
   const changed = () => {
     sessionStorage.setItem(
       `chat:${bot.id}`,
@@ -117,7 +138,7 @@ export function BotChat({
   }, [bot.id, connected])
   const events = useBotEvents(bot.id, connected, refresh, (error) => setError(String(error)))
   const send = async () => {
-    if (busy || active || !connected || !state.text.trim()) return
+    if (busy || active || held || !connected || !state.text.trim()) return
     setBusy(true)
     setError('')
     try {
@@ -207,8 +228,25 @@ export function BotChat({
             {state.turn?.status === 'needs_attention' ? state.turn.attention : t(turnLabel(state.turn))}
           </p>
         </div>
-        <Button onClick={details}>{t('details')}</Button>
+        <div className="chat-header-actions">
+          {onOpenDesktop && (
+            <Button aria-pressed={desktopOpen} onClick={onOpenDesktop}>
+              <Monitor size={15} aria-hidden="true" />
+              {t('viewScreen')}
+            </Button>
+          )}
+          <Button onClick={details}>{t('details')}</Button>
+        </div>
       </header>
+      {held && !desktopOpen && (
+        <div className="desktop-banner" role="status">
+          <p>{t(desktop?.mode === 'blocked' ? 'blockedBanner' : 'pausedBanner')}</p>
+          {(desktop?.mode === 'paused' || desktop?.mode === 'blocked') && (
+            <Button className="primary" disabled={busy || !connected} onClick={() => void continueBot()}>{t('continueBot')}</Button>
+          )}
+          {onOpenDesktop && <Button onClick={onOpenDesktop}>{t('viewScreen')}</Button>}
+        </div>
+      )}
       {state.turn?.status === 'needs_attention' && <Button onClick={() => void refresh()}>{t('checkAgain')}</Button>}
       <div
         className="messages"
@@ -278,7 +316,8 @@ export function BotChat({
         attach={() => void attach()}
         active={active}
         cancelling={state.turn?.status === 'cancelling'}
-        disabled={!connected}
+        disabled={!connected || held}
+        reason={connected && held ? t('composerHeldReason') : undefined}
         busy={busy}
       />
       {replaceFile && (

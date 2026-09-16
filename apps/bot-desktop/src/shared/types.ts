@@ -1,5 +1,5 @@
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
-import type { BotMethod, BotResult, Operation } from '@maestrly/host-protocol'
+import type { BotMethod, BotResult, DesktopInput, DesktopState, Operation } from '@maestrly/host-protocol'
 export type HostEvent = { seq: number; kind: string; createdAt: string; value: unknown }
 export const vmMethods = [
   'host.inspect',
@@ -84,6 +84,21 @@ export interface BotApi {
   savePreferences(preferences: Partial<UiPreferences>): Promise<UiPreferences>
   saveFile(input: { name: string; dataBase64: string }): Promise<{ saved: boolean }>
   pickFile(): Promise<{ name: string; size: number; dataBase64: string } | null>
+  desktop: DesktopApi
+}
+export type DesktopPhase = 'connecting' | 'viewing' | 'acquiring' | 'controlling' | 'returning' | 'reconnecting' | 'closed'
+/** Public projection pushed by the main process; never carries tickets or capabilities. */
+export type DesktopViewEvent = { handle: string; botId: string; state?: DesktopState; controlling: boolean; phase: DesktopPhase; reason?: string }
+export type DesktopOpenResult = { handle: string; url: string; protocols: string[]; state: DesktopState }
+export type DesktopReturnResult = { status: 'running' | 'succeeded' | 'failed'; failureCode?: string; continued: boolean; state: DesktopState }
+export interface DesktopApi {
+  inspect(botId: string): Promise<DesktopState>
+  open(botId: string): Promise<DesktopOpenResult>
+  close(handle: string): Promise<{ closed: boolean }>
+  acquire(handle: string): Promise<{ handle: string; state: DesktopState; controlling: boolean; phase: DesktopPhase }>
+  input(handle: string, events: DesktopInput[]): Promise<{ queued: number }>
+  returnControl(input: { botId: string; handle?: string; continueTask: boolean }): Promise<DesktopReturnResult>
+  onEvent(listener: (event: DesktopViewEvent) => void): () => void
 }
 declare global {
   interface Window {

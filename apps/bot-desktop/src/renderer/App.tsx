@@ -12,6 +12,7 @@ import { BotChat, createChatState, type ChatState } from './features/chat/BotCha
 import { BotDetails } from './features/bots/BotDetails'
 import { Settings } from './features/settings/Settings'
 import { ComputersPage } from './features/computers/ComputersPage'
+import { BotDesktopPanel } from './features/desktop/BotDesktopPanel'
 import './style.css'
 type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments'
 export function App() {
@@ -40,6 +41,9 @@ function Shell({
   const [failedTarget, setFailedTarget] = useState<HostTarget>()
   const [booting, setBooting] = useState(true)
   const [panel, setPanel] = useState<{ kind: 'details' } | { kind: 'preview'; name: string; text: string }>()
+  const [desktopBotId, setDesktopBotId] = useState<string>()
+  const [desktopExpanded, setDesktopExpanded] = useState(false)
+  const desktopOpener = useRef<HTMLElement | null>(null)
   const chatStates = useRef(new Map<string, ChatState>())
   const retries = useRef(0)
   const reconnectTarget = useRef<HostTarget | undefined>(undefined)
@@ -216,6 +220,18 @@ function Shell({
     setView('computers')
   }
   if (bot && !chatStates.current.has(bot.id)) chatStates.current.set(bot.id, createChatState(bot.id))
+  const openDesktop = () => {
+    if (!bot) return
+    desktopOpener.current = document.activeElement as HTMLElement
+    setPanel(undefined)
+    setDesktopBotId(bot.id)
+  }
+  const closeDesktop = () => {
+    setDesktopBotId(undefined)
+    setDesktopExpanded(false)
+    desktopOpener.current?.focus()
+  }
+  const desktopVisible = !!bot && desktopBotId === bot.id && connection.connected
   return (
     <div className="app-shell maestrly-ui">
       <aside className="bot-sidebar">
@@ -232,6 +248,11 @@ function Shell({
               aria-label={value.name}
               onClick={() => {
                 returnView.current = 'chat'
+                // Switching bots closes the screen: one bot's pixels never appear under another.
+                if (value.id !== botId) {
+                  setDesktopBotId(undefined)
+                  setDesktopExpanded(false)
+                }
                 setBotId(value.id)
                 setView('chat')
                 setPanel(undefined)
@@ -357,17 +378,24 @@ function Shell({
                 onReady={(value) => void openBot(value)}
               />
             ) : bot ? (
-              <BotChat
-                onBotUpdate={(value) =>
-                  setBots((previous) => previous.map((entry) => (entry.id === value.id ? value : entry)))
-                }
-                key={bot.id}
-                bot={bot}
-                connected={connection.connected}
-                state={chatStates.current.get(bot.id)!}
-                details={() => openPanel({ kind: 'details' })}
-                onPreview={(name, text) => openPanel({ kind: 'preview', name, text })}
-              />
+              <div className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}>
+                <BotChat
+                  onBotUpdate={(value) =>
+                    setBots((previous) => previous.map((entry) => (entry.id === value.id ? value : entry)))
+                  }
+                  key={bot.id}
+                  bot={bot}
+                  connected={connection.connected}
+                  state={chatStates.current.get(bot.id)!}
+                  details={() => openPanel({ kind: 'details' })}
+                  onPreview={(name, text) => openPanel({ kind: 'preview', name, text })}
+                  onOpenDesktop={connection.connected ? openDesktop : undefined}
+                  desktopOpen={desktopVisible}
+                />
+                {desktopVisible && (
+                  <BotDesktopPanel key={bot.id} bot={bot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />
+                )}
+              </div>
             ) : (
               <section className="empty">
                 <h1>{t('home')}</h1>
@@ -394,6 +422,7 @@ function Shell({
             bot && (
               <BotDetails
                 onAccounts={openAccounts}
+                onOpenDesktop={connection.connected ? openDesktop : undefined}
                 bot={bot}
                 advanced={preferences.advanced}
                 onUpdate={(value) =>

@@ -11,6 +11,15 @@ const adapters: CodexAdapter[] = []
 it('disables notification commands with a TOML-compatible empty list', () => {
   expect(configuration(snapshot(), '/tmp/workspace', false).thread.config?.notify).toEqual([])
 })
+it('tells the model that its browser is the managed Chromium behind the browser tools', () => {
+  const instructions = configuration(snapshot({ instructions: 'Seja breve.' }), '/tmp/workspace', false).thread.developerInstructions ?? ''
+  // The bot's own instructions come first; the environment follows on every thread start.
+  expect(instructions.startsWith('Seja breve.')).toBe(true)
+  expect(instructions).toContain('Chromium')
+  expect(instructions).toContain('browser_navigate')
+  expect(instructions).toMatch(/não fica no PATH/)
+  expect(instructions).toContain('https://www.google.com/search?q=')
+})
 afterEach(async () => {
   await Promise.all(adapters.splice(0).map((adapter) => adapter.dispose()))
   vi.unstubAllEnvs()
@@ -72,6 +81,21 @@ describe('real Codex adapter against app-server fixture', () => {
     expect(log.filter(row => ['thread/archive', 'thread/unarchive', 'thread/resume'].includes(row.method)).map(row => row.method)).toEqual(['thread/archive', 'thread/unarchive', 'thread/resume'])
     expect(resumed.params.developerInstructions).not.toContain('do not repeat')
     expect(events.filter((event) => event.kind === 'assistant.message')).toHaveLength(2)
+  })
+  it('confirms MCP tool calls of its own tool server and declines any other server', async () => {
+    const { result, root } = await adapter()
+    const { hook, events } = hooks()
+    await result.startTurn(snapshot({ message: '#elicit' }), hook, new AbortController().signal)
+    await result.startTurn(snapshot({ message: '#elicit-foreign' }), hook, new AbortController().signal)
+    const log = (await readFile(join(root, 'workspace/rpc-log.jsonl'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    const answers = log.filter((row) => row.serverResponse).map((row) => row.serverResponse)
+    // Without this the tool call is refused and the browser silently stops working in ask mode.
+    expect(answers[0].result).toEqual({ action: 'accept' })
+    expect(answers[1].result).toEqual({ action: 'decline' })
+    expect(events.filter((event) => event.kind === 'diagnostic')).toHaveLength(1)
   })
   it('refuses an unavailable thread instead of silently replacing its history', async () => {
     const { result } = await adapter()

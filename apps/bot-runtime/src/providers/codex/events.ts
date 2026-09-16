@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { CodexNotification, CodexServerRequest } from '@maestrly/codex-client'
 import type { TurnHooks, TurnOutcome } from '../provider.js'
+import { MCP_SERVER_NAME } from './configuration.js'
 export const object = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -88,6 +89,24 @@ export async function serverRequest(request: CodexServerRequest, hooks: TurnHook
       answers[text(question.id) || 'answer'] = { answers: [answer] }
     }
     return { answers }
+  }
+  /**
+   * With approvals on request, Codex asks the client to confirm every MCP tool call. The only
+   * configured server is the bot's own catalogue (browser, computer, files, memory), whose limits
+   * the Host already enforces, so it is accepted; anything else is declined instead of refused.
+   * Without this answer Codex treats each tool call as refused, which silently disables the
+   * browser and computer tools in `ask` mode.
+   */
+  if (request.method === 'mcpServer/elicitation/request') {
+    const server = text(params.server_name ?? params.serverName ?? params.server ?? object(params.request).server_name)
+    const mine = !server || server === MCP_SERVER_NAME
+    if (!mine)
+      hooks.emit({
+        kind: 'diagnostic',
+        summary: 'Pedido de um servidor de ferramentas desconhecido recusado',
+        detail: { server: server.slice(0, 80) },
+      })
+    return { action: mine ? 'accept' : 'decline' }
   }
   hooks.emit({
     kind: 'diagnostic',

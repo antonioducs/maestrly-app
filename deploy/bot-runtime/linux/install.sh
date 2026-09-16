@@ -79,7 +79,7 @@ mkdir -p "$(prefix /etc/udev/rules.d)" "$(prefix /etc/sudoers.d)" "$(prefix /etc
 cp "$dest/install/90-maestrly-bot.rules" "$(prefix /etc/udev/rules.d/90-maestrly-bot.rules)"
 cp "$dest/install/sudoers.d-maestrly-bot" "$(prefix /etc/sudoers.d/maestrly-bot)"
 chmod 0440 "$(prefix /etc/sudoers.d/maestrly-bot)"
-for unit in maestrly-bot-runtime.service maestrly-bot-desktop.service maestrly-bot-vm.service maestrly-bot-runtime@.service maestrly-bot-desktop@.service; do
+for unit in maestrly-bot-runtime.service maestrly-bot-desktop.service maestrly-bot-vm.service maestrly-bot-runtime@.service maestrly-bot-desktop@.service maestrly-bot-desktop-services@.service maestrly-bot-desktop-services@.socket; do
   cp "$dest/install/$unit" "$(prefix /etc/systemd/system)/$unit"
 done
 mkdir -p "$(prefix /etc/apparmor.d)"
@@ -96,7 +96,7 @@ if [ -z "$root" ]; then
     # The surrounding Host preparation owns the authorized backup/maintenance window.
     # Existing session data stays in place for explicit supervisor adoption.
     systemctl disable --now maestrly-bot-runtime.service maestrly-bot-desktop.service
-    chmod 0600 /dev/virtio-ports/org.maestrly.bot.control.0 /dev/virtio-ports/org.maestrly.bot.egress.0 2>/dev/null || true
+    chmod 0600 /dev/virtio-ports/org.maestrly.bot.control.0 /dev/virtio-ports/org.maestrly.bot.egress.0 /dev/virtio-ports/org.maestrly.bot.desktop.0 2>/dev/null || true
     printf '%s\n' 'SUBSYSTEM=="virtio-ports", ATTR{name}=="org.maestrly.bot.*", OWNER="root", GROUP="root", MODE="0600"' > /etc/udev/rules.d/90-maestrly-bot.rules
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=virtio-ports

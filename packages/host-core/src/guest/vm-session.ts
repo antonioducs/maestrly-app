@@ -12,7 +12,10 @@ export class VmSession {
   readonly legacy?: Duplex
   private pending = new Map<string, Pending>()
   private legacyClaimed = false
+  /** Runtime version the supervisor announced in its hello; decides whether an update applies. */
+  readonly runtimeVersion?: string
   private constructor(readonly wire: JsonWire, readonly managed: boolean, first: unknown) {
+    this.runtimeVersion = managed ? vmHelloSchema.safeParse(first).data?.version : undefined
     this.router = new SessionRouter(wire)
     if (!managed) {
       const stream = new Duplex({ read() {}, write(bytes, _encoding, cb) { wire.stream.write(bytes, cb) }, destroy(error, cb) { wire.close(); cb(error) } })

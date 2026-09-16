@@ -1,4 +1,4 @@
-import { ipcMain, type BrowserWindow } from 'electron'
+import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { validSender } from './validation'
 /**
  * Electron IPC only carries the error message across the bridge. Structured Host codes are
@@ -14,7 +14,7 @@ export function ipcError(error: unknown): Error {
 export function registerIpc(
   win: BrowserWindow,
   expectedUrl: string,
-  handlers: Record<string, (arg: unknown) => unknown>
+  handlers: Record<string, (arg: unknown, event: IpcMainInvokeEvent) => unknown>
 ) {
   for (const [name, handler] of Object.entries(handlers))
     ipcMain.handle(`bot:${name}`, async (event, arg) => {
@@ -29,7 +29,7 @@ export function registerIpc(
       )
         throw new Error('Untrusted IPC sender')
       try {
-        return await handler(arg)
+        return await handler(arg, event)
       } catch (error) {
         throw ipcError(error)
       }

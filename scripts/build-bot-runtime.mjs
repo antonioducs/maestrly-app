@@ -81,6 +81,7 @@ async function build() {
       entryPoints: {
         main: path.join(root, 'apps/bot-runtime/src/main.ts'),
         'vm/main': path.join(root, 'apps/bot-runtime/src/vm/main.ts'),
+        'desktop/services-main': path.join(root, 'apps/bot-runtime/src/desktop/services-main.ts'),
         'tools/mcp-main': path.join(root, 'apps/bot-runtime/src/tools/mcp-main.ts'),
       },
       outdir: path.join(staging, 'app'),
@@ -114,6 +115,7 @@ async function build() {
     })
     await cp(path.join(staging, 'install/install.sh'), path.join(staging, 'install.sh'))
     let sessionMeasurement
+    let desktopLive = false
     if (config.sessionCapacity) {
       const { sessionCapacitySchema } = await import('../packages/host-protocol/dist/index.js')
       const capacity = sessionCapacitySchema.parse(config.sessionCapacity)
@@ -136,6 +138,10 @@ async function build() {
         throw new Error('UNSAFE_DEPENDENCY_ARCHIVE')
       await mkdir(path.join(staging, 'offline-dependencies'))
       run('tar', ['-xf', addon, '-C', path.join(staging, 'offline-dependencies')])
+      // The live screen is advertised only when the verified addon pins the screen server;
+      // the guest still probes the installed binary and fails closed at runtime.
+      const expected = await readFile(path.join(staging, 'offline-dependencies/expected.tsv'), 'utf8').catch(() => '')
+      desktopLive = /^tigervnc-scraping-server\t1\.13\.1\+dfsg-2build2$/m.test(expected)
     }
     const files = []
     async function collect(directory, prefix = '') {
@@ -182,6 +188,7 @@ async function build() {
       'tools.system',
       'tools.memory',
       'desktop.session',
+      ...(desktopLive ? ['desktop.live.v1', 'desktop.handoff.v1'] : []),
     ]
     await writeFile(
       tar + '.manifest.json',

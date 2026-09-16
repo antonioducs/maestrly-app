@@ -1,7 +1,7 @@
 import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotMemory, type BotMessage, type NetworkPolicy, type TurnSnapshot } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 
-export const TURN_LIMITS = { activeMs: 30 * 60_000, maxTools: 100, maxLogBytes: 10 * 1024 * 1024, leaseMs: 30_000, renewMs: 10_000, humanWaitMs: 24 * 3_600_000 }
+export const TURN_LIMITS = { activeMs: 30 * 60_000, maxTools: 100, maxLogBytes: 10 * 1024 * 1024, leaseMs: 30_000, renewMs: 10_000, humanWaitMs: 24 * 3_600_000, dispatchAttentionMs: 60_000 }
 export function defaultInstructions(bot: Pick<Bot, 'name' | 'purpose'>): string {
   const purpose = bot.purpose.trim()
   return [
@@ -21,6 +21,8 @@ export function buildSnapshot(input: {
   recent: BotMessage[]
   message: BotMessage
   leaseMs: number
+  /** Remaining budget of a continued task; defaults to a fresh task budget. */
+  limits?: TurnSnapshot['limits']
 }): TurnSnapshot {
   const active = input.memory.filter((m) => m.active)
   const memoryBytes = active.reduce((sum, m) => sum + Buffer.byteLength(m.content), 0)
@@ -50,6 +52,6 @@ export function buildSnapshot(input: {
     model: { model: input.bot.model.model, ...(input.bot.model.effort ? { effort: input.bot.model.effort } : {}) },
     providerThreadId: input.conversation.providerThreadId,
     leaseMs: input.leaseMs,
-    limits: { activeMs: TURN_LIMITS.activeMs, maxTools: TURN_LIMITS.maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes },
+    limits: input.limits ?? { activeMs: TURN_LIMITS.activeMs, maxTools: TURN_LIMITS.maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes },
   }
 }

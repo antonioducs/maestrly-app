@@ -19,6 +19,24 @@ const complete = (status) => {
 }
 async function runTurn(prompt) {
   if (prompt.includes('#slow')) return
+  if (prompt.includes('#elicit')) {
+    // Codex asks the client to confirm an MCP tool call before running it.
+    const id = 'elicitation'
+    const response = await new Promise((resolve) => {
+      pending.set(id, resolve)
+      send({
+        id,
+        method: 'mcpServer/elicitation/request',
+        params: {
+          server_name: prompt.includes('#elicit-foreign') ? 'outro-servidor' : 'maestrly-bot',
+          elicitation_id: 'elicit-1',
+          message: 'Run browser_navigate?',
+          requestedSchema: { type: 'object', properties: {} },
+        },
+      })
+    })
+    record({ serverResponse: response })
+  }
   if (prompt.includes('#approve') || prompt.includes('#unknown')) {
     const id = 'server-request'
     const response = await new Promise((resolve) => {

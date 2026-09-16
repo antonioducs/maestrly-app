@@ -15,6 +15,14 @@ export const sessionRecordSchema = vmSessionInfoSchema.extend({
   createdAt: z.string(),
 })
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
+/** Durable handoff hold. mode 'bot' keeps the epoch high-water mark after control returns. */
+export const desktopHoldSchema = z.strictObject({
+  mode: z.enum(['bot', 'acquiring', 'human', 'paused', 'resuming']),
+  epoch: z.number().int().nonnegative(),
+  updatedAt: z.string(),
+})
+export type DesktopHold = z.infer<typeof desktopHoldSchema>
+export const CATALOG_VERSION = 2
 export function publicSession(record: SessionRecord): VmSessionInfo {
   const { id, botId, profile, state, generation, desiredState } = record
   return { id, botId, profile, state, generation, desiredState }
@@ -38,14 +46,22 @@ export class VmCatalog {
     try { this.lock.exec('PRAGMA busy_timeout=0; BEGIN EXCLUSIVE') } catch (error) { this.lock.close(); throw error }
     this.db = new DatabaseSync(join(directory, 'sessions.sqlite'))
     const version = this.db.prepare('PRAGMA user_version').get()!.user_version as number
-    if (version > 1) { this.db.close(); this.lock.close(); throw new Error('Unsupported VM catalogue version') }
+    // Schema 2 adds durable handoff holds; an older supervisor refuses it instead of
+    // silently restarting automation that a person paused.
+    if (version > CATALOG_VERSION) { this.db.close(); this.lock.close(); throw new Error('Unsupported VM catalogue version') }
     chmodSync(join(directory, 'owner.sqlite'), 0o600)
     chmodSync(join(directory, 'sessions.sqlite'), 0o600)
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;')
     this.db.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,bot_id TEXT UNIQUE NOT NULL,username TEXT UNIQUE NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS operations(key TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,status TEXT NOT NULL,result TEXT);
       CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);`)
-    this.db.exec('PRAGMA user_version=1')
+    if (version < CATALOG_VERSION) {
+      this.db.exec('BEGIN IMMEDIATE')
+      try {
+        this.db.exec('CREATE TABLE IF NOT EXISTS desktop_holds(session_id TEXT PRIMARY KEY REFERENCES sessions(id),body TEXT NOT NULL); PRAGMA user_version=2;')
+        this.db.exec('COMMIT')
+      } catch (error) { this.db.exec('ROLLBACK'); throw error }
+    }
   }
   transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE')
@@ -66,6 +82,17 @@ export class VmCatalog {
   }
   begin(key: string, fingerprint: string) { this.db.prepare("INSERT INTO operations(key,fingerprint,status) VALUES(?,?,'pending')").run(key, fingerprint) }
   finish(key: string, value: unknown) { this.db.prepare("UPDATE operations SET status='succeeded',result=? WHERE key=?").run(JSON.stringify(value), key) }
+  desktopHold(sessionId: string): DesktopHold {
+    sessionIdSchema.parse(sessionId)
+    const row = this.db.prepare('SELECT body FROM desktop_holds WHERE session_id=?').get(sessionId)
+    return row ? desktopHoldSchema.parse(JSON.parse(row.body as string)) : { mode: 'bot', epoch: 0, updatedAt: new Date(0).toISOString() }
+  }
+  saveDesktopHold(sessionId: string, hold: Omit<DesktopHold, 'updatedAt'>) {
+    const value = desktopHoldSchema.parse({ ...hold, updatedAt: new Date().toISOString() })
+    if (value.epoch < this.desktopHold(sessionId).epoch) throw new Error('Desktop epoch must not decrease')
+    this.db.prepare('INSERT INTO desktop_holds(session_id,body) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET body=excluded.body').run(sessionId, JSON.stringify(value))
+    return value
+  }
   metadata(key: string) { return this.db.prepare('SELECT value FROM metadata WHERE key=?').get(key)?.value as string | undefined }
   setMetadata(key: string, value: string) { this.db.prepare('INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value) }
   close() { this.db.close(); this.lock.close() }

@@ -14,6 +14,7 @@ export function BotDetails({
   onArchive,
   onPreview,
   onAccounts,
+  onOpenDesktop,
 }: {
   bot: Bot
   advanced: boolean
@@ -21,6 +22,7 @@ export function BotDetails({
   onArchive: () => void
   onPreview: (name: string, text: string) => void
   onAccounts: () => void
+  onOpenDesktop?: () => void
 }) {
   const t = useT()
   const [tab, setTab] = useState<(typeof tabs)[number]>('instructions')
@@ -83,7 +85,7 @@ export function BotDetails({
   }
   return (
     <section>
-      <BotComputer bot={bot} />
+      <BotComputer onOpenDesktop={onOpenDesktop} bot={bot} />
       <nav className="tabs" aria-label={t('details')}>
         {tabs.map((value) => (
           <Button

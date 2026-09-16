@@ -61,6 +61,11 @@ export class FixtureHost {
       runtimes: [{ id: 'qemu', available: true }],
     }
   }
+  /** Fixture media: a real read-only RFB stream for a single-use ticket. */
+  async desktopMedia(ticket: string) {
+    if (!this.connected) throw new Error('Fixture disconnected')
+    return { stream: this.bots.desktop.media(ticket) }
+  }
   async request(method: string, p: Record<string, unknown>): Promise<unknown> {
     if (!this.connected) throw new Error('Fixture disconnected')
     if (method.startsWith('bot.') || method.startsWith('account.') || method.startsWith('environment.')) {

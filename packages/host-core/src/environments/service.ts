@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { environmentOperationSchema, type BotEnvironment, type BotRequest, type EnvironmentOperation, type BotSetupPreview } from '@maestrly/host-protocol'
+import { DESKTOP_LIVE_CAPABILITY, environmentOperationSchema, type BotEnvironment, type BotRequest, type EnvironmentOperation, type BotSetupPreview } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 import { fingerprint } from '../bots/interactions.js'
 import { type BotRepository, now } from '../bots/repository.js'
@@ -41,6 +41,22 @@ export class EnvironmentService {
   private record(vmId: string, state: string, operationId: string) {
     this.repo.db.prepare('INSERT INTO environment_vms(vm_id,state,operation_id) VALUES(?,?,?) ON CONFLICT(vm_id) DO UPDATE SET state=excluded.state,operation_id=excluded.operation_id').run(vmId, state, operationId)
   }
+  /** A shared-account template for this runtime that also brings the live screen. */
+  private desktopTemplate(runtimeId: string) {
+    return this.host.templates.find(template => template.runtimeId === runtimeId && template.runtimeBundle && template.capabilities.includes('account.delegation.v1') && template.capabilities.includes(DESKTOP_LIVE_CAPABILITY))
+  }
+  /**
+   * The environment works, but this Host carries a live-screen runtime it does not run yet:
+   * either the guest predates the screen, or it announced a different runtime version (for
+   * example a fix to the screen). Optional; the update keeps the backup and restart consent.
+   */
+  private desktopUpdate(vmId: string, runtimeId: string, capabilities: readonly string[]) {
+    const template = this.desktopTemplate(runtimeId)
+    if (!template?.runtimeBundle || !capabilities.includes('account.delegation.v1')) return false
+    if (!capabilities.includes(DESKTOP_LIVE_CAPABILITY)) return true
+    const version = this.sessions.runtimeVersion(vmId)
+    return !!version && version !== template.runtimeBundle.version
+  }
   list(): BotEnvironment[] {
     return this.host.vms().filter(vm => vm.state !== 'removed').map(vm => {
       const inventory = this.sessions.snapshot(vm.id)
@@ -50,14 +66,21 @@ export class EnvironmentService {
         : !inventory.supported ? this.repo.sessionCapacity(vm.id) ? 'unavailable' : 'needs-preparation' : legacy ? 'needs-migration'
         : !inventory.capabilities.includes('account.delegation.v1') ? 'needs-update' : inventory.available < 1 ? 'full' : 'ready'
       if (record?.state === 'preparing') status = 'preparing'
-      if (record?.state === 'failed') status = 'unavailable'
+      // A failed update leaves the earlier runtime installed (the installer publishes atomically).
+      // While its supervisor still answers with the shared account, the environment stays usable,
+      // shows why the update stopped and can be updated again; otherwise it is unavailable.
+      if (record?.state === 'failed' && !(vm.state === 'running' && inventory.supported && inventory.capabilities.includes('account.delegation.v1'))) status = 'unavailable'
       const operation = record ? this.operation(String(record.operation_id)) : undefined
       // Known environments refresh in the background. Listing never waits for an offline guest or hashes an image.
       if (!this.abort.signal.aborted && vm.state === 'running' && status !== 'preparing' && (inventory.supported || this.repo.bindingByVm(vm.id) || record) && Date.now() - (this.refreshing.get(vm.id) ?? 0) > 15000) {
         this.refreshing.set(vm.id, Date.now())
         void this.sessions.inspectVm(vm.id).catch(() => {})
       }
-      return { vm, status, inventory, ...(operation?.error ? { reason: operation.error.message } : inventory.reason ? { reason: inventory.reason } : {}), ...(operation && ['queued', 'running', 'failed'].includes(operation.status) ? { operationId: operation.id } : {}) }
+      // After a failed update the person can always try again from the app, even when the guest
+      // stopped answering (for example a full disk): the retry takes a new backup first.
+      const retry = record?.state === 'failed' && vm.state === 'running' && !!this.desktopTemplate(vm.runtimeId)?.runtimeBundle
+      const update = retry || (['ready', 'full'].includes(status) && this.desktopUpdate(vm.id, vm.runtimeId, inventory.capabilities))
+      return { vm, status, inventory, ...(operation?.error ? { reason: operation.error.message } : inventory.reason ? { reason: inventory.reason } : {}), ...(operation && ['queued', 'running', 'failed'].includes(operation.status) ? { operationId: operation.id } : {}), ...(update ? { updateAvailable: 'desktop' as const } : {}) }
     })
   }
   assertVmOperationAllowed(vmId: string, key: string) {
@@ -95,13 +118,16 @@ export class EnvironmentService {
     if (input.confirmBackup !== true || input.confirmRestart !== true) throw new HostError('CONFIRMATION_REQUIRED', 'Confirme o backup e o reinício do ambiente')
     if (this.repo.botsByVm(input.vmId).some(bot => this.repo.activeTurn(bot.id))) throw new HostError('BOT_ACTIVE', 'Pare as tarefas dos bots deste ambiente antes de prepará-lo')
     const record = this.repo.db.prepare('SELECT state FROM environment_vms WHERE vm_id=?').get(input.vmId)
-    if (record?.state === 'preparing' || record?.state === 'failed') throw new HostError('ENVIRONMENT_BUSY', 'Verifique a preparação anterior deste ambiente antes de continuar')
+    // A failed preparation can be repeated: every attempt takes a new backup, and a failed
+    // installer leaves the running runtime and removes its partial copy.
+    if (record?.state === 'preparing' || record?.state === 'verifying') throw new HostError('ENVIRONMENT_BUSY', 'Aguarde a preparação atual deste ambiente terminar')
     const current = await this.sessions.inspectVm(input.vmId)
-    const prepared = current.supported && current.capabilities.includes('account.delegation.v1')
+    // A prepared environment is reinstalled only when this Host can bring it the live screen.
+    const prepared = current.supported && current.capabilities.includes('account.delegation.v1') && !this.desktopUpdate(input.vmId, this.host.vm(input.vmId).runtimeId, current.capabilities)
     let templateId = 'prepared-environment'
     if (!prepared) {
       const vm = this.host.vm(input.vmId)
-      const template = this.host.templates.find(template => template.runtimeId === vm.runtimeId && template.runtimeBundle && template.capabilities.includes('account.delegation.v1'))
+      const template = this.desktopTemplate(vm.runtimeId) ?? this.host.templates.find(template => template.runtimeId === vm.runtimeId && template.runtimeBundle && template.capabilities.includes('account.delegation.v1'))
       if (!template) throw new HostError('NO_BOT_TEMPLATE', 'Este Host não tem um pacote compatível para preparar o ambiente')
       if (vm.cpus < template.minimum.cpus || vm.memoryMiB < template.minimum.memoryMiB || vm.diskGiB < template.minimum.diskGiB) throw new HostError('CAPACITY_APPROVAL_REQUIRED', 'Este ambiente não tem os recursos mínimos necessários')
       templateId = template.id

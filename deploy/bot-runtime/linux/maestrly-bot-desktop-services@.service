@@ -1,0 +1,10 @@
+[Unit]
+Description=Maestrly bot desktop services %i
+# Generated session drop-ins bind this unit to its display, namespace, slice and
+# root-only administrative socket. It owns the browser, proxy, screen and input.
+
+[Service]
+User=nobody
+Group=nogroup
+Environment=MAESTRLY_BOT_SESSION_REQUIRED=1
+ExecStart=/opt/maestrly-bot/runtime/bin/node /opt/maestrly-bot/app/desktop/services-main.js

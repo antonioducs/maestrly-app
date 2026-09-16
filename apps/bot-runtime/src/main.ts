@@ -30,6 +30,7 @@ export async function main() {
     workspace,
     version,
     controlPath: process.env.MAESTRLY_BOT_CONTROL_PATH ?? '/dev/virtio-ports/org.maestrly.bot.control.0',
+    desktopServices: process.env.MAESTRLY_BOT_DESKTOP_SERVICES,
     providerFactory: () =>
       provider === 'fixture'
         ? Promise.resolve(new FixtureProvider(workspace))

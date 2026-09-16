@@ -29,6 +29,16 @@ import {
 } from './bots.js'
 import { networkPolicySchema, hostnameSchema } from './bot-policy.js'
 import { botSessionSchema, sessionsInventorySchema } from './bot-sessions.js'
+import {
+  desktopClaimResultSchema,
+  desktopCloseResultSchema,
+  desktopInputResultSchema,
+  desktopOpenResultSchema,
+  desktopOperationSchema,
+  desktopRenewResultSchema,
+  desktopRequestParams,
+  desktopStateSchema,
+} from './desktop.js'
 
 // Bot wire methods share the v1 envelope. Each method has explicit params and result schemas.
 const envelope = { version: z.literal(1), id }
@@ -189,6 +199,18 @@ export const botRequests = [
   request('bot.files.transferAbort', z.strictObject({ transferId: id })),
   request('bot.operation.get', z.strictObject({ operationId: id })),
   request('bot.operation.lookup', z.strictObject({ idempotencyKey: id })),
+  // Live desktop. Viewing and controlling are separate authorizations; capabilities and
+  // tickets are ephemeral and only ever handled by the application's main process.
+  request('bot.desktop.inspect', desktopRequestParams.inspect),
+  request('bot.desktop.open', desktopRequestParams.open),
+  request('bot.desktop.close', desktopRequestParams.close),
+  request('bot.desktop.acquire', desktopRequestParams.acquire),
+  request('bot.desktop.operation.get', desktopRequestParams.operationGet),
+  request('bot.desktop.operation.lookup', desktopRequestParams.operationLookup),
+  request('bot.desktop.claimControl', desktopRequestParams.claimControl),
+  request('bot.desktop.renew', desktopRequestParams.renew),
+  request('bot.desktop.input', desktopRequestParams.input),
+  request('bot.desktop.return', desktopRequestParams.return),
 ] as const
 export const botRequestSchema = z.discriminatedUnion('method', [...botRequests])
 export type BotRequest = z.infer<typeof botRequestSchema>
@@ -267,6 +289,16 @@ export const botResultSchemas = {
   'bot.files.transferAbort': transferStateSchema,
   'bot.operation.get': botOperationSchema,
   'bot.operation.lookup': botOperationSchema.nullable(),
+  'bot.desktop.inspect': desktopStateSchema,
+  'bot.desktop.open': desktopOpenResultSchema,
+  'bot.desktop.close': desktopCloseResultSchema,
+  'bot.desktop.acquire': desktopOperationSchema,
+  'bot.desktop.operation.get': desktopOperationSchema,
+  'bot.desktop.operation.lookup': desktopOperationSchema.nullable(),
+  'bot.desktop.claimControl': desktopClaimResultSchema,
+  'bot.desktop.renew': desktopRenewResultSchema,
+  'bot.desktop.input': desktopInputResultSchema,
+  'bot.desktop.return': desktopOperationSchema,
 } satisfies Record<BotMethod, z.ZodType>
 export type BotResult<M extends BotMethod> = z.infer<(typeof botResultSchemas)[M]>
 export const BOT_MUTATIONS: readonly BotMethod[] = [
@@ -293,6 +325,22 @@ export const BOT_MUTATIONS: readonly BotMethod[] = [
   'bot.files.transferChunk',
   'bot.files.transferFinish',
   'bot.files.transferAbort',
+  'bot.desktop.open',
+  'bot.desktop.close',
+  'bot.desktop.acquire',
+  'bot.desktop.claimControl',
+  'bot.desktop.input',
+  'bot.desktop.return',
 ]
-/** Methods whose params carry secrets that must never be journaled or logged. */
-export const BOT_SECRET_METHODS: readonly BotMethod[] = ['bot.auth.setApiKey', 'account.setApiKey']
+/** Methods whose params or results carry secrets that must never be journaled or logged. */
+export const BOT_SECRET_METHODS: readonly BotMethod[] = [
+  'bot.auth.setApiKey',
+  'account.setApiKey',
+  'bot.desktop.open',
+  'bot.desktop.claimControl',
+  'bot.desktop.renew',
+  'bot.desktop.input',
+  'bot.desktop.return',
+]
+/** Desktop methods are driven by the application's main process only, never the renderer bridge. */
+export const BOT_DESKTOP_METHODS: readonly BotMethod[] = botMethods.filter((method) => method.startsWith('bot.desktop.'))
