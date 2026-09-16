@@ -228,7 +228,9 @@ export class TeamArtifacts {
       if (existing.digest === artifact.digest) return this.markDelivered(grant)
       throw new HostError('FILE_EXISTS', 'Já existe outro arquivo neste caminho do espaço de trabalho do bot')
     }
-    const transferId = `${grant.id}:deliver`
+    // The guest accepts only [A-Za-z0-9_-] in a transfer id: a separator it rejects would fail
+    // every delivery at the first chunk, so the suffix stays inside that alphabet.
+    const transferId = `${grant.id}-deliver`
     for (let offset = 0; offset < artifact.size || offset === 0; ) {
       const bytes = await this.read(artifact, offset, FILE_CHUNK_BYTES)
       const final = offset + bytes.length >= artifact.size

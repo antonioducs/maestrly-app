@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import type { GuestEvent, HostToGuestRequest, Vm, BotSession, SessionCapacity } from '@maestrly/host-protocol'
 import { HostService } from '../src/index.js'
+import { HostError } from '../src/errors.js'
 import type { Provider, Runtime } from '../src/provider.js'
 import type { GuestConnector, GuestSession, GuestRequestParams } from '../src/guest/session.js'
 import type { BotTemplate } from '../src/bots/recommendations.js'
@@ -174,6 +175,9 @@ export class FakeGuest implements GuestSession {
       }
       case 'files.write': {
         const p = params as any
+        // The real guest refuses any transfer id outside this alphabet; a fake that accepted
+        // everything would hide a delivery that fails on the first chunk against real hardware.
+        if (!/^[a-zA-Z0-9_-]+$/.test(String(p.transferId))) throw new HostError('RUNTIME_PROTOCOL', 'Invalid transfer id')
         const existing = this.files.get(`${p.path}.part`) ?? Buffer.alloc(0)
         const next = Buffer.concat([existing, Buffer.from(p.dataBase64, 'base64')])
         if (p.final) {
