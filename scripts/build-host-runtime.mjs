@@ -3,12 +3,20 @@ import { ACCOUNT_CODEX_VERSION } from './fetch-account-runtime.mjs'
 // Package an explicitly supplied, relocatable, pinned macOS QEMU runtime.
 // This build process is intentionally independent of HostService / VM lifecycle.
 import { cp, mkdir, readFile, writeFile, chmod, rename, rm, lstat, readdir } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { validateBuildConfig, verifyInput, sha256, run, minimumMacOS, compareVersions } from './host-build-utils.mjs'
 import { bundleHostSource } from './host-source-bundle.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+/** The schema this Host code actually migrates to, taken from the migrations source. */
+function hostDatabaseVersion() {
+  const source = readFileSync(path.join(root, 'packages/host-core/src/bots/migrations.ts'), 'utf8')
+  const version = Number(/HOST_DB_VERSION\s*=\s*(\d+)/.exec(source)?.[1])
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error('HOST_SCHEMA_VERSION_UNKNOWN')
+  return version
+}
 
 async function build() {
   const configPath = process.env.MAESTRLY_HOST_BUILD_CONFIG
@@ -221,7 +229,9 @@ async function build() {
     const manifest = {
       version: 1,
       serviceVersion: hostManifest.version,
-      hostSchemaVersion: 5,
+      // Read from the migrations themselves: a package must never claim a schema its code
+      // does not actually create, or an upgrade kit would check the wrong database version.
+      hostSchemaVersion: hostDatabaseVersion(),
       architecture: config.architecture,
       nodeVersion: config.nodeVersion,
       qemuVersion: config.qemuVersion,

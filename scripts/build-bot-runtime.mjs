@@ -189,6 +189,9 @@ async function build() {
       'tools.memory',
       'desktop.session',
       ...(desktopLive ? ['desktop.live.v1', 'desktop.handoff.v1'] : []),
+      // Collaboration tools are part of the runtime itself: a Host that knows teams finds
+      // them here, and an older Host simply never sends a team context.
+      'bot.teams.v1',
     ]
     await writeFile(
       tar + '.manifest.json',
