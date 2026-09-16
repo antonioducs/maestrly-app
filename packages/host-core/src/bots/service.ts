@@ -24,9 +24,13 @@ import type { HostStore } from '../persistence/store.js'
 import { BotRepository as Repository } from './repository.js'
 import { BotSessions } from './sessions.js'
 import { DesktopService, DIRECT_CONTEXT, type DesktopContext } from '../desktop/service.js'
+import { TeamRepository } from '../teams/repository.js'
+import { TeamService } from '../teams/service.js'
 
 export interface BotServiceOptions {
   store: HostStore
+  /** Where verified copies of shared team files are kept, outside every guest workspace. */
+  stateDirectory: string
   sharedAccounts?: AccountAuthority
   host: SetupHost & { hostGeneration: number }
   connector: GuestConnector
@@ -46,6 +50,7 @@ export class BotService {
   readonly delegation?: AccountDelegation
   readonly sessions: BotSessions
   readonly desktop: DesktopService
+  readonly teams: TeamService
   constructor(private readonly options: BotServiceOptions) {
     this.repo = new Repository(options.store)
     this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
@@ -86,12 +91,29 @@ export class BotService {
         if (bot.accountId && options.sharedAccounts) options.sharedAccounts.assertBindable(bot.accountId)
         return this.turns.createContinuation(input)
       },
+      returned: (input) => this.teams.handoffReturned(input),
+      budgetCeiling: (turnId) => this.teams.budgetCeiling(turnId),
     })
     this.coordinator.setDesktopHold((botId) => this.desktop.held(botId))
     this.memories = new BotMemories(this.repo)
     const session = (bot: Bot) => this.coordinator.session(bot)
     this.files = new BotFiles(this.repo, session)
     this.accounts = new BotAccounts(this.repo, session, this.coordinator.events, (bot) => this.setup.accountConnected(bot), options.sharedAccounts && this.delegation ? { authority: options.sharedAccounts, delegation: this.delegation } : undefined)
+    this.teams = new TeamService({
+      repo: this.repo,
+      teams: new TeamRepository(options.store),
+      turns: this.turns,
+      coordinator: this.coordinator,
+      hostId: options.store.hostId,
+      stateDirectory: options.stateDirectory,
+      session,
+      held: (botId) => this.desktop.held(botId),
+    })
+    // Team work rides the existing turn engine: it observes transitions and blocks a
+    // dispatch whose authorization no longer holds, but never becomes a second executor.
+    this.coordinator.onTurnChanged((turnId) => this.teams.turnChanged(turnId))
+    this.coordinator.setDispatchGuard((turnId) => this.teams.dispatchGuard(turnId))
+    this.coordinator.setCollaboration((botId, request) => this.teams.collaboration(botId, request))
   }
   async ready() {
     this.sessions.recover()
@@ -101,9 +123,11 @@ export class BotService {
     this.setup.recover()
     this.coordinator.start()
     this.desktop.start()
+    this.teams.ready()
   }
   async close() {
     this.desktop.shutdown()
+    await this.teams.close()
     await this.coordinator.close()
   }
   isMutation(method: BotMethod) {
@@ -142,6 +166,7 @@ export class BotService {
         const conversation = this.repo.conversation(turn.conversationId)
         this.repo.saveConversation({ ...conversation, activeTurnId: undefined, revision: conversation.revision + 1, updatedAt: now() })
       })
+    if (turn) this.coordinator.turnChanged(turn.id)
     }
   }
   /** A VM bound to a bot, or being created for one, launches with the private bot channels. */

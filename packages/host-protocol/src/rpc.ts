@@ -5,6 +5,7 @@ import { z } from 'zod'
 // expectedRevision is mandatory except on create. Events use an exclusive cursor.
 import { id, revision, errorSchema } from './common.js'
 import { botRequests } from './bot-rpc.js'
+import { teamRequests } from './team-rpc.js'
 const empty = z.strictObject({})
 const mutation = { vmId: id, expectedRevision: revision, idempotencyKey: id }
 const envelope = { version: z.literal(1), id }
@@ -45,6 +46,7 @@ export const requestSchema = z.discriminatedUnion('method', [
     })
   ),
   ...botRequests,
+  ...teamRequests,
 ])
 export const responseSchema = z
   .strictObject({

@@ -58,7 +58,8 @@ it('migrates schema 4 to 5 additively, idempotently and without touching existin
   try {
     const before = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())
     migrateToV5(db)
-    expect(HOST_DB_VERSION).toBe(5)
+    // The desktop migration itself still lands on 5; later phases add their own steps.
+    expect(HOST_DB_VERSION).toBeGreaterThanOrEqual(5)
     expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(5)
     expect(tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before)
     migrateToV5(db)
@@ -90,7 +91,8 @@ it('an older binary refuses a newer schema instead of converting it', async () =
   const store = new HostStore(dir)
   store.close()
   const db = new DatabaseSync(join(dir, 'host.sqlite'))
-  db.exec('PRAGMA user_version=6')
+  // Anything past what this binary knows is refused, never silently converted.
+  db.exec(`PRAGMA user_version=${HOST_DB_VERSION + 1}`)
   db.close()
   expect(() => new HostStore(dir)).toThrow('Unsupported host database version')
 })

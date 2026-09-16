@@ -1,4 +1,4 @@
-import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotMemory, type BotMessage, type NetworkPolicy, type TurnSnapshot } from '@maestrly/host-protocol'
+import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotMemory, type BotMessage, type NetworkPolicy, type TeamTurnContext, type TurnSnapshot } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 
 export const TURN_LIMITS = { activeMs: 30 * 60_000, maxTools: 100, maxLogBytes: 10 * 1024 * 1024, leaseMs: 30_000, renewMs: 10_000, humanWaitMs: 24 * 3_600_000, dispatchAttentionMs: 60_000 }
@@ -23,6 +23,16 @@ export function buildSnapshot(input: {
   leaseMs: number
   /** Remaining budget of a continued task; defaults to a fresh task budget. */
   limits?: TurnSnapshot['limits']
+  /** Replaces the bot's own instructions for this turn only (team role, never persisted). */
+  instructions?: string
+  /**
+   * Collaboration context of a team task. It is added only for a turn that belongs to a
+   * team run and only when the guest announced the team capability; the caller is
+   * responsible for passing an empty private memory and no private history alongside it.
+   */
+  team?: TeamTurnContext
+  /** Permission ceiling agreed for this work; never wider than the bot's own mode. */
+  permissionMode?: Bot['permissionMode']
 }): TurnSnapshot {
   const active = input.memory.filter((m) => m.active)
   const memoryBytes = active.reduce((sum, m) => sum + Buffer.byteLength(m.content), 0)
@@ -37,10 +47,10 @@ export function buildSnapshot(input: {
     conversationId: input.conversation.id,
     turnId: input.turnId,
     generation: input.generation,
-    permissionMode: input.bot.permissionMode,
+    permissionMode: input.permissionMode ?? input.bot.permissionMode,
     policyRevision: input.network.revision,
     network: input.network,
-    instructions: input.bot.instructions.trim() || defaultInstructions(input.bot),
+    instructions: input.instructions?.trim() || input.bot.instructions.trim() || defaultInstructions(input.bot),
     memory: active.map((m) => ({ id: m.id, content: m.content })),
     contextSummary: input.conversation.contextSummary,
     recentMessages: input.recent
@@ -53,5 +63,6 @@ export function buildSnapshot(input: {
     providerThreadId: input.conversation.providerThreadId,
     leaseMs: input.leaseMs,
     limits: input.limits ?? { activeMs: TURN_LIMITS.activeMs, maxTools: TURN_LIMITS.maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes },
+    ...(input.team ? { team: input.team } : {}),
   }
 }

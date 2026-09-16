@@ -24,6 +24,7 @@ import {
   type Operation,
   DESKTOP_HANDOFF_CAPABILITY,
   DESKTOP_LIVE_CAPABILITY,
+  TEAM_HOST_CAPABILITY,
 } from '@maestrly/host-protocol'
 import { QemuProvider, type Provider, type Runtime, type Image } from './provider.js'
 import { verifyAsset } from './assets.js'
@@ -166,6 +167,7 @@ export class HostService {
     }
     this.bots = new BotService({
       store: this.store,
+      stateDirectory: this.options.stateDirectory,
       sharedAccounts: authority,
       connector: this.connector ?? (this.vmConnector = new VmGuestConnector(this.hostId, this.hostGeneration, vmId => {
         const vm = this.store.vm(vmId)
@@ -309,7 +311,7 @@ export class HostService {
       id: this.hostId,
       serviceVersion: '0.2.0',
       protocolVersion: 1,
-      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY, 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
+      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY, TEAM_HOST_CAPABILITY, 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
       health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',
       observedMemoryMiB: observedMemoryMiB(),
       platform: process.platform,
@@ -404,6 +406,7 @@ export class HostService {
     if (request.method.startsWith('environment.')) return this.environments.handle(request as any)
     if (request.method.startsWith('account.')) return this.accounts.handle(request as any)
     if (request.method.startsWith('bot.')) return this.bots.handle(request as any, context)
+    if (request.method.startsWith('team.')) return this.bots.teams.handle(request as any)
     switch (request.method) {
       case 'host.inspect':
         return this.inspectHost()

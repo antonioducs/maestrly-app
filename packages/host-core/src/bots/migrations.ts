@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 
-export const HOST_DB_VERSION = 5
+export const HOST_DB_VERSION = 6
 /**
  * Schema 1 → 2 adds the Bot domain next to the phase-one VM catalogue. The migration is
  * one transaction; hostId, VMs, operations and events are untouched. A binary rolled

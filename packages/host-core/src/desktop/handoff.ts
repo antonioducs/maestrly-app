@@ -32,6 +32,13 @@ export interface HandoffDeps {
   connector: GuestConnector
   continueTask: ContinuationFactory
   event: (botId: string, summary: string, detail: Record<string, unknown>, kind?: 'runtime.changed' | 'attention') => void
+  /**
+   * Outcome of a return, for domains that track the interrupted work. Returning without a
+   * continuation must end the logical task explicitly instead of leaving it paused forever.
+   */
+  returned?: (input: { botId: string; interruptedTurnId?: string; continuationTurnId?: string; failureCode?: string }) => void
+  /** Ceiling of the larger work a turn belongs to, when one exists (a team task parcel). */
+  budgetCeiling?: (turnId: string) => { activeMs: number; maxTools: number } | undefined
 }
 export const stableCode = (error: unknown, fallback: string) => {
   const code = (error as { code?: unknown })?.code
@@ -43,13 +50,15 @@ const within = <T>(promise: Promise<T>, ms: number) =>
  * A continued task never gets more than the budget of the task it continues. Each
  * handoff subtracts the time and tool calls the interrupted turn already spent.
  */
-export function remainingBudget(record: DesktopRecord, turn: BotTurn) {
+export function remainingBudget(record: DesktopRecord, turn: BotTurn, ceiling?: { activeMs: number; maxTools: number }) {
   const elapsed = turn.startedAt ? Math.max(0, new Date(turn.finishedAt ?? Date.now()).getTime() - new Date(turn.startedAt).getTime()) : 0
   const chain = record.chain && record.chain.lastTurnId === turn.id ? record.chain : { rootTurnId: turn.id, lastTurnId: turn.id, activeMs: 0, tools: 0 }
   const usedMs = chain.activeMs + elapsed
   const usedTools = chain.tools + (turn.usage?.toolCalls ?? 0)
-  const activeMs = TURN_LIMITS.activeMs - usedMs
-  const maxTools = TURN_LIMITS.maxTools - usedTools
+  // Work that belongs to a larger piece (a team task) is capped by the parcel that work
+  // reserved, never by the standalone per-turn ceiling.
+  const activeMs = Math.min(ceiling?.activeMs ?? TURN_LIMITS.activeMs, TURN_LIMITS.activeMs) - usedMs
+  const maxTools = Math.min(ceiling?.maxTools ?? TURN_LIMITS.maxTools, TURN_LIMITS.maxTools) - usedTools
   if (activeMs < 60_000 || maxTools < 1) return undefined
   return { limits: { activeMs, maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes }, chain: { rootTurnId: chain.rootTurnId, activeMs: usedMs, tools: usedTools } }
 }
@@ -142,7 +151,7 @@ export class HandoffRunner {
         try {
           const turn = repo.turn(plan.interruptedTurnId)
           const record = store.get(session.id)!
-          const budget = remainingBudget(record, turn)
+          const budget = remainingBudget(record, turn, this.deps.budgetCeiling?.(turn.id))
           if (!budget) throw new HostError('BUDGET_EXHAUSTED', 'O limite desta tarefa foi atingido')
           const file = { path: capture.path, name: capture.name, size: capture.size, digest: capture.digest }
           repo.transaction(() => {
@@ -167,6 +176,7 @@ export class HandoffRunner {
           interruptedTurnId: undefined,
           reasonCode: failureCode,
         }))
+      this.deps.returned?.({ botId: operation.botId, interruptedTurnId: plan.interruptedTurnId, continuationTurnId, failureCode })
       if (continuationTurnId) {
         const turn = repo.turn(continuationTurnId)
         coordinator.events.record(operation.botId, 'turn.status', 'Tarefa retomada a partir do estado atual da tela', { turnId: turn.id, conversationId: turn.conversationId, detail: { status: 'queued' } })

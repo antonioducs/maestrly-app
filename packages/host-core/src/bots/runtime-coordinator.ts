@@ -5,6 +5,7 @@ import {
   turnStatusSchema,
   type Bot,
   type BotTurn,
+  type CollaborationRequest,
   type GuestEvent,
   type Vm,
 } from '@maestrly/host-protocol'
@@ -32,8 +33,37 @@ export class RuntimeCoordinator {
   private closed = false
   private accounts?: AccountDelegation
   setAccounts(accounts: AccountDelegation) { this.accounts = accounts }
+  private collaboration?: (botId: string, request: CollaborationRequest) => Promise<Record<string, unknown>>
+  /** Installed by the teams domain; without it the collaboration lane simply does not exist. */
+  setCollaboration(handler: (botId: string, request: CollaborationRequest) => Promise<Record<string, unknown>>) {
+    this.collaboration = handler
+  }
   private takeovers = new Set<string>()
   private holdCheck?: (botId: string) => boolean
+  private turnListener?: (turnId: string) => void
+  private dispatchGuard?: (turnId: string) => { code: string; message: string } | undefined
+  /** Observes every turn transition so another domain can mirror it onto its own records. */
+  onTurnChanged(listener: (turnId: string) => void) {
+    this.turnListener = listener
+  }
+  /**
+   * Last authorization check before a queued turn is written to the guest. An authorization
+   * that was reduced after admission blocks the outbox item instead of letting it run.
+   */
+  setDispatchGuard(guard: (turnId: string) => { code: string; message: string } | undefined) {
+    this.dispatchGuard = guard
+  }
+  private notify(turnId: string) {
+    try {
+      this.turnListener?.(turnId)
+    } catch {
+      /* a listener must never break the turn engine */
+    }
+  }
+  /** Public entry point for domains that change a turn outside this coordinator. */
+  turnChanged(turnId: string) {
+    this.notify(turnId)
+  }
   /** While a person holds the desktop, nothing connects, dispatches or reconciles bot work. */
   setDesktopHold(check: (botId: string) => boolean) { this.holdCheck = check }
   held(botId: string) { return this.holdCheck?.(botId) === true }
@@ -180,6 +210,12 @@ export class RuntimeCoordinator {
             return Promise.reject(new HostError('ACCOUNT_UNAVAILABLE', 'O canal desta conta está indisponível'))
           return this.accounts.credential(bot.id, forceRefresh, credentialHash)
         })
+        // The acting bot is this session's bot, decided here and never by the frame.
+        session.setCollaborationHandler?.((request) => {
+          if (this.sessions.get(bot.id) !== session || !session.alive || !this.collaboration)
+            return Promise.reject(new HostError('TEAM_STAGE_INVALID', 'Esta sessão não pode colaborar agora'))
+          return this.collaboration(bot.id, request)
+        })
         this.sessions.set(bot.id, session)
         session.onEvent((event, ack) => this.handleEvent(bot.id, event, ack))
         session.onClose(() => {
@@ -294,6 +330,13 @@ export class RuntimeCoordinator {
               continue
             }
           }
+          // Authorization is revalidated here, immediately before the wire write.
+          const blocked = this.dispatchGuard?.(turn.id)
+          if (blocked) {
+            this.repo.dequeue(item.id)
+            this.finish(turn, 'cancelled', blocked)
+            continue
+          }
           // Persist the dispatch attempt before the wire write: a lost reply is reconciled, never replayed.
           this.repo.transaction(() => {
             this.repo.enqueue({ ...item, attempts: item.attempts + 1 })
@@ -310,6 +353,7 @@ export class RuntimeCoordinator {
               this.repo.saveTurn({ ...current, status: 'running', leaseExpiresAt: new Date(Date.now() + this.limits.leaseMs).toISOString(), revision: current.revision + 1, updatedAt: now() })
           })
           this.events.record(botId, 'turn.status', 'O bot começou a trabalhar', { turnId: turn.id, conversationId: turn.conversationId, detail: { status: 'running' } })
+          this.notify(turn.id)
         } else if (item.kind === 'turn.cancel') {
           await session.request('turn.cancel', { turnId: turn.id, generation: turn.generation }, 60_000)
           const identity = this.repo.session(bot.id)
@@ -329,6 +373,8 @@ export class RuntimeCoordinator {
             if (current.status === 'waiting_approval' || current.status === 'waiting_input')
               this.repo.saveTurn({ ...current, status: 'running', revision: current.revision + 1, updatedAt: now() })
           })
+          // The answer reached the bot: whoever tracks this work must stop showing a wait.
+          this.notify(turn.id)
         }
       }
     } finally {
@@ -416,6 +462,7 @@ export class RuntimeCoordinator {
     if (identity?.transport === 'managed') void this.connector.releaseSessionLease?.(identity, turn.id).catch(() => {})
     const labels: Record<string, string> = { succeeded: 'Tarefa concluída', failed: 'A tarefa falhou', cancelled: 'Tarefa interrompida', interrupted: 'A tarefa foi interrompida' }
     this.events.record(turn.botId, 'turn.status', error?.code === 'HUMAN_TAKEOVER' ? 'Tarefa pausada para você usar a tela' : labels[status] ?? status, { turnId: turn.id, conversationId: turn.conversationId, detail: { status, ...(error ? { error } : {}) } })
+    this.notify(turn.id)
   }
   /** Events are persisted first; ACK follows the commit so a crash re-delivers instead of losing. */
   private handleEvent(botId: string, event: GuestEvent, ack: () => void) {
@@ -454,6 +501,7 @@ export class RuntimeCoordinator {
               })
             )
             this.events.record(botId, 'turn.status', event.summary, common)
+            this.notify(turn.id)
           }
           break
         }
@@ -500,6 +548,7 @@ export class RuntimeCoordinator {
             this.repo.saveTurn({ ...turn, status: event.kind === 'question.asked' ? 'waiting_input' : 'waiting_approval', revision: turn.revision + 1, updatedAt: now() })
           )
           this.events.record(botId, event.kind, event.summary || interaction.title, { ...common, detail: { interactionId: interaction.id, title: interaction.title } })
+          this.notify(turn.id)
           break
         }
         case 'account.changed': {

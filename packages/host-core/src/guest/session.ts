@@ -1,4 +1,4 @@
-import { delegatedCredentialSchema, type DelegatedCredential, type VmRequest, type VmSessionInfo } from '@maestrly/host-protocol'
+import { TEAM_LIMITS, delegatedCredentialSchema, type CollaborationRequest, type DelegatedCredential, type VmRequest, type VmSessionInfo } from '@maestrly/host-protocol'
 import { connect } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
@@ -28,6 +28,11 @@ export interface GuestSession {
   onEvent(listener: (event: GuestEvent, ack: () => void) => void): () => void
   onClose(listener: (error: Error) => void): () => void
   setAccountHandler?(handler: (forceRefresh: boolean, credentialHash?: string) => Promise<DelegatedCredential>): void
+  /**
+   * Handles a collaboration request from the working guest. The Host derives who is acting
+   * from this authenticated session; the frame never names a bot, a team or a role.
+   */
+  setCollaborationHandler?(handler: (request: CollaborationRequest) => Promise<Record<string, unknown>>): void
   readonly alive: boolean
   close(): void
 }
@@ -60,6 +65,9 @@ export class SocketGuestSession implements GuestSession {
   private accountHandler?: (forceRefresh: boolean, credentialHash?: string) => Promise<DelegatedCredential>
   private accountPending = false
   setAccountHandler(handler: (forceRefresh: boolean, credentialHash?: string) => Promise<DelegatedCredential>) { this.accountHandler = handler }
+  private collaborationHandler?: (request: CollaborationRequest) => Promise<Record<string, unknown>>
+  private collaborationPending = 0
+  setCollaborationHandler(handler: (request: CollaborationRequest) => Promise<Record<string, unknown>>) { this.collaborationHandler = handler }
   private buffer = Buffer.alloc(0)
   private pending = new Map<string, Pending>()
   private eventListeners = new Set<(event: GuestEvent, ack: () => void) => void>()
@@ -156,6 +164,32 @@ export class SocketGuestSession implements GuestSession {
         }).catch(error => {
           if (this.alive) this.write({ type: 'account.response', id, error: { code: error instanceof HostError && ['ACCOUNT_REQUIRED', 'ACCOUNT_REVOKED'].includes(error.code) ? error.code : 'ACCOUNT_UNAVAILABLE' } })
         }).finally(() => { this.accountPending = false })
+        continue
+      }
+      if (frame.type === 'collaboration.request') {
+        const id = frame.id
+        // Bounded concurrency: collaboration must never starve account renewal, leases,
+        // cancellation or the live screen on the same channel.
+        if (!this.collaborationHandler || this.collaborationPending >= TEAM_LIMITS.requestsInFlightMax) {
+          this.write({ type: 'collaboration.response', id, error: { code: 'TEAM_BUSY', message: 'Colaboração indisponível nesta execução' } })
+          continue
+        }
+        this.collaborationPending++
+        void this.collaborationHandler(frame)
+          .then((result) => {
+            if (this.alive) this.write({ type: 'collaboration.response', id, result })
+          })
+          .catch((error) => {
+            if (this.alive)
+              this.write({
+                type: 'collaboration.response',
+                id,
+                error: { code: error instanceof HostError ? error.code : 'TEAM_STAGE_INVALID', message: String(error?.message ?? 'Ação indisponível').slice(0, 400) },
+              })
+          })
+          .finally(() => {
+            this.collaborationPending--
+          })
         continue
       }
       if (frame.type === 'response') {

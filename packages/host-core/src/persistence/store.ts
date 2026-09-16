@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { vmSchema, operationSchema, type Vm, type Operation } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 import { HOST_DB_VERSION, migrateToV2, migrateToV3, migrateToV4, migrateToV5 } from '../bots/migrations.js'
+import { migrateToV6 } from '../teams/migrations.js'
 const now = () => new Date().toISOString()
 
 /**
@@ -62,6 +63,7 @@ export class HostStore {
       migrateToV3(this.db)
       migrateToV4(this.db)
       migrateToV5(this.db)
+      migrateToV6(this.db)
       this.db.prepare('INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)').run('hostId', randomUUID())
       this.hostId = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('hostId')!.value as string
       if (!/^[a-f0-9-]{36}$/.test(this.hostId)) throw new Error('Invalid persisted host identity')

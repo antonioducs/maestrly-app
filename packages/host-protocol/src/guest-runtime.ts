@@ -2,6 +2,7 @@ import { delegatedCredentialSchema, accountCredentialRequestSchema, accountCrede
 import { z } from 'zod'
 import { id } from './common.js'
 import { networkPolicySchema } from './bot-policy.js'
+import { collaborationRequestSchema, collaborationResponseSchema, teamTurnContextSchema } from './team-runtime.js'
 
 // Private virtio-serial control channel between Host and the Linux runtime inside a VM.
 // Frames are JSONL up to 256 KiB. File chunks are 48 KiB before base64. The Host
@@ -40,6 +41,7 @@ export const runtimeCapabilitySchema = z.enum([
   'tools.memory',
   'network.proxy',
   'desktop.session',
+  'teams.collaboration',
 ])
 
 // Host → guest requests. Every method has its own params; there is no generic exec.
@@ -67,6 +69,11 @@ const snapshotSchema = z.strictObject({
     maxTools: z.number().int().positive(),
     maxLogBytes: z.number().int().positive(),
   }),
+  /**
+   * Present only for a turn that belongs to a team task, and only when the runtime
+   * announced the team capability. An older guest keeps receiving the exact v1 shape.
+   */
+  team: teamTurnContextSchema.optional(),
 })
 export type TurnSnapshot = z.infer<typeof snapshotSchema>
 const turnIdentity = z.strictObject({ turnId: id, generation: z.number().int().positive() })
@@ -151,7 +158,7 @@ export const guestResponseSchema = z.strictObject({
   error: z.strictObject({ code: z.string().min(1).max(64), message: z.string().max(2000) }).optional(),
 })
 export const hostAckSchema = z.strictObject({ type: z.literal('ack'), runtimeEventId: z.string().min(1).max(128) })
-export const guestFrameSchema = z.discriminatedUnion('type', [guestHelloSchema, guestEventSchema, guestResponseSchema, accountCredentialRequestSchema])
-export const hostFrameSchema = z.discriminatedUnion('type', [hostWelcomeSchema, hostToGuestRequestSchema, hostAckSchema, accountCredentialResponseSchema])
+export const guestFrameSchema = z.discriminatedUnion('type', [guestHelloSchema, guestEventSchema, guestResponseSchema, accountCredentialRequestSchema, collaborationRequestSchema])
+export const hostFrameSchema = z.discriminatedUnion('type', [hostWelcomeSchema, hostToGuestRequestSchema, hostAckSchema, accountCredentialResponseSchema, collaborationResponseSchema])
 export type GuestFrame = z.infer<typeof guestFrameSchema>
 export type HostFrame = z.infer<typeof hostFrameSchema>

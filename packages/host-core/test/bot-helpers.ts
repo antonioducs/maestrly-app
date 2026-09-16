@@ -79,6 +79,13 @@ export class FakeGuest implements GuestSession {
   private accountHandler?: (forceRefresh: boolean) => Promise<import('@maestrly/host-protocol').DelegatedCredential>
   setAccountHandler(handler: (forceRefresh: boolean) => Promise<import('@maestrly/host-protocol').DelegatedCredential>) { this.accountHandler = handler }
   refreshAccount() { if (!this.accountHandler) throw new Error('No shared account'); return this.accountHandler(true) }
+  private collaborationHandler?: (request: import('@maestrly/host-protocol').CollaborationRequest) => Promise<Record<string, unknown>>
+  setCollaborationHandler(handler: (request: import('@maestrly/host-protocol').CollaborationRequest) => Promise<Record<string, unknown>>) { this.collaborationHandler = handler }
+  /** Calls a collaboration tool the way the packaged runtime does: over this session only. */
+  collaborate(turnId: string, method: string, params: Record<string, unknown> = {}, generation = 1, requestId = randomUUID()) {
+    if (!this.collaborationHandler) throw new Error('Collaboration unavailable on this session')
+    return this.collaborationHandler({ type: 'collaboration.request', id: requestId, turnId, generation, method: method as never, params })
+  }
   private listeners = new Set<(event: GuestEvent, ack: () => void) => void>()
   private closeListeners = new Set<(error: Error) => void>()
   private queue: { event: GuestEvent; acked: boolean }[] = []
@@ -279,7 +286,7 @@ export const template: BotTemplate = {
   recommended: { cpus: 2, memoryMiB: 4096, diskGiB: 24 },
   capabilities: ['account.delegation.v1', 'provider.codex'],
 }
-export async function setup(options: { capacity?: { cpus: number; memoryMiB: number; diskGiB: number }; dir?: string; templates?: BotTemplate[]; connector?: FakeConnector; provider?: FakeProvider; accountProvider?: AccountProviderFactory } = {}) {
+export async function setup(options: { capacity?: { cpus: number; memoryMiB: number; diskGiB: number }; dir?: string; templates?: BotTemplate[]; connector?: FakeConnector; provider?: FakeProvider; accountProvider?: AccountProviderFactory; imageVirtualSizeGiB?: number } = {}) {
   const dir = options.dir ?? (await directory())
   const asset = `${dir}/image`
   await writeFile(asset, 'image')
@@ -289,7 +296,9 @@ export async function setup(options: { capacity?: { cpus: number; memoryMiB: num
     stateDirectory: dir,
     accountProvider: options.accountProvider,
     runtimes: [runtime],
-    images: [{ id: 'image', name: 'Bot image', arch: 'arm64' as const, asset: { path: asset, sha256: sha(Buffer.from('image')) }, format: 'raw' as const, virtualSizeGiB: 12, guestAgent: true as const }],
+    // Virtual size is an injection seam: suites that only exercise Host logic use a small
+    // image so they do not depend on the controller having tens of free GiB.
+    images: [{ id: 'image', name: 'Bot image', arch: 'arm64' as const, asset: { path: asset, sha256: sha(Buffer.from('image')) }, format: 'raw' as const, virtualSizeGiB: options.imageVirtualSizeGiB ?? 12, guestAgent: true as const }],
     capacity: options.capacity ?? { cpus: 4, memoryMiB: 8192, diskGiB: 40 },
     provider,
     connector,

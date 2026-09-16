@@ -23,7 +23,7 @@ import { type BotRepository, now } from '../bots/repository.js'
 import type { RuntimeCoordinator } from '../bots/runtime-coordinator.js'
 import type { GuestConnector } from '../guest/session.js'
 import { MediaTickets } from './grants.js'
-import { HandoffRunner, stableCode, type ContinuationFactory } from './handoff.js'
+import { HandoffRunner, stableCode, type ContinuationFactory, type HandoffDeps } from './handoff.js'
 import { DesktopViewers, type Viewer } from './leases.js'
 import { DesktopRepository, type DesktopRecord } from './repository.js'
 
@@ -37,6 +37,9 @@ export interface DesktopServiceOptions {
   vm: (id: string) => Vm
   hostGeneration: number
   continueTask: ContinuationFactory
+  /** Notified after a return, so the domain that owns the interrupted work can close it. */
+  returned?: HandoffDeps['returned']
+  budgetCeiling?: HandoffDeps['budgetCeiling']
   clock?: () => number
 }
 const INPUT_ERRORS = new Set(['CONTROL_EXPIRED', 'STALE_DESKTOP', 'INPUT_SEQUENCE_INVALID', 'INPUT_RATE_LIMITED', 'INVALID_COORDINATES', 'DESKTOP_INPUT_REJECTED', 'SESSION_GENERATION_CHANGED'])
@@ -62,6 +65,8 @@ export class DesktopService {
       coordinator: options.coordinator,
       connector: options.connector,
       continueTask: options.continueTask,
+      ...(options.returned ? { returned: options.returned } : {}),
+      ...(options.budgetCeiling ? { budgetCeiling: options.budgetCeiling } : {}),
       event: (botId, summary, detail, kind = 'runtime.changed') => this.event(botId, summary, detail, kind),
     })
   }
@@ -336,7 +341,9 @@ export class DesktopService {
     })
     if (begun.existing) return begun.operation
     this.event(params.botId, 'Devolvendo o controle ao bot', { mode: 'resuming', continueTask })
-    void this.handoff.return(begun.operation, session, { continueTask, interruptedTurnId: continueTask ? interrupted!.id : undefined })
+    // The interrupted turn travels either way: continuing resumes it, and not continuing
+    // still has to close the work it belonged to instead of leaving it paused.
+    void this.handoff.return(begun.operation, session, { continueTask, interruptedTurnId: record.interruptedTurnId })
     return begun.operation
   }
   /** The Host connection closed: its viewers go away and a controller becomes a pause. */
