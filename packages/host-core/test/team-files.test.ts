@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest'
 import { rm } from 'node:fs/promises'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { TEAM_LIMITS } from '@maestrly/host-protocol'
 import { ask, collaborate, createTeam, finishTurn, runOf, teamBot, teamLab, turnOf, until, type TeamLab } from './team-helpers.js'
 import { HostError } from '../src/errors.js'
@@ -101,7 +101,7 @@ it.skipIf(skip)('fails honestly when the file changes during the copy and leaves
   const original = Buffer.alloc(120 * 1024, 'a')
   guest.files.set('grande.bin', original)
   let reads = 0
-  guest.handler = (method, params) => {
+  guest.handler = (method) => {
     if (method === 'files.read') {
       reads++
       // The file is replaced after the first chunk, exactly as a live edit would.
