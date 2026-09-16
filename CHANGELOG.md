@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-16
+
+### Added
+
+- Preserve the complete available conversation when switching models or
+  providers, compacting before dispatch when transport limits require it.
+- Block model transfers that remain oversized or whose required compaction
+  fails, avoiding silent context truncation.
+
+### Fixed
+
+- Restore Kanban project chat tool execution for Claude and avoid repeating
+  project context after the first message.
+
 ## [0.6.1] - 2026-09-15
 
 ### Fixed
