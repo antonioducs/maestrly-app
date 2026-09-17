@@ -55,6 +55,12 @@ jobs:
         run: xvfb-run -a npm run test:e2e:bot
       - name: Test Bot team UI
         run: xvfb-run -a npm run test:e2e:bot-teams
+      # The chat experience: transcript, composer, commands, extensions and usage, all against
+      # the interface fixture. The guest-side gates (Codex with MCP and skills) belong to the lab.
+      - name: Check Bot chat experience deterministic suites (no remote hardware)
+        run: npm run check:bot-chat && npm run test:bot-chat
+      - name: Test Bot chat experience UI
+        run: xvfb-run -a npm run test:e2e:bot-chat
       - name: Run browser flows
         run: npm run test:e2e:platform
       - name: Run real desktop project chat

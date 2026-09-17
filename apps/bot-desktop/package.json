@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/bot-desktop",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "Local Maestrly VM host console",
   "author": "Maestrly contributors",
@@ -17,7 +17,8 @@
     "check": "npm run typecheck && npm test && npm run build",
     "package:lab": "node ../../scripts/package-bot-lab.mjs",
     "test:e2e:teams": "playwright test test/e2e/bot-teams.spec.ts test/e2e/bot-team-simple-mode.spec.ts test/e2e/bot-team-handoff.spec.ts",
-    "test:e2e:phase5": "playwright test test/e2e/bot-routines.spec.ts test/e2e/bot-voice.spec.ts test/e2e/bot-routine-voice.spec.ts"
+    "test:e2e:phase5": "playwright test test/e2e/bot-routines.spec.ts test/e2e/bot-voice.spec.ts test/e2e/bot-routine-voice.spec.ts",
+    "test:e2e:chat": "playwright test test/e2e/bot-chat-transcript.spec.ts test/e2e/bot-chat-composer.spec.ts test/e2e/bot-chat-prompts.spec.ts test/e2e/bot-chat-extensions.spec.ts test/e2e/bot-chat-usage.spec.ts"
   },
   "dependencies": {
     "@maestrly/host-protocol": "0.3.0",
