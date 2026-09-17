@@ -1,19 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Lock } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { ChatContextMeter as SharedContextMeter, formatCost as fmtCost, formatTokens as fmt } from '@maestrly/chat-ui'
 import { contextOccupancy, estimatedCostOfUsage, usageMetaForModel } from '../../../shared/chat'
 import type { ChatHistoryStats, ChatModelMeta } from '../../../shared/chat'
-
-const fmt = (n: number): string =>
-  n >= 1e6
-    ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M`
-    : n >= 1000
-      ? `${(n / 1000).toFixed(n >= 1e5 ? 0 : 1)}k`
-      : String(n)
-
-const fmtCost = (c: number): string =>
-  c >= 1 ? `$${c.toFixed(2)}` : c >= 0.01 ? `$${c.toFixed(3)}` : `$${c.toFixed(4)}`
 
 function parseLimit(raw: string): number | null {
   const s = raw.trim().toLowerCase().replace(/\s+/g, '')
@@ -168,35 +157,18 @@ export function ChatContextMeter({
         (noCacheReported ? t('meter.costNoCacheNote') : '')
       : '')
 
+  // The pill is the shared component; the desktop adds its richer tooltip and the limit popover.
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => canLimit && setOpen((o) => !o)}
+      <SharedContextMeter
+        usage={{ input: 0, output: 0, contextInput: stats.used }}
+        meta={win ? { contextWindow: win } : null}
+        limitOverride={activeLimit}
+        cost={hasPricing ? stats.cost : null}
+        estimated={history?.contextProjection?.quality === 'estimated'}
+        onClick={canLimit ? () => setOpen((o) => !o) : undefined}
         title={canLimit ? tip + '\n\n' + t('meter.limitButtonTitle') : tip}
-        disabled={!canLimit}
-        className={cn(
-          'inline-flex items-center gap-1 rounded px-1 text-[11px]',
-          canLimit && 'cursor-pointer hover:bg-white/[0.06]',
-          activeLimit != null && 'text-indigo-400',
-          activeLimit == null &&
-            (pct != null && pct >= 0.9
-              ? 'text-red-400'
-              : pct != null && pct >= 0.75
-                ? 'text-amber-400'
-                : 'text-muted-foreground')
-        )}
-      >
-        {activeLimit != null && <Lock className="h-2.5 w-2.5 shrink-0" />}
-        <span>
-          {history?.contextProjection?.quality === 'estimated' ? '~' : ''}
-          {fmt(stats.used)}
-          {win ? `/${fmt(win)}` : ''}
-          {pct != null ? ` ${Math.round(pct * 100)}%` : ' tok'}
-          {hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}
-        </span>
-      </button>
-
+      />
       {open && canLimit && (
         <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-white/[0.1] bg-[#161618] p-3 shadow-2xl">
           <div className="text-[13px] font-medium text-foreground">{t('meter.limitTitle')}</div>

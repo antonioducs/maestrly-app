@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./components.css": "./src/components.css"
+    "./components.css": "./src/components.css",
+    "./cost": "./src/usage/cost.ts",
+    "./model-meta": "./src/usage/model-meta.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

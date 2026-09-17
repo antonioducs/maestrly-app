@@ -96,71 +96,18 @@ export interface ChatUsageStats {
   lastAt: number | null
 }
 
-export function totalTokensOf(u: { input: number; output: number; cacheRead?: number; cacheCreate?: number }): number {
-  return Math.max(0, u.input) + Math.max(0, u.output) + Math.max(0, u.cacheRead ?? 0) + Math.max(0, u.cacheCreate ?? 0)
-}
-
-type UsagePricing = {
-  inputPer1M?: number
-  outputPer1M?: number
-  cacheReadPer1M?: number
-  cacheWritePer1M?: number
-}
-
-export function hasUsagePricing(meta: UsagePricing | null | undefined): boolean {
-  return !!meta && [meta.inputPer1M, meta.outputPer1M, meta.cacheReadPer1M, meta.cacheWritePer1M].some(Number.isFinite)
-}
-
-export function costOfUsage(
-  t: { input: number; output: number; cacheRead?: number; cacheCreate?: number },
-  meta: UsagePricing | null | undefined
-): number {
-  const inRate = meta?.inputPer1M ?? 0
-  const outRate = meta?.outputPer1M ?? 0
-  const cacheReadRate = meta?.cacheReadPer1M ?? inRate
-  const cacheWriteRate = meta?.cacheWritePer1M ?? inRate * 1.25
-  const input = Math.max(0, t.input)
-  const output = Math.max(0, t.output)
-  const cacheRead = Math.max(0, t.cacheRead ?? 0)
-  const cacheCreate = Math.max(0, t.cacheCreate ?? 0)
-  return (input * inRate + cacheRead * cacheReadRate + cacheCreate * cacheWriteRate + output * outRate) / 1e6
-}
-
-function hasUsagePricingFor(
-  usage: { input: number; output: number; cacheRead?: number; cacheCreate?: number },
-  meta: UsagePricing | null | undefined
-): boolean {
-  const hasInput = Number.isFinite(meta?.inputPer1M)
-  const hasOutput = Number.isFinite(meta?.outputPer1M)
-  const hasCacheRead = Number.isFinite(meta?.cacheReadPer1M) || hasInput
-  const hasCacheWrite = Number.isFinite(meta?.cacheWritePer1M) || hasInput
-  return (
-    (Math.max(0, usage.input) === 0 || hasInput) &&
-    (Math.max(0, usage.output) === 0 || hasOutput) &&
-    (Math.max(0, usage.cacheRead ?? 0) === 0 || hasCacheRead) &&
-    (Math.max(0, usage.cacheCreate ?? 0) === 0 || hasCacheWrite)
-  )
-}
-
-export function estimatedCostOfUsage(
-  usage: { input: number; output: number; cacheRead?: number; cacheCreate?: number },
-  meta: UsagePricing | null | undefined,
-  runtimeEstimatedCostUsd?: number | null,
-  catalogUsage: { input: number; output: number; cacheRead?: number; cacheCreate?: number } = {
-    input: 0,
-    output: 0,
-  }
-): number | null {
-  const runtimeCost =
-    typeof runtimeEstimatedCostUsd === 'number' &&
-    Number.isFinite(runtimeEstimatedCostUsd) &&
-    runtimeEstimatedCostUsd >= 0
-      ? runtimeEstimatedCostUsd
-      : null
-  if (runtimeCost == null) return hasUsagePricingFor(usage, meta) ? costOfUsage(usage, meta) : null
-  if (totalTokensOf(catalogUsage) === 0) return runtimeCost
-  return hasUsagePricingFor(catalogUsage, meta) ? runtimeCost + costOfUsage(catalogUsage, meta) : null
-}
+// Cost arithmetic and pricing types are shared with the Maestrly Bot; the names stay exported from here.
+export {
+  totalTokensOf,
+  hasUsagePricing,
+  costOfUsage,
+  estimatedCostOfUsage,
+  usageMetaForModel,
+  contextOccupancy,
+} from '@maestrly/chat-ui/cost'
+export type { UsagePricing, ChatModelMeta } from '@maestrly/chat-ui/cost'
+import { totalTokensOf, estimatedCostOfUsage } from '@maestrly/chat-ui/cost'
+import type { UsagePricing, ChatModelMeta } from '@maestrly/chat-ui/cost'
 
 export function estimatedCostOfUsageWithSubagents(
   usage: Pick<
@@ -272,10 +219,6 @@ export const CUT_FINISH_REASONS: ReadonlySet<string> = new Set([
   'unknown',
 ])
 
-export function contextOccupancy(u: ChatUsage): number {
-  if (u.contextInput != null) return u.contextInput + (u.contextOutput ?? 0)
-  return u.usageVersion === 2 ? u.input + (u.cachedInput ?? 0) + (u.cacheCreate ?? 0) + u.output : u.input + u.output
-}
 
 export interface SubagentRunMeta {
   profile?: SubagentExecutionSnapshotV1
@@ -557,44 +500,6 @@ export interface ChatFileHit {
   path: string
   name: string
   kind: 'file' | 'dir'
-}
-
-export interface ChatModelMeta extends UsagePricing {
-  contextWindow?: number
-  maxOutput?: number
-  inputPer1M?: number
-  outputPer1M?: number
-  cacheReadPer1M?: number
-  cacheWritePer1M?: number
-  reasoning?: boolean
-
-  reasoningEfforts?: string[]
-
-  interleavedReasoning?: { field: string; format: 'text' }
-  vision?: boolean
-
-  chatCapable?: boolean
-  /** The model advertises Fast/Priority support (Codex service tiers, Claude supportsFastMode, xAI Priority Processing). */
-  fastModeCapability?: boolean
-
-  nativeUltraMode?: boolean
-
-  contextLimitEditable?: boolean
-}
-
-export function usageMetaForModel(
-  metaByModel: Record<string, ChatModelMeta | null> | undefined,
-  target: { providerId: string | null; modelId: string | null },
-  current: { providerId?: string | null; modelId?: string | null; meta: ChatModelMeta | null }
-): ChatModelMeta | null {
-  const providerId = target.providerId ?? ''
-  const modelId = target.modelId ?? ''
-  const key = `${providerId}\0${modelId}`
-  if (metaByModel && Object.hasOwn(metaByModel, key)) return metaByModel[key]
-
-  if (modelId && metaByModel && Object.hasOwn(metaByModel, modelId)) return metaByModel[modelId]
-  if (providerId === (current.providerId ?? '') && modelId === (current.modelId ?? '')) return current.meta
-  return null
 }
 
 export type ChatReasoningEffort =

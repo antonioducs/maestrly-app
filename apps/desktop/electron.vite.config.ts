@@ -5,7 +5,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // The shared chat package ships TypeScript sources, so it is bundled rather than required at runtime.
+    plugins: [externalizeDepsPlugin({ exclude: ['@maestrly/chat-ui'] })],
     build: {
       rollupOptions: {
         // Keep ML inference in utility processes so it does not block the main process.
