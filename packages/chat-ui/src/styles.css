@@ -1,0 +1,5 @@
+/* Entry for an application that has no Tailwind setup of its own (the Maestrly Bot). */
+@import 'tailwindcss';
+@import '@maestrly/ui/tokens.css';
+@source './';
+@import './components.css';

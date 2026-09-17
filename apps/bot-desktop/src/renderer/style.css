@@ -1,3 +1,4 @@
+@import '@maestrly/chat-ui/styles.css';
 @import '@maestrly/ui/tokens.css';
 @import '@maestrly/ui/checkbox.css';
 @import '@maestrly/ui/controls.css';
@@ -414,3 +415,52 @@ progress { max-width: 100%; accent-color: var(--blue); }
 .team-limits { display:grid; grid-template-columns:1fr auto; gap:6px 12px; font-size:12px; margin:8px 0; }
 .team-limits dt { color:var(--muted); }
 .team-limits dd { margin:0; text-align:right; }
+
+/* --- Phase 5: routines and voice ------------------------------------------------------------
+   Scoped to the new classes only. The team screen was already broken once by a global selector
+   that reached radios and checkboxes; nothing here selects a bare element outside these blocks. */
+.routine-panel { display:flex; flex-direction:column; gap:16px; }
+.routine-list header, .routine-history header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.routine-list h3, .routine-history h4 { font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); font-weight:500; margin:0; }
+.routine-list ul, .routine-history ul, .routine-proposals { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:8px; }
+.routine-list li { display:flex; align-items:center; gap:8px; }
+.routine-row { flex:1; min-width:0; display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:transparent; color:inherit; text-align:left; cursor:pointer; font:inherit; }
+.routine-row:hover { border-color:color-mix(in srgb,var(--line) 60%,var(--ink)); }
+.routine-name { font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.routine-next, .routine-last, .routine-when, .routine-manual { font-size:11px; color:var(--muted); }
+.routine-empty { font-size:12px; color:var(--muted); margin:8px 0; }
+.routine-card, .routine-editor, .routine-history, .routine-list, .voice-draft { padding:14px; border-radius:12px; }
+.routine-card header, .voice-draft header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.routine-card header strong, .voice-draft header strong { font-size:13px; }
+.routine-request { font-size:13px; line-height:1.55; margin:0 0 10px; }
+.routine-facts { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:12px; margin:0 0 10px; }
+.routine-facts dt { color:var(--muted); }
+.routine-facts dd { margin:0; }
+.routine-warning { font-size:12px; color:var(--m-attention,#b45309); margin:4px 0; }
+.routine-clarification, .routine-inert, .routine-zone, .voice-note { font-size:11px; color:var(--muted); margin:6px 0; }
+.routine-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.routine-editor label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+.routine-days { display:flex; flex-wrap:wrap; gap:10px; border:1px solid var(--line); border-radius:10px; padding:10px; }
+.routine-days legend { font-size:11px; color:var(--muted); padding:0 4px; }
+.routine-days label { flex-direction:row; align-items:center; gap:6px; color:var(--ink); }
+.routine-preview { border-top:1px solid var(--line); margin-top:12px; padding-top:12px; font-size:12px; }
+.routine-preview h4 { font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); margin:0 0 6px; }
+.routine-preview ul { list-style:none; padding:0; margin:0 0 8px; display:flex; flex-direction:column; gap:2px; }
+.routine-history li { display:flex; flex-wrap:wrap; align-items:center; gap:8px; border:1px solid var(--line); border-radius:10px; padding:10px; }
+.routine-status { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+.routine-status-failed, .routine-status-needs_attention { color:var(--m-attention,#b45309); }
+.routine-reason { font-size:11px; color:var(--muted); flex-basis:100%; }
+.routine-summary { font-size:12px; line-height:1.5; margin:4px 0 0; flex-basis:100%; }
+.maestrly-ui .voice-button { padding:0 10px; height:32px; }
+.maestrly-ui .voice-button.recording { color:var(--m-attention,#b45309); gap:6px; font-variant-numeric:tabular-nums; }
+.voice-draft { display:flex; flex-direction:column; gap:8px; margin:0 auto 8px; max-width:760px; width:100%; }
+.voice-target { font-size:11px; color:var(--muted); margin-left:auto; }
+.voice-progress { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); margin:0; }
+.voice-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.voice-message { margin-top:8px; }
+.voice-row { display:flex; align-items:center; gap:8px; }
+.voice-duration { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.voice-gone { font-size:11px; color:var(--muted); font-style:italic; }
+.voice-transcript { margin-top:6px; font-size:12px; line-height:1.55; }
+.voice-transcript small { display:block; margin-top:4px; font-size:10px; color:var(--muted); }
+@media (prefers-reduced-motion:reduce) { .spin { animation:none; } }

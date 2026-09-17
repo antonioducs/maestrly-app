@@ -1,4 +1,14 @@
 export default {
+  chatUi: {
+    changes: 'Changes',
+    contextUsed: '{{used}} of {{limit}}',
+    contextCost: '~{{cost}}',
+    stopping: 'Stopping…',
+    commands: 'Commands',
+    noCommands: 'No commands',
+    period: 'Period',
+    invalidDiagram: 'Invalid Mermaid',
+  },
   mermaid: {
     expand: 'Expand diagram',
     zoomOut: 'Zoom out',

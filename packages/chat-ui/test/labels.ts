@@ -10,5 +10,5 @@ export const labels: ChatUiLabels = {
   model: { title: 'Model', effort: 'Effort' },
   permission: { ask: 'Ask', full: 'Full access', askHint: 'Asks before acting', fullHint: 'Acts without asking' },
   usage: { title: 'Usage', period: 'Period', model: 'Model', input: 'Input', output: 'Output', cached: 'Cached', turns: 'Turns', cost: 'Cost', empty: 'Nothing yet', refresh: 'Refresh' },
-  mermaid: { failed: 'Diagram failed' },
+  mermaid: { failed: 'Invalid diagram', rendering: 'Rendering diagram…', expand: 'Expand', zoomIn: 'Zoom in', zoomOut: 'Zoom out', reset: 'Reset', close: 'Close', dialog: 'Diagram' },
 }

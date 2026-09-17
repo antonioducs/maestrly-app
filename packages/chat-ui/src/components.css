@@ -1,0 +1,193 @@
+/* Shared chat rendering: rendered Markdown prose, code highlighting and Mermaid diagrams. */
+/* Both applications import this file; the colours come from the @maestrly/ui tokens. */
+
+/* ---------- rendered Markdown (Plan tab, read-only mode) ---------- */
+.dark-glass-prose {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--foreground);
+}
+.dark-glass-prose > :first-child {
+  margin-top: 0;
+}
+.dark-glass-prose h1,
+.dark-glass-prose h2,
+.dark-glass-prose h3,
+.dark-glass-prose h4 {
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--foreground);
+}
+.dark-glass-prose h1 {
+  font-size: 1.15rem;
+  margin: 1.1em 0 0.5em;
+}
+.dark-glass-prose h2 {
+  font-size: 1rem;
+  margin: 1em 0 0.45em;
+}
+.dark-glass-prose h3 {
+  font-size: 0.9rem;
+  margin: 0.9em 0 0.4em;
+  color: rgba(237, 234, 227, 0.85);
+}
+.dark-glass-prose p {
+  margin: 0.55em 0;
+  color: rgba(237, 234, 227, 0.9);
+}
+.dark-glass-prose ul,
+.dark-glass-prose ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.dark-glass-prose li {
+  margin: 0.2em 0;
+}
+.dark-glass-prose ul {
+  list-style: disc;
+}
+.dark-glass-prose ol {
+  list-style: decimal;
+}
+.dark-glass-prose a {
+  color: var(--primary);
+  text-decoration: none;
+}
+.dark-glass-prose a:hover {
+  text-decoration: underline;
+}
+.dark-glass-prose strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.dark-glass-prose blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 0.9em;
+  border-left: 2px solid rgba(237, 234, 227, 0.25);
+  color: rgba(237, 234, 227, 0.7);
+}
+.dark-glass-prose hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.dark-glass-prose code {
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+  font-size: 0.86em;
+}
+
+.dark-glass-prose :not(pre) > code {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.08em 0.4em;
+  color: #EDEAE3;
+}
+.dark-glass-prose pre {
+  margin: 0.7em 0;
+  padding: 0.8em 0.9em;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 17, 0.55);
+  overflow: auto;
+}
+.dark-glass-prose pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.dark-glass-prose table {
+  margin: 0.6em 0;
+  border-collapse: collapse;
+  font-size: 0.92em;
+
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.dark-glass-prose th,
+.dark-glass-prose td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.dark-glass-prose th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.dark-glass-prose .hljs {
+  color: rgba(237, 234, 227, 0.92);
+  background: transparent;
+}
+.dark-glass-prose .hljs-comment,
+.dark-glass-prose .hljs-quote {
+  color: rgba(154, 149, 140, 0.55);
+  font-style: italic;
+}
+.dark-glass-prose .hljs-keyword,
+.dark-glass-prose .hljs-selector-tag,
+.dark-glass-prose .hljs-literal,
+.dark-glass-prose .hljs-built_in {
+  color: #EDEAE3;
+}
+.dark-glass-prose .hljs-string,
+.dark-glass-prose .hljs-attr,
+.dark-glass-prose .hljs-addition {
+  color: #5bd6a0;
+}
+.dark-glass-prose .hljs-number,
+.dark-glass-prose .hljs-symbol,
+.dark-glass-prose .hljs-meta {
+  color: #9A958C;
+}
+.dark-glass-prose .hljs-title,
+.dark-glass-prose .hljs-section,
+.dark-glass-prose .hljs-name {
+  color: #EDEAE3;
+}
+.dark-glass-prose .hljs-type,
+.dark-glass-prose .hljs-class .hljs-title {
+  color: #9A958C;
+}
+.dark-glass-prose .hljs-deletion,
+.dark-glass-prose .hljs-tag {
+  color: #ff7a85;
+}
+
+.mermaid-preview {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 0.5rem;
+}
+.mermaid-preview svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-error {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: #ff7a85;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mermaid-zoom-stage {
+  width: 82vw;
+  height: 82vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mermaid-zoom-stage .mermaid-preview {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}
+.mermaid-zoom-stage .mermaid-preview svg {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}

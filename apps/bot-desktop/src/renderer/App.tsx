@@ -2,7 +2,9 @@ import { AccountsPage } from './features/accounts/AccountsPage'
 import { EnvironmentsPage } from './features/environments/EnvironmentsPage'
 import { Plus, Settings2, Monitor, UserRound } from 'lucide-react'
 import { Button } from './ui'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChatUiProvider, type ChatUiContextValue } from '@maestrly/chat-ui'
+import { chatUiLabels } from './i18n/chatUiLabels'
 import type { Bot } from '@maestrly/host-protocol'
 import type { Connection, HostTarget, OnboardingDraft, UiPreferences } from '../shared/types'
 import { LocaleContext, useT } from './i18n'
@@ -22,9 +24,19 @@ import './style.css'
 type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments' | 'team' | 'team-create'
 export function App() {
   const [preferences, setPreferences] = useState<UiPreferences>({ theme: 'system', locale: 'pt-BR', advanced: false })
+  const chatUi = useMemo<ChatUiContextValue>(
+    () => ({
+      labels: chatUiLabels(preferences.locale),
+      openExternal: (url) => void window.bot.openExternal(url),
+      locale: preferences.locale,
+    }),
+    [preferences.locale]
+  )
   return (
     <LocaleContext value={preferences.locale}>
-      <Shell preferences={preferences} setPreferences={setPreferences} />
+      <ChatUiProvider value={chatUi}>
+        <Shell preferences={preferences} setPreferences={setPreferences} />
+      </ChatUiProvider>
     </LocaleContext>
   )
 }
@@ -83,6 +95,9 @@ function Shell({
   const refreshHosts = async () => setHosts(await window.bot.hosts())
   /** Teams exist only on a Host that knows about them; an older one simply shows no section. */
   const teamsSupported = connection.teamSupport === 'available'
+  // Both are advertised by the Host; voice only when it can actually transcribe.
+  const routinesSupported = connection.routineSupport === 'available'
+  const voiceSupported = connection.voiceSupport === 'available'
   const refreshTeams = async (preferred?: string) => {
     if (!teamsSupported) return
     const next = await window.bot.team({ method: 'team.list', params: {} })
@@ -477,6 +492,9 @@ function Shell({
                   onPreview={(name, text) => openPanel({ kind: 'preview', name, text })}
                   onOpenDesktop={connection.connected ? openDesktop : undefined}
                   desktopOpen={desktopVisible}
+                  hostId={connection.hostId ?? ''}
+                  voiceSupported={voiceSupported}
+                  routinesSupported={routinesSupported}
                 />
                 {desktopVisible && (
                   <BotDesktopPanel key={bot.id} bot={bot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />
@@ -511,6 +529,7 @@ function Shell({
                 bots={bots}
                 advanced={preferences.advanced}
                 connected={connection.connected}
+                routinesSupported={routinesSupported}
                 onChanged={setTeamDetails}
                 onArchived={() => {
                   closePanel()
@@ -536,6 +555,8 @@ function Shell({
                   void refreshBots()
                 }}
                 onPreview={(name, text) => setPanel({ kind: 'preview', name, text })}
+                connected={connection.connected}
+                routinesSupported={routinesSupported}
               />
             )
           )}

@@ -8,7 +8,7 @@ import { uploadConfig } from '@milkdown/kit/plugin/upload'
 import { Fragment, type Node as ProseNode, type Schema } from '@milkdown/kit/prose/model'
 import { Plugin, PluginKey } from '@milkdown/prose/state'
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/prose/view'
-import { renderMermaid, mermaidError } from '@/lib/mermaid'
+import { renderMermaid, mermaidError } from '@maestrly/chat-ui'
 import { i18n } from '@/lib/i18n'
 import type { NotesScope } from '../../../preload'
 import {

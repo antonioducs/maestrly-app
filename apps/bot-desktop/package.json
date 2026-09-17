@@ -25,7 +25,8 @@
     "@novnc/novnc": "1.7.0",
     "lucide-react": "1.41.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "@maestrly/chat-ui": "0.1.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
@@ -38,7 +39,9 @@
     "electron-vite": "5.0.0",
     "typescript": "5.9.3",
     "vite": "^7.0.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "@tailwindcss/vite": "4.3.3",
+    "tailwindcss": "4.3.3"
   },
   "engines": {
     "node": ">=22.15.0 <23"

@@ -1,0 +1,108 @@
+import type { ChatUiLabels } from '@maestrly/chat-ui'
+
+/** The copy the shared chat components render in this application, one full set per locale. */
+const ptBR: ChatUiLabels = {
+  copy: 'Copiar',
+  copied: 'Copiado',
+  responseDuration: (seconds) => `Tempo de resposta: ${seconds}s`,
+  tool: { running: 'executando', done: 'concluído', error: 'falhou', output: 'Resultado', command: 'Comando', changes: 'Alterações' },
+  context: {
+    title: 'Contexto',
+    used: (used, limit) => `${used} de ${limit}`,
+    cost: (cost) => `~${cost}`,
+    unknownWindow: 'Janela de contexto desconhecida',
+  },
+  composer: {
+    placeholder: 'Escreva uma mensagem…',
+    send: 'Enviar',
+    stop: 'Parar',
+    stopping: 'Parando…',
+    attach: 'Anexar arquivo',
+    commands: 'Comandos',
+    skills: 'Skills',
+    noCommands: 'Nenhum comando',
+  },
+  model: { title: 'Modelo', effort: 'Esforço' },
+  permission: {
+    ask: 'Perguntar',
+    full: 'Acesso completo',
+    askHint: 'Pede aprovação antes de agir no computador.',
+    fullHint: 'Age no computador sem pedir aprovação.',
+  },
+  usage: {
+    title: 'Uso e custos',
+    period: 'Período',
+    model: 'Modelo',
+    input: 'Entrada',
+    output: 'Saída',
+    cached: 'Cache',
+    turns: 'Tarefas',
+    cost: 'Custo',
+    empty: 'Nenhum uso neste período.',
+    refresh: 'Atualizar',
+  },
+  mermaid: {
+    failed: 'Mermaid inválido',
+    rendering: '⏳ Renderizando diagrama…',
+    expand: 'Ampliar diagrama',
+    zoomIn: 'Aumentar',
+    zoomOut: 'Diminuir',
+    reset: 'Redefinir zoom',
+    close: 'Fechar (Esc)',
+    dialog: 'Diagrama',
+  },
+}
+const en: ChatUiLabels = {
+  copy: 'Copy',
+  copied: 'Copied',
+  responseDuration: (seconds) => `Response time: ${seconds}s`,
+  tool: { running: 'running', done: 'completed', error: 'failed', output: 'Result', command: 'Command', changes: 'Changes' },
+  context: {
+    title: 'Context',
+    used: (used, limit) => `${used} of ${limit}`,
+    cost: (cost) => `~${cost}`,
+    unknownWindow: 'Context window unknown',
+  },
+  composer: {
+    placeholder: 'Write a message…',
+    send: 'Send',
+    stop: 'Stop',
+    stopping: 'Stopping…',
+    attach: 'Attach file',
+    commands: 'Commands',
+    skills: 'Skills',
+    noCommands: 'No commands',
+  },
+  model: { title: 'Model', effort: 'Effort' },
+  permission: {
+    ask: 'Ask',
+    full: 'Full access',
+    askHint: 'Asks for approval before acting on the computer.',
+    fullHint: 'Acts on the computer without asking.',
+  },
+  usage: {
+    title: 'Usage & cost',
+    period: 'Period',
+    model: 'Model',
+    input: 'Input',
+    output: 'Output',
+    cached: 'Cached',
+    turns: 'Tasks',
+    cost: 'Cost',
+    empty: 'No usage in this period.',
+    refresh: 'Refresh',
+  },
+  mermaid: {
+    failed: 'Invalid Mermaid',
+    rendering: '⏳ Rendering diagram…',
+    expand: 'Expand diagram',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    reset: 'Reset zoom',
+    close: 'Close (Esc)',
+    dialog: 'Diagram',
+  },
+}
+export function chatUiLabels(locale: 'pt-BR' | 'en'): ChatUiLabels {
+  return locale === 'en' ? en : ptBR
+}

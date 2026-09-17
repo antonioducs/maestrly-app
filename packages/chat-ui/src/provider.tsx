@@ -10,7 +10,7 @@ export interface ChatUiLabels {
   model: { title: string; effort: string }
   permission: { ask: string; full: string; askHint: string; fullHint: string }
   usage: { title: string; period: string; model: string; input: string; output: string; cached: string; turns: string; cost: string; empty: string; refresh: string }
-  mermaid: { failed: string }
+  mermaid: { failed: string; rendering: string; expand: string; zoomIn: string; zoomOut: string; reset: string; close: string; dialog: string }
 }
 export interface ChatUiContextValue {
   labels: ChatUiLabels

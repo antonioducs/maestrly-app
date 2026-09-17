@@ -24,7 +24,8 @@ export async function renderMermaid(code: string): Promise<string> {
   }
 }
 
-export function mermaidError(e: unknown): string {
+/** The failure text is injected so the message reads in the person's language, never in the library's. */
+export function mermaidError(e: unknown, label = 'Invalid Mermaid'): string {
   const msg = String((e as Error)?.message ?? e).replace(/</g, '&lt;')
-  return `<pre class="mermaid-error">⚠️ Invalid Mermaid:\n${msg}</pre>`
+  return `<pre class="mermaid-error">⚠️ ${label.replace(/</g, '&lt;')}:\n${msg}</pre>`
 }

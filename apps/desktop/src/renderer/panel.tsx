@@ -10,6 +10,7 @@ import { PlanPanel } from '@/components/PlanPanel'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { TerminalTabs } from '@/components/TerminalTabs'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ChatUiRoot } from '@/components/ChatUiRoot'
 import { i18n, initRendererI18n } from './lib/i18n'
 import type { PlanReceived } from '../preload'
 import './styles.css'
@@ -100,9 +101,11 @@ void initRendererI18n().finally(() => {
     <StrictMode>
       <I18nextProvider i18n={i18n}>
         <ErrorBoundary>
-          <div className="h-screen w-screen bg-surface text-foreground">
-            <PanelRoot />
-          </div>
+          <ChatUiRoot>
+            <div className="h-screen w-screen bg-surface text-foreground">
+              <PanelRoot />
+            </div>
+          </ChatUiRoot>
         </ErrorBoundary>
       </I18nextProvider>
     </StrictMode>

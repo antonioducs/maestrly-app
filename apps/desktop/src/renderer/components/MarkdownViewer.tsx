@@ -1,11 +1,9 @@
 import { createContext, memo, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import { defaultUrlTransform } from 'react-markdown'
 import type { Components, Options } from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeHighlight from 'rehype-highlight'
 import { FileCode, Folder, MessageSquare, MessageSquarePlus } from 'lucide-react'
-import { MermaidBlock } from '@/components/MermaidBlock'
+import { Markdown } from '@maestrly/chat-ui'
 import { i18n } from '@/lib/i18n'
 import { rehypeChatMentions, rehypeMarkdownSearchHighlight } from '@/lib/markdown-search-highlight'
 import { cn } from '@/lib/utils'
@@ -53,36 +51,19 @@ export const MarkdownViewer = memo(function MarkdownViewer({
     () => buildComponents(onOpenFile, ctx, onOpenMention),
     [onOpenFile, ctx, onOpenMention]
   )
+  // Highlighting and the Mermaid `pre` renderer come from the shared package; only the desktop
+  // extras (mentions, search highlight, file references, comments) are layered here.
   const rehypePlugins = useMemo<NonNullable<Options['rehypePlugins']>>(
     () => [
-      [rehypeHighlight, { detect: true, ignoreMissing: true }],
       ...(onOpenMention ? [rehypeChatMentions] : []),
       [rehypeMarkdownSearchHighlight, { query: searchQuery, current: currentSearchMatch }],
     ],
     [onOpenMention, searchQuery, currentSearchMatch]
   )
-  return (
-    <div className="dark-glass-prose">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={rehypePlugins}
-        components={components}
-        urlTransform={markdownUrlTransform}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  )
+  return <Markdown text={markdown} components={components} rehypePlugins={rehypePlugins} urlTransform={markdownUrlTransform} />
 })
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-
-function hastText(node: any): string {
-  if (!node) return ''
-  if (typeof node.value === 'string') return node.value
-  if (Array.isArray(node.children)) return node.children.map(hastText).join('')
-  return ''
-}
 function buildComponents(
   onOpenFile?: OpenFileReference,
   ctx?: CommentCtx,
@@ -174,14 +155,6 @@ function buildComponents(
     li: child('li'),
     blockquote: child('blockquote'),
 
-    pre: ({ node, children }: any) => {
-      const codeNode = node?.children?.find((c: any) => c?.tagName === 'code')
-      const cls = Array.isArray(codeNode?.properties?.className)
-        ? codeNode.properties.className.join(' ')
-        : String(codeNode?.properties?.className ?? '')
-      if (/\blanguage-mermaid\b/.test(cls)) return <MermaidBlock code={hastText(codeNode)} />
-      return <pre>{children}</pre>
-    },
     code: ({ className, children }: any) => (
       <InlineCode className={className} onOpenReference={onOpenReference}>
         {children}

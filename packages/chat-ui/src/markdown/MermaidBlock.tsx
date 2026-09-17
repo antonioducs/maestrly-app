@@ -1,36 +1,41 @@
-import { useTranslation } from 'react-i18next'
 import { useEffect, useRef, useState } from 'react'
 import { ZoomIn, ZoomOut, RotateCcw, X, Maximize2 } from 'lucide-react'
-import { renderMermaid, mermaidError } from '@/lib/mermaid'
+import { useChatUi } from '../provider'
+import { renderMermaid, mermaidError } from './mermaid'
 
 export function MermaidBlock({ code }: { code: string }) {
-  const { t } = useTranslation('ui')
+  const { labels } = useChatUi()
   const [html, setHtml] = useState('')
   const [zoom, setZoom] = useState(false)
   useEffect(() => {
     let alive = true
     renderMermaid(code)
       .then((h) => alive && setHtml(h))
-      .catch((e) => alive && setHtml(mermaidError(e)))
+      .catch((e) => alive && setHtml(mermaidError(e, labels.mermaid.failed)))
     return () => {
       alive = false
     }
-  }, [code])
+  }, [code, labels.mermaid.failed])
   if (!html)
-    return <div className="mermaid-preview text-xs text-muted-foreground">{t('notesEditor.renderingDiagram')}</div>
+    return (
+      <div className="mermaid-preview text-xs text-muted-foreground" data-mermaid="rendering">
+        {labels.mermaid.rendering}
+      </div>
+    )
   return (
     <>
       <div
         className="group/mermaid relative min-w-0 max-w-full cursor-zoom-in"
         role="button"
         tabIndex={0}
+        data-mermaid="ready"
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
             setZoom(true)
           }
         }}
-        title={t('mermaid.expand')}
+        title={labels.mermaid.expand}
         onClick={() => setZoom(true)}
       >
         <div dangerouslySetInnerHTML={{ __html: html }} />
@@ -46,7 +51,7 @@ export function MermaidBlock({ code }: { code: string }) {
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n))
 
 function MermaidZoom({ code, onClose }: { code: string; onClose: () => void }) {
-  const { t } = useTranslation('ui')
+  const { labels } = useChatUi()
   const [html, setHtml] = useState('')
   const [scale, setScale] = useState(1)
   const [off, setOff] = useState({ x: 0, y: 0 })
@@ -57,11 +62,11 @@ function MermaidZoom({ code, onClose }: { code: string; onClose: () => void }) {
     let alive = true
     renderMermaid(code)
       .then((h) => alive && setHtml(h))
-      .catch((e) => alive && setHtml(mermaidError(e)))
+      .catch((e) => alive && setHtml(mermaidError(e, labels.mermaid.failed)))
     return () => {
       alive = false
     }
-  }, [code])
+  }, [code, labels.mermaid.failed])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
@@ -84,6 +89,7 @@ function MermaidZoom({ code, onClose }: { code: string; onClose: () => void }) {
     setScale(1)
     setOff({ x: 0, y: 0 })
   }
+  const control = 'flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20'
 
   return (
     <div
@@ -91,39 +97,19 @@ function MermaidZoom({ code, onClose }: { code: string; onClose: () => void }) {
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={t('notesEditor.diagramMermaid')}
+      aria-label={labels.mermaid.dialog}
     >
       <div className="absolute right-4 top-14 z-[120] flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => setScale((s) => clamp(s * 0.83, 0.3, 8))}
-          title={t('mermaid.zoomOut')}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        >
+        <button type="button" onClick={() => setScale((s) => clamp(s * 0.83, 0.3, 8))} title={labels.mermaid.zoomOut} className={control}>
           <ZoomOut className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          onClick={() => setScale((s) => clamp(s * 1.2, 0.3, 8))}
-          title={t('mermaid.zoomIn')}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        >
+        <button type="button" onClick={() => setScale((s) => clamp(s * 1.2, 0.3, 8))} title={labels.mermaid.zoomIn} className={control}>
           <ZoomIn className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          onClick={reset}
-          title={t('mermaid.reset')}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        >
+        <button type="button" onClick={reset} title={labels.mermaid.reset} className={control}>
           <RotateCcw className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          title={t('mermaid.close')}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        >
+        <button type="button" onClick={onClose} title={labels.mermaid.close} className={control}>
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -143,14 +129,13 @@ function MermaidZoom({ code, onClose }: { code: string; onClose: () => void }) {
       >
         {html ? (
           // The fixed-size zoom stage lets the SVG scale to fit its viewBox.
-
           <div
             className="mermaid-zoom-stage origin-center"
             style={{ transform: `translate(${off.x}px, ${off.y}px) scale(${scale})` }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         ) : (
-          <div className="text-sm text-white/60">{t('notesEditor.renderingDiagram')}</div>
+          <div className="text-sm text-white/60">{labels.mermaid.rendering}</div>
         )}
       </div>
     </div>

@@ -3,6 +3,16 @@
  * ⚠️ A chave `panel.*` já vem do bootstrap da infra — PRESERVE-a. Chave ausente aqui cai no en (fallbackLng).
  */
 export default {
+  chatUi: {
+    changes: 'Alterações',
+    contextUsed: '{{used}} de {{limit}}',
+    contextCost: '~{{cost}}',
+    stopping: 'Parando…',
+    commands: 'Comandos',
+    noCommands: 'Nenhum comando',
+    period: 'Período',
+    invalidDiagram: 'Mermaid inválido',
+  },
   mermaid: {
     expand: 'Ampliar diagrama',
     zoomOut: 'Diminuir',
