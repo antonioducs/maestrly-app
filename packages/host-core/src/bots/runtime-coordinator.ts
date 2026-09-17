@@ -1,12 +1,14 @@
 import type { AccountDelegation } from '../accounts/delegation.js'
 import { randomUUID } from 'node:crypto'
 import {
+  ROUTINE_CAPABILITY,
   TURN_TERMINAL,
   turnStatusSchema,
   type Bot,
   type BotTurn,
   type CollaborationRequest,
   type GuestEvent,
+  type RoutineRuntimeRequest,
   type Vm,
 } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
@@ -37,6 +39,11 @@ export class RuntimeCoordinator {
   /** Installed by the teams domain; without it the collaboration lane simply does not exist. */
   setCollaboration(handler: (botId: string, request: CollaborationRequest) => Promise<Record<string, unknown>>) {
     this.collaboration = handler
+  }
+  private routineLane?: (botId: string, request: RoutineRuntimeRequest) => Promise<Record<string, unknown>>
+  /** Installed by the routines domain; without it a guest simply has no proposal tools. */
+  setRoutineLane(handler: (botId: string, request: RoutineRuntimeRequest) => Promise<Record<string, unknown>>) {
+    this.routineLane = handler
   }
   private takeovers = new Set<string>()
   private holdCheck?: (botId: string) => boolean
@@ -216,6 +223,12 @@ export class RuntimeCoordinator {
             return Promise.reject(new HostError('TEAM_STAGE_INVALID', 'Esta sessão não pode colaborar agora'))
           return this.collaboration(bot.id, request)
         })
+        // Same rule for routine proposals: the acting bot is this session's bot, decided here.
+        session.setRoutineHandler?.((request) => {
+          if (this.sessions.get(bot.id) !== session || !session.alive || !this.routineLane)
+            return Promise.reject(new HostError('ROUTINE_UPDATE_REQUIRED', 'Esta sessão não pode sugerir rotinas agora'))
+          return this.routineLane(bot.id, request)
+        })
         this.sessions.set(bot.id, session)
         session.onEvent((event, ack) => this.handleEvent(bot.id, event, ack))
         session.onClose(() => {
@@ -345,7 +358,23 @@ export class RuntimeCoordinator {
           await this.accounts?.renew(bot, turn.id)
           const identity = this.repo.session(bot.id)
           if (identity?.transport === 'managed') await this.connector.renewSessionLease?.(identity, turn.id, this.limits.leaseMs)
-          await session.request('turn.start', item.body as any, 60_000)
+          // Compatibility is decided here, against the guest that is actually connected: a runtime
+          // that never announced routines receives the exact shape it knows. Its snapshot schema is
+          // strict, so one unknown field would make it refuse every turn — seen on real hardware,
+          // where a Host newer than its guest retried the same turn.start for twelve minutes.
+          const body = this.compatibleSnapshot(session, item.body as Record<string, unknown>)
+          try {
+            await session.request('turn.start', body as any, 60_000)
+          } catch (error) {
+            if (error instanceof HostError && error.code === 'INVALID_REQUEST') {
+              // The guest understood the request and rejected its shape: sending it again can only
+              // produce the same answer. Fail the turn with a reason a person can act on.
+              this.repo.dequeue(item.id)
+              this.finish(this.repo.turn(turn.id), 'failed', { code: 'RUNTIME_UPDATE_REQUIRED', message: 'O computador deste bot precisa ser atualizado antes de executar esta tarefa.' })
+              continue
+            }
+            throw error
+          }
           this.repo.transaction(() => {
             this.repo.dequeue(item.id)
             const current = this.repo.turn(turn.id)
@@ -430,6 +459,12 @@ export class RuntimeCoordinator {
     void this.drain(botId).catch(() => {})
     return updated
   }
+  /** The snapshot as the connected guest can parse it: optional sections it never announced are left out. */
+  private compatibleSnapshot(session: GuestSession, snapshot: Record<string, unknown>): Record<string, unknown> {
+    if (!('routines' in snapshot) || session.capabilities.includes(ROUTINE_CAPABILITY)) return snapshot
+    const { routines: _omitted, ...rest } = snapshot
+    return rest
+  }
   private finish(turn: BotTurn, status: BotTurn['status'], error?: { code: string; message: string }, extra: Record<string, unknown> = {}) {
     this.repo.transaction(() => {
       const current = this.repo.turn(turn.id)
@@ -447,6 +482,20 @@ export class RuntimeCoordinator {
         updatedAt: now(),
       }
       this.repo.saveTurn(finished)
+      // The ledger row is derived here, in the same transaction, so usage can never be counted twice.
+      if (finished.usage)
+        this.repo.saveTurnUsage({
+          turnId: finished.id,
+          botId: finished.botId,
+          finishedAt: finished.finishedAt ?? now(),
+          provider: 'codex',
+          model: finished.model?.model ?? 'unknown',
+          input: finished.usage.inputTokens ?? 0,
+          cachedInput: finished.usage.cachedInputTokens ?? 0,
+          output: finished.usage.outputTokens ?? 0,
+          reasoningOutput: finished.usage.reasoningOutputTokens ?? 0,
+          toolCalls: finished.usage.toolCalls ?? 0,
+        })
       this.interactions.invalidatePending(turn.id, turn.botId)
       const conversation = this.repo.conversation(turn.conversationId)
       this.repo.saveConversation({

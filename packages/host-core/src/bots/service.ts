@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto'
 import {
   BOT_MUTATIONS,
   botResultSchemas,
+  foldTranscript,
+  transcriptCursor,
   type Bot,
   type BotMethod,
   type BotOperation,
@@ -26,6 +28,15 @@ import { BotSessions } from './sessions.js'
 import { DesktopService, DIRECT_CONTEXT, type DesktopContext } from '../desktop/service.js'
 import { TeamRepository } from '../teams/repository.js'
 import { TeamService } from '../teams/service.js'
+import { BackgroundAdmission } from '../teams/background-admission.js'
+import { RoutineRepository } from '../routines/repository.js'
+import { RoutineService } from '../routines/service.js'
+import { RoutineGuestLane } from '../routines/guest-lane.js'
+import { VoiceRepository } from '../voice/repository.js'
+import { VoiceService } from '../voice/service.js'
+import type { AsrOptions } from '../voice/worker-client.js'
+import type { Clock } from '../routines/calendar.js'
+import { CompositeContinuationScope, composeBudgetCeilings, composeDispatchGuards, composeTurnObservers } from './scoped-execution.js'
 
 export interface BotServiceOptions {
   store: HostStore
@@ -37,6 +48,10 @@ export interface BotServiceOptions {
   /** Notifies the egress broker when a bot policy changes or is revoked. */
   onPolicyChanged?: (botId: string, vmId: string | undefined, policy: { mode: 'offline' | 'allowlist' | 'blocklist'; domains: string[]; revision: number }) => void
   activeStreams?: (vmId: string, botId?: string) => number
+  /** Local speech recognition. Absent means this Host simply has no voice transcription. */
+  asr?: AsrOptions
+  /** Injection seam for calendar tests; production reads the real clock. */
+  routines?: { clock?: Clock; tickMs?: number }
 }
 /** Bot domain façade delegated to by HostService. VM authority stays in HostService. */
 export class BotService {
@@ -51,6 +66,8 @@ export class BotService {
   readonly sessions: BotSessions
   readonly desktop: DesktopService
   readonly teams: TeamService
+  readonly routines: RoutineService
+  readonly voice: VoiceService
   constructor(private readonly options: BotServiceOptions) {
     this.repo = new Repository(options.store)
     this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
@@ -91,17 +108,27 @@ export class BotService {
         if (bot.accountId && options.sharedAccounts) options.sharedAccounts.assertBindable(bot.accountId)
         return this.turns.createContinuation(input)
       },
-      returned: (input) => this.teams.handoffReturned(input),
-      budgetCeiling: (turnId) => this.teams.budgetCeiling(turnId),
+      returned: (input) => {
+        this.teams.handoffReturned(input)
+        this.routines.adapter.handoffReturned(input)
+      },
+      // Exclusive by construction: if two domains ever claimed the same turn, this fails
+      // closed instead of quietly handing a continuation somebody else's allowance.
+      budgetCeiling: (turnId) =>
+        composeBudgetCeilings([
+          { domain: 'teams', ceiling: (id) => this.teams.budgetCeiling(id) },
+          { domain: 'routines', ceiling: (id) => this.routines.adapter.budgetCeiling(id) },
+        ])(turnId),
     })
     this.coordinator.setDesktopHold((botId) => this.desktop.held(botId))
     this.memories = new BotMemories(this.repo)
     const session = (bot: Bot) => this.coordinator.session(bot)
     this.files = new BotFiles(this.repo, session)
     this.accounts = new BotAccounts(this.repo, session, this.coordinator.events, (bot) => this.setup.accountConnected(bot), options.sharedAccounts && this.delegation ? { authority: options.sharedAccounts, delegation: this.delegation } : undefined)
+    const teamRepository = new TeamRepository(options.store)
     this.teams = new TeamService({
       repo: this.repo,
-      teams: new TeamRepository(options.store),
+      teams: teamRepository,
       turns: this.turns,
       coordinator: this.coordinator,
       hostId: options.store.hostId,
@@ -109,12 +136,69 @@ export class BotService {
       session,
       held: (botId) => this.desktop.held(botId),
     })
-    // Team work rides the existing turn engine: it observes transitions and blocks a
-    // dispatch whose authorization no longer holds, but never becomes a second executor.
-    this.coordinator.onTurnChanged((turnId) => this.teams.turnChanged(turnId))
-    this.coordinator.setDispatchGuard((turnId) => this.teams.dispatchGuard(turnId))
+    const routineRepository = new RoutineRepository(options.store)
+    // One pool of background slots for every kind of work nobody is watching. Without this,
+    // each scheduler would hand out its own pair and the Host would quietly run twice as much.
+    this.background = new BackgroundAdmission(() => ({
+      teamTasks: teamRepository.activeTaskCount(),
+      routineOccurrences: routineRepository.runningBotCount(),
+    }))
+    this.routines = new RoutineService({
+      routines: routineRepository,
+      bots: this.repo,
+      teams: teamRepository,
+      turns: this.turns,
+      coordinator: this.coordinator,
+      teamService: () => this.teams,
+      hostId: options.store.hostId,
+      held: (botId) => this.desktop.held(botId),
+      vmRunning: (vmId) => {
+        try {
+          return options.host.vm(vmId).state === 'running'
+        } catch {
+          return false
+        }
+      },
+      backgroundAvailable: () => this.background.available(),
+      ...(options.routines?.clock ? { clock: options.routines.clock } : {}),
+      ...(options.routines?.tickMs !== undefined ? { tickMs: options.routines.tickMs } : {}),
+    })
+    this.voice = new VoiceService({
+      voice: new VoiceRepository(options.store),
+      bots: this.repo,
+      teams: teamRepository,
+      turns: this.turns,
+      coordinator: this.coordinator,
+      teamService: () => this.teams,
+      stateDirectory: options.stateDirectory,
+      ...(options.asr ? { asr: options.asr } : {}),
+    })
+    // Scheduled and collaborative work ride the SAME turn engine. Each hook below is composed
+    // rather than replaced: two domains silently overwriting one another would resume a turn
+    // in the wrong conversation, under the wrong budget, with the wrong authorization.
+    const continuations = new CompositeContinuationScope()
+    continuations.register('teams', this.teams.adapter)
+    continuations.register('routines', this.routines.adapter)
+    this.turns.setContinuationScope(continuations)
+    this.coordinator.onTurnChanged(
+      composeTurnObservers(
+        (turnId) => this.teams.turnChanged(turnId),
+        (turnId) => this.routines.adapter.turnChanged(turnId)
+      )
+    )
+    this.coordinator.setDispatchGuard(
+      composeDispatchGuards(
+        (turnId) => this.teams.dispatchGuard(turnId),
+        (turnId) => this.routines.adapter.dispatchGuard(turnId)
+      )
+    )
     this.coordinator.setCollaboration((botId, request) => this.teams.collaboration(botId, request))
+    const lane = new RoutineGuestLane(this.routines.proposals)
+    this.coordinator.setRoutineLane((botId, request) => lane.handle(botId, request))
+    // Reference time and whether this turn may suggest a routine; never a new tool or permission.
+    this.turns.setRoutineContext(({ botId, turnId, conversationId }) => this.routines.proposals.context(botId, turnId, conversationId))
   }
+  readonly background: BackgroundAdmission
   async ready() {
     this.sessions.recover()
     // No controller survives a Host restart; held bots stay held until an explicit return.
@@ -124,9 +208,14 @@ export class BotService {
     this.coordinator.start()
     this.desktop.start()
     this.teams.ready()
+    // Routines come last: they only admit work through the engines started above.
+    this.routines.ready()
+    await this.voice.sweep().catch(() => {})
   }
   async close() {
     this.desktop.shutdown()
+    this.voice.close()
+    await this.routines.close()
     await this.teams.close()
     await this.coordinator.close()
   }
@@ -316,6 +405,18 @@ export class BotService {
         const page = messages.length > p.limit ? messages.slice(1) : messages
         const turnIds = [...new Set(page.map((m) => m.turnId).filter((id): id is string => !!id))]
         return { conversation, messages: page, turns: this.repo.turns(conversation.id, turnIds), hasMore: messages.length > p.limit }
+      }
+      case 'bot.transcript.list': {
+        const bot = this.repo.bot(p.botId)
+        if (!bot.conversationId) return { messages: [], turns: [], hasMore: false, cursor: 0 }
+        const conversation = this.repo.conversation(bot.conversationId)
+        const messages = this.repo.messages(conversation.id, p.before, p.limit + 1)
+        const page = messages.length > p.limit ? messages.slice(1) : messages
+        const turnIds = [...new Set(page.map((m) => m.turnId).filter((id): id is string => !!id))]
+        const turns = this.repo.turns(conversation.id, turnIds)
+        const events = this.repo.eventsOfTurns(turnIds)
+        // One projection for history and for the live screen: see foldTranscript in host-protocol.
+        return { messages: foldTranscript({ messages: page, turns, events }), turns, hasMore: messages.length > p.limit, cursor: transcriptCursor(events) }
       }
       case 'bot.messages.send': {
         const bot = this.repo.bot(p.botId)

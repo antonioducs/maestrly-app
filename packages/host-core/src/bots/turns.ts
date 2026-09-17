@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { MESSAGE_CONTENT_MAX, TURN_TERMINAL, type BotMessage, type BotTurn, type TeamTurnContext, type TurnSnapshot, type attachmentRefSchema } from '@maestrly/host-protocol'
+import { MESSAGE_CONTENT_MAX, TURN_TERMINAL, type BotMessage, type BotTurn, type RoutineTurnContext, type TeamTurnContext, type TurnSnapshot, type attachmentRefSchema } from '@maestrly/host-protocol'
 import type { z } from 'zod'
 import { HostError } from '../errors.js'
 import { buildSnapshot, TURN_LIMITS } from './context.js'
@@ -53,6 +53,22 @@ export class BotTurns {
   setContinuationScope(scope: ContinuationScope) {
     this.scope = scope
   }
+  private routineContext?: (input: { botId: string; turnId: string; conversationId: string }) => RoutineTurnContext | undefined
+  /**
+   * Installed once the routines domain exists. It only ever adds reference time and whether
+   * this turn may suggest a routine; it never adds a tool, a permission or a destination.
+   */
+  setRoutineContext(provider: (input: { botId: string; turnId: string; conversationId: string }) => RoutineTurnContext | undefined) {
+    this.routineContext = provider
+  }
+  private routinesFor(botId: string, turnId: string, conversationId: string) {
+    try {
+      return this.routineContext?.({ botId, turnId, conversationId })
+    } catch {
+      // A routine context is a convenience; failing to build one must never block work.
+      return undefined
+    }
+  }
   /**
    * The single admission path. It revalidates the bot, its account, the global slot (which
    * spans the private chat and every team) and the desktop hold inside one transaction, then
@@ -94,6 +110,8 @@ export class BotTurns {
         conversationId: conversation.id,
         messageId: message.id,
         status: 'queued',
+        // The model the ledger prices this turn at; changing the bot later must not rewrite history.
+        ...(bot.model ? { model: bot.model } : {}),
         generation: 1,
         providerThreadId: conversation.providerThreadId,
         revision: 0,
@@ -115,6 +133,10 @@ export class BotTurns {
         ...(input.instructions ? { instructions: input.instructions } : {}),
         ...(input.team ? { team: input.team } : {}),
         ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+        ...(() => {
+          const routines = this.routinesFor(bot.id, turnId, conversation.id)
+          return routines ? { routines } : {}
+        })(),
       })
       this.repo.saveMessage(message)
       this.repo.saveTurn(turn)
@@ -188,7 +210,7 @@ export class BotTurns {
     const sequence = conversation.lastSequence + 1
     const turnId = randomUUID()
     const message: BotMessage = { id: randomUUID(), conversationId: conversation.id, clientMessageId, role: 'system', content, turnId, sequence, attachments: [input.capture], createdAt: now() }
-    const turn: BotTurn = { id: turnId, botId: bot.id, conversationId: conversation.id, messageId: message.id, status: 'queued', generation: 1, providerThreadId: conversation.providerThreadId, revision: 0, createdAt: now(), updatedAt: now() }
+    const turn: BotTurn = { id: turnId, botId: bot.id, conversationId: conversation.id, messageId: message.id, status: 'queued', ...(bot.model ? { model: bot.model } : {}), generation: 1, providerThreadId: conversation.providerThreadId, revision: 0, createdAt: now(), updatedAt: now() }
     const snapshot = buildSnapshot({
       bot,
       conversation,
@@ -203,6 +225,10 @@ export class BotTurns {
       ...(scoped?.instructions ? { instructions: scoped.instructions } : {}),
       ...(scoped?.team ? { team: scoped.team } : {}),
       ...(scoped?.permissionMode ? { permissionMode: scoped.permissionMode } : {}),
+      ...(() => {
+        const routines = this.routinesFor(bot.id, turnId, conversation.id)
+        return routines ? { routines } : {}
+      })(),
     })
     this.repo.saveMessage(message)
     this.repo.saveTurn(turn)

@@ -26,6 +26,7 @@ import {
   DESKTOP_LIVE_CAPABILITY,
   TEAM_HOST_CAPABILITY,
   ROUTINE_HOST_CAPABILITY,
+  CHAT_HOST_CAPABILITY,
   VOICE_HOST_CAPABILITY,
 } from '@maestrly/host-protocol'
 import { QemuProvider, type Provider, type Runtime, type Image } from './provider.js'
@@ -347,6 +348,7 @@ export class HostService {
         DESKTOP_HANDOFF_CAPABILITY,
         TEAM_HOST_CAPABILITY,
         ROUTINE_HOST_CAPABILITY,
+        CHAT_HOST_CAPABILITY,
         // Voice is announced only when this Host can actually transcribe: an application
         // that sees the capability must not end up with a microphone button that fails.
         ...(this.bots?.voice.status().available ? [VOICE_HOST_CAPABILITY] : []),

@@ -57,6 +57,18 @@ export type OutboxItem = z.infer<typeof outboxSchema>
 const parseRow = <T>(schema: { parse(value: unknown): T }, row: unknown): T => schema.parse(JSON.parse((row as { body: string }).body))
 
 /** Shares the HostStore connection and transaction; never a second owner of the database. */
+export interface TurnUsageRow {
+  turnId: string
+  botId: string
+  finishedAt: string
+  provider: string
+  model: string
+  input: number
+  cachedInput: number
+  output: number
+  reasoningOutput: number
+  toolCalls: number
+}
 export class BotRepository {
   readonly db: DatabaseSync
   constructor(readonly store: HostStore) {
@@ -282,9 +294,44 @@ export class BotRepository {
       if (existing) return undefined
     }
     const result = this.db
-      .prepare('INSERT INTO bot_events(bot_id,runtime_event_id,body) VALUES(?,?,?)')
-      .run(event.botId, event.runtimeEventId ?? null, JSON.stringify(event))
+      .prepare('INSERT INTO bot_events(bot_id,runtime_event_id,turn_id,body) VALUES(?,?,?,?)')
+      .run(event.botId, event.runtimeEventId ?? null, event.turnId ?? null, JSON.stringify(event))
     return botEventSchema.parse({ seq: Number(result.lastInsertRowid), ...event })
+  }
+  /** Every event of the given turns, in sequence order: the rows a transcript is folded from. */
+  eventsOfTurns(turnIds: readonly string[]): BotEvent[] {
+    if (!turnIds.length) return []
+    return this.db
+      .prepare(`SELECT seq,body FROM bot_events WHERE turn_id IN (${turnIds.map(() => '?').join(',')}) ORDER BY seq`)
+      .all(...turnIds)
+      .map((row) => botEventSchema.parse({ seq: Number((row as { seq: number }).seq), ...JSON.parse((row as { body: string }).body) }))
+  }
+  // Usage ledger: one row per finished turn, what the usage summary is computed from.
+  saveTurnUsage(row: TurnUsageRow) {
+    this.db
+      .prepare(
+        'INSERT INTO bot_turn_usage(turn_id,bot_id,finished_at,provider,model,input,cached_input,output,reasoning_output,tool_calls) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(turn_id) DO UPDATE SET finished_at=excluded.finished_at,provider=excluded.provider,model=excluded.model,input=excluded.input,cached_input=excluded.cached_input,output=excluded.output,reasoning_output=excluded.reasoning_output,tool_calls=excluded.tool_calls'
+      )
+      .run(row.turnId, row.botId, row.finishedAt, row.provider, row.model, row.input, row.cachedInput, row.output, row.reasoningOutput, row.toolCalls)
+  }
+  turnUsage(botId: string | undefined, sinceIso: string, untilIso: string): TurnUsageRow[] {
+    const rows = (
+      botId
+        ? this.db.prepare('SELECT * FROM bot_turn_usage WHERE bot_id=? AND finished_at>=? AND finished_at<=? ORDER BY finished_at').all(botId, sinceIso, untilIso)
+        : this.db.prepare('SELECT * FROM bot_turn_usage WHERE finished_at>=? AND finished_at<=? ORDER BY finished_at').all(sinceIso, untilIso)
+    ) as Record<string, string | number>[]
+    return rows.map((row) => ({
+      turnId: String(row.turn_id),
+      botId: String(row.bot_id),
+      finishedAt: String(row.finished_at),
+      provider: String(row.provider),
+      model: String(row.model),
+      input: Number(row.input),
+      cachedInput: Number(row.cached_input),
+      output: Number(row.output),
+      reasoningOutput: Number(row.reasoning_output),
+      toolCalls: Number(row.tool_calls),
+    }))
   }
   events(botId: string, after: number, limit: number, byteBudget: number): { events: BotEvent[]; hasMore: boolean } {
     const rows = this.db
