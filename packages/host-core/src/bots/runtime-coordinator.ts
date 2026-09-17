@@ -36,6 +36,9 @@ export class RuntimeCoordinator {
   private closed = false
   private accounts?: AccountDelegation
   setAccounts(accounts: AccountDelegation) { this.accounts = accounts }
+  private extensions?: { prepare(bot: Bot, session: GuestSession, turnId: string): Promise<void> }
+  /** Installed once the chat domains exist; a bot without extensions never sees a request. */
+  setExtensions(delivery: { prepare(bot: Bot, session: GuestSession, turnId: string): Promise<void> }) { this.extensions = delivery }
   private collaboration?: (botId: string, request: CollaborationRequest) => Promise<Record<string, unknown>>
   /** Installed by the teams domain; without it the collaboration lane simply does not exist. */
   setCollaboration(handler: (botId: string, request: CollaborationRequest) => Promise<Record<string, unknown>>) {
@@ -343,6 +346,13 @@ export class RuntimeCoordinator {
               this.finish(turn, 'failed', { code: error instanceof HostError ? error.code : 'ACCOUNT_UNAVAILABLE', message: 'Não foi possível acessar a conta geral. Verifique Contas antes de tentar novamente.' })
               continue
             }
+          }
+          // Extensions (MCP servers, skills) reach the guest before the turn that will use them.
+          try { await this.extensions?.prepare(bot, session, turn.id) }
+          catch (error) {
+            this.repo.dequeue(item.id)
+            this.finish(turn, 'failed', { code: error instanceof HostError ? error.code : 'EXTENSIONS_UNAVAILABLE', message: 'As extensões deste bot não puderam ser preparadas. Revise MCP e skills nas configurações.' })
+            continue
           }
           // Authorization is revalidated here, immediately before the wire write.
           const blocked = this.dispatchGuard?.(turn.id)

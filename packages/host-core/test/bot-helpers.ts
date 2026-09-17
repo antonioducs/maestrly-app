@@ -188,6 +188,8 @@ export class FakeGuest implements GuestSession {
       }
       case 'files.abort':
         return {}
+      case 'extensions.apply':
+        return { applied: (params as any).revision }
     }
     throw new Error(`unhandled ${method}`)
   }

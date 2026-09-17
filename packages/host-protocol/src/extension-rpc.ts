@@ -17,6 +17,8 @@ export const mcpServerInputSchema = z
     headers: z.record(z.string().max(64), z.string().max(1024)).optional(),
     /** Values to store; a key absent here keeps the value already stored, an empty string removes it. */
     env: z.record(envKeySchema, z.string().max(EXTENSION_LIMITS.envValueMax)).default({}),
+    /** Accepted so a state read back can be submitted as is; the stored keys are what the Host derives. */
+    envKeys: z.array(envKeySchema).max(32).optional(),
     enabled: z.boolean().default(true),
   })
   .refine((s) => (s.transport === 'stdio' ? !!s.command && !s.url : !!s.url && !s.command), 'a stdio server names a command, an http server names a url')
