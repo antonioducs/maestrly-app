@@ -479,5 +479,7 @@ export const ptBR = {
   voicePlaybackFailed: "Não foi possível reproduzir este áudio.",
   voiceUnavailable: "Este computador ainda não transcreve mensagens de voz.",
   chatHostOutdated: 'Atualize o Host para ver ferramentas, raciocínio e tempo de resposta nesta conversa.',
+  effortDefault: 'Padrão do modelo',
+  pickerBusyReason: 'Espere a tarefa atual terminar para trocar.',
 } as const
 export type TranslationKey = keyof typeof ptBR

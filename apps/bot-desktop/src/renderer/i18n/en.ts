@@ -478,4 +478,6 @@ export const en: Record<TranslationKey, string> = {
   voicePlaybackFailed: "This audio could not be played.",
   voiceUnavailable: "This computer does not transcribe voice messages yet.",
   chatHostOutdated: 'Update the Host to see tools, reasoning and response time in this conversation.',
+  effortDefault: 'Model default',
+  pickerBusyReason: 'Wait for the current task to finish before changing.',
 }

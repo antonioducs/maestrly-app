@@ -232,6 +232,7 @@ export function TeamChat({
         </p>
       )}
       <Composer
+        connected={connected}
         attachments={[]}
         removeAttachment={() => {}}
         value={state.text}

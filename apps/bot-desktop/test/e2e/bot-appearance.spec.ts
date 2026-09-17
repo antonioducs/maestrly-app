@@ -97,7 +97,9 @@ test('attachment chips remove the message attachment without deleting the upload
     await app.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
     }, file)
-    await page.getByRole('button', { name: 'Anexar arquivo' }).click()
+    // Attaching lives in the composer's "+" menu, like the other additions.
+    await page.getByRole('button', { name: 'Adicionar', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Anexar arquivo' }).click()
     await expect(page.locator('.composer-attachments')).toContainText('dados.csv')
     await page.screenshot({ animations: 'disabled', path: 'test-results/ux-attachment.png' })
     await page.getByRole('button', { name: 'Remover anexo da mensagem dados.csv' }).click()

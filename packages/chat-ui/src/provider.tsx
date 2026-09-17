@@ -19,7 +19,21 @@ export interface ChatUiLabels {
     imageUnavailable: string
   }
   context: { title: string; used: (used: string, limit: string) => string; cost: (cost: string) => string; unknownWindow: string }
-  composer: { placeholder: string; send: string; stop: string; stopping: string; attach: string; commands: string; skills: string; noCommands: string }
+  composer: {
+    placeholder: string
+    /** Accessible name of the message box. */
+    message: string
+    send: string
+    stop: string
+    stopping: string
+    attach: string
+    add: string
+    attachments: string
+    removeAttachment: string
+    commands: string
+    skills: string
+    noCommands: string
+  }
   model: { title: string; effort: string }
   permission: { ask: string; full: string; askHint: string; fullHint: string }
   usage: { title: string; period: string; model: string; input: string; output: string; cached: string; turns: string; cost: string; empty: string; refresh: string }

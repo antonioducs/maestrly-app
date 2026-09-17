@@ -360,6 +360,9 @@ export function BotChat({
         </p>
       )}
       <Composer
+        bot={bot}
+        onBotUpdate={onBotUpdate}
+        connected={connected}
         attachments={state.attachments}
         removeAttachment={(path) => { state.attachments = state.attachments.filter(file => file.path !== path); changed() }}
         value={state.text}
