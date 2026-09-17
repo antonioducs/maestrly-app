@@ -5,7 +5,7 @@ import { useT } from '../../i18n'
 import type { TranslationKey } from '../../i18n/pt-BR'
 import { Composer } from '../chat/Composer'
 import { InteractionCard } from '../chat/InteractionCard'
-import { Markdown } from '../chat/MessageList'
+import { BotMarkdown as Markdown } from '../chat/BotMarkdown'
 import { useTeamEvents } from './useTeamEvents'
 import { TeamActivity, progressOf } from './TeamActivity'
 

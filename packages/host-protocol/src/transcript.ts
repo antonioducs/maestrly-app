@@ -12,6 +12,8 @@ import { TOOL_OUTPUT_MAX, type TranscriptMessage, type TranscriptPart } from './
 export interface TranscriptLookup {
   /** The persisted assistant message an `assistant.message` event produced, by its runtime event id. */
   messageByRuntimeEventId?: (runtimeEventId: string) => BotMessage | undefined
+  /** The n-th persisted assistant message of a turn, for events that carry no runtime id. */
+  messageOfTurn?: (turnId: string, index: number) => BotMessage | undefined
 }
 
 const turnCardId = (turnId: string) => `turn:${turnId}`
@@ -122,14 +124,22 @@ export function applyTranscriptEvent(
       break
     }
     case 'assistant.message': {
-      // The persisted message carries the full text; the event only has a preview.
-      const persisted = event.runtimeEventId ? lookup.messageByRuntimeEventId?.(event.runtimeEventId) : undefined
-      const content = persisted?.content ?? text(detail.content) ?? ''
+      // The persisted message carries the full text; the event only has a preview. Without a
+      // runtime id the n-th message event of the turn pairs with its n-th persisted message.
+      const sealedBefore = card.parts.filter((part) => part.type === 'text' && part.id.endsWith(FINAL)).length
+      const persisted =
+        (event.runtimeEventId ? lookup.messageByRuntimeEventId?.(event.runtimeEventId) : undefined) ?? lookup.messageOfTurn?.(turnId, sealedBefore)
+      // Already shown from the persisted row (a fold without events): nothing to add twice.
+      if (persisted && card.parts.some((part) => part.id === `${persisted.id}:text`)) return next
+      const content = persisted?.content ?? (text(detail.content) || text(detail.preview))
       const last = card.parts[card.parts.length - 1]
       // Sealing the paragraph (the id says so) makes the next delta open a new one.
       const sealed = { type: 'text' as const, id: `${card.id}:${event.seq}${FINAL}` }
+      // Attachments the Host stored on that message belong to the card as well.
+      const attachments = persisted?.attachments.filter((file) => !card.attachments.some((known) => known.path === file.path)) ?? []
       updated = {
         ...card,
+        ...(attachments.length ? { attachments: [...card.attachments, ...attachments] } : {}),
         parts:
           last && last.type === 'text' && !last.id.endsWith(FINAL)
             ? [...card.parts.slice(0, -1), { ...sealed, text: content || last.text }]
@@ -242,8 +252,12 @@ export function applyTranscriptEvent(
 
 export function foldTranscript(input: { messages: BotMessage[]; turns: BotTurn[]; events: BotEvent[] }): TranscriptMessage[] {
   const turns = new Map(input.turns.map((turn) => [turn.id, turn]))
-  const byRuntimeEventId = new Map(input.messages.filter((m) => m.role === 'assistant').map((m) => [m.clientMessageId, m]))
-  const lookup: TranscriptLookup = { messageByRuntimeEventId: (id) => byRuntimeEventId.get(id) }
+  const assistant = input.messages.filter((m) => m.role === 'assistant').sort((a, b) => a.sequence - b.sequence)
+  const byRuntimeEventId = new Map(assistant.map((m) => [m.clientMessageId, m]))
+  const lookup: TranscriptLookup = {
+    messageByRuntimeEventId: (id) => byRuntimeEventId.get(id),
+    messageOfTurn: (turnId, index) => assistant.filter((m) => m.turnId === turnId)[index],
+  }
   // Every persisted non-assistant message stands on its own; assistant rows are absorbed into turn cards.
   let transcript: TranscriptMessage[] = input.messages.filter((m) => m.role !== 'assistant').map(fromMessage)
   for (const turn of input.turns) {
@@ -260,7 +274,11 @@ export function foldTranscript(input: { messages: BotMessage[]; turns: BotTurn[]
   transcript = transcript.map((message) => {
     if (message.role !== 'assistant' || !message.turnId || covered.has(message.turnId) || message.parts.length) return message
     const persisted = input.messages.filter((m) => m.turnId === message.turnId && m.role === 'assistant')
-    return { ...message, parts: persisted.map((m) => ({ type: 'text' as const, id: `${m.id}:text`, text: m.content })) }
+    return {
+      ...message,
+      parts: persisted.map((m) => ({ type: 'text' as const, id: `${m.id}:text`, text: m.content })),
+      attachments: persisted.flatMap((m) => m.attachments),
+    }
   })
   return transcript
 }

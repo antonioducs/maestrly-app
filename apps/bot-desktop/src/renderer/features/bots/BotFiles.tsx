@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { BotFile } from '@maestrly/host-protocol'
 import { useT } from '../../i18n'
-import { FileCard } from '../chat/MessageList'
+import { FileCard } from '../chat/FileCard'
 export function BotFiles({ botId, onPreview }: { botId: string; onPreview: (name: string, text: string) => void }) {
   const t = useT()
   const [files, setFiles] = useState<BotFile[]>([])

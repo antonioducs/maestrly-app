@@ -4,7 +4,12 @@ import { createElement } from 'react'
 import type { BotEvent } from '@maestrly/host-protocol'
 import { mergeBotEvents } from '../src/renderer/features/chat/events'
 import { sanitizeMarkdown, safeHttpsUrl } from '../src/renderer/features/chat/markdown'
-import { Markdown } from '../src/renderer/features/chat/MessageList'
+import { ChatUiProvider } from '@maestrly/chat-ui'
+import { BotMarkdown } from '../src/renderer/features/chat/BotMarkdown'
+import { chatUiLabels } from '../src/renderer/i18n/chatUiLabels'
+// The shared renderer needs its context; the assertions below are exactly the old ones.
+const Markdown = ({ text }: { text: string }) =>
+  createElement(ChatUiProvider, { value: { labels: chatUiLabels('pt-BR'), openExternal: () => {}, locale: 'pt-BR' }, children: createElement(BotMarkdown, { text }) })
 const event = (seq: number): BotEvent => ({
   seq,
   botId: 'bot-1',

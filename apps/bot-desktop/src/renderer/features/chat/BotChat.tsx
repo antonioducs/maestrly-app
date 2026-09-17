@@ -1,22 +1,28 @@
 import { Button } from '../../ui'
 import { useEffect, useRef, useState } from 'react'
-import type { Bot, BotInteraction, BotMessage, BotTurn } from '@maestrly/host-protocol'
+import type { Bot, BotInteraction, BotTurn } from '@maestrly/host-protocol'
 import { useT } from '../../i18n'
 import type { TranslationKey } from '../../i18n/pt-BR'
+import { TranscriptList, useStickToBottom } from '@maestrly/chat-ui'
+import type { TranscriptMessage } from '@maestrly/host-protocol'
 import { Composer } from './Composer'
-import { FileCard, MessageList } from './MessageList'
-import { Activity } from './Activity'
+import { FileCard } from './FileCard'
+import { botUrlTransform } from './BotMarkdown'
+import { useTranscript } from './useTranscript'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
 import { Monitor } from 'lucide-react'
 import { useDesktopState } from '../desktop/useDesktopState'
+import { VoiceComposer } from '../voice/VoiceComposer'
+import { VoiceMessage } from '../voice/VoiceMessage'
+import { ProposalStrip } from '../routines/ProposalStrip'
+import type { VoiceMessageMeta } from '@maestrly/host-protocol'
 
 export type ChatState = {
   text: string
   clientMessageId?: string
   attachments: Attachment[]
-  messages: BotMessage[]
   turn?: BotTurn
   scrollTop: number
 }
@@ -27,12 +33,23 @@ export function createChatState(botId: string): ChatState {
       text: saved.text ?? '',
       clientMessageId: saved.clientMessageId,
       attachments: saved.attachments ?? [],
-      messages: [],
       scrollTop: 0,
     }
   } catch {
-    return { text: '', attachments: [], messages: [], scrollTop: 0 }
+    return { text: '', attachments: [], scrollTop: 0 }
   }
+}
+function SystemNotice({ content }: { content: string }) {
+  const t = useT()
+  return (
+    <>
+      <p className="system-title">{t('continuationNotice')}</p>
+      <details>
+        <summary>{t('continuationDetails')}</summary>
+        <p>{content}</p>
+      </details>
+    </>
+  )
 }
 const terminal = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
 export function turnLabel(turn?: BotTurn): TranslationKey {
@@ -62,6 +79,10 @@ export function BotChat({
   onBotUpdate,
   onOpenDesktop,
   desktopOpen = false,
+  hostId = '',
+  voiceSupported = false,
+  routinesSupported = false,
+  chatSupported = false,
 }: {
   bot: Bot
   onBotUpdate: (bot: Bot) => void
@@ -71,15 +92,21 @@ export function BotChat({
   onPreview: (name: string, text: string) => void
   onOpenDesktop?: () => void
   desktopOpen?: boolean
+  hostId?: string
+  /** Advertised by the Host only when it can actually transcribe. */
+  voiceSupported?: boolean
+  routinesSupported?: boolean
+  /** The Host folds transcripts (tool cards, reasoning); without it the app shows plain messages. */
+  chatSupported?: boolean
 }) {
   const t = useT()
   const [, render] = useState(0)
   const [interactions, setInteractions] = useState<BotInteraction[]>([])
-  const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [replaceFile, setReplaceFile] = useState<Awaited<ReturnType<typeof window.bot.pickFile>>>(null)
-  const scroll = useRef<HTMLDivElement>(null)
+  // Sidecar metadata for messages that came from a recording; absent for typed ones.
+  const [voiceMeta, setVoiceMeta] = useState<Record<string, VoiceMessageMeta>>({})
   const alive = useRef(true)
   const active = !!state.turn && !terminal.has(state.turn.status)
   const [desktop, setDesktop] = useDesktopState(bot.id, connected, desktopOpen)
@@ -104,31 +131,46 @@ export function BotChat({
     )
     if (alive.current) render((value) => value + 1)
   }
-  const refresh = async (earlier = false) => {
-    const [page, pending, inspected] = await Promise.all([
-      window.bot.bot({
-        method: 'bot.messages.list',
-        params: { botId: bot.id, ...(earlier && state.messages.length ? { before: state.messages[0].sequence } : {}) },
-      }),
+  const events = useBotEvents(bot.id, connected, () => refresh(), (error) => setError(String(error)))
+  const transcript = useTranscript(bot.id, connected, chatSupported, events)
+  const refresh = async () => {
+    const [pending, inspected] = await Promise.all([
       window.bot.bot({ method: 'bot.interactions.list', params: { botId: bot.id, pendingOnly: true } }),
       window.bot.bot({ method: 'bot.inspect', params: { botId: bot.id } }),
+      transcript.reload(),
     ])
     if (!alive.current) return
-    const merged = new Map(state.messages.map((message) => [message.id, message]))
-    for (const message of page.messages) merged.set(message.id, message)
-    state.messages = [...merged.values()].sort((a, b) => a.sequence - b.sequence)
-    if (!earlier) state.turn = page.turns.at(-1) ?? state.turn
-    if (state.turn && !terminal.has(state.turn.status))
-      state.turn = await window.bot.bot({ method: 'bot.turn.get', params: { turnId: state.turn.id } })
+    const activeTurn = inspected.activeTurnId ?? state.turn?.id
+    if (activeTurn) state.turn = await window.bot.bot({ method: 'bot.turn.get', params: { turnId: activeTurn } })
     if (!alive.current) return
-    if (earlier || state.messages.length <= page.messages.length) setHasMore(page.hasMore)
     onBotUpdate(inspected)
     setInteractions(pending)
     changed()
   }
+  const persistedIds = transcript.messages.filter((message) => message.role === 'user').map((message) => message.id)
+  useEffect(() => {
+    if (!voiceSupported || !connected || !persistedIds.length) return
+    let cancelled = false
+    window.bot.voice
+      .call({ method: 'voice.forMessages', params: { target: { kind: 'bot', id: bot.id }, messageIds: persistedIds.slice(-100) } })
+      .then((metas) => {
+        if (!cancelled && alive.current) setVoiceMeta(Object.fromEntries(metas.map((meta) => [meta.messageId, meta])))
+      })
+      .catch(() => {
+        /* a Host without voice simply has no recordings to describe */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [voiceSupported, connected, bot.id, persistedIds.join(',')])
+  // Opens at the end and follows new content only while the person is already reading the end.
+  const lastMessage = transcript.messages.at(-1)
+  const { ref: scroll, onScroll } = useStickToBottom<HTMLDivElement>(
+    `${transcript.messages.length}:${lastMessage?.id}:${lastMessage?.parts.length}:${(() => { const last = lastMessage?.parts.at(-1); return last && last.type === 'text' ? last.text.length : '' })()}`,
+    state.scrollTop
+  )
   useEffect(() => {
     alive.current = true
-    if (scroll.current) scroll.current.scrollTop = state.scrollTop
     return () => {
       alive.current = false
     }
@@ -136,7 +178,6 @@ export function BotChat({
   useEffect(() => {
     if (connected) void refresh().catch((error) => setError(String(error)))
   }, [bot.id, connected])
-  const events = useBotEvents(bot.id, connected, refresh, (error) => setError(String(error)))
   const send = async () => {
     if (busy || active || held || !connected || !state.text.trim()) return
     setBusy(true)
@@ -248,44 +289,60 @@ export function BotChat({
         </div>
       )}
       {state.turn?.status === 'needs_attention' && <Button onClick={() => void refresh()}>{t('checkAgain')}</Button>}
+      {connected && !chatSupported && (
+        <p className="alert" role="status">
+          {t('chatHostOutdated')}
+        </p>
+      )}
       <div
         className="messages"
         ref={scroll}
         onScroll={(event) => {
           state.scrollTop = event.currentTarget.scrollTop
+          onScroll()
         }}
       >
-        {hasMore && (
-          <Button onClick={() => void refresh(true).catch((error) => setError(String(error)))}>{t('previous')}</Button>
+        {transcript.hasMore && (
+          <Button onClick={() => void transcript.loadEarlier().catch((error) => setError(String(error)))}>{t('previous')}</Button>
         )}
-        {!state.messages.length && (
+        {!transcript.messages.length && (
           <div className="empty-chat">
             <h2>{t('emptyChat')}</h2>
             <p>{t('emptyChatText')}</p>
           </div>
         )}
-        <MessageList botId={bot.id} messages={state.messages} onPreview={onPreview} />
-        {events
-          .filter(
-            (event) =>
-              event.kind === 'file.produced' &&
-              typeof event.detail?.path === 'string' &&
-              typeof event.detail?.name === 'string' &&
-              typeof event.detail?.size === 'number' &&
-              !state.messages.some((message) => message.attachments.some((file) => file.path === event.detail?.path))
-          )
-          .map((event) => (
-            <FileCard
-              key={event.seq}
-              botId={bot.id}
-              file={{
-                path: event.detail!.path as string,
-                name: event.detail!.name as string,
-                size: event.detail!.size as number,
-              }}
-              onPreview={onPreview}
-            />
-          ))}
+        <TranscriptList<TranscriptMessage>
+          messages={transcript.messages}
+          urlTransform={botUrlTransform}
+          allowImages={false}
+          slots={{
+            system: (message) => <SystemNotice content={message.parts.map((part) => (part.type === 'text' ? part.text : '')).join('\n')} />,
+            // A produced file that is also an attachment of the answer is shown once, as the attachment.
+            file: (part, message) =>
+              message.attachments.some((file) => file.path === part.path) ? null : (
+                <FileCard botId={bot.id} file={{ path: part.path!, name: part.name!, size: part.size ?? 0 }} onPreview={onPreview} />
+              ),
+            after: (message) => (
+              <>
+                {(() => {
+                  const meta = voiceMeta[message.id]
+                  return meta ? <VoiceMessage meta={meta} read={(clipId) => window.bot.voice.read({ clipId })} /> : null
+                })()}
+                {message.attachments.map((file) => (
+                  <FileCard key={file.path} botId={bot.id} file={file} onPreview={onPreview} />
+                ))}
+              </>
+            ),
+          }}
+        />
+        {/* Suggestions the bot left, where it left them. Each one is inert until confirmed. */}
+        <ProposalStrip
+          target={{ kind: 'bot', id: bot.id }}
+          targetName={bot.name}
+          connected={connected}
+          supported={routinesSupported}
+          onActivated={() => void refresh()}
+        />
         {interactions.map((interaction) => (
           <InteractionCard key={interaction.id} interaction={interaction} refresh={refresh} disabled={!connected} />
         ))}
@@ -296,7 +353,6 @@ export function BotChat({
             {state.turn.error?.message && <details><summary>{t('technical')}</summary><pre>{state.turn.error.message}</pre></details>}
           </div>
         )}
-        {events.length > 0 && <Activity events={events} />}
       </div>
       {error && (
         <p role="alert" className="alert">
@@ -319,6 +375,18 @@ export function BotChat({
         disabled={!connected || held}
         reason={connected && held ? t('composerHeldReason') : undefined}
         busy={busy}
+        voice={
+          <VoiceComposer
+            target={{ kind: 'bot', id: bot.id }}
+            targetName={bot.name}
+            hostId={hostId}
+            connected={connected}
+            supported={voiceSupported}
+            disabled={!connected || held || active}
+            busy={busy}
+            onSent={() => refresh()}
+          />
+        }
       />
       {replaceFile && (
         <dialog

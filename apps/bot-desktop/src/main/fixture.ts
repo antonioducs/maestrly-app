@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { HostRequestError } from './host-client'
 import { FixtureBots } from './fixture-bots'
 import { FixtureTeams } from './fixture-teams'
+import { FixtureRoutines } from './fixture-routines'
+import { FixtureVoice } from './fixture-voice'
 import type { Host, Vm, Operation } from '@maestrly/host-protocol'
 // Explicit local UI fixture; never hardware evidence and disabled in packaged builds.
 const timestamp = '2026-01-01T00:00:00.000Z'
@@ -29,7 +31,9 @@ export class FixtureHost {
   ]
   readonly bots: FixtureBots
   readonly teams: FixtureTeams
-  constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; noTeams?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
+  readonly routines: FixtureRoutines
+  readonly voice: FixtureVoice
+  constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; noTeams?: boolean; noRoutines?: boolean; noVoice?: boolean; noChat?: boolean; suggestRoutine?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
     if (options.readyEnvironment) { this.vms[0].state = 'running'; this.vms[0].health = 'ready'; this.vms[0].desiredState = 'running' }
     if (options.retained) this.vms[0].state = 'removed'
     this.bots = new FixtureBots(
@@ -43,6 +47,18 @@ export class FixtureHost {
       { slowSetup: options.slowSetup, autoLoginMs: options.autoLoginMs, readyEnvironment: options.readyEnvironment, connectedAccount: options.connectedAccount }
     )
     this.teams = new FixtureTeams((id) => this.bots.bots.get(id))
+    this.routines = new FixtureRoutines('d9a02e5b-0c12-4411-9393-b5106ecff181', (target) =>
+      (target.kind === 'bot' ? this.bots.bots.get(target.id)?.name : this.teams.teams.get(target.id)?.name) ?? 'destino'
+    )
+    // A voice message becomes a real message in the fixture domains, exactly as on a Host.
+    this.voice = new FixtureVoice(async (target, text, clientMessageId) => {
+      if (target.kind === 'bot') {
+        const receipt = (await this.bots.request('bot.messages.send', { botId: target.id, clientMessageId, content: text, attachments: [] })) as { message: { id: string } }
+        return { messageId: receipt.message.id, result: { bot: receipt } }
+      }
+      const receipt = this.teams.request('team.messages.send', { teamId: target.id, clientMessageId, content: text, artifactIds: [] }) as { message: { id: string } }
+      return { messageId: receipt.message.id, result: { team: receipt } }
+    })
   }
   operations = new Map<string, Operation>()
   private keys = new Map<string, Operation>()
@@ -55,7 +71,20 @@ export class FixtureHost {
       protocolVersion: 1,
       capabilities: this.options.noBots
         ? ['fixture']
-        : ['fixture', 'environments.v1', 'accounts.v1', 'bot.runtime.v1', 'bot.setup', 'bot.sessions.v1', ...(this.options.noTeams ? [] : ['teams.v1'])],
+        : [
+            'fixture',
+            'environments.v1',
+            'accounts.v1',
+            'bot.runtime.v1',
+            'bot.setup',
+            'bot.sessions.v1',
+            ...(this.options.noTeams ? [] : ['teams.v1']),
+            ...(this.options.noRoutines ? [] : ['routines.v1']),
+            // Voice is advertised only when transcription is actually available, as on a Host.
+            ...(this.options.noVoice ? [] : ['voice.messages.v1']),
+            // Rich transcripts: the fixture folds them with the Host's own projection.
+            ...(this.options.noChat ? [] : ['chat.experience.v1']),
+          ],
       health: 'ready',
       observedMemoryMiB: 4096,
       platform: 'darwin',
@@ -80,6 +109,24 @@ export class FixtureHost {
     if (method.startsWith('team.')) {
       if (this.options.noBots || this.options.noTeams) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
       return this.teams.request(method, p)
+    }
+    if (method.startsWith('routine.')) {
+      if (this.options.noBots || this.options.noRoutines) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      // A suggestion the bot left during the conversation, seeded once for interface work.
+      if (this.options.suggestRoutine && method === 'routine.proposals.list' && !this.routines.proposals.size) {
+        const target = (p.target as { kind: 'bot' | 'team'; id: string } | undefined) ?? undefined
+        if (target)
+          this.routines.suggest(target, {
+            name: 'Resumo de segunda',
+            request: 'Prepare o resumo da semana',
+            schedule: { kind: 'weekly', daysOfWeek: [1], hour: 9, minute: 0, timeZone: 'America/Sao_Paulo' },
+          })
+      }
+      return this.routines.request(method, p)
+    }
+    if (method.startsWith('voice.')) {
+      if (this.options.noBots || this.options.noVoice) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      return this.voice.request(method, p)
     }
     if (method === 'host.inspect') return this.hostInfo()
     if (method === 'vm.list')

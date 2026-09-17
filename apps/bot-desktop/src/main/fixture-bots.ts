@@ -20,7 +20,7 @@ import type {
   TransferState,
   Vm,
 } from '@maestrly/host-protocol'
-import { permissionSummary } from '@maestrly/host-protocol'
+import { foldTranscript, permissionSummary, transcriptCursor } from '@maestrly/host-protocol'
 import { HostRequestError } from './host-client'
 import { FixtureDesktops } from './fixture-desktop'
 // 1x1 PNG standing in for the fresh capture attached to a continuation.
@@ -385,6 +385,20 @@ export class FixtureBots {
         const turnIds = [...new Set(page.map((m) => m.turnId).filter(Boolean))] as string[]
         return { conversation: this.conversations.get(bot.conversationId), messages: page, turns: turnIds.map((id) => this.turns.get(id)!), hasMore: filtered.length > page.length }
       }
+      case 'bot.transcript.list': {
+        const bot = this.bot(String(p.botId))
+        if (!bot.conversationId) return { messages: [], turns: [], hasMore: false, cursor: 0 }
+        const all = this.messages.get(bot.conversationId) ?? []
+        const before = typeof p.before === 'number' ? p.before : Number.MAX_SAFE_INTEGER
+        const limit = typeof p.limit === 'number' ? p.limit : 50
+        const filtered = all.filter((m) => m.sequence < before)
+        const page = filtered.slice(-limit)
+        const turnIds = [...new Set(page.map((m) => m.turnId).filter(Boolean))] as string[]
+        const turns = turnIds.map((id) => this.turns.get(id)!)
+        const events = this.events.filter((e) => e.turnId && turnIds.includes(e.turnId))
+        // The fixture folds with the very function the Host uses: same projection, no hardware.
+        return { messages: foldTranscript({ messages: page, turns, events }), turns, hasMore: filtered.length > page.length, cursor: transcriptCursor(events) }
+      }
       case 'bot.messages.lookup': {
         const bot = this.bot(String(p.botId))
         const message = (this.messages.get(bot.conversationId ?? '') ?? []).find((m) => m.clientMessageId === p.clientMessageId)
@@ -590,10 +604,11 @@ export class FixtureBots {
       this.updateTurn(turn.id, { status: 'running', startedAt: now() })
       this.desktop.screen(botId).setActivity(true)
       this.emit(botId, 'turn.status', 'O bot começou a trabalhar', { turnId: turn.id, detail: { status: 'running' } })
-      this.emit(botId, 'tool.started', 'Lendo os arquivos do espaço de trabalho', { turnId: turn.id })
+      this.emit(botId, 'tool.started', 'Executando um comando', { turnId: turn.id, detail: { callId: `c-${turn.id.slice(0, 8)}`, tool: 'commandExecution', summary: 'Executando um comando', command: 'ls' } })
       this.later(400, () => {
         const current = this.turns.get(turn.id)!
         if (current.status !== 'running') return
+        this.emit(botId, 'tool.finished', 'Executando um comando', { turnId: turn.id, detail: { callId: `c-${turn.id.slice(0, 8)}`, tool: 'commandExecution', summary: 'Executando um comando', output: 'a\nb', exitCode: 0 } })
         if (content.includes('#approve')) {
           const interaction: BotInteraction = { id: randomUUID(), botId, turnId: turn.id, actionId: 'act-1', kind: 'approval', title: 'Executar com privilégios', reason: 'O bot quer instalar uma ferramenta do sistema para concluir a tarefa.', consequence: 'Altera pacotes dentro do computador do bot. Não afeta o seu Mac.', parameters: { command: 'apt-get install -y pandoc' }, fingerprint: 'f'.repeat(64), policyRevision: 0, generation: 1, expiresAt: new Date(Date.now() + 86_400_000).toISOString(), status: 'pending', createdAt: now(), updatedAt: now() }
           this.interactions.set(interaction.id, interaction)
@@ -627,7 +642,7 @@ export class FixtureBots {
     if (reply) {
       const message: BotMessage = { id: randomUUID(), conversationId: conversation.id, clientMessageId: `assistant-${turnId}`, role: 'assistant', content: reply, turnId, sequence: ++conversation.lastSequence, attachments, createdAt: now() }
       this.messages.get(conversation.id)!.push(message)
-      this.emit(bot.id, 'assistant.message', 'O bot respondeu', { turnId, detail: { preview: reply.slice(0, 200) } })
+      this.emit(bot.id, 'assistant.message', 'O bot respondeu', { turnId, runtimeEventId: `assistant-${turnId}`, detail: { preview: reply.slice(0, 200) } })
     }
     this.updateTurn(turnId, { status, finishedAt: now(), ...(status === 'failed' ? { error: { code: 'FIXTURE_FAILURE', message: 'A tarefa falhou no fixture' } } : {}) })
     this.save({ ...this.bot(bot.id), activeTurnId: undefined })

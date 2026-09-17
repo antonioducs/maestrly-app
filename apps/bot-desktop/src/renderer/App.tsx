@@ -98,6 +98,7 @@ function Shell({
   // Both are advertised by the Host; voice only when it can actually transcribe.
   const routinesSupported = connection.routineSupport === 'available'
   const voiceSupported = connection.voiceSupport === 'available'
+  const chatSupported = connection.chatSupport === 'available'
   const refreshTeams = async (preferred?: string) => {
     if (!teamsSupported) return
     const next = await window.bot.team({ method: 'team.list', params: {} })
@@ -495,6 +496,7 @@ function Shell({
                   hostId={connection.hostId ?? ''}
                   voiceSupported={voiceSupported}
                   routinesSupported={routinesSupported}
+                  chatSupported={chatSupported}
                 />
                 {desktopVisible && (
                   <BotDesktopPanel key={bot.id} bot={bot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />

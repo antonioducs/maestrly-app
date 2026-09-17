@@ -35,16 +35,19 @@ export interface MarkdownProps {
   /** Extra rehype plugins appended after highlighting. */
   rehypePlugins?: NonNullable<Options['rehypePlugins']>
   urlTransform?: Options['urlTransform']
+  /** false renders images as their alt text: an application that must never fetch remote bytes passes it. */
+  allowImages?: boolean
 }
 
 /**
  * Rendered Markdown as the chat shows it: GFM, highlighted code, Mermaid diagrams and links that
  * leave the application only through the injected `openExternal`, never through the webview.
  */
-export const Markdown = memo(function Markdown({ text, className, components, rehypePlugins, urlTransform }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ text, className, components, rehypePlugins, urlTransform, allowImages = true }: MarkdownProps) {
   const { openExternal } = useChatUi()
   const merged = useMemo<Components>(
     () => ({
+      ...(allowImages ? {} : { img: ({ alt }: any) => <span className="text-muted-foreground">{alt ? `[${alt}]` : ''}</span> }),
       a: ({ href, children }: any) => {
         const url = typeof href === 'string' ? href : ''
         return (
@@ -63,7 +66,7 @@ export const Markdown = memo(function Markdown({ text, className, components, re
       pre: markdownPre,
       ...components,
     }),
-    [components, openExternal]
+    [components, openExternal, allowImages]
   )
   const plugins = useMemo<NonNullable<Options['rehypePlugins']>>(() => [MARKDOWN_HIGHLIGHT, ...(rehypePlugins ?? [])], [rehypePlugins])
   return (

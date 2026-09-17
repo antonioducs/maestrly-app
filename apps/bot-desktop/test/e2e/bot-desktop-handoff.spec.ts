@@ -58,7 +58,7 @@ test('closing while in control keeps the bot paused until the person resumes it 
     await expect(banner).toHaveCount(0, { timeout: 10_000 })
     await expect(page.getByRole('textbox', { name: 'Mensagem', exact: true })).toBeEditable()
     await send(page, 'Uma nova tarefa depois da pausa')
-    await expect(page.locator('.message.user').last()).toHaveText('Uma nova tarefa depois da pausa')
+    await expect(page.locator('.message.user p').last()).toHaveText('Uma nova tarefa depois da pausa')
   } finally {
     await app.close()
   }

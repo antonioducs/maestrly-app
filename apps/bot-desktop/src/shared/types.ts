@@ -1,5 +1,19 @@
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
-import type { BotMethod, BotResult, DesktopInput, DesktopState, Operation, TeamMethod, TeamResult } from '@maestrly/host-protocol'
+import type {
+  BotMethod,
+  BotResult,
+  DesktopInput,
+  DesktopState,
+  Operation,
+  RoutineMethod,
+  RoutineResult,
+  TargetRef,
+  TeamMethod,
+  TeamResult,
+  VoiceClip,
+  VoiceMethod,
+  VoiceResult,
+} from '@maestrly/host-protocol'
 export type HostEvent = { seq: number; kind: string; createdAt: string; value: unknown }
 export const vmMethods = [
   'host.inspect',
@@ -22,6 +36,8 @@ export type Method = (typeof vmMethods)[number]
 export type Call = { method: Method; params: Record<string, unknown> }
 export type BotCall<M extends BotMethod = BotMethod> = { method: M; params: Record<string, unknown> }
 export type TeamCall<M extends TeamMethod = TeamMethod> = { method: M; params: Record<string, unknown> }
+export type RoutineCall<M extends RoutineMethod = RoutineMethod> = { method: M; params: Record<string, unknown> }
+export type VoiceCall<M extends VoiceMethod = VoiceMethod> = { method: M; params: Record<string, unknown> }
 /** Where a Host runs: this Mac through the fixed local command, or a remote alias already trusted in SSH config. */
 export type HostTarget =
   | { kind: 'local'; id: 'local'; displayName: string; hostId?: string; lastConnectedAt?: string }
@@ -40,6 +56,11 @@ export type Connection = {
   accountSupport?: 'available' | 'host-outdated' | 'unknown'
   botSupport?: 'available' | 'host-outdated' | 'unknown'
   teamSupport?: 'available' | 'host-outdated' | 'unknown'
+  routineSupport?: 'available' | 'host-outdated' | 'unknown'
+  /** Voice is only offered when this Host can actually transcribe; otherwise the app stays textual. */
+  voiceSupport?: 'available' | 'host-outdated' | 'unknown'
+  /** Rich transcripts (tool cards, reasoning) need a Host that folds them; otherwise the app shows plain messages. */
+  chatSupport?: 'available' | 'host-outdated' | 'unknown'
 }
 export type LocalHostStatus =
   | { state: 'installed'; version?: string }
@@ -77,6 +98,8 @@ export interface BotApi {
   call(call: Call): Promise<unknown>
   bot<M extends BotMethod>(call: BotCall<M>): Promise<BotResult<M>>
   team<M extends TeamMethod>(call: TeamCall<M>): Promise<TeamResult<M>>
+  routine<M extends RoutineMethod>(call: RoutineCall<M>): Promise<RoutineResult<M>>
+  voice: VoiceApi
   syncAccounts(): Promise<{ unavailableHosts: string[] }>
   localHost(): Promise<LocalHostStatus>
   installLocalHost(): Promise<InstallOutcome>
@@ -88,6 +111,22 @@ export interface BotApi {
   saveFile(input: { name: string; dataBase64: string }): Promise<{ saved: boolean }>
   pickFile(): Promise<{ name: string; size: number; dataBase64: string } | null>
   desktop: DesktopApi
+}
+/**
+ * Voice lives behind its own small surface. Recording is the renderer's job; everything that
+ * touches the Host — reserving, streaming, transcribing, sending — happens in the main process,
+ * so the chunk loop cannot sit in front of the frames a person is waiting on.
+ */
+export interface VoiceApi {
+  call<M extends VoiceMethod>(call: VoiceCall<M>): Promise<VoiceResult<M>>
+  /** Hands over one canonical WAV and gets back the stored clip. */
+  upload(input: { target: TargetRef; clientClipId: string; dataBase64: string; durationMs: number }): Promise<VoiceClip>
+  /** Reads a recording back for playback, by identity; there is no path or URL to hand out. */
+  read(input: { clipId: string }): Promise<{ clipId: string; dataBase64: string }>
+  /** Asks the system for microphone access, on the person's gesture. */
+  requestMicrophone(): Promise<{ access: 'granted' | 'denied' | 'restricted' | 'unavailable' }>
+  /** Arms or disarms the window's microphone gate around a recording. */
+  arm(armed: boolean): Promise<{ armed: boolean }>
 }
 export type DesktopPhase = 'connecting' | 'viewing' | 'acquiring' | 'controlling' | 'returning' | 'reconnecting' | 'closed'
 /** Public projection pushed by the main process; never carries tickets or capabilities. */

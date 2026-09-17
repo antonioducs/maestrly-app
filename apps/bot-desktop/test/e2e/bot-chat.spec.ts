@@ -59,8 +59,11 @@ test('long text stays intact, markup is inert, and reconnect preserves a draft',
     const content =
       '/home/maestrlybot/workspace/project/'.repeat(95) + '<script>window.pwned=1</script> [bad](javascript:alert(1))'
     await send(page, content)
-    await expect(page.locator('.message.user')).toHaveText(content)
+    // The message body is the paragraph; the article also carries the time it was sent.
+    await expect(page.locator('.message.user p')).toHaveText(content)
+    // The assistant card now appears while the bot still works; wait for the turn to end before disconnecting.
     await expect(page.locator('.message.assistant')).toBeVisible()
+    await expect(page.locator('.chat-header')).toContainText('Tarefa concluída')
     expect(await page.evaluate(() => (window as unknown as { pwned?: number }).pwned)).toBeUndefined()
     await expect(page.locator('.message script, .message a[href^="javascript:"], .message img')).toHaveCount(0)
     const composer = page.getByRole('textbox', { name: 'Mensagem', exact: true })

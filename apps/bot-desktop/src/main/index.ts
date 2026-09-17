@@ -1,10 +1,10 @@
-import { DESKTOP_LIVE_CAPABILITY, TEAM_HOST_CAPABILITY, modelSelectionSchema } from '@maestrly/host-protocol'
+import { DESKTOP_LIVE_CAPABILITY, ROUTINE_HOST_CAPABILITY, CHAT_HOST_CAPABILITY, TEAM_HOST_CAPABILITY, VOICE_HOST_CAPABILITY, modelSelectionSchema } from '@maestrly/host-protocol'
 import { GlobalAccounts } from './global-accounts'
 import { accountEndpointFor } from './account-endpoint'
 import { HostConnections } from './host-connections'
 import { registerIpc } from './ipc'
 import { validateResult, type Host } from './host-client'
-import { app, BrowserWindow, dialog, shell, webContents, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, shell, systemPreferences, webContents, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { DesktopViewServer, VIEW_HEADER } from './desktop-view-server'
 import { DesktopClient, type DesktopRpc } from './desktop-client'
@@ -21,6 +21,9 @@ import { LocalTransport, inspectLocalHost } from './local-transport'
 import { BotJournal } from './bot-journal'
 import { BotClient } from './bot-client'
 import { TeamClient } from './team-client'
+import { RoutineClient } from './routine-client'
+import { VoiceClient } from './voice-client'
+import { installMicrophonePermissions, requestSystemMicrophone } from './microphone-permissions'
 import { installLocalHost } from './host-installation'
 import type { Connection, HostTarget, OnboardingDraft, UiPreferences } from '../shared/types'
 const fixtureEnabled = !app.isPackaged && process.env.MAESTRLY_BOT_FIXTURE === '1'
@@ -40,6 +43,10 @@ const fixture = fixtureEnabled
       autoLoginMs: process.env.MAESTRLY_BOT_FIXTURE_AUTOLOGIN_MS ? Number(process.env.MAESTRLY_BOT_FIXTURE_AUTOLOGIN_MS) : undefined,
       noBots: process.env.MAESTRLY_BOT_FIXTURE_NO_BOTS === '1',
       noTeams: process.env.MAESTRLY_BOT_FIXTURE_NO_TEAMS === '1',
+      noRoutines: process.env.MAESTRLY_BOT_FIXTURE_NO_ROUTINES === '1',
+      noVoice: process.env.MAESTRLY_BOT_FIXTURE_NO_VOICE === '1',
+      noChat: process.env.MAESTRLY_BOT_FIXTURE_NO_CHAT === '1',
+      suggestRoutine: process.env.MAESTRLY_BOT_FIXTURE_ROUTINE_PROPOSAL === '1',
       readyEnvironment: process.env.MAESTRLY_BOT_FIXTURE_READY_ENVIRONMENT === '1',
       connectedAccount: process.env.MAESTRLY_BOT_FIXTURE_CONNECTED_ACCOUNT === '1',
     })
@@ -71,6 +78,8 @@ if (!app.requestSingleInstanceLock()) {
         webSecurity: true,
       },
     })
+    // Armed only while a person is actually holding the record button in this window.
+    const microphone = { armed: false }
     const rendererFile = join(import.meta.dirname, '../renderer/index.html')
     const expectedUrl = new URL(
       (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) || pathToFileURL(rendererFile).href
@@ -79,7 +88,10 @@ if (!app.requestSingleInstanceLock()) {
     win.webContents.on('will-navigate', (event, url) => {
       if (url !== expectedUrl) event.preventDefault()
     })
-    win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    // Both handlers, one decision: a request prompt and the synchronous check the page makes
+    // before it asks. Installing only the first would leave the second at its default, which is
+    // how a renderer ends up believing it holds a device it was never granted.
+    installMicrophonePermissions({ session: win.webContents.session, contents: win.webContents, expectedUrl, gate: microphone })
     // Loopback-only socket feeding noVNC. Tickets travel in the subprotocol, and only this
     // window's own WebSocket requests carry the binding header.
     const rendererOrigins = () => {
@@ -117,6 +129,8 @@ if (!app.requestSingleInstanceLock()) {
     const bots = new BotClient(journal, request)
     // Teams share the journal file but keep their own namespace, lookups and receipts.
     const teams = new TeamClient(journal, request)
+    const routines = new RoutineClient(journal, request)
+    const voice = new VoiceClient(journal, request)
     const desktop = new DesktopClient({
       target: () => (fixture ? (fixture.connected ? { kind: 'local' as const, id: 'local' as const, displayName: 'Este Mac (fixture)', hostId: 'd9a02e5b-0c12-4411-9393-b5106ecff181' } : undefined) : active),
       // A dedicated control connection: screen input never waits behind chat requests.
@@ -187,6 +201,9 @@ if (!app.requestSingleInstanceLock()) {
         accountSupport: !base.connected ? 'unknown' : hostCapabilities.includes('accounts.v1') ? 'available' : 'host-outdated',
         botSupport: !base.connected ? 'unknown' : hostCapabilities.includes('bot.runtime.v1') ? 'available' : 'host-outdated',
         teamSupport: !base.connected ? 'unknown' : hostCapabilities.includes(TEAM_HOST_CAPABILITY) ? 'available' : 'host-outdated',
+        routineSupport: !base.connected ? 'unknown' : hostCapabilities.includes(ROUTINE_HOST_CAPABILITY) ? 'available' : 'host-outdated',
+        voiceSupport: !base.connected ? 'unknown' : hostCapabilities.includes(VOICE_HOST_CAPABILITY) ? 'available' : 'host-outdated',
+        chatSupport: !base.connected ? 'unknown' : hostCapabilities.includes(CHAT_HOST_CAPABILITY) ? 'available' : 'host-outdated',
       }
     }
     const jsonFile = async <T>(name: string, fallback: T): Promise<T> => {
@@ -253,9 +270,14 @@ if (!app.requestSingleInstanceLock()) {
           await connections.connect(target.id, host)
           bots.connected(host.id)
           teams.connected(host.id)
+          routines.connected(host.id)
+          voice.connected(host.id)
           if (hostCapabilities.includes('bot.runtime.v1')) await bots.recover()
           // Only a Host that knows teams can answer team lookups; an older one is left alone.
           if (hostCapabilities.includes(TEAM_HOST_CAPABILITY)) await teams.recover()
+          // Only a Host that knows these domains can answer their lookups; an older one is left alone.
+          if (hostCapabilities.includes(ROUTINE_HOST_CAPABILITY)) await routines.recover()
+          if (hostCapabilities.includes(VOICE_HOST_CAPABILITY)) await voice.recover()
           active = { ...target, hostId: host.id, lastConnectedAt: new Date().toISOString() }
           if (!fixture) await targets.upsert(active)
           if (hostCapabilities.includes('accounts.v1')) void accountDirectory.sync(active).catch(() => {})
@@ -291,6 +313,38 @@ if (!app.requestSingleInstanceLock()) {
         const result = await teams.call(value)
         if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
         return result
+      },
+      routine: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(ROUTINE_HOST_CAPABILITY)) throw new Error('Atualize este computador para usar rotinas')
+        const result = await routines.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
+      },
+      voice: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(VOICE_HOST_CAPABILITY)) throw new Error('Este computador ainda não transcreve mensagens de voz')
+        const result = await voice.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
+      },
+      voiceUpload: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(VOICE_HOST_CAPABILITY)) throw new Error('Este computador ainda não transcreve mensagens de voz')
+        const clip = await voice.upload(value)
+        // The recording belongs to the Host it was sent to; a target switch mid-upload is an error.
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return clip
+      },
+      voiceRead: async (value) => voice.read(value),
+      voiceMicrophone: async () => ({ access: await requestSystemMicrophone(systemPreferences) }),
+      voiceArm: async (value) => {
+        if (typeof value !== 'boolean') throw new Error('Invalid microphone request')
+        microphone.armed = value
+        return { armed: microphone.armed }
       },
       syncAccounts: async () => {
         if (!active) throw new Error('Conecte-se a um computador antes de continuar')
