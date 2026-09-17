@@ -192,6 +192,14 @@ async function build() {
       // Collaboration tools are part of the runtime itself: a Host that knows teams finds
       // them here, and an older Host simply never sends a team context.
       'bot.teams.v1',
+      // Same for routine suggestions. The runtime carries the tools; a Host that knows routines
+      // sends the reference time and the permission to propose, and an older one never does.
+      'bot.routines.v1',
+      // The transcript detail (tool identity, output, reasoning, richer usage) and the ability
+      // to receive MCP servers and skills before a turn. Both are gated by the Host on the
+      // capabilities the live session announced.
+      'bot.transcript.v1',
+      'bot.extensions.v1',
     ]
     await writeFile(
       tar + '.manifest.json',

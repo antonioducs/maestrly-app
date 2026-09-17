@@ -97,6 +97,29 @@ describe('real Codex adapter against app-server fixture', () => {
     expect(answers[1].result).toEqual({ action: 'decline' })
     expect(events.filter((event) => event.kind === 'diagnostic')).toHaveLength(1)
   })
+  it('carries tool identity, output, changes, reasoning and richer usage for the transcript', async () => {
+    const { result } = await adapter()
+    const { hook, events } = hooks()
+    const outcome = await result.startTurn(snapshot({ message: '#tools' }), hook, new AbortController().signal)
+    const started = events.filter((event) => event.kind === 'tool.started')
+    const finished = events.filter((event) => event.kind === 'tool.finished')
+    expect(started.map((event) => event.detail?.callId)).toEqual(['c1', 'm1', 'f1'])
+    expect(started[0].detail).toMatchObject({ tool: 'commandExecution', command: 'ls' })
+    expect(finished[0].detail).toMatchObject({ callId: 'c1', output: 'a\nb', exitCode: 0 })
+    expect(started[1].detail).toMatchObject({ callId: 'm1', server: 'maestrly-bot', name: 'browser_navigate', arguments: { url: 'x' } })
+    expect(finished[2].detail).toMatchObject({ callId: 'f1', changes: [{ path: 'a.txt', kind: 'add' }] })
+    // Reasoning is a delta on its own channel, never mixed into the answer text.
+    expect(events.find((event) => event.kind === 'assistant.delta' && event.detail?.channel === 'reasoning')?.detail?.text).toBe('thinking')
+    expect(outcome.usage).toEqual({ inputTokens: 100, outputTokens: 20, cachedInputTokens: 40, reasoningOutputTokens: 5, contextTokens: 90, modelContextWindow: 272000 })
+  })
+  it('keeps the end of a huge tool output, bounded to what the transcript stores', async () => {
+    const { result } = await adapter()
+    const { hook, events } = hooks()
+    await result.startTurn(snapshot({ message: '#tools #huge' }), hook, new AbortController().signal)
+    const output = events.find((event) => event.kind === 'tool.finished')?.detail?.output as string
+    expect(output.length).toBe(8 * 1024)
+    expect(output.endsWith('y')).toBe(true)
+  })
   it('refuses an unavailable thread instead of silently replacing its history', async () => {
     const { result } = await adapter()
     await expect(result.startTurn(

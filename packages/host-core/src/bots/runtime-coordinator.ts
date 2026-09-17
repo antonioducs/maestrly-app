@@ -4,6 +4,7 @@ import {
   ROUTINE_CAPABILITY,
   TURN_TERMINAL,
   turnStatusSchema,
+  usageSchema,
   type Bot,
   type BotTurn,
   type CollaborationRequest,
@@ -477,7 +478,7 @@ export class RuntimeCoordinator {
         ...(error ? { error } : {}),
         ...(typeof extra.providerThreadId === 'string' ? { providerThreadId: extra.providerThreadId } : {}),
         ...(typeof extra.providerTurnId === 'string' ? { providerTurnId: extra.providerTurnId } : {}),
-        ...(extra.usage && typeof extra.usage === 'object' ? { usage: extra.usage as BotTurn['usage'] } : {}),
+        ...(mergedUsage(extra) ? { usage: mergedUsage(extra) } : {}),
         revision: current.revision + 1,
         updatedAt: now(),
       }
@@ -623,4 +624,19 @@ export class RuntimeCoordinator {
       // Persistence failed: do not ACK; the guest keeps the event for redelivery.
     }
   }
+}
+
+
+/**
+ * Usage as a guest reports it: the legacy trio in `usage`, richer counters in `usageDetail`
+ * (kept apart so an older Host never sees keys it would refuse). Anything malformed is dropped
+ * rather than allowed to fail the transaction that ends a turn.
+ */
+export function mergedUsage(extra: Record<string, unknown>): BotTurn['usage'] | undefined {
+  if (!extra.usage || typeof extra.usage !== 'object') return undefined
+  const detail = extra.usageDetail && typeof extra.usageDetail === 'object' ? (extra.usageDetail as Record<string, unknown>) : {}
+  const parsed = usageSchema.safeParse({ ...(extra.usage as Record<string, unknown>), ...detail })
+  if (parsed.success) return parsed.data
+  const legacy = usageSchema.safeParse(extra.usage)
+  return legacy.success ? legacy.data : undefined
 }

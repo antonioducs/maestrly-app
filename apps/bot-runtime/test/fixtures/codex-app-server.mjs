@@ -56,6 +56,23 @@ async function runTurn(prompt) {
   }
   if (!current) return
   const params = { threadId: current.threadId, turnId: current.id }
+  if (prompt.includes('#tools')) {
+    // The three tool item kinds Codex app-server v2 emits, with the fields a transcript keeps.
+    const command = { id: 'c1', type: 'commandExecution', command: 'ls', cwd: '/w', status: 'inProgress' }
+    notify('item/started', { ...params, item: command })
+    notify('item/reasoning/summaryTextDelta', { ...params, delta: 'thinking' })
+    notify('item/completed', { ...params, item: { ...command, status: 'completed', aggregatedOutput: prompt.includes('#huge') ? 'y'.repeat(20 * 1024) : 'a\nb', exitCode: 0 } })
+    const mcp = { id: 'm1', type: 'mcpToolCall', server: 'maestrly-bot', tool: 'browser_navigate', arguments: { url: 'x' } }
+    notify('item/started', { ...params, item: mcp })
+    notify('item/completed', { ...params, item: { ...mcp, result: { ok: true }, status: 'completed' } })
+    const change = { id: 'f1', type: 'fileChange', changes: [{ path: 'a.txt', kind: { type: 'add' } }] }
+    notify('item/started', { ...params, item: change })
+    notify('item/completed', { ...params, item: { ...change, status: 'completed' } })
+    notify('thread/tokenUsage/updated', {
+      ...params,
+      tokenUsage: { total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningOutputTokens: 5, totalTokens: 120 }, last: { totalTokens: 90 }, modelContextWindow: 272000 },
+    })
+  }
   notify('item/agentMessage/delta', { ...params, delta: 'Hello ' })
   notify('item/agentMessage/delta', { ...params, text: 'world' })
   notify('item/completed', { ...params, item: { type: 'agentMessage', text: 'Hello world' } })

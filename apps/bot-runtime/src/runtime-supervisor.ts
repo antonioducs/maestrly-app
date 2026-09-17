@@ -8,7 +8,7 @@ import { LocalDesktopTools, type DesktopTools } from './desktop/desktop-tools.js
 import { ManagedDesktopClient } from './desktop/managed-client.js'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { TEAM_CAPABILITY, type NetworkPolicy } from '@maestrly/host-protocol'
+import { ROUTINE_CAPABILITY, TEAM_CAPABILITY, TRANSCRIPT_CAPABILITY, narrowNetworkPolicy, narrowPermissionMode, type NetworkPolicy } from '@maestrly/host-protocol'
 import { Journal } from './control/journal.js'
 import { ControlSession, type HandlerMap } from './control/session.js'
 import { openControlTransport } from './control/transport.js'
@@ -16,6 +16,7 @@ import { FileService } from './files/service.js'
 import type { ProviderAdapter } from './providers/provider.js'
 import { recoverTurns } from './turns/recovery.js'
 import { CollaborationClient } from './teams/client.js'
+import { RoutineClient } from './routines/client.js'
 import { runtimeError, TurnService } from './turns/service.js'
 export async function runtimeVersion() {
   return (
@@ -33,6 +34,7 @@ export class RuntimeSupervisor {
   private desktop!: DesktopTools
   private tools!: ToolRegistry
   private collaboration!: CollaborationClient
+  private routines!: RoutineClient
   private bridge!: ToolsBridge
   private capabilities = [
     'account.delegation.v1',
@@ -44,6 +46,12 @@ export class RuntimeSupervisor {
     // never sends a team context and no team tool is ever offered.
     TEAM_CAPABILITY,
     'teams.collaboration',
+    // Routine proposals exist only when the Host also knows about routines; an older Host
+    // never sends a routine context and no proposal tool is ever offered.
+    ROUTINE_CAPABILITY,
+    // Tool, reasoning and usage events carry the detail a transcript needs; a Host that does
+    // not fold transcripts simply keeps the summaries it always read.
+    TRANSCRIPT_CAPABILITY,
   ]
   private provider!: ProviderAdapter
   private session?: ControlSession
@@ -94,13 +102,30 @@ export class RuntimeSupervisor {
         return { turnId: snapshot.turnId, generation: snapshot.generation, team: snapshot.team }
       }
     )
+    this.routines = new RoutineClient(
+      (input) => {
+        const session = this.session
+        if (!session) throw runtimeError('ROUTINE_UPDATE_REQUIRED', 'O canal com o Host não está disponível')
+        return session.requestRoutine(input)
+      },
+      () => {
+        const snapshot = this.turns.toolContext().snapshot
+        return { turnId: snapshot.turnId, generation: snapshot.generation, routines: snapshot.routines }
+      }
+    )
     this.tools = new ToolRegistry(
       this.journal,
       this.files,
       this.desktop,
       () => this.turns.toolContext(),
-      () => this.policy?.permissionMode ?? this.turns.toolContext().snapshot.permissionMode,
-      this.collaboration
+      // The stricter of the two, never the session's alone: a turn approved as "ask" keeps
+      // asking even while the session as a whole is allowed to do more.
+      () => {
+        const snapshot = this.turns.toolContext().snapshot
+        return this.policy ? narrowPermissionMode(this.policy.permissionMode, snapshot.permissionMode) : snapshot.permissionMode
+      },
+      this.collaboration,
+      this.routines
     )
     this.bridge = new ToolsBridge(this.options.state, this.tools)
     await this.bridge.start()
@@ -183,12 +208,13 @@ export class RuntimeSupervisor {
         if (process.env.MAESTRLY_BOT_ID && snapshot.botId !== process.env.MAESTRLY_BOT_ID)
           throw runtimeError('SESSION_CONFLICT', 'This task belongs to another bot')
         this.tools.invalidate()
-        await this.applyNetwork(this.policy?.network ?? snapshot.network)
-        return this.turns.start(
-          this.policy
-            ? { ...snapshot, network: this.policy.network, permissionMode: this.policy.permissionMode }
-            : snapshot
-        )
+        // The session policy and the turn's own ceiling are INTERSECTED, never substituted.
+        // Replacing the snapshot here used to let a session in full-vm mode widen a turn that
+        // was approved as "ask" — a scheduled routine would then run with an authorization the
+        // person never gave it. The stricter side always wins, in both directions.
+        const effective = this.effectivePolicy(snapshot)
+        await this.applyNetwork(effective.network)
+        return this.turns.start({ ...snapshot, network: effective.network, permissionMode: effective.permissionMode })
       },
       'turn.reconcile': ({ turnId, generation }) => this.turns.reconcile(turnId, generation),
       'turn.cancel': ({ turnId, generation }) => this.turns.cancel(turnId, generation),
@@ -204,6 +230,19 @@ export class RuntimeSupervisor {
       'files.read': (params) => this.files.read(params),
       'files.write': (params) => this.files.write(params),
       'files.abort': (params) => this.files.abort(params),
+    }
+  }
+  /**
+   * What this turn may actually do: the intersection of the session's current policy and the
+   * ceiling the Host approved for this specific piece of work. An authorization is never the
+   * larger of the two, and a later widening of the session cannot reach a turn already
+   * admitted under a narrower ceiling.
+   */
+  effectivePolicy(snapshot: { network: NetworkPolicy; permissionMode: 'ask' | 'full-vm' }) {
+    if (!this.policy) return { network: snapshot.network, permissionMode: snapshot.permissionMode }
+    return {
+      network: narrowNetworkPolicy(this.policy.network, snapshot.network),
+      permissionMode: narrowPermissionMode(this.policy.permissionMode, snapshot.permissionMode),
     }
   }
   /** The guest proxy is a first filter; the Host egress broker remains the authority. */

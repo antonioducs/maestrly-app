@@ -314,8 +314,17 @@ export class TurnService {
           detail: { code: 'FILE_SCAN_FAILED' },
         })
       }
-      const { finalMessage: _message, ...detail } = outcome
-      this.publish(active, { kind: 'turn.status', summary: 'Tarefa encerrada', detail })
+      const { finalMessage: _message, usage, ...detail } = outcome
+      // A Host older than the transcript work validates `usage` strictly: the three fields it
+      // knows stay there, the richer ones travel beside it and are ignored by a Host that never
+      // asked for them.
+      const { inputTokens, outputTokens, toolCalls, ...usageDetail } = usage ?? {}
+      const legacy = Object.fromEntries(Object.entries({ inputTokens, outputTokens, toolCalls }).filter(([, value]) => value !== undefined))
+      this.publish(active, {
+        kind: 'turn.status',
+        summary: 'Tarefa encerrada',
+        detail: { ...detail, ...(usage ? { usage: legacy } : {}), ...(Object.keys(usageDetail).length ? { usageDetail } : {}) },
+      })
     } finally {
       active.controller.abort()
       await this.processes.stop(active.snapshot.turnId)
