@@ -3,6 +3,7 @@ import { AccountDelegation } from '../accounts/delegation.js'
 import { PromptService } from '../chat/prompts.js'
 import { ExtensionsService } from '../chat/extensions-service.js'
 import { ExtensionsDelivery } from '../chat/extensions-delivery.js'
+import { UsageService } from '../chat/usage-service.js'
 import { randomUUID } from 'node:crypto'
 import {
   BOT_MUTATIONS,
@@ -73,6 +74,7 @@ export class BotService {
   readonly voice: VoiceService
   readonly prompts: PromptService
   readonly extensions: ExtensionsService
+  readonly usage: UsageService
   constructor(private readonly options: BotServiceOptions) {
     this.repo = new Repository(options.store)
     this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
@@ -171,6 +173,7 @@ export class BotService {
     this.prompts = new PromptService(this.options.store, this.repo)
     this.extensions = new ExtensionsService(this.options.store, this.repo, options.stateDirectory)
     this.coordinator.setExtensions(new ExtensionsDelivery(this.extensions, this.coordinator.events))
+    this.usage = new UsageService(this.repo)
     this.voice = new VoiceService({
       voice: new VoiceRepository(options.store),
       bots: this.repo,

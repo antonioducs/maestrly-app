@@ -89,6 +89,11 @@ export class BotRepository {
     if (!row) throw new HostError('NOT_FOUND', 'Bot not found')
     return parseRow(botSchema, row)
   }
+  /** The name alone, without parsing the whole record: an old or archived bot still has one. */
+  botName(id: string): string | undefined {
+    const row = this.db.prepare("SELECT json_extract(body,'$.name') AS name FROM bots WHERE id=?").get(id) as { name?: unknown } | undefined
+    return row ? String(row.name ?? '') : undefined
+  }
   botByVm(vmId: string): Bot | undefined {
     const row = this.db.prepare("SELECT body FROM bots WHERE vm_id=? AND status!='archived'").get(vmId)
     return row ? parseRow(botSchema, row) : undefined

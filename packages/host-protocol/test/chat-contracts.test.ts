@@ -135,6 +135,24 @@ describe('foldTranscript over rows recorded on real hardware', () => {
   })
 })
 
+describe('usage contracts', () => {
+  it('names the method on the shared envelope, bounds the window and shapes a summary without prices', async () => {
+    const { USAGE_MAX_WINDOW_DAYS, usageWindowProblem, usageSummarySchema, usageResultSchemas } = await import('../src/index.js')
+    expect(USAGE_MAX_WINDOW_DAYS).toBe(90)
+    expect(requestSchema.safeParse({ version: 1, id: 'r', method: 'usage.summary', params: { since: '2026-09-01T00:00:00.000Z' } }).success).toBe(true)
+    expect(requestSchema.safeParse({ version: 1, id: 'r', method: 'usage.summary', params: { since: '2026-09-01T00:00:00.000Z', force: true } }).success).toBe(false)
+    expect(usageWindowProblem('2026-09-01T00:00:00.000Z', '2026-09-02T00:00:00.000Z')).toBeNull()
+    expect(usageWindowProblem('2026-09-02T00:00:00.000Z', '2026-09-01T00:00:00.000Z')).toBe('USAGE_RANGE_INVALID')
+    expect(usageWindowProblem('2026-06-01T00:00:00.000Z', '2026-09-01T00:00:00.001Z')).toBe('USAGE_RANGE_INVALID')
+    const row = { provider: 'codex', model: 'gpt-5', turns: 1, input: 1, cachedInput: 0, output: 1, reasoningOutput: 0, toolCalls: 0 }
+    const summary = { since: '2026-09-01T00:00:00.000Z', until: '2026-09-02T00:00:00.000Z', turns: 1, input: 1, cachedInput: 0, output: 1, reasoningOutput: 0, toolCalls: 0, byModel: [row], byBot: [], byDay: [{ day: '2026-09-01', ...row, provider: undefined, model: undefined }] }
+    expect(usageResultSchemas['usage.summary']).toBe(usageSummarySchema)
+    expect(usageSummarySchema.safeParse({ ...summary, byDay: [{ day: '2026-09-01', turns: 1, input: 1, cachedInput: 0, output: 1, reasoningOutput: 0, toolCalls: 0 }] }).success).toBe(true)
+    // The Host never prices: a cost field is not part of the contract.
+    expect(usageSummarySchema.safeParse({ ...summary, byDay: [], byModel: [{ ...row, costUsd: 1 }] }).success).toBe(false)
+  })
+})
+
 describe('extension contracts', () => {
   it('shapes an MCP server by transport and never lets a secret value back out through the state', async () => {
     const { mcpServerSchema, extensionsStateSchema, extensionsApplySchema, hostToGuestRequestSchema, extensionResultSchemas, extensionMethods } = await import('../src/index.js')
