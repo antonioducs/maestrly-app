@@ -11,6 +11,7 @@ import { botUrlTransform } from './BotMarkdown'
 import { useTranscript } from './useTranscript'
 import { useContextMeter } from './useContextMeter'
 import { expandMessage, usePrompts } from '../prompts/usePrompts'
+import { useExtensions } from '../extensions/useExtensions'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
@@ -137,6 +138,9 @@ export function BotChat({
   const transcript = useTranscript(bot.id, connected, chatSupported, events)
   const meter = useContextMeter(transcript.turns, bot.model?.model)
   const { prompts, commands } = usePrompts(bot.id, connected, chatSupported)
+  const extensions = useExtensions(bot.id, connected, chatSupported)
+  const enabledServers = extensions.state.mcpServers.filter((server) => server.enabled).length
+  const enabledSkills = extensions.state.skills.filter((skill) => skill.enabled).length
   const refresh = async () => {
     const [pending, inspected] = await Promise.all([
       window.bot.bot({ method: 'bot.interactions.list', params: { botId: bot.id, pendingOnly: true } }),
@@ -374,6 +378,15 @@ export function BotChat({
           state.text = `/${command.name} `
           changed()
         }}
+        leftExtra={
+          // What this bot carries into the turn, at a glance; the details tab is where it changes.
+          enabledServers + enabledSkills > 0 ? (
+            <Button className="extension-chip" aria-label={t('extensions')} title={t('extensions')} onClick={details}>
+              {enabledServers > 0 && <span>MCP: {enabledServers}</span>}
+              {enabledSkills > 0 && <span>{t('skills')}: {enabledSkills}</span>}
+            </Button>
+          ) : undefined
+        }
         attachments={state.attachments}
         removeAttachment={(path) => { state.attachments = state.attachments.filter(file => file.path !== path); changed() }}
         value={state.text}

@@ -24,6 +24,8 @@ import { TeamClient } from './team-client'
 import { RoutineClient } from './routine-client'
 import { VoiceClient } from './voice-client'
 import { PromptClient } from './prompt-client'
+import { ExtensionClient, skillNameFrom } from './extension-client'
+import { readSkillFolder } from './skill-folder'
 import { ModelMetaCatalogue } from './model-meta'
 import { installMicrophonePermissions, requestSystemMicrophone } from './microphone-permissions'
 import { installLocalHost } from './host-installation'
@@ -134,6 +136,7 @@ if (!app.requestSingleInstanceLock()) {
     const routines = new RoutineClient(journal, request)
     const voice = new VoiceClient(journal, request)
     const prompts = new PromptClient(request)
+    const extensions = new ExtensionClient(request)
     // Context windows and prices for the meter: the fixture never touches the network.
     const modelMeta = fixture
       ? { current: async () => ({ 'openai/fixture-small': { contextWindow: 200_000, inputPer1M: 1.25, outputPer1M: 10 }, 'openai/fixture-large': { contextWindow: 400_000, inputPer1M: 5, outputPer1M: 20 } }) }
@@ -284,6 +287,7 @@ if (!app.requestSingleInstanceLock()) {
           routines.connected(host.id)
           voice.connected(host.id)
           prompts.connected(host.id)
+          extensions.connected(host.id)
           if (hostCapabilities.includes('bot.runtime.v1')) await bots.recover()
           // Only a Host that knows teams can answer team lookups; an older one is left alone.
           if (hostCapabilities.includes(TEAM_HOST_CAPABILITY)) await teams.recover()
@@ -341,6 +345,22 @@ if (!app.requestSingleInstanceLock()) {
         const result = await prompts.call(value)
         if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
         return result
+      },
+      extension: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(CHAT_HOST_CAPABILITY)) throw new Error('Atualize este computador para configurar MCP e skills')
+        const result = await extensions.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
+      },
+      // A skill is read here, in the main process, from a folder the person chose; the renderer
+      // never sees a path. The fixture may name the folder so interface tests skip the dialog.
+      pickFolder: async () => {
+        const preset = fixture ? process.env.MAESTRLY_BOT_FIXTURE_PICK_FOLDER : undefined
+        const path = preset ?? (await dialog.showOpenDialog(win, { properties: ['openDirectory'] }).then((result) => (result.canceled ? undefined : result.filePaths[0])))
+        if (!path) return null
+        return { name: skillNameFrom(basename(path)), files: await readSkillFolder(path) }
       },
       voice: async (value) => {
         const target = active

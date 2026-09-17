@@ -4,6 +4,7 @@ import { FixtureBots } from './fixture-bots'
 import { FixtureTeams } from './fixture-teams'
 import { FixtureRoutines } from './fixture-routines'
 import { FixturePrompts } from './fixture-prompts'
+import { FixtureExtensions } from './fixture-extensions'
 import { FixtureVoice } from './fixture-voice'
 import type { Host, Vm, Operation } from '@maestrly/host-protocol'
 // Explicit local UI fixture; never hardware evidence and disabled in packaged builds.
@@ -11,6 +12,7 @@ const timestamp = '2026-01-01T00:00:00.000Z'
 export class FixtureHost {
   connected = false
   readonly prompts = new FixturePrompts()
+  readonly extensions = new FixtureExtensions()
   vms: Vm[] = [
     {
       id: 'fixture-vm',
@@ -133,6 +135,10 @@ export class FixtureHost {
     if (method.startsWith('prompt.')) {
       if (this.options.noBots || this.options.noChat) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
       return this.prompts.request(method, p)
+    }
+    if (method.startsWith('extension.')) {
+      if (this.options.noBots || this.options.noChat) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      return this.extensions.request(method, p)
     }
     if (method === 'host.inspect') return this.hostInfo()
     if (method === 'vm.list')

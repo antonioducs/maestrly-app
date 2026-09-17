@@ -6,7 +6,9 @@ import { BotFiles } from './BotFiles'
 import { BotMemory } from './BotMemory'
 import { BotSettings } from '../settings/BotSettings'
 import { BotComputer } from './BotComputer'
-const tabs = ['instructions', 'model', 'files', 'memory', 'permissions', 'internet'] as const
+import { RoutinePanel } from '../routines/RoutinePanel'
+import { ExtensionsPanel } from '../extensions/ExtensionsPanel'
+const tabs = ['instructions', 'model', 'files', 'memory', 'routines', 'extensions', 'permissions', 'internet'] as const
 export function BotDetails({
   bot,
   advanced,
@@ -15,6 +17,9 @@ export function BotDetails({
   onPreview,
   onAccounts,
   onOpenDesktop,
+  connected = true,
+  routinesSupported = false,
+  extensionsSupported = false,
 }: {
   bot: Bot
   advanced: boolean
@@ -23,6 +28,11 @@ export function BotDetails({
   onPreview: (name: string, text: string) => void
   onAccounts: () => void
   onOpenDesktop?: () => void
+  connected?: boolean
+  /** False on a Host that predates routines; the tab explains instead of failing. */
+  routinesSupported?: boolean
+  /** False on a Host that predates the chat experience; the tab explains instead of failing. */
+  extensionsSupported?: boolean
 }) {
   const t = useT()
   const [tab, setTab] = useState<(typeof tabs)[number]>('instructions')
@@ -139,6 +149,10 @@ export function BotDetails({
       </>}
       {tab === 'files' && <BotFiles botId={bot.id} onPreview={onPreview} />}
       {tab === 'memory' && <BotMemory botId={bot.id} />}
+      {tab === 'routines' && (
+        <RoutinePanel target={{ kind: 'bot', id: bot.id }} targetName={bot.name} connected={connected} supported={routinesSupported} />
+      )}
+      {tab === 'extensions' && <ExtensionsPanel botId={bot.id} connected={connected} supported={extensionsSupported} />}
       {tab === 'permissions' && (
         <>
           <p>{t(bot.permissionMode === 'ask' ? 'askMode' : 'fullMode')}</p>

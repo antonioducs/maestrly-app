@@ -1,6 +1,8 @@
 import type { ChatModelMeta } from '@maestrly/chat-ui/cost'
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
 import type {
+  ExtensionMethod,
+  ExtensionResult,
   PromptMethod,
   PromptResult,
   BotMethod,
@@ -42,6 +44,9 @@ export type TeamCall<M extends TeamMethod = TeamMethod> = { method: M; params: R
 export type RoutineCall<M extends RoutineMethod = RoutineMethod> = { method: M; params: Record<string, unknown> }
 export type VoiceCall<M extends VoiceMethod = VoiceMethod> = { method: M; params: Record<string, unknown> }
 export type PromptCall<M extends PromptMethod = PromptMethod> = { method: M; params: Record<string, unknown> }
+export type ExtensionCall<M extends ExtensionMethod = ExtensionMethod> = { method: M; params: Record<string, unknown> }
+/** A folder read for a skill install: relative paths and contents, bounded by the Host limits. */
+export type PickedFolder = { name: string; files: { path: string; dataBase64: string }[] }
 /** Where a Host runs: this Mac through the fixed local command, or a remote alias already trusted in SSH config. */
 export type HostTarget =
   | { kind: 'local'; id: 'local'; displayName: string; hostId?: string; lastConnectedAt?: string }
@@ -104,6 +109,10 @@ export interface BotApi {
   team<M extends TeamMethod>(call: TeamCall<M>): Promise<TeamResult<M>>
   routine<M extends RoutineMethod>(call: RoutineCall<M>): Promise<RoutineResult<M>>
   prompt<M extends PromptMethod>(call: PromptCall<M>): Promise<PromptResult<M>>
+  /** Per-bot MCP servers and skills; secret values go in and never come back. */
+  extension<M extends ExtensionMethod>(call: ExtensionCall<M>): Promise<ExtensionResult<M>>
+  /** Chooses a skill folder with the main-process dialog; null when cancelled. */
+  pickFolder(): Promise<PickedFolder | null>
   voice: VoiceApi
   syncAccounts(): Promise<{ unavailableHosts: string[] }>
   localHost(): Promise<LocalHostStatus>

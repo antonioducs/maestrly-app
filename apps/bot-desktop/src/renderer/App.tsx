@@ -559,6 +559,7 @@ function Shell({
                 onPreview={(name, text) => setPanel({ kind: 'preview', name, text })}
                 connected={connection.connected}
                 routinesSupported={routinesSupported}
+                extensionsSupported={chatSupported}
               />
             )
           )}

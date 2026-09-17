@@ -9,6 +9,8 @@ import {
   voiceResultSchemas,
   promptResultSchemas,
   type PromptMethod,
+  extensionResultSchemas,
+  type ExtensionMethod,
   type BotMethod,
   type TeamMethod,
   type RoutineMethod,
@@ -58,6 +60,12 @@ export function validateResult(method: string, value: unknown): unknown {
   if (method.startsWith('prompt.')) {
     const schema = promptResultSchemas[method as PromptMethod]
     if (!schema) throw new Error('Unsupported prompt result')
+    return schema.parse(value)
+  }
+  // Extension states are typed too, and the schema itself has no place for a secret value.
+  if (method.startsWith('extension.')) {
+    const schema = extensionResultSchemas[method as ExtensionMethod]
+    if (!schema) throw new Error('Unsupported extension result')
     return schema.parse(value)
   }
   if (method.startsWith('voice.')) {
