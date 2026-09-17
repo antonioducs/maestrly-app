@@ -483,5 +483,15 @@ export const ptBR = {
   pickerBusyReason: 'Espere a tarefa atual terminar para trocar.',
   voiceDevice: 'Escolher microfone',
   voiceDeviceDefault: 'Microfone padrão do sistema',
+  commands: 'Comandos',
+  commandsHelp: 'Atalhos que você digita com / no chat. O texto do comando substitui o atalho; $ARGUMENTS vira o que você escrever depois dele.',
+  newCommand: 'Novo comando',
+  commandName: 'Nome do comando',
+  description: 'Descrição',
+  scope: 'Vale para',
+  scopeHost: 'Todos os bots deste computador',
+  template: 'Texto do comando',
+  templateHint: 'Use $ARGUMENTS onde o que você digitar depois do comando deve entrar.',
+  delete: 'Remover',
 } as const
 export type TranslationKey = keyof typeof ptBR

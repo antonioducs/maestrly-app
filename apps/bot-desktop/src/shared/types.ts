@@ -1,6 +1,8 @@
 import type { ChatModelMeta } from '@maestrly/chat-ui/cost'
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
 import type {
+  PromptMethod,
+  PromptResult,
   BotMethod,
   BotResult,
   DesktopInput,
@@ -39,6 +41,7 @@ export type BotCall<M extends BotMethod = BotMethod> = { method: M; params: Reco
 export type TeamCall<M extends TeamMethod = TeamMethod> = { method: M; params: Record<string, unknown> }
 export type RoutineCall<M extends RoutineMethod = RoutineMethod> = { method: M; params: Record<string, unknown> }
 export type VoiceCall<M extends VoiceMethod = VoiceMethod> = { method: M; params: Record<string, unknown> }
+export type PromptCall<M extends PromptMethod = PromptMethod> = { method: M; params: Record<string, unknown> }
 /** Where a Host runs: this Mac through the fixed local command, or a remote alias already trusted in SSH config. */
 export type HostTarget =
   | { kind: 'local'; id: 'local'; displayName: string; hostId?: string; lastConnectedAt?: string }
@@ -100,6 +103,7 @@ export interface BotApi {
   bot<M extends BotMethod>(call: BotCall<M>): Promise<BotResult<M>>
   team<M extends TeamMethod>(call: TeamCall<M>): Promise<TeamResult<M>>
   routine<M extends RoutineMethod>(call: RoutineCall<M>): Promise<RoutineResult<M>>
+  prompt<M extends PromptMethod>(call: PromptCall<M>): Promise<PromptResult<M>>
   voice: VoiceApi
   syncAccounts(): Promise<{ unavailableHosts: string[] }>
   localHost(): Promise<LocalHostStatus>

@@ -394,7 +394,7 @@ function Shell({
         {view === 'accounts' ? <AccountsPage onEnvironments={openEnvironments} /> : view === 'environments' ? <EnvironmentsPage hosts={hosts} connect={connect} refreshHosts={refreshHosts} advanced={computers} /> : view === 'computers' ? (
           <ComputersPage />
         ) : view === 'settings' ? (
-          <Settings preferences={preferences} save={savePreferences} computers={computers} />
+          <Settings preferences={preferences} save={savePreferences} computers={computers} bots={bots} connected={connection.connected} commandsSupported={chatSupported} />
         ) : (
           <>
             {failedTarget && (

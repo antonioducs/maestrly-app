@@ -12,6 +12,7 @@ const api: BotApi = {
   bot: (call) => ipcRenderer.invoke('bot:bot', call),
   team: (call) => ipcRenderer.invoke('bot:team', call),
   routine: (call) => ipcRenderer.invoke('bot:routine', call),
+  prompt: (call) => ipcRenderer.invoke('bot:prompt', call),
   // Audio never becomes a path, a URL or a handle in the renderer: it is handed over once and
   // read back by clip identity.
   voice: {

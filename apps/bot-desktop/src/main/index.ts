@@ -23,6 +23,7 @@ import { BotClient } from './bot-client'
 import { TeamClient } from './team-client'
 import { RoutineClient } from './routine-client'
 import { VoiceClient } from './voice-client'
+import { PromptClient } from './prompt-client'
 import { ModelMetaCatalogue } from './model-meta'
 import { installMicrophonePermissions, requestSystemMicrophone } from './microphone-permissions'
 import { installLocalHost } from './host-installation'
@@ -132,6 +133,7 @@ if (!app.requestSingleInstanceLock()) {
     const teams = new TeamClient(journal, request)
     const routines = new RoutineClient(journal, request)
     const voice = new VoiceClient(journal, request)
+    const prompts = new PromptClient(request)
     // Context windows and prices for the meter: the fixture never touches the network.
     const modelMeta = fixture
       ? { current: async () => ({ 'openai/fixture-small': { contextWindow: 200_000, inputPer1M: 1.25, outputPer1M: 10 }, 'openai/fixture-large': { contextWindow: 400_000, inputPer1M: 5, outputPer1M: 20 } }) }
@@ -281,6 +283,7 @@ if (!app.requestSingleInstanceLock()) {
           teams.connected(host.id)
           routines.connected(host.id)
           voice.connected(host.id)
+          prompts.connected(host.id)
           if (hostCapabilities.includes('bot.runtime.v1')) await bots.recover()
           // Only a Host that knows teams can answer team lookups; an older one is left alone.
           if (hostCapabilities.includes(TEAM_HOST_CAPABILITY)) await teams.recover()
@@ -328,6 +331,14 @@ if (!app.requestSingleInstanceLock()) {
         if (!target) throw new Error('Conecte-se a um computador antes de continuar')
         if (!hostCapabilities.includes(ROUTINE_HOST_CAPABILITY)) throw new Error('Atualize este computador para usar rotinas')
         const result = await routines.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
+      },
+      prompt: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(CHAT_HOST_CAPABILITY)) throw new Error('Atualize este computador para usar comandos')
+        const result = await prompts.call(value)
         if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
         return result
       },

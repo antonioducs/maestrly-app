@@ -3,14 +3,23 @@ import { useState } from 'react'
 import type { UiPreferences } from '../../../shared/types'
 import { useT } from '../../i18n'
 import { AdvancedSettings } from './AdvancedSettings'
+import { PromptsSettings } from '../prompts/PromptsSettings'
+import type { Bot } from '@maestrly/host-protocol'
 export function Settings({
   preferences,
   save,
   computers,
+  bots,
+  connected,
+  commandsSupported = false,
 }: {
   preferences: UiPreferences
   save: (preferences: Partial<UiPreferences>) => Promise<void>
   computers: () => void
+  /** Stored commands need a connected Host; without one the section only explains itself. */
+  bots?: Bot[]
+  connected?: boolean
+  commandsSupported?: boolean
 }) {
   const t = useT()
   const [advanced, setAdvanced] = useState(false)
@@ -52,6 +61,7 @@ export function Settings({
         {t('showAdvanced')}
       </label>
       <p>{t('presentationOnly')}</p>
+      {commandsSupported && <PromptsSettings bots={bots ?? []} connected={!!connected} />}
       <Button onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
         {t('advanced')}
       </Button>

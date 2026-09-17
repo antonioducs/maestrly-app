@@ -10,6 +10,7 @@ import { FileCard } from './FileCard'
 import { botUrlTransform } from './BotMarkdown'
 import { useTranscript } from './useTranscript'
 import { useContextMeter } from './useContextMeter'
+import { expandMessage, usePrompts } from '../prompts/usePrompts'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
@@ -135,6 +136,7 @@ export function BotChat({
   const events = useBotEvents(bot.id, connected, () => refresh(), (error) => setError(String(error)))
   const transcript = useTranscript(bot.id, connected, chatSupported, events)
   const meter = useContextMeter(transcript.turns, bot.model?.model)
+  const { prompts, commands } = usePrompts(bot.id, connected, chatSupported)
   const refresh = async () => {
     const [pending, inspected] = await Promise.all([
       window.bot.bot({ method: 'bot.interactions.list', params: { botId: bot.id, pendingOnly: true } }),
@@ -199,7 +201,8 @@ export function BotChat({
           params: {
             botId: bot.id,
             clientMessageId: state.clientMessageId,
-            content: state.text,
+            // A stored command is expanded here, in the application: the Host receives plain text.
+            content: expandMessage(state.text, prompts),
             attachments: state.attachments,
           },
         })
@@ -366,6 +369,11 @@ export function BotChat({
         onBotUpdate={onBotUpdate}
         connected={connected}
         metaSlot={<ChatContextMeter usage={meter.usage} meta={meter.meta} cost={meter.cost} />}
+        commands={commands}
+        onPickCommand={(command) => {
+          state.text = `/${command.name} `
+          changed()
+        }}
         attachments={state.attachments}
         removeAttachment={(path) => { state.attachments = state.attachments.filter(file => file.path !== path); changed() }}
         value={state.text}

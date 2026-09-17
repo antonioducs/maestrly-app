@@ -5,8 +5,14 @@ import {
   verifyResultSchema,
   botResultSchemas,
   teamResultSchemas,
+  routineResultSchemas,
+  voiceResultSchemas,
+  promptResultSchemas,
+  type PromptMethod,
   type BotMethod,
   type TeamMethod,
+  type RoutineMethod,
+  type VoiceMethod,
   type Host,
   type Vm,
   type Operation,
@@ -41,6 +47,24 @@ export function validateResult(method: string, value: unknown): unknown {
   }
   // Team results are typed projections too: their text must not pass through the
   // diagnostic sanitizer, which would strip exactly the content the person asked for.
+  // Routine and voice results are typed projections as well. A routine's request and a voice
+  // transcript are the person's own words: running them through the diagnostic sanitizer would
+  // strip paths out of the very text they dictated.
+  if (method.startsWith('routine.')) {
+    const schema = routineResultSchemas[method as RoutineMethod]
+    if (!schema) throw new Error('Unsupported routine result')
+    return schema.parse(value)
+  }
+  if (method.startsWith('prompt.')) {
+    const schema = promptResultSchemas[method as PromptMethod]
+    if (!schema) throw new Error('Unsupported prompt result')
+    return schema.parse(value)
+  }
+  if (method.startsWith('voice.')) {
+    const schema = voiceResultSchemas[method as VoiceMethod]
+    if (!schema) throw new Error('Unsupported voice result')
+    return schema.parse(value)
+  }
   if (method.startsWith('team.')) {
     const schema = teamResultSchemas[method as TeamMethod]
     if (!schema) throw new Error('Unsupported team result')
