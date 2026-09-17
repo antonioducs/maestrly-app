@@ -94,7 +94,12 @@ export function toolDetail(item: Record<string, unknown>): Record<string, unknow
       .map((change) => ({ path: text(change.path).slice(0, 512), kind: (text(change.kind) || text(object(change.kind).type) || 'update').slice(0, 20) }))
   return detail
 }
-export async function serverRequest(request: CodexServerRequest, hooks: TurnHooks) {
+/** What an elicitation decision needs to know: which servers a person configured and how strict this turn is. */
+export interface ServerRequestContext {
+  configuredServers: string[]
+  permissionMode: 'ask' | 'full-vm'
+}
+export async function serverRequest(request: CodexServerRequest, hooks: TurnHooks, context: ServerRequestContext = { configuredServers: [], permissionMode: 'ask' }) {
   const params = object(request.params)
   if (['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'].includes(request.method)) {
     const command = request.method.includes('commandExecution')
@@ -130,22 +135,33 @@ export async function serverRequest(request: CodexServerRequest, hooks: TurnHook
     return { answers }
   }
   /**
-   * With approvals on request, Codex asks the client to confirm every MCP tool call. The only
-   * configured server is the bot's own catalogue (browser, computer, files, memory), whose limits
-   * the Host already enforces, so it is accepted; anything else is declined instead of refused.
-   * Without this answer Codex treats each tool call as refused, which silently disables the
-   * browser and computer tools in `ask` mode.
+   * With approvals on request, Codex asks the client to confirm every MCP tool call. The bot's
+   * own catalogue (browser, computer, files, memory) has limits the Host already enforces, so it
+   * is accepted. A server the person configured for this bot follows the turn's ceiling: in
+   * full-vm it is accepted, in ask mode the person decides. Anything else is declined instead of
+   * refused — without an answer Codex treats each tool call as refused, which silently disables
+   * the browser and computer tools in `ask` mode.
    */
   if (request.method === 'mcpServer/elicitation/request') {
     const server = text(params.server_name ?? params.serverName ?? params.server ?? object(params.request).server_name)
-    const mine = !server || server === MCP_SERVER_NAME
-    if (!mine)
-      hooks.emit({
-        kind: 'diagnostic',
-        summary: 'Pedido de um servidor de ferramentas desconhecido recusado',
-        detail: { server: server.slice(0, 80) },
+    if (!server || server === MCP_SERVER_NAME) return { action: 'accept' }
+    if (context.configuredServers.includes(server)) {
+      if (context.permissionMode === 'full-vm') return { action: 'accept' }
+      const decision = await hooks.requestApproval({
+        actionId: randomUUID(),
+        title: `Usar o servidor MCP ${server}`,
+        reason: text(params.message).slice(0, 2000),
+        consequence: 'Executa uma ferramenta de um servidor MCP configurado para este bot',
+        parameters: { server },
       })
-    return { action: mine ? 'accept' : 'decline' }
+      return { action: decision === 'approve' ? 'accept' : 'decline' }
+    }
+    hooks.emit({
+      kind: 'diagnostic',
+      summary: 'Pedido de um servidor de ferramentas desconhecido recusado',
+      detail: { server: server.slice(0, 80) },
+    })
+    return { action: 'decline' }
   }
   hooks.emit({
     kind: 'diagnostic',

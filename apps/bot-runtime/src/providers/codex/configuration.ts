@@ -19,11 +19,17 @@ Você trabalha numa área de trabalho Linux (1280×800) que a pessoa pode ver ao
 O navegador é o Chromium gerenciado desta área de trabalho, usado pelas ferramentas browser_* do servidor maestrly-bot: browser_navigate abre a página e a janela aparece na tela. Quando pedirem para abrir o navegador ou o Chrome, ou para pesquisar algo, use essas ferramentas (para pesquisar, abra https://www.google.com/search?q=<termos>).
 O Chromium não fica no PATH: não o procure pelo terminal e não tente instalar outro navegador.
 Para outras janelas da área de trabalho, observe com computer_screenshot e aja com computer_click, computer_type e computer_key.`
+/** Per-bot extensions already applied to this runtime, as the thread configuration needs them. */
+export interface ConfiguredExtensions {
+  mcpServers: Record<string, unknown>
+  skills: string[]
+}
 export function configuration(
   snapshot: TurnSnapshot,
   workspace: string,
   recreated: boolean,
-  state = process.env.MAESTRLY_BOT_STATE ?? '/var/lib/maestrly-bot'
+  state = process.env.MAESTRLY_BOT_STATE ?? '/var/lib/maestrly-bot',
+  extensions?: ConfiguredExtensions
 ): { thread: CodexThreadStartParams; sandboxPolicy: CodexSandboxPolicy } {
   const full = snapshot.permissionMode === 'full-vm'
   const blocks = [snapshot.instructions, ENVIRONMENT_INSTRUCTIONS]
@@ -38,6 +44,10 @@ export function configuration(
   // dependencies produced. Without this block the model would know it has a shared file but not
   // where it is, and would burn its whole tool allowance searching for it.
   if (snapshot.team) blocks.push(teamBlock(snapshot.team))
+  // Reference time and what a suggestion actually is. Without this the model either invents a
+  // time zone or announces a routine that does not exist yet.
+  if (snapshot.routines) blocks.push(routinesBlock(snapshot.routines))
+  if (extensions && (extensions.skills.length || Object.keys(extensions.mcpServers).length)) blocks.push(extensionsBlock(extensions))
   if (snapshot.contextSummary) blocks.push(snapshot.contextSummary)
   if (recreated && snapshot.recentMessages.length)
     blocks.push(
@@ -55,7 +65,10 @@ export function configuration(
       developerInstructions: blocks.join('\n\n'),
       config: {
         features: { web_search_request: false },
+        // The person's servers first, the bot's own catalogue last: whatever a person named,
+        // the tool server the Host authorizes is always the one under `maestrly-bot`.
         mcp_servers: {
+          ...(extensions?.mcpServers ?? {}),
           [MCP_SERVER_NAME]: {
             command: process.execPath,
             args: [
@@ -80,6 +93,46 @@ export function configuration(
           excludeSlashTmp: false,
         },
   }
+}
+
+/**
+ * The extensions a person configured for this bot, by name only. Codex already offers the tools
+ * and reads the skills; this block exists so the model knows they were put there on purpose and
+ * does not go looking for them elsewhere.
+ */
+export function extensionsBlock(extensions: ConfiguredExtensions): string {
+  const lines = ['## Extensões deste bot']
+  const servers = Object.keys(extensions.mcpServers)
+  if (servers.length) lines.push(`Servidores MCP configurados pela pessoa: ${servers.join(', ')}. Use as ferramentas deles quando forem úteis.`)
+  if (extensions.skills.length) lines.push(`Skills instaladas: ${extensions.skills.join(', ')}. Abra a skill antes de seguir o que ela pede.`)
+  return lines.join('\n').slice(0, 4 * 1024)
+}
+
+/**
+ * The routine section of a turn. It gives the model an anchor for relative phrasing and states
+ * the one rule that matters: a suggestion is a card a person still has to confirm. Inside a
+ * scheduled run it says the opposite — that this turn may not suggest anything at all — so a
+ * routine cannot quietly breed more routines.
+ */
+export function routinesBlock(routines: NonNullable<TurnSnapshot['routines']>): string {
+  const lines = ['## Rotinas e horários']
+  lines.push(
+    routines.timeZone
+      ? `Agora são ${routines.nowLocal} no fuso da pessoa (${routines.timeZone}).`
+      : 'O fuso horário da pessoa não é conhecido. Se ela falar de horários, pergunte o fuso antes de sugerir qualquer rotina.'
+  )
+  if (!routines.canPropose) {
+    lines.push('Esta execução não pode criar, alterar nem ativar rotinas. Se algo deveria virar rotina, escreva isso no seu resultado para a pessoa decidir depois.')
+    return lines.join('\n')
+  }
+  lines.push(
+    'Se a pessoa pedir algo recorrente, use routine_propose para deixar um CARTÃO de sugestão.',
+    'O cartão não agenda nada: a rotina só existe depois que a pessoa revisar e confirmar na tela. Nunca diga que já está agendada.',
+    `Você pode deixar no máximo ${routines.proposalsRemaining} sugestão(ões) nesta conversa agora.`
+  )
+  if (routines.existing.length)
+    lines.push('', 'Rotinas que já existem para este destino:', ...routines.existing.map((routine) => `- ${routine.name}: ${routine.schedule}`))
+  return lines.join('\n').slice(0, 8 * 1024)
 }
 
 /**

@@ -12,17 +12,24 @@ import { modelCatalogEntrySchema, type ModelCatalogEntry, type TurnSnapshot } fr
 import { FileService } from '../../files/service.js'
 import type { ProviderAdapter, TurnHooks, TurnOutcome } from '../provider.js'
 import { CodexAccount } from './account.js'
-import { configuration } from './configuration.js'
+import { configuration, type ConfiguredExtensions } from './configuration.js'
 import { notificationEvent, object, serverRequest } from './events.js'
+/** The per-bot extensions the runtime holds; the adapter reads them when it configures a thread. */
+export interface ExtensionsSource {
+  readonly names: string[]
+  readonly skills: string[]
+  codexServers(): Record<string, unknown>
+}
 export class CodexAdapter implements ProviderAdapter {
   readonly auth: CodexAccount
-  private active?: { turnId: string; threadId?: string; providerTurnId?: string; hooks: TurnHooks }
+  private active?: { turnId: string; threadId?: string; providerTurnId?: string; hooks: TurnHooks; permissionMode: 'ask' | 'full-vm' }
   private threads = new Map<string, string>()
   private constructor(
     readonly client: CodexAppServerClient,
     private workspace: string,
     private state: string,
-    delegated = false
+    delegated = false,
+    private extensions?: ExtensionsSource
   ) {
     this.auth = new CodexAccount(client, { home: join(state, 'codex'), state, delegated })
     client.setServerRequestHandler((request) => {
@@ -34,8 +41,15 @@ export class CodexAdapter implements ProviderAdapter {
         (params.turnId && this.active.providerTurnId && params.turnId !== this.active.providerTurnId)
       )
         throw new Error('Stale provider request')
-      return serverRequest(request, this.active.hooks)
+      return serverRequest(request, this.active.hooks, { configuredServers: this.extensions?.names ?? [], permissionMode: this.active.permissionMode })
     })
+  }
+  /** What the thread configuration receives; absent when nothing was applied so the shape stays exactly as before. */
+  private configured(): ConfiguredExtensions | undefined {
+    if (!this.extensions) return undefined
+    const mcpServers = this.extensions.codexServers()
+    const skills = this.extensions.skills
+    return Object.keys(mcpServers).length || skills.length ? { mcpServers, skills } : undefined
   }
   static async connect(options: {
     state: string
@@ -43,6 +57,7 @@ export class CodexAdapter implements ProviderAdapter {
     version: string
     binaryPath?: string
     binaryArgs?: string[]
+    extensions?: ExtensionsSource
   }) {
     const home = join(options.state, 'codex')
     await mkdir(home, { recursive: true, mode: 0o700 })
@@ -71,7 +86,7 @@ export class CodexAdapter implements ProviderAdapter {
       // minimalEnvironment starts empty; explicit env above wins after prefix removal.
       unsetEnvPrefixes: ['OPENAI_', 'CODEX_'],
     }
-    return new CodexAdapter(await CodexAppServerClient.connect(connection), options.workspace, options.state, delegated)
+    return new CodexAdapter(await CodexAppServerClient.connect(connection), options.workspace, options.state, delegated, options.extensions)
   }
   async inspect() {
     if (this.client.state !== 'ready') throw new Error('Provider unavailable')
@@ -104,6 +119,7 @@ export class CodexAdapter implements ProviderAdapter {
     const active = {
       turnId: snapshot.turnId,
       hooks,
+      permissionMode: snapshot.permissionMode,
       threadId: undefined as string | undefined,
       providerTurnId: undefined as string | undefined,
     }
@@ -161,14 +177,14 @@ export class CodexAdapter implements ProviderAdapter {
         await this.client.request('thread/unarchive', { threadId: existing }, { signal })
         active.threadId = (
           await this.client.resumeThread(
-            { threadId: existing, ...configuration(snapshot, this.workspace, false, this.state).thread },
+            { threadId: existing, ...configuration(snapshot, this.workspace, false, this.state, this.configured()).thread },
             { signal }
           )
         ).thread.id
       }
       if (!active.threadId)
         active.threadId = (
-          await this.client.startThread(configuration(snapshot, this.workspace, true, this.state).thread, { signal })
+          await this.client.startThread(configuration(snapshot, this.workspace, true, this.state, this.configured()).thread, { signal })
         ).thread.id
       this.threads.set(snapshot.conversationId, active.threadId)
       const input: CodexUserInput[] = [codexTextInput(snapshot.message)]
@@ -186,7 +202,7 @@ export class CodexAdapter implements ProviderAdapter {
         input,
         model: snapshot.model?.model,
         effort: snapshot.model?.effort,
-        sandboxPolicy: configuration(snapshot, this.workspace, false, this.state).sandboxPolicy,
+        sandboxPolicy: configuration(snapshot, this.workspace, false, this.state, this.configured()).sandboxPolicy,
       })
       active.providerTurnId = response.turn.id
       hooks.emit({

@@ -28,7 +28,7 @@ async function runTurn(prompt) {
         id,
         method: 'mcpServer/elicitation/request',
         params: {
-          server_name: prompt.includes('#elicit-foreign') ? 'outro-servidor' : 'maestrly-bot',
+          server_name: prompt.includes('#elicit-foreign') ? 'outro-servidor' : prompt.includes('#elicit-configured') ? 'meu-mcp' : 'maestrly-bot',
           elicitation_id: 'elicit-1',
           message: 'Run browser_navigate?',
           requestedSchema: { type: 'object', properties: {} },

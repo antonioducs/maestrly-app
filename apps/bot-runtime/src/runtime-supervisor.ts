@@ -7,8 +7,10 @@ import { ToolsBridge } from './tools/bridge.js'
 import { LocalDesktopTools, type DesktopTools } from './desktop/desktop-tools.js'
 import { ManagedDesktopClient } from './desktop/managed-client.js'
 import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ROUTINE_CAPABILITY, TEAM_CAPABILITY, TRANSCRIPT_CAPABILITY, narrowNetworkPolicy, narrowPermissionMode, type NetworkPolicy } from '@maestrly/host-protocol'
+import { EXTENSIONS_CAPABILITY, ROUTINE_CAPABILITY, TEAM_CAPABILITY, TRANSCRIPT_CAPABILITY, narrowNetworkPolicy, narrowPermissionMode, type NetworkPolicy } from '@maestrly/host-protocol'
+import { ExtensionsStore } from './extensions/store.js'
 import { Journal } from './control/journal.js'
 import { ControlSession, type HandlerMap } from './control/session.js'
 import { openControlTransport } from './control/transport.js'
@@ -52,7 +54,12 @@ export class RuntimeSupervisor {
     // Tool, reasoning and usage events carry the detail a transcript needs; a Host that does
     // not fold transcripts simply keeps the summaries it always read.
     TRANSCRIPT_CAPABILITY,
+    // Per-bot MCP servers and skills arrive before a turn; an older Host never sends them and
+    // this runtime simply runs with the bot's own tool server, as it always did.
+    EXTENSIONS_CAPABILITY,
   ]
+  /** Outlives provider restarts: what the Host applied stays until the session ends. */
+  readonly extensions: ExtensionsStore
   private provider!: ProviderAdapter
   private session?: ControlSession
   private stopped = new AbortController()
@@ -70,16 +77,19 @@ export class RuntimeSupervisor {
       controlPath: string
       version: string
       bootId?: string
-      providerFactory: () => Promise<ProviderAdapter>
+      providerFactory: (extensions: ExtensionsStore) => Promise<ProviderAdapter>
       /** Agent socket of the session graphical services; absent in unmanaged workers. */
       desktopServices?: string
     }
   ) {
     this.journal = new Journal(options.state)
     this.files = new FileService(options.workspace)
+    this.extensions = new ExtensionsStore(join(options.state, 'codex'))
   }
   async initialize() {
     await this.files.init()
+    // Skills left by a previous run are not trusted to be current; the Host resends them.
+    await this.extensions.reset()
     recoverTurns(this.journal)
     // Managed sessions: browser, egress and proxy belong to the persistent graphical
     // services, so stopping automation never closes them.
@@ -230,6 +240,12 @@ export class RuntimeSupervisor {
       'files.read': (params) => this.files.read(params),
       'files.write': (params) => this.files.write(params),
       'files.abort': (params) => this.files.abort(params),
+      // Refused while a turn runs: Codex keeps a thread's MCP processes until the next
+      // archive/unarchive, so a change mid-turn would only take effect at an unknown moment.
+      'extensions.apply': (payload) => {
+        if (this.turns.busy) throw runtimeError('TURN_BUSY', 'Extensions change between turns, not during one')
+        return this.extensions.apply(payload)
+      },
     }
   }
   /**
@@ -280,7 +296,7 @@ export class RuntimeSupervisor {
       this.stopped.signal.throwIfAborted()
       this.restartAttempts.push(Date.now())
       try {
-        const provider = await this.options.providerFactory()
+        const provider = await this.options.providerFactory(this.extensions)
         provider.auth.setCredentialProvider?.((forceRefresh, credentialHash) => {
           if (!this.session) return Promise.reject(new Error('Account channel unavailable'))
           return this.session.requestAccount(forceRefresh, credentialHash)

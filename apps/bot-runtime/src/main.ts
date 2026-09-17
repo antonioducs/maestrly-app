@@ -31,10 +31,10 @@ export async function main() {
     version,
     controlPath: process.env.MAESTRLY_BOT_CONTROL_PATH ?? '/dev/virtio-ports/org.maestrly.bot.control.0',
     desktopServices: process.env.MAESTRLY_BOT_DESKTOP_SERVICES,
-    providerFactory: () =>
+    providerFactory: (extensions) =>
       provider === 'fixture'
         ? Promise.resolve(new FixtureProvider(workspace))
-        : CodexAdapter.connect({ state, workspace, version }),
+        : CodexAdapter.connect({ state, workspace, version, extensions }),
   })
   for (const signal of ['SIGTERM', 'SIGINT'] as const)
     process.once(signal, () => {
