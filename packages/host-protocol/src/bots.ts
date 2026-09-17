@@ -101,6 +101,11 @@ export const usageSchema = z.strictObject({
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   toolCalls: z.number().int().nonnegative().optional(),
+  // Reported by guests that announce bot.transcript.v1; older guests simply omit them.
+  cachedInputTokens: z.number().int().nonnegative().optional(),
+  reasoningOutputTokens: z.number().int().nonnegative().optional(),
+  contextTokens: z.number().int().nonnegative().optional(),
+  modelContextWindow: z.number().int().nonnegative().optional(),
 })
 export const botTurnSchema = z.strictObject({
   id,
@@ -118,6 +123,8 @@ export const botTurnSchema = z.strictObject({
   usage: usageSchema.optional(),
   error: errorSchema.optional(),
   attention: z.string().max(1000).optional(),
+  /** The model selected on the bot when this turn was admitted; what the usage ledger prices. */
+  model: modelSelectionSchema.optional(),
   revision,
   createdAt: isoDate,
   updatedAt: isoDate,

@@ -28,6 +28,7 @@ import {
   runtimeInfoSchema,
 } from './bots.js'
 import { networkPolicySchema, hostnameSchema } from './bot-policy.js'
+import { transcriptPageSchema } from './chat.js'
 import { botSessionSchema, sessionsInventorySchema } from './bot-sessions.js'
 import {
   desktopClaimResultSchema,
@@ -124,6 +125,10 @@ export const botRequests = [
   request('bot.auth.setApiKey', z.strictObject({ botId: id, apiKey: z.string().min(8).max(512) })),
   request(
     'bot.messages.list',
+    z.strictObject({ botId: id, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(200).default(50) })
+  ),
+  request(
+    'bot.transcript.list',
     z.strictObject({ botId: id, before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(200).default(50) })
   ),
   request(
@@ -270,6 +275,7 @@ export const botResultSchemas = {
   'bot.auth.logout': authStatusSchema,
   'bot.auth.setApiKey': authStatusSchema,
   'bot.messages.list': messagesPageSchema,
+  'bot.transcript.list': transcriptPageSchema,
   'bot.messages.send': sendReceiptSchema,
   'bot.messages.lookup': sendReceiptSchema.nullable(),
   'bot.turn.get': botTurnSchema,

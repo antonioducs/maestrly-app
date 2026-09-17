@@ -1,0 +1,608 @@
+{
+  "note": "Recorded on the Mac mini laboratory Host on 2026-09-17; laboratory text only.",
+  "routine": {
+    "turn": {
+      "id": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+      "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+      "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+      "messageId": "0e7f2a4d-19fb-4076-8852-59242490dad7",
+      "status": "succeeded",
+      "generation": 1,
+      "providerThreadId": "01a0b129-b2a0-7c12-9b37-a998d50b001b",
+      "providerTurnId": "01a0b129-b45e-7e33-b1f0-33fd5d50910b",
+      "leaseExpiresAt": "2026-09-17T20:58:53.632Z",
+      "startedAt": "2026-09-17T20:58:15.043Z",
+      "finishedAt": "2026-09-17T20:58:29.619Z",
+      "usage": {
+        "inputTokens": 26035,
+        "outputTokens": 399
+      },
+      "revision": 5,
+      "createdAt": "2026-09-17T20:58:03.654Z",
+      "updatedAt": "2026-09-17T20:58:29.619Z"
+    },
+    "events": [
+      {
+        "seq": 1079,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+        "turnId": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+        "kind": "turn.status",
+        "summary": "O bot começou a trabalhar",
+        "detail": {
+          "status": "running"
+        },
+        "createdAt": "2026-09-17T20:58:15.115Z"
+      },
+      {
+        "seq": 1080,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+        "turnId": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+        "kind": "turn.status",
+        "summary": "O bot começou a trabalhar",
+        "detail": {
+          "status": "running",
+          "providerThreadId": "01a0b129-b2a0-7c12-9b37-a998d50b001b",
+          "providerTurnId": "01a0b129-b45e-7e33-b1f0-33fd5d50910b"
+        },
+        "runtimeEventId": "425e8a56-b15f-4fdb-940e-efc587e84ca7",
+        "generation": 1,
+        "createdAt": "2026-09-17T20:58:15.742Z"
+      },
+      {
+        "seq": 1081,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+        "turnId": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+        "kind": "assistant.delta",
+        "summary": "Escrevendo…",
+        "detail": {
+          "text": "A execução programada aconteceu em 17/09/2026 às 17:58 (horário de Brasília)."
+        },
+        "runtimeEventId": "557ab3e8-02ac-44d0-90b2-8b6da30ef9d3",
+        "generation": 1,
+        "createdAt": "2026-09-17T20:58:29.479Z"
+      },
+      {
+        "seq": 1082,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+        "turnId": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+        "kind": "assistant.message",
+        "summary": "O bot respondeu",
+        "detail": {
+          "preview": "A execução programada aconteceu em 17/09/2026 às 17:58 (horário de Brasília)."
+        },
+        "runtimeEventId": "1201aeba-586f-42f9-8a8e-8e4ce2cf8078",
+        "generation": 1,
+        "createdAt": "2026-09-17T20:58:29.490Z"
+      },
+      {
+        "seq": 1083,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "routine:ee30de9f-1f00-48d0-8c14-e4c9ce02fc1b",
+        "turnId": "cc608977-9c6b-470e-a891-00acf6f9c5d6",
+        "kind": "turn.status",
+        "summary": "Tarefa concluída",
+        "detail": {
+          "status": "succeeded"
+        },
+        "createdAt": "2026-09-17T20:58:29.624Z"
+      }
+    ],
+    "messages": []
+  },
+  "tools": {
+    "turn": {
+      "id": "19e95032-ad5a-4a09-ad74-70981d585671",
+      "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+      "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+      "messageId": "77b031aa-a128-417d-8e6d-11990a2c16ae",
+      "status": "succeeded",
+      "generation": 1,
+      "providerThreadId": "01a09cec-adf9-7370-a400-6b4eaaae5260",
+      "providerTurnId": "01a09ced-c818-7fe1-98e6-dbebaa0dca13",
+      "leaseExpiresAt": "2026-09-13T22:42:28.123Z",
+      "startedAt": "2026-09-13T22:40:24.498Z",
+      "finishedAt": "2026-09-13T22:42:01.677Z",
+      "usage": {
+        "inputTokens": 389337,
+        "outputTokens": 3851
+      },
+      "revision": 14,
+      "createdAt": "2026-09-13T22:40:24.494Z",
+      "updatedAt": "2026-09-13T22:42:01.677Z"
+    },
+    "messages": [
+      {
+        "id": "77b031aa-a128-417d-8e6d-11990a2c16ae",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "clientMessageId": "f3c71e8d-d285-4e16-8db6-2451a2d3a5a0",
+        "role": "user",
+        "content": "abre o chrome ae pra mim, pesquisa por haval h6 e me manda um print aqui\n\n",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "sequence": 4,
+        "attachments": [],
+        "createdAt": "2026-09-13T22:40:24.494Z"
+      },
+      {
+        "id": "5eaf37d5-36c9-44a4-9459-3e63096967b7",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "clientMessageId": "f5f957dd-6da1-40f2-baca-aa33a4ef34b8",
+        "role": "assistant",
+        "content": "Vou abrir o Chrome, pesquisar “haval h6” e capturar a tela para te enviar aqui.",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "sequence": 5,
+        "attachments": [],
+        "createdAt": "2026-09-13T22:40:28.785Z"
+      },
+      {
+        "id": "aeb1b6e9-7999-4b5d-9ac3-e26918143f8a",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "clientMessageId": "ca614883-bbd4-44f0-91d2-7d46f2b6f462",
+        "role": "assistant",
+        "content": "O navegador integrado não está respondendo nesta sessão, então estou verificando se há um Chrome local disponível para fazer a captura diretamente.",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "sequence": 6,
+        "attachments": [],
+        "createdAt": "2026-09-13T22:41:01.864Z"
+      },
+      {
+        "id": "66104361-d4b9-4a7f-b412-57ca945886a7",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "clientMessageId": "30c2c2d7-c65a-433d-a875-fd6e9866c544",
+        "role": "assistant",
+        "content": "Não consegui concluir: a sessão do navegador ficou inativa e a pesquisa retornou erro de conexão. [Print]( /home/maestrlybot/workspace/haval-h6.png )\n\nÉ preciso iniciar uma nova sessão do navegador.",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "sequence": 7,
+        "attachments": [],
+        "createdAt": "2026-09-13T22:42:01.617Z"
+      }
+    ],
+    "events": [
+      {
+        "seq": 33,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "turn.status",
+        "summary": "Tarefa recebida",
+        "detail": {
+          "status": "queued"
+        },
+        "createdAt": "2026-09-13T22:40:24.497Z"
+      },
+      {
+        "seq": 34,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "turn.status",
+        "summary": "O bot começou a trabalhar",
+        "detail": {
+          "status": "running"
+        },
+        "createdAt": "2026-09-13T22:40:24.515Z"
+      },
+      {
+        "seq": 35,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "turn.status",
+        "summary": "O bot começou a trabalhar",
+        "detail": {
+          "status": "running",
+          "providerThreadId": "01a09cec-adf9-7370-a400-6b4eaaae5260",
+          "providerTurnId": "01a09ced-c818-7fe1-98e6-dbebaa0dca13"
+        },
+        "runtimeEventId": "66f8c266-72bd-45ff-ad7e-325286ff2b73",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:24.578Z"
+      },
+      {
+        "seq": 36,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.delta",
+        "summary": "Escrevendo…",
+        "detail": {
+          "text": "Vou abrir o Chrome, pesquisar “haval h6” e capturar a tela para te enviar aqui."
+        },
+        "runtimeEventId": "c9c594b0-9d18-4e95-a750-06d841445241",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:28.730Z"
+      },
+      {
+        "seq": 37,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.message",
+        "summary": "O bot respondeu",
+        "detail": {
+          "preview": "Vou abrir o Chrome, pesquisar “haval h6” e capturar a tela para te enviar aqui."
+        },
+        "runtimeEventId": "f5f957dd-6da1-40f2-baca-aa33a4ef34b8",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:28.786Z"
+      },
+      {
+        "seq": 38,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando"
+        },
+        "runtimeEventId": "2c7cbbb1-8f5b-409f-a311-1857e37eb823",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:31.132Z"
+      },
+      {
+        "seq": 39,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando",
+          "exitCode": 0
+        },
+        "runtimeEventId": "558a8246-4ca9-4c93-938f-4b83f5fa09a3",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:31.134Z"
+      },
+      {
+        "seq": 40,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "e2878ccd-4044-45f3-9d5b-a5290710591c",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:41.710Z"
+      },
+      {
+        "seq": 41,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "c2cd32cd-3814-4571-bd8e-fb2cb28c654d",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:41.726Z"
+      },
+      {
+        "seq": 42,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "67e01a26-0dcd-408e-985e-f846463aa748",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:45.434Z"
+      },
+      {
+        "seq": 43,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "873781e7-bba8-4b60-9726-fe65bff49149",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:40:45.449Z"
+      },
+      {
+        "seq": 44,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.delta",
+        "summary": "Escrevendo…",
+        "detail": {
+          "text": "O navegador integrado não está respondendo nesta sessão, então estou verificando se há um Chrome local disponível para fazer a captura diretamente."
+        },
+        "runtimeEventId": "3a28e7c7-c13f-43fd-a2ad-d6edf6483a5b",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:01.862Z"
+      },
+      {
+        "seq": 45,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.message",
+        "summary": "O bot respondeu",
+        "detail": {
+          "preview": "O navegador integrado não está respondendo nesta sessão, então estou verificando se há um Chrome local disponível para fazer a captura diretamente."
+        },
+        "runtimeEventId": "ca614883-bbd4-44f0-91d2-7d46f2b6f462",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:01.865Z"
+      },
+      {
+        "seq": 46,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando"
+        },
+        "runtimeEventId": "5e3caf26-6a80-4cfb-9199-a358cbbfcf44",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:04.681Z"
+      },
+      {
+        "seq": 47,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando",
+          "exitCode": 0
+        },
+        "runtimeEventId": "93612989-2ae5-4719-b7cf-6e4ff92432fe",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:04.685Z"
+      },
+      {
+        "seq": 48,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando"
+        },
+        "runtimeEventId": "409ea693-21f6-4505-a2cc-9a916c48b6b2",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:11.941Z"
+      },
+      {
+        "seq": 49,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando",
+          "exitCode": 0
+        },
+        "runtimeEventId": "76f2dbfe-d679-4329-b28e-a696999898f3",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:15.575Z"
+      },
+      {
+        "seq": 50,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando"
+        },
+        "runtimeEventId": "5c02d856-6754-4aa0-9c7f-2909e04e4e1c",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:25.179Z"
+      },
+      {
+        "seq": 51,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando",
+          "exitCode": 0
+        },
+        "runtimeEventId": "e3f7f663-0e40-4cdb-b174-37a59eba7191",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:25.188Z"
+      },
+      {
+        "seq": 52,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando"
+        },
+        "runtimeEventId": "c1c48469-f1e4-4191-9d49-d64aae3489a0",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:42.411Z"
+      },
+      {
+        "seq": 53,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando um comando",
+        "detail": {
+          "tool": "commandExecution",
+          "summary": "Executando um comando",
+          "exitCode": 0
+        },
+        "runtimeEventId": "bf8d13e9-bf5a-407b-af18-f2c149a6a5ae",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:42.429Z"
+      },
+      {
+        "seq": 54,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "6b9112ef-4d92-43e2-befc-9a953142381a",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:46.015Z"
+      },
+      {
+        "seq": 55,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "48b493da-7093-4ccd-9c12-c3e1648034af",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:46.321Z"
+      },
+      {
+        "seq": 56,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.started",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "8117053d-83cb-4df2-a1e9-e33db46964d2",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:53.655Z"
+      },
+      {
+        "seq": 57,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "tool.finished",
+        "summary": "Executando uma ferramenta",
+        "detail": {
+          "tool": "mcpToolCall",
+          "summary": "Executando uma ferramenta"
+        },
+        "runtimeEventId": "7679512d-6cc0-47cd-bb05-ebd9f0e10525",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:41:54.649Z"
+      },
+      {
+        "seq": 58,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.delta",
+        "summary": "Escrevendo…",
+        "detail": {
+          "text": "Não consegui concluir: a sessão do navegador ficou inativa e a pesquisa retornou erro de conexão. [Print]( /home/"
+        },
+        "runtimeEventId": "06cd144e-1a03-4dbe-bda9-512d41a5bad5",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:42:00.946Z"
+      },
+      {
+        "seq": 59,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.delta",
+        "summary": "Escrevendo…",
+        "detail": {
+          "text": "maestrlybot/workspace/haval-h6.png )\n\nÉ preciso iniciar uma nova sessão do navegador."
+        },
+        "runtimeEventId": "94d72eba-d86d-4e1e-981b-abcf59623a68",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:42:01.455Z"
+      },
+      {
+        "seq": 60,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "assistant.message",
+        "summary": "O bot respondeu",
+        "detail": {
+          "preview": "Não consegui concluir: a sessão do navegador ficou inativa e a pesquisa retornou erro de conexão. [Print]( /home/maestrlybot/workspace/haval-h6.png )\n\nÉ preciso iniciar uma nova sessão do navegador."
+        },
+        "runtimeEventId": "30c2c2d7-c65a-433d-a875-fd6e9866c544",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:42:01.618Z"
+      },
+      {
+        "seq": 61,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "file.produced",
+        "summary": "Arquivo produzido: haval-h6.png",
+        "detail": {
+          "path": "haval-h6.png",
+          "name": "haval-h6.png",
+          "size": 30114,
+          "digest": "a32b861ddab1b867cb01892baa43bbb43453ae683a891b23968dab7573acd548"
+        },
+        "runtimeEventId": "eb28bd04-edc7-4c5a-81d4-18369616d486",
+        "generation": 1,
+        "createdAt": "2026-09-13T22:42:01.676Z"
+      },
+      {
+        "seq": 62,
+        "botId": "4ac3cf89-8f9f-4055-bade-7fcaa03c1171",
+        "conversationId": "95d8da7e-3c3e-47b6-87f9-cd44965e99f4",
+        "turnId": "19e95032-ad5a-4a09-ad74-70981d585671",
+        "kind": "turn.status",
+        "summary": "Tarefa concluída",
+        "detail": {
+          "status": "succeeded"
+        },
+        "createdAt": "2026-09-13T22:42:01.679Z"
+      }
+    ]
+  }
+}
