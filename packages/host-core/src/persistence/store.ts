@@ -6,6 +6,8 @@ import { vmSchema, operationSchema, type Vm, type Operation } from '@maestrly/ho
 import { HostError } from '../errors.js'
 import { HOST_DB_VERSION, migrateToV2, migrateToV3, migrateToV4, migrateToV5 } from '../bots/migrations.js'
 import { migrateToV6 } from '../teams/migrations.js'
+import { migrateToV7 } from './phase5-migration.js'
+import { migrateToV8 } from './chat-migration.js'
 const now = () => new Date().toISOString()
 
 /**
@@ -64,6 +66,8 @@ export class HostStore {
       migrateToV4(this.db)
       migrateToV5(this.db)
       migrateToV6(this.db)
+      migrateToV7(this.db)
+      migrateToV8(this.db)
       this.db.prepare('INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)').run('hostId', randomUUID())
       this.hostId = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('hostId')!.value as string
       if (!/^[a-f0-9-]{36}$/.test(this.hostId)) throw new Error('Invalid persisted host identity')

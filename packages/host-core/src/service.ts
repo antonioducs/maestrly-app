@@ -25,6 +25,8 @@ import {
   DESKTOP_HANDOFF_CAPABILITY,
   DESKTOP_LIVE_CAPABILITY,
   TEAM_HOST_CAPABILITY,
+  ROUTINE_HOST_CAPABILITY,
+  VOICE_HOST_CAPABILITY,
 } from '@maestrly/host-protocol'
 import { QemuProvider, type Provider, type Runtime, type Image } from './provider.js'
 import { verifyAsset } from './assets.js'
@@ -34,6 +36,8 @@ import { type GuestConnector } from './guest/session.js'
 import { EgressBroker } from './egress/broker.js'
 import { DesktopMediaConnector } from './desktop/media-connector.js'
 import type { DesktopContext } from './desktop/service.js'
+import type { AsrOptions } from './voice/worker-client.js'
+import type { Clock } from './routines/calendar.js'
 export interface HostServiceOptions {
   stateDirectory: string
   accounts?: { runtime?: AccountRuntime; peers?: { host: string; port: number } }
@@ -49,6 +53,13 @@ export interface HostServiceOptions {
   connector?: GuestConnector
   /** Injection seam for egress tests; production brokers the VM egress socket with real DNS/TCP. */
   egress?: EgressBroker
+  /**
+   * Local speech recognition for voice messages. Absent means this Host simply does not
+   * transcribe, and the voice capability is not advertised at all.
+   */
+  asr?: AsrOptions
+  /** Injection seam for calendar tests; production reads the real clock every five seconds. */
+  routines?: { clock?: Clock; tickMs?: number }
 }
 const now = () => new Date().toISOString()
 function canonical(value: unknown): string {
@@ -85,6 +96,16 @@ export class HostService {
   private hostGeneration = 0
   private readonly templates: BotTemplate[]
   private readonly connector?: GuestConnector
+  private readonly asr?: AsrOptions
+  private readonly routineOptions?: { clock?: Clock; tickMs?: number }
+  /**
+   * The internal domains of this Host, available after ready(). This is not a wire API: it
+   * exists so conformance tests and operator tooling can drive a scheduler tick or inspect
+   * durable state without going through a socket.
+   */
+  get domains() {
+    return { bots: this.bots, teams: this.bots?.teams, routines: this.bots?.routines, voice: this.bots?.voice }
+  }
   constructor(options: HostServiceOptions) {
     if (!['darwin', 'linux'].includes(process.platform) || typeof process.getuid !== 'function')
       throw new Error('Host service requires POSIX ownership on macOS or Linux')
@@ -128,12 +149,17 @@ export class HostService {
       connector: undefined,
       egress: undefined,
       templates: undefined,
+      // Both hold injected functions; a function cannot be structurally cloned.
+      asr: undefined,
+      routines: undefined,
       capacity,
     })
     this.templates = structuredClone(options.templates ?? [])
     this.accountProvider = options.accountProvider
     this.connector = options.connector
     this.egress = options.egress
+    this.asr = options.asr
+    this.routineOptions = options.routines
     this.provider = options.provider ?? new QemuProvider(options.stateDirectory)
   }
   ready() {
@@ -183,6 +209,8 @@ export class HostService {
         if (vmId) this.egress?.updatePolicy(vmId, policy, session?.transport === 'managed' ? session.id : undefined)
       },
       activeStreams: (vmId, botId) => { const session = botId ? this.bots.repo.session(botId) : undefined; return this.egress?.activeStreams(vmId, session?.transport === 'managed' ? session.id : undefined) ?? 0 },
+      ...(this.asr ? { asr: this.asr } : {}),
+      ...(this.routineOptions ? { routines: this.routineOptions } : {}),
     })
     this.environments = new EnvironmentService(this.bots.repo, setupHost, this.bots.sessions, this.bots.setup)
     const migration = new AccountMigration(authority, this.bots.repo, this.bots.coordinator, this.bots.delegation!)
@@ -309,9 +337,27 @@ export class HostService {
     )
     return {
       id: this.hostId,
-      serviceVersion: '0.3.0',
+      serviceVersion: '0.4.0',
       protocolVersion: 1,
-      capabilities: ['environments.v1', 'accounts.v1', 'bot.sessions.v1', DESKTOP_LIVE_CAPABILITY, DESKTOP_HANDOFF_CAPABILITY, TEAM_HOST_CAPABILITY, 'vm.create', 'vm.verify', 'vm.remove.retain', 'vm.remove.purge', 'runtime.hvf-smoke', 'bot.runtime.v1', ...(this.templates.length ? ['bot.setup'] : [])],
+      capabilities: [
+        'environments.v1',
+        'accounts.v1',
+        'bot.sessions.v1',
+        DESKTOP_LIVE_CAPABILITY,
+        DESKTOP_HANDOFF_CAPABILITY,
+        TEAM_HOST_CAPABILITY,
+        ROUTINE_HOST_CAPABILITY,
+        // Voice is announced only when this Host can actually transcribe: an application
+        // that sees the capability must not end up with a microphone button that fails.
+        ...(this.bots?.voice.status().available ? [VOICE_HOST_CAPABILITY] : []),
+        'vm.create',
+        'vm.verify',
+        'vm.remove.retain',
+        'vm.remove.purge',
+        'runtime.hvf-smoke',
+        'bot.runtime.v1',
+        ...(this.templates.length ? ['bot.setup'] : []),
+      ],
       health: runtimes.some((x) => x.available) ? 'ready' : 'unavailable',
       observedMemoryMiB: observedMemoryMiB(),
       platform: process.platform,
@@ -407,6 +453,8 @@ export class HostService {
     if (request.method.startsWith('account.')) return this.accounts.handle(request as any)
     if (request.method.startsWith('bot.')) return this.bots.handle(request as any, context)
     if (request.method.startsWith('team.')) return this.bots.teams.handle(request as any)
+    if (request.method.startsWith('routine.')) return this.bots.routines.handle(request as any)
+    if (request.method.startsWith('voice.')) return this.bots.voice.handle(request as any)
     switch (request.method) {
       case 'host.inspect':
         return this.inspectHost()
