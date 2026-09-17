@@ -36,6 +36,8 @@ export function validateConfig(config) {
     // Phase 4 team laboratory (opt-in): the exact bots that may form the test team.
     'teamBotIds',
     'allowTeamSmoke',
+    // Chat experience laboratory (opt-in): installing an MCP server and a skill on routineBotId.
+    'allowExtensionsSmoke',
   ])
   if (Object.keys(config).some((k) => !allowed.has(k))) throw Error('Unknown lab configuration key')
   if (typeof config.sshAlias !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$/.test(config.sshAlias))
@@ -76,7 +78,7 @@ export function validateConfig(config) {
     throw Error('Invalid local operator')
   if (config.botVmId !== undefined && (typeof config.botVmId !== 'string' || !/^[0-9a-f-]{36}$/i.test(config.botVmId)))
     throw Error('botVmId must be the exact VM identifier chosen for preparation')
-  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke', 'authorizeDesktopLab', 'allowTeamSmoke'])
+  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke', 'authorizeDesktopLab', 'allowTeamSmoke', 'allowExtensionsSmoke'])
     if (config[key] !== undefined && typeof config[key] !== 'boolean') throw Error('Authorization must be boolean')
   // The team is named by explicit bot identifiers; the lab never picks a bot on its own.
   if (config.teamBotIds !== undefined) {

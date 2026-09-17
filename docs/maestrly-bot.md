@@ -34,6 +34,9 @@ interrompe o bot; o computador que executa a VM precisa continuar ligado.
 - Vários bots podem formar uma **equipe** que recebe um pedido só e devolve um resultado
   consolidado, com delegação em lotes, compartilhamento explícito e controle humano preservado.
   Veja [equipes de bots](bot-runtime/teams.md).
+- A conversa mostra ferramentas, raciocínio e tempo de resposta a partir de uma projeção única
+  dos eventos; comandos prontos, servidores MCP e skills por bot e uma área de uso e custos
+  completam a experiência. Veja [experiência de chat](bot-runtime/chat-experience.md).
 - Permissões: `ask` (recomendado: usuário Linux não-root, workspace, aprovações para ações elevadas,
   novos destinos e exclusões protegidas) e `full-vm` (controle administrativo completo dentro da VM,
   confirmação explícita, sem acesso ao Host nem alteração de egress). Nenhuma delas é isolamento

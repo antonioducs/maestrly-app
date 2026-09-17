@@ -130,9 +130,26 @@ test('capabilities and versions are the ones the rollout kit expects', async () 
   assert.match(await read('packages/host-core/src/bots/migrations.ts'), /HOST_DB_VERSION = 8/)
 })
 
+test('the laboratory asks before it installs anything, removes what it installed and prints no answer', async () => {
+  const lab = await read('scripts/bot-chat-lab.mjs')
+  assert.match(lab, /EXTENSIONS_LAB_NOT_AUTHORIZED/)
+  assert.match(lab, /CHAT_METHOD_NOT_ALLOWED/)
+  assert.match(lab, /EXTENSIONS_TARGET_REQUIRED/)
+  assert.match(lab, /EXTENSIONS_LAB_LEFTOVER/)
+  // The answer is reported by length; the echo server needs no network and no files.
+  assert.match(lab, /answerLength/)
+  assert.doesNotMatch(lab, /require\('(net|http|https|fs|child_process)'\)/)
+  assert.match(lab, /extension\.skill\.remove/)
+  assert.match(lab, /extension\.mcp\.remove/)
+  const config = await read('scripts/host-lab.mjs')
+  assert.match(config, /allowExtensionsSmoke/)
+})
+
 test('the chat experience is wired into the repository checks and the CI', async () => {
   const manifest = JSON.parse(await read('package.json'))
-  for (const script of ['check:bot-chat', 'test:bot-chat', 'test:e2e:bot-chat', 'typecheck:chat-ui', 'test:chat-ui']) assert.ok(manifest.scripts[script], `missing script ${script}`)
+  for (const script of ['check:bot-chat', 'test:bot-chat', 'test:e2e:bot-chat', 'typecheck:chat-ui', 'test:chat-ui', 'lab:bot:chat']) assert.ok(manifest.scripts[script], `missing script ${script}`)
+  // The laboratory is never part of an automated run.
+  assert.doesNotMatch(manifest.scripts.test, /lab:bot:chat/)
   assert.match(manifest.scripts.check, /check:bot-chat/)
   assert.match(manifest.scripts.test, /test:bot-chat/)
   // The desktop suites run in the same check: a shared package must not break either application.

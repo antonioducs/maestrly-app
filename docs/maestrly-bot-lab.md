@@ -69,6 +69,25 @@ operador. Sem Mac mini, `node scripts/verify-bot-desktop.mjs --local-container` 
 Relatórios ficam em `.host-lab/bot-*/` e `.host-lab/desktop-lab-*/` (ignorados pelo Git). O laboratório não executa reboot
 físico, não altera cotas, não instala pacotes no controlador e não copia credenciais.
 
+## Experiência de chat: extensões por bot
+
+- `npm run lab:bot:chat` — inventário **somente leitura**: se o Host anuncia
+  `chat.experience.v1`, se o guest do bot escolhido aceita extensões (`bot.extensions.v1`) e
+  transcript rico (`bot.transcript.v1`), quais servidores MCP e skills estão configurados (nomes
+  e contagens, nunca comandos, cabeçalhos ou textos), quantos comandos existem e o uso dos últimos
+  7 dias. Num Host anterior ele reporta `chat: false` em vez de falhar.
+- `npm run lab:bot:chat -- --authorize-extensions-smoke` — o portão das extensões. Exige, no
+  `.maestrly-host-lab.json` privado, `allowExtensionsSmoke: true` e o mesmo `routineBotId` com o
+  **identificador exato** do bot. Ele instala um servidor MCP `echo` (um script de uma linha que
+  roda com o Node do próprio guest, sem rede e sem arquivos) e uma skill `verificacao`, manda
+  **uma** mensagem que só pode ser respondida usando os dois, lê o transcript que o Host dobrou e
+  **remove exatamente o que instalou**. O relatório traz o estado do turno, quantas ferramentas
+  foram chamadas, se o servidor configurado foi usado, se o eco voltou, o **tamanho** da resposta
+  e se o guest se declarou antigo — nunca a resposta em si.
+
+Autorizar extensões não autoriza rotinas nem áudio, e vice-versa. Sem a chave na configuração
+**e** a flag na linha de comando, apenas os métodos de leitura rodam.
+
 ## Pré-requisitos do Host
 
 O pacote do Host precisa incluir `templates` em `etc/host.json` (gerados por
