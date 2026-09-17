@@ -86,7 +86,7 @@ export type OnboardingDraft = {
   botId?: string
   updatedAt: string
 }
-export type UiPreferences = { theme: 'system' | 'light' | 'dark'; advanced: boolean; locale: 'pt-BR' | 'en'; lastBotId?: string }
+export type UiPreferences = { theme: 'system' | 'light' | 'dark'; advanced: boolean; locale: 'pt-BR' | 'en'; lastBotId?: string; /** The audio input chosen for voice notes; absent = the system default. */ microphoneDeviceId?: string }
 export interface BotApi {
   hosts(): Promise<HostTarget[]>
   connect(targetId: string): Promise<Connection>

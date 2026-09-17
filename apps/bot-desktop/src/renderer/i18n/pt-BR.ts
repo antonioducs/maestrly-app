@@ -481,5 +481,7 @@ export const ptBR = {
   chatHostOutdated: 'Atualize o Host para ver ferramentas, raciocínio e tempo de resposta nesta conversa.',
   effortDefault: 'Padrão do modelo',
   pickerBusyReason: 'Espere a tarefa atual terminar para trocar.',
+  voiceDevice: 'Escolher microfone',
+  voiceDeviceDefault: 'Microfone padrão do sistema',
 } as const
 export type TranslationKey = keyof typeof ptBR

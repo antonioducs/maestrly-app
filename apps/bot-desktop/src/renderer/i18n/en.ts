@@ -480,4 +480,6 @@ export const en: Record<TranslationKey, string> = {
   chatHostOutdated: 'Update the Host to see tools, reasoning and response time in this conversation.',
   effortDefault: 'Model default',
   pickerBusyReason: 'Wait for the current task to finish before changing.',
+  voiceDevice: 'Choose microphone',
+  voiceDeviceDefault: 'System default microphone',
 }

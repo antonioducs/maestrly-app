@@ -378,6 +378,13 @@ if (!app.requestSingleInstanceLock()) {
           advanced: typeof patch.advanced === 'boolean' ? patch.advanced : current.advanced,
           locale: patch.locale === 'en' || patch.locale === 'pt-BR' ? patch.locale : current.locale,
           lastBotId: typeof patch.lastBotId === 'string' ? patch.lastBotId.slice(0, 128) : patch.lastBotId === null ? undefined : current.lastBotId,
+          // A device id is an opaque browser string; null clears it, anything else is ignored.
+          microphoneDeviceId:
+            typeof patch.microphoneDeviceId === 'string' && patch.microphoneDeviceId.length <= 128
+              ? patch.microphoneDeviceId
+              : (patch.microphoneDeviceId as unknown) === null
+                ? undefined
+                : current.microphoneDeviceId,
         }
         await saveJson('preferences.json', next)
         return next

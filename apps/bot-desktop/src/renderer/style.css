@@ -452,6 +452,7 @@ progress { max-width: 100%; accent-color: var(--blue); }
 .routine-reason { font-size:11px; color:var(--muted); flex-basis:100%; }
 .routine-summary { font-size:12px; line-height:1.5; margin:4px 0 0; flex-basis:100%; }
 .maestrly-ui .voice-button { padding:0 10px; height:32px; }
+.maestrly-ui .voice-device { padding:0 4px; height:32px; min-width:20px; color:var(--muted); border:0; }
 .maestrly-ui .voice-button.recording { color:var(--m-attention,#b45309); gap:6px; font-variant-numeric:tabular-nums; }
 .voice-draft { display:flex; flex-direction:column; gap:8px; margin:0 auto 8px; max-width:760px; width:100%; }
 .voice-target { font-size:11px; color:var(--muted); margin-left:auto; }
