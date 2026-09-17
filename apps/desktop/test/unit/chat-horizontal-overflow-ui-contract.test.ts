@@ -6,7 +6,8 @@ const source = (path: string): string => readFileSync(new URL(`../../${path}`, i
 const chatViewSource = source('src/renderer/components/chat/ChatView.tsx')
 const messageListSource = source('src/renderer/components/chat/ChatMessageList.tsx')
 const stylesSource = source('src/renderer/styles.css')
-const toolCallCardSource = source('src/renderer/components/chat/ToolCallCard.tsx')
+// The tool card is shared with the Maestrly Bot; the overflow contract follows it into the package.
+const toolCallCardSource = source('../../packages/chat-ui/src/transcript/ToolCallCard.tsx')
 const subagentCardSource = source('src/renderer/components/chat/SubagentCard.tsx')
 
 describe('chat horizontal scrolling contract without a global scrollbar', () => {

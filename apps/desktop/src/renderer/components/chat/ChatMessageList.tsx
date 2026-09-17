@@ -12,8 +12,6 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Copy,
-  Check,
   Pencil,
   FileText,
   ScanText,
@@ -25,7 +23,8 @@ import {
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
-import { ToolCallCard } from './ToolCallCard'
+import { CopyButton, ResponseDuration, ToolCallCard } from '@maestrly/chat-ui'
+import { toolPartView } from './tool-part-view'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
 import { QuestionCard } from './QuestionCard'
@@ -53,49 +52,6 @@ function plainText(m: ChatMessage): string {
     .filter((p): p is Extract<MessagePart, { type: 'skill-invocation' }> => p.type === 'skill-invocation')
     .map((p) => `/${p.name}${p.args ? ` ${p.args}` : ''}`)
   return [...invocation, textOnly(m)].filter(Boolean).join('\n')
-}
-
-function CopyButton({ text }: { text: string }) {
-  const { t } = useTranslation('chat')
-  const [done, setDone] = useState(false)
-  return (
-    <button
-      type="button"
-      title={t('messages.copy')}
-      onClick={() => {
-        navigator.clipboard.writeText(text).then(() => {
-          setDone(true)
-          setTimeout(() => setDone(false), 1200)
-        })
-      }}
-      className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-    >
-      {done ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
-  )
-}
-
-function ResponseDuration({ message }: { message: ChatMessage }) {
-  const { t } = useTranslation('chat')
-  const [, tick] = useState(0)
-  const live = message.responseStartedAt != null && message.responseDurationMs == null
-  useEffect(() => {
-    if (!live) return
-    const id = setInterval(() => tick((n) => n + 1), 1000)
-    return () => clearInterval(id)
-  }, [live])
-  const duration =
-    message.responseDurationMs ??
-    (message.responseStartedAt != null ? responseDurationMs(message.responseStartedAt) : undefined)
-  if (duration == null) return null
-  return (
-    <span
-      title={t('messages.responseTime', { duration: formatResponseDuration(duration) })}
-      className="font-mono text-[11px] tabular-nums text-muted-foreground/70"
-    >
-      {formatResponseDuration(duration)}
-    </span>
-  )
 }
 
 const fmtReviewLoopCost = (c: number): string =>
@@ -462,7 +418,7 @@ function Part({
           onOpenMention={onOpenMention}
         />
       )
-    return <ToolCallCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    return <ToolCallCard part={toolPartView(toolPart, conversationId, messageId)} />
   }
   return null
 }
@@ -860,7 +816,9 @@ const Bubble = memo(function Bubble({
           <div className="opacity-0 transition-opacity group-hover:opacity-100">
             {text.trim() && <CopyButton text={text} />}
           </div>
-          {!isReviewLoopSource && <ResponseDuration message={message} />}
+          {!isReviewLoopSource && (
+            <ResponseDuration startedAt={message.responseStartedAt} durationMs={message.responseDurationMs} />
+          )}
         </div>
       )}
     </>

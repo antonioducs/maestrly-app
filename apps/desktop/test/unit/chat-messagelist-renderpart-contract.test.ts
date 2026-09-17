@@ -23,9 +23,8 @@ describe('ChatMessageList renderPart exhaustiveness', () => {
 
   it('renders final ToolCallCard fallback only for tool parts', () => {
     expect(messageListSource).toContain("if (part.type === 'tool') {")
-    expect(messageListSource).toContain(
-      'return <ToolCallCard part={toolPart} conversationId={conversationId} messageId={messageId} />'
-    )
+    // The shared card receives a projected view, built from the typed tool part only.
+    expect(messageListSource).toContain('return <ToolCallCard part={toolPartView(toolPart, conversationId, messageId)} />')
     // The blind fallback without a type guard was removed.
     expect(messageListSource).not.toContain('return <ToolCallCard part={part} />\n}')
   })

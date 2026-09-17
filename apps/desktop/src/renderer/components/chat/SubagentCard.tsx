@@ -11,7 +11,8 @@ import {
   subagentRunCost,
   subagentRunDisplay,
 } from '@/lib/subagent-profile-display'
-import { StatusBadge, ToolCallCard } from './ToolCallCard'
+import { StatusBadge, ToolCallCard } from '@maestrly/chat-ui'
+import { toolPartView, toolViewState } from './tool-part-view'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { useOpenSubagentSession, useSubagentSessions } from './SubagentSessionContext'
 
@@ -118,7 +119,7 @@ export const SubagentCard = memo(function SubagentCard({
         {subagentProfileLabel(display.profile) ?? t('subagent.profileNotRecorded')}
       </div>
     ) : (
-      <ToolCallCard part={part} conversationId={conversationId} messageId={messageId} />
+      <ToolCallCard part={toolPartView(part, conversationId, messageId)} />
     )
 
   const progressTail =
@@ -234,7 +235,7 @@ export const SubagentCard = memo(function SubagentCard({
             </span>
           )}
           {elapsed && <span className="tabular-nums">{elapsed}</span>}
-          <StatusBadge state={badgeState} />
+          <StatusBadge state={toolViewState(badgeState)} />
           {!legacy && (
             <PanelRightOpen className="h-3.5 w-3.5 text-violet-300/60 transition-colors group-hover:text-violet-200" />
           )}

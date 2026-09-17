@@ -19,6 +19,12 @@ export function chatUiLabels(): ChatUiLabels {
       output: t('chat:tool.result'),
       command: t('chat:tool.arguments'),
       changes: t('ui:chatUi.changes'),
+      pending: t('chat:tool.preparing'),
+      awaitingPermission: t('chat:tool.awaitingPermission'),
+      denied: t('chat:tool.denied'),
+      imageOutput: t('chat:tool.imageOutput'),
+      imageLoading: t('chat:tool.imageLoading'),
+      imageUnavailable: t('chat:tool.imageUnavailable'),
     },
     context: {
       title: t('chat:meter.limitTitle'),
