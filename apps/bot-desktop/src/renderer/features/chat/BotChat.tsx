@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from 'react'
 import type { Bot, BotInteraction, BotTurn } from '@maestrly/host-protocol'
 import { useT } from '../../i18n'
 import type { TranslationKey } from '../../i18n/pt-BR'
-import { TranscriptList, useStickToBottom } from '@maestrly/chat-ui'
+import { ChatContextMeter, TranscriptList, useStickToBottom } from '@maestrly/chat-ui'
 import type { TranscriptMessage } from '@maestrly/host-protocol'
 import { Composer } from './Composer'
 import { FileCard } from './FileCard'
 import { botUrlTransform } from './BotMarkdown'
 import { useTranscript } from './useTranscript'
+import { useContextMeter } from './useContextMeter'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
@@ -133,6 +134,7 @@ export function BotChat({
   }
   const events = useBotEvents(bot.id, connected, () => refresh(), (error) => setError(String(error)))
   const transcript = useTranscript(bot.id, connected, chatSupported, events)
+  const meter = useContextMeter(transcript.turns, bot.model?.model)
   const refresh = async () => {
     const [pending, inspected] = await Promise.all([
       window.bot.bot({ method: 'bot.interactions.list', params: { botId: bot.id, pendingOnly: true } }),
@@ -363,6 +365,7 @@ export function BotChat({
         bot={bot}
         onBotUpdate={onBotUpdate}
         connected={connected}
+        metaSlot={<ChatContextMeter usage={meter.usage} meta={meter.meta} cost={meter.cost} />}
         attachments={state.attachments}
         removeAttachment={(path) => { state.attachments = state.attachments.filter(file => file.path !== path); changed() }}
         value={state.text}

@@ -644,7 +644,8 @@ export class FixtureBots {
       this.messages.get(conversation.id)!.push(message)
       this.emit(bot.id, 'assistant.message', 'O bot respondeu', { turnId, runtimeEventId: `assistant-${turnId}`, detail: { preview: reply.slice(0, 200) } })
     }
-    this.updateTurn(turnId, { status, finishedAt: now(), ...(status === 'failed' ? { error: { code: 'FIXTURE_FAILURE', message: 'A tarefa falhou no fixture' } } : {}) })
+    // Usage as a transcript-capable guest reports it: what the meter and the ledger show.
+    this.updateTurn(turnId, { status, finishedAt: now(), usage: { inputTokens: 50_000, outputTokens: 800, cachedInputTokens: 10_000, contextTokens: 50_000, modelContextWindow: 200_000 }, ...(status === 'failed' ? { error: { code: 'FIXTURE_FAILURE', message: 'A tarefa falhou no fixture' } } : {}) })
     this.save({ ...this.bot(bot.id), activeTurnId: undefined })
     this.emit(bot.id, 'turn.status', status === 'succeeded' ? 'Tarefa concluída' : status === 'failed' ? 'A tarefa falhou' : 'Tarefa interrompida', { turnId, detail: { status } })
   }

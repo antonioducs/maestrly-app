@@ -1,3 +1,4 @@
+import type { ChatModelMeta } from '@maestrly/chat-ui/cost'
 export type { Vm, Host, Operation } from '@maestrly/host-protocol'
 import type {
   BotMethod,
@@ -107,6 +108,8 @@ export interface BotApi {
   draft(): Promise<OnboardingDraft | null>
   saveDraft(draft: OnboardingDraft | null): Promise<void>
   preferences(): Promise<UiPreferences>
+  /** Context windows and prices from the public models.dev catalogue, keyed `provider/model`; empty when never fetched. */
+  modelMeta(): Promise<Record<string, ChatModelMeta>>
   savePreferences(preferences: Partial<UiPreferences>): Promise<UiPreferences>
   saveFile(input: { name: string; dataBase64: string }): Promise<{ saved: boolean }>
   pickFile(): Promise<{ name: string; size: number; dataBase64: string } | null>

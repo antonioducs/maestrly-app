@@ -4,7 +4,7 @@ import { accountEndpointFor } from './account-endpoint'
 import { HostConnections } from './host-connections'
 import { registerIpc } from './ipc'
 import { validateResult, type Host } from './host-client'
-import { app, BrowserWindow, dialog, shell, systemPreferences, webContents, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, dialog, net, shell, systemPreferences, webContents, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { DesktopViewServer, VIEW_HEADER } from './desktop-view-server'
 import { DesktopClient, type DesktopRpc } from './desktop-client'
@@ -23,6 +23,7 @@ import { BotClient } from './bot-client'
 import { TeamClient } from './team-client'
 import { RoutineClient } from './routine-client'
 import { VoiceClient } from './voice-client'
+import { ModelMetaCatalogue } from './model-meta'
 import { installMicrophonePermissions, requestSystemMicrophone } from './microphone-permissions'
 import { installLocalHost } from './host-installation'
 import type { Connection, HostTarget, OnboardingDraft, UiPreferences } from '../shared/types'
@@ -131,6 +132,14 @@ if (!app.requestSingleInstanceLock()) {
     const teams = new TeamClient(journal, request)
     const routines = new RoutineClient(journal, request)
     const voice = new VoiceClient(journal, request)
+    // Context windows and prices for the meter: the fixture never touches the network.
+    const modelMeta = fixture
+      ? { current: async () => ({ 'openai/fixture-small': { contextWindow: 200_000, inputPer1M: 1.25, outputPer1M: 10 }, 'openai/fixture-large': { contextWindow: 400_000, inputPer1M: 5, outputPer1M: 20 } }) }
+      : new ModelMetaCatalogue(profile.userData, async (url, signal) => {
+          const response = await net.fetch(url, { signal })
+          if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`)
+          return response.json()
+        })
     const desktop = new DesktopClient({
       target: () => (fixture ? (fixture.connected ? { kind: 'local' as const, id: 'local' as const, displayName: 'Este Mac (fixture)', hostId: 'd9a02e5b-0c12-4411-9393-b5106ecff181' } : undefined) : active),
       // A dedicated control connection: screen input never waits behind chat requests.
@@ -340,6 +349,7 @@ if (!app.requestSingleInstanceLock()) {
         return clip
       },
       voiceRead: async (value) => voice.read(value),
+      modelMeta: async () => modelMeta.current(),
       voiceMicrophone: async () => ({ access: await requestSystemMicrophone(systemPreferences) }),
       voiceArm: async (value) => {
         if (typeof value !== 'boolean') throw new Error('Invalid microphone request')

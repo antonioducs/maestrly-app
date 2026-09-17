@@ -11,6 +11,16 @@ const api: BotApi = {
   call: (call) => ipcRenderer.invoke('bot:call', call),
   bot: (call) => ipcRenderer.invoke('bot:bot', call),
   team: (call) => ipcRenderer.invoke('bot:team', call),
+  routine: (call) => ipcRenderer.invoke('bot:routine', call),
+  // Audio never becomes a path, a URL or a handle in the renderer: it is handed over once and
+  // read back by clip identity.
+  voice: {
+    call: (call) => ipcRenderer.invoke('bot:voice', call),
+    upload: (input) => ipcRenderer.invoke('bot:voiceUpload', input),
+    read: (input) => ipcRenderer.invoke('bot:voiceRead', input),
+    requestMicrophone: () => ipcRenderer.invoke('bot:voiceMicrophone'),
+    arm: (armed) => ipcRenderer.invoke('bot:voiceArm', armed),
+  },
   syncAccounts: () => ipcRenderer.invoke('bot:syncAccounts'),
   localHost: () => ipcRenderer.invoke('bot:localHost'),
   installLocalHost: () => ipcRenderer.invoke('bot:installLocalHost'),
@@ -18,6 +28,7 @@ const api: BotApi = {
   draft: () => ipcRenderer.invoke('bot:draft'),
   saveDraft: (draft) => ipcRenderer.invoke('bot:saveDraft', draft),
   preferences: () => ipcRenderer.invoke('bot:preferences'),
+  modelMeta: () => ipcRenderer.invoke('bot:modelMeta'),
   savePreferences: (preferences) => ipcRenderer.invoke('bot:savePreferences', preferences),
   saveFile: (input) => ipcRenderer.invoke('bot:saveFile', input),
   pickFile: () => ipcRenderer.invoke('bot:pickFile'),

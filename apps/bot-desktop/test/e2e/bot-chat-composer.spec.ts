@@ -50,3 +50,18 @@ test('the pickers wait while a task runs, with the reason on hover', async () =>
     await app.close()
   }
 })
+
+test('after a task the meter shows the window occupancy and an estimated cost', async () => {
+  const { app, page } = await launchBot()
+  try {
+    await readyBot(page)
+    await expect(page.locator('[data-context-meter]')).toHaveCount(0)
+    await send(page, 'Prepare um relatório')
+    await expect(page.locator('.chat-header')).toContainText('Tarefa concluída')
+    const meter = page.locator('[data-context-meter]')
+    await expect(meter).toContainText('50.0k/200k 25%')
+    await expect(meter).toContainText('~$')
+  } finally {
+    await app.close()
+  }
+})
