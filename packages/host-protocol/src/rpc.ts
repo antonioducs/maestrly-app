@@ -6,6 +6,9 @@ import { z } from 'zod'
 import { id, revision, errorSchema } from './common.js'
 import { botRequests } from './bot-rpc.js'
 import { teamRequests } from './team-rpc.js'
+import { routineRequests } from './routine-rpc.js'
+import { voiceRequests } from './voice-rpc.js'
+import { promptRequests } from './prompt-rpc.js'
 const empty = z.strictObject({})
 const mutation = { vmId: id, expectedRevision: revision, idempotencyKey: id }
 const envelope = { version: z.literal(1), id }
@@ -47,6 +50,9 @@ export const requestSchema = z.discriminatedUnion('method', [
   ),
   ...botRequests,
   ...teamRequests,
+  ...routineRequests,
+  ...voiceRequests,
+  ...promptRequests,
 ])
 export const responseSchema = z
   .strictObject({

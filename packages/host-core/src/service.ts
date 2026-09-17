@@ -457,6 +457,7 @@ export class HostService {
     if (request.method.startsWith('team.')) return this.bots.teams.handle(request as any)
     if (request.method.startsWith('routine.')) return this.bots.routines.handle(request as any)
     if (request.method.startsWith('voice.')) return this.bots.voice.handle(request as any)
+    if (request.method.startsWith('prompt.')) return this.bots.prompts.handle(request as any)
     switch (request.method) {
       case 'host.inspect':
         return this.inspectHost()

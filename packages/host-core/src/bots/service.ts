@@ -1,5 +1,6 @@
 import type { AccountAuthority } from '../accounts/authority.js'
 import { AccountDelegation } from '../accounts/delegation.js'
+import { PromptService } from '../chat/prompts.js'
 import { randomUUID } from 'node:crypto'
 import {
   BOT_MUTATIONS,
@@ -68,6 +69,7 @@ export class BotService {
   readonly teams: TeamService
   readonly routines: RoutineService
   readonly voice: VoiceService
+  readonly prompts: PromptService
   constructor(private readonly options: BotServiceOptions) {
     this.repo = new Repository(options.store)
     this.coordinator = new RuntimeCoordinator(this.repo, options.connector, { vm: (id) => options.host.vm(id), hostGeneration: options.host.hostGeneration })
@@ -163,6 +165,7 @@ export class BotService {
       ...(options.routines?.clock ? { clock: options.routines.clock } : {}),
       ...(options.routines?.tickMs !== undefined ? { tickMs: options.routines.tickMs } : {}),
     })
+    this.prompts = new PromptService(this.options.store, this.repo)
     this.voice = new VoiceService({
       voice: new VoiceRepository(options.store),
       bots: this.repo,
