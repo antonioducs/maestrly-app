@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/host",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": false,
   "license": "MIT",
   "type": "module",
@@ -21,8 +21,8 @@
     "test:lab": "vitest run test/lab/host-lifecycle.test.ts"
   },
   "dependencies": {
-    "@maestrly/host-core": "0.2.0",
-    "@maestrly/host-protocol": "0.2.0"
+    "@maestrly/host-core": "0.3.0",
+    "@maestrly/host-protocol": "0.3.0"
   },
   "devDependencies": {
     "@types/node": "22.18.1",

@@ -14,11 +14,11 @@
     "test:lab": "vitest run test/lab/bot-lifecycle.test.ts"
   },
   "dependencies": {
-    "@maestrly/host-protocol": "0.2.0",
+    "@maestrly/host-protocol": "0.3.0",
     "@maestrly/codex-client": "0.1.0",
     "zod": "4.1.8",
     "playwright-core": "1.62.1",
-    "@maestrly/guest-transport": "0.1.0"
+    "@maestrly/guest-transport": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "22.18.1",

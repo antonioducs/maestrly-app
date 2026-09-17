@@ -1,6 +1,6 @@
 {
   "name": "@maestrly/bot-desktop",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "private": true,
   "description": "Local Maestrly VM host console",
   "author": "Maestrly contributors",
@@ -16,10 +16,11 @@
     "test:e2e": "npm run build && playwright test",
     "check": "npm run typecheck && npm test && npm run build",
     "package:lab": "node ../../scripts/package-bot-lab.mjs",
-    "test:e2e:teams": "playwright test test/e2e/bot-teams.spec.ts test/e2e/bot-team-simple-mode.spec.ts test/e2e/bot-team-handoff.spec.ts"
+    "test:e2e:teams": "playwright test test/e2e/bot-teams.spec.ts test/e2e/bot-team-simple-mode.spec.ts test/e2e/bot-team-handoff.spec.ts",
+    "test:e2e:phase5": "playwright test test/e2e/bot-routines.spec.ts test/e2e/bot-voice.spec.ts test/e2e/bot-routine-voice.spec.ts"
   },
   "dependencies": {
-    "@maestrly/host-protocol": "0.2.0",
+    "@maestrly/host-protocol": "0.3.0",
     "@maestrly/ui": "0.1.0",
     "@novnc/novnc": "1.7.0",
     "lucide-react": "1.41.0",

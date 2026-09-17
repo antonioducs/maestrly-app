@@ -24,10 +24,10 @@
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@maestrly/host-protocol": "0.2.0",
+    "@maestrly/host-protocol": "0.3.0",
     "@maestrly/codex-client": "0.1.0",
     "zod": "4.1.8",
-    "@maestrly/guest-transport": "0.1.0"
+    "@maestrly/guest-transport": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "22.18.1",
