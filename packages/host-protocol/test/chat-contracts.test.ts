@@ -134,3 +134,24 @@ describe('foldTranscript over rows recorded on real hardware', () => {
     expect(tool.type === 'tool' && tool.input).toBe('ls')
   })
 })
+
+describe('extension contracts', () => {
+  it('shapes an MCP server by transport and never lets a secret value back out through the state', async () => {
+    const { mcpServerSchema, extensionsStateSchema, extensionsApplySchema, hostToGuestRequestSchema, extensionResultSchemas, extensionMethods } = await import('../src/index.js')
+    const stdio = { id: 's1', name: 'echo', transport: 'stdio', command: 'node', args: ['echo.mjs'], envKeys: ['TOKEN'], enabled: true }
+    expect(mcpServerSchema.safeParse(stdio).success).toBe(true)
+    expect(mcpServerSchema.safeParse({ ...stdio, command: undefined }).success).toBe(false)
+    expect(mcpServerSchema.safeParse({ ...stdio, transport: 'http', url: 'https://x.test/mcp' }).success).toBe(false)
+    expect(mcpServerSchema.safeParse({ id: 's2', name: 'web', transport: 'http', url: 'https://x.test/mcp' }).success).toBe(true)
+    expect(mcpServerSchema.safeParse({ ...stdio, envKeys: ['token'] }).success).toBe(false)
+    const state = { botId: 'b', revision: 1, mcpServers: [stdio], skills: [] }
+    expect(extensionsStateSchema.safeParse(state).success).toBe(true)
+    expect(extensionsStateSchema.safeParse({ ...state, mcpServers: [{ ...stdio, env: { TOKEN: 'x' } }] }).success).toBe(false)
+    const apply = { revision: 1, mcpServers: [{ ...stdio, env: { TOKEN: 'x' } }], skills: [{ name: 'review', files: [{ path: 'SKILL.md', dataBase64: 'aGk=' }] }] }
+    expect(extensionsApplySchema.safeParse(apply).success).toBe(true)
+    expect(extensionsApplySchema.safeParse({ ...apply, skills: [{ name: 'review', files: [{ path: '../SKILL.md', dataBase64: 'aGk=' }] }] }).success).toBe(false)
+    expect(extensionsApplySchema.safeParse({ ...apply, skills: [{ name: 'review', files: [{ path: '/etc/SKILL.md', dataBase64: 'aGk=' }] }] }).success).toBe(false)
+    expect(hostToGuestRequestSchema.safeParse({ type: 'request', id: 'r', method: 'extensions.apply', params: apply }).success).toBe(true)
+    for (const method of extensionMethods) expect(extensionResultSchemas[method]).toBeDefined()
+  })
+})

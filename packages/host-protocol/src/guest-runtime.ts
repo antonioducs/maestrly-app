@@ -1,8 +1,10 @@
 import { delegatedCredentialSchema, accountCredentialRequestSchema, accountCredentialResponseSchema } from './delegated-auth.js'
 import { z } from 'zod'
+import { extensionsApplySchema } from './extensions.js'
 import { id } from './common.js'
 import { networkPolicySchema } from './bot-policy.js'
 import { collaborationRequestSchema, collaborationResponseSchema, teamTurnContextSchema } from './team-runtime.js'
+import { routineRuntimeRequestSchema, routineRuntimeResponseSchema, routineTurnContextSchema } from './routine-runtime.js'
 
 // Private virtio-serial control channel between Host and the Linux runtime inside a VM.
 // Frames are JSONL up to 256 KiB. File chunks are 48 KiB before base64. The Host
@@ -74,6 +76,11 @@ const snapshotSchema = z.strictObject({
    * announced the team capability. An older guest keeps receiving the exact v1 shape.
    */
   team: teamTurnContextSchema.optional(),
+  /**
+   * Present only when the runtime announced the routine capability. An older guest keeps
+   * receiving the exact previous shape: a strict schema never receives an unknown field.
+   */
+  routines: routineTurnContextSchema.optional(),
 })
 export type TurnSnapshot = z.infer<typeof snapshotSchema>
 const turnIdentity = z.strictObject({ turnId: id, generation: z.number().int().positive() })
@@ -125,6 +132,8 @@ export const hostToGuestRequestSchema = z.discriminatedUnion('method', [
   ),
   hostRequest('files.abort', z.strictObject({ transferId: id })),
   hostRequest('files.stat', z.strictObject({ path: z.string().min(1).max(512) })),
+  /** Per-bot MCP servers and skills, delivered before a turn to a guest that announced bot.extensions.v1. */
+  hostRequest('extensions.apply', extensionsApplySchema),
 ])
 export type HostToGuestRequest = z.infer<typeof hostToGuestRequestSchema>
 
@@ -158,7 +167,7 @@ export const guestResponseSchema = z.strictObject({
   error: z.strictObject({ code: z.string().min(1).max(64), message: z.string().max(2000) }).optional(),
 })
 export const hostAckSchema = z.strictObject({ type: z.literal('ack'), runtimeEventId: z.string().min(1).max(128) })
-export const guestFrameSchema = z.discriminatedUnion('type', [guestHelloSchema, guestEventSchema, guestResponseSchema, accountCredentialRequestSchema, collaborationRequestSchema])
-export const hostFrameSchema = z.discriminatedUnion('type', [hostWelcomeSchema, hostToGuestRequestSchema, hostAckSchema, accountCredentialResponseSchema, collaborationResponseSchema])
+export const guestFrameSchema = z.discriminatedUnion('type', [guestHelloSchema, guestEventSchema, guestResponseSchema, accountCredentialRequestSchema, collaborationRequestSchema, routineRuntimeRequestSchema])
+export const hostFrameSchema = z.discriminatedUnion('type', [hostWelcomeSchema, hostToGuestRequestSchema, hostAckSchema, accountCredentialResponseSchema, collaborationResponseSchema, routineRuntimeResponseSchema])
 export type GuestFrame = z.infer<typeof guestFrameSchema>
 export type HostFrame = z.infer<typeof hostFrameSchema>
