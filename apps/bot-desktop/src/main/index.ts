@@ -25,6 +25,7 @@ import { RoutineClient } from './routine-client'
 import { VoiceClient } from './voice-client'
 import { PromptClient } from './prompt-client'
 import { ExtensionClient, skillNameFrom } from './extension-client'
+import { UsageClient } from './usage-client'
 import { readSkillFolder } from './skill-folder'
 import { ModelMetaCatalogue } from './model-meta'
 import { installMicrophonePermissions, requestSystemMicrophone } from './microphone-permissions'
@@ -137,6 +138,7 @@ if (!app.requestSingleInstanceLock()) {
     const voice = new VoiceClient(journal, request)
     const prompts = new PromptClient(request)
     const extensions = new ExtensionClient(request)
+    const usage = new UsageClient(request)
     // Context windows and prices for the meter: the fixture never touches the network.
     const modelMeta = fixture
       ? { current: async () => ({ 'openai/fixture-small': { contextWindow: 200_000, inputPer1M: 1.25, outputPer1M: 10 }, 'openai/fixture-large': { contextWindow: 400_000, inputPer1M: 5, outputPer1M: 20 } }) }
@@ -288,6 +290,7 @@ if (!app.requestSingleInstanceLock()) {
           voice.connected(host.id)
           prompts.connected(host.id)
           extensions.connected(host.id)
+          usage.connected(host.id)
           if (hostCapabilities.includes('bot.runtime.v1')) await bots.recover()
           // Only a Host that knows teams can answer team lookups; an older one is left alone.
           if (hostCapabilities.includes(TEAM_HOST_CAPABILITY)) await teams.recover()
@@ -351,6 +354,14 @@ if (!app.requestSingleInstanceLock()) {
         if (!target) throw new Error('Conecte-se a um computador antes de continuar')
         if (!hostCapabilities.includes(CHAT_HOST_CAPABILITY)) throw new Error('Atualize este computador para configurar MCP e skills')
         const result = await extensions.call(value)
+        if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
+        return result
+      },
+      usage: async (value) => {
+        const target = active
+        if (!target) throw new Error('Conecte-se a um computador antes de continuar')
+        if (!hostCapabilities.includes(CHAT_HOST_CAPABILITY)) throw new Error('Atualize este computador para ver uso e custos')
+        const result = await usage.call(value)
         if (active?.id !== target.id) throw new Error('O computador selecionado mudou. Tente novamente.')
         return result
       },

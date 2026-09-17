@@ -18,3 +18,5 @@ export { parseCatalog, parseModelsDev, providerModelKey } from './usage/model-me
 export { TranscriptList, type TranscriptMessageLike, type TranscriptPartLike, type TranscriptSlots } from './transcript/TranscriptList'
 export { useStickToBottom, STICK_THRESHOLD_PX } from './transcript/useStickToBottom'
 export { ChatComposer, type ComposerCommand, type ComposerAttachment } from './composer/ChatComposer'
+export { UsagePanel, usagePeriodRange, fmtTokens, fmtNum, fmtCost, isoDay, DAY_MS, type UsagePanelProps, type UsagePanelRow, type UsagePeriod } from './usage/UsagePanel'
+export { QuickUsageDialog, QuickUsageTargets, QuickUsageRefresh, type QuickUsageTargetView } from './usage/QuickUsageDialog'

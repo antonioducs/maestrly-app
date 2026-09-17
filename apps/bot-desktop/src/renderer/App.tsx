@@ -1,6 +1,6 @@
 import { AccountsPage } from './features/accounts/AccountsPage'
 import { EnvironmentsPage } from './features/environments/EnvironmentsPage'
-import { Plus, Settings2, Monitor, UserRound } from 'lucide-react'
+import { Plus, Settings2, Monitor, UserRound, DollarSign } from 'lucide-react'
 import { Button } from './ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChatUiProvider, type ChatUiContextValue } from '@maestrly/chat-ui'
@@ -13,6 +13,7 @@ import { FirstBot } from './features/onboarding/FirstBot'
 import { BotChat, createChatState, type ChatState } from './features/chat/BotChat'
 import { BotDetails } from './features/bots/BotDetails'
 import { Settings } from './features/settings/Settings'
+import { UsagePage } from './features/usage/UsagePage'
 import { ComputersPage } from './features/computers/ComputersPage'
 import { BotDesktopPanel } from './features/desktop/BotDesktopPanel'
 import { TeamsList } from './features/teams/TeamsList'
@@ -21,7 +22,7 @@ import { TeamChat, createTeamChatState, type TeamChatState } from './features/te
 import { TeamDetails } from './features/teams/TeamDetails'
 import type { Team, TeamDetails as TeamDetailsShape } from '@maestrly/host-protocol'
 import './style.css'
-type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments' | 'team' | 'team-create'
+type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments' | 'team' | 'team-create' | 'usage'
 export function App() {
   const [preferences, setPreferences] = useState<UiPreferences>({ theme: 'system', locale: 'pt-BR', advanced: false })
   const chatUi = useMemo<ChatUiContextValue>(
@@ -360,6 +361,17 @@ function Shell({
           <Button aria-label={t('environments')} disabled={booting} onClick={openEnvironments}><Monitor size={16} aria-hidden="true" /><span className="bot-label">{t('environments')}</span></Button>
           <Button aria-label={t('accounts')} disabled={booting} onClick={openAccounts}><UserRound size={16} aria-hidden="true" /><span className="bot-label">{t('accounts')}</span></Button>
           <Button
+            aria-label={t('usage')}
+            disabled={booting}
+            onClick={() => {
+              setPanel(undefined)
+              setView('usage')
+            }}
+          >
+            <DollarSign size={16} aria-hidden="true" />
+            <span className="bot-label">{t('usage')}</span>
+          </Button>
+          <Button
             aria-label={t('settings')}
             disabled={booting}
             onClick={() => {
@@ -373,7 +385,7 @@ function Shell({
         </footer>
       </aside>
       <main className="workspace">
-        {(['settings', 'computers', 'accounts', 'environments'].includes(view)) && (
+        {(['settings', 'computers', 'accounts', 'environments', 'usage'].includes(view)) && (
           <Button
             className="back-button"
             onClick={() => {
@@ -391,7 +403,7 @@ function Shell({
             {t(returnView.current === 'onboarding' ? 'returnToCreation' : 'back')}
           </Button>
         )}
-        {view === 'accounts' ? <AccountsPage onEnvironments={openEnvironments} /> : view === 'environments' ? <EnvironmentsPage hosts={hosts} connect={connect} refreshHosts={refreshHosts} advanced={computers} /> : view === 'computers' ? (
+        {view === 'usage' ? <UsagePage connected={connection.connected} supported={chatSupported} /> : view === 'accounts' ? <AccountsPage onEnvironments={openEnvironments} /> : view === 'environments' ? <EnvironmentsPage hosts={hosts} connect={connect} refreshHosts={refreshHosts} advanced={computers} /> : view === 'computers' ? (
           <ComputersPage />
         ) : view === 'settings' ? (
           <Settings preferences={preferences} save={savePreferences} computers={computers} bots={bots} connected={connection.connected} commandsSupported={chatSupported} />

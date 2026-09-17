@@ -15,7 +15,8 @@ import { useExtensions } from '../extensions/useExtensions'
 import { InteractionCard } from './InteractionCard'
 import { useBotEvents } from './useBotEvents'
 import { uploadFile, type Attachment } from './files'
-import { Monitor } from 'lucide-react'
+import { DollarSign, Monitor } from 'lucide-react'
+import { BotUsageDialog } from '../usage/BotUsageDialog'
 import { useDesktopState } from '../desktop/useDesktopState'
 import { VoiceComposer } from '../voice/VoiceComposer'
 import { VoiceMessage } from '../voice/VoiceMessage'
@@ -108,6 +109,7 @@ export function BotChat({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [replaceFile, setReplaceFile] = useState<Awaited<ReturnType<typeof window.bot.pickFile>>>(null)
+  const [usageOpen, setUsageOpen] = useState(false)
   // Sidecar metadata for messages that came from a recording; absent for typed ones.
   const [voiceMeta, setVoiceMeta] = useState<Record<string, VoiceMessageMeta>>({})
   const alive = useRef(true)
@@ -285,9 +287,15 @@ export function BotChat({
               {t('viewScreen')}
             </Button>
           )}
+          {chatSupported && (
+            <Button aria-label={t('usageOf').replace('{name}', bot.name)} title={t('usage')} onClick={() => setUsageOpen(true)}>
+              <DollarSign size={15} aria-hidden="true" />
+            </Button>
+          )}
           <Button onClick={details}>{t('details')}</Button>
         </div>
       </header>
+      {chatSupported && <BotUsageDialog bot={bot} open={usageOpen} onOpenChange={setUsageOpen} connected={connected} supported={chatSupported} />}
       {held && !desktopOpen && (
         <div className="desktop-banner" role="status">
           <p>{t(desktop?.mode === 'blocked' ? 'blockedBanner' : 'pausedBanner')}</p>

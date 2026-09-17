@@ -517,4 +517,8 @@ export const en: Record<TranslationKey, string> = {
   installSkill: 'Install from a folder',
   skillFiles: 'files',
   noExtensions: 'No extensions yet.',
+  usage: 'Usage & cost',
+  usageOf: 'Usage & cost of {name}',
+  usageByBot: 'By bot',
+  usageHostOutdated: 'Update the Host to see usage and cost.',
 }

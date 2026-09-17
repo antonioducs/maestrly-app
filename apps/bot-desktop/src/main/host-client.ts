@@ -11,6 +11,8 @@ import {
   type PromptMethod,
   extensionResultSchemas,
   type ExtensionMethod,
+  usageResultSchemas,
+  type UsageMethod,
   type BotMethod,
   type TeamMethod,
   type RoutineMethod,
@@ -66,6 +68,11 @@ export function validateResult(method: string, value: unknown): unknown {
   if (method.startsWith('extension.')) {
     const schema = extensionResultSchemas[method as ExtensionMethod]
     if (!schema) throw new Error('Unsupported extension result')
+    return schema.parse(value)
+  }
+  if (method.startsWith('usage.')) {
+    const schema = usageResultSchemas[method as UsageMethod]
+    if (!schema) throw new Error('Unsupported usage result')
     return schema.parse(value)
   }
   if (method.startsWith('voice.')) {

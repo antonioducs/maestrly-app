@@ -3,6 +3,8 @@ export type { Vm, Host, Operation } from '@maestrly/host-protocol'
 import type {
   ExtensionMethod,
   ExtensionResult,
+  UsageMethod,
+  UsageResult,
   PromptMethod,
   PromptResult,
   BotMethod,
@@ -45,6 +47,7 @@ export type RoutineCall<M extends RoutineMethod = RoutineMethod> = { method: M; 
 export type VoiceCall<M extends VoiceMethod = VoiceMethod> = { method: M; params: Record<string, unknown> }
 export type PromptCall<M extends PromptMethod = PromptMethod> = { method: M; params: Record<string, unknown> }
 export type ExtensionCall<M extends ExtensionMethod = ExtensionMethod> = { method: M; params: Record<string, unknown> }
+export type UsageCall<M extends UsageMethod = UsageMethod> = { method: M; params: Record<string, unknown> }
 /** A folder read for a skill install: relative paths and contents, bounded by the Host limits. */
 export type PickedFolder = { name: string; files: { path: string; dataBase64: string }[] }
 /** Where a Host runs: this Mac through the fixed local command, or a remote alias already trusted in SSH config. */
@@ -113,6 +116,8 @@ export interface BotApi {
   extension<M extends ExtensionMethod>(call: ExtensionCall<M>): Promise<ExtensionResult<M>>
   /** Chooses a skill folder with the main-process dialog; null when cancelled. */
   pickFolder(): Promise<PickedFolder | null>
+  /** Usage summaries over the Host's turn ledger; the application prices them with the catalogue. */
+  usage<M extends UsageMethod>(call: UsageCall<M>): Promise<UsageResult<M>>
   voice: VoiceApi
   syncAccounts(): Promise<{ unavailableHosts: string[] }>
   localHost(): Promise<LocalHostStatus>

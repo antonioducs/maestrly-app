@@ -5,6 +5,7 @@ import { FixtureTeams } from './fixture-teams'
 import { FixtureRoutines } from './fixture-routines'
 import { FixturePrompts } from './fixture-prompts'
 import { FixtureExtensions } from './fixture-extensions'
+import { FixtureUsage } from './fixture-usage'
 import { FixtureVoice } from './fixture-voice'
 import type { Host, Vm, Operation } from '@maestrly/host-protocol'
 // Explicit local UI fixture; never hardware evidence and disabled in packaged builds.
@@ -37,6 +38,7 @@ export class FixtureHost {
   readonly teams: FixtureTeams
   readonly routines: FixtureRoutines
   readonly voice: FixtureVoice
+  readonly usage: FixtureUsage
   constructor(private options: { lostReply?: string; retained?: boolean; slowSetup?: boolean; autoLoginMs?: number; noBots?: boolean; noTeams?: boolean; noRoutines?: boolean; noVoice?: boolean; noChat?: boolean; suggestRoutine?: boolean; readyEnvironment?: boolean; connectedAccount?: boolean } = {}) {
     if (options.readyEnvironment) { this.vms[0].state = 'running'; this.vms[0].health = 'ready'; this.vms[0].desiredState = 'running' }
     if (options.retained) this.vms[0].state = 'removed'
@@ -51,6 +53,7 @@ export class FixtureHost {
       { slowSetup: options.slowSetup, autoLoginMs: options.autoLoginMs, readyEnvironment: options.readyEnvironment, connectedAccount: options.connectedAccount }
     )
     this.teams = new FixtureTeams((id) => this.bots.bots.get(id))
+    this.usage = new FixtureUsage(() => [...this.bots.turns.values()], (id) => this.bots.bots.get(id))
     this.routines = new FixtureRoutines('d9a02e5b-0c12-4411-9393-b5106ecff181', (target) =>
       (target.kind === 'bot' ? this.bots.bots.get(target.id)?.name : this.teams.teams.get(target.id)?.name) ?? 'destino'
     )
@@ -139,6 +142,10 @@ export class FixtureHost {
     if (method.startsWith('extension.')) {
       if (this.options.noBots || this.options.noChat) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
       return this.extensions.request(method, p)
+    }
+    if (method.startsWith('usage.')) {
+      if (this.options.noBots || this.options.noChat) throw new HostRequestError('Host request failed', 'INVALID_REQUEST')
+      return this.usage.request(method, p)
     }
     if (method === 'host.inspect') return this.hostInfo()
     if (method === 'vm.list')

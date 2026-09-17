@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Activity, Loader2, RefreshCw } from 'lucide-react'
+import { Activity } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { QuickUsageRefresh, QuickUsageTargets } from '@maestrly/chat-ui'
 import type { ChatSubscriptionUsage } from '../../../shared/chat'
-import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
 import type { QuickUsageTarget } from './quick-subscription-usage'
@@ -11,6 +11,10 @@ function targetKey(target: QuickUsageTarget): string {
   return target.providerId
 }
 
+/**
+ * The quick look at subscription limits from the sidebar. The dialog shell stays the desktop's
+ * own primitive; the list of targets and the refresh control are the shared ones.
+ */
 export function QuickSubscriptionUsageDialog({
   open,
   onOpenChange,
@@ -65,6 +69,12 @@ export function QuickSubscriptionUsageDialog({
     setLoading(false)
   }, [open])
 
+  const views = targets.map((target) => ({
+    ...target,
+    key: targetKey(target),
+    data: { 'quick-usage-provider': target.providerKind, 'quick-usage-account': target.accountId ?? 'default' },
+  }))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -80,50 +90,20 @@ export function QuickSubscriptionUsageDialog({
           <DialogDescription>{t('sidebar.usageDescription')}</DialogDescription>
         </DialogHeader>
 
-        <div
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1"
-          data-testid="quick-usage-list"
-        >
-          {targets.map((target) => {
-            const usage = snapshots[targetKey(target)] ?? null
-            return (
-              <section
-                key={targetKey(target)}
-                className="rounded-lg border border-border bg-black/15 px-3 py-3"
-                data-quick-usage-provider={target.providerKind}
-                data-quick-usage-account={target.accountId ?? 'default'}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[13px] font-medium text-foreground">{target.label}</p>
-                    {target.accountLabel && !target.label.includes(target.accountLabel) && (
-                      <p className="truncate text-[11px] text-muted-foreground">{target.accountLabel}</p>
-                    )}
-                  </div>
-                </div>
-                {usage?.state === 'unsupported' ? (
-                  <p className="mt-2 text-[11px] text-muted-foreground">{t('sidebar.usageUnavailable')}</p>
-                ) : (
-                  <SubscriptionUsagePanel usage={usage} loading={loading && !usage} showHeading={false} />
-                )}
-              </section>
+        <QuickUsageTargets
+          targets={views}
+          render={(target) => {
+            const usage = snapshots[target.key] ?? null
+            return usage?.state === 'unsupported' ? (
+              <p className="mt-2 text-[11px] text-muted-foreground">{t('sidebar.usageUnavailable')}</p>
+            ) : (
+              <SubscriptionUsagePanel usage={usage} loading={loading && !usage} showHeading={false} />
             )
-          })}
-        </div>
+          }}
+        />
 
         <div className="flex shrink-0 justify-end">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-[12px]"
-            disabled={loading}
-            onClick={() => void load(true)}
-            aria-label={t('sidebar.usageRefresh')}
-          >
-            {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            {t('common.refresh')}
-          </Button>
+          <QuickUsageRefresh loading={loading} onRefresh={() => void load(true)} label={t('sidebar.usageRefresh')} />
         </div>
       </DialogContent>
     </Dialog>

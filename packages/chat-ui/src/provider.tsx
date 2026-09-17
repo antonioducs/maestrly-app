@@ -36,7 +36,48 @@ export interface ChatUiLabels {
   }
   model: { title: string; effort: string }
   permission: { ask: string; full: string; askHint: string; fullHint: string }
-  usage: { title: string; period: string; model: string; input: string; output: string; cached: string; turns: string; cost: string; empty: string; refresh: string }
+  usage: {
+    title: string
+    description: string
+    period: string
+    model: string
+    input: string
+    output: string
+    cached: string
+    turns: string
+    cost: string
+    empty: string
+    loading: string
+    refresh: string
+    close: string
+    periodToday: string
+    period7d: string
+    period30d: string
+    period90d: string
+    periodCustom: string
+    from: string
+    to: string
+    cardTotalTokens: string
+    cardTotalCost: string
+    cardTurns: string
+    cardModels: string
+    colModel: string
+    colInput: string
+    colOutput: string
+    colCacheCreate: string
+    colCacheRead: string
+    colTotal: string
+    colShare: string
+    colCost: string
+    turnsUnit: string
+    totalRow: string
+    /** "+ n models without a price", appended to the total when some rows could not be priced. */
+    unpriced: (count: number) => string
+    noPricing: string
+    note: string
+    /** What stands in for a value that does not exist. */
+    dash: string
+  }
   mermaid: { failed: string; rendering: string; expand: string; zoomIn: string; zoomOut: string; reset: string; close: string; dialog: string }
 }
 export interface ChatUiContextValue {

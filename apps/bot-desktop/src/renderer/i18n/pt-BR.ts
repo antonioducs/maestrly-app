@@ -518,5 +518,9 @@ export const ptBR = {
   installSkill: 'Instalar de uma pasta',
   skillFiles: 'arquivos',
   noExtensions: 'Nenhuma extensão ainda.',
+  usage: 'Uso e custos',
+  usageOf: 'Uso e custos de {name}',
+  usageByBot: 'Por bot',
+  usageHostOutdated: 'Atualize o Host para ver uso e custos.',
 } as const
 export type TranslationKey = keyof typeof ptBR
