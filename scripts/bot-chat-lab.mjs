@@ -104,10 +104,13 @@ export async function doctor(session) {
   const prompts = chat ? await session.request('prompt.list', {}) : undefined
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString()
   const usage = chat ? await session.request('usage.summary', { since }) : undefined
-  let guest
+  // What the environment inventory recorded for the VM's guest. On the Mac mini this inventory
+  // was not refreshed by the environment update, so it can lag behind the live session: the smoke
+  // report (`guestOutdated`, from the Host's own diagnostic) is the evidence, not this field.
+  let guestInventory
   if (inspected?.vmId) {
     const inventory = await session.request('bot.sessions.list', { vmId: inspected.vmId }).catch(() => undefined)
-    if (inventory) guest = { extensions: inventory.capabilities.includes('bot.extensions.v1'), transcript: inventory.capabilities.includes('bot.transcript.v1') }
+    if (inventory) guestInventory = { extensions: inventory.capabilities.includes('bot.extensions.v1'), transcript: inventory.capabilities.includes('bot.transcript.v1') }
   }
   return {
     host: { id: host.id, serviceVersion: host.serviceVersion, chat },
@@ -123,7 +126,7 @@ export async function doctor(session) {
           model: inspected.model?.model,
         }
       : undefined,
-    guest,
+    guestInventory,
     // Names only: a server's command line and a skill's text may be private.
     extensions: extensions
       ? {

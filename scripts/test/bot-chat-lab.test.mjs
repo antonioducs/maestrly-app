@@ -108,7 +108,7 @@ test('the doctor changes nothing and reports names and counts only', async () =>
   const report = await doctor(session)
   assert.equal(report.ready, true)
   assert.equal(report.host.chat, true)
-  assert.deepEqual(report.guest, { extensions: true, transcript: true })
+  assert.deepEqual(report.guestInventory, { extensions: true, transcript: true })
   assert.deepEqual(report.extensions.mcpServers, [{ name: 'privado', transport: 'stdio', enabled: true, envKeys: 1 }])
   assert.equal(report.prompts, 1)
   assert.equal(report.usage7d.turns, 4)
@@ -129,7 +129,7 @@ test('the doctor reports an older Host instead of failing', async () => {
   assert.equal(report.host.chat, false)
   assert.equal(report.ready, false)
   assert.equal(report.extensions, undefined)
-  assert.deepEqual(report.guest, { extensions: false, transcript: false })
+  assert.deepEqual(report.guestInventory, { extensions: false, transcript: false })
 })
 
 /** A Host that answers the smoke: extensions are installed, one turn runs, the transcript shows the tool. */

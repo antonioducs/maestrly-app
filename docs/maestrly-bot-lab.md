@@ -72,8 +72,9 @@ físico, não altera cotas, não instala pacotes no controlador e não copia cre
 ## Experiência de chat: extensões por bot
 
 - `npm run lab:bot:chat` — inventário **somente leitura**: se o Host anuncia
-  `chat.experience.v1`, se o guest do bot escolhido aceita extensões (`bot.extensions.v1`) e
-  transcript rico (`bot.transcript.v1`), quais servidores MCP e skills estão configurados (nomes
+  `chat.experience.v1`, o que o inventário do ambiente registrou sobre o guest do bot escolhido
+  (`bot.extensions.v1`, `bot.transcript.v1` — pode ficar defasado; a prova é o `guestOutdated`
+  do portão), quais servidores MCP e skills estão configurados (nomes
   e contagens, nunca comandos, cabeçalhos ou textos), quantos comandos existem e o uso dos últimos
   7 dias. Num Host anterior ele reporta `chat: false` em vez de falhar.
 - `npm run lab:bot:chat -- --authorize-extensions-smoke` — o portão das extensões. Exige, no
