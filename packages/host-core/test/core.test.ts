@@ -629,7 +629,9 @@ describe('critical acceptance regressions', () => {
     expect((await call(reopened, 'host.inspect')).result).toMatchObject({
       id: host.id,
       protocolVersion: 1,
-      serviceVersion: '0.2.0',
+      // What matters here is that reopening reports the SAME identity and version, not which
+      // version that is. Pinning a literal only guaranteed this test went stale on every release.
+      serviceVersion: host.serviceVersion,
     })
     expect(
       (

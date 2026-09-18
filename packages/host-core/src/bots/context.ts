@@ -1,4 +1,4 @@
-import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotInteraction, type BotMemory, type BotMessage, type BotTurn, type NetworkPolicy, type TeamTurnContext, type TurnSnapshot } from '@maestrly/host-protocol'
+import { MEMORY_ACTIVE_BUDGET, type Bot, type BotConversation, type BotInteraction, type BotMemory, type BotMessage, type BotTurn, type NetworkPolicy, type RoutineTurnContext, type TeamTurnContext, type TurnSnapshot } from '@maestrly/host-protocol'
 import { HostError } from '../errors.js'
 
 export const TURN_LIMITS = { activeMs: 30 * 60_000, maxTools: 100, maxLogBytes: 10 * 1024 * 1024, leaseMs: 30_000, renewMs: 10_000, humanWaitMs: 24 * 3_600_000, dispatchAttentionMs: 60_000 }
@@ -33,6 +33,11 @@ export function buildSnapshot(input: {
   team?: TeamTurnContext
   /** Permission ceiling agreed for this work; never wider than the bot's own mode. */
   permissionMode?: Bot['permissionMode']
+  /**
+   * Reference time, zone and whether this turn may suggest a routine at all. Added only when
+   * the guest announced the routine capability; an older guest receives the previous shape.
+   */
+  routines?: RoutineTurnContext
 }): TurnSnapshot {
   const active = input.memory.filter((m) => m.active)
   const memoryBytes = active.reduce((sum, m) => sum + Buffer.byteLength(m.content), 0)
@@ -64,6 +69,7 @@ export function buildSnapshot(input: {
     leaseMs: input.leaseMs,
     limits: input.limits ?? { activeMs: TURN_LIMITS.activeMs, maxTools: TURN_LIMITS.maxTools, maxLogBytes: TURN_LIMITS.maxLogBytes },
     ...(input.team ? { team: input.team } : {}),
+    ...(input.routines ? { routines: input.routines } : {}),
   }
 }
 

@@ -1,4 +1,4 @@
-import { TEAM_LIMITS, delegatedCredentialSchema, type CollaborationRequest, type DelegatedCredential, type VmRequest, type VmSessionInfo } from '@maestrly/host-protocol'
+import { TEAM_LIMITS, delegatedCredentialSchema, type CollaborationRequest, type DelegatedCredential, type RoutineRuntimeRequest, type VmRequest, type VmSessionInfo } from '@maestrly/host-protocol'
 import { connect } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { lstat } from 'node:fs/promises'
@@ -33,6 +33,11 @@ export interface GuestSession {
    * from this authenticated session; the frame never names a bot, a team or a role.
    */
   setCollaborationHandler?(handler: (request: CollaborationRequest) => Promise<Record<string, unknown>>): void
+  /**
+   * Handles a routine proposal request. It is a separate lane with its own small budget, so a
+   * model writing suggestion cards can never starve cancellation, leases or the live screen.
+   */
+  setRoutineHandler?(handler: (request: RoutineRuntimeRequest) => Promise<Record<string, unknown>>): void
   readonly alive: boolean
   close(): void
 }
@@ -68,6 +73,9 @@ export class SocketGuestSession implements GuestSession {
   private collaborationHandler?: (request: CollaborationRequest) => Promise<Record<string, unknown>>
   private collaborationPending = 0
   setCollaborationHandler(handler: (request: CollaborationRequest) => Promise<Record<string, unknown>>) { this.collaborationHandler = handler }
+  private routineHandler?: (request: RoutineRuntimeRequest) => Promise<Record<string, unknown>>
+  private routinePending = 0
+  setRoutineHandler(handler: (request: RoutineRuntimeRequest) => Promise<Record<string, unknown>>) { this.routineHandler = handler }
   private buffer = Buffer.alloc(0)
   private pending = new Map<string, Pending>()
   private eventListeners = new Set<(event: GuestEvent, ack: () => void) => void>()
@@ -189,6 +197,32 @@ export class SocketGuestSession implements GuestSession {
           })
           .finally(() => {
             this.collaborationPending--
+          })
+        continue
+      }
+      if (frame.type === 'routine.request') {
+        const id = frame.id
+        // One proposal at a time per session: writing cards is never urgent, and this lane
+        // must not compete with the frames a person is waiting on.
+        if (!this.routineHandler || this.routinePending >= 1) {
+          this.write({ type: 'routine.response', id, error: { code: 'ROUTINE_UPDATE_REQUIRED', message: 'Sugestões de rotina indisponíveis nesta execução' } })
+          continue
+        }
+        this.routinePending++
+        void this.routineHandler(frame)
+          .then((result) => {
+            if (this.alive) this.write({ type: 'routine.response', id, result })
+          })
+          .catch((error) => {
+            if (this.alive)
+              this.write({
+                type: 'routine.response',
+                id,
+                error: { code: error instanceof HostError ? error.code : 'ROUTINE_PROPOSAL_INVALID', message: String(error?.message ?? 'Ação indisponível').slice(0, 400) },
+              })
+          })
+          .finally(() => {
+            this.routinePending--
           })
         continue
       }

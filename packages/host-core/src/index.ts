@@ -51,3 +51,25 @@ export { buildSnapshot, defaultInstructions, TURN_LIMITS } from './bots/context.
 export type { VerifyResult } from '@maestrly/host-protocol'
 export { handleDesktopAttach, type DesktopAttach } from './desktop/gateway.js'
 export { DIRECT_CONTEXT, type DesktopContext } from './desktop/service.js'
+
+/**
+ * Phase 5 (schema 7): routine.* and voice.* are delegated to RoutineService and
+ * VoiceService. A routine is a durable calendar entry that admits work into the engines that
+ * already exist — one scoped turn per bot, one run per team — and is only ever activated by a
+ * person confirming a preview. Voice messages are captured in the application, transcribed by
+ * a separate worker process on the Host from a verified local bundle, and only the confirmed
+ * text reaches the AI provider.
+ */
+export { nextOccurrences, latestDue, describeSchedule, resolveLocal, localReading, isAmbiguousInstant, type Clock, type CalendarOccurrence, type DueSummary } from './routines/calendar.js'
+export { RoutineRepository } from './routines/repository.js'
+export { RoutineService, type RoutineServiceOptions } from './routines/service.js'
+export { RoutineAuthority } from './routines/authority.js'
+export { BackgroundAdmission } from './teams/background-admission.js'
+export { CompositeContinuationScope, OwnershipConflict, composeDispatchGuards, composeBudgetCeilings, composeTurnObservers } from './bots/scoped-execution.js'
+export { VoiceRepository } from './voice/repository.js'
+export { VoiceService, type VoiceServiceOptions } from './voice/service.js'
+export { VoiceStorage } from './voice/uploads.js'
+export { parseCanonicalWav, encodeCanonicalWav, decodePcm, isSilent, WAV_HEADER_BYTES } from './voice/wav.js'
+export { inspectAsrBundle, resetAsrVerification, asrManifestSchema, type AsrBundle, type AsrBundleState } from './voice/assets.js'
+export { AsrWorkerClient, asrRequestSchema, asrResponseSchema, type AsrOptions, type AsrWorkerFactory, type AsrWorkerHandle } from './voice/worker-client.js'
+export { forkAsrWorker } from './voice/worker-process.js'

@@ -16,6 +16,7 @@ import {
   type TeamMessage,
   type TeamMethod,
   type TeamOperation,
+  type TeamPolicy,
   type TeamRequest,
   type TeamResult,
   type TeamRun,
@@ -49,6 +50,37 @@ const canonical = (value: unknown): string => {
 /** Idempotency fingerprint covers content, attachments, recipients and scope, not just text. */
 export const teamFingerprint = (params: unknown) => createHash('sha256').update(canonical(params)).digest('hex')
 const TRANSFER_TTL_MS = 30 * 60_000
+
+/**
+ * Who asked for this work. There is no shape here that lets a caller claim to be a person:
+ * a routine is a routine, and the conversation shows it as one.
+ */
+export type TeamRunOrigin =
+  | { kind: 'human' }
+  | { kind: 'routine'; routineId: string; occurrenceId: string; name: string; scheduledForLocal: string }
+
+export interface TeamRunInput {
+  teamId: string
+  clientMessageId: string
+  content: string
+  artifactIds: string[]
+  origin: TeamRunOrigin
+  /** Reduced ceilings for programmed work; intersected with the team's policy, never added to it. */
+  limits?: { maxToolCalls?: number; maxActiveMs?: number; permissionMode?: 'ask' | 'full-vm' }
+  /** Runs inside the admission transaction, after every guard passed. */
+  onAdmitted?: (receipt: { message: TeamMessage; run: TeamRun }) => void
+}
+
+/** `ask` always wins, and every numeric ceiling can only go down. */
+export function narrowPolicy(policy: TeamPolicy, reduced: TeamRunInput['limits']): TeamPolicy {
+  if (!reduced) return policy
+  return teamPolicySchema.parse({
+    ...policy,
+    ...(reduced.maxToolCalls !== undefined ? { maxToolCalls: Math.min(policy.maxToolCalls, Math.max(1, reduced.maxToolCalls)) } : {}),
+    ...(reduced.maxActiveMs !== undefined ? { maxActiveMs: Math.min(policy.maxActiveMs, Math.max(60_000, reduced.maxActiveMs)) } : {}),
+    permissionMode: reduced.permissionMode === 'ask' || policy.permissionMode === 'ask' ? 'ask' : policy.permissionMode,
+  })
+}
 
 export interface TeamServiceOptions {
   repo: BotRepository
@@ -469,6 +501,18 @@ export class TeamService {
 
   /** A person's request opens exactly one run; a repeated key returns the same receipt. */
   private send(p: { teamId: string; clientMessageId: string; content: string; artifactIds: string[] }) {
+    return this.enqueueRun({ ...p, origin: { kind: 'human' } })
+  }
+
+  /**
+   * The single admission path for team work, shared by the person's own request and by a
+   * scheduled routine. A programmed request is recorded as what it is — a system author with
+   * explicit provenance — instead of being replayed through the public message endpoint as if
+   * a second person had typed it. Everything else is identical: one run per conversation, the
+   * roster frozen at admission, resources verified by identity, and the coordinator's planning
+   * task created in the same transaction as the message and the run.
+   */
+  enqueueRun(p: TeamRunInput) {
     const team = this.access.team(p.teamId)
     const members = this.repo.members(team.id, true)
     if (members.length < 2) throw new HostError('TEAM_MEMBER_INVALID', 'Esta equipe não tem membros suficientes para trabalhar')
@@ -493,12 +537,24 @@ export class TeamService {
         id: randomUUID(),
         conversationId: conversation.id,
         clientMessageId: p.clientMessageId,
-        author: { kind: 'human' },
+        // A programmed request is authored by the system, with the routine named beside it.
+        author: p.origin.kind === 'human' ? { kind: 'human' } : { kind: 'system' },
         kind: 'request',
         content: p.content,
         runId,
         sequence,
         artifacts: resources,
+        ...(p.origin.kind === 'routine'
+          ? {
+              provenance: {
+                kind: 'routine' as const,
+                routineId: p.origin.routineId,
+                occurrenceId: p.origin.occurrenceId,
+                name: p.origin.name,
+                scheduledForLocal: p.origin.scheduledForLocal,
+              },
+            }
+          : {}),
         createdAt: now(),
       }
       this.repo.saveMessage(message)
@@ -519,7 +575,8 @@ export class TeamService {
         })),
         resources,
         memberGrantRevision: grantRevision,
-        limits: team.policy,
+        // A reduced ceiling may only narrow the team's own policy, never widen it.
+        limits: narrowPolicy(team.policy, p.limits),
         budget: emptyBudget(),
         round: 0,
         status: 'planning',
@@ -558,9 +615,18 @@ export class TeamService {
         createdAt: now(),
         updatedAt: now(),
       })
+      // Runs inside the admission transaction: the caller's own durable link to this run is
+      // committed with it, so a crash can never leave an orphan run nobody is tracking.
+      p.onAdmitted?.({ message, run })
       return { message, run }
     })
-    this.scheduler.event({ teamId: team.id, runId: receipt.run.id, kind: 'run.status', summary: 'A equipe recebeu o pedido', detail: { status: 'planning' } })
+    this.scheduler.event({
+      teamId: team.id,
+      runId: receipt.run.id,
+      kind: 'run.status',
+      summary: p.origin.kind === 'routine' ? `A equipe recebeu o pedido da rotina ${p.origin.name}` : 'A equipe recebeu o pedido',
+      detail: { status: 'planning', origin: p.origin.kind },
+    })
     this.scheduler.kick()
     return receipt
   }

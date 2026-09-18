@@ -143,7 +143,8 @@ describe.skipIf(skipWindows)('team schema migration and durable store', () => {
       const before = bots.bot('a')
       const conversation = bots.conversation('conv-a')
       expect((store.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(HOST_DB_VERSION)
-      expect(HOST_DB_VERSION).toBe(6)
+      // The teams domain arrived at schema 6; later phases keep migrating past it.
+      expect(HOST_DB_VERSION).toBeGreaterThanOrEqual(6)
       // Re-running the migration on an already migrated database is a no-op.
       migrateToV6(store.db)
       expect(bots.bot('a')).toEqual(before)
