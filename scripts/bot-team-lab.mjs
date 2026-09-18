@@ -118,10 +118,18 @@ export class HostSession {
       else pending.resolve(reply.result)
     }
   }
+  /**
+   * The consent policy of this laboratory. A laboratory for another phase replaces it with its own
+   * complete policy instead of stacking a second one on top: two guards that each know only their
+   * own methods would refuse everything the other one owns.
+   */
+  guard(method) {
+    guardTeamLab(this.config, method, this.flags)
+  }
   request(method, params, timeoutMs = 60_000) {
     // A refusal is a rejected promise, never a synchronous throw: callers await uniformly.
     try {
-      guardTeamLab(this.config, method, this.flags)
+      this.guard(method)
     } catch (error) {
       return Promise.reject(error)
     }

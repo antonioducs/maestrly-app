@@ -44,6 +44,26 @@ test('build accepts a complete pinned x64 manifest and rejects duplicate inputs'
   assert.throws(() => validateBuildConfig({ ...config, files: [...config.files, config.files[0]] }), /CONFIG/)
 })
 
+test('a speech bundle may be omitted but never pointed outside the Host tree', () => {
+  const config = {
+    architecture: 'x64',
+    nodeVersion: '22.23.2',
+    qemuVersion: '10.2.0',
+    inputDirectory: path.resolve('build/runtime'),
+    files: ['bin/node', 'bin/qemu-img', 'bin/qemu-system-x86_64'].map((path) => ({
+      path,
+      sha256: 'a'.repeat(64),
+      license: 'See supplied notices',
+      source: 'https://example.org/pinned',
+    })),
+  }
+  // A Host without transcription is a valid Host; the application simply stays textual.
+  assert.equal(validateBuildConfig(config), config)
+  assert.equal(validateBuildConfig({ ...config, asrBundleDirectory: '/Library/MaestrlyHost/asr' }).asrBundleDirectory, '/Library/MaestrlyHost/asr')
+  for (const directory of ['/tmp/asr', '/Users/someone/asr', '/Library/MaestrlyHostEvil/asr', 'asr', 42])
+    assert.throws(() => validateBuildConfig({ ...config, asrBundleDirectory: directory }), /asrBundleDirectory/)
+})
+
 test('QEMU image preparation pins QGA, disables logins and cleans instance identity', async () => {
   const { imageBuildUserData } = await import('../scripts/build-host-image-qemu.mjs')
   const id = '11111111-1111-4111-8111-111111111111'

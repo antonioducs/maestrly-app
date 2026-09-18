@@ -65,6 +65,18 @@ export function validateBuildConfig(config) {
   for (const key of ['firmware', 'firmwareVars'])
     if (config[key] && !seen.has(safeRelative(config[key]))) throw new Error(`CONFIG: missing ${key}`)
   if (config.architecture === 'arm64' && !config.firmware) throw new Error('CONFIG: Arm requires verified firmware')
+  /**
+   * Local speech recognition is optional, but once the operator names a bundle the rule belongs
+   * to the configuration contract rather than to a single writer: a directory outside the Host's
+   * own root-owned tree could be writable by an ordinary account, which would turn a "verified"
+   * bundle into code chosen by whoever can write there.
+   */
+  const asrBundleDirectory = config.asrBundleDirectory
+  if (
+    asrBundleDirectory !== undefined &&
+    (typeof asrBundleDirectory !== 'string' || !asrBundleDirectory.startsWith('/Library/MaestrlyHost/'))
+  )
+    throw new Error('CONFIG: asrBundleDirectory must live under /Library/MaestrlyHost/')
   return config
 }
 export function run(file, args, options = {}) {

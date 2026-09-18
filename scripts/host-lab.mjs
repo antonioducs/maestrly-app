@@ -36,6 +36,14 @@ export function validateConfig(config) {
     // Phase 4 team laboratory (opt-in): the exact bots that may form the test team.
     'teamBotIds',
     'allowTeamSmoke',
+    // Phase 5 routine and voice laboratory (opt-in): the exact bot that may receive a scheduled
+    // firing, the consented recording, and the calendar zone the routine is written in.
+    'allowRoutineSmoke',
+    'routineBotId',
+    'routineTeamId',
+    'allowVoiceSmoke',
+    'voiceSampleFile',
+    'timeZone',
     // Chat experience laboratory (opt-in): installing an MCP server and a skill on routineBotId.
     'allowExtensionsSmoke',
   ])
@@ -78,7 +86,7 @@ export function validateConfig(config) {
     throw Error('Invalid local operator')
   if (config.botVmId !== undefined && (typeof config.botVmId !== 'string' || !/^[0-9a-f-]{36}$/i.test(config.botVmId)))
     throw Error('botVmId must be the exact VM identifier chosen for preparation')
-  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke', 'authorizeDesktopLab', 'allowTeamSmoke', 'allowExtensionsSmoke'])
+  for (const key of ['allowGuestPreparation', 'authorizeBotSmoke', 'authorizeDesktopLab', 'allowTeamSmoke'])
     if (config[key] !== undefined && typeof config[key] !== 'boolean') throw Error('Authorization must be boolean')
   // The team is named by explicit bot identifiers; the lab never picks a bot on its own.
   if (config.teamBotIds !== undefined) {
@@ -91,6 +99,21 @@ export function validateConfig(config) {
   if (config.botBundlePath !== undefined && (typeof config.botBundlePath !== 'string' || !config.botBundlePath.startsWith('/')))
     throw Error('Explicit absolute bot bundle path required')
   if (config.botBundleSha256 !== undefined && !/^[a-f0-9]{64}$/.test(config.botBundleSha256)) throw Error('Invalid bot bundle SHA256')
+  for (const key of ['allowRoutineSmoke', 'allowVoiceSmoke', 'allowExtensionsSmoke'])
+    if (config[key] !== undefined && typeof config[key] !== 'boolean') throw Error('Authorization must be boolean')
+  for (const key of ['routineBotId', 'routineTeamId'])
+    if (config[key] !== undefined && (typeof config[key] !== 'string' || !/^[0-9a-f-]{36}$/i.test(config[key])))
+      throw Error(`${key} must be an exact identifier`)
+  if (config.voiceSampleFile !== undefined && (typeof config.voiceSampleFile !== 'string' || !config.voiceSampleFile.startsWith('/') || config.voiceSampleFile.includes('\0')))
+    throw Error('voiceSampleFile must be an explicit absolute path')
+  if (config.timeZone !== undefined) {
+    if (typeof config.timeZone !== 'string') throw Error('timeZone must be an IANA zone name')
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: config.timeZone })
+    } catch {
+      throw Error('timeZone must be an IANA zone name')
+    }
+  }
   return config
 }
 export function sshArguments(config) {

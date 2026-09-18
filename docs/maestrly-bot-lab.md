@@ -69,6 +69,41 @@ operador. Sem Mac mini, `node scripts/verify-bot-desktop.mjs --local-container` 
 Relatórios ficam em `.host-lab/bot-*/` e `.host-lab/desktop-lab-*/` (ignorados pelo Git). O laboratório não executa reboot
 físico, não altera cotas, não instala pacotes no controlador e não copia credenciais.
 
+## Rotinas e mensagens de voz (fase 5)
+
+- `npm run lab:bot:phase5` — inventário **somente leitura**: bots, computadores, se o Host anuncia
+  `routines.v1` e `voice.messages.v1`, o que já está agendado e se o alvo configurado pode executar.
+  Não cria rotina, não grava áudio e não transcreve nada. Num Host anterior à fase 5 ele reporta
+  `routines: false` e `voice: false` em vez de falhar. O relatório traz **nome e horário** das
+  rotinas, nunca o pedido em si — o texto de uma rotina pode ser confidencial.
+- `npm run lab:bot:phase5 -- --authorize-routine-smoke` — o portão de agendamento. Exige, no
+  `.maestrly-host-lab.json` privado, `allowRoutineSmoke: true` e um `routineBotId` com o
+  **identificador exato** do bot. Ele ativa uma rotina de **uma única execução**, poucos minutos à
+  frente, e espera o Host cumprir o horário sozinho. Ao terminar, pausa o que criou: nada fica
+  agendado sem querer. O relatório traz horário previsto e real, quantas ocorrências e quantas
+  execuções existiram (o valor que importa é **um e um**) e o **tamanho** da resposta, nunca o
+  conteúdo.
+- `npm run lab:bot:phase5 -- --authorize-voice-smoke` — o portão de transcrição. Exige
+  `allowVoiceSmoke: true` e um `voiceSampleFile` apontando para um WAV canônico (16 kHz, mono,
+  PCM16) que a pessoa **consentiu** em usar. O laboratório nunca grava ninguém: ele envia o arquivo
+  ao Host, pede a transcrição e confere que o worker empacotado produziu texto. O relatório traz
+  duração, tempos de upload e de inferência e o **número de palavras**, nunca a transcrição.
+
+Os dois consentimentos são independentes: autorizar agendamento não autoriza áudio, e vice-versa.
+Sem a chave na configuração **e** a flag na linha de comando, apenas os métodos de leitura rodam.
+
+Para transcrever, o Host precisa de um pacote de fala verificado:
+
+```bash
+npm run build:host:asr -- --runtime <dir do runtime local-ML> --model <dir do modelo> --model-id <id>
+```
+
+O build não baixa nada: runtime e pesos são entradas explícitas do operador. A saída traz um
+`manifest.json` com o digest de cada arquivo, e o Host recalcula tudo antes de iniciar um worker.
+Instale o pacote sob `/Library/MaestrlyHost/` e aponte `asrBundleDirectory` no manifesto privado do
+Host; sem isso o Host não anuncia voz e o aplicativo continua só com texto. **O pacote de fala vai
+no Host, nunca dentro das VMs dos bots.**
+
 ## Experiência de chat: extensões por bot
 
 - `npm run lab:bot:chat` — inventário **somente leitura**: se o Host anuncia

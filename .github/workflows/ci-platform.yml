@@ -51,10 +51,16 @@ jobs:
         run: npm run check:bot-phase3 && npm run test:bot-phase3
       - name: Check Bot team collaboration deterministic suites (no remote hardware)
         run: npm run check:bot-phase4 && npm run test:bot-phase4
+      # Routines and voice, with an injected clock and a worker fixture. No microphone, no
+      # speech model and no SSH run here: those gates belong to the laboratory report.
+      - name: Check Bot routines and voice deterministic suites (no remote hardware)
+        run: npm run check:bot-phase5 && npm run test:bot-phase5
       - name: Test Bot local UI
         run: xvfb-run -a npm run test:e2e:bot
       - name: Test Bot team UI
         run: xvfb-run -a npm run test:e2e:bot-teams
+      - name: Test Bot routines and voice UI
+        run: xvfb-run -a npm run test:e2e:bot-phase5
       # The chat experience: transcript, composer, commands, extensions and usage, all against
       # the interface fixture. The guest-side gates (Codex with MCP and skills) belong to the lab.
       - name: Check Bot chat experience deterministic suites (no remote hardware)

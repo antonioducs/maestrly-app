@@ -40,7 +40,9 @@ test('team collaboration never travels outside the private control channel', asy
 
 test('the teams domain keeps a distinct schema version and a preserving migration', async () => {
   const migrations = await read('packages/host-core/src/bots/migrations.ts')
-  assert.match(migrations, /HOST_DB_VERSION = 6/)
+  // The teams domain arrived at schema 6; later phases keep migrating past it, and the team
+  // migration below must keep refusing to run against anything but schema 5.
+  assert.ok(Number(/HOST_DB_VERSION = (\d+)/.exec(migrations)?.[1]) >= 6)
   const teams = await read('packages/host-core/src/teams/migrations.ts')
   assert.match(teams, /requires host schema version 5/)
   assert.match(teams, /BEGIN IMMEDIATE/)
@@ -68,15 +70,26 @@ test('the team capability is advertised on both sides and gated in the applicati
 })
 
 test('versions advance so an existing environment is offered the update', async () => {
-  const manifests = {
+  // What matters is that nothing goes backwards from what phase 4 shipped: an installed
+  // environment compares versions to decide whether an update exists. Pinning exact literals made
+  // this test fail on every release instead of catching the regression it is named after.
+  const baseline = {
     'apps/bot-runtime/package.json': '0.2.0',
     'packages/host-protocol/package.json': '0.3.0',
     'packages/host-core/package.json': '0.3.0',
     'apps/host/package.json': '0.3.0',
     'apps/bot-desktop/package.json': '0.3.0',
   }
-  for (const [file, version] of Object.entries(manifests))
-    assert.equal(JSON.parse(await read(file)).version, version, file)
+  const compare = (a, b) =>
+    a
+      .split('.')
+      .map(Number)
+      .reduce((acc, part, index) => acc || part - Number(b.split('.')[index] ?? 0), 0)
+  for (const [file, floor] of Object.entries(baseline)) {
+    const version = JSON.parse(await read(file)).version
+    assert.match(version, /^\d+\.\d+\.\d+$/, file)
+    assert.ok(compare(version, floor) >= 0, `${file}: ${version} is older than ${floor}`)
+  }
 })
 
 test('shared team files never become a writable shared folder or a Host path in public shapes', async () => {

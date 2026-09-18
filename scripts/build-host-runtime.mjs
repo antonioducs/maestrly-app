@@ -209,9 +209,29 @@ async function build() {
       if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('ACCOUNT_PEER_PORT_INVALID')
       accounts = { runtime: { version: ACCOUNT_CODEX_VERSION, binary: await asset(config.accounts.binary) }, peers: { host: config.accounts.peerBindAddress ?? '0.0.0.0', port } }
     }
+    /**
+     * Local speech recognition, when the operator installed a verified bundle on this Host.
+     * The directory is named in the root-owned configuration and validateBuildConfig already
+     * refused anything outside the Host's own tree; the Host then verifies every file against
+     * the bundle manifest before starting a worker,
+     * and advertises the voice capability only when that verification succeeds. Without this
+     * key the Host simply does not transcribe, and the application stays textual.
+     */
+    const asrBundleDirectory = config.asrBundleDirectory
     await writeFile(
       path.join(staging, 'etc/host.json'),
-      JSON.stringify({ stateDirectory: '/Library/MaestrlyHost/state', runtimes: [runtime], images, templates, ...(accounts ? { accounts } : {}) }, null, 2)
+      JSON.stringify(
+        {
+          stateDirectory: '/Library/MaestrlyHost/state',
+          runtimes: [runtime],
+          images,
+          templates,
+          ...(accounts ? { accounts } : {}),
+          ...(asrBundleDirectory ? { asrBundleDirectory } : {}),
+        },
+        null,
+        2
+      )
     )
 
     await cp(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(staging, 'THIRD_PARTY_NOTICES.md'))
