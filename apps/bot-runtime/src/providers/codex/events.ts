@@ -76,7 +76,9 @@ export function toolDetail(item: Record<string, unknown>): Record<string, unknow
   const detail: Record<string, unknown> = {}
   if (text(item.id)) detail.callId = text(item.id).slice(0, 128)
   if (text(item.command)) detail.command = text(item.command).slice(0, 4096)
-  const output = text(item.aggregatedOutput) || text(item.output)
+  // An MCP call carries its result as content blocks, not as output text; without this the card
+  // of a configured server's tool closed empty on real hardware while the model had the answer.
+  const output = text(item.aggregatedOutput) || text(item.output) || mcpResultText(item.result)
   if (output) detail.output = output.length > TOOL_OUTPUT_MAX ? output.slice(output.length - TOOL_OUTPUT_MAX) : output
   if (typeof item.exitCode === 'number' && Number.isInteger(item.exitCode)) detail.exitCode = item.exitCode
   if (text(item.server)) detail.server = text(item.server).slice(0, 80)
@@ -98,6 +100,16 @@ export function toolDetail(item: Record<string, unknown>): Record<string, unknow
 export interface ServerRequestContext {
   configuredServers: string[]
   permissionMode: 'ask' | 'full-vm'
+}
+/** The text of an MCP tool result: its text blocks joined, or the JSON of anything else. */
+function mcpResultText(result: unknown): string {
+  if (result === undefined || result === null) return ''
+  const content = object(result).content
+  if (Array.isArray(content)) {
+    const texts = content.map(object).filter((block) => block.type === 'text' && typeof block.text === 'string').map((block) => block.text as string)
+    if (texts.length) return texts.join('\n')
+  }
+  return typeof result === 'string' ? result : (JSON.stringify(result) ?? '')
 }
 export async function serverRequest(request: CodexServerRequest, hooks: TurnHooks, context: ServerRequestContext = { configuredServers: [], permissionMode: 'ask' }) {
   const params = object(request.params)

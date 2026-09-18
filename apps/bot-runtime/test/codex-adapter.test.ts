@@ -107,6 +107,8 @@ describe('real Codex adapter against app-server fixture', () => {
     expect(started[0].detail).toMatchObject({ tool: 'commandExecution', command: 'ls' })
     expect(finished[0].detail).toMatchObject({ callId: 'c1', output: 'a\nb', exitCode: 0 })
     expect(started[1].detail).toMatchObject({ callId: 'm1', server: 'maestrly-bot', name: 'browser_navigate', arguments: { url: 'x' } })
+    // An MCP result reaches the card as text: its text blocks when it has them, its JSON otherwise.
+    expect(finished[1].detail).toMatchObject({ callId: 'm1', output: '{"ok":true}' })
     expect(finished[2].detail).toMatchObject({ callId: 'f1', changes: [{ path: 'a.txt', kind: 'add' }] })
     // Reasoning is a delta on its own channel, never mixed into the answer text.
     expect(events.find((event) => event.kind === 'assistant.delta' && event.detail?.channel === 'reasoning')?.detail?.text).toBe('thinking')
