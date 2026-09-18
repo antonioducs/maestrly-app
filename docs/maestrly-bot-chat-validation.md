@@ -82,6 +82,7 @@ próximo bundle levará a correção.
 | --- | --- | --- |
 | Servidor `stdio` sem `PATH` | `apps/bot-runtime/src/extensions/store.ts` | Nenhum servidor declarado por nome de comando funcionaria em hardware real |
 | Resultado MCP não vira saída da parte de ferramenta | `apps/bot-runtime/src/providers/codex/events.ts` | Cartões de ferramentas MCP sempre vazios |
+| `@maestrly/chat-ui` externo no main do Bot | `apps/bot-desktop/electron.vite.config.ts` | O app **empacotado** 0.4.0 não abria janela: o main não carregava `model-meta.ts` do asar; os e2e (que lançam `out/main/index.js` do workspace) não pegavam. Corrigido bundlando o pacote no main, com guardrail; app Bot Lab 0.4.0 instalado e verificado nesta máquina |
 | Doctor lia o inventário do ambiente como se fosse a sessão viva | `scripts/bot-chat-lab.mjs` | `guest.extensions: false` com o guest já aplicando extensões; renomeado para `guestInventory`, a prova é `guestOutdated` |
 
 ## Limitações e o que não foi provado

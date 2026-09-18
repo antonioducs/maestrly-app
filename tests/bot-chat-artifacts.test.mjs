@@ -116,6 +116,14 @@ test('the application never renders a native select and keeps its fixtures out o
   assert.match(index, /const preset = fixture \? process\.env\.MAESTRLY_BOT_FIXTURE_PICK_FOLDER : undefined/)
 })
 
+test('both main processes bundle the shared chat package instead of leaving it external', async () => {
+  // The package ships TypeScript sources only. Left external, the packaged Bot Lab 0.4.0 failed to
+  // load `@maestrly/chat-ui/model-meta` from its asar and never opened a window; the e2e runs that
+  // launch `out/main/index.js` from the workspace did not catch it.
+  for (const config of ['apps/bot-desktop/electron.vite.config.ts', 'apps/desktop/electron.vite.config.ts'])
+    assert.match(await read(config), /externalizeDepsPlugin\(\{\s*exclude:\s*\[\s*'@maestrly\/chat-ui'\s*\]\s*\}\)/, config)
+})
+
 test('capabilities and versions are the ones the rollout kit expects', async () => {
   const chat = await read('packages/host-protocol/src/chat.ts')
   assert.match(chat, /CHAT_HOST_CAPABILITY = 'chat\.experience\.v1'/)
