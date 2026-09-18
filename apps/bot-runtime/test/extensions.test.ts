@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EXTENSIONS_CAPABILITY, type ExtensionsApply } from '@maestrly/host-protocol'
-import { ExtensionsStore } from '../src/extensions/store.js'
+import { ExtensionsStore, serverPath } from '../src/extensions/store.js'
 import { CodexAdapter } from '../src/providers/codex/adapter.js'
 import { configuration, MCP_SERVER_NAME } from '../src/providers/codex/configuration.js'
 import { FixtureProvider } from '../src/providers/fixture.js'
@@ -46,10 +46,17 @@ describe('extensions store', () => {
     expect((await stat(join(state, 'codex/skills/verificacao/scripts/check.sh'))).mode & 0o777).toBe(0o600)
     // Only enabled servers reach Codex; the secret lives in memory and in the header it fills.
     expect(store.names).toEqual(['meu-mcp', 'remoto'])
+    // The command is looked up on a PATH that starts with the guest's own Node: on the Mac mini a
+    // server declared as `node` never started because Codex runs without a PATH at all.
     expect(store.codexServers()).toEqual({
-      'meu-mcp': { command: 'npx', args: ['-y', 'meu-mcp'], env: { TOKEN: SECRET } },
+      'meu-mcp': { command: 'npx', args: ['-y', 'meu-mcp'], env: { PATH: serverPath(), TOKEN: SECRET } },
       remoto: { url: 'https://mcp.example.test/sse', http_headers: { Authorization: 'Bearer k-1' } },
     })
+    expect(serverPath('/opt/maestrly-bot/runtime/bin/node')).toBe('/opt/maestrly-bot/runtime/bin:/usr/local/bin:/usr/bin:/bin')
+    // A PATH the person set herself is kept.
+    await store.apply(payload({ mcpServers: [{ ...payload().mcpServers[0], env: { PATH: '/custom' } }] }))
+    expect(store.codexServers()['meu-mcp']).toMatchObject({ env: { PATH: '/custom' } })
+    await store.apply(payload())
     const files = await walk(state)
     for (const file of files) expect(await readFile(file, 'utf8')).not.toContain(SECRET)
     // A later revision without the skill removes it instead of leaving a stale copy behind.

@@ -1,5 +1,5 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { skillFilePathSchema, type ExtensionsApply } from '@maestrly/host-protocol'
 import { MCP_SERVER_NAME } from '../providers/codex/configuration.js'
 import { runtimeError } from '../turns/service.js'
@@ -71,8 +71,17 @@ export class ExtensionsStore {
   }
 }
 
+/**
+ * Where a stdio server's command is looked up. Codex runs with a minimal environment and no PATH,
+ * and the guest's Node lives inside the runtime bundle, not in /usr/bin — so `node` or `npx` as a
+ * command name resolved to nothing on real hardware and the server silently never started. A
+ * PATH set on the child is what the command lookup uses; a PATH the person set herself wins.
+ */
+export function serverPath(execPath = process.execPath): string {
+  return [dirname(execPath), '/usr/local/bin', '/usr/bin', '/bin'].join(':')
+}
 function codexServer(server: ExtensionsApply['mcpServers'][number]): CodexMcpServer {
-  if (server.transport === 'stdio') return { command: server.command ?? '', args: server.args, env: server.env }
+  if (server.transport === 'stdio') return { command: server.command ?? '', args: server.args, env: { PATH: serverPath(), ...server.env } }
   // An http server has no process to inherit variables: a secret reaches it through a header,
   // written as `${KEY}` and filled here so the stored configuration never contains the value.
   const headers = Object.fromEntries(
