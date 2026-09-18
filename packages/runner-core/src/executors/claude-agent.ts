@@ -1,6 +1,7 @@
 import { query, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk'
 import os from 'node:os'
 import type { ExecutionContext, ExecutionHandle, ExecutionOutcome, ExecutorAdapter, ExecutorCapabilities } from '../executor.js'
+import { fallbackPrompt } from '../prompt.js'
 
 export interface ClaudeAgentExecutorOptions {
   executable?:string
@@ -11,7 +12,7 @@ export interface ClaudeAgentExecutorOptions {
 
 function promptFor(context: ExecutionContext): string {
   if(context.envelope.snapshot.renderedPrompt)return context.envelope.snapshot.renderedPrompt
-  return `${context.envelope.snapshot.title}\n\n${context.envelope.snapshot.description}\n\nAcceptance criteria:\n${context.envelope.snapshot.acceptanceCriteria.map((item) => `- ${item}`).join('\n')}`
+  return fallbackPrompt(context.envelope)
 }
 
 function outcomeFor(result: SDKResultMessage | undefined): ExecutionOutcome {

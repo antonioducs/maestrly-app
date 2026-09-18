@@ -6,10 +6,40 @@ import {
   cardSchema,
   executionEnvelopeSchema,
   instanceMetadataSchema,
+  renderAutomationPrompt,
   supportsProtocol,
 } from '../src/index.js'
 
 const now = '2026-09-07T01:00:00.000Z'
+
+describe('renderAutomationPrompt', () => {
+  const card = {
+    id: '0f1e2d3c-4b5a-6978-8f9e-0a1b2c3d4e5f',
+    title: 'Refine the login flow',
+    description: 'Body with {task_title} inside',
+    acceptanceCriteria: ['Spec written', 'Risks listed'],
+    boardId: 'board-1',
+    projectId: 'project-1',
+  }
+  it('always prefixes the card context, even when the template ignores every variable', () => {
+    const prompt = renderAutomationPrompt('Refine the card in this column.', card, 'Technical refinement')
+    expect(prompt).toContain('- Card ID: 0f1e2d3c-4b5a-6978-8f9e-0a1b2c3d4e5f')
+    expect(prompt).toContain('- Task #0f1e2d3c: Refine the login flow')
+    expect(prompt).toContain('- Column: Technical refinement')
+    expect(prompt).toContain('- Board ID: board-1')
+    expect(prompt).toContain('- Workspace: EMPTY')
+    expect(prompt).toContain('- Spec written')
+    expect(prompt).toContain('### Description\nBody with {task_title} inside')
+    expect(prompt.endsWith('## Instructions\nRefine the card in this column.')).toBe(true)
+  })
+  it('substitutes variables once and falls back to a generic instruction for an empty template', () => {
+    const rendered = renderAutomationPrompt('Do {task_title} ({task_number}) in {column_name}: {task_body}', card, 'Build', { repositoryBranch: 'main' })
+    expect(rendered).toContain('- Workspace: isolated clone of the linked repository, branch `main`')
+    expect(rendered).not.toContain('EMPTY')
+    expect(rendered.endsWith('Do Refine the login flow (0f1e2d3c) in Build: Body with {task_title} inside')).toBe(true)
+    expect(renderAutomationPrompt('  ', card, 'Build').endsWith('## Instructions\nComplete the task described in the card above.')).toBe(true)
+  })
+})
 
 describe('public protocol', () => {
   it('round-trips an authorized execution envelope', () => {

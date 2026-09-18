@@ -8,11 +8,14 @@ Cards support title, description, labels, priority, acceptance criteria and proj
 
 ## Card details
 
-- **General:** fields, rich Markdown description, source/preview, assignees, one-level subtasks and attachments.
-- **Events:** a paginated, read-only audit timeline.
-- **Comments:** Markdown writing/preview; authors and project maintainers can edit or remove comments.
+The card opens as a two-pane dialog: a sticky head (column › copyable card ID, inline title, state and last-execution chips, save status) over the content and a properties sidebar (column, priority, labels, a searchable multi-select of assignees, the column agent's latest state and metadata). Subtasks and the parent open inside the same dialog with a back breadcrumb. Archive, cancel executions and delete live in the **⋯** menu; archived cards show a visible **Restore** action.
+
+- **Details:** rich Markdown description with source/preview, acceptance criteria as an editable list, one-level subtasks with a progress bar, and attachments.
+- **Activity:** comments and the audit timeline in one feed, newest first, filterable by kind. Authors and project maintainers can edit or remove comments.
+- **Executions:** the latest attempt highlighted with its outcome, approvals and requests for information, the column agent controls, every attempt (collapsible) with its conversation and events, and downloadable evidence.
 - **History:** description versions, line comparison and explicit restoration. Restoring creates a new version. Existing descriptions are seeded when the migration runs; earlier versions cannot be reconstructed.
-- **Executions:** jobs, attempts, approvals, requests for information and downloadable evidence.
+
+Title, priority, labels, acceptance criteria and assignees are saved together with **Save changes**; the button appears as soon as one of them differs from the loaded card.
 
 Descriptions autosave. A conflicting version stops autosave and presents the server content alongside the retained draft. The user must explicitly choose the server version or save their draft over the displayed version. Drafts are scoped by account, organization and card in browser session storage.
 
@@ -38,7 +41,7 @@ Completing an agent execution never automatically moves the card to Done.
 5. For the embedded desktop runner, bind the remote project and repository ID to a local workspace under **Settings → Platform**, then enable the runner. Mappings for the selected organization's projects are included in its machine enrollment.
 6. Configure the column's repository, branch, provider, model and approval requirement. The runner will only claim a linked job when it reports the matching repository and branch. The Runners panel reports missing repository/branch availability.
 
-Each job keeps its repository/branch snapshot. The runner clones the chosen local branch into an isolated workspace, records the base commit, and uploads a patch (including new files) for review. The original checkout is unchanged. There is no automatic commit or push. A project without a default Git repository remains usable for planning; repository-free analysis is an explicit policy task type.
+Each job keeps its repository/branch snapshot. The runner clones the chosen local branch into an isolated workspace, records the base commit, and uploads a patch (including new files) for review. The original checkout is unchanged. There is no automatic commit or push. The repository is always the column's repository or, by default, the project's default repository — there is no separate task type. A project without any Git repository remains usable for planning; its column agents run in an empty workspace and the prompt tells the agent so.
 
 ## Verification
 
@@ -60,11 +63,11 @@ Backlog and Done have explicit protected roles. They cannot run column agents, b
 
 The editor supports provider/model, model-supported effort and fast mode, initialization prompt, manual versus automatic entry, execution destination, Git inheritance, Standard/Maestro mode, strategy, subagents, pre-commands and limits. Enabling requires a runner that supports the combination. Disabled configurations can be saved as drafts. Configuration history retains prior policy versions; restoring creates a new version.
 
-Prompt variables are `{task_number}` (the card's short identifier), `{task_title}`, `{task_body}` and `{column_name}`. Preview uses an actual card. User text is substituted once, never recursively. The job records the rendered prompt, resolved settings and source card version.
+Every rendered prompt starts with a **Task context** block — the full card ID (usable with the board tools), short task number, title, column, board/project IDs, workspace state (cloned branch, or an explicit "empty workspace" notice when no repository is linked), acceptance criteria and description — followed by the column's instructions. The template therefore never needs to repeat the card data; prompt variables `{task_number}` (the card's short identifier), `{task_title}`, `{task_body}` and `{column_name}` remain available inside the instructions. Preview uses an actual card. User text is substituted once, never recursively. The job records the rendered prompt, resolved settings and source card version.
 
 Under a card's **Executions → Column agent**, override only provider/model/effort/fast for a chosen normal column, or restore inheritance. Manual execution uses the card's current column, presents the resolved prompt and requires unchanged card, policy and override versions. Automatic entry is a separate setting; an enabled manual-only column does not run merely because a card enters it.
 
-Board limits inherit defaults of three starts per card/column in a ten-minute counting window, a one-hour execution timeout and 10 MiB of logs. A blocked card remains blocked after the window expires until a user explicitly releases it. Pending/running jobs prevent duplicate manual dispatch. Configuration changes apply to future jobs; they do not rewrite authorized snapshots. Successful execution still does not move the card or push Git changes.
+Board limits inherit defaults of three starts per card/column in a ten-minute counting window, a one-hour execution timeout and 10 MiB of logs. There is no cap on parallel executions: a runner claims every queued job it qualifies for and executes them concurrently. The only exclusion is per card — a card never has two active runs at the same time. A blocked card remains blocked after the window expires until a user explicitly releases it. Pending/running jobs prevent duplicate manual dispatch. Configuration changes apply to future jobs; they do not rewrite authorized snapshots. Successful execution still does not move the card or push Git changes.
 
 ## Project team
 

@@ -9,12 +9,24 @@ import {
   type ColumnAutomation,
   type CardAutomationOverride,
   type AutomationLimits,
+  type AutomationPromptCard,
 } from '@maestrly/protocol'
 import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
 import { boardLock, cardScope, fail, transaction, type Scope } from '../kanban/service.js'
 import { authorizeProject } from '../access/authorize.js'
 import { appendDomainEvent } from '../events/store.js'
 import { branchSchema } from '../kanban/repositories.js'
+import type { CardRow } from '../cards/service.js'
+
+/** Card fields the prompt renderer needs so the agent always receives the card context. */
+export const promptCard = (card: CardRow): AutomationPromptCard => ({
+  id: card.id,
+  title: card.title,
+  description: card.description,
+  acceptanceCriteria: card.acceptance_criteria,
+  boardId: card.board_id,
+  projectId: card.project_id,
+})
 
 export interface ColumnConfigRow {
   id: string
@@ -44,8 +56,10 @@ export async function columnScope(client: DatabaseClient, scope: Scope, columnId
   return column
 }
 export function configFromPolicy(row: any): ColumnAutomation {
+  // Policies saved before task types were removed still carry `taskType`; it is ignored.
+  const { taskType: _legacyTaskType, ...stored } = row?.automation_config ?? {}
   return columnAutomationSchema.parse(
-    row?.automation_config ?? {
+    row?.automation_config ? stored : {
       enabled: row?.enabled ?? false,
       autoRun: row?.enabled ?? false,
       provider: row?.provider ?? 'codex',
@@ -53,7 +67,6 @@ export function configFromPolicy(row: any): ColumnAutomation {
       effort: row?.effort ?? null,
       repositoryBindingId: row?.repository_binding_id ?? null,
       repositoryBranch: row?.repository_branch ?? null,
-      taskType: row?.task_type === 'analysis' ? 'analysis' : 'code',
       approvalRequired: row?.approval_required ?? true,
       maxDurationSeconds: row ? Number(row.max_duration_seconds) : null,
       maxLogBytes: row ? Number(row.max_log_bytes) : null,
@@ -102,10 +115,8 @@ export async function resolvedRepository(
     'select default_repository_binding_id from projects where id=$1 and organization_id=$2',
     [projectId, organizationId]
   )
-  const id =
-    config.taskType === 'analysis'
-      ? null
-      : (config.repositoryBindingId ?? project.rows[0]?.default_repository_binding_id ?? null)
+  // Column repository, else the project default. Without either, the job runs in an empty workspace.
+  const id = config.repositoryBindingId ?? project.rows[0]?.default_repository_binding_id ?? null
   if (!id) return { repositoryBindingId: null, repositoryBranch: undefined }
   const repo = await client.query(
     'select base_branch from repository_bindings where organization_id=$1 and project_id=$2 and id=$3 and disabled_at is null',
@@ -194,7 +205,6 @@ export async function saveColumnAutomation(
     if (config.mode === 'maestro' && !config.subagentsEnabled) fail('Maestro requires Maestrly subagents.', 400)
     if (config.repositoryBranch) branchSchema.parse(config.repositoryBranch)
     if (config.runnerSelector === 'runner' && !config.targetRunnerId) fail('Select a target runner.', 400)
-    if (config.preCommands.length && config.taskType === 'analysis') fail('Pre-commands require a code workspace.', 400)
     if (config.repositoryBindingId) {
       const binding = await client.query(
         'select id from repository_bindings where organization_id=$1 and project_id=$2 and id=$3',
@@ -233,7 +243,7 @@ export async function saveColumnAutomation(
         column.project_id,
         policyKey,
         column.name + ' automation',
-        config.taskType,
+        'code',
         JSON.stringify([{ name: 'executor:' + config.provider }, { name: 'delivery:patch' }]),
         config.repositoryBindingId,
         config.repositoryBranch,
@@ -324,11 +334,7 @@ export async function cardAutomationContext(pool: DatabasePool, scope: Scope & {
       effective,
       override: override.rows[0]?.config ?? null,
       overrideVersion: Number(override.rows[0]?.version ?? 0),
-      renderedPrompt: renderAutomationPrompt(
-        effective.promptTemplate,
-        { id: card.id, title: card.title, description: card.description },
-        column.name
-      ),
+      renderedPrompt: renderAutomationPrompt(effective.promptTemplate, promptCard(card), column.name, repository),
       personalDevices: (await personalDeviceRows(client, scope.organizationId, card.project_id, scope.userId)).map(
         (row) => ({
           id: row.id,
@@ -472,11 +478,14 @@ export async function previewAutomation(
     const card = await cardScope(client, s, s.cardId),
       column = await columnScope(client, s, s.columnId)
     if (card.board_id !== column.board_id) fail('Column belongs to another board.', 400)
-    const prompt = renderAutomationPrompt(
-      s.promptTemplate,
-      { id: card.id, title: card.title, description: card.description },
-      column.name
-    )
+    const { config } = await currentConfig(client, column)
+    let repository: { repositoryBranch?: string } = {}
+    try {
+      repository = await resolvedRepository(client, s.organizationId, card.project_id, config)
+    } catch {
+      /* The preview still renders when the repository is disabled; dispatch reports that error. */
+    }
+    const prompt = renderAutomationPrompt(s.promptTemplate, promptCard(card), column.name, repository)
     if (prompt.length > 200000) fail('Rendered prompt is too long.', 400)
     return { prompt }
   })

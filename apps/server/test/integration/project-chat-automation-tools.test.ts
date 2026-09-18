@@ -49,9 +49,9 @@ it.skipIf(!integrationAvailable)(
         title: 'Automated card',
         labels: ['chat'],
       })) as { id: string }
-      expect(
-        await run('board_preview_automation', { cardId: card.id, columnId, promptTemplate: '{task_title}' })
-      ).toEqual({ prompt: 'Automated card' })
+      const preview = (await run('board_preview_automation', { cardId: card.id, columnId, promptTemplate: '{task_title}' })) as { prompt: string }
+      expect(preview.prompt).toContain(`- Card ID: ${card.id}`)
+      expect(preview.prompt.endsWith('## Instructions\nAutomated card')).toBe(true)
       await run('board_set_card_automation_override', { cardId: card.id, columnId, expectedVersion: 0, config: null })
       await expect(
         run('board_set_card_automation_override', { cardId: card.id, columnId, expectedVersion: 0, config: null })

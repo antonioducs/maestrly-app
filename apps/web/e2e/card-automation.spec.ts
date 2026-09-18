@@ -29,7 +29,7 @@ test('saves per-column overrides, releases a block and requests the exact previe
  await page.goto('/')
  await page.getByRole('button',{name:'Run this card',exact:true}).click()
  const dialog=page.getByRole('dialog')
- await dialog.getByRole('tab',{name:L('Executions'),exact:true}).click()
+ await dialog.getByRole('tab',{name:new RegExp('^'+L('Executions'))}).click()
  await dialog.getByRole('combobox',{name:L('Override model'),exact:true}).click()
  await page.getByRole('option',{name:'alternative',exact:true}).click()
  await dialog.getByRole('combobox',{name:L('Override effort'),exact:true}).click()

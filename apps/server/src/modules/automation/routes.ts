@@ -64,7 +64,7 @@ export function registerAutomationRoutes(app: FastifyInstance, pool: DatabasePoo
       .object({
         policyKey: opaqueIdSchema.optional(),
         name: z.string().min(1).max(160),
-        taskType: z.string().min(1).max(120),
+        taskType: z.string().min(1).max(120).optional(),
         executionProfileId: opaqueIdSchema,
         requiredCapabilities: z.array(capabilitySchema).max(100),
         repositoryBindingId: opaqueIdSchema.nullable(),

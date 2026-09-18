@@ -1,7 +1,13 @@
 import { getGlobalMaestroConfig } from '../chat/maestro-config'
 import { createHash, randomUUID } from 'node:crypto'
 import type { ChatInventory, RunnerAutomationCapabilities } from '@maestrly/protocol'
-import type { ExecutorAdapter, ExecutionContext, ExecutionHandle, ExecutionOutcome } from '@maestrly/runner-core'
+import {
+  fallbackPrompt,
+  type ExecutorAdapter,
+  type ExecutionContext,
+  type ExecutionHandle,
+  type ExecutionOutcome,
+} from '@maestrly/runner-core'
 import { insertConversation } from '../store'
 import { broadcast } from '../window-ipc'
 import { listChatRunnerCapabilities, startExecutorChatTurn, primeChatTurnSelection } from '../chat/service'
@@ -245,7 +251,7 @@ export class DesktopChatExecutor implements ExecutorAdapter {
           prompt:
             AUTONOMOUS_INSTRUCTIONS +
             '\n\n' +
-            (snapshot.renderedPrompt ?? snapshot.title + '\n' + snapshot.description),
+            (snapshot.renderedPrompt ?? fallbackPrompt(context.envelope)),
           signal: abort.signal,
         })
       )

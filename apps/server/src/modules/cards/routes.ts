@@ -4,7 +4,7 @@ import { cardPatchSchema, moveCardRequestSchema, opaqueIdSchema, prioritySchema 
 import type { DatabasePool } from '../../db/pool.js'
 import type { HumanIdentity } from '../auth/routes.js'
 import { executeIdempotent } from '../events/http-idempotency.js'
-import { createCard, getCardDetail, moveCard, requestCardPreparation, updateCard } from './service.js'
+import { createCard, getCardDetail, moveCard, updateCard } from './service.js'
 import { readAuthorizedAttachment, uploadAttachment } from '../attachments/service.js'
 import { readAuthorizedArtifact } from '../artifacts/service.js'
 import type { ServerConfig } from '../../config.js'
@@ -88,15 +88,6 @@ export function registerCardRoutes(app: FastifyInstance, pool: DatabasePool, aut
       async (human) => createComment(pool, { ...params, body: body.body, userId: human.userId, actor: actorFor(request, human) }))
     if (result.replayed) reply.header('idempotency-replayed', 'true')
     return reply.status(result.replayed ? result.status : 201).send(result.body)
-  })
-
-  app.post('/api/v1/organizations/:organizationId/cards/:cardId/prepare', async (request, reply) => {
-    const params = z.object({ organizationId: opaqueIdSchema, cardId: opaqueIdSchema }).parse(request.params)
-    const body = z.object({ expectedVersion: z.number().int().positive() }).strict().parse(request.body)
-    const result = await withWrite(pool, authenticate, request, params.organizationId, body,
-      async (human) => requestCardPreparation(pool, { ...params, ...body, userId: human.userId }))
-    if (result.replayed) reply.header('idempotency-replayed', 'true')
-    return reply.status(result.replayed ? result.status : 202).send(result.body)
   })
 
   app.post('/api/v1/organizations/:organizationId/cards/:cardId/attachments', async (request, reply) => {
