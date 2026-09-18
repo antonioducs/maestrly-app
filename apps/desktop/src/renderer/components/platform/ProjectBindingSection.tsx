@@ -396,8 +396,8 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                   {project && !repositories.length ? (
                     <p className="text-xs leading-relaxed text-muted-foreground">
                       {L(
-                        'No code repository is registered for this project in the Kanban, so it will run analysis tasks only.',
-                        'Este projeto não tem repositório de código cadastrado no Kanban, então rodará apenas tarefas de análise.'
+                        'No code repository is registered for this project in the Kanban. Column agents will run in an empty workspace until one is added.',
+                        'Este projeto não tem repositório de código cadastrado no Kanban. Os agentes de coluna rodarão em um workspace vazio até que um seja adicionado.'
                       )}
                     </p>
                   ) : null}

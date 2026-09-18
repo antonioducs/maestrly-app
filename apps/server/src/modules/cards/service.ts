@@ -180,12 +180,6 @@ async function reorderColumn(
   }
 }
 
-interface PolicyRow {
-  id: string; version: string; task_type: string; execution_profile_id: string; required_capabilities: unknown[];
-  repository_branch?: string | null; repository_binding_id: string | null; provider: 'codex' | 'claude-agent'; model: string; effort: string | null;
-  approval_required: boolean; max_duration_seconds: string; max_log_bytes: string; delivery: Record<string, unknown>; enabled: boolean
-}
-
 export async function moveCard(
   pool: DatabasePool,
   input: { organizationId: string; cardId: string; userId: string; move: MoveCardRequest; actor?: Actor },
@@ -239,47 +233,6 @@ export async function moveCard(
       jobId=dispatch.jobId??undefined
     }
     return { card: mapCard(updated), ...(jobId ? { jobId } : {}) }
-  })
-}
-
-export async function requestCardPreparation(
-  pool: DatabasePool,
-  input: { organizationId: string; cardId: string; userId: string; expectedVersion: number },
-): Promise<{ jobId: string }> {
-  return inTenantTransaction(pool, { organizationId: input.organizationId, actor: { type: 'human', userId: input.userId } }, async (client) => {
-    const card = await lockedCard(client, input.organizationId, input.cardId, input.userId)
-    await authorizeProject(client, input.organizationId, card.project_id, input.userId, 'execution:request')
-    if (Number(card.version) !== input.expectedVersion) throw new OptimisticConflictError(mapCard(card))
-    const policy = await client.query<PolicyRow>(`
-      select * from execution_policies
-      where organization_id = $1 and project_id = $2 and task_type = 'analysis'
-        and repository_binding_id is null and enabled = true
-      order by version desc limit 1
-    `, [input.organizationId, card.project_id])
-    const selected = policy.rows[0]
-    if (!selected) throw Object.assign(new Error('No enabled repository-free analysis policy is configured.'), { statusCode: 409 })
-    const event = await appendDomainEvent(client, {
-      organizationId: input.organizationId, projectId: card.project_id, type: 'card.preparation_requested',
-      aggregateType: 'card', aggregateId: card.id, actor: { type: 'human', userId: input.userId }, data: { cardVersion: Number(card.version) },
-    })
-    const snapshot = {
-      title: `Prepare: ${card.title}`,
-      description: `Propose a clearer description, decomposition and acceptance criteria. Do not access a repository.\n\nCurrent description:\n${card.description}`,
-      acceptanceCriteria: card.acceptance_criteria, taskType: 'analysis', provider: selected.provider, model: selected.model,
-      ...(selected.effort ? { effort: selected.effort } : {}), repositoryBindingId: null,
-      delivery: { mode: 'patch', requireHumanApproval: true },
-    }
-    const job = await client.query<{ id: string }>(`
-      insert into jobs(organization_id, project_id, board_id, card_id, source_event_id, policy_id, policy_version, snapshot, state, requested_by_user_id)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id
-    `, [
-      input.organizationId, card.project_id, card.board_id, card.id, event.id, selected.id, Number(selected.version), snapshot,
-      selected.approval_required ? 'waiting_approval' : 'queued', input.userId,
-    ])
-    if (selected.approval_required) {
-      await client.query("insert into approvals(organization_id, project_id, job_id, status, requested_by_user_id) values ($1,$2,$3,'pending',$4)", [input.organizationId, card.project_id, job.rows[0]!.id, input.userId])
-    }
-    return { jobId: job.rows[0]!.id }
   })
 }
 

@@ -22,6 +22,8 @@ const MAX_BYTES = 2 * 1024 * 1024
 const MAX_EVENTS_PER_RUN = 1_000
 
 export class RunnerJournal {
+  // Concurrent runs share one journal; updates are serialized so read-modify-write never loses entries.
+  private queue: Promise<unknown> = Promise.resolve()
   constructor(readonly file: string) {}
 
   async read(): Promise<RunnerJournalData> {
@@ -36,7 +38,13 @@ export class RunnerJournal {
     }
   }
 
-  async update(change: (current: RunnerJournalData) => RunnerJournalData | void): Promise<RunnerJournalData> {
+  update(change: (current: RunnerJournalData) => RunnerJournalData | void): Promise<RunnerJournalData> {
+    const next = this.queue.then(() => this.write(change))
+    this.queue = next.catch(() => undefined)
+    return next
+  }
+
+  private async write(change: (current: RunnerJournalData) => RunnerJournalData | void): Promise<RunnerJournalData> {
     const current = await this.read()
     const draft = structuredClone(current)
     const next = change(draft) ?? draft

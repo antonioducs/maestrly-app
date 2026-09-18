@@ -34,7 +34,6 @@ export const columnAutomationSchema = z
     targetRunnerId: z.string().uuid().nullable().default(null),
     repositoryBindingId: z.string().uuid().nullable().default(null),
     repositoryBranch: z.string().max(250).nullable().default(null),
-    taskType: z.enum(['code', 'analysis']).default('code'),
     approvalRequired: z.boolean().default(true),
     maxDurationSeconds: z.number().int().min(1).max(86400).nullable().default(null),
     maxLogBytes: z.number().int().min(1).max(10485760).nullable().default(null),
@@ -78,10 +77,53 @@ export function resolveAutomationLimits(overrides: AutomationLimits = {}) {
     maxLogBytes: overrides.maxLogBytes ?? automationDefaults.maxLogBytes,
   }
 }
+export interface AutomationPromptCard {
+  id: string
+  title: string
+  description: string
+  acceptanceCriteria?: string[]
+  boardId?: string
+  projectId?: string
+}
+export interface AutomationPromptWorkspace {
+  /** Branch cloned into the workspace; `null`/`undefined` means the workspace is an empty directory. */
+  repositoryBranch?: string | null
+}
+export const AUTOMATION_TASK_CONTEXT_HEADING = '## Task context'
+export const AUTOMATION_NO_REPOSITORY_NOTE =
+  '- Workspace: EMPTY — no Git repository is linked to this project/column, so there is no code to inspect. Do not search for source files; work from the card content and the board tools only.'
+/**
+ * Structured card context that always precedes the column instructions, so the agent knows which card it is
+ * working on (full identifiers usable with the board tools) even when the template mentions none of it.
+ */
+export function automationTaskContext(
+  card: AutomationPromptCard,
+  column: string,
+  workspace: AutomationPromptWorkspace = {}
+): string {
+  const lines = [
+    AUTOMATION_TASK_CONTEXT_HEADING,
+    `- Card ID: ${card.id} (use this exact id with the board tools)`,
+    `- Task #${card.id.slice(0, 8)}: ${card.title}`,
+    `- Column: ${column}`,
+  ]
+  if (card.boardId) lines.push(`- Board ID: ${card.boardId}`)
+  if (card.projectId) lines.push(`- Project ID: ${card.projectId}`)
+  lines.push(
+    workspace.repositoryBranch
+      ? `- Workspace: isolated clone of the linked repository, branch \`${workspace.repositoryBranch}\` (changes are delivered as a patch for review)`
+      : AUTOMATION_NO_REPOSITORY_NOTE
+  )
+  if (card.acceptanceCriteria?.length)
+    lines.push('', '### Acceptance criteria', ...card.acceptanceCriteria.map((item) => `- ${item}`))
+  lines.push('', '### Description', card.description.trim() || '(no description)')
+  return lines.join('\n')
+}
 export function renderAutomationPrompt(
   template: string,
-  card: { id: string; title: string; description: string },
-  column: string
+  card: AutomationPromptCard,
+  column: string,
+  workspace: AutomationPromptWorkspace = {}
 ) {
   const vars: Record<string, string> = {
     task_number: card.id.slice(0, 8),
@@ -89,13 +131,18 @@ export function renderAutomationPrompt(
     task_body: card.description,
     column_name: column,
   }
-  const source = template.trim() ? template : 'Task #{task_number}: {task_title}\nColumn: {column_name}\n\n{task_body}'
-  let length = source.length
+  const source = template.trim() ? template : 'Complete the task described in the card above.'
+  const context = automationTaskContext(card, column, workspace)
+  let length = context.length + 2 + source.length
   for (const match of source.matchAll(/\{(task_number|task_title|task_body|column_name)\}/g))
     length += vars[match[1]!]!.length - match[0].length
   if (length > 200000) throw new Error('Rendered prompt is too long.')
   // Single pass: user content containing a template variable must not be expanded again.
-  return source.replace(/\{(task_number|task_title|task_body|column_name)\}/g, (_match, key: string) => vars[key]!)
+  const instructions = source.replace(
+    /\{(task_number|task_title|task_body|column_name)\}/g,
+    (_match, key: string) => vars[key]!
+  )
+  return context + '\n\n## Instructions\n' + instructions
 }
 export function effectiveAutomation(
   config: ColumnAutomation,

@@ -34,7 +34,8 @@ it.skipIf(!integrationAvailable)(
     await assignColumnPolicy(f.pool,{...f.scope,columnId:column.id,policyId:policy.id})
     const moved=await moveCard(f.pool,{...f.scope,cardId:card.id,move:{expectedVersion:card.version,targetColumnId:column.id,targetPosition:0,source:'human',allowAutomationChain:false,chainDepth:0}})
     expect(moved.jobId).toBeTruthy()
-    expect(await claimJob(f.pool, { ...f.identity, protocolVersion: '1.0' })).toBeNull()
+    // Column-agent jobs are not capped per runner: an active chat turn does not block them.
+    expect((await claimJob(f.pool, { ...f.identity, protocolVersion: '1.0' }))?.envelope.jobId).toBe(moved.jobId)
       await expect(f.send('Second concurrent turn')).rejects.toThrow(/active/)
       await runnerTransaction(f.pool, f.identity, (c) =>
         c.query("update chat_turns set lease_expires_at=now()-interval '1 second' where id=$1", [t.id])

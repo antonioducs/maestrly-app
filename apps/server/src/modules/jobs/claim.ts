@@ -23,8 +23,8 @@ export async function claimJob(
   return inTenantTransaction(pool, {
     organizationId: input.organizationId, actor: { type: 'runner', runnerId: input.runnerId },
   }, async (client) => {
-    const runnerResult = await client.query<{ max_concurrency: string;owner_user_id:string|null;personal_enabled:boolean }>(`
-      select r.max_concurrency,r.owner_user_id,r.personal_enabled from runners r
+    const runnerResult = await client.query<{ owner_user_id:string|null;personal_enabled:boolean }>(`
+      select r.owner_user_id,r.personal_enabled from runners r
       join runner_credentials rc on rc.organization_id = r.organization_id and rc.runner_id = r.id
       where r.organization_id = $1 and r.id = $2 and r.status <> 'revoked'
         and rc.secret_hash = $3 and rc.revoked_at is null and (rc.expires_at is null or rc.expires_at > now())
@@ -36,12 +36,8 @@ export async function claimJob(
     const inventory=input.repositories ?? []
     await client.query("update runners set repositories=$2,repositories_seen_at=now(),last_seen_at=now(),status='online' where id=$1",[input.runnerId,JSON.stringify(inventory)])
     if(input.automationCapabilities) await client.query('update runners set automation_capabilities=$2,automation_seen_at=now() where id=$1',[input.runnerId,input.automationCapabilities])
-    const active = await client.query<{ count: string }>(`
-      select ((select count(*) from runs where runner_id = $1 and state in ('claimed', 'running', 'cancelling'))
-        + (select count(*) from chat_turns where runner_id=$1 and state in ('running','waiting_input','cancelling')))::text as count
-    `, [input.runnerId])
-    if (Number(active.rows[0]!.count) >= Number(runner.max_concurrency)) return null
-
+    // Jobs are not capped per runner: every queued job the runner qualifies for is handed out.
+    // The only exclusion is per card (one active run per card), enforced in the candidate query.
     const candidate = await client.query<ClaimRow>(`
       select j.*, p.execution_profile_id
       from jobs j

@@ -8,6 +8,7 @@ import type { CardRow } from '../cards/service.js'
 import { OptimisticConflictError, mapCard } from '../cards/service.js'
 import {
   currentConfig,
+  promptCard,
   projectCatalog,
   resolvedRepository,
   assessAutomationRunner,
@@ -138,11 +139,7 @@ export async function dispatchColumnAutomation(
     }
     return { jobId: null, blocked: true, reason: 'Dispatch limit reached. Release this card to continue.' }
   }
-  const prompt = renderAutomationPrompt(
-    effective.promptTemplate,
-    { id: card.id, title: card.title, description: card.description },
-    column.name
-  )
+  const prompt = renderAutomationPrompt(effective.promptTemplate, promptCard(card), column.name, repository)
   if (prompt.length > 200000) fail('Rendered prompt is too long.', 400)
   const sourceEvent =
     input.sourceEventId ??
@@ -165,7 +162,6 @@ export async function dispatchColumnAutomation(
     title: card.title,
     description: card.description,
     acceptanceCriteria: card.acceptance_criteria,
-    taskType: effective.taskType,
     provider: effective.provider,
     model: effective.model,
     ...(effective.effort && effective.effort !== 'off' ? { effort: effective.effort } : {}),

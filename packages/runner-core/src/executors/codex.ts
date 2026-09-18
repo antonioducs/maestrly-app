@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import type { ExecutionContext, ExecutionHandle, ExecutionOutcome, ExecutorAdapter, ExecutorCapabilities } from '../executor.js'
+import { fallbackPrompt } from '../prompt.js'
 
 export interface CodexExecutorOptions {
   catalogLoader?: typeof loadCodexModels
@@ -16,12 +17,7 @@ function promptFor(context: ExecutionContext): string {
   const snapshot = context.envelope.snapshot
   if(snapshot.renderedPrompt)return snapshot.renderedPrompt
   return [
-    snapshot.title,
-    '',
-    snapshot.description,
-    '',
-    'Acceptance criteria:',
-    ...snapshot.acceptanceCriteria.map((criterion) => `- ${criterion}`),
+    fallbackPrompt(context.envelope),
     '',
     'Work only inside the provided workspace. Produce a concise final summary and run relevant verification.',
   ].join('\n')

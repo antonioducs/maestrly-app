@@ -256,7 +256,7 @@ test('pairs the real desktop, exposes only an owner device and disables it on di
     await expect.poll(async()=>{device=(await call('get','/api/v1/organizations/'+organizationId+'/projects/'+created.project.id+'/personal-devices'))[0];return device?.capabilities?.models?.length??device?.automationCapabilities?.models?.length??0},{timeout:30000}).toBeGreaterThan(0)
     const catalog=device.capabilities??device.automationCapabilities
     const board=await call('get','/api/v1/organizations/'+organizationId+'/boards/'+created.boardId),column=board.columns[1]
-    const config=columnAutomationSchema.parse({enabled:true,provider:'maestrly',model:catalog.models[0].model,taskType:'analysis',approvalRequired:true})
+    const config=columnAutomationSchema.parse({enabled:true,provider:'maestrly',model:catalog.models[0].model,approvalRequired:true})
     const policy=await call('put','/api/v1/organizations/'+organizationId+'/columns/'+column.id+'/automation',{expectedPolicyId:null,config})
     const card=await call('post','/api/v1/organizations/'+organizationId+'/boards/'+created.boardId+'/cards',{columnId:column.id,title:'Desktop executor proof'})
     await call('post','/api/v1/organizations/'+organizationId+'/cards/'+card.id+'/automation/run',{expectedVersion:card.version,expectedPolicyId:policy.policyId,expectedOverrideVersion:0,personalDeviceId:state.deviceId})

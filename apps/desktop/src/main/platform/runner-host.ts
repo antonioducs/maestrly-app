@@ -320,13 +320,15 @@ export class EmbeddedRunnerHost {
   private async runLoop(engine: RunnerEngine) {
     try {
       while (!this.stopping) {
+        let claimed = false
         try {
-          await engine.runOnce()
+          // Claim keeps going while the server hands out jobs; runs execute concurrently in the background.
+          claimed = await engine.poll((error) => console.warn('[executor] run failed', error))
         } catch (error) {
           const status = (error as { status?: number }).status
           if (!(error instanceof TypeError) && (error as Error).name!=='TimeoutError' && !(status && status >= 500)) throw error
         }
-        if (!this.stopping) await new Promise((r) => setTimeout(r, 2000))
+        if (!this.stopping && !claimed) await new Promise((r) => setTimeout(r, 2000))
       }
     } catch (error) {
       this.state = { state: 'error', error: (error as Error).message }

@@ -23,7 +23,8 @@ export const executionPolicySchema = z.object({
   projectId: opaqueIdSchema,
   version: z.number().int().positive(),
   name: z.string().min(1).max(160),
-  taskType: z.string().min(1).max(120),
+  /** Legacy field: every policy is a code task; kept optional for older clients. */
+  taskType: z.string().min(1).max(120).optional(),
   executionProfileId: opaqueIdSchema,
   requiredCapabilities: z.array(capabilitySchema).max(100),
   repositoryBindingId: opaqueIdSchema.nullable(),
@@ -60,7 +61,8 @@ export const executionSnapshotSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().max(100_000),
   acceptanceCriteria: z.array(z.string().min(1).max(4_000)).max(100),
-  taskType: z.string().min(1).max(120),
+  /** Legacy field kept for jobs created before task types were removed. */
+  taskType: z.string().min(1).max(120).optional(),
   provider: z.enum(['codex', 'claude-agent', 'maestrly']),
   model: z.string().min(1).max(160),
   effort: z.string().max(80).optional(),

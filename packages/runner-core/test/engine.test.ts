@@ -70,6 +70,47 @@ describe('RunnerEngine', () => {
     expect(server.uploadArtifact).toHaveBeenCalledOnce()
   })
 
+  it('executes every claimed job concurrently and stops all of them together', async () => {
+    const directory = await temp()
+    const finishers = new Map<string, (outcome: { state: 'succeeded' | 'cancelled'; failure?: string }) => void>()
+    const executor: ExecutorAdapter = {
+      capabilities: async () => ({ executor: 'deterministic', capabilities: [] }),
+      start: async (context: ExecutionContext) => ({
+        done: new Promise((resolve) => { finishers.set(context.envelope.runId, resolve) }),
+        cancel: async (reason: string) => finishers.get(context.envelope.runId)?.({ state: 'cancelled', failure: reason }),
+      }),
+    }
+    const queue = ['run-a', 'run-b', 'run-c']
+    const server: RunnerServer = {
+      claim: async () => {
+        const runId = queue.shift()
+        return runId ? { envelope: { ...envelope, runId, jobId: 'job-' + runId, leaseId: 'lease-' + runId }, executionToken: 'token' } : null
+      },
+      renew: async () => ({ leaseExpiresAt: envelope.leaseExpiresAt, cancellationRequested: false }),
+      event: async () => undefined,
+      complete: vi.fn(async () => undefined),
+      uploadArtifact: vi.fn(),
+      reconcile: async () => 'terminal',
+    }
+    const workspace = {
+      prepare: async () => ({ workspacePath: directory, isolated: true, environment: {}, cleanup: async () => undefined }),
+    } as unknown as WorkspaceManager
+    const engine = new RunnerEngine(server, new Map([['deterministic', executor]]), workspace, new RunnerJournal(path.join(directory, 'journal.json')))
+    expect(await engine.poll()).toBe(true)
+    expect(await engine.poll()).toBe(true)
+    expect(await engine.poll()).toBe(true)
+    expect(await engine.poll()).toBe(false)
+    await vi.waitFor(() => expect(finishers.size).toBe(3))
+    expect(engine.activeRuns).toBe(3)
+    finishers.get('run-a')!({ state: 'succeeded' })
+    await vi.waitFor(() => expect(server.complete).toHaveBeenCalledWith('run-a', 'lease-run-a', expect.objectContaining({ state: 'succeeded' })))
+    await vi.waitFor(() => expect(engine.activeRuns).toBe(2))
+    await engine.stop('Runner is stopping.')
+    expect(engine.activeRuns).toBe(0)
+    expect(server.complete).toHaveBeenCalledWith('run-b', 'lease-run-b', expect.objectContaining({ state: 'cancelled' }))
+    expect(server.complete).toHaveBeenCalledWith('run-c', 'lease-run-c', expect.objectContaining({ state: 'cancelled' }))
+  })
+
   it('reconciles journaled attempts before accepting new work', async () => {
     const directory = await temp()
     const journal = new RunnerJournal(path.join(directory, 'journal.json'))

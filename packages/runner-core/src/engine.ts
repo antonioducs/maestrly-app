@@ -35,7 +35,9 @@ export interface RunnerServer {
 }
 export class RunnerEngine {
   private stopped = false
-  private active?: { cancel(reason: string): Promise<void> }
+  // Runs execute concurrently without a local cap; the server decides how many jobs it hands out.
+  private readonly active = new Map<string, { cancel(reason: string): Promise<void> }>()
+  private readonly background = new Set<Promise<void>>()
   constructor(
     private readonly server: RunnerServer,
     private readonly executors: Map<string, ExecutorAdapter>,
@@ -52,10 +54,33 @@ export class RunnerEngine {
         })
     }
   }
+  /** Number of runs currently executing on this engine. */
+  get activeRuns(): number {
+    return this.active.size
+  }
+  /** Claims one job and executes it to completion. Resolves with `true` when a job was processed. */
   async runOnce(): Promise<boolean> {
-    if (this.stopped || this.active) return false
+    if (this.stopped) return false
     const claim = await this.server.claim()
     if (!claim) return false
+    await this.execute(claim)
+    return true
+  }
+  /**
+   * Claims one job and executes it in the background so the caller can immediately claim the next one.
+   * Resolves with `true` when a job was claimed. Execution failures are reported through `onError`.
+   */
+  async poll(onError?: (error: unknown) => void): Promise<boolean> {
+    if (this.stopped) return false
+    const claim = await this.server.claim()
+    if (!claim) return false
+    const pending: Promise<void> = this.execute(claim)
+      .catch((error) => onError?.(error))
+      .finally(() => this.background.delete(pending))
+    this.background.add(pending)
+    return true
+  }
+  private async execute(claim: RunnerClaim): Promise<void> {
     const envelope = claim.envelope
     const adapter = this.executors.get(envelope.snapshot.provider)
     if (!adapter) {
@@ -64,7 +89,7 @@ export class RunnerEngine {
         failure: 'Executor unavailable.',
         artifacts: [],
       })
-      return true
+      return
     }
     let handle: ExecutionHandle | undefined, environment: PreparedEnvironment | undefined, cancelled: string | undefined
     let logBytes = 0,
@@ -101,7 +126,8 @@ export class RunnerEngine {
       abort.abort(reason)
       await handle?.cancel(reason)
     }
-    this.active = { cancel }
+    this.active.set(envelope.runId, { cancel })
+    if (this.stopped) void cancel('Runner is stopping.')
     const lease = new LeaseController(
       envelope.leaseExpiresAt,
       () => this.server.renew(envelope.runId, envelope.leaseId),
@@ -169,17 +195,17 @@ export class RunnerEngine {
     } finally {
       clearTimeout(timer)
       lease.stop()
-      this.active = undefined
+      this.active.delete(envelope.runId)
       await environment?.cleanup()
       await this.journal.update((current) => {
         current.runs = current.runs.filter((entry) => entry.runId !== envelope.runId)
       })
     }
-    return true
   }
   async stop(reason = 'Runner is stopping.') {
     this.stopped = true
-    await this.active?.cancel(reason)
+    await Promise.all([...this.active.values()].map((run) => run.cancel(reason)))
+    await Promise.allSettled([...this.background])
   }
   private async finish(envelope: ExecutionEnvelope, outcome: ExecutionOutcome) {
     const artifacts: DeliveryArtifact[] = []

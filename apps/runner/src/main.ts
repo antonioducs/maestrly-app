@@ -55,8 +55,9 @@ export async function runRunner(signal?: AbortSignal): Promise<void> {
   signal?.addEventListener('abort', stop, { once: true })
   try {
     while (!signal?.aborted) {
-      const worked = await engine.runOnce()
-      if (!worked) await new Promise((resolve) => setTimeout(resolve, 2_000))
+      // Runs execute concurrently; keep claiming while the server hands out jobs.
+      const claimed = await engine.poll((error) => console.error('[runner] run failed', error))
+      if (!claimed) await new Promise((resolve) => setTimeout(resolve, 2_000))
     }
   } finally {
     signal?.removeEventListener('abort', stop)

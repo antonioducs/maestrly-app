@@ -72,8 +72,8 @@ export async function claimChat(pool: DatabasePool, identity: ChatRunnerIdentity
     if (!inv.success || !inv.data.enabled) return null
     const active = (
       await c.query(
-        `select (select count(*) from runs where runner_id=$1 and state in ('claimed','running','cancelling'))+
-      (select count(*) from chat_turns where runner_id=$1 and state in ('running','waiting_input','cancelling')) as count`,
+        // Column-agent runs are uncapped and must not starve chat; only chat turns count toward the limit.
+        `select count(*) as count from chat_turns where runner_id=$1 and state in ('running','waiting_input','cancelling')`,
         [identity.runnerId]
       )
     ).rows[0]

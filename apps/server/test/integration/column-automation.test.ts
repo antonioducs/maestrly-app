@@ -42,7 +42,11 @@ describe.skipIf(!integrationAvailable)('column automation lifecycle',()=>{
       const card=await createCard(pool,{...scope,boardId:board.board.id,columnId:a.id,title:'Card {column_name}',description:'Markdown body'})
       await saveCardOverride(pool,{...scope,cardId:card.id,columnId:a.id,expectedVersion:0,config:{effort:'high',fastMode:true}})
       const preview=await cardAutomationContext(pool,{...scope,cardId:card.id})
-      expect(preview.renderedPrompt).toBe('Review Card {column_name} in In progress: Markdown body')
+      // The card context always precedes the rendered template, with the full card id for the board tools.
+      expect(preview.renderedPrompt.endsWith('\n\n## Instructions\nReview Card {column_name} in In progress: Markdown body')).toBe(true)
+      expect(preview.renderedPrompt).toContain(`- Card ID: ${card.id}`)
+      expect(preview.renderedPrompt).toContain(`- Board ID: ${board.board.id}`)
+      expect(preview.renderedPrompt).toContain('- Column: In progress')
       expect(preview.effective.effort).toBe('high')
       await expect(requestColumnAgent(pool,{...scope,cardId:card.id,expectedVersion:card.version,expectedPolicyId:restored.policyId,expectedOverrideVersion:0})).rejects.toThrow(/override changed/)
       const toolScope={...scope,projectId:project.project.id,conversationId:crypto.randomUUID()}

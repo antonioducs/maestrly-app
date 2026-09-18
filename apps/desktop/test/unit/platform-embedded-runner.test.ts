@@ -70,6 +70,10 @@ vi.mock('@maestrly/runner-core', () => ({
       await new Promise((resolve) => setTimeout(resolve, 5))
       return true
     }
+    async poll() {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      return false
+    }
     async stop() {}
   },
   RunnerJournal: class {},
