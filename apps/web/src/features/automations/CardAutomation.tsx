@@ -60,8 +60,8 @@ export function CardAutomation({
     ])
       .then(([board, catalog]) => {
         if (active) {
-          setColumns(board.columns)
-          setRunners(catalog.runners)
+          setColumns(board.columns ?? [])
+          setRunners(catalog.runners ?? [])
         }
       })
       .catch((e) => {

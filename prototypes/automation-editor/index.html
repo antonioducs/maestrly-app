@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Protótipo · Automação da coluna</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=4" />
+</head>
+<body>
+  <!-- Board de fundo (cenário) -->
+  <div class="board-bg" aria-hidden="true">
+    <div class="board-col"><h4>Backlog</h4><div class="board-card"></div><div class="board-card"></div><div class="board-card short"></div></div>
+    <div class="board-col"><h4>Refinamento Técnico</h4><div class="board-card"></div><div class="board-card short"></div></div>
+    <div class="board-col"><h4>Em desenvolvimento</h4><div class="board-card"></div><div class="board-card"></div><div class="board-card"></div><div class="board-card short"></div></div>
+    <div class="board-col"><h4>Done</h4><div class="board-card short"></div></div>
+  </div>
+
+  <!-- Barra do protótipo -->
+  <div class="proto-bar">
+    <span class="proto-badge">PROTÓTIPO · dados fictícios</span>
+    <label class="proto-switch"><input type="checkbox" id="theme-toggle" /> Tema escuro</label>
+    <label class="proto-switch"><input type="checkbox" id="shift-toggle" checked /> Slots reservados (anti‑CLS)</label>
+    <span class="proto-metric" id="shift-metric" title="Deslocamento acumulado do conteúdo desde o último ajuste">shift acumulado: <b>0px</b></span>
+  </div>
+
+  <div class="scrim"></div>
+
+  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+    <header class="dialog-head">
+      <div class="head-main">
+        <p class="crumbs"><span>Guardião Financeiro</span><i>›</i><span>Board principal</span><i>›</i><strong>Refinamento Técnico</strong></p>
+        <h2 id="dlg-title">Agente da coluna</h2>
+      </div>
+      <div class="head-meta">
+        <span class="status-pill" id="dirty-pill"><i class="dot"></i><span>Configuração salva</span></span>
+        <span class="version">v3</span>
+        <button class="ghost" type="button" data-open="history">Histórico</button>
+        <button class="ghost" type="button" id="refresh-runners">Atualizar runners</button>
+        <button class="icon-btn" type="button" aria-label="Fechar">✕</button>
+      </div>
+    </header>
+
+    <div class="dialog-body" id="body">
+
+      <!-- ① Ativação -->
+      <section class="sec" aria-labelledby="s-act">
+        <header class="sec-head">
+          <span class="sec-num">01</span>
+          <div><h3 id="s-act">Ativação</h3><p>Como e quando este agente entra em ação.</p></div>
+        </header>
+        <div class="option-cards">
+          <label class="opt">
+            <input type="checkbox" id="enabled" checked />
+            <span class="opt-body"><strong>Agente habilitado</strong><small>Permite execuções manuais nos cards desta coluna.</small></span>
+          </label>
+          <label class="opt">
+            <input type="checkbox" id="autorun" checked />
+            <span class="opt-body"><strong>Rodar ao entrar</strong><small>Dispara quando um card chega aqui. Execução manual continua disponível.</small></span>
+          </label>
+          <label class="opt">
+            <input type="checkbox" id="approval" />
+            <span class="opt-body"><strong>Exigir aprovação</strong><small>Um humano libera o job antes do runner assumir.</small></span>
+          </label>
+        </div>
+        <p class="hint-slot" id="hint-activation"></p>
+      </section>
+
+      <!-- ② Onde roda -->
+      <section class="sec" aria-labelledby="s-where">
+        <header class="sec-head">
+          <span class="sec-num">02</span>
+          <div><h3 id="s-where">Onde roda</h3><p>Runner e repositório clonados para o workspace isolado.</p></div>
+        </header>
+        <div class="grid2">
+          <div class="field">
+            <label for="dest">Destino de execução</label>
+            <select id="dest"><option value="pool">Pool de runners compatíveis</option><option value="runner">Runner específico</option></select>
+            <p class="hint-slot" id="hint-dest"></p>
+          </div>
+          <div class="field">
+            <label for="runner">Runner</label>
+            <select id="runner"><option value="">Qualquer runner compatível</option><option value="r1">MacBook do Jorge · pessoal · online</option><option value="r4">desk-team-02 · Maestrly · online</option><option value="r2">ci-runner-01 · online</option><option value="r3">build-box · offline</option></select>
+            <p class="hint-slot" id="hint-runner"></p>
+          </div>
+          <div class="field">
+            <label for="repo">Repositório</label>
+            <select id="repo"><option value="">Herdar do projeto (guardiao-api · main)</option><option value="g1">guardiao-api</option><option value="g2">guardiao-web</option></select>
+            <p class="hint-slot" id="hint-repo"></p>
+          </div>
+          <div class="field">
+            <label for="branch">Branch (opcional)</label>
+            <input id="branch" placeholder="Herdar branch base do repositório" />
+            <p class="hint-slot" id="hint-branch"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ Modelo -->
+      <section class="sec" aria-labelledby="s-model">
+        <header class="sec-head">
+          <span class="sec-num">03</span>
+          <div><h3 id="s-model">Modelo</h3><p>Só aparecem modelos que os runners selecionados reportam.</p></div>
+        </header>
+        <div class="grid2">
+          <div class="field">
+            <label for="provider">Provedor</label>
+            <select id="provider"><option value="maestrly">Maestrly</option><option value="codex">Codex</option><option value="claude">Claude Agent SDK</option></select>
+            <p class="hint-slot" id="hint-provider"></p>
+          </div>
+          <div class="field">
+            <label for="model">Modelo</label>
+            <select id="model"></select>
+            <p class="hint-slot" id="hint-model"></p>
+          </div>
+          <div class="field">
+            <label for="effort">Esforço de raciocínio</label>
+            <select id="effort"></select>
+            <p class="hint-slot" id="hint-effort"></p>
+          </div>
+          <div class="field">
+            <span class="label-like">Velocidade</span>
+            <label class="switch-row" id="fast-row"><input type="checkbox" id="fast" /><span class="switch"></span><span>Fast mode</span></label>
+            <p class="hint-slot" id="hint-fast"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ Modo de execução -->
+      <section class="sec" aria-labelledby="s-mode">
+        <header class="sec-head">
+          <span class="sec-num">04</span>
+          <div><h3 id="s-mode">Modo de execução</h3><p>Um agente único ou orquestração Maestro com subagentes.</p></div>
+        </header>
+        <div class="grid2">
+          <div class="field">
+            <span class="label-like">Modo</span>
+            <div class="seg" role="radiogroup" aria-label="Modo">
+              <button type="button" role="radio" aria-checked="true" data-mode="standard">Standard</button>
+              <button type="button" role="radio" aria-checked="false" data-mode="maestro">Maestro</button>
+            </div>
+            <p class="hint-slot" id="hint-mode"></p>
+          </div>
+          <div class="field">
+            <label for="strategy">Estratégia Maestro</label>
+            <select id="strategy"><option>Balanceada</option><option>Melhor qualidade</option><option>Rápida</option><option>Econômica</option></select>
+            <p class="hint-slot" id="hint-strategy"></p>
+          </div>
+          <div class="field span2">
+            <label class="switch-row"><input type="checkbox" id="subagents" /><span class="switch"></span><span>Permitir subagentes Maestrly</span></label>
+            <p class="hint-slot" id="hint-subagents"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ⑤ Prompt -->
+      <section class="sec" aria-labelledby="s-prompt">
+        <header class="sec-head">
+          <span class="sec-num">05</span>
+          <div><h3 id="s-prompt">Prompt de inicialização</h3><p>O contexto do card (ID, título, coluna, workspace, critérios, descrição) é sempre enviado antes destas instruções.</p></div>
+          <div class="sec-actions">
+            <button type="button" class="ghost" id="expand">Expandir</button>
+          </div>
+        </header>
+        <div class="chips" aria-label="Variáveis">
+          <span>Inserir:</span>
+          <button type="button" data-var="{task_number}">task_number</button>
+          <button type="button" data-var="{task_title}">task_title</button>
+          <button type="button" data-var="{task_body}">task_body</button>
+          <button type="button" data-var="{column_name}">column_name</button>
+        </div>
+        <textarea id="prompt" rows="7" placeholder="Deixe vazio para usar o prompt padrão.">Refine tecnicamente o card: leia o código relevante, liste riscos, proponha decomposição em subtarefas e critérios de aceite. Não implemente nada ainda.</textarea>
+        <div class="preview">
+          <div class="preview-bar">
+            <label for="preview-card">Pré‑visualizar com</label>
+            <select id="preview-card"><option value="c1">a1f3c9d2 · Alertas de gasto recorrente</option><option value="c2">7b2e0f11 · Importar OFX do Nubank</option></select>
+            <button type="button" class="ghost" id="preview-toggle" aria-expanded="false">Mostrar prompt renderizado</button>
+          </div>
+          <pre class="preview-body" id="preview-body" hidden></pre>
+        </div>
+      </section>
+
+      <!-- ⑥ Avançado -->
+      <section class="sec sec-adv" aria-labelledby="s-adv">
+        <button type="button" class="sec-head sec-head-btn" id="adv-toggle" aria-expanded="false" aria-controls="adv-body">
+          <span class="sec-num">06</span>
+          <div><h3 id="s-adv">Avançado</h3><p>Pré‑comandos e limites. Raramente precisa mudar.</p></div>
+          <span class="chev" aria-hidden="true">▾</span>
+        </button>
+        <div class="adv-body" id="adv-body" hidden>
+          <div class="grid2">
+            <div class="field span2">
+              <label for="precmd">Pré‑comandos</label>
+              <textarea id="precmd" rows="3" placeholder="npm ci&#10;npm run build"></textarea>
+              <p class="hint-slot" id="hint-precmd"></p>
+            </div>
+            <div class="field">
+              <label for="timeout">Timeout (segundos)</label>
+              <input id="timeout" type="number" placeholder="Herdar do board (3600)" />
+              <p class="hint-slot"></p>
+            </div>
+            <div class="field">
+              <label for="logs">Limite de logs (bytes)</label>
+              <input id="logs" type="number" placeholder="Herdar do board (10 MiB)" />
+              <p class="hint-slot"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="dialog-foot">
+      <p class="foot-status" id="foot-status" role="status" aria-live="polite"><i class="dot"></i><span>Alterações valem para jobs futuros; snapshots existentes são preservados.</span></p>
+      <div class="foot-actions">
+        <button type="button" class="ghost">Fechar</button>
+        <button type="button" class="primary" id="save">Salvar automação</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- Histórico (sub-modal) -->
+  <div class="sub" id="history" hidden>
+    <div class="sub-card" role="dialog" aria-label="Histórico de configuração">
+      <header><h3>Histórico de configuração</h3><button class="icon-btn" type="button" data-close="history" aria-label="Fechar">✕</button></header>
+      <ul class="hist">
+        <li><button type="button"><b>v3</b> · hoje, 10:12 · Maestrly · claude-sonnet-4 · autorun</button></li>
+        <li><button type="button"><b>v2</b> · ontem, 18:40 · Codex · gpt-5 · aprovação</button></li>
+        <li><button type="button"><b>v1</b> · 12 set · rascunho desabilitado</button></li>
+      </ul>
+      <p class="muted">Restaurar cria uma nova versão; nada é sobrescrito.</p>
+    </div>
+  </div>
+
+  <script src="select.js?v=3"></script>
+  <script src="app.js?v=5"></script>
+</body>
+</html>

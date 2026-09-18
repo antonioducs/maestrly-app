@@ -159,7 +159,7 @@ test('live snapshots refresh an open card while preserving metadata drafts', asy
   const dialog = page.getByRole('dialog')
   await expect(dialog.locator('[contenteditable=true]').first()).toBeVisible()
   await dialog.getByRole('textbox', { name: L('Title'), exact: true }).fill('My unsaved title')
-  await dialog.getByRole('tab', { name: new RegExp('^' + L('Comments')) }).click()
+  await dialog.getByRole('tab', { name: new RegExp('^' + L('Activity')) }).click()
   await dialog.getByRole('button', { name: L('Write'), exact: true }).last().click()
   await dialog.getByRole('textbox', { name: L('Comment'), exact: true }).fill('My unsent comment')
   const before = detailReads
@@ -168,12 +168,11 @@ test('live snapshots refresh an open card while preserving metadata drafts', asy
   await expect(dialog.locator('.comment-entry')).toContainText('Remote comment')
   expect(detailReads).toBeGreaterThan(before)
   await expect(dialog.getByRole('textbox', { name: L('Comment'), exact: true })).toHaveValue('My unsent comment')
-  await dialog.getByRole('tab', { name: L('Events'), exact: true }).click()
   await expect(dialog.locator('.timeline-entry')).toHaveCount(0)
   events = [{ id: 'event', type: 'card.updated', actor: { type: 'human' }, data: {}, createdAt: now, reason: 'Remote activity' }]
   await refresh()
   await expect(dialog.locator('.timeline-entry')).toContainText('Remote activity')
-  await dialog.getByRole('tab', { name: L('History'), exact: true }).click()
+  await dialog.getByRole('tab', { name: new RegExp('^' + L('History')) }).click()
   await expect(dialog.locator('.history-list button')).toHaveCount(0)
   history = [{ id: 'version', body: 'Remote description', version: 1, actor: {}, createdAt: now }]
   await refresh()
@@ -181,7 +180,7 @@ test('live snapshots refresh an open card while preserving metadata drafts', asy
   current = { ...current, title: 'Remote title', version: 2, columnId: 'review' }
   await refresh()
   await expect(dialog.getByRole('heading', { name: 'Remote title', exact: true })).toBeVisible()
-  await dialog.getByRole('tab', { name: L('General'), exact: true }).click()
+  await dialog.getByRole('tab', { name: L('Details'), exact: true }).click()
   await expect(dialog.getByRole('textbox', { name: L('Title'), exact: true })).toHaveValue('My unsaved title')
   await dialog.getByRole('button', { name: L('Save changes'), exact: true }).click()
   await expect(dialog.getByRole('alert')).toContainText(L('The card changed after it was loaded.'))
@@ -192,7 +191,7 @@ test('live snapshots refresh an open card while preserving metadata drafts', asy
   await expect(page.getByRole('button', { name: current.title, exact: true })).toBeVisible()
   await expect(dialog).toHaveCount(0)
   await page.getByRole('button', { name: current.title, exact: true }).click()
-  await expect(dialog.getByRole('tab', { name: L('General'), exact: true })).toBeVisible()
+  await expect(dialog.getByRole('tab', { name: L('Details'), exact: true })).toBeVisible()
   current = { ...current, archivedAt: now, version: 3 }
   await refresh()
   await expect(dialog.getByRole('button', { name: L('Restore'), exact: true })).toBeVisible()

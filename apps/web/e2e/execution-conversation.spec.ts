@@ -28,7 +28,7 @@ test('shows the execution conversation and merges streamed message revisions',as
  await page.goto('/')
  await page.getByRole('button',{name:'Executor conversation',exact:true}).click()
  const dialog=page.getByRole('dialog')
- await dialog.getByRole('tab',{name:L('Executions'),exact:true}).click()
+ await dialog.getByRole('tab',{name:new RegExp('^'+L('Executions'))}).click()
  await dialog.getByText(L('Execution conversation'),{exact:true}).click()
  await expect(dialog.locator('.execution-message')).toHaveCount(2)
  await expect(dialog.locator('.execution-message').last()).toContainText('Verified implementation.')

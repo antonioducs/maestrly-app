@@ -7,12 +7,15 @@ export function Modal({
   children,
   wide = false,
   closeLabel,
+  className = '',
 }: {
   title: string
   onClose(): void
   children: ReactNode
   wide?: boolean
   closeLabel?: string
+  /** Extra dialog class for layouts that own their scroll/footer (e.g. the column agent editor). */
+  className?: string
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     id = useId()
@@ -30,7 +33,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={'form-dialog dialog-enter ' + (wide ? 'detail-dialog' : '')}
+      className={'form-dialog dialog-enter ' + (wide ? 'detail-dialog ' : '') + className}
       aria-labelledby={id}
       onCancel={(e) => {
         e.preventDefault()
