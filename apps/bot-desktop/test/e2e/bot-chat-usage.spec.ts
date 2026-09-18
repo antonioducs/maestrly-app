@@ -19,6 +19,10 @@ test('a finished task shows up in the bot dialog and on the usage page, priced w
 
     // The page: every bot of the Host, by model and then by bot.
     await page.getByRole('button', { name: 'Uso e custos', exact: true }).click()
+    await expect(page.locator('.usage-header')).toHaveCSS('height', '40px')
+    expect(
+      await page.locator('.usage-page').evaluate((node) => node.getBoundingClientRect().width)
+    ).toBeLessThanOrEqual(672)
     const panel = page.locator('[data-usage-panel]')
     await expect(panel.locator('[data-usage-row="fixture-small"]')).toBeVisible()
     await expect(panel).toContainText('Total de tokens')

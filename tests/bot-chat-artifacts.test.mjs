@@ -25,9 +25,29 @@ test('the shared chat package depends on neither application', async () => {
     assert.doesNotMatch(source, /react-i18next|from '@\/|\.\.\/\.\.\/shared/, file)
   }
   // Both applications render the same table and the same transcript; neither keeps a private copy.
-  for (const app of ['apps/desktop/src/renderer/components/UsagePanel.tsx', 'apps/bot-desktop/src/renderer/features/usage/UsagePage.tsx'])
+  for (const app of [
+    'apps/desktop/src/renderer/components/UsagePanel.tsx',
+    'apps/bot-desktop/src/renderer/features/usage/UsagePage.tsx',
+  ])
     assert.match(await read(app), /from '@maestrly\/chat-ui'/)
   assert.doesNotMatch(await read('apps/desktop/src/renderer/components/UsagePanel.tsx'), /<table/)
+
+  // Layout is shared too: transcript measure, scroll viewport, composer gutter and settings
+  // content cannot drift independently after the visual 1:1 port.
+  const layout = await read('packages/chat-ui/src/layout/ChatLayout.tsx')
+  for (const primitive of [
+    'ChatSurface',
+    'ChatMessageViewport',
+    'ChatMessageContent',
+    'ChatComposerDock',
+    'SettingsContent',
+  ])
+    assert.match(layout, new RegExp(`export (?:const|function) ${primitive}`), primitive)
+  assert.match(await read('apps/bot-desktop/src/renderer/features/chat/BotChat.tsx'), /ChatMessageContent/)
+  assert.match(await read('apps/desktop/src/renderer/components/chat/ChatMessageList.tsx'), /ChatMessageContent/)
+  assert.match(await read('apps/bot-desktop/src/renderer/features/usage/UsagePage.tsx'), /SettingsContent/)
+  assert.match(await read('apps/desktop/src/renderer/components/SettingsView.tsx'), /SettingsContent/)
+  assert.match(await read('apps/bot-desktop/src/renderer/style.css'), /@source '\.\/'/)
 })
 
 test('a transcript is one projection, folded from durable rows on the Host and applied live in the app', async () => {
@@ -121,7 +141,11 @@ test('both main processes bundle the shared chat package instead of leaving it e
   // load `@maestrly/chat-ui/model-meta` from its asar and never opened a window; the e2e runs that
   // launch `out/main/index.js` from the workspace did not catch it.
   for (const config of ['apps/bot-desktop/electron.vite.config.ts', 'apps/desktop/electron.vite.config.ts'])
-    assert.match(await read(config), /externalizeDepsPlugin\(\{\s*exclude:\s*\[\s*'@maestrly\/chat-ui'\s*\]\s*\}\)/, config)
+    assert.match(
+      await read(config),
+      /externalizeDepsPlugin\(\{\s*exclude:\s*\[\s*'@maestrly\/chat-ui'\s*\]\s*\}\)/,
+      config
+    )
 })
 
 test('capabilities and versions are the ones the rollout kit expects', async () => {
@@ -155,7 +179,15 @@ test('the laboratory asks before it installs anything, removes what it installed
 
 test('the chat experience is wired into the repository checks and the CI', async () => {
   const manifest = JSON.parse(await read('package.json'))
-  for (const script of ['check:bot-chat', 'test:bot-chat', 'test:e2e:bot-chat', 'typecheck:chat-ui', 'test:chat-ui', 'lab:bot:chat']) assert.ok(manifest.scripts[script], `missing script ${script}`)
+  for (const script of [
+    'check:bot-chat',
+    'test:bot-chat',
+    'test:e2e:bot-chat',
+    'typecheck:chat-ui',
+    'test:chat-ui',
+    'lab:bot:chat',
+  ])
+    assert.ok(manifest.scripts[script], `missing script ${script}`)
   // The laboratory is never part of an automated run.
   assert.doesNotMatch(manifest.scripts.test, /lab:bot:chat/)
   assert.match(manifest.scripts.check, /check:bot-chat/)

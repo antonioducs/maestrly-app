@@ -4,6 +4,13 @@ test('chat completes work, produces a preview, and offers the real download', as
   const { app, page } = await launchBot()
   try {
     await readyBot(page)
+    await expect(page.locator('.chat-header')).toHaveCSS('height', '40px')
+    expect(await page.locator('.chat-msgs').evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(
+      768
+    )
+    expect(await page.locator('.composer').evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(
+      768
+    )
     await send(page, 'Prepare um relatório #slow')
     await expect(page.locator('.chat-header')).toContainText('Trabalhando…')
     await expect(page.getByRole('button', { name: 'Parar tarefa', exact: true })).toBeVisible()
@@ -13,6 +20,7 @@ test('chat completes work, produces a preview, and offers the real download', as
     await expect(page.locator('.chat-header')).toContainText('Tarefa interrompida')
     await send(page, 'Prepare um relatório')
     await expect(page.locator('.file-card')).toContainText('relatorio.md')
+    await expect(page.locator('[data-tool-card]').first()).toHaveCSS('border-color', 'rgba(255, 255, 255, 0.08)')
     await page.getByRole('button', { name: 'Abrir prévia', exact: true }).click()
     await expect(page.getByRole('region', { name: 'relatorio.md' })).toContainText('Pedido: Prepare um relatório')
     await page.getByRole('button', { name: 'Fechar', exact: true }).click()
