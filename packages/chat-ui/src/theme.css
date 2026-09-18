@@ -1,0 +1,30 @@
+/* Semantic chat tokens shared by both desktop products. Product themes may override them. */
+:root {
+  --radius: 0.75rem;
+  --background: rgba(0, 0, 0, 0);
+  --surface: var(--m-surface);
+  --surface-elevated: var(--m-surface-elevated);
+  --terminal-bg: rgba(10, 10, 11, 0.82);
+  --foreground: rgba(237, 234, 227, 0.96);
+  --card: var(--surface-elevated);
+  --card-foreground: var(--foreground);
+  --popover: rgba(26, 26, 29, 0.86);
+  --popover-foreground: var(--foreground);
+  --primary: var(--m-primary);
+  --primary-foreground: var(--m-canvas);
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: rgba(154, 149, 140, 0.85);
+  --accent: rgba(255, 255, 255, 0.08);
+  --accent-foreground: var(--foreground);
+  --destructive: #ff7a85;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(237, 234, 227, 0.5);
+  --status-working: #edeae3;
+  --status-ready: var(--m-ready);
+  --status-waiting: #edeae3;
+  --status-error: #ff7a85;
+}

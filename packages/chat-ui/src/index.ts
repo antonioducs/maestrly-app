@@ -5,7 +5,14 @@ export { renderMermaid, mermaidError, getMermaid } from './markdown/mermaid'
 export { ToolCallCard, StatusBadge, clipOutput } from './transcript/ToolCallCard'
 export { CopyButton } from './transcript/CopyButton'
 export { ResponseDuration } from './transcript/ResponseDuration'
-export { formatResponseDuration, responseDurationMs, TOOL_OUTPUT_DISPLAY_MAX, type ToolPartView, type ToolViewState, type ToolImageRef } from './transcript/types'
+export {
+  formatResponseDuration,
+  responseDurationMs,
+  TOOL_OUTPUT_DISPLAY_MAX,
+  type ToolPartView,
+  type ToolViewState,
+  type ToolImageRef,
+} from './transcript/types'
 export { ChatPermModePicker, BotPermModePicker, type PermMode } from './composer/ChatPermModePicker'
 export { ChatReasoningPicker } from './composer/ChatReasoningPicker'
 export { ChatModelChip, type ModelOption, type ModelSelection } from './composer/ChatModelChip'
@@ -15,8 +22,37 @@ export { ChatContextMeter } from './composer/ChatContextMeter'
 export { usePopover, PANEL_CLASS } from './composer/usePopover'
 export * from './usage/cost'
 export { parseCatalog, parseModelsDev, providerModelKey } from './usage/model-meta'
-export { TranscriptList, type TranscriptMessageLike, type TranscriptPartLike, type TranscriptSlots } from './transcript/TranscriptList'
+export {
+  TranscriptList,
+  type TranscriptMessageLike,
+  type TranscriptPartLike,
+  type TranscriptSlots,
+} from './transcript/TranscriptList'
 export { useStickToBottom, STICK_THRESHOLD_PX } from './transcript/useStickToBottom'
 export { ChatComposer, type ComposerCommand, type ComposerAttachment } from './composer/ChatComposer'
-export { UsagePanel, usagePeriodRange, fmtTokens, fmtNum, fmtCost, isoDay, DAY_MS, type UsagePanelProps, type UsagePanelRow, type UsagePeriod } from './usage/UsagePanel'
-export { QuickUsageDialog, QuickUsageTargets, QuickUsageRefresh, type QuickUsageTargetView } from './usage/QuickUsageDialog'
+export {
+  UsagePanel,
+  usagePeriodRange,
+  fmtTokens,
+  fmtNum,
+  fmtCost,
+  isoDay,
+  DAY_MS,
+  type UsagePanelProps,
+  type UsagePanelRow,
+  type UsagePeriod,
+} from './usage/UsagePanel'
+export {
+  QuickUsageDialog,
+  QuickUsageTargets,
+  QuickUsageRefresh,
+  type QuickUsageTargetView,
+} from './usage/QuickUsageDialog'
+export {
+  ChatSurface,
+  ChatTopBar,
+  ChatMessageViewport,
+  ChatMessageContent,
+  ChatComposerDock,
+  SettingsContent,
+} from './layout/ChatLayout'

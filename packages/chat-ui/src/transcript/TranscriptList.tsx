@@ -50,7 +50,11 @@ function Reasoning({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="my-1 text-[12px] text-muted-foreground" data-reasoning>
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 rounded px-1 hover:bg-white/[0.06]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1 rounded px-1 hover:bg-white/[0.06]"
+      >
         <ChevronRight className={cn('h-3 w-3 transition-transform', open && 'rotate-90')} />
         <BrainCircuit className="h-3 w-3" />
         <span className="truncate">{text.slice(0, 80)}</span>
@@ -104,15 +108,27 @@ export function TranscriptList<M extends TranscriptMessageLike>({
         const text = plainText(message)
         const startedAt = message.responseStartedAt ? Date.parse(message.responseStartedAt) : undefined
         return (
-          <article className={cn('message group', message.role)} key={message.id} data-message-id={message.id} data-streaming={message.streaming || undefined}>
+          <article
+            className={cn('message group', message.role, 'flex w-full min-w-0 max-w-full flex-col gap-1')}
+            key={message.id}
+            data-message-id={message.id}
+            data-streaming={message.streaming || undefined}
+          >
             {message.role === 'system' && slots.system ? (
               slots.system(message)
             ) : message.role === 'user' ? (
-              <p>{text}</p>
+              <p className="whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-white/[0.05] px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground">
+                {text}
+              </p>
             ) : (
               message.parts.map((part) =>
                 part.type === 'text' ? (
-                  <Markdown key={part.id} text={part.text ?? ''} urlTransform={urlTransform} allowImages={allowImages} />
+                  <Markdown
+                    key={part.id}
+                    text={part.text ?? ''}
+                    urlTransform={urlTransform}
+                    allowImages={allowImages}
+                  />
                 ) : part.type === 'reasoning' ? (
                   <Reasoning key={part.id} text={part.text ?? ''} />
                 ) : part.type === 'tool' ? (
@@ -129,9 +145,13 @@ export function TranscriptList<M extends TranscriptMessageLike>({
               <time dateTime={message.createdAt} className="tabular-nums">
                 {time.format(new Date(message.createdAt))}
               </time>
-              {message.role === 'assistant' && (message.responseDurationMs != null || (message.streaming && startedAt != null)) && (
-                <ResponseDuration startedAt={message.streaming ? startedAt : undefined} durationMs={message.responseDurationMs} />
-              )}
+              {message.role === 'assistant' &&
+                (message.responseDurationMs != null || (message.streaming && startedAt != null)) && (
+                  <ResponseDuration
+                    startedAt={message.streaming ? startedAt : undefined}
+                    durationMs={message.responseDurationMs}
+                  />
+                )}
               {text.trim() && (
                 <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                   <CopyButton text={text} />

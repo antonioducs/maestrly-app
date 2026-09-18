@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
+    "./theme.css": "./src/theme.css",
     "./components.css": "./src/components.css",
     "./cost": "./src/usage/cost.ts",
     "./model-meta": "./src/usage/model-meta.ts"
