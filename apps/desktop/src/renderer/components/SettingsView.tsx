@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Settings, X, PanelLeft } from 'lucide-react'
 import type { ChatPermMode, ShortcutOpenMode } from '../../preload'
 import { UsagePanel } from '@/components/UsagePanel'
+import { SettingsContent } from '@maestrly/chat-ui'
 import { useLocale } from '@/lib/i18n'
 import type { FloatTab } from '../../shared/tool-tabs'
 import {
@@ -331,12 +332,7 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onClose }
           ))}
         </nav>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div
-            className={cn(
-              'mx-auto flex w-full flex-col gap-7 px-6 py-6',
-              section === 'chat' ? 'max-w-6xl' : 'max-w-2xl'
-            )}
-          >
+          <SettingsContent className={cn(section === 'chat' ? 'max-w-6xl' : 'max-w-2xl')}>
             {section === 'usage' && <UsagePanel />}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
@@ -405,7 +401,7 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onClose }
             )}
 
             {section === 'privacy' && <PrivacySection t={t} />}
-          </div>
+          </SettingsContent>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@
 @import 'tw-animate-css';
 @import '@maestrly/ui/tokens.css';
 @import '@maestrly/ui/checkbox.css';
+@import '@maestrly/chat-ui/theme.css';
 @source '../../../../packages/ui/src';
 @source '../../../../packages/chat-ui/src';
 @import '@maestrly/chat-ui/components.css';

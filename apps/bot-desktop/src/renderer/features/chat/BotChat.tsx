@@ -3,7 +3,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { Bot, BotInteraction, BotTurn } from '@maestrly/host-protocol'
 import { useT } from '../../i18n'
 import type { TranslationKey } from '../../i18n/pt-BR'
-import { ChatContextMeter, TranscriptList, useStickToBottom } from '@maestrly/chat-ui'
+import {
+  ChatContextMeter,
+  ChatMessageContent,
+  ChatMessageViewport,
+  ChatSurface,
+  ChatTopBar,
+  TranscriptList,
+  useStickToBottom,
+} from '@maestrly/chat-ui'
 import type { TranscriptMessage } from '@maestrly/host-protocol'
 import { Composer } from './Composer'
 import { FileCard } from './FileCard'
@@ -136,7 +144,12 @@ export function BotChat({
     )
     if (alive.current) render((value) => value + 1)
   }
-  const events = useBotEvents(bot.id, connected, () => refresh(), (error) => setError(String(error)))
+  const events = useBotEvents(
+    bot.id,
+    connected,
+    () => refresh(),
+    (error) => setError(String(error))
+  )
   const transcript = useTranscript(bot.id, connected, chatSupported, events)
   const meter = useContextMeter(transcript.turns, bot.model?.model)
   const { prompts, commands } = usePrompts(bot.id, connected, chatSupported)
@@ -162,7 +175,10 @@ export function BotChat({
     if (!voiceSupported || !connected || !persistedIds.length) return
     let cancelled = false
     window.bot.voice
-      .call({ method: 'voice.forMessages', params: { target: { kind: 'bot', id: bot.id }, messageIds: persistedIds.slice(-100) } })
+      .call({
+        method: 'voice.forMessages',
+        params: { target: { kind: 'bot', id: bot.id }, messageIds: persistedIds.slice(-100) },
+      })
       .then((metas) => {
         if (!cancelled && alive.current) setVoiceMeta(Object.fromEntries(metas.map((meta) => [meta.messageId, meta])))
       })
@@ -176,7 +192,10 @@ export function BotChat({
   // Opens at the end and follows new content only while the person is already reading the end.
   const lastMessage = transcript.messages.at(-1)
   const { ref: scroll, onScroll } = useStickToBottom<HTMLDivElement>(
-    `${transcript.messages.length}:${lastMessage?.id}:${lastMessage?.parts.length}:${(() => { const last = lastMessage?.parts.at(-1); return last && last.type === 'text' ? last.text.length : '' })()}`,
+    `${transcript.messages.length}:${lastMessage?.id}:${lastMessage?.parts.length}:${(() => {
+      const last = lastMessage?.parts.at(-1)
+      return last && last.type === 'text' ? last.text.length : ''
+    })()}`,
     state.scrollTop
   )
   useEffect(() => {
@@ -271,36 +290,58 @@ export function BotChat({
     }
   }
   return (
-    <section className="chat">
-      <header className="chat-header" data-status={state.turn?.status}>
-        <div>
-          <h1>{bot.name}</h1>
-          <p role="status" aria-live="polite">
-            <span className="status-dot" />
-            {state.turn?.status === 'needs_attention' ? state.turn.attention : t(turnLabel(state.turn))}
-          </p>
-        </div>
-        <div className="chat-header-actions">
-          {onOpenDesktop && (
-            <Button aria-pressed={desktopOpen} onClick={onOpenDesktop}>
-              <Monitor size={15} aria-hidden="true" />
-              {t('viewScreen')}
+    <ChatSurface className="chat">
+      <ChatTopBar
+        className="chat-header"
+        leading={
+          <div className="flex min-w-0 items-center gap-2" data-status={state.turn?.status}>
+            <h1 className="truncate">{bot.name}</h1>
+            <p className="shrink-0" role="status" aria-live="polite">
+              <span className="status-dot" />
+              {state.turn?.status === 'needs_attention' ? state.turn.attention : t(turnLabel(state.turn))}
+            </p>
+          </div>
+        }
+        trailing={
+          <div className="chat-header-actions">
+            {onOpenDesktop && (
+              <Button className="topbar-action" aria-pressed={desktopOpen} onClick={onOpenDesktop}>
+                <Monitor size={15} aria-hidden="true" />
+                {t('viewScreen')}
+              </Button>
+            )}
+            {chatSupported && (
+              <Button
+                className="topbar-icon"
+                aria-label={t('usageOf').replace('{name}', bot.name)}
+                title={t('usage')}
+                onClick={() => setUsageOpen(true)}
+              >
+                <DollarSign size={15} aria-hidden="true" />
+              </Button>
+            )}
+            <Button className="topbar-action" onClick={details}>
+              {t('details')}
             </Button>
-          )}
-          {chatSupported && (
-            <Button aria-label={t('usageOf').replace('{name}', bot.name)} title={t('usage')} onClick={() => setUsageOpen(true)}>
-              <DollarSign size={15} aria-hidden="true" />
-            </Button>
-          )}
-          <Button onClick={details}>{t('details')}</Button>
-        </div>
-      </header>
-      {chatSupported && <BotUsageDialog bot={bot} open={usageOpen} onOpenChange={setUsageOpen} connected={connected} supported={chatSupported} />}
+          </div>
+        }
+      />
+      {chatSupported && (
+        <BotUsageDialog
+          bot={bot}
+          open={usageOpen}
+          onOpenChange={setUsageOpen}
+          connected={connected}
+          supported={chatSupported}
+        />
+      )}
       {held && !desktopOpen && (
         <div className="desktop-banner" role="status">
           <p>{t(desktop?.mode === 'blocked' ? 'blockedBanner' : 'pausedBanner')}</p>
           {(desktop?.mode === 'paused' || desktop?.mode === 'blocked') && (
-            <Button className="primary" disabled={busy || !connected} onClick={() => void continueBot()}>{t('continueBot')}</Button>
+            <Button className="primary" disabled={busy || !connected} onClick={() => void continueBot()}>
+              {t('continueBot')}
+            </Button>
           )}
           {onOpenDesktop && <Button onClick={onOpenDesktop}>{t('viewScreen')}</Button>}
         </div>
@@ -311,7 +352,7 @@ export function BotChat({
           {t('chatHostOutdated')}
         </p>
       )}
-      <div
+      <ChatMessageViewport
         className="messages"
         ref={scroll}
         onScroll={(event) => {
@@ -319,58 +360,77 @@ export function BotChat({
           onScroll()
         }}
       >
-        {transcript.hasMore && (
-          <Button onClick={() => void transcript.loadEarlier().catch((error) => setError(String(error)))}>{t('previous')}</Button>
-        )}
-        {!transcript.messages.length && (
-          <div className="empty-chat">
-            <h2>{t('emptyChat')}</h2>
-            <p>{t('emptyChatText')}</p>
-          </div>
-        )}
-        <TranscriptList<TranscriptMessage>
-          messages={transcript.messages}
-          urlTransform={botUrlTransform}
-          allowImages={false}
-          slots={{
-            system: (message) => <SystemNotice content={message.parts.map((part) => (part.type === 'text' ? part.text : '')).join('\n')} />,
-            // A produced file that is also an attachment of the answer is shown once, as the attachment.
-            file: (part, message) =>
-              message.attachments.some((file) => file.path === part.path) ? null : (
-                <FileCard botId={bot.id} file={{ path: part.path!, name: part.name!, size: part.size ?? 0 }} onPreview={onPreview} />
+        <ChatMessageContent>
+          {transcript.hasMore && (
+            <Button onClick={() => void transcript.loadEarlier().catch((error) => setError(String(error)))}>
+              {t('previous')}
+            </Button>
+          )}
+          {!transcript.messages.length && (
+            <div className="empty-chat">
+              <h2>{t('emptyChat')}</h2>
+              <p>{t('emptyChatText')}</p>
+            </div>
+          )}
+          <TranscriptList<TranscriptMessage>
+            messages={transcript.messages}
+            urlTransform={botUrlTransform}
+            allowImages={false}
+            slots={{
+              system: (message) => (
+                <SystemNotice
+                  content={message.parts.map((part) => (part.type === 'text' ? part.text : '')).join('\n')}
+                />
               ),
-            after: (message) => (
-              <>
-                {(() => {
-                  const meta = voiceMeta[message.id]
-                  return meta ? <VoiceMessage meta={meta} read={(clipId) => window.bot.voice.read({ clipId })} /> : null
-                })()}
-                {message.attachments.map((file) => (
-                  <FileCard key={file.path} botId={bot.id} file={file} onPreview={onPreview} />
-                ))}
-              </>
-            ),
-          }}
-        />
-        {/* Suggestions the bot left, where it left them. Each one is inert until confirmed. */}
-        <ProposalStrip
-          target={{ kind: 'bot', id: bot.id }}
-          targetName={bot.name}
-          connected={connected}
-          supported={routinesSupported}
-          onActivated={() => void refresh()}
-        />
-        {interactions.map((interaction) => (
-          <InteractionCard key={interaction.id} interaction={interaction} refresh={refresh} disabled={!connected} />
-        ))}
-        {state.turn?.status === 'failed' && (
-          <div role="alert" className="task-error">
-            <h3>{t('failed')}</h3>
-            <p>{t('failedGuidance')}</p>
-            {state.turn.error?.message && <details><summary>{t('technical')}</summary><pre>{state.turn.error.message}</pre></details>}
-          </div>
-        )}
-      </div>
+              // A produced file that is also an attachment of the answer is shown once, as the attachment.
+              file: (part, message) =>
+                message.attachments.some((file) => file.path === part.path) ? null : (
+                  <FileCard
+                    botId={bot.id}
+                    file={{ path: part.path!, name: part.name!, size: part.size ?? 0 }}
+                    onPreview={onPreview}
+                  />
+                ),
+              after: (message) => (
+                <>
+                  {(() => {
+                    const meta = voiceMeta[message.id]
+                    return meta ? (
+                      <VoiceMessage meta={meta} read={(clipId) => window.bot.voice.read({ clipId })} />
+                    ) : null
+                  })()}
+                  {message.attachments.map((file) => (
+                    <FileCard key={file.path} botId={bot.id} file={file} onPreview={onPreview} />
+                  ))}
+                </>
+              ),
+            }}
+          />
+          {/* Suggestions the bot left, where it left them. Each one is inert until confirmed. */}
+          <ProposalStrip
+            target={{ kind: 'bot', id: bot.id }}
+            targetName={bot.name}
+            connected={connected}
+            supported={routinesSupported}
+            onActivated={() => void refresh()}
+          />
+          {interactions.map((interaction) => (
+            <InteractionCard key={interaction.id} interaction={interaction} refresh={refresh} disabled={!connected} />
+          ))}
+          {state.turn?.status === 'failed' && (
+            <div role="alert" className="task-error">
+              <h3>{t('failed')}</h3>
+              <p>{t('failedGuidance')}</p>
+              {state.turn.error?.message && (
+                <details>
+                  <summary>{t('technical')}</summary>
+                  <pre>{state.turn.error.message}</pre>
+                </details>
+              )}
+            </div>
+          )}
+        </ChatMessageContent>
+      </ChatMessageViewport>
       {error && (
         <p role="alert" className="alert">
           {error}
@@ -391,12 +451,19 @@ export function BotChat({
           enabledServers + enabledSkills > 0 ? (
             <Button className="extension-chip" aria-label={t('extensions')} title={t('extensions')} onClick={details}>
               {enabledServers > 0 && <span>MCP: {enabledServers}</span>}
-              {enabledSkills > 0 && <span>{t('skills')}: {enabledSkills}</span>}
+              {enabledSkills > 0 && (
+                <span>
+                  {t('skills')}: {enabledSkills}
+                </span>
+              )}
             </Button>
           ) : undefined
         }
         attachments={state.attachments}
-        removeAttachment={(path) => { state.attachments = state.attachments.filter(file => file.path !== path); changed() }}
+        removeAttachment={(path) => {
+          state.attachments = state.attachments.filter((file) => file.path !== path)
+          changed()
+        }}
         value={state.text}
         onChange={(value) => {
           state.text = value
@@ -437,6 +504,6 @@ export function BotChat({
           <Button onClick={() => void attach(true)}>{t('replace')}</Button>
         </dialog>
       )}
-    </section>
+    </ChatSurface>
   )
 }

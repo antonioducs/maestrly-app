@@ -22,7 +22,16 @@ import { TeamChat, createTeamChatState, type TeamChatState } from './features/te
 import { TeamDetails } from './features/teams/TeamDetails'
 import type { Team, TeamDetails as TeamDetailsShape } from '@maestrly/host-protocol'
 import './style.css'
-type View = 'onboarding' | 'chat' | 'settings' | 'computers' | 'accounts' | 'environments' | 'team' | 'team-create' | 'usage'
+type View =
+  | 'onboarding'
+  | 'chat'
+  | 'settings'
+  | 'computers'
+  | 'accounts'
+  | 'environments'
+  | 'team'
+  | 'team-create'
+  | 'usage'
 export function App() {
   const [preferences, setPreferences] = useState<UiPreferences>({ theme: 'system', locale: 'pt-BR', advanced: false })
   const chatUi = useMemo<ChatUiContextValue>(
@@ -58,7 +67,9 @@ function Shell({
   const [error, setError] = useState('')
   const [failedTarget, setFailedTarget] = useState<HostTarget>()
   const [booting, setBooting] = useState(true)
-  const [panel, setPanel] = useState<{ kind: 'details' } | { kind: 'team-details' } | { kind: 'preview'; name: string; text: string }>()
+  const [panel, setPanel] = useState<
+    { kind: 'details' } | { kind: 'team-details' } | { kind: 'preview'; name: string; text: string }
+  >()
   const [teams, setTeams] = useState<Team[]>([])
   const [teamId, setTeamId] = useState<string>()
   const [teamDetails, setTeamDetails] = useState<TeamDetailsShape>()
@@ -171,7 +182,10 @@ function Shell({
             if (next.botSupport !== 'host-outdated') await refreshBots(savedPreferences.lastBotId)
             // Teams must reappear after a restart, not only after a reconnection.
             if (next.teamSupport === 'available')
-              await window.bot.team({ method: 'team.list', params: {} }).then(setTeams).catch(() => undefined)
+              await window.bot
+                .team({ method: 'team.list', params: {} })
+                .then(setTeams)
+                .catch(() => undefined)
           } catch (error) {
             setFailedTarget(target)
             setError(String(error))
@@ -238,7 +252,13 @@ function Shell({
   }
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && panel && !document.querySelector('dialog[open], [role="listbox"]')) closePanel()
+      if (
+        event.key === 'Escape' &&
+        !event.defaultPrevented &&
+        panel &&
+        !document.querySelector('dialog[open], [role="listbox"]')
+      )
+        closePanel()
     }
     window.addEventListener('keydown', listener)
     return () => window.removeEventListener('keydown', listener)
@@ -262,11 +282,13 @@ function Shell({
   }
   const openAccounts = () => {
     if (currentView.current === 'onboarding') returnView.current = 'onboarding'
-    setPanel(undefined); setView('accounts')
+    setPanel(undefined)
+    setView('accounts')
   }
   const openEnvironments = () => {
     if (currentView.current === 'onboarding') returnView.current = 'onboarding'
-    setPanel(undefined); setView('environments')
+    setPanel(undefined)
+    setView('environments')
   }
   const computers = () => {
     setPanel(undefined)
@@ -358,8 +380,14 @@ function Shell({
           />
         )}
         <footer>
-          <Button aria-label={t('environments')} disabled={booting} onClick={openEnvironments}><Monitor size={16} aria-hidden="true" /><span className="bot-label">{t('environments')}</span></Button>
-          <Button aria-label={t('accounts')} disabled={booting} onClick={openAccounts}><UserRound size={16} aria-hidden="true" /><span className="bot-label">{t('accounts')}</span></Button>
+          <Button aria-label={t('environments')} disabled={booting} onClick={openEnvironments}>
+            <Monitor size={16} aria-hidden="true" />
+            <span className="bot-label">{t('environments')}</span>
+          </Button>
+          <Button aria-label={t('accounts')} disabled={booting} onClick={openAccounts}>
+            <UserRound size={16} aria-hidden="true" />
+            <span className="bot-label">{t('accounts')}</span>
+          </Button>
           <Button
             aria-label={t('usage')}
             disabled={booting}
@@ -385,7 +413,7 @@ function Shell({
         </footer>
       </aside>
       <main className="workspace">
-        {(['settings', 'computers', 'accounts', 'environments', 'usage'].includes(view)) && (
+        {['settings', 'computers', 'accounts', 'environments'].includes(view) && (
           <Button
             className="back-button"
             onClick={() => {
@@ -403,10 +431,27 @@ function Shell({
             {t(returnView.current === 'onboarding' ? 'returnToCreation' : 'back')}
           </Button>
         )}
-        {view === 'usage' ? <UsagePage connected={connection.connected} supported={chatSupported} /> : view === 'accounts' ? <AccountsPage onEnvironments={openEnvironments} /> : view === 'environments' ? <EnvironmentsPage hosts={hosts} connect={connect} refreshHosts={refreshHosts} advanced={computers} /> : view === 'computers' ? (
+        {view === 'usage' ? (
+          <UsagePage
+            connected={connection.connected}
+            supported={chatSupported}
+            onBack={() => setView(returnView.current)}
+          />
+        ) : view === 'accounts' ? (
+          <AccountsPage onEnvironments={openEnvironments} />
+        ) : view === 'environments' ? (
+          <EnvironmentsPage hosts={hosts} connect={connect} refreshHosts={refreshHosts} advanced={computers} />
+        ) : view === 'computers' ? (
           <ComputersPage />
         ) : view === 'settings' ? (
-          <Settings preferences={preferences} save={savePreferences} computers={computers} bots={bots} connected={connection.connected} commandsSupported={chatSupported} />
+          <Settings
+            preferences={preferences}
+            save={savePreferences}
+            computers={computers}
+            bots={bots}
+            connected={connection.connected}
+            commandsSupported={chatSupported}
+          />
         ) : (
           <>
             {failedTarget && (
@@ -471,7 +516,9 @@ function Shell({
                 }}
               />
             ) : view === 'team' && teamDetails ? (
-              <div className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}>
+              <div
+                className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}
+              >
                 <TeamChat
                   key={teamDetails.team.id}
                   details={teamDetails}
@@ -488,11 +535,19 @@ function Shell({
                   }}
                 />
                 {desktopVisible && desktopBot && (
-                  <BotDesktopPanel key={desktopBot.id} bot={desktopBot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />
+                  <BotDesktopPanel
+                    key={desktopBot.id}
+                    bot={desktopBot}
+                    expanded={desktopExpanded}
+                    onExpand={() => setDesktopExpanded((value) => !value)}
+                    onClose={closeDesktop}
+                  />
                 )}
               </div>
             ) : bot ? (
-              <div className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}>
+              <div
+                className={`chat-layout${desktopVisible ? ' with-desktop' : ''}${desktopVisible && desktopExpanded ? ' desktop-expanded' : ''}`}
+              >
                 <BotChat
                   onBotUpdate={(value) =>
                     setBots((previous) => previous.map((entry) => (entry.id === value.id ? value : entry)))
@@ -511,7 +566,13 @@ function Shell({
                   chatSupported={chatSupported}
                 />
                 {desktopVisible && (
-                  <BotDesktopPanel key={bot.id} bot={bot} expanded={desktopExpanded} onExpand={() => setDesktopExpanded((value) => !value)} onClose={closeDesktop} />
+                  <BotDesktopPanel
+                    key={bot.id}
+                    bot={bot}
+                    expanded={desktopExpanded}
+                    onExpand={() => setDesktopExpanded((value) => !value)}
+                    onClose={closeDesktop}
+                  />
                 )}
               </div>
             ) : (

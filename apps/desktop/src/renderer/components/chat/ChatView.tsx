@@ -86,6 +86,7 @@ import { ChatFastModeToggle } from './ChatFastModeToggle'
 import { ChatPlusMenu } from './ChatPlusMenu'
 import { ChatContextMeter } from './ChatContextMeter'
 import { ChatMicButton } from './ChatMicButton'
+import { ChatMessageViewport, ChatSurface } from '@maestrly/chat-ui'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
 import { MaestroControl } from './MaestroControl'
@@ -1645,11 +1646,11 @@ export function ChatView({
   return (
     <SubagentSessionContext.Provider value={openSubagentSession}>
       <SubagentSessionsContext.Provider value={subagentSessions}>
-        <div
+        <ChatSurface
           ref={rootRef}
           id={maestroPanelHostId}
           className={cn(
-            'relative flex h-full w-full flex-row bg-[#0d0d10] transition-[background,box-shadow] duration-500',
+            'flex-row transition-[background,box-shadow] duration-500',
             designVisualActive
               ? 'chat-design-ambient ring-1 ring-inset ring-amber-400/35 shadow-[inset_0_0_44px_rgba(249,115,22,0.08)]'
               : ultraVisualActive &&
@@ -1676,7 +1677,7 @@ export function ChatView({
                   onClose={closeSearch}
                 />
               )}
-              <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+              <ChatMessageViewport ref={scrollRef}>
                 <ChatMessageList
                   messages={messages}
                   experience={currentExperience}
@@ -1702,7 +1703,7 @@ export function ChatView({
                   searchHitIds={searchHitIds}
                   currentSearchHitId={currentSearchHitId}
                 />
-              </div>
+              </ChatMessageViewport>
 
               {!atBottom && messages.length > 0 && (
                 <button
@@ -1883,7 +1884,9 @@ export function ChatView({
                 onMentionsChange={setDraftMentions}
                 structuredAgentMentions={draftMentions}
                 streaming={streaming}
-                sendWhileStreaming={maestroLiveActive || (midTurnSteering && activeHarnessProfile === 'openai-gpt-6-astra-v1')}
+                sendWhileStreaming={
+                  maestroLiveActive || (midTurnSteering && activeHarnessProfile === 'openai-gpt-6-astra-v1')
+                }
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
                 disabled={keyMissing || reviewLoopActive}
                 onSend={submitDraft}
@@ -2058,7 +2061,7 @@ export function ChatView({
               </div>
             </>
           )}
-        </div>
+        </ChatSurface>
       </SubagentSessionsContext.Provider>
     </SubagentSessionContext.Provider>
   )

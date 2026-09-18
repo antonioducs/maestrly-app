@@ -1,4 +1,5 @@
 import { ComposerSurface } from '@maestrly/ui'
+import { ChatComposerDock } from '@maestrly/chat-ui'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp, Square, X, FileText } from 'lucide-react'
@@ -169,7 +170,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
   const canSend = value.trim().length > 0 || attachments.length > 0
 
   return (
-    <div className="px-3 pb-3 pt-1">
+    <ChatComposerDock>
       <ComposerSurface>
         {slashOpen && (
           <div className="absolute bottom-full left-3 z-50 mb-1 max-h-72 w-96 overflow-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl">
@@ -309,6 +310,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
       {metaSlot && (
         <div className="mx-auto mt-1.5 flex w-full max-w-3xl items-center justify-between gap-2 px-1">{metaSlot}</div>
       )}
-    </div>
+    </ChatComposerDock>
   )
 })

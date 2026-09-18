@@ -11,19 +11,11 @@ import {
   type RefObject,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Pencil,
-  FileText,
-  ScanText,
-  TriangleAlert,
-  Sparkles,
-  ChevronRight,
-  BrainCircuit,
-} from 'lucide-react'
+import { Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight, BrainCircuit } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
-import { CopyButton, ResponseDuration, ToolCallCard } from '@maestrly/chat-ui'
+import { ChatMessageContent, CopyButton, ResponseDuration, ToolCallCard } from '@maestrly/chat-ui'
 import { toolPartView } from './tool-part-view'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
@@ -377,9 +369,7 @@ function Part({
       <Compaction
         text={part.text}
         native={
-          part.strategy === 'openai-native' ||
-          part.strategy === 'codex-native' ||
-          part.strategy === 'claude-native'
+          part.strategy === 'openai-native' || part.strategy === 'codex-native' || part.strategy === 'claude-native'
         }
         onOpenMention={onOpenMention}
         searchQuery={searchQuery}
@@ -936,8 +926,7 @@ export const ChatMessageList = memo(function ChatMessageList({
 
   let latestTodoId: string | null = null
   for (const m of visibleMessages)
-    for (const p of m.parts)
-      if (p.type === 'tool' && p.toolName === 'todo_write') latestTodoId = p.toolCallId
+    for (const p of m.parts) if (p.type === 'tool' && p.toolName === 'todo_write') latestTodoId = p.toolCallId
 
   const nearBottomRef = useRef(true)
   const prevVisibleRef = useRef(false)
@@ -1050,7 +1039,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   }
 
   return (
-    <div ref={contentRef} className="chat-msgs mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-5 px-3 py-5">
+    <ChatMessageContent ref={contentRef}>
       {lightbox && <ChatImageLightbox src={lightbox.src} name={lightbox.name} onClose={closeImage} />}
       {visibleMessages.map((m, i) => (
         // Keep the scroll anchor stable while content visibility updates card height.
@@ -1091,6 +1080,6 @@ export const ChatMessageList = memo(function ChatMessageList({
           {t('messages.generating')}
         </div>
       )}
-    </div>
+    </ChatMessageContent>
   )
 })
