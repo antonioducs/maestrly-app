@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
+import { createServer, type AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -35,6 +36,7 @@ const payload = (overrides: Partial<ExtensionsApply> = {}): ExtensionsApply => (
 const cleanups: (() => Promise<unknown> | unknown)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
+  vi.unstubAllEnvs()
 })
 
 describe('extensions store', () => {
@@ -148,6 +150,13 @@ describe('elicitation for a configured server', () => {
 describe('runtime supervisor', () => {
   it('announces the capability, applies extensions between turns and hands the store to every provider', async () => {
     const root = await temporary()
+    // The supervisor starts the local proxy; another file's supervisor test binds the default
+    // port in a parallel worker, so this one asks the OS for a free port instead.
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const port = (probe.address() as AddressInfo).port
+    await new Promise<void>((resolve) => probe.close(() => resolve()))
+    vi.stubEnv('MAESTRLY_BOT_PROXY_PORT', String(port))
     const factory = vi.fn(async () => new FixtureProvider(join(root, 'workspace')))
     const runtime = new RuntimeSupervisor({ state: join(root, 'state'), workspace: join(root, 'workspace'), controlPath: 'unused', version: '0.1.0', providerFactory: factory })
     await runtime.initialize()
