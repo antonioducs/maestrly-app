@@ -130,6 +130,19 @@ export const teamArtifactRefSchema = z.strictObject({
 })
 export type TeamArtifactRef = z.infer<typeof teamArtifactRefSchema>
 
+/**
+ * Where a non-human request came from. It is shown as provenance beside the message — the
+ * Host never rewrites the request itself to look like something a person typed.
+ */
+export const teamProvenanceSchema = z.strictObject({
+  kind: z.literal('routine'),
+  routineId: id,
+  occurrenceId: id,
+  name: z.string().min(1).max(TEAM_NAME_MAX),
+  scheduledForLocal: z.string().min(1).max(40),
+})
+export type TeamProvenance = z.infer<typeof teamProvenanceSchema>
+
 export const teamMessageSchema = z.strictObject({
   id,
   conversationId: id,
@@ -141,6 +154,7 @@ export const teamMessageSchema = z.strictObject({
   taskId: id.optional(),
   sequence: z.number().int().positive(),
   artifacts: z.array(teamArtifactRefSchema).max(16).default([]),
+  provenance: teamProvenanceSchema.optional(),
   createdAt: isoDate,
 })
 export type TeamMessage = z.infer<typeof teamMessageSchema>

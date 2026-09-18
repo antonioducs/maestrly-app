@@ -34,6 +34,35 @@ export function permitsDomain(policy: NetworkPolicy, hostname: string): boolean 
   if (policy.mode === 'blocklist') return !policy.domains.some(domain => host === domain || host.endsWith('.' + domain))
   return false
 }
+export type PermissionMode = 'ask' | 'full-vm'
+/** `ask` always wins. Two authorizations are never added up; the stricter one applies. */
+export function narrowPermissionMode(a: PermissionMode, b: PermissionMode): PermissionMode {
+  return a === 'ask' || b === 'ask' ? 'ask' : 'full-vm'
+}
+/**
+ * Intersection of two egress policies. It exists because an authorization approved for one
+ * piece of work must never be widened by a change made somewhere else while that work runs:
+ * offline beats everything, allowlists intersect, blocklists accumulate, and an allowlist
+ * crossed with a blocklist keeps only the allowed names that are not blocked.
+ *
+ * The revision is the newer of the two, so a stale snapshot cannot be replayed as current.
+ */
+export function narrowNetworkPolicy(a: NetworkPolicy, b: NetworkPolicy): NetworkPolicy {
+  const revision = Math.max(a.revision, b.revision)
+  if (a.mode === 'offline' || b.mode === 'offline') return { mode: 'offline', domains: [], revision }
+  if (a.mode === 'allowlist' && b.mode === 'allowlist')
+    return { mode: 'allowlist', domains: a.domains.filter((domain) => b.domains.includes(domain)), revision }
+  if (a.mode === 'allowlist' || b.mode === 'allowlist') {
+    const allow = a.mode === 'allowlist' ? a : b
+    const block = a.mode === 'allowlist' ? b : a
+    return {
+      mode: 'allowlist',
+      domains: allow.domains.filter((domain) => !block.domains.some((blocked) => domain === blocked || domain.endsWith(`.${blocked}`))),
+      revision,
+    }
+  }
+  return { mode: 'blocklist', domains: [...new Set([...a.domains, ...b.domains])], revision }
+}
 export const NETWORK_PORTS = [80, 443] as const
 export const EGRESS_LIMITS = {
   streamsPerVm: 16,
