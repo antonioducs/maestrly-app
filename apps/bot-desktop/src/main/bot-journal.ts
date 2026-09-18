@@ -1,9 +1,9 @@
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { BOT_SECRET_METHODS, type BotMethod, type TeamMethod } from '@maestrly/host-protocol'
+import { BOT_SECRET_METHODS, type BotMethod, type RoutineMethod, type TeamMethod, type VoiceMethod } from '@maestrly/host-protocol'
 
 /** Methods whose durable key the Host can be asked about after a lost reply. */
-export type JournaledMethod = BotMethod | TeamMethod
+export type JournaledMethod = BotMethod | TeamMethod | RoutineMethod | VoiceMethod
 export type BotJournalEntry = {
   hostId: string
   method: JournaledMethod
@@ -24,6 +24,16 @@ export const journaled: Partial<Record<JournaledMethod, (params: Record<string, 
   'team.run.cancel': (p) => ({ key: String(p.idempotencyKey), reference: { runId: String(p.runId), idempotencyKey: String(p.idempotencyKey) } }),
   'team.artifacts.share': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
   'team.artifacts.revoke': (p) => ({ key: String(p.idempotencyKey), reference: { teamId: String(p.teamId), idempotencyKey: String(p.idempotencyKey) } }),
+  // Routine mutations resolve through routine.operation.lookup; the other namespaces cannot
+  // answer for these keys. A preview is never journaled: nothing the person did not confirm is.
+  'routine.activate': (p) => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
+  'routine.pause': (p) => ({ key: String(p.idempotencyKey), reference: { routineId: String(p.routineId), idempotencyKey: String(p.idempotencyKey) } }),
+  'routine.archive': (p) => ({ key: String(p.idempotencyKey), reference: { routineId: String(p.routineId), idempotencyKey: String(p.idempotencyKey) } }),
+  'routine.runNow': (p) => ({ key: String(p.idempotencyKey), reference: { routineId: String(p.routineId), idempotencyKey: String(p.idempotencyKey) } }),
+  'routine.occurrence.cancel': (p) => ({ key: String(p.idempotencyKey), reference: { occurrenceId: String(p.occurrenceId), idempotencyKey: String(p.idempotencyKey) } }),
+  // A voice message is looked up by its own client message id, like a typed one. The audio
+  // itself is never journaled: this file holds references and receipts, never content.
+  'voice.send': (p) => ({ key: `voice:${p.clipId}:${p.clientMessageId}`, reference: { clipId: String(p.clipId), clientMessageId: String(p.clientMessageId) } }),
   'environment.create': p => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
   'environment.prepare': p => ({ key: String(p.idempotencyKey), reference: { idempotencyKey: String(p.idempotencyKey) } }),
   'bot.messages.send': (p) => ({ key: `${p.botId}:${p.clientMessageId}`, reference: { botId: String(p.botId), clientMessageId: String(p.clientMessageId) } }),

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { TEAM_LIMITS, type Bot, type TeamArtifact, type TeamDetails as Details, type TeamMemory } from '@maestrly/host-protocol'
 import { Button, Input, Select } from '../../ui'
 import { useT } from '../../i18n'
+import { RoutinePanel } from '../routines/RoutinePanel'
 
 /**
  * Everything about a team a person may need, grouped and calm: who takes part, which files
@@ -13,6 +14,7 @@ export function TeamDetails({
   bots,
   advanced,
   connected,
+  routinesSupported = false,
   onChanged,
   onArchived,
 }: {
@@ -20,6 +22,8 @@ export function TeamDetails({
   bots: Bot[]
   advanced: boolean
   connected: boolean
+  /** False on a Host that predates routines; the section explains instead of failing. */
+  routinesSupported?: boolean
   onChanged: (details: Details) => void
   onArchived: () => void
 }) {
@@ -263,6 +267,15 @@ export function TeamDetails({
           )}
         </section>
       )}
+      <section>
+        <h3>{t('routines')}</h3>
+        <RoutinePanel
+          target={{ kind: 'team', id: details.team.id }}
+          targetName={details.team.name}
+          connected={connected}
+          supported={routinesSupported}
+        />
+      </section>
       <section>
         <h3>{t('teamArchive')}</h3>
         <p className="hint">{t('teamArchiveHint')}</p>

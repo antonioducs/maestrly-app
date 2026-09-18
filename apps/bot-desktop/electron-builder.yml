@@ -11,4 +11,12 @@ mac:
   category: public.app-category.developer-tools
   target: dir
   identity: null
+  # macOS refuses to record without a reason the person can read in the prompt, and the
+  # entitlement is what makes the grant survive signing. Both are required for voice messages.
+  extendInfo:
+    NSMicrophoneUsageDescription: >-
+      O Maestrly grava áudio apenas quando você toca em "Gravar áudio". O áudio fica no seu Mac e
+      no computador que você escolheu; só o texto confirmado é enviado para a IA.
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
 publish: null

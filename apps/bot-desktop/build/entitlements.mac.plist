@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Voice messages need the microphone, and nothing else changes.
+
+    The hardened runtime stays on, the library validation exception is the one Electron itself
+    requires, and no entitlement here weakens Gatekeeper, the sandbox or TCC. In particular the
+    camera is deliberately absent: this application records voice notes, and an entitlement it
+    does not need is an entitlement somebody will eventually use.
+  -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
