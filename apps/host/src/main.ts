@@ -16,8 +16,20 @@ export async function daemon() {
     throw Error('Unsafe configuration')
   const config = JSON.parse(await readFile(configPath, 'utf8'))
   if (config.stateDirectory !== '/Library/MaestrlyHost/state') throw Error('Invalid state directory')
-  const { HostService } = await import('@maestrly/host-core')
-  const service = new HostService(config)
+  const { HostService, forkAsrWorker } = await import('@maestrly/host-core')
+  /**
+   * Local speech recognition, when this Host has a bundle installed. The directory is named
+   * in the root-owned configuration, never chosen by a client, and every file inside it is
+   * verified against its manifest before a worker is allowed to start. Without it the Host
+   * simply does not advertise voice, and the text chat is unaffected.
+   */
+  const asrDirectory = typeof config.asrBundleDirectory === 'string' ? config.asrBundleDirectory : undefined
+  if (asrDirectory && !asrDirectory.startsWith('/Library/MaestrlyHost/')) throw Error('Invalid ASR bundle directory')
+  const { asrBundleDirectory: _ignored, ...serviceConfig } = config
+  const service = new HostService({
+    ...serviceConfig,
+    ...(asrDirectory ? { asr: { bundleDirectory: asrDirectory, factory: forkAsrWorker() } } : {}),
+  })
   await service.ready()
   const log = new RotatingLog('/Library/MaestrlyHost/log/host.jsonl')
   let closeSocket: () => Promise<void>

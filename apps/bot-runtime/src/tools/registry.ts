@@ -14,6 +14,8 @@ import { systemExec } from './system.js'
 import { proposeMemory } from './memory.js'
 import type { CollaborationClient } from '../teams/client.js'
 import { COLLABORATION_SUMMARIES, collaborationTools, isCollaborationTool } from '../teams/tools.js'
+import type { RoutineClient } from '../routines/client.js'
+import { ROUTINE_SUMMARIES, isRoutineTool, routineTools } from '../routines/tools.js'
 
 const empty = z.strictObject({})
 const ref = { ref: z.number().int().positive(), observationId: z.string().uuid() }
@@ -104,7 +106,9 @@ export class ToolRegistry {
     private context: () => ToolContext,
     private mode: () => 'ask' | 'full-vm',
     /** Present only when this runtime can collaborate; otherwise no team tool exists. */
-    private collaboration?: CollaborationClient
+    private collaboration?: CollaborationClient,
+    /** Present only when this Host knows about routines; otherwise no proposal tool exists. */
+    private routines?: RoutineClient
   ) {
     this.tools = target instanceof BrowserSession ? new LocalDesktopTools(target, files) : target
   }
@@ -122,6 +126,9 @@ export class ToolRegistry {
       // Collaboration tools belong to the turn, not to the runtime: outside a team task
       // this list is empty and the names do not exist.
       ...(this.collaboration ? collaborationTools(this.collaboration) : []),
+      // Routine tools belong to the person's own conversation: a scheduled run, a delegated
+      // worker and a continuation after a takeover all get an empty list here.
+      ...(this.routines ? routineTools(this.routines) : []),
     ]
   }
   call(turnId: string, requestId: string, name: string, args: unknown): Promise<ToolResult> {
@@ -158,7 +165,9 @@ export class ToolRegistry {
         ? 'Abrindo a página ' + String(args.url)
         : isCollaborationTool(name)
           ? COLLABORATION_SUMMARIES[name]
-          : (summaries[name as keyof typeof schemas] ?? 'Ferramenta desconhecida')
+          : isRoutineTool(name)
+            ? ROUTINE_SUMMARIES[name]
+            : (summaries[name as keyof typeof schemas] ?? 'Ferramenta desconhecida')
     ).slice(0, 400)
     hooks.emit({ kind: 'tool.started', summary, detail: { name, requestId } })
     let result: ToolResult
@@ -174,6 +183,13 @@ export class ToolRegistry {
         if (!this.collaboration) throw runtimeError('TEAM_UNAVAILABLE', 'Collaboration is not available in this environment')
         // The Host validates origin, stage, membership, grants and budget again.
         const value = await this.collaboration.call(name, (args ?? {}) as Record<string, unknown>)
+        signal.removeEventListener('abort', cancelBrowser)
+        return this.finish(record, hooks, summary, { content: [{ type: 'text', text: JSON.stringify(value) }] })
+      }
+      if (isRoutineTool(name)) {
+        if (!this.routines) throw runtimeError('ROUTINE_UPDATE_REQUIRED', 'Routine suggestions are not available in this environment')
+        // The Host validates the acting bot, the thread, the generation and the limits again.
+        const value = await this.routines.call(name, (args ?? {}) as Record<string, unknown>)
         signal.removeEventListener('abort', cancelBrowser)
         return this.finish(record, hooks, summary, { content: [{ type: 'text', text: JSON.stringify(value) }] })
       }

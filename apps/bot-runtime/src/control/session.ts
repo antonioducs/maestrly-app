@@ -1,4 +1,4 @@
-import { TEAM_LIMITS, accountCredentialResponseSchema, collaborationResponseSchema, type CollaborationMethod, type DelegatedCredential } from '@maestrly/host-protocol'
+import { TEAM_LIMITS, accountCredentialResponseSchema, collaborationResponseSchema, routineRuntimeResponseSchema, type CollaborationMethod, type DelegatedCredential, type RoutineMethodName } from '@maestrly/host-protocol'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import type { Duplex } from 'node:stream'
@@ -31,6 +31,7 @@ export class ControlSession {
   private accountPromise?: Promise<DelegatedCredential>
   private accountRequests = new Map<string, { resolve: (value: DelegatedCredential) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
   private collaborationRequests = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
+  private routineRequests = new Map<string, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
   readonly nonce = randomBytes(16).toString('hex')
   readonly done: Promise<void>
   private finish!: () => void
@@ -111,6 +112,17 @@ export class ControlSession {
       clearTimeout(pending.timer)
       if (parsed.data.error)
         pending.reject(Object.assign(new Error(parsed.data.error.message), { code: parsed.data.error.code }))
+      else pending.resolve((parsed.data.result ?? {}) as Record<string, unknown>)
+      return
+    }
+    if (frame.type === 'routine.response') {
+      const parsed = routineRuntimeResponseSchema.safeParse(frame)
+      if (!parsed.success) return this.close()
+      const pending = this.routineRequests.get(parsed.data.id)
+      if (!pending) return
+      this.routineRequests.delete(parsed.data.id)
+      clearTimeout(pending.timer)
+      if (parsed.data.error) pending.reject(Object.assign(new Error(parsed.data.error.message), { code: parsed.data.error.code }))
       else pending.resolve((parsed.data.result ?? {}) as Record<string, unknown>)
       return
     }
@@ -214,6 +226,26 @@ export class ControlSession {
       this.send({ type: 'collaboration.request', id, turnId: input.turnId, generation: input.generation, method: input.method, params: input.params })
     })
   }
+  /**
+   * Asks the Host to record a routine suggestion. Separate lane, one at a time: writing a
+   * card is never urgent and must not compete with the frames a person is waiting on —
+   * cancellation, leases, the account or the live screen.
+   */
+  requestRoutine(input: { turnId: string; generation: number; method: RoutineMethodName; params: Record<string, unknown> }): Promise<Record<string, unknown>> {
+    if (!this.ready || this.closed) return Promise.reject(Object.assign(new Error('Routine channel unavailable'), { code: 'ROUTINE_UPDATE_REQUIRED' }))
+    if (this.routineRequests.size >= 1)
+      return Promise.reject(Object.assign(new Error('A routine suggestion is already in flight'), { code: 'ROUTINE_PROPOSAL_INVALID' }))
+    const id = randomUUID()
+    return new Promise<Record<string, unknown>>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.routineRequests.delete(id)
+        // The Host may have recorded it: the caller consults the card instead of writing a second one.
+        reject(Object.assign(new Error('Routine suggestion timed out; consult routine_proposal_status'), { code: 'ROUTINE_TIMEOUT', requestId: id }))
+      }, TEAM_LIMITS.requestTimeoutMs)
+      this.routineRequests.set(id, { resolve, reject, timer })
+      this.send({ type: 'routine.request', id, turnId: input.turnId, generation: input.generation, method: input.method, params: input.params })
+    })
+  }
   close() {
     if (this.closed) return
     this.closed = true
@@ -223,6 +255,8 @@ export class ControlSession {
     this.accountRequests.clear()
     for (const pending of this.collaborationRequests.values()) { clearTimeout(pending.timer); pending.reject(Object.assign(new Error('Collaboration channel closed'), { code: 'TEAM_UNAVAILABLE' })) }
     this.collaborationRequests.clear()
+    for (const pending of this.routineRequests.values()) { clearTimeout(pending.timer); pending.reject(Object.assign(new Error('Routine channel closed'), { code: 'ROUTINE_UPDATE_REQUIRED' })) }
+    this.routineRequests.clear()
     this.stream.destroy()
     this.finish()
   }
