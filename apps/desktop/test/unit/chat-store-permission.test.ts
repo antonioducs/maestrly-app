@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { freshDb, closeDb } from '../helpers/db'
+import { freshDb, closeDb, restartDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
 import {
   aggregateChatUsage,
@@ -53,6 +53,34 @@ beforeEach(freshDb)
 afterEach(() => {
   clearEphemeralToolImages()
   closeDb()
+})
+
+describe('standalone saved permissions', () => {
+  it('keeps workspace and chat approvals separate across pending requests and restart', async () => {
+    const broker = new PermissionBroker({ rulesetFor: () => BYOK_DEFAULT_RULESET })
+    const input = { action: 'edit', resources: ['/report'], save: ['*'] }
+    const workspace = broker.assert({ ...input, conversationId: 'project-chat', projectId: 'workspace' })
+    broker.reply({ requestId: broker.pendingFor('project-chat')[0].id, reply: 'always' })
+    await workspace
+    const scopeA = { kind: 'conversation', id: 'chat-a' } as const
+    const scopeB = { kind: 'conversation', id: 'chat-b' } as const
+    const a = broker.assert({ ...input, conversationId: 'chat-a', projectId: null, permissionScope: scopeA })
+    const b = broker.assert({ ...input, conversationId: 'chat-b', projectId: null, permissionScope: scopeB })
+    expect(broker.pendingFor('chat-a')).toHaveLength(1)
+    broker.reply({ requestId: broker.pendingFor('chat-a')[0].id, reply: 'always' })
+    await a
+    expect(broker.pendingFor('chat-b')).toHaveLength(1)
+    const rejection = expect(b).rejects.toThrow('denied')
+    broker.reply({ requestId: broker.pendingFor('chat-b')[0].id, reply: 'reject' })
+    await rejection
+    restartDb()
+    const reopened = new PermissionBroker({ rulesetFor: () => BYOK_DEFAULT_RULESET })
+    await reopened.assert({ ...input, conversationId: 'child-of-a', projectId: null, permissionScope: scopeA })
+    const stillIsolated = reopened.assert({ ...input, conversationId: 'chat-b', projectId: null, permissionScope: scopeB })
+    expect(reopened.pendingFor('chat-b')).toHaveLength(1)
+    reopened.reply({ requestId: reopened.pendingFor('chat-b')[0].id, reply: 'once' })
+    await stillIsolated
+  })
 })
 
 function chatConv() {

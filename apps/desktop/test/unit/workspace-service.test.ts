@@ -14,7 +14,13 @@ vi.mock('../../src/main/git-service', () => ({
   deleteBranch: vi.fn(),
 }))
 
+const lifecycle = vi.hoisted(() => ({ removeDirectory: vi.fn(), deletePermission: vi.fn() }))
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  removeStandaloneConversationDirectory: lifecycle.removeDirectory,
+}))
+
 vi.mock('../../src/main/store', () => ({
+  getDb: () => ({ prepare: () => ({ run: lifecycle.deletePermission }) }),
   getConversation: vi.fn(),
   getWorkspaceByPath: vi.fn(),
   listConversations: vi.fn(),
@@ -136,6 +142,7 @@ describe('workspace-service createSiblingConversation', () => {
   it('creates a Local sibling in the same cwd and branch without touching Git', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'local-source',
+      scope: 'project',
       workspaceId: 'ws-1',
       name: 'main',
       branch: 'main',
@@ -153,6 +160,7 @@ describe('workspace-service createSiblingConversation', () => {
     expect(git.createWorktree).not.toHaveBeenCalled()
     expect(store.insertConversation).toHaveBeenCalledWith(
       expect.objectContaining({
+        scope: 'project',
         workspaceId: 'ws-1',
         branch: 'main',
         mode: 'local',
@@ -165,6 +173,7 @@ describe('workspace-service createSiblingConversation', () => {
   it('preserves a worktree sibling attachment in the same cwd and branch', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'worktree-source',
+      scope: 'project',
       workspaceId: 'ws-1',
       name: 'feature',
       branch: 'feature',
@@ -190,6 +199,7 @@ describe('workspace-service createSiblingConversation', () => {
   it('siblings inherit Maestro and allow an explicit override', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'maestro-source',
+      scope: 'project',
       workspaceId: 'ws-1',
       name: 'feature',
       branch: 'feature',
@@ -209,6 +219,7 @@ describe('workspace-service createSiblingConversation', () => {
   it('accepts a name and Maestro experience without creating another worktree', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'standard-source',
+      scope: 'project',
       workspaceId: 'ws-1',
       name: 'Feature checkout',
       branch: 'feat/checkout',
@@ -241,6 +252,7 @@ describe('workspace-service deleteConversation', () => {
   it('deletes Local conversations without touching the main checkout or user branches', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'c-local',
+      scope: 'project',
       workspaceId: 'ws-1',
       mode: 'local',
       isMulti: 0,
@@ -264,6 +276,7 @@ describe('workspace-service deleteConversation', () => {
   it('cleans up worktree and branch for an exclusive worktree conversation', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'c-worktree',
+      scope: 'project',
       workspaceId: 'ws-1',
       mode: 'worktree',
       isMulti: 0,
@@ -288,6 +301,7 @@ describe('workspace-service deleteConversation', () => {
   it('removes the worktree while preserving a preexisting branch when requested', async () => {
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'c-runner-existing-branch',
+      scope: 'project',
       workspaceId: 'ws-1',
       mode: 'worktree',
       isMulti: 0,
@@ -306,6 +320,7 @@ describe('workspace-service deleteConversation', () => {
     vi.mocked(store.countOtherConversationsInCwd).mockReturnValue(1)
     vi.mocked(store.getConversation).mockReturnValue({
       id: 'c-shared-2',
+      scope: 'project',
       workspaceId: 'ws-1',
       mode: 'worktree',
       isMulti: 0,
@@ -316,5 +331,51 @@ describe('workspace-service deleteConversation', () => {
     await deleteConversation('c-shared-2')
 
     expect(git.removeWorktree).not.toHaveBeenCalled()
+  })
+})
+
+describe('standalone lifecycle', () => {
+  const standalone = {
+    id: 'standalone',
+    scope: 'standalone',
+    workspaceId: null,
+    branch: null,
+    mode: null,
+    isMulti: 0,
+    cwd: '/private/chat',
+  } as const
+  beforeEach(() => {
+    vi.mocked(store.getConversation).mockReturnValue(standalone as never)
+    lifecycle.removeDirectory.mockReset().mockResolvedValue(undefined)
+  })
+  it('rejects standalone siblings before touching Git', async () => {
+    await expect(createSiblingConversation('standalone')).rejects.toThrow('project-required')
+    expect(git.createWorktree).not.toHaveBeenCalled()
+  })
+  it('cleans provider sessions, then the managed directory, permission key and row', async () => {
+    await deleteConversation('standalone')
+    expect(lifecycle.removeDirectory).toHaveBeenCalledWith(standalone)
+    expect(lifecycle.deletePermission).toHaveBeenCalledWith('conversation:standalone')
+    expect(store.deleteConversation).toHaveBeenCalledWith('standalone')
+    expect(vi.mocked(claudeLifecycle.deleteClaudeSessionForConversation).mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.removeDirectory.mock.invocationCallOrder[0]
+    )
+    expect(lifecycle.removeDirectory.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(store.deleteConversation).mock.invocationCallOrder[0]
+    )
+    expect(git.removeWorktree).not.toHaveBeenCalled()
+    expect(git.deleteBranch).not.toHaveBeenCalled()
+  })
+  it('preserves the row and permissions when directory cleanup fails', async () => {
+    lifecycle.removeDirectory.mockRejectedValueOnce(new Error('unsafe directory'))
+    await expect(deleteConversation('standalone')).rejects.toThrow('unsafe directory')
+    expect(store.deleteConversation).not.toHaveBeenCalled()
+    expect(lifecycle.deletePermission).not.toHaveBeenCalled()
+  })
+  it('preserves the directory and row when provider cleanup fails', async () => {
+    vi.mocked(claudeLifecycle.deleteClaudeSessionForConversation).mockRejectedValueOnce(new Error('provider failed'))
+    await expect(deleteConversation('standalone')).rejects.toThrow('provider failed')
+    expect(lifecycle.removeDirectory).not.toHaveBeenCalled()
+    expect(store.deleteConversation).not.toHaveBeenCalled()
   })
 })

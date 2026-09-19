@@ -5,13 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   cwd: '' as string | undefined,
+  scope: 'project',
   excludeFromGitInfo: vi.fn(),
 }))
 
 vi.mock('../../src/main/store', () => ({
-  getConversation: vi.fn(() => (h.cwd ? { cwd: h.cwd } : undefined)),
+  getConversation: vi.fn(() => (h.cwd ? { cwd: h.cwd, scope: h.scope } : undefined)),
 }))
 vi.mock('../../src/main/git-service', () => ({ excludeFromGitInfo: h.excludeFromGitInfo }))
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  validateStandaloneConversationDirectory: vi.fn(async (conversation: { cwd: string }) => conversation.cwd),
+}))
 
 import { requestVSCodeNavigation } from '../../src/main/vscode/vscode-navigation'
 import {
@@ -27,6 +31,7 @@ let root: string
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-navigation-'))
   h.cwd = root
+  h.scope = 'project'
   h.excludeFromGitInfo.mockReset()
 })
 
@@ -35,6 +40,13 @@ afterEach(async () => {
 })
 
 describe('VS Code navigation bridge', () => {
+  it('writes standalone navigation without Git hygiene', async () => {
+    h.scope = 'standalone'
+    await requestVSCodeNavigation('chat', 'forward')
+    const payload = JSON.parse(await fs.readFile(path.join(root, '.maestrly', NAVIGATION_FILE), 'utf8'))
+    expect(payload.direction).toBe('forward')
+    expect(h.excludeFromGitInfo).not.toHaveBeenCalled()
+  })
   it('writes direction and timestamp to the Git-ignored sidecar', async () => {
     await requestVSCodeNavigation('conv-1', 'back')
 

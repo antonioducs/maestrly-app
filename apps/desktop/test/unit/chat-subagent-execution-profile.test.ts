@@ -33,6 +33,7 @@ beforeEach(() => {
   freshDb()
   insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
   insertConversation({
+    scope: 'project',
     id: 'c',
     workspaceId: 'w',
     name: 'C',

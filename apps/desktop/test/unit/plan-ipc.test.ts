@@ -23,6 +23,9 @@ const h = vi.hoisted(() => ({
 vi.mock('../../src/main/floating-manager', () => ({
   focusFloatIfAny: h.focusFloatIfAny,
 }))
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  validateStandaloneConversationDirectory: vi.fn(async (conversation: { cwd: string }) => conversation.cwd),
+}))
 
 vi.mock('../../src/main/git-service', () => ({
   excludeFromGitInfo: h.excludeFromGitInfo,
@@ -89,6 +92,25 @@ describe('registerPlanIpc', () => {
     expect([...mhandles.keys()].sort()).toEqual(['plan:decide', 'plan:open-file'])
     expect(ons.size).toBe(0)
     expect(mons.size).toBe(0)
+  })
+
+  it('rejects a forged standalone Maestro handoff without creating a sibling', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    h.getConversation.mockReturnValue({ id: 'standalone', scope: 'standalone', experience: 'standard' })
+    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: 'A general plan' })
+    registerPlanIpc(reg, {
+      sendToWindow: vi.fn(),
+      createMaestroSibling: h.createMaestroSibling,
+      deleteConversation: h.deleteConversation,
+      applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
+    })
+    const result = await mhandles.get('plan:decide')!({} as never, 'standalone', {
+      action: 'approve',
+      implementationTarget: 'maestro',
+    })
+    expect(result).toEqual({ ok: false, error: 'project-required' })
+    expect(h.createMaestroSibling).not.toHaveBeenCalled()
+    expect(h.commitPlanDecision).not.toHaveBeenCalled()
   })
 
   it('approve (chat) sets Agent mode, notifies the UI, and starts implementation with the final plan', () => {
@@ -409,12 +431,12 @@ describe('registerPlanIpc', () => {
     expect(h.setChatMode).toHaveBeenCalledWith('conv-cli', 'agent')
   })
 
-  it('writes an internal workspace reference with line and range and requests VS Code focus', async () => {
+  it.each(['project', 'standalone'])('opens a file reference in %s scope without requiring Git', async (scope) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'plan-open-file-'))
     tempRoots.push(root)
     await fs.mkdir(path.join(root, 'src'), { recursive: true })
     await fs.writeFile(path.join(root, 'src', 'view.tsx'), '')
-    h.getConversation.mockReturnValue({ cwd: root })
+    h.getConversation.mockReturnValue({ cwd: root, scope })
     const { reg, mhandles } = createTestRegistrar()
     const sendToWindow = vi.fn()
     registerPlanIpc(reg, { sendToWindow })
@@ -424,7 +446,8 @@ describe('registerPlanIpc', () => {
     const payload = JSON.parse(await fs.readFile(path.join(root, '.maestrly', 'agent-open-file.json'), 'utf8'))
     expect(payload).toMatchObject({ rel: 'src/view.tsx', line: 12, endLine: 18 })
     expect(payload.ts).toEqual(expect.any(Number))
-    expect(h.excludeFromGitInfo).toHaveBeenCalledWith(root, ['.maestrly/agent-open-file.json'])
+    if (scope === 'project') expect(h.excludeFromGitInfo).toHaveBeenCalledWith(root, ['.maestrly/agent-open-file.json'])
+    else expect(h.excludeFromGitInfo).not.toHaveBeenCalled()
     expect(h.focusFloatIfAny).toHaveBeenCalledWith('conv-1', 'vscode')
     expect(sendToWindow).toHaveBeenCalledWith('debug:ensure-vscode', 'conv-1')
   })

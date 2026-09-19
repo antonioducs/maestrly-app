@@ -166,6 +166,7 @@ beforeEach(() => {
   })
   insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
   insertConversation({
+    scope: 'project',
     id: 'c',
     workspaceId: 'w',
     name: 'C',
@@ -1121,6 +1122,7 @@ describe('description lifecycle on conversation and message deletion', () => {
     // otherwise byte cleanup correctly prevents reinterpretation.
     upsertChatMessage(toolImageOwnerMessage('m-owner-a', 'c', image!.id))
     insertConversation({
+      scope: 'project',
       id: 'conversation-b',
       workspaceId: 'w',
       name: 'B',
@@ -1177,6 +1179,7 @@ describe('description lifecycle on conversation and message deletion', () => {
     upsertChatMessage(toolImageOwnerMessage('m-remove', 'c', imageA!.id, 't-remove'))
     // Removed the shared handle owner; otherwise cleanup would free the bytes and mask the cache.
     insertConversation({
+      scope: 'project',
       id: 'conversation-b',
       workspaceId: 'w',
       name: 'B',

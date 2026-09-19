@@ -16,6 +16,7 @@ describe('getConversationBranchInfo', () => {
   it('resolves cwd by ID and exposes the actual branch without changing the persisted branch', async () => {
     h.getConversation.mockReturnValue({
       id: 'assistant-1',
+      scope: 'project',
       cwd: '/workspace/from-store',
       branch: 'main',
       isMulti: 0,
@@ -41,6 +42,7 @@ describe('getConversationBranchInfo', () => {
   it('resolves every worktree in a multi-repository conversation and preserves detached HEAD', async () => {
     h.getConversation.mockReturnValue({
       id: 'multi-1',
+      scope: 'project',
       cwd: '/aggregator',
       branch: 'feature/coordinated',
       isMulti: 1,
@@ -83,6 +85,12 @@ describe('getConversationBranchInfo', () => {
     expect(h.currentGitHead.mock.calls).toEqual([['/worktrees/frontend'], ['/worktrees/backend']])
   })
 
+  it('rejects standalone branch probes before invoking Git', async () => {
+    h.getConversation.mockReturnValue({ id: 'chat', scope: 'standalone', cwd: '/private/chat', branch: null })
+    await expect(getConversationBranchInfo('chat')).rejects.toThrow('project-required')
+    expect(h.currentGitHead).not.toHaveBeenCalled()
+  })
+
   it('returns null for a missing conversation', async () => {
     h.getConversation.mockReturnValue(undefined)
 
@@ -93,6 +101,7 @@ describe('getConversationBranchInfo', () => {
   it('does not report divergence when Git is unavailable and no actual HEAD can be compared', async () => {
     h.getConversation.mockReturnValue({
       id: 'no-git-1',
+      scope: 'project',
       cwd: '/workspace/no-git',
       branch: 'main',
       isMulti: 0,

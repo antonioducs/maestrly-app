@@ -6,6 +6,7 @@ import {
   CHAT_HISTORY_MAX_BYTES,
   CHAT_HISTORY_MAX_MESSAGES,
   estimateHistoryWindowBytes,
+  mergeLiveChatHistory,
 } from '../../src/renderer/lib/chat-history-window'
 
 /**
@@ -23,6 +24,31 @@ function textMessage(id: string, text = 'x'): ChatMessage {
     createdAt: 1,
   }
 }
+
+it('preserves an in-flight assistant snapshot when SQLite hydration lags streaming', () => {
+  const saved: ChatMessage = { ...textMessage('assistant', ''), role: 'assistant' }
+  const live: ChatMessage = { ...saved, parts: [{ type: 'text', id: 'part', text: 'first chunk ' }] }
+  const hydrated = mergeLiveChatHistory([textMessage('user'), saved], [live])
+  const next = applyChatEvent(hydrated, { kind: 'text-delta', messageId: 'assistant', partId: 'part', delta: 'second chunk' })
+  expect(next[1].parts).toEqual([{ type: 'text', id: 'part', text: 'first chunk second chunk' }])
+  expect(next.map(message => message.id)).toEqual(['user', 'assistant'])
+  expect(mergeLiveChatHistory([textMessage('user')], [live])).toHaveLength(2)
+  expect(mergeLiveChatHistory([saved], [])).toEqual([saved])
+})
+
+it('mirrors the live buffer idempotently, unlike folding the same delta twice', () => {
+  const saved: ChatMessage = { ...textMessage('assistant', ''), role: 'assistant', parts: [] }
+  const delta = { kind: 'text-delta', messageId: 'assistant', partId: 'part', delta: 'chunk ' } as const
+  const live = applyChatEvent([saved], delta)
+
+  // A replayed or reordered updater must not append the same token again.
+  const once = mergeLiveChatHistory([saved], live)
+  const twice = mergeLiveChatHistory(once, live)
+  expect(twice).toEqual(once)
+  expect(twice[0].parts).toEqual([{ type: 'text', id: 'part', text: 'chunk ' }])
+  // The relative fold is not idempotent, which is exactly the duplication this mirroring avoids.
+  expect(applyChatEvent(once, delta)[0].parts).toEqual([{ type: 'text', id: 'part', text: 'chunk chunk ' }])
+})
 
 function heavyMessage(id: string, textSize: number): ChatMessage {
   return textMessage(id, 'x'.repeat(textSize))

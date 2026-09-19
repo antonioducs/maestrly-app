@@ -55,7 +55,7 @@ import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-ex
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { patchConvUiPrefs, setAppSetting } from '../../src/main/store'
+import { insertConversation, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
@@ -510,7 +510,7 @@ function persistUser(conversationId: string, id: string, text: string, createdAt
 
 function runArgs(
   conversationId: string,
-  projectId: string,
+  projectId: string | null,
   cwd: string,
   client: FakeCodexClient,
   emit: (event: ChatStreamEvent) => void = () => {}
@@ -646,6 +646,30 @@ describe('Codex subscription runner', () => {
     chatDiagMock.mockClear()
   })
   afterEach(closeDb)
+
+  it('runs standalone Ask with general native instructions and unchanged restricted capabilities', async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
+    try {
+      writeFileSync(path.join(cwd, 'AGENTS.md'), 'PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
+      insertConversation({ id: 'standalone', scope: 'standalone', workspaceId: null, branch: null, mode: null,
+        experience: 'standard', cwd, name: 'Chat', status: 'idle', createdAt: 1,
+        archived: 0, pinnedAt: null, lastActivityAt: 1, isMulti: 0 })
+      persistUser('standalone', 'standalone-user', 'Help me think', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'standalone-turn', notifications: [completedNotification('thread_1', 'standalone-turn')] })
+      await runCodexSubscriptionChat(runArgs('standalone', null, cwd, client))
+      const request = client.startThreadCalls[0] as { baseInstructions?: string; developerInstructions: string; config: Record<string, unknown>; environments: unknown[] }
+      expect(request.baseInstructions).toBeUndefined()
+      expect(request.developerInstructions).toContain('general assistant')
+      expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
+      expect(request.developerInstructions).not.toContain('# Durable project memory')
+      expect(request.developerInstructions).toContain('app tools are disabled')
+      expect(request.config.project_doc_max_bytes).toBe(0)
+      expect(request.config['features.shell_tool']).toBe(false)
+      expect(request.config['skills.include_instructions']).toBe(false)
+      expect(request.environments).toEqual([])
+    } finally { rmSync(cwd, { recursive: true, force: true }) }
+  })
 
   it('stops before dispatch when the full input exceeds the Codex transport limit', async () => {
     const workspace = makeWorkspace()

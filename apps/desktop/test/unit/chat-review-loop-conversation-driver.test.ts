@@ -9,6 +9,7 @@ import {
 
 function conversation(id: string, cwd = '/repo'): Conversation {
   return {
+    scope: 'project',
     id,
     workspaceId: 'workspace',
     name: id,

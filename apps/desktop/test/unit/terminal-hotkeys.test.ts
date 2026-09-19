@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  validateStandaloneConversationDirectory: vi.fn(),
+}))
+
 vi.mock('../../src/main/store', () => ({
   getConversation: vi.fn(),
 }))
@@ -10,16 +14,10 @@ vi.mock('../../src/main/terminal-manager', () => ({
   getTerminalState: vi.fn(),
 }))
 
+import { validateStandaloneConversationDirectory } from '../../src/main/standalone-conversation-service'
 import { getConversation } from '../../src/main/store'
-import {
-  closeShellTerminal,
-  createShellTerminal,
-  getTerminalState,
-} from '../../src/main/terminal-manager'
-import {
-  attachTerminalHotkeyCapture,
-  terminalShortcutAction,
-} from '../../src/main/terminal-hotkeys'
+import { closeShellTerminal, createShellTerminal, getTerminalState } from '../../src/main/terminal-manager'
+import { attachTerminalHotkeyCapture, terminalShortcutAction } from '../../src/main/terminal-hotkeys'
 
 interface Input {
   type: string
@@ -73,6 +71,15 @@ describe('attachTerminalHotkeyCapture', () => {
       terminals: [{ id: 'term:conv-1:1', cwd: '/repo' }],
       activeId: 'term:conv-1:1',
     })
+  })
+
+  it('validates standalone cwd before creating a shortcut terminal', async () => {
+    vi.mocked(getConversation).mockReturnValue({ id: 'conv-1', scope: 'standalone', cwd: '/forged' } as never)
+    vi.mocked(validateStandaloneConversationDirectory).mockResolvedValue('/managed/chat')
+    const fire = capture()
+    fire({ type: 'keyDown', code: 'KeyT', ...primaryModifier })
+    await Promise.resolve()
+    expect(createShellTerminal).toHaveBeenCalledWith('conv-1', '/managed/chat')
   })
 
   it('creates and selects a terminal through the canonical manager flow', () => {

@@ -25,6 +25,7 @@ beforeEach(() => {
   freshDb()
   insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
   insertConversation({
+    scope: 'project',
     id: 'c',
     workspaceId: 'w',
     name: 'C',
@@ -129,6 +130,7 @@ describe('subagent profile config', () => {
     expect(getConvUiPrefs('c').chat?.subagentProfiles).toEqual(normalizedRules)
 
     insertConversation({
+      scope: 'project',
       id: 'other',
       workspaceId: 'w',
       name: 'Other',

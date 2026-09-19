@@ -16,7 +16,7 @@ describe('Maestro renderer contract', () => {
     const preload = readFileSync('src/preload/api-chat.ts', 'utf8')
     expect(view).toContain('chatStandardConvertToMaestro(conversationId)')
     expect(view).toContain("setCurrentExperience('maestro')")
-    expect(view).toContain('onUseMaestro={convertStandardToMaestro}')
+    expect(view).toContain('onUseMaestro={workspaceId ? convertStandardToMaestro : undefined}')
     expect(picker).toContain("t('mode.useMaestro')")
     expect(picker).toContain('chatMaestroGetConversation(conversationId)')
     expect(picker).toContain("t('mode.confirmMaestro'")

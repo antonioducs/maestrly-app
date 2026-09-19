@@ -22,6 +22,11 @@ const servers: McpServer[] = [
 ]
 
 describe('ChatGPT Web capability policy', () => {
+  it('intersects standalone restrictions without changing browser or MCP preferences', () => {
+    const policy = resolveChatGptWebCapabilities({ git: 'read', gh: 'read', memory: 'read', kanban: 'write', conversation: 'read', browser: 'interact', mcp: { jira: 'write' } }, servers, 'standalone')
+    expect(policy).toMatchObject({ git: 'off', gh: 'off', memory: 'off', kanban: 'off', browser: 'interact', conversation: 'read', mcp: { jira: 'write' } })
+  })
+
   it('defaults to read-only and never grants a globally disabled server', () => {
     expect(resolveChatGptWebCapabilities(undefined, servers)).toEqual({
       kanban: 'read',

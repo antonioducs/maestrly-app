@@ -5,9 +5,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
-import { patchConvUiPrefs } from '../../src/main/store'
+import { insertConversation, patchConvUiPrefs } from '../../src/main/store'
 import { platformProjectBindings } from '../../src/main/platform/project-bindings'
-import { createLinkedBoardAccess } from '../../src/main/platform/linked-board'
+import { createLinkedBoardAccess, linkedConversationBinding } from '../../src/main/platform/linked-board'
 import { registerBoardTools } from '../../src/main/mcp/tools/board'
 import { createChatGptWebBridge } from '../../src/main/chat/chatgpt-web/bridge-server'
 import { createBridgeRouter } from '../../src/main/chat/chatgpt-web/bridge-router'
@@ -52,6 +52,31 @@ function fixture() {
   vi.stubGlobal('fetch', fetch)
   return { workspace, conversation, binding, fetch }
 }
+
+it('does not inherit a project binding in a standalone chat', async () => {
+  const f = fixture()
+  const id = randomUUID()
+  insertConversation({
+    id,
+    scope: 'standalone',
+    workspaceId: null,
+    branch: null,
+    mode: null,
+    experience: 'standard',
+    isMulti: 0,
+    name: 'Chat',
+    cwd: '/private/chat',
+    status: 'idle',
+    createdAt: 1,
+    lastActivityAt: 1,
+    archived: 0,
+    pinnedAt: null,
+  })
+  expect(linkedConversationBinding(id)).toBeNull()
+  await expect(createLinkedBoardAccess(id).call('board_list_cards', {})).rejects.toThrow('project-required')
+  expect(f.fetch).not.toHaveBeenCalled()
+  expect(h.token).not.toHaveBeenCalled()
+})
 
 it('exposes complete typed tools through real MCP for every workspace worktree', async () => {
   const f = fixture(),

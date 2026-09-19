@@ -138,7 +138,7 @@ describe('Maestro full worker tool runtime', () => {
       new Set(['remote_mutate', 'mcp_search', 'mcp_call', 'browser_click', 'terminal_run', 'notes_write_page'])
     )
     expect(runtime.skillCatalog).toContain('frontend-design')
-    expect(h.buildModelSkillRuntime).toHaveBeenCalledWith({ cwd: '/repo', conversationId: 'conv-1' })
+    expect(h.buildModelSkillRuntime).toHaveBeenCalledWith({ cwd: '/repo', conversationId: 'conv-1', scope: 'project' })
 
     await runtime.close()
     await runtime.close()
