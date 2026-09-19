@@ -32,9 +32,11 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   registerBrowserTools(ctx)
   registerTerminalTools(ctx)
   if (conversation) registerConversationNotesTools(ctx)
-  registerProjectNotesTools(ctx)
-  registerMemoryTools(ctx)
+  if (conversation?.scope !== 'standalone') {
+    registerProjectNotesTools(ctx)
+    registerMemoryTools(ctx)
+  }
   registerDebugTools(ctx)
-  registerBoardTools(ctx)
+  if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   return server
 }

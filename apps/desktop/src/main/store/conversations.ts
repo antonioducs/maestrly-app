@@ -1,141 +1,46 @@
-import type { FloatTab } from '../../shared/tool-tabs'
-import type { SubagentProfileRulesV1 } from '../../shared/subagent-profiles'
-import type { ChatGptWebCapabilities, ChatMode, ChatSkillSelection } from '../../shared/chat'
 import { normalizeConversationExperience, type ConversationExperience } from '../../shared/conversation-experience'
-import type { MaestroConfigV1 } from '../../shared/maestro'
+import type {
+  Conversation,
+  ProjectConversation,
+  StandaloneConversation,
+  ConversationMode,
+  ConversationStatus,
+  ConvRepo,
+  ConvUiPrefs,
+} from '../../shared/conversation'
+export type {
+  Conversation,
+  ProjectConversation,
+  StandaloneConversation,
+  ConversationMode,
+  ConversationStatus,
+  ConvRepo,
+  ConvUiPrefs,
+  FloatingBounds,
+} from '../../shared/conversation'
+import { requireProjectConversation } from '../../shared/conversation-scope'
 import { getDb, transaction } from './db'
 import { getDefaultMainTabOrder } from './settings'
-
-export type ConversationMode = 'worktree' | 'local'
-export type ConversationStatus = 'idle' | 'working' | 'ready' | 'waiting' | 'asking' | 'error'
-/** Participating repository in a multi-repository conversation, with its isolated worktree/branch. */
-export interface ConvRepo {
-  workspaceId: string
-  repoTop: string // repository root
-  branch: string
-  base: string
-  worktreePath: string // external repository worktree under userData (#143)
-  linkName: string // symlink name within the aggregator, e.g. backend
-}
-/** Floating-window position and size in DIPs, persisted across restarts. */
-export interface FloatingBounds {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-/** Per-conversation UI preferences stored as ui_prefs JSON. */
-export interface ConvUiPrefs {
-  /** Main drawer tab order, using shared tool-tab keys. */
-  mainTabOrder?: string[]
-  /** Drawer tabs currently open (on-demand tab bar), using shared tool-tab keys. */
-  openTabs?: string[]
-  /** Active drawer tab among openTabs. */
-  activeTab?: string
-  /** Ordered browser tabs restored when reopening the app. */
-  browserTabs?: { url: string; title?: string }[]
-  /** Active browser-tab index within browserTabs. */
-  browserActive?: number
-  /** Last Companion ChatGPT conversation, resumable with a new MCP session. */
-  chatGptWebUrl?: string
-  /** Nonsecret MCP capability salt persists across resumes and rotates when Companion data is cleared. */
-  chatGptWebSessionScope?: string
-  /** Capability policy selected for this conversation's ChatGPT Web companion. */
-  chatGptWebCapabilities?: ChatGptWebCapabilities
-  /** Fingerprint of the policy/config used by the remote conversation's latest pairing. */
-  chatGptWebPairedCapabilityFingerprint?: string
-  /**
-   * Per-detached-tab window bounds. Missing values are tolerated and patches merge for older database
-   * compatibility.
-   */
-  floating?: Partial<Record<FloatTab, FloatingBounds>>
-  /** Per-conversation Chat provider/model selection. */
-  chat?: {
-    providerId?: string
-    modelId?: string
-    /** Permission mode: full, ask, or auto; default inherits the global setting. */
-    permMode?: 'full' | 'ask' | 'auto'
-    /** Standard behavior mode. Design shares Agent capabilities while applying a prototype-focused harness. */
-    mode?: ChatMode
-    /**
-     * Reasoning/thinking level, usually the provider's raw effort. maestrly-ultra is a local sentinel
-     * intercepted before transport; off means none.
-     */
-    reasoning?: string
-    /** Fast/Priority for embedded Codex; absent means Standard. */
-    fastMode?: boolean
-    /**
-     * Runtime image rejection overrides catalog claims. Runner sets this to stop resending attachments;
-     * model changes clear it.
-     */
-    imagesUnsupported?: boolean
-    /**
-     * Conversation app-tool enablement, disabled MCP servers, and image-generation override; absent image
-     * setting inherits global chat.imageGen.
-     */
-    tools?: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
-    /**
-     * Conversation-only skill overrides map names to on/off; missing entries inherit global/base skill
-     * selection.
-     */
-    skills?: Record<string, 'on' | 'off'>
-    /** Conversation base skill selection; absent means all for legacy compatibility. */
-    skillSelection?: ChatSkillSelection
-    /** Optional deterministic subagent rules; absent inherits global rules. */
-    subagentProfiles?: SubagentProfileRulesV1
-    /** Enable deterministic profiles by default; false directly inherits the parent. */
-    subagentProfilesEnabled?: boolean
-    /** Allow subagent delegation, default on for legacy compatibility. */
-    subagentsEnabled?: boolean
-  }
-  /** Maestro settings are an override; absence inherits the global Maestro configuration. */
-  maestro?: { config?: MaestroConfigV1; projectScoped?: boolean }
-  /** Plan-panel draft keyed by current plan version/hash. */
-  planDraft?: {
-    version: number
-    planHash: string
-    text: string
-    feedback: string
-    lineComments: Record<number, string>
-    mode: 'read' | 'edit' | 'diff'
-  }
-}
-
-export interface Conversation {
-  id: string
-  workspaceId: string
-  name: string
-  branch: string
-  mode: ConversationMode
-  /** Structural experience chosen at creation; an idle Maestro conversation may hand off to Standard. */
-  experience: ConversationExperience
-  cwd: string // worktree or local root; multi-repository uses the aggregator
-  status: ConversationStatus
-  createdAt: number
-  /** Zero means active; one means reversibly archived and hidden by default. */
-  archived: number
-  /** Pin timestamp, or null when unpinned. */
-  pinnedAt: number | null
-  /** Last creation/open/hook activity timestamp for sorting and relative-time display. */
-  lastActivityAt: number
-  /** One means multi-repository aggregator cwd; zero means single repository. */
-  isMulti: number
-  /** Participating repositories in position order, with the primary first; multi-repository only. */
-  repos?: ConvRepo[]
-  /** Conversation UI preferences, including tab order and browser restoration. */
-  uiPrefs?: ConvUiPrefs
-}
 
 /**
  * Transactionally reorder workspace conversations with dense positions. Visible sidebar IDs move among
  * their slots; omitted archived entries retain absolute slots. Ignore foreign-workspace IDs.
  */
 export function setConversationOrder(workspaceId: string, ids: string[]): void {
+  setScopedConversationOrder(workspaceId, ids)
+}
+
+export function setStandaloneConversationOrder(ids: string[]): void {
+  setScopedConversationOrder(null, ids)
+}
+
+function setScopedConversationOrder(workspaceId: string | null, ids: string[]): void {
   const base = (
     getDb()
-      .prepare('SELECT id FROM conversations WHERE workspace_id = ? ORDER BY position ASC, created_at ASC')
-      .all(workspaceId) as Array<{ id: string }>
+      .prepare(
+        'SELECT id FROM conversations WHERE scope = ? AND workspace_id IS ? ORDER BY position ASC, created_at ASC'
+      )
+      .all(workspaceId === null ? 'standalone' : 'project', workspaceId) as Array<{ id: string }>
   ).map((r) => r.id)
   const baseSet = new Set(base)
   const wanted: string[] = []
@@ -166,13 +71,14 @@ export function insertConversation(c: Conversation): void {
   getDb()
     .prepare(
       `INSERT INTO conversations
-       (id, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, position)
+       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, position)
      VALUES
-       (@id, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs,
-        (SELECT COALESCE(MAX(position), -1) + 1 FROM conversations WHERE workspace_id = @workspaceId))`
+       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs,
+        (SELECT COALESCE(MAX(position), -1) + 1 FROM conversations WHERE scope = @scope AND workspace_id IS @workspaceId))`
     )
     .run({
       id: c.id,
+      scope: c.scope ?? 'project',
       workspaceId: c.workspaceId,
       name: c.name,
       branch: c.branch,
@@ -191,6 +97,9 @@ export function insertConversation(c: Conversation): void {
 
 /** Insert multi-repository participants in order, primary at position zero. */
 export function insertConvRepos(conversationId: string, repos: ConvRepo[]): void {
+  const conversation = getConversation(conversationId)
+  if (!conversation) throw new Error('Conversation not found.')
+  requireProjectConversation(conversation)
   const stmt = getDb().prepare(
     `INSERT INTO conversation_repos
        (conversation_id, workspace_id, repo_top, branch, base, worktree_path, link_name, position)
@@ -235,6 +144,9 @@ export function setConversationLocation(
   id: string,
   location: { branch: string; mode: ConversationMode; cwd: string }
 ): void {
+  const conversation = getConversation(id)
+  if (!conversation) throw new Error('Conversation not found.')
+  requireProjectConversation(conversation)
   const changed = getDb()
     .prepare('UPDATE conversations SET branch = ?, mode = ?, cwd = ? WHERE id = ?')
     .run(location.branch, location.mode, location.cwd, id).changes
@@ -252,14 +164,22 @@ function withRepos(c: Conversation | undefined): Conversation | undefined {
 }
 
 /** List workspace conversations, including archived only when requested. */
-export function listConversations(workspaceId: string, includeArchived = false): Conversation[] {
+export function listConversations(workspaceId: string, includeArchived = false): ProjectConversation[] {
   const sql = includeArchived
-    ? 'SELECT * FROM conversations WHERE workspace_id = ? ORDER BY position ASC, created_at ASC'
-    : 'SELECT * FROM conversations WHERE workspace_id = ? AND archived = 0 ORDER BY position ASC, created_at ASC'
+    ? "SELECT * FROM conversations WHERE scope = 'project' AND workspace_id = ? ORDER BY position ASC, created_at ASC"
+    : "SELECT * FROM conversations WHERE scope = 'project' AND workspace_id = ? AND archived = 0 ORDER BY position ASC, created_at ASC"
   return getDb()
     .prepare(sql)
     .all(workspaceId)
-    .map((r) => withRepos(rowToConversation(r))!) as Conversation[]
+    .map((r) => withRepos(rowToConversation(r))!) as ProjectConversation[]
+}
+
+export function listStandaloneConversations(includeArchived = false): StandaloneConversation[] {
+  return getDb()
+    .prepare(`SELECT * FROM conversations WHERE scope = 'standalone'
+    ${includeArchived ? '' : 'AND archived = 0'} ORDER BY position ASC, created_at ASC`)
+    .all()
+    .map((row) => rowToConversation(row) as StandaloneConversation)
 }
 
 export function listAllConversations(): Conversation[] {
@@ -391,13 +311,25 @@ export function patchConvUiPrefs(id: string, patch: Partial<ConvUiPrefs>): void 
 
 function rowToConversation(r: any): Conversation | undefined {
   if (!r) return undefined
+  if (r.scope !== 'project' && r.scope !== 'standalone') throw new Error('Invalid conversation scope')
+  if (
+    r.scope === 'standalone' &&
+    (r.workspace_id !== null || r.branch !== null || r.mode !== null || r.experience !== 'standard' || r.is_multi !== 0)
+  )
+    throw new Error('Invalid standalone conversation context')
+  if (
+    r.scope === 'project' &&
+    (typeof r.workspace_id !== 'string' || typeof r.branch !== 'string' || !['local', 'worktree'].includes(r.mode))
+  )
+    throw new Error('Invalid project conversation context')
   return {
     id: r.id,
+    scope: r.scope,
     workspaceId: r.workspace_id,
     name: r.name,
     branch: r.branch,
     mode: r.mode,
-    experience: normalizeConversationExperience(r.experience),
+    experience: r.scope === 'standalone' ? 'standard' : normalizeConversationExperience(r.experience),
     cwd: r.cwd,
     status: r.status,
     createdAt: r.created_at,
@@ -406,7 +338,7 @@ function rowToConversation(r: any): Conversation | undefined {
     lastActivityAt: r.last_activity_at ?? r.created_at,
     isMulti: r.is_multi ?? 0,
     uiPrefs: parseUiPrefs(r.ui_prefs),
-  }
+  } as Conversation
 }
 
 function rowToConvRepo(r: any): ConvRepo {

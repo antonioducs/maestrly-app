@@ -1,5 +1,6 @@
 import {executorSettings,recoverDesktopExecutions} from './platform/executor-settings'
 import path from 'node:path'
+import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -280,6 +281,11 @@ function detachByShortcut(convId: string, tab: FloatTab): boolean {
 
 // Resolve the conversation directory when opening a cold editor popup.
 async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
+  const conversation = getConversation(convId)
+  if (conversation?.scope === 'standalone') {
+    const managed = await validateStandaloneConversationDirectory(conversation)
+    if (folder !== managed) throw new Error('Unsafe standalone chat directory.')
+  }
   void watchConversation(convId, folder)
 
   if (!isVSCodeCliReady()) showVSCodeLoading(convId, '', 'downloading')

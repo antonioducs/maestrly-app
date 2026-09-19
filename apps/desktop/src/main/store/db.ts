@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { conversationScopeConstraint, migrateStandaloneConversations } from './standalone-conversation-migration'
 import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
 
@@ -161,6 +162,11 @@ export function initStore(file?: string): void {
   try {
     // One durable commit for schema upgrades and backfills avoids an fsync per DDL statement.
     transaction(initializeSchema)
+    // Legacy normalization needs its existing cascades. Only the standalone table rebuild
+    // uses a second transaction, after normalization commits and before any runtime starts.
+    migrateStandaloneConversations(db)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_standalone
+      ON conversations(scope, archived, position, created_at) WHERE scope = 'standalone'`)
   } catch (error) {
     closeStore()
     throw error
@@ -217,10 +223,11 @@ function initializeSchema(): void {
     );
     CREATE TABLE IF NOT EXISTS conversations (
       id           TEXT PRIMARY KEY,
-      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      scope        TEXT NOT NULL DEFAULT 'project',
+      workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
       name         TEXT NOT NULL,
-      branch       TEXT NOT NULL,
-      mode         TEXT NOT NULL,
+      branch       TEXT,
+      mode         TEXT,
       experience   TEXT NOT NULL DEFAULT 'standard',
       cwd          TEXT NOT NULL,
       status       TEXT NOT NULL DEFAULT 'idle',
@@ -228,7 +235,9 @@ function initializeSchema(): void {
       archived     INTEGER NOT NULL DEFAULT 0,
       pinned_at    INTEGER,
       last_activity_at INTEGER NOT NULL DEFAULT 0,
-      position     INTEGER NOT NULL DEFAULT 0
+      position     INTEGER NOT NULL DEFAULT 0,
+      is_multi     INTEGER NOT NULL DEFAULT 0,
+      ${conversationScopeConstraint}
     );
     CREATE INDEX IF NOT EXISTS idx_conv_ws ON conversations(workspace_id);
     CREATE TABLE IF NOT EXISTS conversation_migrations (
@@ -808,9 +817,7 @@ function initializeSchema(): void {
     db.exec("ALTER TABLE chat_codex_threads ADD COLUMN instruction_hash TEXT NOT NULL DEFAULT '';")
   }
   if (!codexThreadCols.some((column) => column.name === 'harness_profile')) {
-    db.exec(
-      "ALTER TABLE chat_codex_threads ADD COLUMN harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1';"
-    )
+    db.exec("ALTER TABLE chat_codex_threads ADD COLUMN harness_profile TEXT NOT NULL DEFAULT 'openai-default-v1';")
   }
 
   // Versioned harness contract of the execution that created each native binding. Additive and nullable:
