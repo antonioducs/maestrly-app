@@ -136,6 +136,7 @@ export class DesktopChatExecutor implements ExecutorAdapter {
       now = Date.now(),
       snapshot = context.envelope.snapshot
     const conversation = {
+      scope: 'project' as const,
       id,
       workspaceId: binding.workspaceId,
       name: snapshot.title,

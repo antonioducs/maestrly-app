@@ -52,6 +52,7 @@ import { createVisualBrowser } from './visual-browser'
 import { createDrawerBrowserSession } from './drawer-browser-session'
 import { createProjectEnvironmentJobController, type ProjectEnvironmentJobController } from './project-environment'
 import { createChatGptWebMcpGateway } from './mcp-gateway'
+import { createConversationFileScope } from '../../conversation-file-scope'
 import { createRepositoryScope, SINGLE_REPOSITORY_SELECTOR } from '../../repository-scope'
 import { gitRead, type GitReadInput } from '../../git-read'
 import { ghRead, type GhReadInput } from '../../gh-read'
@@ -140,7 +141,7 @@ export interface ChatGptWebHooks {
   turnCompleted: (conversationId: string) => void
   projectContext: (conversationId: string, cwd: string) => Promise<string> | string
   listSkills: (cwd: string, conversationId?: string) => Promise<Array<{ name: string; description: string }>>
-  readSkill: (cwd: string, name: string) => Promise<string | null>
+  readSkill: (cwd: string, name: string, conversationId?: string) => Promise<string | null>
   getConversationContext: (conversationId: string, signal?: AbortSignal) => Promise<unknown> | unknown
   getConversationRevision: (conversationId: string, signal?: AbortSignal) => Promise<string | null> | string | null
   searchConversation: (
@@ -611,7 +612,7 @@ export function listSessions(): ChatGptWebSession[] {
 
 export function capabilitiesForConversation(conversationId: string): ChatGptWebCapabilitiesInfo {
   const prefs = getConvUiPrefs(conversationId)
-  const info = chatGptWebCapabilitiesInfo(prefs.chatGptWebCapabilities, listMcpServers(), sessionForConversation(conversationId) === null)
+  const info = chatGptWebCapabilitiesInfo(prefs.chatGptWebCapabilities, listMcpServers(), sessionForConversation(conversationId) === null, getConversation(conversationId)?.scope ?? 'project')
   const binding = linkedConversationBinding(conversationId)
   if (binding && info.capabilities.kanban !== 'off') info.fingerprint = createHash('sha256')
     .update(JSON.stringify([info.fingerprint, linkedBoardScopeIdentity(conversationId)])).digest('hex')
@@ -625,7 +626,7 @@ export function setCapabilitiesForConversation(
 ): ChatGptWebCapabilitiesInfo {
   if (sessionForConversation(conversationId)) throw new Error('companion-session-active')
   const servers = listMcpServers()
-  const sanitized = resolveChatGptWebCapabilities(input, servers)
+  const sanitized = resolveChatGptWebCapabilities(input, servers, getConversation(conversationId)?.scope ?? 'project')
   patchConvUiPrefs(conversationId, { chatGptWebCapabilities: sanitized })
   emitChange()
   return capabilitiesForConversation(conversationId)
@@ -719,7 +720,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
     }))
     const localMemoryAllowed = capabilityInfo.capabilities.memory === 'read'
     const assertMemoryEnabled = () => {
-      if (!isWorkspaceMemoryEnabled(conversation.workspaceId)) throw new Error('memory-disabled')
+      if (conversation.scope === 'standalone' || !isWorkspaceMemoryEnabled(conversation.workspaceId)) throw new Error('memory-disabled')
     }
     const publicRepositoryId = (root: string): string | undefined => {
       const match = repositoryScope.repositories.find(
@@ -929,7 +930,9 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         planReview: planReviewController,
         projectContext: () => hooks?.projectContext(input.conversationId, input.cwd) ?? '',
         listSkills: () => hooks?.listSkills(input.cwd, input.conversationId) ?? [],
-        readSkill: (name) => hooks?.readSkill(input.cwd, name) ?? null,
+        readSkill: (name) => conversation.scope === 'standalone'
+          ? hooks?.readSkill(input.cwd, name, input.conversationId) ?? null
+          : hooks?.readSkill(input.cwd, name) ?? null,
         ...(capabilityInfo.capabilities.conversation === 'read'
           ? {
               conversation: {
@@ -954,7 +957,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
           : {}),
         memory: {
           status: async () => {
-            if (!isWorkspaceMemoryEnabled(conversation.workspaceId)) {
+            if (conversation.scope === 'standalone' || !isWorkspaceMemoryEnabled(conversation.workspaceId)) {
               return {
                 enabled: false,
                 state: 'disabled',
@@ -978,6 +981,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
           },
           search: async (memoryArgs: { query: string; limit?: number; repo?: string }) => {
             assertMemoryEnabled()
+            if (conversation.scope === 'standalone') throw new Error('no_repository')
             const selectedRoots = memoryArgs.repo
               ? [
                   {
@@ -1017,6 +1021,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
           },
           read: async (memoryArgs: { kind: 'local' | 'shared'; id: string; repo?: string; path?: string }) => {
             assertMemoryEnabled()
+            if (conversation.scope === 'standalone') throw new Error('no_repository')
             if (memoryArgs.kind === 'local') {
               if (!localMemoryAllowed) throw new Error('memory-local-capability-off')
               const memory = getLocalMemory(conversation.workspaceId, memoryArgs.id)
@@ -1054,6 +1059,8 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         projectEnvironment,
         browserCapability: capabilityInfo.capabilities.browser,
         repositoryScope,
+        conversationScope: conversation.scope,
+        fileScope: await createConversationFileScope(conversation),
         gitReadEnabled: capabilityInfo.capabilities.git === 'read',
         external: {
           listCapabilities: () => ({
@@ -1281,6 +1288,7 @@ export function companionPrompt(conversationId: string): string | null {
   const session = sessions.get(conversationId)
   if (!session) return null
   return buildCompanionPrompt({
+    scope: getConversation(conversationId)?.scope,
     appName: getAppName(),
     sessionKey: session.sessionKey,
   })

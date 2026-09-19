@@ -3,11 +3,13 @@ import {
   buildPinnedWorkspaceLabels,
   collectPinnedConversations,
 } from '../../src/renderer/components/sidebar/pinned-conversations'
-import type { Conversation, WorkspaceWithConversations } from '../../src/preload'
+import type { WorkspaceWithConversations } from '../../src/preload'
+import type { ProjectConversation } from '../../src/shared/conversation'
 
 /** Local fixtures require pinnedAt; explicitly pass null for unpinned conversations. */
-function conv(id: string, pinnedAt: number | null, overrides: Partial<Conversation> = {}): Conversation {
+function conv(id: string, pinnedAt: number | null, overrides: Partial<ProjectConversation> = {}): ProjectConversation {
   return {
+    scope: 'project',
     id,
     workspaceId: 'ws-1',
     name: id,
@@ -25,7 +27,7 @@ function conv(id: string, pinnedAt: number | null, overrides: Partial<Conversati
   }
 }
 
-function ws(id: string, conversations: Conversation[]): WorkspaceWithConversations {
+function ws(id: string, conversations: ProjectConversation[]): WorkspaceWithConversations {
   return {
     id,
     path: `/repo/${id}`,

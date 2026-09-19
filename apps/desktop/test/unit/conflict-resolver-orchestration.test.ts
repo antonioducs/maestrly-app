@@ -77,6 +77,7 @@ const cwd = '/tmp/review-conflict-resolver'
 beforeEach(() => {
   vi.clearAllMocks()
   h.getConversation.mockReturnValue({
+    scope: 'project',
     id: 'conv-1',
     cwd,
     workspaceId: 'workspace-1',
@@ -108,6 +109,13 @@ afterEach(() => {
 })
 
 describe('resolveReviewConflicts cwd boundary', () => {
+  it('rejects standalone before looking up reviews or starting Git work', async () => {
+    h.getConversation.mockReturnValue({ id: 'chat', scope: 'standalone', cwd, workspaceId: null, branch: null })
+    await expect(resolveReviewConflicts('chat')).rejects.toThrow('project-required')
+    expect(h.getReviewData).not.toHaveBeenCalled()
+    expect(h.isWorkingTreeClean).not.toHaveBeenCalled()
+    expect(h.executeSubagent).not.toHaveBeenCalled()
+  })
   it('blocks a competing cwd owner before starting the worker', async () => {
     const competing = tryAcquireCwdActivity(cwd, 'chat')
 

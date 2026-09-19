@@ -81,6 +81,9 @@ export function DesktopApp() {
   const ws = useWorkspaces({ active, setActive, forgetConvDrawerState })
   const {
     workspaces,
+    standaloneConversations,
+    standaloneArchivedCount,
+    handleReorderStandaloneConversations,
     groups,
     showArchived,
     setShowArchived,
@@ -103,24 +106,41 @@ export function DesktopApp() {
     handleMoveWorkspaceToGroup,
     handleToggleWorkspaceCollapsed,
   } = ws
-  useEffect(() => window.api.onPlatformLinksChanged(() => { void refreshWorkspaces() }), [refreshWorkspaces])
+  useEffect(
+    () =>
+      window.api.onPlatformLinksChanged(() => {
+        void refreshWorkspaces()
+      }),
+    [refreshWorkspaces]
+  )
   const handleConversationExperienceChange = useCallback(
     (conversationId: string, experience: Conversation['experience']) => {
-      setActive((current) => (current?.id === conversationId ? { ...current, experience } : current))
+      setActive((current) =>
+        current?.id === conversationId && current.scope !== 'standalone' ? { ...current, experience } : current
+      )
       setMountedConvs((current) =>
         current.map((conversation) =>
-          conversation.id === conversationId ? { ...conversation, experience } : conversation
+          conversation.id === conversationId && conversation.scope !== 'standalone'
+            ? { ...conversation, experience }
+            : conversation
         )
       )
       void refreshWorkspaces()
     },
     [refreshWorkspaces]
   )
-  const allConversations = useMemo(() => workspaces.flatMap((workspace) => workspace.conversations), [workspaces])
-  const pairedLoopForActive = useMemo(
-    () => findActivePairedReviewLoop(reviewLoops, active?.id),
-    [active, reviewLoops]
+  const allConversations = useMemo(
+    () => [...standaloneConversations, ...workspaces.flatMap((workspace) => workspace.conversations)],
+    [workspaces, standaloneConversations]
   )
+  useEffect(() => {
+    setActive((current) => {
+      if (current?.scope !== 'standalone') return current
+      const refreshed = standaloneConversations.find((conversation) => conversation.id === current.id)
+      return refreshed && refreshed.name !== current.name ? { ...current, name: refreshed.name } : current
+    })
+  }, [standaloneConversations])
+  const pairedLoopForActive = useMemo(() => findActivePairedReviewLoop(reviewLoops, active?.id), [active, reviewLoops])
   const runningReviewLoopForActive = useMemo(
     () =>
       active
@@ -196,6 +216,24 @@ export function DesktopApp() {
     completeOnboarding,
   } = nav
 
+  const creatingChatRef = useRef(false)
+  const [creatingChat, setCreatingChat] = useState(false)
+  const handleNewChat = useCallback(async () => {
+    if (creatingChatRef.current) return
+    creatingChatRef.current = true
+    setCreatingChat(true)
+    try {
+      const conversation = await window.api.createStandaloneConversation()
+      await handleCreated(conversation)
+      handleSelect(conversation)
+    } catch (error) {
+      alert(i18n.t('ui:app.createChatFailed', { error: String(error) }))
+    } finally {
+      creatingChatRef.current = false
+      setCreatingChat(false)
+    }
+  }, [handleCreated, handleSelect])
+
   const [chatGptFloating, setChatGptFloating] = useState(false)
   const [chatGptFloatingVisible, setChatGptFloatingVisible] = useState(false)
   useEffect(() => {
@@ -266,12 +304,20 @@ export function DesktopApp() {
     chatGptVisibleConversationId,
   })
   const { statuses, attention, acknowledgeConversation } = agents
-  useEffect(()=>{
-    let mounted=true
-    const unsubscribe=window.api.onExecutorOpen(()=>openSettings('platform'))
-    void window.api.platformExecutorSettings().then(settings=>{if(mounted&&settings.mode==='team')openSettings('platform')}).catch(()=>{})
-    return ()=>{mounted=false;unsubscribe()}
-  },[openSettings])
+  useEffect(() => {
+    let mounted = true
+    const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
+    void window.api
+      .platformExecutorSettings()
+      .then((settings) => {
+        if (mounted && settings.mode === 'team') openSettings('platform')
+      })
+      .catch(() => {})
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
+  }, [openSettings])
 
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
@@ -373,7 +419,7 @@ export function DesktopApp() {
   }, [active?.id, autoReclaimEnabled, hardPressure, protectedReviewIds, statuses, unsafeChatIds])
 
   useEffect(() => {
-    const live = new Set(workspaces.flatMap((w) => w.conversations).map((c) => c.id))
+    const live = new Set(allConversations.map((c) => c.id))
     setMountedConvs((prev) => (prev.some((c) => !live.has(c.id)) ? prev.filter((c) => live.has(c.id)) : prev))
     const pruneDead = <T,>(prev: Record<string, T>): Record<string, T> => {
       const dead = Object.keys(prev).filter((id) => !live.has(id))
@@ -389,14 +435,16 @@ export function DesktopApp() {
     setDrawerFullByConv(pruneDead)
 
     hydrateOpenTabs(
-      workspaces
-        .flatMap((w) => w.conversations)
-        .map((conv) => ({ conv, openTabs: conv.uiPrefs?.openTabs, activeTab: conv.uiPrefs?.activeTab }))
+      allConversations.map((conv) => ({
+        conv,
+        openTabs: conv.uiPrefs?.openTabs,
+        activeTab: conv.uiPrefs?.activeTab,
+      }))
     )
 
     setMainTabOrderByConv((prev) => {
       let next = prev
-      for (const conv of workspaces.flatMap((w) => w.conversations)) {
+      for (const conv of allConversations) {
         if (next[conv.id]) continue
         const saved = conv.uiPrefs?.mainTabOrder
         if (saved?.length) {
@@ -406,7 +454,7 @@ export function DesktopApp() {
       }
       return pruneDead(next)
     })
-  }, [workspaces])
+  }, [allConversations])
 
   useEffect(() => {
     const root = document.documentElement
@@ -506,6 +554,11 @@ export function DesktopApp() {
           {sidebarOpen && (
             <Sidebar
               workspaces={workspaces}
+              standaloneConversations={standaloneConversations}
+              standaloneArchivedCount={standaloneArchivedCount}
+              onNewChat={handleNewChat}
+              creatingChat={creatingChat}
+              onReorderStandaloneConversations={handleReorderStandaloneConversations}
               statuses={statuses}
               attention={attention}
               activeId={active?.id ?? null}
@@ -590,6 +643,8 @@ export function DesktopApp() {
             {onboardingOpen && (
               <OnboardingFlow
                 workspaces={workspaces}
+                onNewChat={handleNewChat}
+                creatingChat={creatingChat}
                 onAddWorkspace={requestProject}
                 onCreateConversation={(wsId) => setDialogWs(wsId)}
                 onClose={completeOnboarding}
@@ -616,10 +671,12 @@ export function DesktopApp() {
                     </Button>
                   )}
                   <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
-                  {active && <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />}
+                  {active?.scope === 'project' && (
+                    <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />
+                  )}
                 </div>
                 <div className="no-drag flex min-w-0 items-center gap-2">
-                  {active &&
+                  {active?.scope === 'project' &&
                     active.archived === 0 &&
                     !active.isMulti &&
                     !runningReviewLoopForActive && (
@@ -704,6 +761,9 @@ export function DesktopApp() {
                       <MessagesSquare className="size-7 opacity-60" />
                     </div>
                     <p className="text-sm">{t('app.emptyState')}</p>
+                    <Button disabled={creatingChat} onClick={() => void handleNewChat()}>
+                      {t('sidebar.newChat')}
+                    </Button>
                   </div>
                 )}
               </div>

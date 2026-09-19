@@ -40,12 +40,12 @@ export interface RepositoryScope {
   resolveBridgePath(relativePath: string): Promise<ResolvedRepositoryPath>
 }
 
-function isInside(root: string, target: string): boolean {
+export function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target)
   return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
 }
 
-async function canonicalTarget(root: string, absolutePath: string): Promise<string> {
+export async function canonicalTarget(root: string, absolutePath: string): Promise<string> {
   let candidate = absolutePath
   for (;;) {
     try {
@@ -64,6 +64,11 @@ async function canonicalTarget(root: string, absolutePath: string): Promise<stri
 
 /** Builds the only repository roots authorized by the persisted conversation record. */
 export async function createRepositoryScope(conversation: Conversation): Promise<RepositoryScope> {
+  if (conversation.scope === 'standalone') {
+    const unavailable = (): never => { throw new RepositoryScopeError('no_repository', 'This conversation has no repository.') }
+    return { repositories: [], isMulti: false, resolveRepository: unavailable,
+      resolvePath: async () => unavailable(), resolveBridgePath: async () => unavailable() }
+  }
   const configured = conversation.isMulti
     ? (conversation.repos ?? []).map((repo) => ({
         linkName: repo.linkName,

@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../shared/conversation-scope'
 import type { ToolSet } from 'ai'
 import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { PermissionBroker } from './permission'
@@ -47,7 +48,8 @@ export interface MaestroWorkerToolRuntime {
 
 export async function buildMaestroWorkerTools(args: {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   parentMessageId: string
   delegationId: string
@@ -78,6 +80,7 @@ export async function buildMaestroWorkerTools(args: {
     const skillRuntime = await buildModelSkillRuntime({
       cwd: args.cwd,
       conversationId: args.conversationId,
+      scope: args.projectId === null ? 'standalone' : 'project',
     })
     const childMeta = isClaudeSubscriptionProvider(effective.providerId)
       ? { meta: { vision: true } }
@@ -98,6 +101,7 @@ export async function buildMaestroWorkerTools(args: {
       return args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         action: 'mcp',
         resources: [toolName],
         save: [toolName],
@@ -139,6 +143,7 @@ export async function buildMaestroWorkerTools(args: {
       makeCtx: (toolCallId, signal) => ({
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         messageId: args.parentMessageId,
         toolCallId,
         cwd: args.cwd,
@@ -147,6 +152,7 @@ export async function buildMaestroWorkerTools(args: {
           return args.broker.assert({
             conversationId: args.conversationId,
             projectId: args.projectId,
+            permissionScope: args.permissionScope,
             action,
             resources,
             save,

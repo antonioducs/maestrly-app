@@ -26,6 +26,8 @@ import { cn } from '@/lib/utils'
 import type { Workspace } from '../../preload'
 
 interface OnboardingFlowProps {
+  onNewChat: () => Promise<void>
+  creatingChat: boolean
   workspaces: { id: string; name: string }[]
   /** Open project setup and return the exact created or imported workspace. */
   onAddWorkspace: () => Promise<Workspace | null>
@@ -35,7 +37,14 @@ interface OnboardingFlowProps {
   onClose: () => void
 }
 
-export function OnboardingFlow({ workspaces, onAddWorkspace, onCreateConversation, onClose }: OnboardingFlowProps) {
+export function OnboardingFlow({
+  workspaces,
+  onAddWorkspace,
+  onCreateConversation,
+  onClose,
+  onNewChat,
+  creatingChat,
+}: OnboardingFlowProps) {
   const { t } = useTranslation('ui')
   const { openSettings } = useSettings()
   const [step, setStep] = useState(0)
@@ -107,14 +116,13 @@ export function OnboardingFlow({ workspaces, onAddWorkspace, onCreateConversatio
           <p className="text-sm leading-relaxed text-muted-foreground">{t('onboarding.convBody')}</p>
           <Button
             className="self-start gap-1.5"
-            disabled={!hasWorkspace}
-            onClick={() => targetWorkspace && onCreateConversation(targetWorkspace.id)}
+            disabled={creatingChat}
+            onClick={() => (targetWorkspace ? onCreateConversation(targetWorkspace.id) : void onNewChat())}
           >
-            <MessageSquarePlus className="size-4" /> {t('onboarding.createFirstConv')}
+            <MessageSquarePlus className="size-4" />{' '}
+            {hasWorkspace ? t('onboarding.createFirstConv') : t('sidebar.newChat')}
           </Button>
-          {!hasWorkspace && (
-            <p className="text-[12px] text-muted-foreground/80">{t('onboarding.convNeedsWorkspace')}</p>
-          )}
+          {!hasWorkspace && <p className="text-[12px] text-muted-foreground/80">{t('onboarding.standaloneHint')}</p>}
         </div>
       ),
     },

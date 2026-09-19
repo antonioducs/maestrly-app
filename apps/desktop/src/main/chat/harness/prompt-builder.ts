@@ -1,4 +1,4 @@
-import { buildMaestrlyBasePrompt } from './host-contracts'
+import { buildMaestrlyBasePrompt, standaloneProfileText } from './host-contracts'
 import {
   composeOpenAICodexPortPrompt,
   composeOpenAIConcisePrompt,
@@ -9,6 +9,7 @@ import type { ChatBehavior, HarnessSourceProvenance, ResolvedHarness } from './t
 export interface BuildHarnessPromptInput {
   harness: ResolvedHarness
   cwd: string
+  scope?: 'project' | 'standalone'
   mode: ChatBehavior
   appToolsEnabled: boolean
   hasNotesTab: boolean
@@ -44,14 +45,21 @@ export function buildHarnessPrompt(input: BuildHarnessPromptInput): CompiledHarn
   const transientContext = harness.prompts.environment.transient ? (input.envContext?.trim() ?? null) : null
   const provenance = harness.source
 
+  if (input.scope === 'standalone') {
+    const base = buildMaestrlyBasePrompt(input)
+    const stablePrefix = [base, standaloneProfileText(harness.prompts.base), input.skillsContext, input.agentsContext, input.ultraContext].filter(Boolean).join('\n\n')
+    const volatileSuffix = transientContext ? '' : (input.envContext?.trim() ?? '')
+    return {
+      layout: harness.prompts.layout,
+      instructions: [stablePrefix, volatileSuffix].filter(Boolean).join('\n\n'),
+      stablePrefix,
+      volatileSuffix,
+      transientContext,
+      provenance,
+    }
+  }
   if (harness.prompts.layout === 'maestrly-base' || !harness.prompts.base) {
-    const instructions = buildMaestrlyBasePrompt({
-      harness,
-      cwd: input.cwd,
-      appToolsEnabled: input.appToolsEnabled,
-      mode: input.mode,
-      hasNotesTab: input.hasNotesTab,
-    })
+    const instructions = buildMaestrlyBasePrompt(input)
     return {
       layout: 'maestrly-base',
       instructions,

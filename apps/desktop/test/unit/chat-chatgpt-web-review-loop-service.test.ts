@@ -700,6 +700,14 @@ describe('review loop internal service API', () => {
     ).resolves.toEqual({ ok: false, error: 'maestro-experience' })
   })
 
+  it('rejects standalone code review before runtime admission', async () => {
+    h.getConversation.mockReturnValue({ id: 'chat', scope: 'standalone', workspaceId: null, cwd })
+    expect(await validateReviewLoopStart('chat')).toEqual({ ok: false, error: 'project-required' })
+    expect(await startInternalChatTurn({ conversationId: 'chat', prompt: 'review', selection: SELECTION,
+      source: 'chatgpt-web-review-loop', loopId: 'loop', iteration: 1, maxIterations: 1,
+      signal: new AbortController().signal })).toEqual({ ok: false, error: 'project-required' })
+  })
+
   it('persists final summaries with stable loop IDs and Agent mode', async () => {
     const first = await persistReviewLoopSummary({
       conversationId: 'conv-chat',

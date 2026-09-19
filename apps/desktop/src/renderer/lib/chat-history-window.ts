@@ -36,6 +36,19 @@ export function estimateHistoryWindowBytes(messages: readonly ChatMessage[]): nu
   return messages.reduce((sum, message) => sum + messageWeight(message), 0)
 }
 
+/** SQLite checkpoints can lag a live stream. Overlay only the current in-memory assistant snapshot. */
+export function mergeLiveChatHistory(
+  saved: readonly ChatMessage[], live: readonly ChatMessage[]
+): ChatMessage[] {
+  const byId = new Map(live.filter(message => message.role === 'assistant').map(message => [message.id, message]))
+  const merged = saved.map(message => {
+    const current = byId.get(message.id)
+    byId.delete(message.id)
+    return current ?? message
+  })
+  return [...merged, ...byId.values()]
+}
+
 export function boundChatHistoryWindow(input: HistoryWindowInput): HistoryWindowResult {
   const keepIds = input.keepIds ?? new Set<string>()
   const merged = input.side === 'replace' ? [...input.incoming] : [...input.incoming, ...input.messages]

@@ -27,6 +27,20 @@ async function write(relative: string, data = 'asset bytes'): Promise<void> {
   await fs.writeFile(target, data)
 }
 
+it('exports standalone working files while excluding symlink targets', async () => {
+  const id = '01234567-89ab-4cde-8fab-0123456789ab'
+  const relative = `standalone-chats/${id}/report.txt`
+  await write(relative, 'chat artifact')
+  await write('private/secret', 'external credential')
+  await fs.symlink(path.join(h.userData, 'private'), path.join(h.userData, 'standalone-chats', id, 'outside'))
+  const omissions: string[] = []
+  const assets = await exportOwnedAssets(omissions)
+  expect(assets).toHaveLength(1)
+  expect(assets[0]).toMatchObject({ path: relative, owner: { kind: 'conversation', id } })
+  expect(Buffer.from(assets[0].data, 'base64').toString()).toBe('chat artifact')
+  expect(omissions).toEqual([`Could not export app-owned asset standalone-chats/${id}/outside.`])
+})
+
 it('exports image, attachment, notebook, and spill bytes with ownership and integrity, excluding credentials', async () => {
   const workspace = makeWorkspace()
   const conversation = makeConversation(workspace.id)

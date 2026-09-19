@@ -1,3 +1,7 @@
+import { conversationPermissionScope } from '../../shared/conversation-scope'
+import { resolveConversationExecutionContext } from '../conversation-context'
+import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
+import { nameStandaloneConversationFromText } from '../standalone-conversation-title'
 import { autonomousPolicy } from './autonomous'
 import { emitChatHost } from './host-events'
 import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
@@ -2959,6 +2963,7 @@ async function preflightContext(
       const compatible = await inspectClaudeSessionCompatibility({
         conversationId,
         projectId: conv.workspaceId,
+        permissionScope: conversationPermissionScope(conv),
         cwd: conv.cwd,
         selection,
         resolvedModelId: model.resolvedModel ?? model.value,
@@ -3111,7 +3116,7 @@ async function currentChatHistoryStats(
     usesNativeSeedProjection = true
     const binding = getCodexThreadBinding(conversationId)
     const conv = getConversation(conversationId)
-    const projectContext = await buildProjectContext(conv?.workspaceId ?? '', conv?.cwd ?? '')
+    const projectContext = await buildProjectContext(conv?.workspaceId ?? null, conv?.cwd ?? '')
     const instructionHash = createHash('sha256').update(projectContext).digest('hex')
     runtimeReusable = !!(
       binding &&
@@ -3370,6 +3375,21 @@ async function startSend(
     return { ok: false, error: 'empty' }
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
+  if (conv.scope === 'standalone') {
+    try {
+      const directory = await ensureStandaloneConversationDirectory(conv)
+      if (directory.recreated) return {
+        ok: false,
+        error: getLocale() === 'pt-BR'
+          ? 'A pasta deste chat estava ausente e foi recriada. O histórico foi preservado, mas os arquivos anteriores podem estar ausentes. Envie a mensagem novamente para continuar.'
+          : 'This chat folder was missing and has been recreated. History is preserved, but previous files may be missing. Send the message again to continue.',
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  // Freeze persisted ownership for every provider, retry and delegated execution in this turn.
+  const executionContext = Object.freeze(resolveConversationExecutionContext(conv))
 
   // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
   // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
@@ -4313,6 +4333,10 @@ async function startSend(
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
+    if (conv.scope === 'standalone' && !opts?.internal && !reviewLoopMessageMeta &&
+      nameStandaloneConversationFromText(conversationId, text)) {
+      send('conversation:open', { conversation: getConversation(conversationId), focus: false })
+    }
     if (!useOfficialSubscription) {
       upsertChatMessage({
         id: assistantMessageId,
@@ -4519,8 +4543,9 @@ async function startSend(
         run.codexThreadAccountId = selectionAccountId
         return runCodexSubscriptionChat({
           conversationId,
-          projectId: conv.workspaceId,
-          cwd: conv.cwd,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
           selection,
           mode: turnBehavior,
           maestro: maestroTurn,
@@ -4626,8 +4651,9 @@ async function startSend(
       try {
         turnPromise = runCodexSubscriptionChat({
           conversationId,
-          projectId: conv.workspaceId,
-          cwd: conv.cwd,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
           selection,
           mode: turnBehavior,
           maestro: maestroTurn,
@@ -4784,8 +4810,9 @@ async function startSend(
         const maestrlyUltra = resolved.maestrlyUltra
         return runGitHubCopilotChat({
           conversationId,
-          projectId: conv.workspaceId,
-          cwd: conv.cwd,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
           selection,
           harness: admittedHarness,
           mode: turnBehavior,
@@ -4937,8 +4964,9 @@ async function startSend(
             send(`chat:subscription-failover:${conversationId}`, event)
           },
           conversationId,
-          projectId: conv.workspaceId,
-          cwd: conv.cwd,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
           selection,
           resolvedModelId: resolvedClaudeModelId,
           harness: admittedHarness,
@@ -5032,8 +5060,9 @@ async function startSend(
         }
         return runCursorSubscriptionChat({
           conversationId,
-          projectId: conv.workspaceId,
-          cwd: conv.cwd,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
           selection,
           mode: turnBehavior,
           harness: admittedHarness,
@@ -5084,8 +5113,9 @@ async function startSend(
       }
       turnPromise = runChat({
         conversationId,
-        projectId: conv.workspaceId,
-        cwd: conv.cwd,
+        projectId: executionContext.workspaceId,
+        permissionScope: executionContext.permissionScope,
+        cwd: executionContext.cwd,
         selection,
         harnessFlags: harnessFlagsAtAdmission,
         ...(isolated && frozenProfile != null
@@ -6494,7 +6524,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     if (!resolution.ok) return { ok: false, error: 'executor-unavailable' }
     compactHarness = resolution.harness
   }
-  const compactSystem = harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
+  const compactSystem = conv.scope === 'standalone' ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.` : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
   const history = opts.executionId
     ? listExecutionContextMessages(conversationId, opts.executionId)
     : listConversationContextMessages(conversationId)
@@ -6565,6 +6595,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           mergeAttemptUsage: mergeIsolatedSummaryAttemptUsage,
           operation: async (target, operationSignal) =>
             summarizeWithCodexRuntime({
+              conversationScope: conv.scope,
               client: target.client,
               cwd: conv.cwd,
               modelId: target.runtimeModelId,
@@ -6595,6 +6626,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       if (!identity.fingerprint) return { ok: false, error: 'no-key' }
       summarize = (prompt, _phase, stageSignal = compactSignal) =>
         summarizeWithGitHubCopilotRuntime({
+          conversationScope: conv.scope,
           manager,
           // Frozen profile: OPAQUE identity from freeze (summarizer aborts on account change) + round reasoning.
           accountIdentity: frozen
@@ -6647,6 +6679,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             },
             operation: (target, signal) =>
               summarizeWithClaudeRuntime({
+                conversationScope: conv.scope,
                 manager: target.manager,
                 accountIdentity: target.accountIdentity,
                 cwd: conv.cwd,
@@ -6676,6 +6709,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             }
         summarize = (prompt, _phase, stageSignal = compactSignal) =>
           summarizeWithClaudeRuntime({
+            conversationScope: conv.scope,
             manager,
             accountIdentity: identity,
             cwd: conv.cwd,
@@ -6850,6 +6884,7 @@ export async function validateReviewLoopStart(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
+  if (conv.scope === 'standalone') return { ok: false, error: 'project-required' }
   // Review-loop executor turns are intentionally forced to Agent. A Maestro conversation can never cross
   // that legacy path because its parent capability boundary is structural, not a mutable chat-mode preference.
   if (conv.experience === 'maestro') return { ok: false, error: 'maestro-experience' }
@@ -7367,6 +7402,7 @@ export async function startInternalChatTurn(input: {
   signal: AbortSignal
 }): Promise<{ ok: true; handle: InternalTurnHandle } | { ok: false; error: string }> {
   if (!savedDeps) return { ok: false, error: 'Chat service not initialized' }
+  if (getConversation(input.conversationId)?.scope === 'standalone') return { ok: false, error: 'project-required' }
   if (getConversation(input.conversationId)?.experience === 'maestro') {
     return { ok: false, error: 'maestro-experience' }
   }
@@ -8544,7 +8580,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
             source: s.source,
           }))
       : []
-    return { prompts: listUserPrompts(), project: conv ? await listProjectCommands(conv.cwd) : [], skills }
+    return { prompts: listUserPrompts(), project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [], skills }
   })
   // ---- Skill management (Settings + conversation popover) ----
   // `conversationId` is optional: without it, show only GLOBAL skills (~/.agents|.claude/skills) — as in
@@ -8964,14 +9000,16 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     },
     projectContext: (conversationId, cwd) => {
       const conv = getConversation(conversationId)
-      return buildProjectContext(conv?.workspaceId ?? '', cwd)
+      return buildProjectContext(conv?.workspaceId ?? null, cwd)
     },
     listSkills: async (cwd, conversationId) =>
       (await effectiveSkills(cwd, conversationId)).map((skill) => ({
         name: skill.name,
         description: skill.description || skill.name,
       })),
-    readSkill: (cwd, name) => readSkillBody(cwd, name),
+    readSkill: (cwd, name, conversationId) => conversationId && getConversation(conversationId)?.scope === 'standalone'
+      ? findEffectiveSkill(cwd, conversationId, name).then(skill => skill?.body ?? null)
+      : readSkillBody(cwd, name),
     getConversationContext: (conversationId, signal) => {
       if (signal?.aborted) throw new Error('session-ended')
       if (!getConversation(conversationId)) throw new Error('invalid-conversation')

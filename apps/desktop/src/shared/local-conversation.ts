@@ -125,6 +125,7 @@ export interface LocalConversationPreview {
 }
 
 export interface LocalConversationRecord {
+  scope: 'project'
   id: string
   workspaceId: string
   name: string

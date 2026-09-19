@@ -45,6 +45,9 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
 
 ## Capabilities
 
+- **Standalone chats:** start a conversation from **Chats → New chat** without
+  adding a project, choosing a folder, or creating a Git repository. See
+  [desktop chats](docs/chat-context.md#chats-and-projects).
 - **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
   GitHub Copilot, Cursor, Grok, and ChatGPT Web integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,

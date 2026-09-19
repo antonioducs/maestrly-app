@@ -1,4 +1,5 @@
 import { getConversation } from './store'
+import { requireProjectConversation } from '../shared/conversation-scope'
 import { getToplevel, getDefaultBranch, getDiff, isGitRepo } from './git-service'
 import { GhCommandError, runGhCommand } from './gh-command'
 
@@ -122,6 +123,7 @@ async function localDiff(cwd: string): Promise<string> {
  */
 export async function getReviewData(convId: string): Promise<MultiReviewData> {
   const conv = getConversation(convId)
+  if (conv) requireProjectConversation(conv)
   if (conv?.isMulti && conv.repos?.length) {
     const repos = await Promise.all(
       conv.repos.map(async (r) => ({

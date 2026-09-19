@@ -1,3 +1,4 @@
+import { removeStandaloneConversationDirectory } from '../standalone-conversation-service'
 import { promises as fsp } from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
@@ -94,6 +95,16 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
   if (!cursorWiped) assertComplete('Local data cleanup was incomplete.')
   for (const account of accounts) await attempt(() => removeSubscriptionAccount(account.id))
 
+  // Validate and remove managed chat directories before rows, preserving identity on failure.
+  const standalone = listAllConversations().filter((conversation) => conversation.scope === 'standalone')
+  if (standalone.length) assertComplete('Local data cleanup was incomplete.')
+  for (const conversation of standalone) {
+    if (conversation.scope === 'standalone') {
+      await attempt(() => removeStandaloneConversationDirectory(conversation))
+    }
+  }
+  if (standalone.length) assertComplete('Local data cleanup was incomplete.')
+
   // Remove cross-workspace conversation references before workspace owners, in one transaction.
   // On a database failure retain settings and sidecars so the surviving rows remain usable.
   let databaseCleared = false
@@ -116,7 +127,13 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
   if (!databaseCleared) assertComplete('Local data cleanup was incomplete.')
 
   // Fixed app-owned roots include orphaned sidecars. Never follow workspace/repository paths from the DB.
-  for (const directory of ['workspace-data', 'chat-generated-images', 'chat-attachment-images', 'chat-tool-output']) {
+  for (const directory of [
+    'standalone-chats',
+    'workspace-data',
+    'chat-generated-images',
+    'chat-attachment-images',
+    'chat-tool-output',
+  ]) {
     await attempt(() => fsp.rm(path.join(app.getPath('userData'), directory), { recursive: true, force: true }))
   }
   assertComplete('Local data cleanup was incomplete.')

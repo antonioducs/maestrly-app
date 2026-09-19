@@ -74,6 +74,7 @@ function makeConversation(operation: PendingOperation): Conversation & LocalConv
   const now = Date.now()
   return {
     id: randomUUID(),
+    scope: 'project',
     workspaceId: operation.input.workspaceId,
     name: operation.input.name || operation.git.target.branch,
     branch: operation.git.target.branch,

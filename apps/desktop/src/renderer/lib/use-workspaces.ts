@@ -1,6 +1,7 @@
 /** Manage local workspace and conversation mutations through named preload operations.
  * Reconcile persisted state after mutations while preserving mounted conversations and drawer state. */
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useStandaloneChats } from './use-standalone-chats'
 import { i18n } from '@/lib/i18n'
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../preload'
 
@@ -20,6 +21,8 @@ function reorderByIds<T extends { id: string }>(list: T[], ids: string[]): T[] {
 export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseWorkspacesParams) {
   const [workspaces, setWorkspaces] = useState<WorkspaceWithConversations[]>([])
 
+  const standalone = useStandaloneChats()
+
   const [groups, setGroups] = useState<WorkspaceGroup[]>([])
   const [showArchived, setShowArchived] = useState(false)
 
@@ -30,12 +33,16 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
 
   const refreshWorkspaces = useCallback(
     async (includeArchived = showArchived) => {
-      const [list, gs] = await Promise.all([window.api.listWorkspaces(includeArchived), window.api.listGroups()])
+      const [list, gs] = await Promise.all([
+        window.api.listWorkspaces(includeArchived),
+        window.api.listGroups(),
+        standalone.refresh(includeArchived),
+      ])
       setWorkspaces(list)
       setGroups(gs)
       return list
     },
-    [showArchived]
+    [showArchived, standalone.refresh]
   )
 
   const reconcileWorkspace = useCallback(
@@ -92,6 +99,9 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
             conversations: w.conversations.map((c) => (c.id === conv.id ? { ...c, pinnedAt } : c)),
           }))
         )
+        standalone.setConversations((chats) =>
+          chats.map((chat) => (chat.id === conv.id ? { ...chat, pinnedAt } : chat))
+        )
         setActive((current) => (current?.id === conv.id ? { ...current, pinnedAt } : current))
       } catch (e) {
         await refreshWorkspaces()
@@ -104,15 +114,24 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
   const handleDelete = useCallback(
     async (conv: Conversation) => {
       const msg =
-        conv.mode === 'worktree'
-          ? i18n.t('ui:app.confirmDeleteConvWorktree', { name: conv.name, cwd: conv.cwd, branch: conv.branch })
-          : i18n.t('ui:app.confirmDeleteConvBranch', { name: conv.name, branch: conv.branch })
+        conv.scope === 'standalone'
+          ? i18n.t('ui:app.confirmDeleteChat', { name: conv.name })
+          : conv.mode === 'worktree'
+            ? i18n.t('ui:app.confirmDeleteConvWorktree', { name: conv.name, cwd: conv.cwd, branch: conv.branch })
+            : i18n.t('ui:app.confirmDeleteConvBranch', { name: conv.name, branch: conv.branch })
       if (!confirm(msg)) return
 
       if (active?.id === conv.id) setActive(null)
       forgetConvDrawerState(conv.id)
       setWorkspaces((wss) => wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => c.id !== conv.id) })))
-      window.api.deleteConversation(conv.id).finally(() => refreshWorkspaces())
+      standalone.setConversations((chats) => chats.filter((chat) => chat.id !== conv.id))
+      try {
+        await window.api.deleteConversation(conv.id)
+      } catch (error) {
+        alert(String(error))
+      } finally {
+        await refreshWorkspaces()
+      }
     },
     [active, refreshWorkspaces, forgetConvDrawerState]
   )
@@ -212,6 +231,16 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
 
   return {
     workspaces,
+    standaloneConversations: standalone.conversations,
+    standaloneArchivedCount: standalone.archivedCount,
+    handleReorderStandaloneConversations: async (ids: string[]) => {
+      standalone.setConversations((chats) => reorderByIds(chats, ids))
+      try {
+        await window.api.reorderStandaloneConversations(ids)
+      } catch {
+        await refreshWorkspaces()
+      }
+    },
     groups,
     showArchived,
     setShowArchived,

@@ -922,6 +922,7 @@ describe('runtime tool-image capability learning', () => {
     freshDb()
     insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
     insertConversation({
+      scope: 'project',
       id: 'c',
       workspaceId: 'w',
       name: 'C',
@@ -971,6 +972,25 @@ describe('runtime tool-image capability learning', () => {
 
   const enableInterpreter = () =>
     setImageInterpreter({ providerId: interpreterProviderId, modelId: 'vision-model', effort: 'high' })
+
+  it('standalone BYOK uses a general Ask harness without Git or workspace memory', async () => {
+    insertConversation({ id: 'standalone', scope: 'standalone', workspaceId: null, branch: null, mode: null,
+      experience: 'standard', cwd: '/private/chat', name: 'Chat', status: 'idle', createdAt: 1,
+      archived: 0, pinnedAt: null, lastActivityAt: 1, isMulti: 0 })
+    mocks.streamText.mockReturnValue(fullStream([]) as never)
+    await runChat({ conversationId: 'standalone', projectId: null, cwd: '/private/chat', modeOverride: 'ask',
+      selection: { providerId: 'openai', modelId: 'gpt-test' },
+      broker: { assert: async () => {} } as unknown as PermissionBroker,
+      questionBroker: {} as unknown as QuestionBroker, emit: () => {}, signal: new AbortController().signal,
+      assistantMessageId: 'standalone-answer', assistantCreatedAt: 1000, responseStartedAt: 1000 })
+    const request = mocks.streamText.mock.calls[0]?.[0] as { system: string; tools: Record<string, unknown> }
+    expect(request.system).toContain('general assistant')
+    expect(request.system).not.toContain('Git branch:')
+    expect(request.system).not.toContain('# Durable project memory')
+    expect(request.tools).not.toHaveProperty('bash')
+    expect(request.tools).not.toHaveProperty('write')
+    expect(request.tools).not.toHaveProperty('edit')
+  })
 
   it('BYOK reviewer exposes only the exact internal read-only tools and skips MCP/app surfaces', async () => {
     mocks.streamText.mockReturnValue(fullStream([]) as never)

@@ -1,3 +1,4 @@
+import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import type { WebContents } from 'electron'
 import { eventKey, type KeyEventLike } from '../shared/shortcuts'
 import { getConversation } from './store'
@@ -30,7 +31,15 @@ export function attachTerminalHotkeyCapture(wc: WebContents, convId: string): vo
     event.preventDefault()
     if (action === 'create') {
       const conv = getConversation(convId)
-      if (conv) createShellTerminal(convId, conv.cwd)
+      if (conv?.scope === 'standalone') {
+        void validateStandaloneConversationDirectory(conv)
+          .then((cwd) => {
+            createShellTerminal(convId, cwd)
+          })
+          .catch((error) => {
+            console.warn('[terminal] Cannot open standalone directory:', error)
+          })
+      } else if (conv) createShellTerminal(convId, conv.cwd)
       return
     }
 

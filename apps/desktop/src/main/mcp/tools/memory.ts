@@ -22,8 +22,12 @@ const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
 
 export function registerMemoryTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
+  if (getConversation(convId)?.scope === 'standalone') return
   const conversation = () => getConversation(convId)
-  const workspaceId = () => conversation()?.workspaceId
+  const workspaceId = () => {
+    const conv = conversation()
+    return conv?.scope === 'project' ? conv.workspaceId : undefined
+  }
   const enabledWorkspace = () => {
     const id = workspaceId()
     if (!id) return { error: err(t('errors.convWsNotFound')) }

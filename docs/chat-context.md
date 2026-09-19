@@ -1,5 +1,29 @@
 # Context usage and compaction
 
+## Chats and projects
+
+Use **Chats → New chat** for a general conversation, explanations, or work with
+attachments. A project is not required. Projects keep their existing repository,
+branch and worktree workflows; standalone chats do not join a project or inherit
+its instructions, memory, Kanban links or saved permissions.
+
+New standalone chats start in Standard with Ask mode and Ask permissions. Saved
+“always allow” decisions belong to that chat alone. Agent, Plan and Design can
+use their usual generic capabilities under the selected permission policy.
+Maestro, Git review, branch operations and project-memory tools require a project.
+Browser, MCPs and other optional tools retain their existing enablement settings.
+Online research requires an available search tool; `webfetch` reads a supplied
+URL and does not provide a general search engine.
+
+Each chat stores working files in `<userData>/standalone-chats/<conversationId>`.
+This managed directory is an execution location, not an operating-system sandbox.
+History, model selection and preferences remain attached to the conversation ID.
+Archiving preserves history and files for restoration. Deleting removes that
+chat's managed files and saved permissions; deleting a project does not delete
+standalone chats. Back up the application profile to preserve these files.
+
+## Context meter
+
 The context meter shows how much of the model's working context is occupied.
 For Codex (including Astra) and Claude subscriptions, it updates as the runtime
 reports new samples, grouping updates within one second. It does not count every

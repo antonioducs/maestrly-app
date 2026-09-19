@@ -81,8 +81,10 @@ export const BUILTIN_AGENTS: ChatAgent[] = [
 
 function agentDirs(cwd: string, home: string): { dir: string; label: string }[] {
   const list = [
-    { dir: path.join(cwd, '.claude/agents'), label: '.claude/agents' },
-    { dir: path.join(cwd, '.agents/agents'), label: '.agents/agents' },
+    ...(cwd ? [
+      { dir: path.join(cwd, '.claude/agents'), label: '.claude/agents' },
+      { dir: path.join(cwd, '.agents/agents'), label: '.agents/agents' },
+    ] : []),
     { dir: path.join(home, '.claude/agents'), label: '~/.claude/agents' },
     { dir: path.join(home, '.agents/agents'), label: '~/.agents/agents' },
   ]
@@ -107,7 +109,6 @@ function parseFrontmatter(text: string): { fm: Record<string, string>; body: str
 
 /** Lists project + global subagents. .md files; accepts symlinks. Deduplicates by name (project wins). */
 export async function listAgents(cwd: string, home: string = os.homedir()): Promise<ChatAgent[]> {
-  if (!cwd) return []
   const out: ChatAgent[] = []
   const seen = new Set<string>()
   for (const { dir, label } of agentDirs(cwd, home)) {

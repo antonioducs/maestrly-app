@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import { createStandaloneConversation } from './standalone-conversation-service'
 import { publicCreateConversationSchema } from '../shared/local-conversation'
 import type { ConversationExperience } from '../shared/conversation-experience'
 import { isFloatTab } from '../shared/tool-tabs'
@@ -14,6 +16,8 @@ import {
   countOtherActiveConversationsInCwd,
   getConversation,
   listConversations,
+  listStandaloneConversations,
+  setStandaloneConversationOrder,
   patchConvUiPrefs,
   setConversationOrder,
   setConversationPinned,
@@ -39,6 +43,13 @@ function assertReviewLoopMutationAllowed(conversationId: string): void {
 }
 
 export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpcDeps): void {
+  reg.mhandle('conversation:create-standalone', (_e, payload: unknown) => createStandaloneConversation(payload))
+  reg.handle('conversation:list-standalone', (_e, includeArchived: unknown = false) =>
+    listStandaloneConversations(z.boolean().parse(includeArchived))
+  )
+  reg.mhandle('conversation:reorder-standalone', (_e, ids: unknown) =>
+    setStandaloneConversationOrder(z.array(z.string().uuid()).parse(ids))
+  )
   reg.mhandle('conversation:create', (_e, payload: unknown) => {
     const parsed = publicCreateConversationSchema.safeParse(payload)
     if (!parsed.success) throw new Error('Invalid payload for creating a worktree conversation.')

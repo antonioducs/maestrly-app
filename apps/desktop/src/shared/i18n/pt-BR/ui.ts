@@ -138,8 +138,7 @@ export default {
     descNamed: 'A branch base usada para criar novas conversas em “{{name}}”.',
     label: 'Branch padrão',
     placeholder: 'ex.: main, stage, develop',
-    unknownWarning:
-      'Essa branch ainda não existe no repositório — crie-a antes de iniciar uma conversa a partir dela.',
+    unknownWarning: 'Essa branch ainda não existe no repositório — crie-a antes de iniciar uma conversa a partir dela.',
   },
 
   branchCombo: {
@@ -158,6 +157,8 @@ export default {
   },
 
   app: {
+    confirmDeleteChat: 'Excluir “{{name}}” e os arquivos do chat permanentemente?',
+    createChatFailed: 'Não foi possível criar o chat: {{error}}',
     loadingSession: 'Carregando sessão...',
     emptyState: 'Crie ou selecione uma conversa para começar.',
     toggleDrawer: 'Alternar gaveta ({{shortcut}})',
@@ -433,6 +434,9 @@ export default {
   },
 
   sidebar: {
+    chats: 'Chats',
+    newChat: 'Novo chat',
+    noChats: 'Nenhum chat ainda',
     rename: 'Renomear',
     archive: 'Arquivar',
     unarchive: 'Desarquivar',
@@ -601,8 +605,7 @@ export default {
     copyCommands: 'Copiar comandos',
     retryPreview: 'Preparar novamente',
     aiTool: 'Ferramenta de IA',
-    noCli:
-      'Nenhuma ferramenta de IA (CLI) instalada. Instale o Claude Code ou o Codex para criar uma conversa.',
+    noCli: 'Nenhuma ferramenta de IA (CLI) instalada. Instale o Claude Code ou o Codex para criar uma conversa.',
     openSettings: 'Abrir Configurações',
     creating: 'Criando…',
     createMulti: 'Criar ({{count}} repos)',
@@ -655,6 +658,7 @@ export default {
   },
 
   onboarding: {
+    standaloneHint: 'Comece um chat sem adicionar um projeto.',
     sampleRepo: 'meu-repositorio',
     headerTitle: 'Boas-vindas',
     skip: 'Pular',

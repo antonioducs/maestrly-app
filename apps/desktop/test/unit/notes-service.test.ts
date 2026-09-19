@@ -1,12 +1,21 @@
 /** Notes traversal protection belongs in safePageId so IPC and MCP callers share the same guard. Tests cover the pure rule and real temporary filesystem writes. */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
+import * as gitService from '../../src/main/git-service'
+import { insertConversation } from '../../src/main/store'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
-import { safePageId, writePage, readPage, listPages, disposeNotes } from '../../src/main/notes/notes-service'
+import {
+  safePageId,
+  writePage,
+  readPage,
+  listPages,
+  disposeNotes,
+  mergeConvIntoProject,
+} from '../../src/main/notes/notes-service'
 
 describe('safePageId — path traversal guard (#264)', () => {
   it('rejects traversal, separators, and dangerous names, including encoded input', () => {
@@ -55,5 +64,44 @@ describe('writePage/readPage keep traversal page IDs inside the notebook (#264)'
     await writePage('conv', conv.id, pageId, 'valid content')
     expect(await readPage('conv', conv.id, pageId)).toBe('valid content')
     expect(existsSync(path.join(cwd, '.agents', 'notes', `${pageId}.md`))).toBe(true)
+  })
+})
+
+describe('standalone conversation notebook', () => {
+  let cwd: string
+  beforeEach(() => {
+    freshDb()
+    cwd = mkdtempSync(path.join(os.tmpdir(), 'standalone-notes-'))
+  })
+  afterEach(() => {
+    disposeNotes()
+    rmSync(cwd, { recursive: true, force: true })
+    closeDb()
+  })
+  it('persists notes without a workspace or repository and rejects promotion', async () => {
+    insertConversation({
+      id: 'standalone-notes',
+      scope: 'standalone',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      isMulti: 0,
+      cwd,
+      name: 'Chat',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+    })
+    const exclude = vi.spyOn(gitService, 'excludeFromGitInfo')
+    const pages = await listPages('conv', 'standalone-notes')
+    await writePage('conv', 'standalone-notes', pages[0]!.id, 'Personal notes')
+    expect(await readPage('conv', 'standalone-notes', pages[0]!.id)).toBe('Personal notes')
+    expect(existsSync(path.join(cwd, '.git'))).toBe(false)
+    await expect(mergeConvIntoProject('standalone-notes')).rejects.toThrow('project-required')
+    expect(exclude).not.toHaveBeenCalled()
+    exclude.mockRestore()
   })
 })

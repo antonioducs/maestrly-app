@@ -1,10 +1,8 @@
+import type { CreateStandaloneConversationArgs } from '../shared/standalone-conversation'
+import type { StandaloneConversation } from '../shared/conversation'
 import { ipcRenderer } from 'electron'
 import type { ConversationBranchInfo } from '../shared/conversation-branch'
-import type { FloatTab } from '../shared/tool-tabs'
-import type { ChatGptWebCapabilities } from '../shared/chat'
 import type { ConversationExperience } from '../shared/conversation-experience'
-import type { MaestroConfigV1 } from '../shared/maestro'
-import type { FloatingBounds } from './api-drawer'
 import type {
   LocalConversationConfirmInput,
   LocalConversationConfirmResult,
@@ -27,52 +25,17 @@ export interface WorkspaceGroup {
   collapsed: boolean
 }
 
-export interface ConvRepo {
-  workspaceId: string
-  repoTop: string
-  branch: string
-  base: string
-  worktreePath: string
-  linkName: string
-}
-
-export interface ConvUiPrefs {
-  mainTabOrder?: string[]
-  openTabs?: string[]
-  activeTab?: string
-  browserTabs?: { url: string; title?: string }[]
-  browserActive?: number
-  chatGptWebCapabilities?: ChatGptWebCapabilities
-  chatGptWebPairedCapabilityFingerprint?: string
-
-  floating?: Partial<Record<FloatTab, FloatingBounds>>
-  maestro?: { config?: MaestroConfigV1; projectScoped?: boolean }
-}
-
-export interface Conversation {
-  id: string
-  workspaceId: string
-  name: string
-  branch: string
-  mode: 'worktree' | 'local'
-  experience: ConversationExperience
-  cwd: string
-  status: 'idle' | 'working' | 'ready' | 'waiting' | 'error'
-  createdAt: number
-  archived: number
-
-  pinnedAt: number | null
-  lastActivityAt: number
-
-  isMulti: number
-
-  repos?: ConvRepo[]
-
-  uiPrefs?: ConvUiPrefs
-}
+export type {
+  Conversation,
+  ProjectConversation,
+  StandaloneConversation,
+  ConvRepo,
+  ConvUiPrefs,
+} from '../shared/conversation'
+import type { Conversation, ProjectConversation } from '../shared/conversation'
 
 export interface WorkspaceWithConversations extends Workspace {
-  conversations: Conversation[]
+  conversations: ProjectConversation[]
   archivedCount: number
 
   groupId: string | null
@@ -114,6 +77,12 @@ export interface CreateSiblingConversationArgs {
 }
 
 export const workspaceApi = {
+  createStandaloneConversation: (args: CreateStandaloneConversationArgs = {}): Promise<StandaloneConversation> =>
+    ipcRenderer.invoke('conversation:create-standalone', args),
+  listStandaloneConversations: (includeArchived = false): Promise<StandaloneConversation[]> =>
+    ipcRenderer.invoke('conversation:list-standalone', includeArchived),
+  reorderStandaloneConversations: (ids: string[]): Promise<void> =>
+    ipcRenderer.invoke('conversation:reorder-standalone', ids),
   // --- Workspaces and conversations ---
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('workspace:pick'),
   addWorkspace: (dir: string): Promise<Workspace> => ipcRenderer.invoke('workspace:add', dir),
@@ -126,17 +95,17 @@ export const workspaceApi = {
 
   setWorkspaceDefaultBranch: (workspaceId: string, branch: string): Promise<void> =>
     ipcRenderer.invoke('workspace:set-default-branch', workspaceId, branch),
-  createConversation: (args: CreateConversationArgs): Promise<Conversation> =>
+  createConversation: (args: CreateConversationArgs): Promise<ProjectConversation> =>
     ipcRenderer.invoke('conversation:create', args),
   prepareLocalConversation: (input: LocalConversationPrepareInput): Promise<LocalConversationPrepareResult> =>
     ipcRenderer.invoke('conversation:local-prepare', input),
   confirmLocalConversation: (input: LocalConversationConfirmInput): Promise<LocalConversationConfirmResult> =>
     ipcRenderer.invoke('conversation:local-confirm', input),
 
-  createSiblingConversation: (args: CreateSiblingConversationArgs): Promise<Conversation> =>
+  createSiblingConversation: (args: CreateSiblingConversationArgs): Promise<ProjectConversation> =>
     ipcRenderer.invoke('conversation:createSibling', args),
 
-  listConversations: (workspaceId: string): Promise<Conversation[]> =>
+  listConversations: (workspaceId: string): Promise<ProjectConversation[]> =>
     ipcRenderer.invoke('conversation:list', workspaceId),
 
   onConversationOpen: (callback: (payload: { conversation: Conversation; focus: boolean }) => void): (() => void) => {

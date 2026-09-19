@@ -67,6 +67,13 @@ export async function exportOwnedAssets(omissions: string[]): Promise<ExportedAs
   for (const root of ['chat-generated-images', 'chat-attachment-images']) {
     await children(root, async (id) => visit(`${root}/${id}`, { kind: 'conversation', id }))
   }
+  await children('standalone-chats', async (id) => {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      omissions.push(`Could not export unrecognized standalone chat directory ${id}.`)
+      return
+    }
+    await visit(`standalone-chats/${id}`, { kind: 'conversation', id })
+  })
   await visit('chat-tool-output', { kind: 'app' }, true)
   await children('workspace-data', async (id) => {
     // Check the intermediate workspace and notebook directories before descending into assets.

@@ -49,3 +49,18 @@ export function migrationWorktreeDir(workspaceId: string, branch: string, operat
 export function workspaceDataDir(workspaceId: string): string {
   return workspaceDataRelPath(app.getPath('userData'), workspaceId)
 }
+
+/** Private conversation directory; callers cannot supply a path segment. */
+export function standaloneConversationRelPath(base: string, id: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw new Error('Invalid standalone conversation id.')
+  }
+  return path.join(base, 'standalone-chats', id)
+}
+
+export function standaloneConversationDir(id: string): string {
+  return standaloneConversationRelPath(app.getPath('userData'), id)
+}
+
+export const standaloneChatRelPath = standaloneConversationRelPath
+export const standaloneChatDir = standaloneConversationDir

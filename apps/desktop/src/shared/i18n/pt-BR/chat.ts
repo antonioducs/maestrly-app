@@ -546,6 +546,7 @@ export default {
   permPrompt: {
     allowOnce: 'Permitir uma vez',
     allowAlways: 'Sempre permitir',
+    allowAlwaysChat: 'Sempre permitir neste chat',
     deny: 'Negar',
   },
   meter: {

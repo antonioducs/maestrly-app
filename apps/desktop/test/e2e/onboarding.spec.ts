@@ -20,6 +20,8 @@ const mainEntry = path.join(repoRoot, 'out', 'main', 'index.js')
 
 interface Api {
   getOnboardingDone(): Promise<boolean>
+  listWorkspaces(): Promise<{ id: string }[]>
+  listStandaloneConversations(): Promise<{ id: string; workspaceId: string | null }[]>
 }
 declare const window: { api: Api }
 
@@ -43,6 +45,8 @@ function launch(extraEnv: Record<string, string> = {}): Promise<ElectronApplicat
       AGENTS_INSTANCE: instanceId,
       AGENTS_USERDATA: userDataDir,
       AGENTS_LOCALE: 'en', // i18n #114: pin English so assertions do not depend on the host locale
+      OPENAI_API_KEY: '',
+      ANTHROPIC_API_KEY: '',
       ELECTRON_RENDERER_URL: '', // force loadFile(out/renderer) instead of the dev server
       ...extraEnv,
     },
@@ -68,6 +72,14 @@ test('first-run: a clean store shows the tour, Skip persists, relaunch hides it,
   await expect(win.getByText('Welcome to Maestrly')).toHaveCount(0)
   await expect.poll(() => win.evaluate(() => window.api.getOnboardingDone())).toBe(true)
 
+  // First use must not require adding a project or picking a folder.
+  expect(await win.evaluate(() => window.api.listWorkspaces())).toEqual([])
+  await win.getByRole('button', { name: 'New chat', exact: true }).first().click()
+  await expect.poll(() => win.evaluate(async () => (await window.api.listStandaloneConversations()).length)).toBe(1)
+  const [chat] = await win.evaluate(() => window.api.listStandaloneConversations())
+  expect(chat.workspaceId).toBeNull()
+  expect(await win.evaluate(() => window.api.listWorkspaces())).toEqual([])
+
   await app.close()
 
   // ---- Session 2: relaunch with the same userData keeps the tour hidden ----
@@ -77,6 +89,11 @@ test('first-run: a clean store shows the tour, Skip persists, relaunch hides it,
 
   expect(await win2.evaluate(() => window.api.getOnboardingDone())).toBe(true)
   await expect(win2.getByText('Welcome to Maestrly')).toHaveCount(0)
+
+  expect(await win2.evaluate(() => window.api.listWorkspaces())).toEqual([])
+  expect(await win2.evaluate(() => window.api.listStandaloneConversations())).toEqual([
+    expect.objectContaining({ id: chat.id, workspaceId: null }),
+  ])
 
   // (c) Help reopens the tour even when the completion flag is set.
   await win2.getByRole('button', { name: 'Help' }).click()

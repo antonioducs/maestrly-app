@@ -22,7 +22,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { generateText } from 'ai'
 import { buildProviderOptions, type ChatImageInterpreter, type ChatMessage, type MessagePart } from '../../shared/chat'
-import { getAppSetting, setAppSetting } from '../store'
+import { getAppSetting, getConversation, setAppSetting } from '../store'
 import {
   getProvider,
   getProviderKind,
@@ -609,6 +609,7 @@ async function describeImage(
         }),
       operation: async (target, operationSignal) =>
         summarizeWithCodexRuntime({
+          conversationScope: getConversation(conversationId)?.scope,
           client: target.client,
           cwd,
           modelId: target.runtimeModelId,

@@ -45,6 +45,8 @@ vi.mock('../../src/main/store', () => ({
   getConversation: vi.fn(),
   getLocale: vi.fn(),
   listConversations: vi.fn(),
+  listStandaloneConversations: vi.fn(),
+  setStandaloneConversationOrder: vi.fn(),
   patchConvUiPrefs: vi.fn(),
   setConversationOrder: vi.fn(),
   setConversationPinned: vi.fn(),
@@ -63,7 +65,11 @@ vi.mock('../../src/main/workspace-service', () => ({
 }))
 
 import { registerConversationIpc } from '../../src/main/conversation-ipc'
-import { setConversationPinned } from '../../src/main/store'
+import {
+  listStandaloneConversations,
+  setStandaloneConversationOrder,
+  setConversationPinned,
+} from '../../src/main/store'
 
 describe('registerConversationIpc', () => {
   beforeEach(() => {
@@ -75,18 +81,36 @@ describe('registerConversationIpc', () => {
 
     registerConversationIpc(reg, { stopChat: h.stopChat })
 
-    expect([...handles.keys()].sort()).toEqual(['conversation:branch-info', 'conversation:list'])
+    expect([...handles.keys()].sort()).toEqual([
+      'conversation:branch-info',
+      'conversation:list',
+      'conversation:list-standalone',
+    ])
     expect([...mhandles.keys()].sort()).toEqual([
       'conversation:archive',
       'conversation:create',
+      'conversation:create-standalone',
       'conversation:createSibling',
       'conversation:delete',
       'conversation:pin',
       'conversation:rename',
       'conversation:reorder',
+      'conversation:reorder-standalone',
     ])
     expect([...ons.keys()]).toEqual([])
     expect([...mons.keys()]).toEqual(['conv:set-main-tab-order', 'conv:set-open-tabs'])
+  })
+
+  it('validates standalone listing and ordering payloads', () => {
+    const { reg, handles, mhandles } = createTestRegistrar()
+    registerConversationIpc(reg, { stopChat: h.stopChat })
+    handles.get('conversation:list-standalone')!({} as never, true)
+    expect(listStandaloneConversations).toHaveBeenCalledWith(true)
+    expect(() => handles.get('conversation:list-standalone')!({} as never, 'true')).toThrow()
+    const ids = ['c5d5d8ee-1bd2-4fd3-a17c-2e36d3751a6e']
+    mhandles.get('conversation:reorder-standalone')!({} as never, ids)
+    expect(setStandaloneConversationOrder).toHaveBeenCalledWith(ids)
+    expect(() => mhandles.get('conversation:reorder-standalone')!({} as never, ['../unsafe'])).toThrow()
   })
 
   it('accepts only the public worktree subset and rejects local mode and internal fields', async () => {
@@ -145,5 +169,4 @@ describe('registerConversationIpc', () => {
     expect(h.stopChat).toHaveBeenCalledWith('conv-chat')
     expect(h.stopChat.mock.invocationCallOrder[0]).toBeLessThan(h.setConversationArchived.mock.invocationCallOrder[0])
   })
-
 })

@@ -1,3 +1,4 @@
+import { validateStandaloneConversationDirectory } from '../../standalone-conversation-service'
 import os from 'node:os'
 import { z } from 'zod'
 import headless from '@xterm/headless'
@@ -84,8 +85,14 @@ export function registerTerminalTools(ctx: McpToolContext): void {
       },
     },
     async ({ cwd, cols, rows }) => {
-      const create = () => {
-        const dir = cwd || getConversation(convId)?.cwd || os.homedir() // use os.homedir() because Windows may lack HOME
+      const create = async () => {
+        const conv = getConversation(convId)
+        let dir = cwd || conv?.cwd || os.homedir() // use os.homedir() because Windows may lack HOME
+        if (conv?.scope === 'standalone') {
+          const managedCwd = await validateStandaloneConversationDirectory(conv)
+          if (cwd && cwd !== managedCwd) return err('Unsafe standalone chat directory.')
+          dir = managedCwd
+        }
         const result = workerScope
           ? createShellTerminal(convId, dir, cols, rows, {
               ownerScopeId: workerScope.id,

@@ -5,11 +5,17 @@ import { tMain } from './i18n'
 import type { IpcRegistrar } from './ipc-registrar'
 import { getOpenTargets, openExternal, type OpenTarget } from './open-external'
 import { getConversation, getWorkspace } from './store'
+import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 
 export function registerAppIpc(reg: IpcRegistrar): void {
   reg.handle('open:targets', () => getOpenTargets())
   reg.mhandle('open:external', async (_e, scope: 'conv' | 'workspace', id: string, target: OpenTarget) => {
-    const dir = scope === 'conv' ? getConversation(id)?.cwd : getWorkspace(id)?.path
+    const conversation = scope === 'conv' ? getConversation(id) : undefined
+    const dir = scope === 'conv'
+      ? conversation?.scope === 'standalone'
+        ? await validateStandaloneConversationDirectory(conversation)
+        : conversation?.cwd
+      : getWorkspace(id)?.path
     const res = dir
       ? await openExternal(dir, target)
       : { ok: false, error: tMain('main')('dialog.convWorkspaceNotFound') }

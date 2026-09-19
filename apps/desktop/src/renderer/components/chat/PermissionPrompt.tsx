@@ -3,11 +3,12 @@ import { AlertTriangle } from 'lucide-react'
 import type { ChatPermissionRequest } from '../../../shared/chat'
 
 interface Props {
+  scope?: 'project' | 'standalone'
   request: ChatPermissionRequest
   onDecide: (reply: 'once' | 'always' | 'reject') => void
 }
 
-export function PermissionPrompt({ request, onDecide }: Props) {
+export function PermissionPrompt({ request, onDecide, scope = 'project' }: Props) {
   const { t } = useTranslation('chat')
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
@@ -33,7 +34,7 @@ export function PermissionPrompt({ request, onDecide }: Props) {
                   onClick={() => onDecide('always')}
                   className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[12px] font-medium text-amber-200 hover:bg-amber-500/15"
                 >
-                  {t('permPrompt.allowAlways')}
+                  {t(scope === 'standalone' ? 'permPrompt.allowAlwaysChat' : 'permPrompt.allowAlways')}
                 </button>
               )}
               <button

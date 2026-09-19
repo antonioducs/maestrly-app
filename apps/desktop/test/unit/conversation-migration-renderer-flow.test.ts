@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Conversation, MigrationPreview } from '../../src/preload'
+import type { ProjectConversation, MigrationPreview } from '../../src/preload'
 import {
   canExecuteConversationMigration,
   conversationMigrationDialogReducer,
@@ -9,8 +9,9 @@ import {
   missingSensitiveConfirmations,
 } from '../../src/renderer/components/conversation-migration/flow'
 
-function conversation(patch: Partial<Conversation> = {}): Conversation {
+function conversation(patch: Partial<ProjectConversation> = {}): ProjectConversation {
   return {
+    scope: 'project',
     id: 'conversation',
     workspaceId: 'workspace',
     name: 'Conversation',

@@ -82,6 +82,7 @@ export class CodexSubagentQuotaError extends Error {
 export interface RunCodexSubagentArgs {
   client: CodexAppServerClient
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   profile: SubagentExecutionSnapshotV1
   definition: ChatAgent
   signal: AbortSignal
@@ -437,7 +438,9 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
         cwd: args.cwd,
         approvalPolicy: args.readOnly ? 'untrusted' : args.approvalPolicy,
         sandbox: 'read-only',
+        ...(args.conversationScope === 'standalone' ? { baseInstructions: 'You are a general assistant running a delegated task in a standalone conversation. Use only the tools supplied under inherited permissions. No project or repository context is available.' } : {}),
         config: {
+          ...(args.conversationScope === 'standalone' ? { project_doc_max_bytes: 0, 'features.skill_search': false, 'skills.include_instructions': false, 'features.skill_mcp_dependency_install': false } : {}),
           // Flags cover only legacy multi-agent; the effective gate is the app-server process
           // `model_catalog_json` flag (manager.ts). Only the per-thread hint inherited by the child remains here.
           'features.multi_agent': false,
@@ -452,7 +455,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
         developerInstructions: [
           args.definition.prompt,
           `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-          MEMORY_TOOL_GUIDANCE,
+          args.conversationScope === 'standalone' ? 'This is a standalone conversation without project or workspace memory.' : MEMORY_TOOL_GUIDANCE,
           autonomousPolicy('')?'This is unattended work. Never ask for a plan approval or an answer from a person. Resolve ordinary technical choices; return concrete blockers to the parent. Use only the provided Maestrly tools under the inherited permissions.':'',
           args.readOnly
             ? 'This delegated run is strictly read-only. Do not modify files, execute commands, or spawn subagents.'

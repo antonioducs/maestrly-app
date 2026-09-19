@@ -16,8 +16,12 @@ const h = vi.hoisted(() => ({
   listShellTerminals: vi.fn(() => []),
   focusShellTerminal: vi.fn(),
   getConversation: vi.fn(),
+  validateStandaloneConversationDirectory: vi.fn(),
 }))
 
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  validateStandaloneConversationDirectory: h.validateStandaloneConversationDirectory,
+}))
 vi.mock('../../src/main/pty-manager', () => h)
 vi.mock('../../src/main/terminal-manager', () => ({
   createShellTerminal: h.createShellTerminal,
@@ -31,7 +35,7 @@ vi.mock('../../src/main/store', () => ({ getConversation: h.getConversation }))
 
 import { registerTerminalTools } from '../../src/main/mcp/tools/terminal'
 
-type Handler = (input: { id: string; command: string; timeout_ms?: number }) => Promise<unknown>
+type Handler = (input: { id?: string; command?: string; timeout_ms?: number; cwd?: string }) => Promise<unknown>
 
 describe('terminal_run output polling', () => {
   const handlers: Record<string, Handler> = {}
@@ -57,6 +61,20 @@ describe('terminal_run output polling', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('validates standalone terminal cwd and rejects a forged override', async () => {
+    h.getConversation.mockReturnValue({ scope: 'standalone', cwd: '/managed/chat' })
+    h.validateStandaloneConversationDirectory.mockResolvedValue('/managed/chat')
+    h.createShellTerminal.mockReturnValue({ ok: true, id: 'term:conv-1:1' })
+    expect(await handlers.terminal_create({ cwd: '/forged' })).toMatchObject({ isError: true })
+    expect(h.createShellTerminal).not.toHaveBeenCalled()
+    await handlers.terminal_create({})
+    expect(h.createShellTerminal).toHaveBeenCalledWith('conv-1', '/managed/chat', undefined, undefined)
+    h.createShellTerminal.mockClear()
+    h.validateStandaloneConversationDirectory.mockRejectedValue(new Error('Unsafe standalone chat directory.'))
+    await expect(handlers.terminal_create({})).rejects.toThrow('Unsafe standalone')
+    expect(h.createShellTerminal).not.toHaveBeenCalled()
   })
 
   it('polls O(1) stats and returns the new tail when the ring was already full', async () => {

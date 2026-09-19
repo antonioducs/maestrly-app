@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { insertWorkspace, insertConversation, type Workspace, type Conversation } from '../../src/main/store'
+import { insertWorkspace, insertConversation, type Workspace } from '../../src/main/store'
+import type { ProjectConversation } from '../../src/shared/conversation'
 
 /** Factories persist through production helpers and require an open test database. */
 
@@ -21,9 +22,10 @@ export function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 }
 
 /** Insert a conversation with deterministic defaults for tests. */
-export function makeConversation(workspaceId: string, overrides: Partial<Conversation> = {}): Conversation {
+export function makeConversation(workspaceId: string, overrides: Partial<ProjectConversation> = {}): ProjectConversation {
   cwdSeq += 1
-  const conv: Conversation = {
+  const conv: ProjectConversation = {
+    scope: 'project',
     id: overrides.id ?? randomUUID(),
     workspaceId,
     name: overrides.name ?? `conv-${cwdSeq}`,

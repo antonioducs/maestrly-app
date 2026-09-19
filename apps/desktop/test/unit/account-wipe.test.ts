@@ -60,6 +60,7 @@ vi.mock('../../src/main/memory/index', () => ({
 }))
 
 import { addSubscriptionAccount, listSubscriptionAccounts } from '../../src/main/chat/catalog'
+import { createStandaloneConversation } from '../../src/main/standalone-conversation-service'
 import { workspaceDataDir } from '../../src/main/app-paths'
 import { resetLocalAppData } from '../../src/main/local-data/local-data-reset'
 import {
@@ -104,6 +105,29 @@ describe('resetLocalAppData', () => {
       'Local data cleanup was incomplete.'
     )
     expect(listSubscriptionAccounts().map((item) => item.id)).toContain(account.id)
+  })
+
+  it('removes standalone directories and orphaned chat files on reset', async () => {
+    const conversation = await createStandaloneConversation({})
+    const orphan = path.join(h.userData, 'standalone-chats', 'orphan')
+    mkdirSync(orphan)
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+    expect(existsSync(conversation.cwd)).toBe(false)
+    expect(existsSync(orphan)).toBe(false)
+    expect(listAllConversations()).toEqual([])
+  })
+
+  it('preserves standalone rows when their managed directory cannot be safely removed', async () => {
+    const conversation = await createStandaloneConversation({})
+    const outside = path.join(h.userData, 'outside')
+    mkdirSync(outside)
+    await fsp.rm(conversation.cwd, { recursive: true })
+    await fsp.symlink(outside, conversation.cwd)
+    await expect(resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })).rejects.toThrow(
+      'Local data cleanup was incomplete.'
+    )
+    expect(listAllConversations().map((c) => c.id)).toContain(conversation.id)
+    expect(existsSync(outside)).toBe(true)
   })
 
   it('finishes independent cleanup and rejects when an isolated runtime cannot be reset', async () => {

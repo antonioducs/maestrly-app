@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
 import { buildAppTools } from '../../src/main/chat/mcp'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
+import { insertConversation } from '../../src/main/store'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
 
@@ -114,9 +115,19 @@ const LINKED_BOARD_TOOL_NAMES = [
   'board_define_fixed_columns',
   'board_execution_events',
   'board_list_members',
-  'get_linked_kanban', 'board_card_events', 'board_update_comment', 'board_card_lifecycle',
-  'board_restore_description', 'board_create_board', 'board_update_board', 'board_manage_columns',
-  'board_list_boards', 'board_get_board', 'board_search_cards', 'board_card_history', 'board_create_card',
+  'get_linked_kanban',
+  'board_card_events',
+  'board_update_comment',
+  'board_card_lifecycle',
+  'board_restore_description',
+  'board_create_board',
+  'board_update_board',
+  'board_manage_columns',
+  'board_list_boards',
+  'board_get_board',
+  'board_search_cards',
+  'board_card_history',
+  'board_create_card',
   'board_comment',
   'board_create_subtask',
   'board_get_card',
@@ -270,6 +281,30 @@ describe('MCP app tools inventory', () => {
     convId = makeConversation(ws.id).id
   })
   afterEach(closeDb)
+
+  it('omits project tools from standalone sessions while retaining generic tools', async () => {
+    insertConversation({
+      id: 'standalone',
+      scope: 'standalone',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      isMulti: 0,
+      cwd: '/private/chat',
+      name: 'Chat',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+    })
+    const names = (await listToolInventory('standalone')).map((tool) => tool.name)
+    expect(names).toContain('notes_write_page')
+    expect(names).toContain('terminal_create')
+    expect(names).toContain('browser_navigate')
+    expect(names.some((name) => /^(project_notes_|memory_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
+  })
 
   it('keeps the registered tool names and input schema shapes stable', async () => {
     const shapes = await listToolInventory(convId)

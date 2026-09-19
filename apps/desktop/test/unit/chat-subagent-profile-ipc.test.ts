@@ -125,6 +125,7 @@ describe('subagent profile IPC', () => {
   it('toggles effective state without deleting conversation overrides', async () => {
     insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
     insertConversation({
+      scope: 'project',
       id: 'c',
       workspaceId: 'w',
       name: 'C',
@@ -434,6 +435,7 @@ describe('subagent profile IPC', () => {
     )
     insertWorkspace({ id: 'w', path: cwd, name: 'W', defaultBranch: 'main', addedAt: 1 })
     insertConversation({
+      scope: 'project',
       id: 'c',
       workspaceId: 'w',
       name: 'C',

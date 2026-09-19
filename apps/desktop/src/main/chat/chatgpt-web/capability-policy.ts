@@ -19,7 +19,8 @@ function validMcpScope(value: unknown): value is ChatGptWebCapabilityScope {
 /** Resolve persisted preferences against the current global MCP catalog. Disabled/removed servers fail closed. */
 export function resolveChatGptWebCapabilities(
   stored: ChatGptWebCapabilities | null | undefined,
-  servers: readonly McpServer[]
+  servers: readonly McpServer[],
+  scope: 'project' | 'standalone' = 'project'
 ): ChatGptWebCapabilities {
   const mcp: Record<string, ChatGptWebCapabilityScope> = {}
   for (const server of servers) {
@@ -27,11 +28,11 @@ export function resolveChatGptWebCapabilities(
     mcp[server.id] = server.enabled ? (validMcpScope(requested) ? requested : 'read') : 'off'
   }
   return {
-    kanban: stored?.kanban === 'off' || stored?.kanban === 'write' ? stored.kanban : 'read',
-    git: stored?.git === 'off' ? 'off' : 'read',
-    gh: stored?.gh === 'off' ? 'off' : 'read',
+    kanban: scope === 'standalone' ? 'off' : stored?.kanban === 'off' || stored?.kanban === 'write' ? stored.kanban : 'read',
+    git: scope === 'standalone' ? 'off' : stored?.git === 'off' ? 'off' : 'read',
+    gh: scope === 'standalone' ? 'off' : stored?.gh === 'off' ? 'off' : 'read',
     conversation: stored?.conversation === 'read' ? 'read' : 'off',
-    memory: stored?.memory === 'read' ? 'read' : 'off',
+    memory: scope === 'standalone' ? 'off' : stored?.memory === 'read' ? 'read' : 'off',
     browser: stored?.browser === 'inspect' || stored?.browser === 'interact' ? stored.browser : 'off',
     mcp,
   }
@@ -82,11 +83,13 @@ export function chatGptWebCapabilityFingerprint(
 export function chatGptWebCapabilitiesInfo(
   stored: ChatGptWebCapabilities | null | undefined,
   servers: readonly McpServer[],
-  editable: boolean
+  editable: boolean,
+  scope: 'project' | 'standalone' = 'project'
 ): ChatGptWebCapabilitiesInfo {
-  const capabilities = resolveChatGptWebCapabilities(stored, servers)
+  const capabilities = resolveChatGptWebCapabilities(stored, servers, scope)
   return {
     capabilities,
+    ...(scope === 'standalone' ? { conversationScope: scope } : {}),
     mcpServers: servers.map((server) => ({
       id: server.id,
       name: server.name,
@@ -94,7 +97,9 @@ export function chatGptWebCapabilitiesInfo(
       scope: capabilities.mcp[server.id] ?? 'off',
     })),
     editable,
-    fingerprint: chatGptWebCapabilityFingerprint(capabilities, servers),
+    fingerprint: scope === 'standalone'
+      ? createHash('sha256').update(JSON.stringify([scope, chatGptWebCapabilityFingerprint(capabilities, servers)])).digest('hex')
+      : chatGptWebCapabilityFingerprint(capabilities, servers),
   }
 }
 

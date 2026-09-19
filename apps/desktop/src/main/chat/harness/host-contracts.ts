@@ -73,9 +73,26 @@ export function hostAppToolsSection(appToolsEnabled: boolean, hasNotesTab: boole
 export interface MaestrlyBasePromptInput {
   harness: ResolvedHarness
   cwd: string
+  scope?: 'project' | 'standalone'
   appToolsEnabled: boolean
   mode: ChatBehavior
   hasNotesTab: boolean
+}
+
+/** Keep applicable profile behavior; project identity and automatic instruction discovery belong to the host. */
+export function standaloneProfileText(text: string | null | undefined): string {
+  return (text ?? '').split(/\n\s*\n/)
+    .filter((paragraph) => !/^\s*You are[^\n]*(?:coding|shared workspace)|AGENTS\.md|CLAUDE\.md|Memory Center|(?:project|workspace) memory/i.test(paragraph))
+    .map((paragraph) => paragraph.replace(/^# Working on the project$/m, '# Working on requested tasks'))
+    .join('\n\n')
+}
+
+function standaloneCapabilities(mode: ChatBehavior): string {
+  if (mode === 'maestro') throw new Error('project-required')
+  const restricted = 'Do NOT edit files or run commands: writes, shell execution and mutating external tools are unavailable. Use only the exposed read and safe-recording tools under their existing permissions.'
+  if (mode === 'ask') return `ASK MODE: answer ordinary questions directly. Use available tools when needed. ${restricted} If the requested task needs file changes or commands, explain that Agent mode is required.`
+  if (mode === 'plan') return `PLAN MODE: investigate the requested task with available tools as needed. ${restricted} Submit the final plan with review_plan. That tool ends the turn; approval starts implementation in a new turn.`
+  return `Use available tools for the requested task. Read relevant files before editing and verify changes in proportion to risk. Permission-sensitive actions remain governed by the selected permission policy.`
 }
 
 /**
@@ -83,6 +100,21 @@ export interface MaestrlyBasePromptInput {
  * actual toolset: models otherwise assume tools exist and emit calls the harness cannot serve.
  */
 export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string {
+  if (input.scope === 'standalone') {
+    return [
+      `You are a general assistant inside the Maestrly app. Reply in the user's language, in Markdown.
+This is a standalone conversation, with no project, repository or workspace memory. The private working directory is ${input.cwd}.
+This directory is an execution location, not an operating-system sandbox. Answer ordinary conversation without requiring file inspection, tests or commits. Profile guidance about code applies only when the user requests work on files or code.
+Do not discover project instructions in this directory or its ancestors, consult workspace memory, or infer a repository. Online research requires an actually available tool; webfetch reads URLs and is not a general search engine. Never claim to have searched without using an available search tool.`,
+      harnessBehaviorHeader(input.harness),
+      standaloneProfileText(input.harness.prompts.styleAndWork),
+      HOST_USING_TOOLS,
+      standaloneCapabilities(input.mode),
+      HOST_RENDERING,
+      input.appToolsEnabled ? 'Maestrly tools are available only as exposed in your tool catalog. Respect their permissions.' : 'Maestrly app tools are disabled.',
+      renderDesignModePrompt(input.mode),
+    ].filter(Boolean).join('\n\n')
+  }
   const header = harnessBehaviorHeader(input.harness)
   const base = [hostIdentityLine(input.cwd), header, input.harness.prompts.styleAndWork, HOST_USING_TOOLS]
     .filter((part): part is string => Boolean(part))

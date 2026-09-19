@@ -1,3 +1,5 @@
+import { requireProjectConversation } from '../../shared/conversation-scope'
+import type { ProjectConversation } from '../../shared/conversation'
 import { randomUUID } from 'node:crypto'
 import type {
   ConversationMigrationRecord,
@@ -10,7 +12,7 @@ import { migrationWorktreeDir } from '../app-paths'
 import { deleteConversationGeneratedImages } from '../chat/generated-images'
 import { deleteConversationAttachmentImages } from '../chat/attachment-artifacts'
 import { inspectCwdActivity } from '../cwd-activity-coordinator'
-import { countOtherRunningConversationsInCwd, getConversation, type Conversation } from '../store/conversations'
+import { countOtherRunningConversationsInCwd, getConversation } from '../store/conversations'
 import { migrationGitAdapter, type MigrationGitAdapter, type MigrationGitPlan } from './git-adapter'
 import { quiesceConversation } from './quiesce'
 import {
@@ -110,15 +112,24 @@ function resultOf(record: ConversationMigrationRecord): MigrationResult {
   }
 }
 
-function assertEligible(conversationId: string): Conversation {
-  const conversation = getConversation(conversationId)
-  if (!conversation) throw new Error('Conversation not found.')
+function assertEligible(conversationId: string): ProjectConversation {
+  const stored = getConversation(conversationId)
+  if (!stored) throw new Error('Conversation not found.')
+  const conversation = requireProjectConversation(stored)
   if (conversation.mode !== 'local' || conversation.isMulti !== 0 || conversation.archived !== 0) {
     throw new Error('Migration requires an active local single-repository conversation.')
   }
   const incomplete = findIncompleteMigrationForScope(conversation.id, conversation.cwd)
   if (incomplete) throw new Error(`An incomplete migration (${incomplete.id}) already exists in this scope.`)
   return conversation
+}
+
+/** Recovery journals must not bypass the scope admission used by fresh previews. */
+function requireProjectMigration(record: ConversationMigrationRecord): void {
+  for (const id of [record.conversationId, record.legacySuccessorConversationId]) {
+    const conversation = id ? getConversation(id) : undefined
+    if (conversation) requireProjectConversation(conversation)
+  }
 }
 
 export class ConversationMigrationService {
@@ -263,6 +274,7 @@ export class ConversationMigrationService {
     await this.serialized(operationId, async () => {
       const record = getMigration(operationId)
       if (!record) throw new Error('Migration not found.')
+      requireProjectMigration(record)
       if (record.phase !== 'prepared')
         throw new Error('The migration has already made changes and cannot be canceled directly.')
       if (!advanceMigration(operationId, 'prepared', { phase: 'cancelled', status: 'cancelled' }))
@@ -280,6 +292,7 @@ export class ConversationMigrationService {
     return this.serialized(operationId, async () => {
       const record = getMigration(operationId)
       if (!record) throw new Error('Migration not found.')
+      requireProjectMigration(record)
       if (record.phase !== 'prepared') return resultOf(record)
       if (record.error) throw new Error(record.error)
       if (Date.now() - record.createdAt > PREPARE_TTL_MS)
@@ -315,6 +328,7 @@ export class ConversationMigrationService {
   }
 
   private async continueRunning(record: ConversationMigrationRecord): Promise<MigrationResult> {
+    requireProjectMigration(record)
     this.ensureLease(record)
     let current = record
     try {
@@ -415,6 +429,7 @@ export class ConversationMigrationService {
   }
 
   private async finalizeStash(record: ConversationMigrationRecord): Promise<MigrationResult> {
+    requireProjectMigration(record)
     let stashCleaned = false
     try {
       stashCleaned = await this.deps.git.finalize(
@@ -441,6 +456,7 @@ export class ConversationMigrationService {
    * waiting on a message and aborting rollback before destructive removal.
    */
   private async adoptDestination(record: ConversationMigrationRecord): Promise<MigrationResult> {
+    requireProjectMigration(record)
     if (record.legacySuccessorConversationId) {
       throw new Error('Legacy migrations with a successor conversation only support safe rollback.')
     }
@@ -474,6 +490,7 @@ export class ConversationMigrationService {
     return this.serialized(operationId, async () => {
       const record = getMigration(operationId)
       if (!record) throw new Error('Migration not found.')
+      requireProjectMigration(record)
       if (action === 'rollback') {
         if (record.phase === 'finalizing-stash')
           throw new Error('The stash has entered final cleanup; this migration can only be completed.')
@@ -488,6 +505,7 @@ export class ConversationMigrationService {
   }
 
   private async rollback(record: ConversationMigrationRecord): Promise<MigrationResult> {
+    requireProjectMigration(record)
     if (isMigrationTerminal(record)) return resultOf(record)
     if (record.phase === 'prepared') {
       if (!advanceMigration(record.id, 'prepared', { phase: 'cancelled', status: 'cancelled' }))
@@ -537,6 +555,12 @@ export class ConversationMigrationService {
   async recoverIncomplete(): Promise<MigrationRecovery[]> {
     const recoveries: MigrationRecovery[] = []
     for (const record of listIncompleteMigrations()) {
+      try {
+        requireProjectMigration(record)
+      } catch {
+        recoveries.push(recoveryOf(this.recoveryRequired(record.id, 'project-required')))
+        continue
+      }
       const blockedPreview = record.phase === 'prepared' && record.status === 'prepared' && !!record.error
       const lease = blockedPreview
         ? undefined

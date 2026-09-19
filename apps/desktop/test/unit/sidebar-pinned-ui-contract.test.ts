@@ -10,7 +10,7 @@ describe('sidebar pinned UI contract', () => {
   it('shows the pinned section only with pins and outside search, avoiding duplicate results', () => {
     const sidebar = source('src/renderer/components/Sidebar.tsx')
     // Require an empty search and at least one pin.
-    expect(sidebar).toContain('!q && pinned.length > 0')
+    expect(sidebar).toContain('!q && (pinned.length > 0 || pinnedChats.length > 0)')
     expect(sidebar).toContain('collectPinnedConversations(workspaces)')
     expect(sidebar).toContain("t('sidebar.pinnedConversations')")
     // Exactly one pinned.map prevents a duplicate section in the search branch.

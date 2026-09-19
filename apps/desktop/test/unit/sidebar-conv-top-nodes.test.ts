@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { buildConvTopNodes } from '../../src/renderer/components/sidebar/conv-top-nodes'
-import type { Conversation } from '../../src/preload'
+import type { ProjectConversation } from '../../src/shared/conversation'
 
-function conversation(id: string, overrides: Partial<Conversation> = {}): Conversation {
+function conversation(id: string, overrides: Partial<ProjectConversation> = {}): ProjectConversation {
   return {
+    scope: 'project',
     id,
     workspaceId: 'workspace-1',
     name: id,

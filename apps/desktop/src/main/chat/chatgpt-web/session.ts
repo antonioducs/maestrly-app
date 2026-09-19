@@ -40,6 +40,8 @@ export interface SessionOptions {
     | 'external'
     | 'memory'
     | 'repositoryScope'
+    | 'conversationScope'
+    | 'fileScope'
     | 'gitReadEnabled'
     | 'browserCapability'
   >
@@ -162,6 +164,7 @@ export function createChatGptWebSession(options: SessionOptions) {
 export type ChatGptWebSession = ReturnType<typeof createChatGptWebSession>
 
 export interface CompanionPromptOptions {
+  scope?: 'project' | 'standalone'
   appName: string
   sessionKey: string
 }
@@ -198,6 +201,19 @@ export function deriveResumableSessionKey(options: ResumableSessionKeyOptions): 
 
 /** Prompt to paste after enabling the Maestrly app in a ChatGPT conversation. */
 export function buildCompanionPrompt(options: CompanionPromptOptions): string {
+  if (options.scope === 'standalone') return [
+    `Use the "${options.appName}" app as a secure companion for this standalone Maestrly conversation.`,
+    `This conversation's session_key: \`${options.sessionKey}\`. Send it in EVERY app tool call.`,
+    'Converse normally. Call get_context to establish the session. No repository is attached; Git, GitHub, project memory and boards are unavailable.',
+    'Use glob, grep and read_file for relevant files in the private conversation directory. Distinguish observations from assumptions and disclose gaps.',
+    'Use list_external_capabilities for authorized MCP and browser access. Never invent server IDs or expand permissions.',
+    'Only when explicitly requested, use send_to_maestrly with destination="chat" or destination="plan", confidence, uninspected_areas and assumptions.',
+    'Use a unique idempotency_key for each delivery; reuse it on retries. Actual evidence is attached by the bridge.',
+    'For destination="plan", capture plan_review_id and call wait_plan_review until terminal. On waiting, wait again. On revise, address feedback and send a new version with a NEW idempotency_key.',
+    'Do not call notify_turn_complete between plan versions. Finish only after approved, discarded, cancelled/superseded or terminal failure.',
+    'After pairing, call notify_turn_complete exactly once as the final tool call for each normal user message, with a new idempotency_key (reuse only on retries).',
+    'Validate pairing with get_context now, briefly confirm connection and wait for my next message.',
+  ].join('\n')
   // Secure MCP Tunnel has no native generation-finished event. Use an explicit signal instead of
   // scraping, polling the UI or depending on private ChatGPT selectors.
   const connection = [

@@ -1,4 +1,5 @@
 import { withCursorAccountRun } from './account-runs'
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import { randomUUID } from 'node:crypto'
 import type { AgentOptions, ModelSelection } from '@cursor/sdk'
@@ -86,7 +87,9 @@ import type {
 
 export interface RunCursorSubscriptionChatArgs {
   conversationId: string
-  projectId: string
+  /** Null for standalone chats, which have no workspace; permissionScope then carries the isolation. */
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   selection: ChatModelRef
   mode: ChatBehavior
@@ -397,6 +400,7 @@ async function runCursorSubscriptionChatInScope(
     const makeContext = (toolCallId: string, toolSignal: AbortSignal): ToolContext => ({
       conversationId: args.conversationId,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       messageId: assistantId,
       toolCallId,
       cwd: args.cwd,
@@ -410,6 +414,7 @@ async function runCursorSubscriptionChatInScope(
         return args.broker.assert({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           action,
           resources,
           save,
@@ -466,6 +471,7 @@ async function runCursorSubscriptionChatInScope(
       return args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         action: 'mcp',
         resources: [toolName],
         save: [toolName],
@@ -655,6 +661,7 @@ async function runCursorSubscriptionChatInScope(
         state.runTask = createCursorTaskRuntime({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           cwd: args.cwd,
           mode: args.mode,
           maestro: args.maestro,

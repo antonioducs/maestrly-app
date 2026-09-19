@@ -1,3 +1,6 @@
+import { StandaloneChatList } from './sidebar/StandaloneChatList'
+import { filterStandaloneConversations } from '@/lib/standalone-conversations'
+import type { StandaloneConversation } from '../../shared/conversation'
 import { WorkspaceKanbanLink } from './platform/WorkspaceKanbanLink'
 /** Local workspaces, virtual groups, and pinned conversations.
  * Apply drag sorting only to the complete list so filtered searches cannot corrupt persisted order. */
@@ -39,6 +42,11 @@ import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
 export type { OpenTargets, OpenExternalTarget }
 
 interface Props {
+  standaloneConversations: StandaloneConversation[]
+  standaloneArchivedCount: number
+  onNewChat: () => Promise<void>
+  creatingChat: boolean
+  onReorderStandaloneConversations: (ids: string[]) => void
   workspaces: WorkspaceWithConversations[]
   statuses: Record<string, AgentStatus>
 
@@ -97,6 +105,11 @@ interface Props {
 }
 
 export function Sidebar({
+  standaloneConversations,
+  standaloneArchivedCount,
+  onNewChat,
+  creatingChat,
+  onReorderStandaloneConversations,
   workspaces,
   statuses,
   attention,
@@ -137,6 +150,12 @@ export function Sidebar({
 }: Props) {
   const { t } = useTranslation('ui')
   const [query, setQuery] = useState('')
+  const [chatsCollapsed, setChatsCollapsed] = useState(() => localStorage.getItem('sidebar.chatsCollapsed') === '1')
+  const toggleChats = () =>
+    setChatsCollapsed((collapsed) => {
+      localStorage.setItem('sidebar.chatsCollapsed', collapsed ? '0' : '1')
+      return !collapsed
+    })
 
   const [renaming, setRenaming] = useState<{ convId: string; instanceKey: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -171,12 +190,19 @@ export function Sidebar({
       .map((ws) => ({
         ...ws,
         conversations: ws.conversations.filter(
-          (c) => c.name.toLowerCase().includes(q) || c.branch.toLowerCase().includes(q)
+          (c) => c.name.toLowerCase().includes(q) || (c.branch ?? '').toLowerCase().includes(q)
         ),
       }))
       .filter((ws) => ws.conversations.length > 0 || ws.name.toLowerCase().includes(q))
   }, [workspaces, q])
 
+  const filteredChats = useMemo(
+    () => filterStandaloneConversations(standaloneConversations, q).filter((chat) => q || chat.pinnedAt === null),
+    [standaloneConversations, q]
+  )
+  const pinnedChats = standaloneConversations
+    .filter((chat) => chat.pinnedAt !== null && chat.archived !== 1)
+    .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0))
   const pinned = useMemo(() => collectPinnedConversations(workspaces), [workspaces])
   const pinnedWorkspaceLabels = useMemo(() => buildPinnedWorkspaceLabels(workspaces), [workspaces])
 
@@ -484,13 +510,42 @@ export function Sidebar({
       />
 
       <div className="flex-1 overflow-y-auto py-1">
-        {filtered.length === 0 && (
+        <section className="mb-2 border-b border-border/40 pb-2" aria-label={t('sidebar.chats')}>
+          <div className="flex items-center justify-between px-3 py-2">
+            <button
+              type="button"
+              onClick={toggleChats}
+              aria-expanded={!chatsCollapsed || Boolean(q)}
+              className="flex items-center gap-1 text-xs font-semibold text-muted-foreground"
+            >
+              {chatsCollapsed && !q ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
+              {t('sidebar.chats')}
+            </button>
+            <Button variant="ghost" size="sm" disabled={creatingChat} onClick={() => void onNewChat()}>
+              <Plus className="size-3.5" /> {t('sidebar.newChat')}
+            </Button>
+          </div>
+          {(!chatsCollapsed || Boolean(q)) && (
+            <StandaloneChatList
+              conversations={filteredChats}
+              enabled={!q && renaming === null}
+              onReorder={onReorderStandaloneConversations}
+              renderConv={(conv, dnd, isOver) =>
+                convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
+              }
+            />
+          )}
+          {!chatsCollapsed && standaloneConversations.length === 0 && !q && (
+            <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
+          )}
+        </section>
+        {filtered.length === 0 && filteredChats.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
             {q ? t('sidebar.nothingFound') : t('sidebar.noWorkspaces')}
           </p>
         )}
 
-        {!q && pinned.length > 0 && (
+        {!q && (pinned.length > 0 || pinnedChats.length > 0) && (
           <div className="mb-1 border-b border-border/40 pb-1">
             <div className="flex items-center gap-1.5 px-2 py-1">
               <Pin className="size-3.5 shrink-0 text-muted-foreground" />
@@ -498,11 +553,12 @@ export function Sidebar({
                 {t('sidebar.pinnedConversations')}
               </span>
               <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
-                {pinned.length}
+                {pinned.length + pinnedChats.length}
               </span>
             </div>
 
             <ul>
+              {pinnedChats.map((conv) => convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` }))}
               {pinned.map((item) =>
                 convItem(item.conversation, {
                   pl: 'pl-6',
@@ -595,6 +651,7 @@ export function Sidebar({
       </div>
 
       <SidebarFooter
+        standaloneArchivedCount={standaloneArchivedCount}
         workspaces={workspaces}
         showArchived={showArchived}
         onToggleArchived={onToggleArchived}

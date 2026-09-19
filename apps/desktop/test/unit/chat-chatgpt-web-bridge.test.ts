@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
+import { app } from 'electron'
 import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -13,6 +14,7 @@ import {
   createChatGptWebSession,
   deriveResumableSessionKey,
 } from '../../src/main/chat/chatgpt-web/session'
+import { createConversationFileScope } from '../../src/main/conversation-file-scope'
 import { createRepositoryScope } from '../../src/main/repository-scope'
 import type { Conversation } from '../../src/main/store/conversations'
 import { createPlanReviewController } from '../../src/main/chat/chatgpt-web/plan-review'
@@ -1939,6 +1941,7 @@ describe('bridge companion multi-root', () => {
     symlinkSync(path.join(fixture, 'outside.txt'), path.join(backend, 'escape.txt'))
     try {
       const scope = await createRepositoryScope({
+        scope: 'project',
         id: 'conv',
         workspaceId: 'ws',
         name: 'multi',
@@ -2017,5 +2020,52 @@ describe('bridge companion multi-root', () => {
     } finally {
       rmSync(fixture, { recursive: true, force: true })
     }
+  })
+})
+
+
+describe('standalone bridge', () => {
+  it('loads context without Git and delivers general work with disclosures and plan review', async () => {
+    const runGit = vi.fn(async () => '')
+    const deliver = vi.fn(async (_delivery: BridgeDelivery) => undefined)
+    // Match the service, which canonicalizes with the native realpath; on Windows the JS variant keeps
+    // 8.3 short names and the managed-directory comparison would differ.
+    const profile = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'standalone-bridge-')))
+    const id = '22222222-2222-4222-8222-222222222222'
+    const cwd = path.join(profile, 'standalone-chats', id)
+    mkdirSync(path.join(cwd, 'src'), { recursive: true })
+    writeFileSync(path.join(cwd, 'src', 'alpha.ts'), 'export const alpha = 1')
+    const userData = vi.spyOn(app, 'getPath').mockReturnValue(profile)
+    const conversation: Conversation = { id, scope: 'standalone', cwd, isMulti: 0,
+      workspaceId: null, branch: null, mode: null, experience: 'standard', name: 'Chat',
+      status: 'idle', archived: 0, pinnedAt: null, createdAt: 1, lastActivityAt: 1 }
+    try {
+    const { bridge } = makeBridge({ conversationScope: 'standalone', runGit, deliver,
+      repositoryScope: await createRepositoryScope(conversation), fileScope: await createConversationFileScope(conversation) })
+    expect(await textOf(call(bridge, 'get_context'))).toContain('Standalone conversation')
+    expect(runGit).not.toHaveBeenCalled()
+    expect(bridge.listTools().map(tool => tool.name)).not.toEqual(expect.arrayContaining(['git_diff']))
+    expect(bridge.listTools().map(tool => tool.name)).not.toContain('get_linked_kanban')
+    expect(bridge.listTools().map(tool => tool.name)).toContain('read_skill')
+    expect((await call(bridge, 'send_to_maestrly', { destination: 'chat', markdown: 'A general answer', idempotency_key: 'standalone-chat-1', ...disclosure })).result.isError).not.toBe(true)
+    expect(deliver.mock.calls[0][0].markdown).not.toContain('Repository context and map loaded: yes')
+    expect(deliver.mock.calls[0][0].markdown).toContain('Self-contained analysis')
+    expect(await textOf(call(bridge, 'git_diff'))).toContain('no_repository')
+    expect(await textOf(call(bridge, 'read_file', { path: 'src/alpha.ts' }))).toContain('alpha')
+    expect((await call(bridge, 'read_file', { path: '../outside.txt' })).result.isError).toBe(true)
+    const result = await call(bridge, 'send_to_maestrly', { destination: 'plan', markdown: 'A general plan', idempotency_key: 'standalone-plan-1', ...disclosure })
+    expect(result.result.isError).not.toBe(true)
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ destination: 'plan', planReviewId: expect.any(String) }))
+    } finally {
+      userData.mockRestore()
+      rmSync(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('uses general pairing instructions while preserving the plan continuation protocol', () => {
+    const prompt = buildCompanionPrompt({ appName: 'Maestrly', sessionKey: 'key', scope: 'standalone' })
+    expect(prompt).toContain('standalone Maestrly conversation')
+    expect(prompt).toContain('wait_plan_review')
+    expect(prompt).not.toContain('git_diff +')
   })
 })

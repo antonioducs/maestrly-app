@@ -1,3 +1,4 @@
+import { getConversation } from '../../store'
 /**
  * Image generation for ANY provider via an EPHEMERAL Codex app-server thread, following `portable-summarizer.ts`:
  * a one-shot thread with no tools or persistence, always deleted at the end, never touching the conversation's
@@ -83,6 +84,7 @@ export async function generateImageWithCodexRuntime(args: {
   client: CodexAppServerClient
   conversationId: string
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   modelId: string
   prompt: string
   signal: AbortSignal
@@ -174,7 +176,9 @@ export async function generateImageWithCodexRuntime(args: {
         dynamicTools: [],
         // Empty = official contract to disable environment access (shell/apply_patch/view_image).
         environments: [],
+        ...(args.conversationScope === 'standalone' ? { baseInstructions: IMAGE_GEN_INSTRUCTIONS } : {}),
         config: {
+          ...(args.conversationScope === 'standalone' ? { project_doc_max_bytes: 0, 'features.skill_search': false, 'skills.include_instructions': false, 'features.skill_mcp_dependency_install': false } : {}),
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
           'features.shell_tool': false,
@@ -343,6 +347,7 @@ export async function generateImageForConversation(args: {
       conversationId: args.conversationId,
       operation: async (target, signal) => {
         return generateImageWithCodexRuntime({
+          conversationScope: getConversation(args.conversationId)?.scope,
           client: target.client,
           conversationId: args.conversationId,
           cwd: args.cwd,

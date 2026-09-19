@@ -200,7 +200,7 @@ export class ProjectChatWorker {
     let id = journal.chatConversation(this.instanceId, claim.session.id)
     if (id) {
       const conv = getConversation(id)
-      if (!conv || conv.workspaceId !== b.workspaceId)
+      if (!conv || conv.scope === 'standalone' || conv.workspaceId !== b.workspaceId)
         throw new Error('The conversation workspace is missing. Restore it before continuing.')
       await access(conv.cwd)
     } else {

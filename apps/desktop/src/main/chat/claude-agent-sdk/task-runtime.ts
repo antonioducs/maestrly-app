@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import type { ToolSet } from 'ai'
 import type {
   ChatModelRef,
@@ -54,7 +55,8 @@ export type ClaudeManagedTaskRunner = (
 
 export interface CreateClaudeTaskRuntimeArgs {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
@@ -264,6 +266,7 @@ export function createClaudeTaskRuntime(args: CreateClaudeTaskRuntimeArgs): Clau
         const worker = await executeSubagent({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           cwd: args.cwd,
           parentMessageId: args.assistantId,
           toolCallId,

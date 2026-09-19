@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { createTestRegistrar } from './ipc-registrar-test-utils'
 
+vi.mock('../../src/main/standalone-conversation-service', () => ({
+  validateStandaloneConversationDirectory: vi.fn(),
+}))
+
 vi.mock('../../src/main/terminal-manager', () => ({
   closeShellTerminal: vi.fn(),
   createShellTerminal: vi.fn(),
@@ -77,18 +81,63 @@ vi.mock('../../src/main/selection-bridge', () => ({
   setVisibleConversation: vi.fn(),
 }))
 
+import { validateStandaloneConversationDirectory } from '../../src/main/standalone-conversation-service'
 import { getConversation } from '../../src/main/store'
 import { createShellTerminal } from '../../src/main/terminal-manager'
 import * as floatingManager from '../../src/main/floating-manager'
 import * as popupManager from '../../src/main/popup-manager'
-import { applyLayout, isTabVisibleInSlot, setDialogSuppressionOwners, setLayout } from '../../src/main/drawer-manager'
+import {
+  applyLayout,
+  ensurePanelTab,
+  isTabVisibleInSlot,
+  setDialogSuppressionOwners,
+  setLayout,
+} from '../../src/main/drawer-manager'
 import { registerDrawerIpc } from '../../src/main/drawer-ipc'
 
 describe('registerDrawerIpc', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(getConversation).mockReset()
     vi.mocked(floatingManager.isChatGptVisible).mockReturnValue(false)
     vi.mocked(popupManager.isChatGptVisible).mockReturnValue(false)
+  })
+
+  it('sanitizes forged standalone review layouts and blocks panel, popup, and float requests', () => {
+    vi.mocked(getConversation).mockReturnValue({ scope: 'standalone' } as never)
+    const { reg, mons } = createTestRegistrar()
+    const openPopup = vi.fn()
+    registerDrawerIpc(reg, { loadVSCodeFolder: vi.fn(), openPopup })
+    mons.get('drawer:layout')!({} as never, { convId: 'chat', visibleKind: 'review' })
+    mons.get('drawer:detach')!({} as never, 'chat', 'review')
+    mons.get('popup:open')!({} as never, 'chat', 'review')
+    mons.get('drawer:ensure-panel')!({} as never, 'chat', 'review')
+    expect(setLayout).toHaveBeenCalledWith({ convId: 'chat', visibleKind: null })
+    expect(floatingManager.detach).not.toHaveBeenCalled()
+    expect(openPopup).not.toHaveBeenCalled()
+    expect(ensurePanelTab).not.toHaveBeenCalled()
+  })
+
+  it('validates the stored standalone directory before terminal/editor opens and rejects forged editor folders', async () => {
+    const conv = { id: 'chat', scope: 'standalone', cwd: '/managed/chat' }
+    vi.mocked(getConversation).mockReturnValue(conv as never)
+    const validate = vi.mocked(validateStandaloneConversationDirectory)
+    validate.mockResolvedValue('/managed/chat')
+    const { reg, mons, mhandles } = createTestRegistrar()
+    const loadVSCodeFolder = vi.fn()
+    registerDrawerIpc(reg, { loadVSCodeFolder, openPopup: vi.fn() })
+    await expect(mhandles.get('drawer:load-vscode')!({} as never, 'chat', '/forged')).rejects.toThrow(
+      'Unsafe standalone'
+    )
+    expect(loadVSCodeFolder).not.toHaveBeenCalled()
+    await mhandles.get('drawer:load-vscode')!({} as never, 'chat', '/managed/chat')
+    expect(loadVSCodeFolder).toHaveBeenCalledWith('chat', '/managed/chat')
+    await mons.get('drawer:create-terminal')!({} as never, 'chat')
+    expect(createShellTerminal).toHaveBeenCalledWith('chat', '/managed/chat')
+    vi.mocked(createShellTerminal).mockClear()
+    validate.mockRejectedValue(new Error('Unsafe standalone chat directory.'))
+    await expect(mons.get('drawer:create-terminal')!({} as never, 'chat')).rejects.toThrow('Unsafe standalone')
+    expect(createShellTerminal).not.toHaveBeenCalled()
   })
 
   it('registers drawer, popup, and standalone terminal channels', () => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { getConversation, getDb } from '../../src/main/store'
+import { getConversation, getDb, insertConversation } from '../../src/main/store'
 import { __resetCwdActivityForTests } from '../../src/main/cwd-activity-coordinator'
 import { __resetMigrationLeasesForTests, getMigrationLease } from '../../src/main/conversation-migration/runtime-lease'
 import {
@@ -78,6 +78,57 @@ afterEach(() => {
 })
 
 describe('conversation migration saga Chat-only', () => {
+  it('rejects standalone migration before Git or quiescing', async () => {
+    const { service, git, deps } = harness()
+    insertConversation({
+      id: 'standalone',
+      scope: 'standalone',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      isMulti: 0,
+      cwd: '/private/chat',
+      name: 'Chat',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+    })
+    await expect(service.prepare('standalone', 'feature/test')).rejects.toThrow('project-required')
+    expect(git.prepare).not.toHaveBeenCalled()
+    expect(deps.quiesce).not.toHaveBeenCalled()
+  })
+
+  it('rejects a recovery journal that points at a standalone conversation before Git', async () => {
+    const { service, git, source } = harness()
+    const preview = await service.prepare(source.id, 'feature/recovery')
+    insertConversation({
+      id: 'standalone',
+      scope: 'standalone',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      isMulti: 0,
+      cwd: '/private/chat',
+      name: 'Chat',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+    })
+    getDb()
+      .prepare('UPDATE conversation_migrations SET conversation_id = ? WHERE id = ?')
+      .run('standalone', preview.operationId)
+    await expect(service.execute(preview.operationId, [], [])).rejects.toThrow('project-required')
+    await expect(service.resolve(preview.operationId, 'rollback')).rejects.toThrow('project-required')
+    expect(git.continue).not.toHaveBeenCalled()
+    expect(git.rollback).not.toHaveBeenCalled()
+  })
+
   it('follows preview, lease, quiesce, transfer and sidecars while preserving identity', async () => {
     const { source, service, deps } = harness()
     const preview = await service.prepare(source.id, 'feature/chat-only')

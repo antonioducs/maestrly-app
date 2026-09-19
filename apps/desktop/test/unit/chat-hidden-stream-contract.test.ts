@@ -17,6 +17,10 @@ describe('ChatView streams for hidden conversations', () => {
     const hiddenReturnIndex = streamEffect.indexOf('if (hidden) return')
 
     expect(streamEffect).toContain('const hidden = !visibleRef.current')
+    // Standalone mirrors the live buffer instead of folding a relative delta, so a replayed updater
+    // cannot apply the same token twice.
+    expect(streamEffect).toContain('const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null')
+    expect(streamEffect).toContain('liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event)')
     expect(streamEffect).toContain('finishTurn(hidden)')
     expect(hiddenReturnIndex).toBeGreaterThan(-1)
     expect(foldIndex).toBeGreaterThan(hiddenReturnIndex)
@@ -62,6 +66,8 @@ describe('ChatView streams for hidden conversations', () => {
     expect(chatView).toContain('stopPending ||')
     expect(chatView).toContain('maestroPostPending > 0 ||')
     expect(chatView).toContain('if (!needsLiveSubscription) return')
+    // A standalone turn buffers its own tokens, so it must stay subscribed while hidden.
+    expect(chatView).toContain("(workspaceId === null && status === 'working')")
     expect(chatView).not.toContain('if (!runtime.streaming) stoppedRef.current = false')
     expect(chatView).not.toContain('historyDirtyRef')
   })
