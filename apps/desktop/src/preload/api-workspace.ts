@@ -38,6 +38,8 @@ export interface ConvRepo {
 
 export interface ConvUiPrefs {
   mainTabOrder?: string[]
+  openTabs?: string[]
+  activeTab?: string
   browserTabs?: { url: string; title?: string }[]
   browserActive?: number
   chatGptWebCapabilities?: ChatGptWebCapabilities
@@ -154,6 +156,8 @@ export const workspaceApi = {
   deleteConversation: (id: string): Promise<void> => ipcRenderer.invoke('conversation:delete', id),
 
   setConvMainTabOrder: (convId: string, order: string[]) => ipcRenderer.send('conv:set-main-tab-order', convId, order),
+  setConvOpenTabs: (convId: string, tabs: string[], active: string | null) =>
+    ipcRenderer.send('conv:set-open-tabs', convId, tabs, active),
 
   reorderWorkspaces: (ids: string[]): Promise<void> => ipcRenderer.invoke('workspace:reorder', ids),
   reorderConversations: (workspaceId: string, ids: string[]): Promise<void> =>

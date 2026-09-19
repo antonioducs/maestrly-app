@@ -101,6 +101,7 @@ describe('registerDrawerIpc', () => {
 
     expect([...handles.keys()].sort()).toEqual([
       'drawer:browser-state-get',
+      'drawer:capture-slot',
       'drawer:chatgpt-visible',
       'drawer:floating-state-get',
       'drawer:read-terminal',

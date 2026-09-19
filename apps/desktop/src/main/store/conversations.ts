@@ -29,6 +29,10 @@ export interface FloatingBounds {
 export interface ConvUiPrefs {
   /** Main drawer tab order, using shared tool-tab keys. */
   mainTabOrder?: string[]
+  /** Drawer tabs currently open (on-demand tab bar), using shared tool-tab keys. */
+  openTabs?: string[]
+  /** Active drawer tab among openTabs. */
+  activeTab?: string
   /** Ordered browser tabs restored when reopening the app. */
   browserTabs?: { url: string; title?: string }[]
   /** Active browser-tab index within browserTabs. */

@@ -1,5 +1,6 @@
 import { publicCreateConversationSchema } from '../shared/local-conversation'
 import type { ConversationExperience } from '../shared/conversation-experience'
+import { isFloatTab } from '../shared/tool-tabs'
 import { getConversationBranchInfo } from './conversation-branch-service'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import * as floatingManager from './floating-manager'
@@ -67,6 +68,12 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   })
   // Main drawer tab order persists per conversation in ui_prefs.
   reg.mon('conv:set-main-tab-order', (_e, id: string, order: string[]) => patchConvUiPrefs(id, { mainTabOrder: order }))
+  // Open drawer tabs (on-demand tab bar) and the active one persist per conversation in ui_prefs.
+  reg.mon('conv:set-open-tabs', (_e, id: string, tabs: unknown, active: unknown) => {
+    const openTabs = Array.isArray(tabs) ? tabs.filter(isFloatTab) : []
+    const activeTab = isFloatTab(active) && openTabs.includes(active) ? active : undefined
+    patchConvUiPrefs(id, { openTabs, activeTab })
+  })
   reg.mhandle('conversation:reorder', (_e, workspaceId: string, ids: string[]) =>
     setConversationOrder(workspaceId, ids)
   )

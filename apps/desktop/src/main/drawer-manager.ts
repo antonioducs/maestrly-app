@@ -21,6 +21,7 @@ export {
 } from './drawer/state'
 export {
   applyLayout,
+  captureSlotView,
   setDialogSuppressionOwners,
   setLayout,
   setPlacement,
