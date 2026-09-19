@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { PlanDecision, PlanReceived } from '../../preload'
-import { type Tab as DrawerTab } from '@/components/Drawer'
+import type { Tab as DrawerTab } from '@/components/Drawer'
 
 type UsePlansParams = {
-  setDrawerTabByConv: Dispatch<SetStateAction<Record<string, DrawerTab>>>
+  openDrawerTab: (convId: string, tab: DrawerTab) => void
   setDrawerOpenByConv: Dispatch<SetStateAction<Record<string, boolean>>>
 }
 
-export function usePlans({ setDrawerTabByConv, setDrawerOpenByConv }: UsePlansParams) {
+export function usePlans({ openDrawerTab, setDrawerOpenByConv }: UsePlansParams) {
   const [plans, setPlans] = useState<Record<string, PlanReceived>>({})
 
   useEffect(() => {
     const offReceived = window.api.onPlanReceived((p) => {
       setPlans((prev) => ({ ...prev, [p.agentId]: p }))
 
-      setDrawerTabByConv((prev) => ({ ...prev, [p.agentId]: 'plan' }))
+      // A plan waiting for review always surfaces: open its tab (if closed) and the drawer.
+      openDrawerTab(p.agentId, 'plan')
       setDrawerOpenByConv((prev) => ({ ...prev, [p.agentId]: true }))
     })
     const offCleared = window.api.onPlanCleared(({ agentId }) => {
@@ -29,7 +30,7 @@ export function usePlans({ setDrawerTabByConv, setDrawerOpenByConv }: UsePlansPa
       offReceived()
       offCleared()
     }
-  }, [])
+  }, [openDrawerTab])
 
   const handleDecidePlan = useCallback((agentId: string, decision: PlanDecision) => {
     window.api.decidePlan(agentId, decision)

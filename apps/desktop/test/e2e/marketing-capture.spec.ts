@@ -468,7 +468,9 @@ test('captures the integrated desktop product surfaces', async () => {
     await toolMessage.getByRole('button').filter({ hasText: 'bash' }).click()
 
     await win.getByTitle('Toggle drawer').click()
-    await win.getByRole('button', { name: 'Review', exact: true }).click()
+    // Drawer tabs open on demand: pick Review from the "+" palette instead of an always-present tab.
+    await win.getByTitle('Open a tool').click()
+    await win.getByRole('option', { name: 'Review', exact: true }).click()
     await win.getByTitle('Full screen (cover the terminal)').click()
     await win.waitForTimeout(1_500)
     await capturePanel(app, 'review-diff.png', 'review')
@@ -483,7 +485,8 @@ test('captures the integrated desktop product surfaces', async () => {
     await expect(win.getByText('gpt-5.2-codex', { exact: true })).toBeVisible()
     await capture(win, 'usage-dashboard.png')
 
-    await win.getByTitle('Close').click()
+    // Exact match: drawer tabs expose "Close <tool>" buttons that a substring match would also hit.
+    await win.getByTitle('Close', { exact: true }).click()
     const workspace = win.locator(`[data-workspace-id="${seeded.workspaceId}"]`)
     await workspace.locator('[data-workspace-header]').hover()
     await workspace.getByTitle('Project notes').click()

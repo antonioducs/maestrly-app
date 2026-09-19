@@ -67,6 +67,8 @@ export const drawerApi = {
     visibleKind: FloatTab | null
     bounds?: { x: number; y: number; width: number; height: number }
   }) => ipcRenderer.send('drawer:layout', payload),
+  /** Data URL of the native view docked in the slot, or null when nothing native is visible there. */
+  drawerCaptureSlot: (convId: string): Promise<string | null> => ipcRenderer.invoke('drawer:capture-slot', convId),
   drawerEnsureBrowser: (convId: string) => ipcRenderer.send('drawer:ensure-browser', convId),
   drawerNewTab: (convId: string, url?: string) => ipcRenderer.send('drawer:tab-new', convId, url),
   drawerCloseTab: (convId: string, id: string) => ipcRenderer.send('drawer:tab-close', convId, id),

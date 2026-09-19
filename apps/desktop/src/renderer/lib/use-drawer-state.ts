@@ -4,9 +4,13 @@ import type { Tab as DrawerTab } from '@/components/Drawer'
 import { defaultDrawerShortcut, formatAccelerator } from '../../shared/shortcuts'
 import {
   DEFAULT_MAIN_ORDER,
+  closeTabInList,
   mainTabsForContext,
   mainTabsForFeatures,
+  moveOpenTab,
+  openTabInList,
   reorderVisibleTabs,
+  sanitizeOpenTabs,
   tabAvailableInContext,
 } from '@/lib/drawer-tabs'
 
@@ -71,24 +75,117 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     })
   }, [])
 
+  // On-demand tab bar: only tabs in openTabsByConv show in the drawer; drawerTabByConv is the active one.
+  const [openTabsByConv, setOpenTabsByConv] = useState<Record<string, DrawerTab[]>>({})
   const [drawerTabByConv, setDrawerTabByConv] = useState<Record<string, DrawerTab>>({})
-  const setActiveDrawerTab = useCallback((t: DrawerTab) => {
-    const active = activeRef.current
-    const id = active?.id
-    if (id && tabAvailableInContext(t, active, chatGptWebEnabledRef.current)) {
-      setDrawerTabByConv((prev) => (prev[id] === t ? prev : { ...prev, [id]: t }))
-    }
+  const openTabsRef = useRef(openTabsByConv)
+  openTabsRef.current = openTabsByConv
+  const drawerTabRef = useRef(drawerTabByConv)
+  drawerTabRef.current = drawerTabByConv
+
+  const persistOpenTabs = useCallback((id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
+    window.api.setConvOpenTabs(id, tabs, activeTab)
   }, [])
+
+  /** Adds the tab to the bar when needed, activates it and persists the set. */
+  const openDrawerTab = useCallback(
+    (id: string, t: DrawerTab) => {
+      const conv = activeRef.current?.id === id ? activeRef.current : { id }
+      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current)) return
+      const list = openTabInList(openTabsRef.current[id] ?? [], t)
+      if (list !== openTabsRef.current[id]) {
+        openTabsRef.current = { ...openTabsRef.current, [id]: list }
+        setOpenTabsByConv(openTabsRef.current)
+      }
+      if (drawerTabRef.current[id] !== t) {
+        drawerTabRef.current = { ...drawerTabRef.current, [id]: t }
+        setDrawerTabByConv(drawerTabRef.current)
+      }
+      persistOpenTabs(id, list, t)
+    },
+    [persistOpenTabs]
+  )
+
+  /** Activates a tab that is already open (opens it otherwise). */
+  const setActiveDrawerTab = useCallback(
+    (t: DrawerTab) => {
+      const id = activeRef.current?.id
+      if (id) openDrawerTab(id, t)
+    },
+    [openDrawerTab]
+  )
+
+  const closeDrawerTab = useCallback(
+    (t: DrawerTab) => {
+      const id = activeRef.current?.id
+      if (!id) return
+      const cur = openTabsRef.current[id] ?? []
+      const res = closeTabInList(cur, t, drawerTabRef.current[id] ?? null)
+      if (res.list === cur) return
+      openTabsRef.current = { ...openTabsRef.current, [id]: res.list }
+      setOpenTabsByConv(openTabsRef.current)
+      const nextActive = { ...drawerTabRef.current }
+      if (res.active) nextActive[id] = res.active
+      else delete nextActive[id]
+      drawerTabRef.current = nextActive
+      setDrawerTabByConv(nextActive)
+      persistOpenTabs(id, res.list, res.active)
+    },
+    [persistOpenTabs]
+  )
+
+  const reorderOpenTabs = useCallback(
+    (from: number, to: number) => {
+      const id = activeRef.current?.id
+      if (!id) return
+      const cur = openTabsRef.current[id] ?? []
+      const next = moveOpenTab(cur, from, to)
+      if (next === cur) return
+      openTabsRef.current = { ...openTabsRef.current, [id]: next }
+      setOpenTabsByConv(openTabsRef.current)
+      persistOpenTabs(id, next, drawerTabRef.current[id] ?? null)
+    },
+    [persistOpenTabs]
+  )
+
+  /** Seeds open tabs from persisted prefs for conversations not tracked yet. */
+  const hydrateOpenTabs = useCallback(
+    (entries: Array<{ conv: Conversation; openTabs?: unknown; activeTab?: unknown }>) => {
+      let tabsNext = openTabsRef.current
+      let activeNext = drawerTabRef.current
+      for (const { conv, openTabs, activeTab } of entries) {
+        if (tabsNext[conv.id]) continue
+        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current)
+        if (list.length === 0) continue
+        if (tabsNext === openTabsRef.current) tabsNext = { ...tabsNext }
+        tabsNext[conv.id] = list
+        if (!activeNext[conv.id]) {
+          if (activeNext === drawerTabRef.current) activeNext = { ...activeNext }
+          activeNext[conv.id] = list.includes(activeTab as DrawerTab) ? (activeTab as DrawerTab) : list[0]
+        }
+      }
+      if (tabsNext !== openTabsRef.current) {
+        openTabsRef.current = tabsNext
+        setOpenTabsByConv(tabsNext)
+      }
+      if (activeNext !== drawerTabRef.current) {
+        drawerTabRef.current = activeNext
+        setDrawerTabByConv(activeNext)
+      }
+    },
+    []
+  )
 
   const [mainTabOrderByConv, setMainTabOrderByConv] = useState<Record<string, DrawerTab[]>>({})
   const mainTabOrder = active
     ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled)
     : mainTabsForFeatures(DEFAULT_MAIN_ORDER, chatGptWebEnabled)
+  const openTabs: DrawerTab[] = active
+    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, chatGptWebEnabled))
+    : []
   const requestedDrawerTab = active ? drawerTabByConv[active.id] : undefined
-  const drawerTab =
-    active && requestedDrawerTab && tabAvailableInContext(requestedDrawerTab, active, chatGptWebEnabled)
-      ? requestedDrawerTab
-      : mainTabOrder[0]
+  const drawerTab: DrawerTab | null =
+    requestedDrawerTab && openTabs.includes(requestedDrawerTab) ? requestedDrawerTab : (openTabs[0] ?? null)
 
   const mainTabOrderRef = useRef(mainTabOrderByConv)
   mainTabOrderRef.current = mainTabOrderByConv
@@ -112,6 +209,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     }
     setDrawerOpenByConv(drop)
     setDrawerTabByConv(drop)
+    setOpenTabsByConv(drop)
     setDrawerWidthByConv(drop)
     setMountedConvs((prev) => prev.filter((c) => c.id !== id))
   }, [])
@@ -142,26 +240,26 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   useEffect(() => {
     const offFocus = window.api.onDrawerTerminalFocus(({ convId }) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
-      setDrawerTabByConv((prev) => (prev[convId] === 'terminal' ? prev : { ...prev, [convId]: 'terminal' }))
+      openDrawerTab(convId, 'terminal')
     })
     return () => {
       offFocus()
     }
-  }, [])
+  }, [openDrawerTab])
 
   useEffect(() => {
     return window.api.onChatGptWebOpen((convId) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
-      setDrawerTabByConv((prev) => (prev[convId] === 'chatgpt' ? prev : { ...prev, [convId]: 'chatgpt' }))
+      openDrawerTab(convId, 'chatgpt')
     })
-  }, [])
+  }, [openDrawerTab])
 
   useEffect(() => {
     return window.api.onDebugEnsureVscode((convId) => {
-      setDrawerTabByConv((prev) => (prev[convId] === 'vscode' ? prev : { ...prev, [convId]: 'vscode' }))
+      openDrawerTab(convId, 'vscode')
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
     })
-  }, [])
+  }, [openDrawerTab])
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -213,6 +311,12 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     setDrawerTabByConv,
     drawerTab,
     setActiveDrawerTab,
+    openTabs,
+    setOpenTabsByConv,
+    openDrawerTab,
+    closeDrawerTab,
+    reorderOpenTabs,
+    hydrateOpenTabs,
     mainTabOrderByConv,
     setMainTabOrderByConv,
     mainTabOrder,

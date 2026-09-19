@@ -22,6 +22,7 @@ import {
   getBrowserState,
   isTabVisibleInSlot,
   applyLayout,
+  captureSlotView,
   navigateBrowser,
   reorderBrowserTab,
   reloadAllVSCode,
@@ -81,6 +82,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
         /* a failed remote load remains retryable on the next visibility signal */
       })
   })
+  // Frozen frame of the docked native view, shown by the renderer under DOM overlays (tool palette).
+  reg.handle('drawer:capture-slot', (_e, convId: string) => captureSlotView(convId))
   // hide native views while an HTML modal appears above them
   reg.mon('drawer:suppress-views', (event, suppress: boolean) => {
     dialogSuppression.update(event.sender, suppress)
