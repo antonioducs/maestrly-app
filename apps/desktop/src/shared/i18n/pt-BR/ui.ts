@@ -799,6 +799,7 @@ export default {
     fullScreen: 'Tela cheia (cobrir o terminal)',
     floatingNotice: '{{tab}} está aberto em uma janela flutuante.',
     addTab: 'Abrir uma ferramenta',
+    tabsLabel: 'Abas de ferramentas',
     closeTab: 'Fechar {{tab}}',
     paletteSearch: 'Buscar ferramenta…',
     paletteOpen: 'aberta',

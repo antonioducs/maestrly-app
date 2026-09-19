@@ -786,6 +786,7 @@ export default {
     fullScreen: 'Full screen (cover the terminal)',
     floatingNotice: '{{tab}} is open in a floating window.',
     addTab: 'Open a tool',
+    tabsLabel: 'Tool tabs',
     closeTab: 'Close {{tab}}',
     paletteSearch: 'Search tools…',
     paletteOpen: 'open',

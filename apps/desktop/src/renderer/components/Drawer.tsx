@@ -417,7 +417,7 @@ export function Drawer({
       <div className="drag flex h-10 items-center gap-1 hairline-b px-2">
         <div
           role="tablist"
-          aria-label={t('drawer.addTab')}
+          aria-label={t('drawer.tabsLabel')}
           className="no-drag flex min-w-0 items-center gap-0.5 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {openTabs.map((key, i) => (
