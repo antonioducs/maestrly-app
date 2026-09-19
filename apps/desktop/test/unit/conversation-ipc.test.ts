@@ -86,7 +86,7 @@ describe('registerConversationIpc', () => {
       'conversation:reorder',
     ])
     expect([...ons.keys()]).toEqual([])
-    expect([...mons.keys()]).toEqual(['conv:set-main-tab-order'])
+    expect([...mons.keys()]).toEqual(['conv:set-main-tab-order', 'conv:set-open-tabs'])
   })
 
   it('accepts only the public worktree subset and rejects local mode and internal fields', async () => {

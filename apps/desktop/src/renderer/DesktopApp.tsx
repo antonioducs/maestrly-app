@@ -56,16 +56,20 @@ export function DesktopApp() {
   const {
     drawerOpen,
     setDrawerOpen,
-    drawerTabByConv,
     drawerTab,
     setDrawerTabByConv,
     setActiveDrawerTab,
+    openTabs,
+    setOpenTabsByConv,
+    openDrawerTab,
+    closeDrawerTab,
+    reorderOpenTabs,
+    hydrateOpenTabs,
     setDrawerOpenByConv,
     setMainTabOrderByConv,
     setDrawerWidthByConv,
     setDrawerFullByConv,
     mainTabOrder,
-    reorderMainTabs,
     forgetConvDrawerState,
     drawerWidth,
     toggleDrawerFull,
@@ -247,7 +251,7 @@ export function DesktopApp() {
     !mainOverride &&
     !chatGptFloating &&
     visiblePopupTab === null &&
-    drawerTabByConv[active.id] === 'chatgpt'
+    drawerTab === 'chatgpt'
       ? active.id
       : null
   const chatGptPopupVisibleConversationId = active && visiblePopupTab === 'chatgpt' ? active.id : null
@@ -289,7 +293,7 @@ export function DesktopApp() {
       return next
     })
   }, [])
-  const plan = usePlans({ setDrawerTabByConv, setDrawerOpenByConv })
+  const plan = usePlans({ openDrawerTab, setDrawerOpenByConv })
   const { plans, pendingPlanIds } = plan
   const [dialogWs, setDialogWs] = useState<string | null>(null)
 
@@ -380,8 +384,15 @@ export function DesktopApp() {
     }
     setDrawerOpenByConv(pruneDead)
     setDrawerTabByConv(pruneDead)
+    setOpenTabsByConv(pruneDead)
     setDrawerWidthByConv(pruneDead)
     setDrawerFullByConv(pruneDead)
+
+    hydrateOpenTabs(
+      workspaces
+        .flatMap((w) => w.conversations)
+        .map((conv) => ({ conv, openTabs: conv.uiPrefs?.openTabs, activeTab: conv.uiPrefs?.activeTab }))
+    )
 
     setMainTabOrderByConv((prev) => {
       let next = prev
@@ -729,8 +740,10 @@ export function DesktopApp() {
                   activePlan={plans[active.id] ?? null}
                   tab={drawerTab}
                   onTabChange={setActiveDrawerTab}
-                  mainTabOrder={mainTabOrder}
-                  onReorderMainTabs={reorderMainTabs}
+                  openTabs={openTabs}
+                  onCloseTab={closeDrawerTab}
+                  onReorderOpenTabs={reorderOpenTabs}
+                  catalogOrder={mainTabOrder}
                   chatGptWebEnabled={chatGptWebEnabled}
                 />
               </div>
