@@ -9,6 +9,9 @@ import { prepareProductionDatabasePath } from './database-path-migration'
 let db: DatabaseSync
 
 const LEGACY_MANAGEMENT_TABLES = [
+  // Retired publishing links reference both cards and workspaces. Drop them first, including on
+  // databases already purged by older releases, or workspace deletion resolves a missing board_cards FK.
+  'cloud_published_card_bindings',
   'delivery_memory_chunks',
   'delivery_memories',
   'card_body_history',
