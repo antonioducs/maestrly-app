@@ -38,6 +38,18 @@
     {
       "providerKind": "github-copilot-subscription",
       "overrides": { "identity": { "promptIdentity": "codex-gpt-5.6-sol@5bed644" } }
+    },
+    {
+      "providerKind": "cursor-subscription",
+      "overrides": {
+        "identity": {
+          "promptIdentity": "cursor-native-with-host-gpt-5.6-sol-v1"
+        },
+        "prompts": {
+          "layout": "openai-codex-port",
+          "base": "prompt.md"
+        }
+      }
     }
   ]
 }
