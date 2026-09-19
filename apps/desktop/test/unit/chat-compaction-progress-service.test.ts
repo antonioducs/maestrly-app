@@ -4,6 +4,7 @@ import type { ChatCompactionProgress, ChatStreamEvent } from '../../src/shared/c
 
 const h = vi.hoisted(() => ({
   generateText: vi.fn(),
+  runChat: vi.fn(async () => ({ planSubmitted: false })),
   resolveLanguageModel: vi.fn(async () => ({ modelId: 'synthetic-model' })),
   webContents: { isDestroyed: () => false, send: vi.fn<(channel: string, event: ChatStreamEvent) => void>() },
   summarizeNative: vi.fn(),
@@ -21,6 +22,10 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('ai', async (original) => ({ ...(await original<typeof import('ai')>()), generateText: h.generateText }))
+vi.mock('../../src/main/chat/runner', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/runner')>()),
+  runChat: h.runChat,
+}))
 vi.mock('../../src/main/chat/provider', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/provider')>()),
   resolveLanguageModel: h.resolveLanguageModel,
@@ -99,6 +104,7 @@ import { addProvider } from '../../src/main/chat/catalog'
 import { getChatMessage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import {
   compactReserved,
+  chatRuntimeState,
   registerChatIpc,
   subscribeChatStream,
   unsubscribeChatStream,
@@ -132,6 +138,7 @@ describe('service-owned compaction progress', () => {
   beforeEach(() => {
     freshDb()
     vi.clearAllMocks()
+    h.webContents.send.mockReset()
     h.generateText.mockReset().mockResolvedValue(success())
     h.summarizeNative.mockReset()
     h.deleteNativeBinding.mockReset().mockResolvedValue(undefined)
@@ -430,6 +437,131 @@ describe('service-owned compaction progress', () => {
     expect(progressEvents().at(-1)?.status).toBe('cancelled')
     h.generateText.mockResolvedValue(success())
     expect(await handlers.get('chat:compact')!({ sender: wc } as never, conversationId)).toMatchObject({ ok: true })
+  })
+
+  it('projects pending input on navigation without adding it to compaction, then persists it once', async () => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    registerChatIpc({
+      mhandle: (channel, handler) => {
+        handlers.set(channel, handler)
+      },
+      mon: vi.fn(),
+      emitStatus: vi.fn(),
+    })
+    let projectedId: string | undefined
+    h.generateText.mockImplementation(async ({ prompt }: { prompt: string }) => {
+      const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+        messages: { id: string; parts: { text?: string }[] }[]
+      }
+      const pending = page.messages.filter((message) => message.parts.some((part) => part.text === 'Pending task'))
+      expect(pending).toHaveLength(1)
+      projectedId ??= pending[0].id
+      expect(pending[0].id).toBe(projectedId)
+      expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: true, compacting: true })
+      expect(prompt).not.toContain('Pending task')
+      expect(listChatMessages(conversationId).some((message) => message.id === projectedId)).toBe(false)
+      const older = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId, {
+        beforeSeq: 2,
+      })) as { messages: { id: string }[] }
+      expect(older.messages.some((message) => message.id === projectedId)).toBe(false)
+      return success()
+    })
+    expect(
+      await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    ).toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(chatRuntimeState(conversationId).streaming).toBe(false))
+    expect(h.runChat).toHaveBeenCalledTimes(1)
+    expect(listChatMessages(conversationId).filter((message) => message.id === projectedId)).toHaveLength(1)
+    const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+      messages: { id: string }[]
+    }
+    expect(page.messages.filter((message) => message.id === projectedId)).toHaveLength(1)
+  })
+
+  it.each([
+    'completed',
+    'failed',
+    'cancelled',
+  ] as const)('releases manual compaction before publishing %s to the queue', async (status) => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
+    const emitStatus = vi.fn()
+    registerChatIpc({
+      mhandle: (channel, handler) => {
+        handlers.set(channel, handler)
+      },
+      mon: (channel, handler) => {
+        listeners.set(channel, handler)
+      },
+      emitStatus,
+    })
+    h.generateText.mockImplementation(async () => {
+      expect(emitStatus).toHaveBeenLastCalledWith(conversationId, 'working', { silent: true })
+      expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: true, compacting: true })
+      if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
+      if (status !== 'completed') throw Object.assign(new Error('Summary failed'), { status: 400 })
+      return success()
+    })
+    const terminalStates: ReturnType<typeof chatRuntimeState>[] = []
+    h.webContents.send.mockImplementation((_channel, event) => {
+      if (event.kind === 'compaction-finished') terminalStates.push(chatRuntimeState(conversationId))
+    })
+    await handlers.get('chat:compact')!({ sender: wc } as never, conversationId)
+    expect(h.webContents.send).toHaveBeenCalledWith(
+      `chat:delta:${conversationId}`,
+      expect.objectContaining({ kind: 'compaction-finished', status })
+    )
+    expect(terminalStates).toEqual([expect.objectContaining({ streaming: false, compacting: false })])
+    expect(emitStatus).toHaveBeenCalledTimes(2)
+    expect(emitStatus.mock.calls[1][1]).not.toBe('working')
+    expect(h.runChat).not.toHaveBeenCalled()
+    h.webContents.send.mockReset()
+  })
+
+  it.each([
+    'failed',
+    'cancelled',
+  ] as const)('removes %s preflight input from the projection without persisting or running it', async (status) => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
+    registerChatIpc({
+      mhandle: (channel, handler) => {
+        handlers.set(channel, handler)
+      },
+      mon: (channel, handler) => {
+        listeners.set(channel, handler)
+      },
+      emitStatus: vi.fn(),
+    })
+    let stageSignal: AbortSignal | undefined
+    let rejectStage!: (error: Error) => void
+    h.generateText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => {
+      stageSignal = abortSignal
+      return new Promise((_, reject) => {
+        rejectStage = reject
+        abortSignal.addEventListener('abort', () => reject(abortSignal.reason))
+      })
+    })
+    const result = handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    await vi.waitFor(() => expect(stageSignal).toBeDefined())
+    expect(await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)).toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: 'user',
+          parts: expect.arrayContaining([expect.objectContaining({ text: 'Pending task' })]),
+        }),
+      ]),
+    })
+    if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
+    else rejectStage(Object.assign(new Error('Summary rejected'), { status: 400 }))
+    expect(await result).toMatchObject({ ok: false })
+    const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+      messages: unknown[]
+    }
+    expect(page.messages).toHaveLength(2)
+    expect(listChatMessages(conversationId)).toHaveLength(2)
+    expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: false, compacting: false })
+    expect(h.runChat).not.toHaveBeenCalled()
   })
 
   it('publishes preflight failure before rejecting turn admission and preserves the pending user input', async () => {

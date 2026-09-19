@@ -632,6 +632,9 @@ interface PendingConversationOperation {
   providerId: string | null
   /** Admitted/resolved physical account; logout/reset target it, not just the logical account. */
   effectiveProviderId?: string
+  /** Render-only admission input; never part of persisted/model context before admission. */
+  pendingMessage?: ChatMessage
+  compacting?: boolean
   controller: AbortController
   done: Promise<void>
   settleDone: () => void
@@ -2186,6 +2189,7 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
   const run = active.get(conversationId)
   return {
     streaming: active.has(conversationId) || pendingConversationOperations.has(conversationId),
+    compacting: pendingConversationOperations.get(conversationId)?.compacting === true,
     pendingPermissions: getBroker()
       .pendingFor(conversationId)
       .map((request) => toRequestPayload(request).request),
@@ -3184,6 +3188,15 @@ async function startSend(
   // Compound operations may reserve the slot before switching provider/model.
   // From here, the label must reflect the provider that will actually start for account boundaries.
   operation.providerId = selection.providerId
+  if (!opts?.internal && !internalLoop) {
+    operation.pendingMessage = {
+      id: randomUUID(),
+      conversationId,
+      role: 'user',
+      parts: text.trim() ? [{ type: 'text', id: randomUUID(), text }] : [],
+      createdAt: Date.now(),
+    }
+  }
   const accountEpochAtAdmission = codexAccountUpdateEpoch
   let githubCopilotIdentityAtAdmission: GitHubCopilotAccountIdentity | undefined
   let githubCopilotModelAtAdmission: GitHubCopilotModelInfo | undefined
@@ -3587,6 +3600,7 @@ async function startSend(
     }
     for (const p of hiddenParts) parts.push(p)
 
+    if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
 
     // Isolated = review-loop with its own context (does not touch main conversation transcript/bindings).
@@ -4030,7 +4044,7 @@ async function startSend(
     // Persist the user message BEFORE running (include it in the next turn's history).
     // Isolated: centralize source + executionScope here (runners receive messageMeta and cannot omit them).
     upsertChatMessage({
-      id: randomUUID(),
+      id: operation.pendingMessage?.id ?? randomUUID(),
       conversationId,
       role: 'user',
       parts,
@@ -4040,6 +4054,7 @@ async function startSend(
     })
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
+    operation.pendingMessage = undefined
     if (!useOfficialSubscription) {
       upsertChatMessage({
         id: assistantMessageId,
@@ -5840,15 +5855,47 @@ async function compact(
   const operation = reserveConversationOperation(conversationId, providerId, opts.operation)
   if (!operation) return { ok: false, error: 'busy' }
   const signal = opts.signal ? AbortSignal.any([opts.signal, operation.controller.signal]) : operation.controller.signal
+  let result: CompactResult | undefined
   try {
-    return await compactReserved(conversationId, { ...opts, signal, operation })
+    result = await compactReserved(conversationId, { ...opts, signal, operation })
+    return result
   } finally {
     releaseConversationOperation(conversationId, operation)
+    // Manual compaction has no runner to publish a terminal event. Never advance a queue
+    // from progress completion: native binding cleanup still owns the reservation then.
+    if (!opts.operation) {
+      const event: ChatStreamEvent = {
+        kind: 'compaction-finished',
+        status: signal.aborted ? 'cancelled' : result?.ok || result?.error === 'too-short' ? 'completed' : 'failed',
+      }
+      const channel = `chat:delta:${conversationId}`
+      const wc = getMainWebContents()
+      if (wc) sendChatEvent(wc, channel, event)
+      else emitChatHost(conversationId, channel, event)
+    }
   }
 }
 
 /** Exported for isolated compaction frozen-profile tests (review-loop). */
 export async function compactReserved(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
+  const previousStatus = opts.operation ? getConversation(conversationId)?.status : undefined
+  if (opts.operation) {
+    opts.operation.compacting = true
+    savedDeps?.emitStatus(conversationId, 'working', { silent: true })
+  }
+  try {
+    return await compactReservedWithProgress(conversationId, opts)
+  } finally {
+    if (opts.operation) {
+      opts.operation.compacting = false
+      if (previousStatus && !active.has(conversationId)) {
+        savedDeps?.emitStatus(conversationId, previousStatus, { silent: true })
+      }
+    }
+  }
+}
+
+async function compactReservedWithProgress(conversationId: string, opts: CompactOpts): Promise<CompactResult> {
   // Live runners own their bubble and progress publisher. Only manual/preflight work may
   // attach observations to an existing assistant, always rereading it before a metadata write.
   const ownsProgress = opts.persist !== false && !opts.executionId && !opts.onProgress && !active.has(conversationId)
@@ -7841,10 +7888,15 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // in huge conversations. Does NOT affect model context (from runnerContextHistory in the runner).
   deps.mhandle(
     'chat:history:page',
-    (_e, conversationId: string, opts?: { beforeSeq?: number; aroundSeq?: number; limit?: number }) =>
-      typeof conversationId === 'string'
-        ? listPublicChatMessagesPage(conversationId, opts ?? {})
-        : { messages: [], hasMore: false, earliestSeq: null }
+    (_e, conversationId: string, opts?: { beforeSeq?: number; aroundSeq?: number; limit?: number }) => {
+      if (typeof conversationId !== 'string') return { messages: [], hasMore: false, earliestSeq: null }
+      const page = listPublicChatMessagesPage(conversationId, opts ?? {})
+      const pending = pendingConversationOperations.get(conversationId)?.pendingMessage
+      // Only the latest page includes the render-only input. Its stable ID becomes the durable
+      // user message ID on admission, so reloading across that boundary cannot duplicate it.
+      if (pending && opts?.beforeSeq == null && opts?.aroundSeq == null) page.messages.push(pending)
+      return page
+    }
   )
   // FULL history summary (cost/context) — cheap (meta_json only): the meter still represents
   // all history despite the paginated list (addresses gap #3 from the refinement review).
