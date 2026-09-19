@@ -454,14 +454,14 @@ export async function summarizeWithCodexRuntime(args: {
       } else if (method === 'turn/completed') {
         const turn = isRecord(params.turn) ? params.turn : null
         if (turn?.status !== 'completed') {
-          rawFailure = turn?.error ? params : (notificationError ?? params)
-          const detail = extractTurnCompletedError(params)
+          // Only trust the turn payload when it actually carries failure detail: otherwise the
+          // extractor yields a generic placeholder that would mask the compaction context.
+          const hasTurnDetail = turn?.error != null || (typeof turn?.message === 'string' && turn.message.trim() !== '')
+          rawFailure = hasTurnDetail ? params : (notificationError ?? params)
+          const detail = hasTurnDetail ? extractTurnCompletedError(params) : null
+          const notified = typeof notificationError?.message === 'string' ? notificationError.message : null
           rejectCompleted(
-            new Error(
-              !turn?.error && typeof notificationError?.message === 'string'
-                ? notificationError.message
-                : (detail?.message ?? `Codex portable compaction ${String(turn?.status ?? 'failed')}`)
-            )
+            new Error(detail?.message ?? notified ?? `Codex portable compaction ${String(turn?.status ?? 'failed')}`)
           )
         } else resolveCompleted('completed')
       } else if (method === 'error') {
