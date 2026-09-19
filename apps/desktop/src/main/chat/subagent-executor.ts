@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../shared/conversation-scope'
 import { autonomousProviderAllowed } from './autonomous'
 import type { ToolSet } from 'ai'
 import type { ChatPermMode, SubagentResumeStatus, SubagentRuntimeHandle } from '../../shared/chat'
@@ -78,7 +79,8 @@ export interface SubagentExecutorAccountContext {
  * usage aggregation and UI state deliberately remain with the task runtime. */
 export async function executeSubagent(args: {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   parentMessageId: string
   /** Conversation turns already own this row; host workflows must declare their cleanup contract. */
@@ -155,6 +157,7 @@ export async function executeSubagent(args: {
       ? await buildMaestroWorkerTools({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           cwd: args.cwd,
           parentMessageId: args.parentMessageId,
           delegationId: args.delegationId ?? taskCallId,
@@ -204,6 +207,7 @@ export async function executeSubagent(args: {
         makeCtx: (toolCallId, toolSignal) => ({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           messageId: args.parentMessageId,
           toolCallId: namespaceSubagentToolCallId(taskCallId, toolCallId),
           cwd: args.cwd,
@@ -213,6 +217,7 @@ export async function executeSubagent(args: {
               subagentPermissionAssertInput({
                 conversationId: args.conversationId,
                 projectId: args.projectId,
+                permissionScope: args.permissionScope,
                 action,
                 resources,
                 save,
@@ -288,6 +293,7 @@ export async function executeSubagent(args: {
       let runtimeSignature = ''
       let childHarness: ResolvedHarness | undefined
       const result = await runClaudeSubagent({
+        conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
@@ -302,7 +308,7 @@ export async function executeSubagent(args: {
             modelId: target.runtimeModelId,
             accountIdentity: target.accountIdentity,
             behaviorProfileId: childHarness.identity.behaviorProfileId,
-            prompt: effectiveDefinition.prompt,
+            prompt: args.projectId === null ? `standalone\n${effectiveDefinition.prompt}` : effectiveDefinition.prompt,
             readOnly: effectiveReadOnly,
             sentEffort: effective.sentEffort,
             fastMode: effective.fastMode === true,
@@ -392,6 +398,7 @@ export async function executeSubagent(args: {
         return { text: '', error: 'GitHub Copilot subscription is not authenticated.', errorCode: 'agent-unavailable' }
       }
       return runGitHubCopilotSubagent({
+        conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
         task: resumeFor(effective.providerId, null).task,
         definition: effectiveDefinition,
@@ -429,6 +436,7 @@ export async function executeSubagent(args: {
         client,
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         messageId: args.parentMessageId,
         broker: args.broker,
         questionBroker: args.questionBroker,
@@ -443,6 +451,7 @@ export async function executeSubagent(args: {
       const resume = resumeFor(effective.providerId, accountId, toolSignature)
       try {
         const result = await runCodexSubagent({
+          conversationScope: args.projectId === null ? 'standalone' : 'project',
           client,
           cwd: args.cwd,
           profile: args.profile,
@@ -481,6 +490,7 @@ export async function executeSubagent(args: {
     const result = await runSubagent({
       cwd: args.cwd,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       conversationId: args.conversationId,
       parentMessageId: args.parentMessageId,
       toolCallId: args.toolCallId,

@@ -7,12 +7,15 @@ import { platformConnections } from './connection-service'
 import { linkedBoardCatalog } from './board-tool-catalog'
 import { normalizeChatMode } from '../../shared/chat-mode'
 import { resolveChatBehavior } from '../../shared/conversation-experience'
+import { requireProjectConversation } from '../../shared/conversation-scope'
 
 /** No path inference: conversations and their worktrees inherit the exact workspace binding. */
 export function linkedConversationBinding(conversationId: string) {
   if (isWebManagedConversation(conversationId)) return null
   const conversation = getConversation(conversationId)
-  return conversation ? platformProjectBindings.forWorkspace(conversation.workspaceId) : null
+  return conversation && conversation.scope !== 'standalone'
+    ? platformProjectBindings.forWorkspace(conversation.workspaceId)
+    : null
 }
 const identity = (binding: ReturnType<typeof linkedConversationBinding>) =>
   binding
@@ -35,6 +38,8 @@ export function linkedBoardScopeIdentity(conversationId: string) {
 export function createLinkedBoardAccess(conversationId: string, access: 'read' | 'write' = 'write') {
   const original = linkedBoardScopeIdentity(conversationId)
   const current = () => {
+    const conversation = getConversation(conversationId)
+    if (conversation) requireProjectConversation(conversation)
     const binding = linkedConversationBinding(conversationId)
     if (!binding) throw new Error('Link this workspace to a Kanban project in Settings → Platform first.')
     if (linkedBoardScopeIdentity(conversationId) !== original)

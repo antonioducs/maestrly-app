@@ -67,9 +67,9 @@ export interface CursorHarnessEnvelope {
   harnessSnapshot?: import('../../../shared/harness').HarnessSnapshotV1
 }
 
-function skillsCatalog(skills: readonly ChatSkill[]): string {
+function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  return 'Project skills available through `use_skill`:\n' + skills.map(skillCatalogLine).join('\n')
+  return `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n` + skills.map(skillCatalogLine).join('\n')
 }
 
 function agentsCatalog(agents: readonly ChatAgent[]): string {
@@ -82,7 +82,8 @@ function agentsCatalog(agents: readonly ChatAgent[]): string {
 }
 
 export interface BuildCursorHarnessContextArgs {
-  projectId: string
+  /** Null for standalone chats: there is no workspace, project context, or project skill catalog. */
+  projectId: string | null
   cwd: string
   conversationId: string
   mode: ChatBehavior
@@ -100,7 +101,7 @@ export async function buildCursorHarnessContext(
     args.mode === 'ask'
       ? []
       : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
-  const skillContext = skillsCatalog(skills)
+  const skillContext = skillsCatalog(skills, args.projectId !== null)
   const allAgents = await listEffectiveAgents({
     cwd: args.cwd,
     conversationId: args.conversationId,

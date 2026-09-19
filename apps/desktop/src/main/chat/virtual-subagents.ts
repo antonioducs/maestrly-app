@@ -1,3 +1,4 @@
+import { getConversation } from '../store'
 /**
  * EFFECTIVE AGENTS layer: physical (project/global/built-in via `listAgents`) + VIRTUAL agents
  * synthesized from CUSTOM `byAgent` keys in subagent profile rules.
@@ -103,7 +104,8 @@ export interface ListEffectiveAgentsInput {
 export async function listEffectiveAgents(input: ListEffectiveAgentsInput): Promise<ChatAgent[]> {
   const conversation = getConversationSubagentProfileRules(input.conversationId)
   if (!conversation.subagentsEnabled) return []
-  const physical = await listAgents(input.cwd, input.home)
+  const cwd = getConversation(input.conversationId)?.scope === 'standalone' ? '' : input.cwd
+  const physical = await listAgents(cwd, input.home)
   if (input.mode !== undefined && capabilityBehaviorFor(input.mode) !== 'agent') return physical
   if (!conversation.enabled) return physical
   const global = getGlobalSubagentProfileRules()

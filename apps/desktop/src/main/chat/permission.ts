@@ -1,3 +1,4 @@
+import { permissionScopeKey, type PermissionScope } from '../../shared/conversation-scope'
 import { autonomousPolicy,assertAutonomousPermission } from './autonomous'
 import { remoteChatPolicy, assertRemoteChatPermission, isWebManagedConversation } from './remote-policy'
 /**
@@ -32,7 +33,8 @@ export type Reply = 'once' | 'always' | 'reject'
 
 export interface AssertInput {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   action: string
   resources: string[]
   /** Patterns to persist as `allow` if user answers "always". */
@@ -48,7 +50,8 @@ export interface AssertInput {
 export interface PermissionRequest {
   id: string
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   action: string
   resources: string[]
   save?: string[]
@@ -189,7 +192,13 @@ export class PermissionBroker extends EventEmitter {
     return this.deps.rulesetFor(conversationId)
   }
 
-  /** Persisted workspace `allow` rules. */
+  private scopeKey(input: Pick<AssertInput, 'projectId' | 'conversationId' | 'permissionScope'>): string {
+    const scope = input.permissionScope
+    if (scope) return permissionScopeKey(scope)
+    return input.projectId ?? `conversation:${input.conversationId}`
+  }
+
+  /** Persisted workspace or owning-conversation allow rules. */
   private savedRules(projectId: string): Ruleset {
     const rows = getDb()
       .prepare('SELECT action, resource FROM permission_saved WHERE project_id = ?')
@@ -212,7 +221,7 @@ export class PermissionBroker extends EventEmitter {
   private evaluateInput(input: AssertInput): { effect: RuleEffect; rules: Ruleset } {
     const base = this.baseRules(input.conversationId)
     if (this.denied(input, base)) return { effect: 'deny', rules: base } // deny: base rules only (G1).
-    const all = [...base, ...this.savedRules(input.projectId)]
+    const all = [...base, ...this.savedRules(this.scopeKey(input))]
     const effs = input.resources.map((res) => evaluate(input.action, res, all).effect)
     const effect: RuleEffect = effs.includes('deny') ? 'deny' : effs.includes('ask') ? 'ask' : 'allow'
     return { effect, rules: all }
@@ -223,6 +232,7 @@ export class PermissionBroker extends EventEmitter {
       id: 'per_' + randomUUID(),
       conversationId: input.conversationId,
       projectId: input.projectId,
+      permissionScope: input.permissionScope,
       action: input.action,
       resources: input.resources,
       save: input.save,
@@ -303,7 +313,7 @@ export class PermissionBroker extends EventEmitter {
     }
 
     if (input.reply === 'always' && existing.request.save?.length) {
-      this.savedAdd(existing.request.projectId, existing.request.action, existing.request.save)
+      this.savedAdd(this.scopeKey(existing.request), existing.request.action, existing.request.save)
     }
     this.emitResolved(existing.request, 'allow')
     existing.resolve(input.reply)
@@ -314,7 +324,7 @@ export class PermissionBroker extends EventEmitter {
     for (const [id, item] of this.pending) {
       const base = this.baseRules(item.request.conversationId)
       if (this.denied(item.request, base)) continue
-      const eff = [...base, ...this.savedRules(item.request.projectId)]
+      const eff = [...base, ...this.savedRules(this.scopeKey(item.request))]
       if (item.request.resources.every((res) => evaluate(item.request.action, res, eff).effect === 'allow')) {
         this.emitResolved(item.request, 'allow')
         item.resolve('always')

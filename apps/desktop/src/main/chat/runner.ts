@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../shared/conversation-scope'
 import { autonomousPolicy,interactiveTool,governAutonomousTools,AUTONOMOUS_INSTRUCTIONS } from './autonomous'
 /**
  * BYOK chat agent loop. Conceptually ported from opencode `session/runner/llm.ts`, which manually
@@ -351,7 +352,8 @@ export function buildPersistedUsage(
 export interface RunChatArgs {
   conversationId: string
   /** workspaceId — key for saved permission rules. */
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   selection: ChatModelRef
   /** Flags captured once at turn admission. undefined keeps direct-call compatibility by capturing locally. */
@@ -466,6 +468,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const {
     conversationId,
     projectId,
+    permissionScope,
     cwd,
     selection,
     broker,
@@ -673,6 +676,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const makeMainToolContext = (toolCallId: string, toolSignal: AbortSignal): ToolContext => ({
     conversationId,
     projectId,
+    permissionScope,
     messageId: assistantId,
     toolCallId,
     cwd,
@@ -685,6 +689,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       return broker.assert({
         conversationId,
         projectId,
+        permissionScope,
         action,
         resources,
         save,
@@ -734,6 +739,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     return broker.assert({
       conversationId,
       projectId,
+      permissionScope,
       action: 'mcp',
       resources: [toolName],
       save: ['*'],
@@ -1078,6 +1084,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                   executeSubagent({
                     conversationId,
                     projectId,
+                    permissionScope,
                     cwd,
                     parentMessageId: assistantId,
                     toolCallId,
@@ -1228,7 +1235,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? await buildOpenAIProjectContext(projectId, cwd)
     : await buildProjectContext(projectId, cwd)
   const skillsCatalog = skills.length
-    ? '\n\nProject skills (specialized capabilities) — when the task matches one, call use_skill("<name>") ' +
+    ? `\n\n${projectId === null ? 'Available' : 'Project'} skills (specialized capabilities) — when the task matches one, call use_skill("<name>") ` +
       'to load the full instructions BEFORE acting:\n' +
       skills.map(skillCatalogLine).join('\n')
     : ''
@@ -1352,9 +1359,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // + uncommitted changes — one cheap call; sticky `dirty` rarely changes cache). Prevents guessing
   // date/OS/branch and conveys repository state without repeated `git status`.
   const plat = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
-  const git = await gitEnvInfo(cwd).catch(() => null)
+  const git = projectId === null ? null : await gitEnvInfo(cwd).catch(() => null)
   const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
-  const envDetails = `OS: ${plat}. Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${cwd}.${gitLine}`
+  const envDetails = `OS: ${plat}. Today's date: ${new Date().toISOString().slice(0, 10)}. ${projectId === null ? 'Private working directory' : 'Project directory'}: ${cwd}.${gitLine}`
   const envContext = `\n\n# Environment\n${envDetails}`
   // Profile-declared extended-reasoning guidance; the synthetic host blocks below stay with the runner.
   const profileUltra = harnessUltraGuidance(harness, mode)
@@ -1381,7 +1388,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
             'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
             'and be critical of your first conclusion before finishing.'
-  const basePrompt = buildMaestrlyBasePrompt({ harness, cwd, appToolsEnabled, mode, hasNotesTab })
+  const basePrompt = buildMaestrlyBasePrompt({ harness, scope: projectId === null ? 'standalone' : 'project', cwd, appToolsEnabled, mode, hasNotesTab })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
     basePrompt +
@@ -1414,6 +1421,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     let sourceCommit: string | undefined
     if (harness.prompts.layout !== 'maestrly-base') {
       const prompt = buildHarnessPrompt({
+        scope: projectId === null ? 'standalone' : 'project',
         harness,
         cwd,
         mode,

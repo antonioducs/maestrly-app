@@ -1,3 +1,4 @@
+import { requireProjectConversation } from '../../shared/conversation-scope'
 import { promises as fsp, watch as fsWatch, type FSWatcher } from 'node:fs'
 import * as windowIpc from '../window-ipc'
 import path from 'node:path'
@@ -526,9 +527,10 @@ async function ensureNotebook(scope: NotesScope, id: string): Promise<string | n
   const dir = notebookDir(scope, id)
   if (!dir) return null
   await fsp.mkdir(dir, { recursive: true })
-  // Apply conversation-note hygiene to cwd; project userData is not a Git repository, so exclusion is a
-  // no-op there.
-  await excludeFromGitInfo(path.dirname(path.dirname(dir)), [`${NOTES_DIR}/`])
+  // Only project conversation notes live in Git worktrees.
+  if (scope === 'conv' && getConversation(id)?.scope === 'project') {
+    await excludeFromGitInfo(path.dirname(path.dirname(dir)), [`${NOTES_DIR}/`])
+  }
   armWatch(dir, scope, id)
   await migrateIfNeeded(dir, scope, id)
   return dir
@@ -964,8 +966,9 @@ export async function deletePage(scope: NotesScope, id: string, pageId: string):
 
 /** Copy a conversation notebook subtree beneath a new conversation/date page in project notes. */
 export async function mergeConvIntoProject(convId: string): Promise<{ ok: boolean; message: string }> {
-  const conv = getConversation(convId)
-  if (!conv) return { ok: false, message: 'Conversation not found.' }
+  const stored = getConversation(convId)
+  if (!stored) return { ok: false, message: 'Conversation not found.' }
+  const conv = requireProjectConversation(stored)
   const convDir = await ensureNotebook('conv', convId)
   if (!convDir) return { ok: false, message: 'Conversation not found.' }
   const convPages = (await loadManifest(convDir)).pages

@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import { governAutonomousTools, autonomousPolicy, AUTONOMOUS_INSTRUCTIONS } from '../autonomous'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
@@ -137,7 +138,8 @@ const PORTABLE_CONTINUE_PROMPT =
 
 export interface RunClaudeChatArgs {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   selection: ChatModelRef
   resolvedModelId?: string
@@ -499,6 +501,7 @@ async function prepareRuntime(
   const makeContext = (toolCallId: string, toolSignal: AbortSignal): ToolContext => ({
     conversationId: args.conversationId,
     projectId: args.projectId,
+    permissionScope: args.permissionScope,
     messageId: assistantId,
     toolCallId,
     cwd: args.cwd,
@@ -512,6 +515,7 @@ async function prepareRuntime(
       return args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         action,
         resources,
         save,
@@ -570,6 +574,7 @@ async function prepareRuntime(
     return args.broker.assert({
       conversationId: args.conversationId,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       action: 'mcp',
       resources: [toolName],
       save: [toolName],
@@ -715,13 +720,13 @@ async function prepareRuntime(
       state.toolJournal
     )
     const projectContext = await buildProjectContext(args.projectId, args.cwd)
-    const git = await gitEnvInfo(args.cwd).catch(() => null)
+    const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
     const env = [
       `OS: ${platform}.`,
       `Today's date: ${new Date().toISOString().slice(0, 10)}.`,
-      `Project directory: ${args.cwd}.`,
+      `${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.`,
       git ? `Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : '',
     ]
       .filter(Boolean)
@@ -751,6 +756,7 @@ async function prepareRuntime(
       : ''
     const systemPrompt = [
       buildMaestrlyBasePrompt({
+        scope: args.projectId === null ? 'standalone' : 'project',
         harness,
         cwd: args.cwd,
         appToolsEnabled,
@@ -759,7 +765,7 @@ async function prepareRuntime(
       }),
       '# Active runtime\nYou are running through the official Anthropic Claude Agent SDK. Maestrly owns the system prompt, tools, permissions, skills, subagents, plans, questions and persistence. Use only the supplied Maestrly MCP tools; native Claude Code extensions are disabled.',
       projectContext,
-      skills.length ? `# Project skills\n${skillsCatalog(skills)}` : '',
+      skills.length ? `# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillsCatalog(skills)}` : '',
       agents.length
         ? args.mode === 'maestro'
           ? renderMaestroAgentCatalog(args.maestro!)
@@ -1218,6 +1224,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         : createClaudeTaskRuntime({
             conversationId: args.conversationId,
             projectId: args.projectId,
+            permissionScope: args.permissionScope,
             cwd: args.cwd,
             mode: args.mode,
             maestro: args.maestro,

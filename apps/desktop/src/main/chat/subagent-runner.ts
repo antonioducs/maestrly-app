@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../shared/conversation-scope'
 import { createHash, randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { streamText, type ModelMessage, type ToolSet } from 'ai'
@@ -248,7 +249,8 @@ export function canReplayOpenAILedger(
 
 export function subagentPermissionAssertInput(input: {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   action: PermissionAction
   resources: string[]
   save?: string[]
@@ -294,7 +296,8 @@ export function hasSubagentMutationInLedger(
  */
 export async function runSubagent(args: {
   cwd: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   conversationId: string
   /** Parent assistant message: all subagent executions disappear with it on clear/edit/delete. */
   parentMessageId: string
@@ -407,6 +410,7 @@ export async function runSubagent(args: {
     const makeSubToolContext = (toolCallId: string, toolSignal: AbortSignal): ToolContext => ({
       conversationId: args.conversationId,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       messageId: args.parentMessageId,
       toolCallId: namespaceSubagentToolCallId(subagentTaskCallId, toolCallId),
       cwd: args.cwd,
@@ -416,6 +420,7 @@ export async function runSubagent(args: {
           subagentPermissionAssertInput({
             conversationId: args.conversationId,
             projectId: args.projectId,
+            permissionScope: args.permissionScope,
             action,
             resources,
             save,
@@ -438,7 +443,7 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = harnessSubagentPrompt([def.prompt, MEMORY_TOOL_GUIDANCE].join('\n\n'), subHarness)
+    let subSystem = harnessSubagentPrompt([def.prompt, args.projectId === null ? '' : MEMORY_TOOL_GUIDANCE].filter(Boolean).join('\n\n'), subHarness)
     chatDiag({
       kind: 'harness-behavior-profile',
       profile: subHarness.identity.behaviorProfileId ?? 'legacy',
@@ -453,8 +458,8 @@ export async function runSubagent(args: {
     let subLifecycle: OpenAICompactionLifecycle | null = useOpenAISubagent
       ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
       : null
-    const standalone = args.messageOwnership?.kind === 'standalone'
-    const executionStore = standalone ? createStandaloneOpenAIExecutionStore() : undefined
+    const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
+    const executionStore = args.messageOwnership?.kind === 'standalone' ? createStandaloneOpenAIExecutionStore() : undefined
     if (useOpenAISubagent) {
       const nativeTools = buildOpenAINativeTools({
         cwd: args.cwd,

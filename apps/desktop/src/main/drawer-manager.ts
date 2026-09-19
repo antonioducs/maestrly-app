@@ -1,3 +1,8 @@
+import { conversationTabAllowed } from './drawer-scope'
+import { setLayout as setDrawerLayout } from './drawer/layout'
+import { ensurePanelTab as ensureDrawerPanelTab } from './drawer/panels'
+import { ensureViewFor as ensureDrawerViewFor } from './drawer/popup'
+
 /**
  * Stable barrel for conversation-isolated drawer views. Implementation lives in drawer/state, layout,
  * float, popup, panels, browser, vscode, and lifecycle. Reexports preserve existing IPC, MCP, manager,
@@ -23,7 +28,6 @@ export {
   applyLayout,
   captureSlotView,
   setDialogSuppressionOwners,
-  setLayout,
   setPlacement,
   setViewsSuppressed,
 } from './drawer/layout'
@@ -36,14 +40,25 @@ export {
   layoutFloatingTab,
   focusFloatingContent,
 } from './drawer/float'
-export { ensurePanelTab } from './drawer/panels'
+export function ensurePanelTab(...args: Parameters<typeof ensureDrawerPanelTab>): void {
+  if (conversationTabAllowed(args[0], args[1])) ensureDrawerPanelTab(...args)
+}
+
+export function setLayout(opts: Parameters<typeof setDrawerLayout>[0]): void {
+  const visibleKind =
+    opts.convId && opts.visibleKind && !conversationTabAllowed(opts.convId, opts.visibleKind) ? null : opts.visibleKind
+  setDrawerLayout({ ...opts, visibleKind })
+}
 export {
   PANEL_COLD_RETRY_MS,
   PANEL_COLD_TTL_MS,
   disposePanelEviction,
   scheduleColdPanelEviction,
 } from './drawer/panels'
-export { ensureViewFor, placeViewInMain, hideViewOffscreen, focusViewInMain } from './drawer/popup'
+export function ensureViewFor(...args: Parameters<typeof ensureDrawerViewFor>): boolean {
+  return conversationTabAllowed(args[0], args[1]) && ensureDrawerViewFor(...args)
+}
+export { placeViewInMain, hideViewOffscreen, focusViewInMain } from './drawer/popup'
 export {
   hardenBrowserSession,
   setPopupBrowserRelayout,

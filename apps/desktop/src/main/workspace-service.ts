@@ -1,9 +1,15 @@
+import {
+  requireProjectConversation,
+  permissionScopeKey,
+  conversationPermissionScope,
+} from '../shared/conversation-scope'
+import { removeStandaloneConversationDirectory } from './standalone-conversation-service'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import * as git from './git-service'
 import * as store from './store'
 import type { ConversationExperience } from '../shared/conversation-experience'
-import type { Conversation, ConversationMode, Workspace } from './store'
+import type { ProjectConversation, ConversationMode, Workspace } from './store'
 import { createAggregator, cleanupAggregator, aggregatorDir, type RepoSpec } from './aggregator-service'
 import { externalWorktreeDir } from './app-paths'
 import { collectChatToolImageRefs, releaseUnreferencedChatToolImages } from './chat/chat-store'
@@ -59,7 +65,7 @@ export async function addWorkspace(
 }
 
 export interface WorkspaceWithConversations extends Workspace {
-  conversations: Conversation[]
+  conversations: ProjectConversation[]
   archivedCount: number
 
   groupId: string | null
@@ -87,7 +93,10 @@ export function listWorkspacesWithConversations(includeArchived = false): Worksp
 
 export function renameConversation(id: string, name: string): void {
   const trimmed = name.trim()
-  if (trimmed) store.renameConversation(id, trimmed)
+  if (trimmed) {
+    store.renameConversation(id, trimmed)
+    if (store.getConversation(id)?.scope === 'standalone') store.patchConvUiPrefs(id, { autoName: false })
+  }
 }
 
 export function setConversationArchived(id: string, archived: boolean): void {
@@ -117,6 +126,16 @@ export async function deleteConversation(id: string, options: { preserveBranch?:
 
     deleteConversationToolImageMetadata(id)
     await deleteConversationGeneratedImages(id)
+  }
+
+  if (conv.scope === 'standalone') {
+    await removeStandaloneConversationDirectory(conv)
+    store
+      .getDb()
+      .prepare('DELETE FROM permission_saved WHERE project_id = ?')
+      .run(permissionScopeKey(conversationPermissionScope(conv)))
+    await deleteRowAndArtifacts()
+    return
   }
 
   if (conv.isMulti && conv.repos?.length) {
@@ -178,7 +197,7 @@ export interface CreateConversationArgs {
 }
 
 /** Prepare a worktree or an explicitly confirmed local attachment before persisting the conversation. */
-export async function createConversation(args: CreateConversationArgs): Promise<Conversation> {
+export async function createConversation(args: CreateConversationArgs): Promise<ProjectConversation> {
   if (args.mode === 'local' && !args.attach) {
     throw new Error('Local creation requires preview and confirmation.')
   }
@@ -199,7 +218,8 @@ export async function createConversation(args: CreateConversationArgs): Promise<
     })
     const convRepos = await createAggregator(id, specs)
     const primary = convRepos[0]
-    const conversation: Conversation = {
+    const conversation: ProjectConversation = {
+      scope: 'project',
       id,
       workspaceId: primary.workspaceId,
       name: args.name || primary.branch,
@@ -250,7 +270,8 @@ export async function createConversation(args: CreateConversationArgs): Promise<
     throw new Error('Local creation requires preview and confirmation.')
   }
 
-  const conversation: Conversation = {
+  const conversation: ProjectConversation = {
+    scope: 'project',
     id: randomUUID(),
     workspaceId: ws.id,
     name: args.name || branch,
@@ -274,9 +295,10 @@ export async function createConversation(args: CreateConversationArgs): Promise<
 export async function createSiblingConversation(
   sourceConversationId: string,
   options: { experience?: ConversationExperience; name?: string } = {}
-): Promise<Conversation> {
-  const src = store.getConversation(sourceConversationId)
-  if (!src) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
+): Promise<ProjectConversation> {
+  const source = store.getConversation(sourceConversationId)
+  if (!source) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
+  const src = requireProjectConversation(source)
   assertConversationMigrationMutationAllowed(sourceConversationId, 'Create sibling conversation')
 
   if (src.isMulti || src.archived === 1) {

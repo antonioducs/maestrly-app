@@ -129,6 +129,7 @@ export async function summarizeWithClaudeRuntime(args: {
   manager: ClaudeSubscriptionManager
   accountIdentity: ClaudeSubscriptionAccountIdentity
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   modelId: string
   system: string
   prompt: string
@@ -311,6 +312,7 @@ const COPILOT_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 export async function summarizeWithCodexRuntime(args: {
   client: CodexAppServerClient
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   modelId: string
   requestedContextWindow?: number | null
   runtimeModel?: Partial<CodexSubscriptionModel> | null
@@ -388,6 +390,7 @@ export async function summarizeWithCodexRuntime(args: {
           ...(runtimeProfile.declaresExperimentalContext
             ? { 'features.context_management.experimental_mode': runtimeProfile.experimentalContextEnabled }
             : {}),
+          ...(args.conversationScope === 'standalone' ? { project_doc_max_bytes: 0, 'features.skill_search': false, 'skills.include_instructions': false, 'features.skill_mcp_dependency_install': false } : {}),
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
           'features.shell_tool': false,
@@ -396,6 +399,7 @@ export async function summarizeWithCodexRuntime(args: {
           web_search: 'disabled',
         },
         developerInstructions: args.system,
+        ...(args.conversationScope === 'standalone' ? { baseInstructions: args.system } : {}),
         personality: 'pragmatic',
       } as Parameters<CodexAppServerClient['startThread']>[0] & { dynamicTools: []; environments: [] },
       { signal: args.signal, timeoutMs: 0 }
@@ -578,6 +582,7 @@ export async function summarizeWithGitHubCopilotRuntime(args: {
   accountIdentity: GitHubCopilotAccountIdentity
   conversationId: string
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   modelId: string
   system: string
   prompt: string

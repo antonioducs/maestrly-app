@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../../shared/conversation-scope'
 /**
  * Shared BYOK chat tool utilities. Ported without Effect from opencode
  * `file-mutation.ts` (BOM + KeyedMutex), `tool-output-store.ts` (bounding), `read-filesystem.ts`
@@ -45,7 +46,8 @@ export interface ReviewerToolRuntime {
 export interface ToolContext {
   conversationId: string
   /** workspaceId — key for saved permission rules. */
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   messageId: string
   toolCallId: string
   /** Conversation working directory (worktree/root). Tools operate relative to it. */

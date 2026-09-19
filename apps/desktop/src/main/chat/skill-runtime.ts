@@ -1,6 +1,7 @@
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import { effectiveSkills, findEffectiveSkill } from './skill-state'
 import { normalizedSkillName, renderSkillContext, skillCatalogLine, type ChatSkill } from './skills'
+import type { ConversationScope } from '../../shared/conversation-scope'
 
 export interface ModelSkillRuntime {
   skills: ChatSkill[]
@@ -8,10 +9,10 @@ export interface ModelSkillRuntime {
   tools: ToolSet
 }
 
-export function renderModelSkillCatalog(skills: readonly ChatSkill[]): string {
+export function renderModelSkillCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
   return [
-    '# Available project skills',
+    `# Available ${project ? 'project ' : ''}skills`,
     'These specialized capabilities are available through `use_skill`.',
     'When the task clearly matches a listed skill, call `use_skill` before acting, read the returned instructions completely, and follow them for this task. Use only the minimal relevant set. User instructions take precedence.',
     ...skills.map(skillCatalogLine),
@@ -25,7 +26,9 @@ export function renderModelSkillCatalog(skills: readonly ChatSkill[]): string {
 export async function buildModelSkillRuntime(args: {
   cwd: string
   conversationId?: string
+  scope?: ConversationScope
 }): Promise<ModelSkillRuntime> {
+  const project = args.scope !== 'standalone'
   const skills = (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
   const catalogNames = new Set(skills.map((skill) => skill.name))
   const unavailable = (name: string): string =>
@@ -34,7 +37,7 @@ export async function buildModelSkillRuntime(args: {
     ? {
         use_skill: tool({
           description:
-            'Loads the full instructions of an enabled project skill. Call this before performing a task ' +
+            `Loads the full instructions of an enabled ${project ? 'project ' : ''}skill. Call this before performing a task ` +
             'covered by a skill listed in the system prompt, then follow the returned instructions.',
           inputSchema: jsonSchema<{ name: string }>({
             type: 'object',
@@ -50,5 +53,5 @@ export async function buildModelSkillRuntime(args: {
         }),
       }
     : {}
-  return { skills, catalog: renderModelSkillCatalog(skills), tools }
+  return { skills, catalog: renderModelSkillCatalog(skills, project), tools }
 }

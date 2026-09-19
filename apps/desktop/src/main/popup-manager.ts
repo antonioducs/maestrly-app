@@ -1,3 +1,4 @@
+import { conversationTabAllowed } from './drawer-scope'
 import type { BrowserWindow } from 'electron'
 import { broadcast } from './window-ipc'
 import {
@@ -207,6 +208,7 @@ export function stateFor(convId: string): PopupState {
 
 /** Open or raise a tool popup. Reopening the same tool reorders it without duplication. */
 export function openPopup(convId: string, tab: FloatTab): void {
+  if (!conversationTabAllowed(convId, tab)) return
   if (isSuppressed()) return // do not open beneath a modal
   // A floating view belongs to another BrowserWindow/manager. Reparenting here would corrupt that
   // ownership, so ignore the popup shortcut and retain the floating window.

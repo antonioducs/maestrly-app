@@ -109,6 +109,7 @@ export function registerConversationNotesTools(ctx: McpToolContext): void {
 
 export function registerProjectNotesTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
+  if (getConversation(convId)?.scope === 'standalone') return
   // Content-writing tools advertise Mermaid support so the model can create diagrams rendered by notes UI.
   const MERMAID_HINT = t('notes.mermaid')
   server.registerTool(
@@ -121,6 +122,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async () => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       return ok(JSON.stringify(await listPages('project', conv.workspaceId), null, 2))
     }
   )
@@ -137,6 +139,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ title, parentId }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       const p = await createPage('project', conv.workspaceId, { title, parentId: parentId ?? null })
       return p ? ok(t('returns.notes.pageCreated', { id: p.id, title: p.title })) : err(t('errors.pageCreateFailed'))
     }
@@ -151,6 +154,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ pageId }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       return ok((await readPage('project', conv.workspaceId, pageId)) || t('returns.notes.pageEmpty'))
     }
   )
@@ -167,6 +171,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ pageId, content }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       await writePage('project', conv.workspaceId, pageId, content, true)
       return ok(t('returns.notes.pageUpdated'))
     }
@@ -181,6 +186,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ pageId, text }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       await appendPage('project', conv.workspaceId, pageId, text, true)
       return ok(t('returns.notes.appended'))
     }
@@ -195,6 +201,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ pageId }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       await deletePage('project', conv.workspaceId, pageId)
       return ok(t('returns.notes.pageDeleted'))
     }
@@ -209,6 +216,7 @@ export function registerProjectNotesTools(ctx: McpToolContext): void {
     async ({ text }) => {
       const conv = getConversation(convId)
       if (!conv) return err(t('errors.convNotFound'))
+      if (conv.scope !== 'project') return err('project-required')
       const pages = await listPages('project', conv.workspaceId)
       let page: PageMeta | undefined =
         pages.filter((p) => p.parentId === null).sort((a, b) => a.order - b.order)[0] ?? pages[0]

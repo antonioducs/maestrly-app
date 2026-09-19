@@ -52,6 +52,7 @@ export interface RunClaudeSubagentArgs {
   accountIdentity?: ClaudeSubscriptionAccountIdentity
   conversationId: string
   cwd: string
+  conversationScope?: 'project' | 'standalone'
   profile: SubagentExecutionSnapshotV1
   /** Canonical child identity supplied by the Claude runtime when the configured model is an alias. */
   resolvedModelId?: string
@@ -171,7 +172,7 @@ async function runClaudeSubagentAttempt(
   const legacySystemPrompt = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-    MEMORY_TOOL_GUIDANCE,
+    args.conversationScope === 'standalone' ? 'This is a standalone conversation without project or workspace memory.' : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',

@@ -1,3 +1,4 @@
+import { conversationTabAllowed } from './drawer-scope'
 import { BrowserWindow, screen } from 'electron'
 import { convAccentColor } from '../shared/conv-color'
 import { resolvePreload } from './resolve-preload'
@@ -37,7 +38,7 @@ function tabTitle(tab: FloatTab): string {
  */
 function windowTitle(convId: string, tab: FloatTab): string {
   const conv = getConversation(convId)
-  const ws = conv ? getWorkspace(conv.workspaceId) : undefined
+  const ws = conv?.scope === 'project' ? getWorkspace(conv.workspaceId) : undefined
   const ctx = [ws?.name, conv?.name].filter(Boolean).join(' · ')
   return ctx ? `${ctx} — ${tabTitle(tab)}` : tabTitle(tab)
 }
@@ -52,7 +53,7 @@ function windowTitle(convId: string, tab: FloatTab): string {
 function stripHtml(convId: string, tab: FloatTab, pinned: boolean): string {
   const t = tMain('main')
   const conv = getConversation(convId)
-  const ws = conv ? getWorkspace(conv.workspaceId) : undefined
+  const ws = conv?.scope === 'project' ? getWorkspace(conv.workspaceId) : undefined
   return floatingStripHtml({
     chromeHeight: FLOAT_CHROME_H,
     color: convAccentColor(convId),
@@ -228,6 +229,7 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
 
 /** Detach a tab into its own window, or focus an existing one. drawer-manager reparents the view. */
 export function detach(convId: string, tab: FloatTab): void {
+  if (!conversationTabAllowed(convId, tab)) return
   if (!mainWindow) return
   const existing = entry(convId, tab)
   if (existing) {
@@ -302,7 +304,7 @@ export function showFor(convId: string | null): void {
   for (const [cid, byTab] of floats) {
     for (const [tab, en] of byTab) {
       if (en.win.isDestroyed()) continue
-      const show = cid === effective || en.pinned
+      const show = conversationTabAllowed(cid, tab) && (cid === effective || en.pinned)
       if (show) {
         if (!en.win.isVisible()) en.win.showInactive()
         layoutFloatingTab(cid, tab, en.win) // restore layout when showing the view to avoid repaint defects

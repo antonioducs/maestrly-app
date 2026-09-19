@@ -1,3 +1,5 @@
+import { conversationTabAllowed } from './drawer-scope'
+import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import {
   closeShellTerminal,
   createShellTerminal,
@@ -52,7 +54,8 @@ export interface DrawerIpcDeps {
 /** Canonical source for deciding whether a Companion completion is visible to the user. */
 export function isChatGptVisible(convId: string): boolean {
   return (
-    isTabVisibleInSlot(convId, 'chatgpt') || popupManager.isChatGptVisible(convId) ||
+    isTabVisibleInSlot(convId, 'chatgpt') ||
+    popupManager.isChatGptVisible(convId) ||
     floatingManager.isChatGptVisible(convId)
   )
 }
@@ -64,6 +67,9 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // Drawer WebContentsViews are isolated by conversation (convId).
   reg.mon('drawer:layout', (_e, payload: { convId: string | null; visibleKind: FloatTab | null; bounds?: Bounds }) => {
+    if (payload.convId && payload.visibleKind && !conversationTabAllowed(payload.convId, payload.visibleKind)) {
+      payload = { ...payload, visibleKind: null }
+    }
     setLayout(payload)
     if (!payload.convId || payload.visibleKind !== 'chatgpt' || !deps.restoreChatGptView) return
     // Memory reclaim keeps the MCP session but closes the remote renderer. Once the current slot asks
@@ -107,7 +113,14 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
   // loadVSCodeFolder owns serve-web startup, settings, URL, and the loading page (#318), allowing
   // popup-manager to reuse the flow when opening a cold editor and resolving cwd itself.
-  reg.mhandle('drawer:load-vscode', (_e, convId: string, folder: string) => deps.loadVSCodeFolder(convId, folder))
+  reg.mhandle('drawer:load-vscode', async (_e, convId: string, folder: string) => {
+    const conv = getConversation(convId)
+    if (conv?.scope === 'standalone') {
+      const cwd = await validateStandaloneConversationDirectory(conv)
+      if (folder !== cwd) throw new Error('Unsafe standalone chat directory.')
+    }
+    return deps.loadVSCodeFolder(convId, folder)
+  })
   // #318: Restart a stalled or crashed serve-web without closing the app, then reload all open Code tabs
   // with its new URL. The global server may choose a different port.
   reg.mhandle('drawer:restart-vscode', async () => {
@@ -120,10 +133,14 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   reg.mon('drawer:dispose-conversation', (_e, convId: string) => disposeConversation(convId))
 
   // ensure the docked React panel view when opening a panel tab
-  reg.mon('drawer:ensure-panel', (_e, convId: string, tab: PanelTab) => ensurePanelTab(convId, tab))
+  reg.mon('drawer:ensure-panel', (_e, convId: string, tab: PanelTab) => {
+    if (conversationTabAllowed(convId, tab)) ensurePanelTab(convId, tab)
+  })
 
   // --- detach drawer tabs by reparenting their native views ---
-  reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => floatingManager.detach(convId, tab))
+  reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => {
+    if (conversationTabAllowed(convId, tab)) floatingManager.detach(convId, tab)
+  })
   reg.mon('drawer:reattach', (_e, convId: string, tab: FloatTab) => floatingManager.reattach(convId, tab))
   reg.mon('drawer:set-float-bounds', (_e, convId: string, tab: FloatTab, bounds: FloatingBounds) =>
     floatingManager.setFloatBounds(convId, tab, bounds)
@@ -148,8 +165,11 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
   })
 
   // Centered tool popups (#328) are opened by user shortcuts; popup-manager owns stacking.
-  reg.mon('popup:open', (_e, convId: string, tab: FloatTab) => deps.openPopup(convId, tab))
+  reg.mon('popup:open', (_e, convId: string, tab: FloatTab) => {
+    if (conversationTabAllowed(convId, tab)) deps.openPopup(convId, tab)
+  })
   reg.mon('popup:open-floating', (_e, convId: string, tab: FloatTab) => {
+    if (!conversationTabAllowed(convId, tab)) return
     // Release popup placement and stack state before floating-manager reparents the same view.
     if (popupManager.releasePopupForFloating(convId, tab)) floatingManager.detach(convId, tab)
   })
@@ -162,10 +182,11 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
 
   // Main owns drawer shell terminals for both UI and MCP. Resolve cwd from the stored conversation; the
   // renderer cannot supply the terminal directory (#264).
-  reg.mon('drawer:create-terminal', (_e, convId: string) => {
+  reg.mon('drawer:create-terminal', async (_e, convId: string) => {
     const conv = getConversation(convId)
     if (!conv) return
-    void createShellTerminal(convId, conv.cwd)
+    const cwd = conv.scope === 'standalone' ? await validateStandaloneConversationDirectory(conv) : conv.cwd
+    void createShellTerminal(convId, cwd)
   })
   // Current conversation terminal state hydrates the terminal panel on mount.
   reg.handle('drawer:terminal-state-get', (_e, convId: string) => getTerminalState(convId))

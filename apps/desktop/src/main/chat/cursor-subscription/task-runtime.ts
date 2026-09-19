@@ -11,6 +11,7 @@ import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { GeneratedImageEmission, GeneratedImageUsage } from '../tools/util'
 import type { ChatAgent } from '../agents'
 import { isClaudeSubscriptionProvider, isCursorSubscriptionProvider } from '../catalog'
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import type { SubagentCoordinator, SubagentLease } from '../subagent-coordinator'
@@ -55,7 +56,9 @@ export type CursorManagedTaskRunner = (
 
 export interface CreateCursorTaskRuntimeArgs {
   conversationId: string
-  projectId: string
+  /** Null for standalone chats, which have no workspace; permissionScope then carries the isolation. */
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
@@ -249,6 +252,7 @@ export function createCursorTaskRuntime(args: CreateCursorTaskRuntimeArgs): Curs
         const worker = await executeSubagent({
           conversationId: args.conversationId,
           projectId: args.projectId,
+          permissionScope: args.permissionScope,
           cwd: args.cwd,
           parentMessageId: args.assistantId,
           toolCallId,

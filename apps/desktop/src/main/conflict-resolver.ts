@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { requireProjectConversation } from '../shared/conversation-scope'
 import { getConversation, getConvUiPrefs } from './store'
 import { getReviewData } from './gh-service'
 import { executeSubagent, type SubagentExecutionResult } from './chat/subagent-executor'
@@ -116,8 +117,9 @@ export async function resolveReviewConflicts(
   convId: string,
   opts: ResolveConflictsOpts = {}
 ): Promise<ResolveConflictsResult> {
-  const conv = getConversation(convId)
-  if (!conv) return { ok: false, status: 'no-pr', reason: 'conversation not found.' }
+  const stored = getConversation(convId)
+  if (!stored) return { ok: false, status: 'no-pr', reason: 'conversation not found.' }
+  const conv = requireProjectConversation(stored)
 
   // Reject multi-repository conversations in V1 because their aggregator cwd would resolve in the wrong
   // directory.

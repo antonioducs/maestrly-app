@@ -1,3 +1,5 @@
+import { buildMaestrlyBasePrompt } from '../harness/host-contracts'
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
 import { remoteChatPolicy, withRemoteChatPolicy } from '../remote-policy'
 import { emitChatHost } from '../host-events'
@@ -283,7 +285,8 @@ export interface CodexFailoverResolutionFailure {
 
 export interface RunCodexSubscriptionChatArgs {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   /** Logical model ref (providerId + modelId). Remains stable across account failover. */
   selection: ChatModelRef
@@ -745,11 +748,11 @@ export function sandboxPolicyFor(
   return { type: 'readOnly', networkAccess: false }
 }
 
-function maestrlySkillCatalog(skills: readonly ChatSkill[]): string {
+function maestrlySkillCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
   const entries = skills.map((skill) => skillCatalogLine(skill).slice(0, 520)).join('\n')
   return (
-    '\n\nMaestrly project skills (specialized capabilities) are available through the `use_skill` dynamic ' +
+    `\n\nMaestrly ${project ? 'project ' : ''}skills (specialized capabilities) are available through the \`use_skill\` dynamic ` +
     'tool:\n' +
     entries +
     '\nWhen the task clearly matches one of these skills, call `use_skill` before acting and follow the returned ' +
@@ -1163,7 +1166,8 @@ function clipCodexContentItems(items: readonly CodexToolContentItem[]): CodexToo
 
 interface RequestRoute {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   messageId: string
   /** Only requests from this thread become visible/persisted parts; descendants stay inside their task card. */
   rootThreadId: string
@@ -1533,6 +1537,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       const decision = await route.broker.assertDecision({
         conversationId: route.conversationId,
         projectId: route.projectId,
+        permissionScope: route.permissionScope,
         action: 'bash',
         resources: resources.length ? resources : [command],
         save,
@@ -1559,6 +1564,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       const decision = await route.broker.assertDecision({
         conversationId: route.conversationId,
         projectId: route.projectId,
+        permissionScope: route.permissionScope,
         action: 'edit',
         resources,
         save,
@@ -1586,6 +1592,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       const decision = await route.broker.assertDecision({
         conversationId: route.conversationId,
         projectId: route.projectId,
+        permissionScope: route.permissionScope,
         action: 'external_directory',
         resources: resources.length ? resources : ['additional permissions'],
         ...(resources.length ? { save: resources } : {}),
@@ -1690,7 +1697,8 @@ function registerRequestRoute(
 export function registerCodexSubagentRequestRoute(args: {
   client: CodexAppServerClient
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   messageId: string
   broker: PermissionBroker
   questionBroker: QuestionBroker
@@ -1703,6 +1711,7 @@ export function registerCodexSubagentRequestRoute(args: {
   const route: RequestRoute = {
     conversationId: args.conversationId,
     projectId: args.projectId,
+    permissionScope: args.permissionScope,
     messageId: args.messageId,
     rootThreadId: '',
     closed: false,
@@ -1730,6 +1739,7 @@ async function buildDynamicTools(
   rawTools: ToolSet
   deferredToolNames: ReadonlySet<string>
   skills: ChatSkill[]
+  appToolsEnabled: boolean
   agents: ChatAgent[]
   close: () => Promise<void>
 }> {
@@ -1754,6 +1764,7 @@ async function buildDynamicTools(
     return args.broker.assert({
       conversationId: args.conversationId,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       action: 'mcp',
       resources: [toolName],
       save: [toolName],
@@ -1833,6 +1844,7 @@ async function buildDynamicTools(
           makeCtx: (toolCallId, signal): ToolContext => ({
             conversationId: args.conversationId,
             projectId: args.projectId,
+            permissionScope: args.permissionScope,
             messageId: '',
             toolCallId,
             cwd: args.cwd,
@@ -1846,6 +1858,7 @@ async function buildDynamicTools(
               return args.broker.assert({
                 conversationId: args.conversationId,
                 projectId: args.projectId,
+                permissionScope: args.permissionScope,
                 action,
                 resources,
                 save,
@@ -2015,6 +2028,7 @@ async function buildDynamicTools(
       rawTools,
       deferredToolNames: hostTools.deferredToolNames,
       skills,
+      appToolsEnabled,
       agents,
       close: async () => {
         await Promise.all([mcp.close(), app.close()])
@@ -2532,6 +2546,21 @@ export async function runCodexSubscriptionChat(
   const signature = dynamicToolSignature(specs)
   const projectContext = await buildProjectContext(args.projectId, args.cwd)
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
+    if (args.projectId === null) {
+      const standalone = (
+        buildMaestrlyBasePrompt({
+          harness: profile.harness,
+          cwd: args.cwd,
+          scope: 'standalone',
+          mode: args.mode,
+          appToolsEnabled: dynamic.appToolsEnabled,
+          hasNotesTab: true,
+        }) +
+        maestrlySkillCatalog(dynamic.skills, false) +
+        subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
+      )
+      return buildHarnessDeveloperInstructions(standalone, profile.harness, { asyncTools: profile.asyncQuestionGuidance })
+    }
     const base = profile.usesNativeOperatingPrompt
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
           conversationId: args.conversationId,
@@ -2553,6 +2582,7 @@ export async function runCodexSubscriptionChat(
       .update(
         JSON.stringify({
           version: 2,
+          ...(args.projectId === null ? { scope: 'standalone', permissionScope: args.permissionScope } : {}),
           harnessProfile: runtimeProfile.modelHarnessProfileId,
           promptVersion: runtimeProfile.promptVersion,
           developerInstructions,
@@ -2755,6 +2785,7 @@ export async function runCodexSubscriptionChat(
   const route: RequestRoute = {
     conversationId: args.conversationId,
     projectId: args.projectId,
+    permissionScope: args.permissionScope,
     messageId: assistantId,
     rootThreadId: canResume ? existing.threadId : '',
     closed: false,
@@ -3398,6 +3429,7 @@ export async function runCodexSubscriptionChat(
                 ? await buildMaestroWorkerTools({
                     conversationId: args.conversationId,
                     projectId: args.projectId,
+                    permissionScope: args.permissionScope,
                     cwd: args.cwd,
                     parentMessageId: assistantId,
                     delegationId: maestroPrepared?.execution.snapshot.delegationId ?? toolCallId,
@@ -3639,6 +3671,7 @@ export async function runCodexSubscriptionChat(
                           client: target.client,
                           conversationId: args.conversationId,
                           projectId: args.projectId,
+                          permissionScope: args.permissionScope,
                           messageId: assistantId,
                           broker: args.broker,
                           questionBroker: args.questionBroker,
@@ -3648,6 +3681,7 @@ export async function runCodexSubscriptionChat(
                         })
                       }
                       const attempt = await runCodexSubagent({
+                        conversationScope: args.projectId === null ? 'standalone' : 'project',
                         client: target.client,
                         cwd: args.cwd,
                         profile,
@@ -3815,6 +3849,7 @@ export async function runCodexSubscriptionChat(
                     let runtimeSignature = ''
                     let childHarness: ReturnType<typeof harnessFor> | undefined
                     const outcome = await runClaudeSubagent({
+                      conversationScope: args.projectId === null ? 'standalone' : 'project',
                       conversationId: args.conversationId,
                       cwd: args.cwd,
                       profile,
@@ -3828,7 +3863,7 @@ export async function runCodexSubscriptionChat(
                           modelId: target.runtimeModelId,
                           accountIdentity: target.accountIdentity,
                           behaviorProfileId: childHarness.identity.behaviorProfileId,
-                          prompt: effectiveDefinition.prompt,
+                          prompt: args.projectId === null ? `standalone\n${effectiveDefinition.prompt}` : effectiveDefinition.prompt,
                           readOnly: codexReadOnly,
                           sentEffort: profile.effective!.sentEffort,
                           fastMode: profile.effective!.fastMode === true,
@@ -3946,6 +3981,7 @@ export async function runCodexSubscriptionChat(
                           return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
                         }
                         return runGitHubCopilotSubagent({
+                          conversationScope: args.projectId === null ? 'standalone' : 'project',
                           manager,
                           accountIdentity: identity,
                           conversationId: args.conversationId,
@@ -3974,6 +4010,7 @@ export async function runCodexSubscriptionChat(
                         const outcome = await runSubagent({
                           cwd: args.cwd,
                           projectId: args.projectId,
+                          permissionScope: args.permissionScope,
                           conversationId: args.conversationId,
                           parentMessageId: assistantId,
                           toolCallId,

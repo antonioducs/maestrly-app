@@ -1,3 +1,4 @@
+import type { PermissionScope } from '../../../shared/conversation-scope'
 import { governAutonomousTools, autonomousPolicy, AUTONOMOUS_INSTRUCTIONS } from '../autonomous'
 import { createHash, randomUUID } from 'node:crypto'
 import { jsonSchema, tool, type ToolSet } from 'ai'
@@ -173,7 +174,8 @@ interface GitHubCopilotRunnerState {
 
 export interface RunGitHubCopilotChatArgs {
   conversationId: string
-  projectId: string
+  projectId: string | null
+  permissionScope?: PermissionScope
   cwd: string
   selection: ChatModelRef
   /** Behavior resolved once at turn admission. undefined keeps direct-call compatibility by resolving locally. */
@@ -398,9 +400,9 @@ async function retireSession(
   await hardDeleteGitHubCopilotSession(manager, sessionId).catch(() => undefined)
 }
 
-function skillsCatalog(skills: readonly ChatSkill[]): string {
+function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  return 'Project skills available through `use_skill`:\n' + skills.map(skillCatalogLine).join('\n')
+  return `${project ? 'Project' : 'Available'} skills available through \`use_skill\`:\n` + skills.map(skillCatalogLine).join('\n')
 }
 
 /**
@@ -454,6 +456,7 @@ async function prepareRuntime(
   const makeContext = (toolCallId: string, toolSignal: AbortSignal): ToolContext => ({
     conversationId: args.conversationId,
     projectId: args.projectId,
+    permissionScope: args.permissionScope,
     messageId: assistantId,
     toolCallId,
     cwd: args.cwd,
@@ -467,6 +470,7 @@ async function prepareRuntime(
       return args.broker.assert({
         conversationId: args.conversationId,
         projectId: args.projectId,
+        permissionScope: args.permissionScope,
         action,
         resources,
         save,
@@ -526,6 +530,7 @@ async function prepareRuntime(
     return args.broker.assert({
       conversationId: args.conversationId,
       projectId: args.projectId,
+      permissionScope: args.permissionScope,
       action: 'mcp',
       resources: [toolName],
       save: [toolName],
@@ -681,16 +686,16 @@ async function prepareRuntime(
       harnessFor('github-copilot-subscription', args.selection.modelId, { flags: captureHarnessFlags() })
     const profileUltra = harnessUltraGuidance(harness, args.mode)
     const projectContext = await buildProjectContext(args.projectId, args.cwd)
-    const skillContext = skillsCatalog(skills)
+    const skillContext = skillsCatalog(skills, args.projectId !== null)
     const agentContext =
       args.mode === 'maestro' && args.maestro
         ? renderMaestroAgentCatalog(args.maestro)
         : agentsCatalog(agents, args.conversationId, capabilityMode === 'plan' || capabilityMode === 'ask')
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
-    const git = await gitEnvInfo(args.cwd).catch(() => null)
+    const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
-    const env = `OS: ${platform}. Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${args.cwd}.${gitLine}`
+    const env = `OS: ${platform}. Today's date: ${new Date().toISOString().slice(0, 10)}. ${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.${gitLine}`
     const ultra = args.maestrlyUltra
       ? args.mode === 'maestro'
         ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
@@ -708,10 +713,10 @@ async function prepareRuntime(
       `${copilot.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
       `the selected model family governs behavioral instructions. Only the explicitly supplied tools are available.`
     let systemMessage =
-      buildMaestrlyBasePrompt({ harness, cwd: args.cwd, appToolsEnabled, mode: args.mode, hasNotesTab: notes }) +
+      buildMaestrlyBasePrompt({ harness, scope: args.projectId === null ? 'standalone' : 'project', cwd: args.cwd, appToolsEnabled, mode: args.mode, hasNotesTab: notes }) +
       runtimeOverlay +
       projectContext +
-      (skillContext ? `\n\n# Project skills\n${skillContext}` : '') +
+      (skillContext ? `\n\n# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillContext}` : '') +
       (agentContext ? `\n\n${args.mode === 'maestro' ? agentContext : `# Subagents\n${agentContext}`}` : '') +
       (args.mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : '') +
       (ultra ? `\n\n# Ultra mode\n${ultra}` : '') +
@@ -719,6 +724,7 @@ async function prepareRuntime(
     // Copilot's legacy prompt key selects the textual axis only; it never enables advanced policies.
     if (copilot.harness.prompts.layout !== 'maestrly-base') {
       systemMessage = buildHarnessPrompt({
+        scope: args.projectId === null ? 'standalone' : 'project',
         harness: copilot.harness,
         cwd: args.cwd,
         mode: args.mode,
@@ -735,7 +741,8 @@ async function prepareRuntime(
       }).instructions
     }
 
-    const signature = gitHubCopilotToolSignature(tools, agents)
+    const toolSignature = gitHubCopilotToolSignature(tools, agents)
+    const signature = args.projectId === null ? createHash('sha256').update(`standalone:${toolSignature}:${systemMessage}`).digest('hex') : toolSignature
     return {
       tools,
       hostTools: hostRuntime.tools,
@@ -1260,6 +1267,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
           const result = await executeSubagent({
             conversationId: args.conversationId,
             projectId: args.projectId,
+            permissionScope: args.permissionScope,
             cwd: args.cwd,
             parentMessageId: assistantId,
             toolCallId,

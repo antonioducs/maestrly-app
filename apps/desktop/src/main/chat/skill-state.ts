@@ -253,7 +253,8 @@ export function setConversationSkillOverride(
 /** Conversation cwd (empty without a conversation, e.g. Settings sees global skills only). */
 export function conversationCwd(conversationId?: string): string {
   if (!conversationId) return ''
-  return getConversation(conversationId)?.cwd ?? ''
+  const conversation = getConversation(conversationId)
+  return conversation?.scope === 'standalone' ? '' : conversation?.cwd ?? ''
 }
 
 export function skillBaseIsEnabled(
@@ -292,7 +293,8 @@ export async function effectiveSkills(
   const overrides = conversationId ? conversationSkillOverrides(conversationId) : {}
   const selection = conversationSkillSelection(conversationId)
   const groups = listSkillGroups()
-  const all = await listSkills(cwd, home)
+  const discoveryCwd = conversationId && getConversation(conversationId)?.scope === 'standalone' ? '' : cwd
+  const all = await listSkills(discoveryCwd, home)
   return all.filter((skill) => skillIsEnabledForSelection(skill.name, disabled, selection, groups, overrides))
 }
 

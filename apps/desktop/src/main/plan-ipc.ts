@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isWebManagedConversation } from './chat/remote-policy'
 import { constants as fsConstants, promises as fsp } from 'node:fs'
 import * as floatingManager from './floating-manager'
@@ -50,7 +51,7 @@ function positiveLine(value: unknown): number | undefined {
 
 export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
   reg.mhandle('plan:decide', (_e, agentId: string, decision: PlanDecision) => {
-    if(isWebManagedConversation(agentId))return {ok:false,error:'Decide this plan in the Kanban web chat.'}
+    if (isWebManagedConversation(agentId)) return { ok: false, error: 'Decide this plan in the Kanban web chat.' }
     if (
       decision.implementationTarget !== undefined &&
       decision.implementationTarget !== 'source' &&
@@ -90,6 +91,7 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       }
 
     if (result.action === 'approve' && result.approvedPlan && decision.implementationTarget === 'maestro') {
+      if (sourceConversation.scope === 'standalone') return { ok: false, error: 'project-required' }
       const approvedPlan = result.approvedPlan
       return (async () => {
         if (sourceConversation.experience !== 'standard') {
@@ -176,8 +178,10 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
   reg.mhandle(
     'plan:open-file',
     async (_e, convId: string, filePath: string, line?: number, requestedEndLine?: number) => {
-      const cwd = getConversation(convId)?.cwd
+      const conversation = getConversation(convId)
+      const cwd = conversation?.cwd
       if (!cwd || typeof filePath !== 'string' || !filePath.trim() || filePath.includes('\0')) return
+      if (conversation.scope === 'standalone') await validateStandaloneConversationDirectory(conversation)
       // Web VS Code opens through its workspace provider. Write a cwd-relative path for joinPath(ws.uri,
       // rel); absolute Uri.file does not work.
       const root = path.resolve(cwd)
@@ -241,7 +245,7 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         } finally {
           await handle.close()
         }
-        await excludeFromGitInfo(cwd, [`.maestrly/${OPEN_FILE_FILE}`])
+        if (conversation?.scope !== 'standalone') await excludeFromGitInfo(cwd, [`.maestrly/${OPEN_FILE_FILE}`])
       } catch {
         return // without a valid sidecar there is no editor target to focus.
       }

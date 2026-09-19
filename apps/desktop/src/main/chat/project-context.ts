@@ -139,7 +139,8 @@ async function discoverProjectInstructions(workspaceId: string, cwd: string): Pr
  * Builds the stable block shared by all runtimes. Empty without conventions. Never throws:
  * swallow fs/store errors so chat works without project context.
  */
-export async function buildProjectContext(workspaceId: string, cwd: string): Promise<string> {
+export async function buildProjectContext(workspaceId: string | null, cwd: string): Promise<string> {
+  if (workspaceId === null) return ''
   const sections: string[] = []
   try {
     const binding = platformProjectBindings.forWorkspace(workspaceId)
@@ -160,6 +161,6 @@ export async function buildProjectContext(workspaceId: string, cwd: string): Pro
 }
 
 /** API compatibility: OpenAI models consume exactly the same canonical block as other runtimes. */
-export async function buildOpenAIProjectContext(workspaceId: string, cwd: string): Promise<string> {
+export async function buildOpenAIProjectContext(workspaceId: string | null, cwd: string): Promise<string> {
   return buildProjectContext(workspaceId, cwd)
 }
