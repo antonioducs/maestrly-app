@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { buildCodexThreadHarness } from './harness/adapters/codex'
+import { captureHarnessFlags } from './harness/flags'
+import type { CodexSubscriptionModel } from './codex-subscription/manager'
+import { extractTurnCompletedError } from './codex-subscription/quota-error'
 import type { CopilotSession, SessionEvent } from '@github/copilot-sdk'
 import type { SDKMessage, SDKResultMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk'
 import type { NormalizedAiUsage } from './runner'
@@ -308,6 +312,8 @@ export async function summarizeWithCodexRuntime(args: {
   client: CodexAppServerClient
   cwd: string
   modelId: string
+  requestedContextWindow?: number | null
+  runtimeModel?: Partial<CodexSubscriptionModel> | null
   system: string
   prompt: string
   signal: AbortSignal
@@ -322,6 +328,22 @@ export async function summarizeWithCodexRuntime(args: {
   /** Owner account for managed hard-delete (null = default account). */
   accountId?: string | null
 }): Promise<IsolatedSummaryResult> {
+  const runtimeProfile = buildCodexThreadHarness({
+    modelId: args.modelId,
+    flags: captureHarnessFlags(),
+    runtimeCapabilities:
+      args.runtimeModel?.supportsExperimentalContext != null
+        ? { experimentalContext: args.runtimeModel.supportsExperimentalContext }
+        : {},
+    eligibleChatGptSession: true,
+    ephemeral: true,
+    reviewer: false,
+    requestUserInputAsyncAvailable: args.client.initializeResult?.capabilities?.requestUserInputAsync === true,
+  })
+  const nominalContext = Math.floor(Number(args.requestedContextWindow))
+  const requestedContextWindow = Number.isSafeInteger(nominalContext) && nominalContext > 0 ? nominalContext : null
+  let rawFailure: unknown
+  let notificationError: Record<string, unknown> | null = null
   let threadId = ''
   let turnId = ''
   let latestUsage: CodexTokenUsageSnapshot | null = null
@@ -332,6 +354,7 @@ export async function summarizeWithCodexRuntime(args: {
     resolveCompleted = resolve
     rejectCompleted = reject
   })
+  void completed.catch(() => {})
   let rejectAborted!: (error: Error) => void
   const aborted = new Promise<never>((_resolve, reject) => {
     rejectAborted = reject
@@ -361,6 +384,10 @@ export async function summarizeWithCodexRuntime(args: {
         dynamicTools: [],
         environments: [],
         config: {
+          ...(requestedContextWindow != null ? { model_context_window: requestedContextWindow } : {}),
+          ...(runtimeProfile.declaresExperimentalContext
+            ? { 'features.context_management.experimental_mode': runtimeProfile.experimentalContextEnabled }
+            : {}),
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
           'features.shell_tool': false,
@@ -426,7 +453,25 @@ export async function summarizeWithCodexRuntime(args: {
         }
       } else if (method === 'turn/completed') {
         const turn = isRecord(params.turn) ? params.turn : null
-        resolveCompleted(typeof turn?.status === 'string' ? turn.status : 'failed')
+        if (turn?.status !== 'completed') {
+          rawFailure = turn?.error ? params : (notificationError ?? params)
+          const detail = extractTurnCompletedError(params)
+          rejectCompleted(
+            new Error(
+              !turn?.error && typeof notificationError?.message === 'string'
+                ? notificationError.message
+                : (detail?.message ?? `Codex portable compaction ${String(turn?.status ?? 'failed')}`)
+            )
+          )
+        } else resolveCompleted('completed')
+      } else if (method === 'error') {
+        const detail = isRecord(params.error) ? params.error : params
+        notificationError = detail
+        if (params.willRetry === true) return
+        rawFailure = params.error ?? params
+        rejectCompleted(
+          new Error(typeof detail.message === 'string' ? detail.message : 'Codex portable compaction failed')
+        )
       } else if (method === 'thread/deleted') {
         rejectCompleted(new Error('Codex compacting thread was deleted before completion'))
       }
@@ -497,11 +542,11 @@ export async function summarizeWithCodexRuntime(args: {
     return { text, ...(usage ? { usage } : {}) }
   } catch (error) {
     const partialUsage = usageFromCodexSnapshot(latestUsage)
-    if (!partialUsage) throw error
     const withUsage =
       error instanceof Error ? error : new Error(error == null ? 'Codex portable compaction failed' : String(error))
     const usageError = withUsage as IsolatedSummaryAttemptError
-    if (!usageError.partialUsage) usageError.partialUsage = partialUsage
+    if (rawFailure !== undefined) usageError.rawFailure ??= rawFailure
+    if (!usageError.partialUsage && partialUsage) usageError.partialUsage = partialUsage
     throw usageError
   } finally {
     args.signal.removeEventListener('abort', onAbort)

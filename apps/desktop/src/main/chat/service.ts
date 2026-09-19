@@ -6190,6 +6190,8 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
               client: target.client,
               cwd: conv.cwd,
               modelId: target.runtimeModelId,
+              requestedContextWindow: target.requestedContextWindow,
+              runtimeModel: target.model,
               system: compactSystem,
               prompt,
               signal: operationSignal,

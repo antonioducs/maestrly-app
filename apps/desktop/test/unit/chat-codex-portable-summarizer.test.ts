@@ -205,3 +205,108 @@ describe('durable ephemeral Codex summarizer lifecycle', () => {
     expect(codexManagerMock.deleteThread).not.toHaveBeenCalled()
   })
 })
+
+describe('portable Codex context and failures', () => {
+  const args = (client: FakeCodexClient) => ({
+    client: client as unknown as CodexAppServerClient,
+    cwd: '/repo',
+    modelId: 'gpt-6',
+    system: 'system',
+    prompt: 'summary',
+    signal: new AbortController().signal,
+  })
+
+  it('passes nominal context without applying the effective-context discount', async () => {
+    const client = new FakeCodexClient()
+    client.queueTurn(completedTurn())
+    await summarizeWithCodexRuntime({
+      ...args(client),
+      modelId: 'gpt-6-astra',
+      requestedContextWindow: 1_000_000,
+      runtimeModel: { supportsExperimentalContext: true },
+    })
+    expect(client.startThreadCalls[0]).toMatchObject({
+      config: {
+        model_context_window: 1_000_000,
+        'features.context_management.experimental_mode': false,
+      },
+    })
+  })
+
+  it.each([
+    undefined,
+    null,
+    0,
+    -1,
+    NaN,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])('omits invalid nominal context %s and unsupported experimental overrides', async (requestedContextWindow) => {
+    const client = new FakeCodexClient()
+    client.queueTurn(completedTurn())
+    await summarizeWithCodexRuntime({
+      ...args(client),
+      requestedContextWindow,
+      runtimeModel: { supportsExperimentalContext: false },
+    })
+    const config = (client.startThreadCalls[0] as { config: Record<string, unknown> }).config
+    expect(config).not.toHaveProperty('model_context_window')
+    expect(config).not.toHaveProperty('features.context_management.experimental_mode')
+  })
+
+  it.each(['turn/completed', 'error'])('preserves %s diagnostics and partial usage', async (method) => {
+    const client = new FakeCodexClient()
+    const error = { message: 'Usage limit exceeded: resets tomorrow', codexErrorInfo: 'UsageLimitExceeded' }
+    const params =
+      method === 'turn/completed'
+        ? { threadId: 'thread_ephemeral', turn: { id: 'turn_ephemeral', status: 'failed', error } }
+        : { threadId: 'thread_ephemeral', error, willRetry: false }
+    client.queueTurn([
+      {
+        method: 'thread/tokenUsage/updated',
+        params: {
+          threadId: 'thread_ephemeral',
+          tokenUsage: { total: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 5 } },
+        },
+      },
+      { method, params },
+    ] as CodexNotification[])
+    await expect(summarizeWithCodexRuntime(args(client))).rejects.toMatchObject({
+      message: error.message,
+      rawFailure: method === 'turn/completed' ? params : error,
+      partialUsage: { input: 80, cacheRead: 20, cacheCreate: 0, totalInput: 100, output: 5 },
+    })
+    expect(client.deleteThreadCalls).toHaveLength(1)
+  })
+
+  it('allows runtime retry notifications to recover', async () => {
+    const client = new FakeCodexClient()
+    client.queueTurn([
+      {
+        method: 'error',
+        params: { threadId: 'thread_ephemeral', willRetry: true, error: { message: 'Temporary connection failure' } },
+      },
+      ...completedTurn(),
+    ] as CodexNotification[])
+    await expect(summarizeWithCodexRuntime(args(client))).resolves.toMatchObject({ text: 'summary ok' })
+  })
+})
+
+it('retains retry diagnostics if the terminal failure contains no error or usage', async () => {
+  const client = new FakeCodexClient()
+  const error = { message: 'Context window exhausted', additionalDetails: 'input too large' }
+  client.queueTurn([
+    { method: 'error', params: { threadId: 'thread_ephemeral', willRetry: true, error } },
+    { method: 'turn/completed', params: { threadId: 'thread_ephemeral', turn: { status: 'failed', error: null } } },
+  ] as CodexNotification[])
+  await expect(
+    summarizeWithCodexRuntime({
+      client: client as unknown as CodexAppServerClient,
+      cwd: '/repo',
+      modelId: 'gpt-6-astra',
+      system: 'system',
+      prompt: 'summary',
+      signal: new AbortController().signal,
+    })
+  ).rejects.toMatchObject({ message: error.message, rawFailure: error })
+})
