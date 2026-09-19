@@ -22,6 +22,10 @@ export function cursorSdkRgBinary(platform) {
 function posixEntries(entries) {
   return entries.map((entry) => entry.replaceAll('\\', '/'))
 }
+/** asar resolves lookups by splitting on `path.sep`, so archive paths need the host separator. */
+export function archiveEntryPath(posixPath, separator = path.sep) {
+  return posixPath.split('/').join(separator)
+}
 export function verifyPlatformEntries(entries, targetId) {
   const target = TARGETS.find((item) => item.id === targetId)
   if (!target && targetId !== 'win-arm64') throw new Error(`Unknown target: ${targetId}`)
@@ -42,11 +46,11 @@ export function verifyLayout(layout, targetId) {
   const archive = path.join(layout.resources, 'app.asar')
   const entries = posixEntries(listPackage(archive))
   const target = verifyPlatformEntries(entries, targetId)
-  const sdk = JSON.parse(extractFile(archive, 'node_modules/@cursor/sdk/package.json'))
+  const sdk = JSON.parse(extractFile(archive, archiveEntryPath('node_modules/@cursor/sdk/package.json')))
   if (sdk.version !== CURSOR_SDK_VERSION) throw new Error('Incorrect packaged Cursor SDK version')
   if (!target) return
   const prefix = `node_modules/@cursor/sdk-${target.npmSuffix}`
-  const pkg = JSON.parse(extractFile(archive, `${prefix}/package.json`))
+  const pkg = JSON.parse(extractFile(archive, archiveEntryPath(`${prefix}/package.json`)))
   if (pkg.version !== CURSOR_SDK_VERSION) throw new Error('Incorrect packaged Cursor helper version')
   if (!entries.includes(`/${prefix}/vendor/tree-sitter/index.js`)) throw new Error('Missing Cursor tree-sitter vendor')
   const binary = path.join(layout.resources, 'app.asar.unpacked', prefix, 'bin', cursorSdkRgBinary(layout.platform))

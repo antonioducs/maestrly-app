@@ -12,7 +12,7 @@ import {
   TARGETS,
   verifyIntegrity,
 } from '../../scripts/fetch-cursor-sdk-platform.mjs'
-import { verifyPlatformEntries } from '../../scripts/verify-packaged-cursor-sdk.mjs'
+import { archiveEntryPath, verifyPlatformEntries } from '../../scripts/verify-packaged-cursor-sdk.mjs'
 
 function archive(name, type = '0', declaredSize = 5) {
   const header = Buffer.alloc(512)
@@ -84,6 +84,12 @@ test('asar entries are matched regardless of the host path separator', () => {
     /Unexpected/
   )
   assert.throws(() => verifyPlatformEntries(['\\node_modules\\@cursor\\sdk-win32-x64\\bin\\rg.exe'], 'win-arm64'))
+  // asar splits lookups on path.sep, so archive reads must use the host separator.
+  assert.equal(archiveEntryPath('node_modules/@cursor/sdk/package.json', '/'), 'node_modules/@cursor/sdk/package.json')
+  assert.equal(
+    archiveEntryPath('node_modules/@cursor/sdk/package.json', '\\'),
+    'node_modules\\@cursor\\sdk\\package.json'
+  )
 })
 test('Windows ARM64 omits helpers without failing the app package', () => {
   assert.deepEqual(parseArgs(['--target=win-arm64', '--prune']), { targets: [], prune: true })
