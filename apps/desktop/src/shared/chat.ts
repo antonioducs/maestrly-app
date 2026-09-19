@@ -1193,6 +1193,8 @@ export interface ChatGptWebMcpCapabilityInfo {
 }
 
 export interface ChatGptWebCapabilitiesInfo {
+  /** Desktop scope restricts the access editor; the main process independently enforces it. */
+  conversationScope?: 'project' | 'standalone'
   capabilities: ChatGptWebCapabilities
   mcpServers: ChatGptWebMcpCapabilityInfo[]
   editable: boolean

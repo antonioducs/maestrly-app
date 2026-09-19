@@ -65,7 +65,7 @@ import {
 } from '../../../shared/chat-agent-mentions'
 
 import { ChatMessageList } from './ChatMessageList'
-import { boundChatHistoryWindow, CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE } from '@/lib/chat-history-window'
+import { boundChatHistoryWindow, mergeLiveChatHistory, CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -99,7 +99,7 @@ import { SubagentActivityPill } from './SubagentActivityPill'
 import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
-  workspaceId: string
+  workspaceId: string | null
   conversationId: string
   cwd: string
   experience: ConversationExperience
@@ -143,6 +143,11 @@ export function ChatView({
   const [currentExperience, setCurrentExperience] = useState(experience)
   useEffect(() => setCurrentExperience(experience), [conversationId, experience])
   const isMaestro = currentExperience === 'maestro'
+  useEffect(() => {
+    if (!visible || workspaceId !== null) return
+    const frame = requestAnimationFrame(() => composerRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [conversationId, visible, workspaceId])
   const maestroPanelHostId = `chat-maestro-panel-${conversationId}`
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [subagentSessions, setSubagentSessions] = useState<SubagentSessionSummary[]>([])
@@ -247,7 +252,7 @@ export function ChatView({
   const contextObservationAfter =
     contextObservationBoundary.conversationId === conversationId ? contextObservationBoundary.after : 0
   const [modelRefresh, setModelRefresh] = useState(0)
-  const [mode, setMode] = useState<ChatMode>('agent')
+  const [mode, setMode] = useState<ChatMode>(workspaceId === null ? 'ask' : 'agent')
   const [modeChangeError, setModeChangeError] = useState<string | null>(null)
   const modeChangeRequestRef = useRef<{ id: number; conversationId: string } | null>(null)
   const modeChangeSeqRef = useRef(0)
@@ -269,6 +274,8 @@ export function ChatView({
 
   const streamingRef = useRef(false)
   streamingRef.current = streaming
+  const liveHistoryRef = useRef<ChatMessage[]>([])
+  useEffect(() => { liveHistoryRef.current = [] }, [conversationId])
   const compactingRef = useRef(false)
   const localManualCompactionRef = useRef(false)
   const compactionRevisionRef = useRef(0)
@@ -382,16 +389,23 @@ export function ChatView({
 
   const reloadLatestPage = useCallback(async () => {
     const revision = ++historyReloadRevisionRef.current
+    const preserveLive = workspaceId === null && streamingRef.current
     const page = await window.api.chatHistoryPage(conversationId, { limit: HISTORY_PAGE_SIZE })
     if (convIdRef.current !== conversationId || revision !== historyReloadRevisionRef.current) return
 
     const hydrated = mergePendingChatQuestions(page.messages, conversationId, runtimeQuestionsRef.current)
-    setMessages((prev) => normalizeHistoryWindow(prev, hydrated, 'replace', hydrated.at(-1)?.id))
+    // Snapshot the live buffer outside the updater: React may replay updaters, and reading the mutable
+    // ref there would mix a newer response with a delta still queued, duplicating that delta.
+    const live = liveHistoryRef.current
+    setMessages((prev) => normalizeHistoryWindow(prev,
+      preserveLive || (workspaceId === null && streamingRef.current)
+        ? mergeLiveChatHistory(hydrated, live) : hydrated,
+      'replace', hydrated.at(-1)?.id))
     setHasMore(page.hasMore)
     earliestSeqRef.current = page.earliestSeq
     anchoredRef.current = false
     refreshStats()
-  }, [conversationId, normalizeHistoryWindow, refreshStats])
+  }, [conversationId, normalizeHistoryWindow, refreshStats, workspaceId])
 
   useEffect(
     () => window.api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
@@ -821,7 +835,10 @@ export function ChatView({
     stopPending ||
     maestroPostPending > 0 ||
     pendingQuestion !== null ||
-    status === 'asking'
+    status === 'asking' ||
+    // A hidden standalone turn keeps its own live buffer; dropping the subscription would lose the
+    // tokens emitted while hidden and later overwrite the history with that stale buffer.
+    (workspaceId === null && status === 'working')
   useEffect(() => {
     if (!needsLiveSubscription) return
 
@@ -829,6 +846,18 @@ export function ChatView({
       const kind = (ev as { kind: string }).kind
       const hidden = !visibleRef.current
       const event = ev as ChatStreamEvent
+
+      // Hidden standalone views do not render tokens, but must retain the active response before
+      // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
+      if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
+        // Compaction rewrites history, so the buffered response must not be replayed over it.
+        if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
+        if (event.kind !== 'compaction-finished') {
+          liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
+            .filter(message => message.role === 'assistant')
+            .map(message => message.conversationId === conversationId ? message : { ...message, conversationId })
+        }
+      }
 
       if (event.kind === 'compaction-finished') {
         // The local IPC promise owns history hydration and queue release when present.
@@ -841,6 +870,7 @@ export function ChatView({
         if (event.status === 'completed') finishTurn(hidden)
         return
       }
+
 
       if (kind === 'done') {
         // The turn ended: drop every live capability before any further action can be routed.
@@ -920,7 +950,17 @@ export function ChatView({
       }
       if (hidden) return
 
-      setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
+      // Standalone views already fold every event into their live buffer. Mirroring that snapshot keeps
+      // the update idempotent, so a replayed or reordered updater cannot apply the same delta twice.
+      const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null
+      setMessages((prev) =>
+        normalizeHistoryWindow(
+          prev,
+          liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
+          'replace',
+          event.messageId
+        )
+      )
 
       if (kind === 'finish' || kind === 'aborted' || kind === 'error') setStreaming(false)
     })
@@ -947,6 +987,7 @@ export function ChatView({
     reloadLatestPage,
     refreshStats,
     setRuntimeQuestionState,
+    workspaceId,
   ])
 
   useEffect(() => {
@@ -954,6 +995,11 @@ export function ChatView({
     // Queue entries are renderer-local. A hidden stream advances queueRef without scheduling a React
     // render; reconcile that bounded state when the conversation becomes visible again.
     setQueueState((current) => (current === queueRef.current ? current : queueRef.current))
+
+    if (workspaceId === null && streamingRef.current) {
+      const live = liveHistoryRef.current
+      setMessages(prev => normalizeHistoryWindow(prev, mergeLiveChatHistory(prev, live), 'replace'))
+    }
 
     void reloadLatestPage()
     let alive = true
@@ -1004,7 +1050,7 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible])
+  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
@@ -1756,7 +1802,7 @@ export function ChatView({
         >
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col">
-              <WorkspaceKanbanLink workspaceId={workspaceId} />
+              {workspaceId && <WorkspaceKanbanLink workspaceId={workspaceId} />}
               {searchOpen && (
                 <ChatSearchBar
                   query={searchQuery}
@@ -1822,7 +1868,12 @@ export function ChatView({
             </div>
 
             {pending.map((req) => (
-              <PermissionPrompt key={req.id} request={req} onDecide={(reply) => decide(req.id, reply)} />
+              <PermissionPrompt
+                scope={workspaceId === null ? 'standalone' : 'project'}
+                key={req.id}
+                request={req}
+                onDecide={(reply) => decide(req.id, reply)}
+              />
             ))}
 
             {compacting && (
@@ -2074,7 +2125,7 @@ export function ChatView({
                           conversationId={conversationId}
                           mode={mode}
                           onChange={applyMode}
-                          onUseMaestro={convertStandardToMaestro}
+                          onUseMaestro={workspaceId ? convertStandardToMaestro : undefined}
                           maestroDisabled={experienceTransitionDisabled || !selModelId}
                           modelId={selModelId}
                         />

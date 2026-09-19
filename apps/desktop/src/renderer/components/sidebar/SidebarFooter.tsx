@@ -17,11 +17,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 export function SidebarFooter({
+  standaloneArchivedCount = 0,
   workspaces,
   showArchived,
   onToggleArchived,
   onOpenAbout,
 }: {
+  standaloneArchivedCount?: number
   workspaces: WorkspaceWithConversations[]
   showArchived: boolean
   onToggleArchived: () => void
@@ -62,7 +64,7 @@ export function SidebarFooter({
   return (
     <>
       {(() => {
-        const archivedTotal = workspaces.reduce((n, w) => n + (w.archivedCount ?? 0), 0)
+        const archivedTotal = standaloneArchivedCount + workspaces.reduce((n, w) => n + (w.archivedCount ?? 0), 0)
         if (archivedTotal === 0 && !showArchived) return null
         return (
           <button

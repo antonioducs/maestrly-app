@@ -12,7 +12,7 @@ import type {
 } from '../../../shared/chat'
 
 export interface ChatGptWebAccessEditorProps {
-  info: Pick<ChatGptWebCapabilitiesInfo, 'mcpServers'>
+  info: Pick<ChatGptWebCapabilitiesInfo, 'mcpServers' | 'conversationScope'>
   capabilities: ChatGptWebCapabilities
   editable: boolean
   disabled?: boolean
@@ -22,8 +22,7 @@ export interface ChatGptWebAccessEditorProps {
   showBrowser?: boolean
 }
 
-const selectClassName =
-  'h-7 w-auto shrink-0 text-[11px]'
+const selectClassName = 'h-7 w-auto shrink-0 text-[11px]'
 
 export function ChatGptWebAccessEditor({
   info,
@@ -39,6 +38,7 @@ export function ChatGptWebAccessEditor({
   const conversationScopeName = useId()
   const memoryScopeName = useId()
   const controlsDisabled = disabled || !editable
+  const project = info.conversationScope !== 'standalone'
   const compact = variant === 'compact'
 
   const setBrowser = (browser: ChatGptWebBrowserCapability) => {
@@ -47,7 +47,7 @@ export function ChatGptWebAccessEditor({
   }
 
   const setCodeScope = (target: 'git' | 'gh', scope: 'off' | 'read') => {
-    if (controlsDisabled) return
+    if (controlsDisabled || !project) return
     onChange({ ...capabilities, [target]: scope })
   }
 
@@ -57,7 +57,7 @@ export function ChatGptWebAccessEditor({
   }
 
   const setMemoryScope = (memory: 'off' | 'read') => {
-    if (controlsDisabled) return
+    if (controlsDisabled || !project) return
     onChange({ ...capabilities, memory })
   }
 
@@ -96,19 +96,27 @@ export function ChatGptWebAccessEditor({
         </div>
       )}
 
-      <section className="rounded-lg border border-border p-2.5">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-medium">{t('kanban.accessTitle')}</span>
-          <OptionSelect aria-label={t('kanban.accessTitle')} className={selectClassName}
-            value={capabilities.kanban ?? 'read'} disabled={controlsDisabled}
-            onValueChange={(value) => { if (!controlsDisabled) onChange({ ...capabilities, kanban: value as ChatGptWebCapabilityScope }) }}>
-            <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
-            <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
-            <SelectOption value="write">{t('chatGptWebAccess.scopeWrite')}</SelectOption>
-          </OptionSelect>
-        </div>
-        <p className="mt-1 text-[10px] text-muted-foreground">{t('kanban.accessDescription')}</p>
-      </section>
+      {project && (
+        <section className="rounded-lg border border-border p-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-medium">{t('kanban.accessTitle')}</span>
+            <OptionSelect
+              aria-label={t('kanban.accessTitle')}
+              className={selectClassName}
+              value={capabilities.kanban ?? 'read'}
+              disabled={controlsDisabled}
+              onValueChange={(value) => {
+                if (!controlsDisabled) onChange({ ...capabilities, kanban: value as ChatGptWebCapabilityScope })
+              }}
+            >
+              <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
+              <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
+              <SelectOption value="write">{t('chatGptWebAccess.scopeWrite')}</SelectOption>
+            </OptionSelect>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">{t('kanban.accessDescription')}</p>
+        </section>
+      )}
 
       {showBrowser && (
         <section className="rounded-lg border border-violet-400/20 bg-violet-500/[0.07] p-2.5">
@@ -205,92 +213,96 @@ export function ChatGptWebAccessEditor({
         </div>
       </section>
 
-      <section className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/[0.05] p-2.5">
-        <div className="flex items-start gap-2">
-          <BrainCircuit className="mt-0.5 h-4 w-4 shrink-0 text-fuchsia-300" />
-          <div>
-            <div className="text-[12px] font-medium text-foreground">{t('chatGptWebAccess.memoryTitle')}</div>
-            <div className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-              {t('chatGptWebAccess.memoryDescription')}
+      {project && (
+        <section className="rounded-lg border border-fuchsia-400/20 bg-fuchsia-500/[0.05] p-2.5">
+          <div className="flex items-start gap-2">
+            <BrainCircuit className="mt-0.5 h-4 w-4 shrink-0 text-fuchsia-300" />
+            <div>
+              <div className="text-[12px] font-medium text-foreground">{t('chatGptWebAccess.memoryTitle')}</div>
+              <div className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+                {t('chatGptWebAccess.memoryDescription')}
+              </div>
             </div>
           </div>
-        </div>
-        <div className={cn('mt-2 grid gap-1.5', !compact && 'sm:grid-cols-2')}>
-          {(['off', 'read'] as const).map((scope) => (
-            <label
-              key={scope}
-              className={cn(
-                'flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 transition-colors',
-                capabilities.memory === scope
-                  ? 'border-fuchsia-400/35 bg-fuchsia-400/[0.1]'
-                  : 'border-white/[0.07] bg-black/[0.08] hover:bg-white/[0.04]',
-                controlsDisabled && 'cursor-not-allowed opacity-60'
-              )}
-            >
-              <input
-                type="radio"
-                name={memoryScopeName}
-                value={scope}
-                checked={capabilities.memory === scope}
-                onChange={() => setMemoryScope(scope)}
-                className="mt-0.5 accent-fuchsia-500"
-              />
-              <span className="min-w-0">
-                <span className="block text-[11px] font-medium text-foreground">
-                  {t(`chatGptWebAccess.scope${scope === 'off' ? 'Off' : 'Read'}`)}
-                </span>
-                <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
-                  {t(`chatGptWebAccess.memory${scope === 'off' ? 'Off' : 'Read'}Description`)}
-                </span>
-              </span>
-            </label>
-          ))}
-        </div>
-        <div className="mt-2 text-[10px] leading-relaxed text-fuchsia-100/75">
-          {t('chatGptWebAccess.memoryIsolation')}
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-2.5">
-        <div className="flex items-start gap-2">
-          <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
-          <div>
-            <div className="text-[12px] font-medium text-foreground">{t('chatGptWebAccess.codeTitle')}</div>
-            <div className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
-              {t('chatGptWebAccess.codeDescription')}
-            </div>
-          </div>
-        </div>
-        <div className="mt-1.5 space-y-1">
-          {(['git', 'gh'] as const).map((target) => (
-            <label
-              key={target}
-              className="flex items-center justify-between gap-3 rounded px-1.5 py-1.5 text-[12px] text-foreground"
-            >
-              <span className="min-w-0">
-                <span>{t(`chatGptWebAccess.${target}Label`)}</span>
-                <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
-                  {t(`chatGptWebAccess.${target}Description`)}
-                </span>
-              </span>
-              <OptionSelect
-                aria-label={t(`chatGptWebAccess.${target}Label`)}
-                value={capabilities[target]}
-                onValueChange={(selectedValue) => setCodeScope(target, selectedValue as 'off' | 'read')}
-                className={selectClassName}
+          <div className={cn('mt-2 grid gap-1.5', !compact && 'sm:grid-cols-2')}>
+            {(['off', 'read'] as const).map((scope) => (
+              <label
+                key={scope}
+                className={cn(
+                  'flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 transition-colors',
+                  capabilities.memory === scope
+                    ? 'border-fuchsia-400/35 bg-fuchsia-400/[0.1]'
+                    : 'border-white/[0.07] bg-black/[0.08] hover:bg-white/[0.04]',
+                  controlsDisabled && 'cursor-not-allowed opacity-60'
+                )}
               >
-                <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
-                <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
-              </OptionSelect>
-            </label>
-          ))}
-        </div>
-        {capabilities.gh === 'read' && (
-          <div className="mt-1 rounded bg-amber-500/[0.06] px-2 py-1.5 text-[10px] leading-relaxed text-amber-100/80">
-            {t('chatGptWebAccess.ghGlobalWarning')}
+                <input
+                  type="radio"
+                  name={memoryScopeName}
+                  value={scope}
+                  checked={capabilities.memory === scope}
+                  onChange={() => setMemoryScope(scope)}
+                  className="mt-0.5 accent-fuchsia-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[11px] font-medium text-foreground">
+                    {t(`chatGptWebAccess.scope${scope === 'off' ? 'Off' : 'Read'}`)}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                    {t(`chatGptWebAccess.memory${scope === 'off' ? 'Off' : 'Read'}Description`)}
+                  </span>
+                </span>
+              </label>
+            ))}
           </div>
-        )}
-      </section>
+          <div className="mt-2 text-[10px] leading-relaxed text-fuchsia-100/75">
+            {t('chatGptWebAccess.memoryIsolation')}
+          </div>
+        </section>
+      )}
+
+      {project && (
+        <section className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-2.5">
+          <div className="flex items-start gap-2">
+            <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-sky-300" />
+            <div>
+              <div className="text-[12px] font-medium text-foreground">{t('chatGptWebAccess.codeTitle')}</div>
+              <div className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+                {t('chatGptWebAccess.codeDescription')}
+              </div>
+            </div>
+          </div>
+          <div className="mt-1.5 space-y-1">
+            {(['git', 'gh'] as const).map((target) => (
+              <label
+                key={target}
+                className="flex items-center justify-between gap-3 rounded px-1.5 py-1.5 text-[12px] text-foreground"
+              >
+                <span className="min-w-0">
+                  <span>{t(`chatGptWebAccess.${target}Label`)}</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                    {t(`chatGptWebAccess.${target}Description`)}
+                  </span>
+                </span>
+                <OptionSelect
+                  aria-label={t(`chatGptWebAccess.${target}Label`)}
+                  value={capabilities[target]}
+                  onValueChange={(selectedValue) => setCodeScope(target, selectedValue as 'off' | 'read')}
+                  className={selectClassName}
+                >
+                  <SelectOption value="off">{t('chatGptWebAccess.scopeOff')}</SelectOption>
+                  <SelectOption value="read">{t('chatGptWebAccess.scopeRead')}</SelectOption>
+                </OptionSelect>
+              </label>
+            ))}
+          </div>
+          {capabilities.gh === 'read' && (
+            <div className="mt-1 rounded bg-amber-500/[0.06] px-2 py-1.5 text-[10px] leading-relaxed text-amber-100/80">
+              {t('chatGptWebAccess.ghGlobalWarning')}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-2.5">
         <div className="flex items-start gap-2">

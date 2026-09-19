@@ -180,7 +180,7 @@ export function useConvRows({
                 <Sparkles className="size-3" />
               </span>
             )}
-            {conv.isMulti ? (
+            {conv.scope === 'standalone' ? null : conv.isMulti ? (
               <span
                 className="flex items-center gap-0.5 text-primary/80"
                 title={conv.repos?.map((r) => `${r.linkName} → ${r.branch}`).join('\n')}
@@ -311,11 +311,7 @@ export function useConvRows({
           <ContextMenuContent>{sharedFolderMenuItems(members, creating, contextKit)}</ContextMenuContent>
         </ContextMenu>
         {open && (
-          <ul>
-            {members.map((c, i) =>
-              convItem(c, { pl: 'pl-11', num: i + 1, instanceKey: `tree:${c.id}` })
-            )}
-          </ul>
+          <ul>{members.map((c, i) => convItem(c, { pl: 'pl-11', num: i + 1, instanceKey: `tree:${c.id}` }))}</ul>
         )}
       </li>
     )

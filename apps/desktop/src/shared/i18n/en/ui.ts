@@ -150,6 +150,8 @@ export default {
   },
 
   app: {
+    confirmDeleteChat: 'Delete “{{name}}” and its chat files permanently?',
+    createChatFailed: 'Could not create chat: {{error}}',
     loadingSession: 'Loading session...',
     emptyState: 'Create or select a conversation to get started.',
     toggleDrawer: 'Toggle drawer ({{shortcut}})',
@@ -424,6 +426,9 @@ export default {
   },
 
   sidebar: {
+    chats: 'Chats',
+    newChat: 'New chat',
+    noChats: 'No chats yet',
     rename: 'Rename',
     archive: 'Archive',
     unarchive: 'Unarchive',
@@ -643,6 +648,7 @@ export default {
   },
 
   onboarding: {
+    standaloneHint: 'Start a chat without adding a project.',
     sampleRepo: 'my-repository',
     headerTitle: 'Welcome',
     skip: 'Skip',
