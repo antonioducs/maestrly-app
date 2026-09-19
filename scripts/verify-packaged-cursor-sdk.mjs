@@ -18,12 +18,18 @@ import {
 export function cursorSdkRgBinary(platform) {
   return platform === 'win' ? 'rg.exe' : 'rg'
 }
+/** `listPackage()` joins entries with the host separator, so Windows reports backslash paths. */
+function posixEntries(entries) {
+  return entries.map((entry) => entry.replaceAll('\\', '/'))
+}
 export function verifyPlatformEntries(entries, targetId) {
   const target = TARGETS.find((item) => item.id === targetId)
   if (!target && targetId !== 'win-arm64') throw new Error(`Unknown target: ${targetId}`)
   const actual = [
     ...new Set(
-      entries.filter((entry) => entry.startsWith('/node_modules/@cursor/sdk-')).map((entry) => entry.split('/')[3])
+      posixEntries(entries)
+        .filter((entry) => entry.startsWith('/node_modules/@cursor/sdk-'))
+        .map((entry) => entry.split('/')[3])
     ),
   ]
   const expected = target ? [`sdk-${target.npmSuffix}`] : []
@@ -34,7 +40,7 @@ export function verifyPlatformEntries(entries, targetId) {
 }
 export function verifyLayout(layout, targetId) {
   const archive = path.join(layout.resources, 'app.asar')
-  const entries = listPackage(archive)
+  const entries = posixEntries(listPackage(archive))
   const target = verifyPlatformEntries(entries, targetId)
   const sdk = JSON.parse(extractFile(archive, 'node_modules/@cursor/sdk/package.json'))
   if (sdk.version !== CURSOR_SDK_VERSION) throw new Error('Incorrect packaged Cursor SDK version')

@@ -72,6 +72,19 @@ test('cross-target staging prunes the host and all other foreign helpers', () =>
   )
   assert.throws(() => verifyPlatformEntries([], 'win-x64'), /missing/)
 })
+test('asar entries are matched regardless of the host path separator', () => {
+  // listPackage() joins with the host separator, so a Windows run reports backslash entries.
+  verifyPlatformEntries(['\\node_modules\\@cursor\\sdk-win32-x64\\package.json'], 'win-x64')
+  assert.throws(
+    () =>
+      verifyPlatformEntries(
+        ['\\node_modules\\@cursor\\sdk-win32-x64\\package.json', '\\node_modules\\@cursor\\sdk-darwin-arm64\\bin\\rg'],
+        'win-x64'
+      ),
+    /Unexpected/
+  )
+  assert.throws(() => verifyPlatformEntries(['\\node_modules\\@cursor\\sdk-win32-x64\\bin\\rg.exe'], 'win-arm64'))
+})
 test('Windows ARM64 omits helpers without failing the app package', () => {
   assert.deepEqual(parseArgs(['--target=win-arm64', '--prune']), { targets: [], prune: true })
   assert.equal(platformPackageSuffixesToPrune([]).length, TARGETS.length)
