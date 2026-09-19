@@ -235,6 +235,10 @@ export async function readSubscriptionUsage(
       }
     }
 
+    // Cursor reports consumption in SDK turns, but exposes no account quota windows.
+    if (input.providerKind === 'cursor-subscription') {
+      return unsupported(input.providerKind, accountId, 'excluded')
+    }
     return unsupported(input.providerKind, accountId, 'provider')
   } catch (error) {
     return {

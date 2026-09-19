@@ -13,24 +13,24 @@
   "targets": {
     "mac-arm64": {
       "status": "measured",
-      "measuredAt": "2026-09-06T00:36:27.369Z",
+      "measuredAt": "2026-09-19T03:36:23.044Z",
       "baseline": {
-        "unpackedAppBytes": 607103173,
-        "appAsarBytes": 262514534,
-        "appAsarUnpackedBytes": 13925887,
+        "unpackedAppBytes": 658365403,
+        "appAsarBytes": 306112047,
+        "appAsarUnpackedBytes": 24306538,
         "frameworksBytes": 286550918,
-        "extraResourcesBytes": 43819679,
+        "extraResourcesBytes": 41099499,
         "mlAggregateBytes": 0,
-        "maxArtifactBytes": 228255087
+        "maxArtifactBytes": 237721708
       },
       "budgets": {
-        "unpackedAppBytes": 667813491,
-        "appAsarBytes": 288765988,
-        "appAsarUnpackedBytes": 15318476,
+        "unpackedAppBytes": 724201944,
+        "appAsarBytes": 336723252,
+        "appAsarUnpackedBytes": 26737192,
         "frameworksBytes": 315206010,
-        "extraResourcesBytes": 48201647,
+        "extraResourcesBytes": 45209449,
         "mlAggregateBytes": 0,
-        "maxArtifactBytes": 251080596
+        "maxArtifactBytes": 261493879
       }
     },
     "mac-x64": {

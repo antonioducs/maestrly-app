@@ -1,3 +1,4 @@
+import { unwrapCursorMcpToolCall } from './cursor-mcp-tool'
 import type { HarnessProfileIdentity } from './harness'
 import type { JSONObject, JSONValue, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
@@ -664,7 +665,12 @@ export function buildProviderOptions(
   reasoning: string | undefined,
   meta: Pick<ChatModelMeta, 'reasoning' | 'reasoningEfforts'> | null | undefined
 ): SharedV3ProviderOptions | undefined {
-  if (kind === 'codex-subscription' || kind === 'github-copilot-subscription' || kind === 'claude-subscription') {
+  if (
+    kind === 'codex-subscription' ||
+    kind === 'github-copilot-subscription' ||
+    kind === 'claude-subscription' ||
+    kind === 'cursor-subscription'
+  ) {
     return undefined
   }
 
@@ -721,7 +727,12 @@ export function frozenEffortReproducible(
   frozenSentEffort: string | undefined,
   meta: Pick<ChatModelMeta, 'reasoning' | 'reasoningEfforts'> | null | undefined
 ): boolean {
-  if (kind === 'codex-subscription' || kind === 'github-copilot-subscription' || kind === 'claude-subscription') {
+  if (
+    kind === 'codex-subscription' ||
+    kind === 'github-copilot-subscription' ||
+    kind === 'claude-subscription' ||
+    kind === 'cursor-subscription'
+  ) {
     return true
   }
   if (!reasoning || reasoning === 'off') return true
@@ -948,11 +959,12 @@ export function findPendingChatQuestion(messages: readonly ChatMessage[]): Pendi
     for (let j = message.parts.length - 1; j >= 0; j--) {
       const part = message.parts[j]
       if (part.type !== 'tool') continue
-      if (part.toolName !== 'ask_question') continue
+      const unwrapped = unwrapCursorMcpToolCall(part.toolName, part.input)
+      if (unwrapped.toolName !== 'ask_question') continue
       if (part.state.status !== 'running' && part.state.status !== 'pending') continue
       const rawQuestions =
-        typeof part.input === 'object' && part.input !== null
-          ? (part.input as { questions?: unknown }).questions
+        typeof unwrapped.input === 'object' && unwrapped.input !== null
+          ? (unwrapped.input as { questions?: unknown }).questions
           : undefined
       const questions = Array.isArray(rawQuestions)
         ? rawQuestions.filter(
@@ -1125,10 +1137,15 @@ export type ChatProviderKind =
   | 'github-copilot-subscription'
   | 'claude-subscription'
   | 'grok-subscription'
+  | 'cursor-subscription'
 
 export type ChatSubscriptionProviderKind = Extract<
   ChatProviderKind,
-  'codex-subscription' | 'github-copilot-subscription' | 'claude-subscription' | 'grok-subscription'
+  | 'codex-subscription'
+  | 'github-copilot-subscription'
+  | 'claude-subscription'
+  | 'grok-subscription'
+  | 'cursor-subscription'
 >
 
 export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProviderKind[] = [
@@ -1136,6 +1153,7 @@ export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProvider
   'github-copilot-subscription',
   'claude-subscription',
   'grok-subscription',
+  'cursor-subscription',
 ]
 
 export function isChatSubscriptionProviderKind(kind: string | null | undefined): kind is ChatSubscriptionProviderKind {
@@ -1266,6 +1284,12 @@ export function isReviewLoopConversationReserved(status: ChatGptWebReviewLoopSta
 }
 
 export interface FrozenChatSelection {
+  /** Effective Cursor model and catalog parameters, frozen for isolated execution. */
+  cursorModelSelection?: {
+    modelId: string
+    params: ReadonlyArray<{ id: string; value: string }>
+  }
+
   providerId: string
   modelId: string
   reasoning?: string
@@ -1449,6 +1473,7 @@ export const PORTABLE_EXECUTION_BUILTIN_PROVIDER_IDS = [
   'builtin_github_copilot_subscription',
   'builtin_claude_subscription',
   'builtin_grok_subscription',
+  'builtin_cursor_subscription',
 ] as const
 
 /** Portable shared configs deliberately exclude random BYOK IDs and account-scoped built-in IDs. */
@@ -1476,6 +1501,8 @@ export function withSubscriptionAccount(baseProviderId: string, accountId: strin
 export type ChatSubscriptionAuthState = 'unavailable' | 'signed-out' | 'signing-in' | 'signed-in' | 'error'
 
 export interface ChatSubscriptionAuthStatus {
+  /** Per-account credential persistence; absent for runtimes that manage their own login. */
+  storageMode?: 'secure' | 'memory'
   state: ChatSubscriptionAuthState
 
   authenticated: boolean

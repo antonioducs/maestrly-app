@@ -17,6 +17,7 @@ export type SubagentSelectionRuntime =
   | 'claude-subscription'
   | 'codex-subscription'
   | 'github-copilot'
+  | 'cursor-subscription'
 
 /** Mutable per-turn state: requested and already-dispatched agents. Does not persist across turns. */
 export interface ExplicitSubagentTurnState {
@@ -77,10 +78,7 @@ export function recordSubagentDispatch(state: ExplicitSubagentTurnState, selecte
   if (key) state.dispatched.add(key)
 }
 
-export function subagentSelectionGuardMessage(
-  requestedAgent: string,
-  selectedAgent: string
-): string {
+export function subagentSelectionGuardMessage(requestedAgent: string, selectedAgent: string): string {
   return (
     `The user explicitly requested the available subagent "${requestedAgent}". ` +
     `Call task again with agent="${requestedAgent}", or explain why that agent cannot be used. ` +

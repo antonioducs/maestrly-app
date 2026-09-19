@@ -68,6 +68,18 @@
           "codexPromptVersion": "astra-codex-host-v1"
         }
       }
+    },
+    {
+      "providerKind": "cursor-subscription",
+      "overrides": {
+        "identity": {
+          "promptIdentity": "cursor-native-with-host-gpt-6-astra-v1"
+        },
+        "prompts": {
+          "layout": "openai-astra",
+          "base": "prompt.md"
+        }
+      }
     }
   ]
 }

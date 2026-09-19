@@ -94,6 +94,7 @@ const kindLabelKey: Record<ChatProviderKind, string> = {
   'github-copilot-subscription': 'settings.apiFormatGitHubCopilotSubscription',
   'claude-subscription': 'settings.apiFormatClaudeSubscription',
   'grok-subscription': 'settings.apiFormatGrokSubscription',
+  'cursor-subscription': 'settings.apiFormatCursorSubscription',
 }
 
 const subscriptionProviderCopy: Record<
@@ -104,6 +105,7 @@ const subscriptionProviderCopy: Record<
       | 'githubCopilotSubscription'
       | 'claudeSubscription'
       | 'grokSubscription'
+      | 'cursorSubscription'
     borderClass: string
     buttonClass: string
   }
@@ -122,6 +124,11 @@ const subscriptionProviderCopy: Record<
     prefix: 'claudeSubscription',
     borderClass: 'border-orange-500/25 bg-orange-500/[0.04]',
     buttonClass: 'bg-orange-600 hover:bg-orange-500',
+  },
+  'cursor-subscription': {
+    prefix: 'cursorSubscription',
+    borderClass: 'border-violet-500/25 bg-violet-500/[0.04]',
+    buttonClass: 'bg-violet-600 hover:bg-violet-500',
   },
   'grok-subscription': {
     prefix: 'grokSubscription',
@@ -1100,6 +1107,9 @@ function SubscriptionProviderCard({
               {[identity, status.planType].filter(Boolean).join(' · ')}
             </p>
           )}
+          {signedIn && status.storageMode === 'memory' ? (
+            <p className="mt-1 text-[11px] text-amber-300">{t('settings.subscriptionMemoryOnly')}</p>
+          ) : null}
           {signingIn && loginInstructions?.userCode && (
             <div className="mt-2 rounded-md border border-amber-400/25 bg-amber-400/[0.06] px-2.5 py-2">
               <p className="text-[11px] text-amber-100">{t(copyKey('DeviceCodeHint'))}</p>

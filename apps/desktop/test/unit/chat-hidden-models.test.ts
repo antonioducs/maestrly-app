@@ -27,6 +27,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isCodexSubscriptionProvider: vi.fn(() => false),
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
   isClaudeSubscriptionProvider: vi.fn(() => false),
+  isCursorSubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn(() => false),
   isManagedProvider: vi.fn(() => false),

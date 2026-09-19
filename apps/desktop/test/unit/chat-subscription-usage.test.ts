@@ -185,6 +185,14 @@ describe('subscription usage adapters', () => {
       accountId: null,
       reason: 'provider',
     })
+    await expect(
+      readSubscriptionUsage({ providerKind: 'cursor-subscription', accountId: 'work' }, deps)
+    ).resolves.toEqual({
+      state: 'unsupported',
+      providerKind: 'cursor-subscription',
+      accountId: 'work',
+      reason: 'excluded',
+    })
     expect(deps.codexAccounts).toEqual([])
     expect(deps.claudeAccounts).toEqual([])
   })

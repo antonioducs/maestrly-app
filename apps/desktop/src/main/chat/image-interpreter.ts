@@ -28,6 +28,7 @@ import {
   getProviderKind,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
   subscriptionAccountId,
@@ -35,6 +36,8 @@ import {
 import { getClaudeSubscriptionManager } from './claude-agent-sdk/manager'
 import { freezeFailoverChain } from './subscription-failover/config'
 import { getCodexSubscriptionManager } from './codex-subscription/manager'
+import { getCursorSubscriptionManager } from './cursor-subscription/manager'
+import { summarizeWithCursorRuntime } from './cursor-subscription/portable-summarizer'
 import { getApiKey, hasApiKey } from './credentials'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
@@ -415,6 +418,12 @@ export function hasConfiguredImageInterpreter(): boolean {
       return status?.authenticated === true && status.accountFingerprint !== null
     }
 
+    if (isCursorSubscriptionProvider(interpreter.providerId)) {
+      const status = getCursorSubscriptionManager(accountId).getStatusSnapshot()
+      // Cursor's execution path refreshes status on demand; only the authenticated identity is a local prerequisite.
+      return status?.authenticated === true && status.accountFingerprint !== null
+    }
+
     if (isGrokSubscriptionProvider(interpreter.providerId)) {
       const status = getGrokSubscriptionManager(accountId).getStatusSnapshot()
       // Grok uses its authenticated BYOK-compatible path and does not require an active connected snapshot.
@@ -472,6 +481,11 @@ function interpreterIdentityFingerprint(interpreter: ChatImageInterpreter): stri
       if (identities.some((entry) => entry === null)) return ''
       // An in-flight description may already be on B even while A's identity is unchanged.
       return `claude-route:${createHash('sha256').update(JSON.stringify(identities)).digest('hex')}`
+    }
+
+    if (isCursorSubscriptionProvider(providerId)) {
+      const { fingerprint, epoch } = getCursorSubscriptionManager(accountId).getAccountIdentity()
+      return fingerprint ? `sub:${fingerprint}:${epoch}` : ''
     }
 
     if (isGrokSubscriptionProvider(providerId)) {
@@ -554,7 +568,12 @@ async function describeImage(
   // model calls. (Conversation meter excludes them — persistence would require extra history messages,
   // invalidating native-session resume; recorded decision.)
   const record = (
-    runtime: 'byok-ai-sdk' | 'codex-subscription' | 'github-copilot-subscription' | 'claude-subscription',
+    runtime:
+      | 'byok-ai-sdk'
+      | 'codex-subscription'
+      | 'github-copilot-subscription'
+      | 'claude-subscription'
+      | 'cursor-subscription',
     usage: DiagnosticUsage | undefined,
     details: { providerId?: string; modelId?: string; attempt?: number } = {}
   ): void => {
@@ -659,6 +678,34 @@ async function describeImage(
           fastMode: target.fastMode,
         }),
     })
+    return result.text
+  }
+
+  if (isCursorSubscriptionProvider(providerId)) {
+    const manager = getCursorSubscriptionManager(accountId)
+    const status = await manager.getStatus(true).catch(() => null)
+    if (!status?.authenticated) throw new Error('Image interpreter provider is not authenticated.')
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) throw new Error('Image interpreter provider is not authenticated.')
+    const result = await summarizeWithCursorRuntime({
+      manager,
+      accountIdentity: identity,
+      cwd,
+      modelId,
+      system: SYSTEM,
+      prompt,
+      signal,
+      ...(effort ? { reasoningEffort: effort } : {}),
+      images: [
+        {
+          data: image.base64 ?? image.dataUrl?.replace(/^data:[^;]+;base64,/, '') ?? '',
+          mimeType: image.mediaType,
+          base64: image.base64,
+          dataUrl: image.dataUrl,
+        },
+      ],
+    })
+    record('cursor-subscription', result.usage)
     return result.text
   }
 

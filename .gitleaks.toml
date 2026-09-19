@@ -36,3 +36,17 @@ condition = "AND"
 paths = ['''^apps/desktop/test/unit/chat-compaction-progress-service\.test\.ts$''']
 regexTarget = "line"
 regexes = ['''new Error\('Summary service rejected request: OPENAI_API_KEY=synthetic-secret-123'\)''']
+
+[[allowlists]]
+description = "Exact synthetic Cursor token asserting SDK credential redaction in tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^apps/desktop/test/unit/chat-cursor-portable-summarizer\.test\.ts$''',
+  '''^apps/desktop/test/unit/chat-cursor-sdk-stream-map\.test\.ts$''',
+  '''^apps/desktop/test/unit/chat-cursor-subscription-drain\.test\.ts$''',
+  '''^apps/desktop/test/unit/chat-cursor-subscription-runner\.test\.ts$''',
+  '''^apps/desktop/test/unit/chat-cursor-subscription-session-store\.test\.ts$''',
+]
+regexTarget = "line"
+regexes = ['''const (?:crsrSecret|secret|token) = 'crsr_live_AbCdEf1234567890'''']

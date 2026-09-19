@@ -736,6 +736,15 @@ describe('preload API — chat pagination (#559)', () => {
     api.chatSubscriptionLogout('github-copilot-subscription')
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:github-copilot-subscription:logout')
 
+    api.chatSubscriptionStatus('cursor-subscription', true, 'work')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:cursor-subscription:status', { refresh: true, accountId: 'work' })
+    api.chatSubscriptionLogin('cursor-subscription', 'work')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:cursor-subscription:login', { accountId: 'work' })
+    api.chatSubscriptionLogout('cursor-subscription', 'work')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:cursor-subscription:logout', { accountId: 'work' })
+    api.chatSubscriptionLogin('cursor-subscription')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:cursor-subscription:login')
+
     api.chatSubscriptionStatus('claude-subscription', true)
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:claude-subscription:status', { refresh: true })
     api.chatSubscriptionLogin('claude-subscription')
@@ -813,6 +822,21 @@ describe('preload API — chat pagination (#559)', () => {
 
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('chat:claude-subscription:auth-changed', listener)
+  })
+
+  it('subscribes to Cursor authentication changes and returns unsubscribe', () => {
+    const callback = vi.fn()
+    const status = { state: 'signed-in', authenticated: true, email: 'dev@example.com', planType: 'max' }
+    const off = api.onChatSubscriptionStatus('cursor-subscription', callback) as () => void
+    expect(onSpy).toHaveBeenCalledTimes(1)
+    expect(onSpy.mock.calls[0]?.[0]).toBe('chat:cursor-subscription:auth-changed')
+
+    const listener = onSpy.mock.calls[0]?.[1] as (...args: unknown[]) => void
+    listener({}, status)
+    expect(callback).toHaveBeenCalledWith(status)
+
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('chat:cursor-subscription:auth-changed', listener)
   })
 
   it('chatSetBashFilters(enabled) -> chat:set-bash-filters preserves the boolean', () => {

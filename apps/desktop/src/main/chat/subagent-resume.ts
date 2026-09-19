@@ -5,6 +5,7 @@ import { clearClaudeSessionCleanup } from './claude-agent-sdk/session-store'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
 } from './catalog'
 import { getCodexSubscriptionManager } from './codex-subscription/manager'
@@ -143,9 +144,9 @@ export function planSubagentResume(input: {
   const codex = isCodexSubscriptionProvider(input.providerId)
   const claude = isClaudeSubscriptionProvider(input.providerId)
   if (!codex && !claude) {
-    // Copilot has sessions but its worker runner does not yet expose handles; BYOK has no server-side
+    // Copilot and Cursor workers do not expose resumable handles; BYOK has no server-side
     // session, so previous-turn history IS the resume.
-    if (isGitHubCopilotSubscriptionProvider(input.providerId)) {
+    if (isGitHubCopilotSubscriptionProvider(input.providerId) || isCursorSubscriptionProvider(input.providerId)) {
       return { mode: 'recreate', reason: 'provider-unsupported' }
     }
     const history = input.resume.replay ?? []

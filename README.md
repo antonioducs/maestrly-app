@@ -46,7 +46,7 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
 ## Capabilities
 
 - **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
-  GitHub Copilot, Grok, and ChatGPT Web integrations.
+  GitHub Copilot, Cursor, Grok, and ChatGPT Web integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
   review loops, permissions, and usage accounting.
 - **Workspaces:** conversations on the current branch or isolated Git worktrees,
@@ -90,6 +90,8 @@ repositories separately; see [Local data and recovery](docs/local-data.md).
 Project state stays on your machine. AI features require a configured provider;
 API keys and subscription integrations use your own provider account. Local ML
 requires separately prepared runtime and model assets.
+
+See [Cursor setup and platform support](docs/cursor.md) to connect a Cursor account.
 
 Provider calls, browser navigation, Git operations, MCP services, and optional
 downloads can access the network. Maestrly does not automatically upload logs or

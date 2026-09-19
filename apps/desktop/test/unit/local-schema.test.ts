@@ -14,6 +14,8 @@ const LOCAL_TABLES = [
   'chat_claude_sessions',
   'chat_codex_thread_cleanup',
   'chat_codex_threads',
+  'chat_cursor_agent_cleanup',
+  'chat_cursor_agents',
   'chat_github_copilot_session_cleanup',
   'chat_github_copilot_sessions',
   'chat_inference_state',

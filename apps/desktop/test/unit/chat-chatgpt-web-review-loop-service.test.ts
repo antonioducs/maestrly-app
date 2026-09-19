@@ -163,6 +163,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isGitHubCopilotSubscriptionProvider: vi.fn(
     (providerId: string) => providerId === 'builtin_github_copilot_subscription'
   ),
+  isCursorSubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),
   isManagedProvider: vi.fn((providerId: string) => providerId.startsWith('builtin_codex_subscription')),

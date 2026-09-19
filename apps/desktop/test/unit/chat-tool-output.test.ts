@@ -36,6 +36,7 @@ import {
   stripToolOutputMetadata,
   toolOutputForPersistence,
   toolOutputToCodexContentItems,
+  toolOutputToCursorResult,
   toolOutputToCopilotResult,
   toolOutputToMcpCallResult,
 } from '../../src/main/chat/tool-output'
@@ -47,6 +48,24 @@ const IMAGE_URL = `data:image/png;base64,${IMAGE_DATA}`
 afterEach(() => clearEphemeralToolImages())
 
 describe('host-owned multimodal tool output', () => {
+  it('projects images and structured errors to Cursor without exposing persisted image bytes', () => {
+    const output = mcpResultToChatToolOutput({
+      content: [
+        { type: 'text', text: 'preview' },
+        { type: 'image', data: IMAGE_DATA, mimeType: 'image/png' },
+      ],
+      structuredContent: { status: 'failed' },
+      isError: true,
+    })
+    const result = toolOutputToCursorResult(output)
+    expect(result.content).toContainEqual({ type: 'image', data: IMAGE_DATA, mimeType: 'image/png' })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toEqual({ status: 'failed' })
+    expect(JSON.stringify(output)).not.toContain(IMAGE_DATA)
+    clearEphemeralToolImages()
+    expect(toolOutputToCursorResult(output).content.every((part) => part.type === 'text')).toBe(true)
+  })
+
   it('keeps MCP images as opaque refs while projecting files to the AI SDK', () => {
     const output = mcpResultToChatToolOutput({
       content: [

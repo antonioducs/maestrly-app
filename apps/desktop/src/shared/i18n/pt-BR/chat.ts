@@ -592,6 +592,24 @@ export default {
     close: 'Fechar (Esc)',
   },
   settings: {
+    apiFormatCursorSubscription: 'Assinatura Cursor',
+    subscriptionMemoryOnly:
+      'Esta conta está conectada apenas nesta sessão. Entre novamente após reiniciar o aplicativo.',
+    cursorSubscriptionHeading: 'Cursor com assinatura',
+    cursorSubscriptionDescription:
+      'Use seu plano Cursor no Maestrly Chat via o Agent SDK oficial. Entre com a conta Cursor no navegador.',
+    cursorSubscriptionConnected: 'Conectado',
+    cursorSubscriptionDisconnected: 'Não conectado',
+    cursorSubscriptionWaiting: 'Aguardando autorização do Cursor…',
+    cursorSubscriptionWaitingShort: 'Aguardando…',
+    cursorSubscriptionUnavailable: 'Provider indisponível nesta plataforma',
+    cursorSubscriptionLogin: 'Entrar com Cursor',
+    cursorSubscriptionLogout: 'Sair',
+    cursorSubscriptionRefresh: 'Atualizar status da conta Cursor',
+    cursorSubscriptionLoginFailed: 'Não foi possível iniciar o login do Cursor.',
+    cursorSubscriptionLogoutFailed: 'Não foi possível sair do Cursor.',
+    cursorSubscriptionProviderPending:
+      'A conta está conectada, mas o provider Cursor ainda não apareceu no catálogo do chat.',
     tabsLabel: 'Configurações do Maestrly Chat',
     tabAccounts: 'Contas',
     tabModelsAgents: 'Modelos & agentes',

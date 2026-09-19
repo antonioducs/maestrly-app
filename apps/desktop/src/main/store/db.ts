@@ -697,6 +697,60 @@ function initializeSchema(): void {
         updated_at = excluded.updated_at;
     END;
 
+    -- Cursor bindings reference app-owned SDK stores. Cleanup survives conversation cascades.
+    CREATE TABLE IF NOT EXISTS chat_cursor_agents (
+      conversation_id     TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      agent_id            TEXT NOT NULL,
+      model_id            TEXT NOT NULL,
+      model_params_json   TEXT NOT NULL DEFAULT '[]',
+      cwd                 TEXT NOT NULL,
+      harness_profile     TEXT NOT NULL,
+      instruction_hash    TEXT NOT NULL,
+      tool_signature      TEXT NOT NULL,
+      last_message_id     TEXT NOT NULL,
+      account_fingerprint TEXT NOT NULL,
+      account_id          TEXT NOT NULL DEFAULT '',
+      usage_json          TEXT NOT NULL DEFAULT '{}',
+      updated_at          INTEGER NOT NULL
+    );
+
+
+    CREATE TABLE IF NOT EXISTS chat_cursor_agent_cleanup (
+      agent_id         TEXT PRIMARY KEY,
+      conversation_id  TEXT NOT NULL,
+      cwd              TEXT NOT NULL,
+      last_error       TEXT,
+      attempts         INTEGER NOT NULL DEFAULT 0,
+      account_id       TEXT NOT NULL DEFAULT '',
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_cursor_cleanup_created
+      ON chat_cursor_agent_cleanup(created_at, agent_id);
+
+    CREATE TRIGGER IF NOT EXISTS trg_chat_cursor_agent_cleanup_before_delete
+    BEFORE DELETE ON chat_cursor_agents
+    FOR EACH ROW
+    BEGIN
+      INSERT INTO chat_cursor_agent_cleanup
+        (agent_id, conversation_id, cwd, last_error, attempts, account_id, created_at, updated_at)
+      VALUES (
+        OLD.agent_id,
+        OLD.conversation_id,
+        OLD.cwd,
+        NULL,
+        0,
+        OLD.account_id,
+        CAST(unixepoch('subsec') * 1000 AS INTEGER),
+        CAST(unixepoch('subsec') * 1000 AS INTEGER)
+      )
+      ON CONFLICT(agent_id) DO UPDATE SET
+        conversation_id = excluded.conversation_id,
+        cwd = excluded.cwd,
+        account_id = excluded.account_id,
+        updated_at = excluded.updated_at;
+    END;
+
     -- Durable tool results keyed by call_id prevent repeated side effects when sampling resumes after tool
     -- completion but before provider confirmation.
     CREATE TABLE IF NOT EXISTS chat_tool_executions (

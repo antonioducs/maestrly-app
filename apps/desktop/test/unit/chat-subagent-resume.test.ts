@@ -41,6 +41,11 @@ describe('planSubagentResume', () => {
       'no-transcript',
     ],
     [
+      'cursor worker',
+      { providerId: 'builtin_cursor_subscription@work', accountId: 'work', resume: { handle: null, replay } },
+      'provider-unsupported',
+    ],
+    [
       'copilot worker',
       { providerId: 'builtin_github_copilot_subscription', accountId: null, resume: { handle: null, replay } },
       'provider-unsupported',

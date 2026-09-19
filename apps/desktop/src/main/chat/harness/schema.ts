@@ -21,6 +21,7 @@ const PROVIDER_KINDS = [
   'github-copilot-subscription',
   'claude-subscription',
   'grok-subscription',
+  'cursor-subscription',
 ] as const
 
 const identity = z

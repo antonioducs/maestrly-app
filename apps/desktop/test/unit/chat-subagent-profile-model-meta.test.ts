@@ -1,3 +1,5 @@
+import { subagentModelCatalog, subagentProviderStatus } from '../../src/main/chat/subagent-provider-runtime'
+import { getCursorSubscriptionManager } from '../../src/main/chat/cursor-subscription/manager'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getProvider } from '../../src/main/chat/catalog'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from '../../src/main/chat/model-meta'
@@ -26,6 +28,13 @@ vi.mock('../../src/main/chat/claude-agent-sdk/manager', () => ({
 }))
 vi.mock('../../src/main/chat/grok-subscription/manager', () => ({
   getGrokSubscriptionManager: vi.fn(),
+}))
+
+vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({ getCursorSubscriptionManager: vi.fn() }))
+
+vi.mock('../../src/main/store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/store')>()),
+  getHiddenChatModelsFor: () => ['hidden-cursor-model'],
 }))
 
 const getProviderMock = vi.mocked(getProvider)
@@ -61,6 +70,72 @@ describe('getSubagentProfileModelMeta', () => {
       getStatus: vi.fn(async () => ({ authenticated: false })),
       listModels: vi.fn(async () => []),
     } as unknown as ReturnType<typeof getGrokSubscriptionManager>)
+  })
+
+  it.each([
+    [{ available: false, authenticated: false }, 'unsupported'],
+    [{ available: true, authenticated: false }, 'disconnected'],
+    [{ available: true, authenticated: true }, 'available'],
+  ])('reflects Cursor platform and authentication availability: %j', async (status, expected) => {
+    getProviderMock.mockReturnValue({
+      id: 'builtin_cursor_subscription',
+      name: 'Cursor',
+      baseURL: 'cursor://subscription',
+    })
+    vi.mocked(getCursorSubscriptionManager).mockReturnValue({
+      getStatus: vi.fn(async () => status),
+    } as unknown as ReturnType<typeof getCursorSubscriptionManager>)
+    await expect(subagentProviderStatus('builtin_cursor_subscription')).resolves.toBe(expected)
+  })
+
+  it('uses the authenticated Cursor catalog and honors hidden model preferences', async () => {
+    vi.mocked(getCursorSubscriptionManager).mockReturnValue({
+      getStatus: vi.fn(async () => ({ authenticated: true, available: true })),
+      listModels: vi.fn(async () => [{ id: 'visible-cursor-model' }, { id: 'hidden-cursor-model' }]),
+    } as unknown as ReturnType<typeof getCursorSubscriptionManager>)
+    await expect(subagentModelCatalog('builtin_cursor_subscription@work')).resolves.toEqual({
+      status: 'available',
+      models: ['visible-cursor-model'],
+    })
+  })
+
+  it('reads Cursor account catalog capabilities without inventing context or effort levels', async () => {
+    vi.mocked(getCursorSubscriptionManager).mockReturnValue({
+      getStatus: vi.fn(async () => ({ authenticated: true, available: true })),
+      listModels: vi.fn(async () => [
+        {
+          id: 'cursor-model',
+          parameters: [
+            { id: 'reasoning', values: [{ value: 'low' }, { value: 'high' }] },
+            { id: 'speed', values: [{ value: 'standard' }, { value: 'fast' }] },
+          ],
+        },
+      ]),
+    } as unknown as ReturnType<typeof getCursorSubscriptionManager>)
+    await expect(getSubagentProfileModelMeta('builtin_cursor_subscription@work', 'cursor-model')).resolves.toEqual({
+      status: 'available',
+      meta: {
+        reasoning: true,
+        reasoningEfforts: ['low', 'high'],
+        chatCapable: true,
+        fastModeCapability: true,
+        contextLimitEditable: false,
+      },
+    })
+    expect(getCursorSubscriptionManager).toHaveBeenCalledWith('work')
+  })
+
+  it('keeps Cursor model discovery unavailable without authentication', async () => {
+    const listModels = vi.fn()
+    vi.mocked(getCursorSubscriptionManager).mockReturnValue({
+      getStatus: vi.fn(async () => ({ authenticated: false })),
+      listModels,
+    } as unknown as ReturnType<typeof getCursorSubscriptionManager>)
+    await expect(getSubagentProfileModelMeta('builtin_cursor_subscription', 'cursor-model')).resolves.toEqual({
+      status: 'unavailable',
+      meta: null,
+    })
+    expect(listModels).not.toHaveBeenCalled()
   })
 
   it('uses the main picker exact-provider then canonical resolution', async () => {

@@ -67,7 +67,9 @@ export class DesktopModelCatalog {
                   ? 'Claude'
                   : p.providerId.includes('copilot')
                     ? 'Copilot'
-                    : 'Maestrly') +
+                    : p.providerId.includes('cursor')
+                      ? 'Cursor'
+                      : 'Maestrly') +
               ' · ' +
               p.modelId,
           },

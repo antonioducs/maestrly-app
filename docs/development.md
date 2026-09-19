@@ -154,3 +154,42 @@ Signed publication follows [Releasing](releasing.md).
 - Foreign runtime in packaging: use a clean checkout for a single target.
 - Migration/reset error: close the app and preserve the complete profile; follow
   [recovery instructions](local-data.md) using a copy.
+
+## Cursor SDK packaging and checks
+
+Cursor is pinned to `@cursor/sdk` 1.0.31. Postinstall fetches the host helper;
+`fetch-cursor-sdk-platform.mjs` verifies its npm archive against a committed
+SHA-512 pin before extraction. Update the runtime platform hash table and the
+fetcher's pins together when upgrading. The package wrapper stages only the
+selected target helper, restores the host helper after cross-builds, and runs
+`verify-packaged-cursor-sdk.mjs` on unpacked apps and installers. Native binaries
+and vendor files live outside ASAR. Windows ARM64 ships no Cursor helper and
+reports the provider as unavailable without blocking the application build.
+
+After a native package build, also run this offline check from the repository root:
+
+```sh
+node scripts/smoke-packaged-cursor-sdk.mjs
+```
+
+It launches the packaged Electron app with a temporary profile, loads the shipped
+SDK, writes and reopens an SDK SQLite record, and executes the shipped `rg`.
+An optional first argument selects an executable. Use `xvfb-run -a` on headless
+Linux. The existing desktop and Local ML packaged smokes remain required.
+
+The authenticated check starts live runs and requires both explicit opt-in and a
+model ID from the Cursor catalog. To use the browser login flow:
+
+```sh
+MAESTRLY_CURSOR_LIVE_SMOKE=1 npm run smoke:cursor-sdk-authenticated -- --model MODEL_ID --login
+```
+
+With a dedicated `CURSOR_API_KEY` already supplied in the environment, omit
+`--login`. `MAESTRLY_CURSOR_SMOKE_MODEL` can supply the model instead of `--model`.
+The check discovers models, invokes a harmless host tool, closes and reopens the
+SDK SQLite store, resumes the same agent and recovers a receipt from its history,
+then cancels another run and checks local logout and cleanup. All state is
+isolated in a temporary directory and an in-memory credential store. Browser
+login mints a one-hour key; local logout clears the temporary credential store.
+It never reads credentials from an existing Maestrly or global Cursor profile.
+See [Cursor usage](cursor.md) for account setup and platform support.

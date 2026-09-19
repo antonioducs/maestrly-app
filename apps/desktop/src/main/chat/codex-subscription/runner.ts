@@ -100,6 +100,7 @@ import {
   getProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   subscriptionAccountId,
 } from '../catalog'
@@ -116,6 +117,8 @@ import {
   type SubagentResumeSource,
 } from '../subagent-resume'
 import { harnessFor } from '../harness/execution'
+import { getCursorSubscriptionManager } from '../cursor-subscription/manager'
+import { runCursorSubagent } from '../cursor-subscription/subagent-runner'
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
@@ -3465,6 +3468,7 @@ export async function runCodexSubscriptionChat(
                 : definition
             const nativeCodex = isCodexSubscriptionProvider(profile.effective.providerId)
             const nativeClaude = isClaudeSubscriptionProvider(profile.effective.providerId)
+            const nativeCursor = isCursorSubscriptionProvider(profile.effective.providerId)
             const nativeCopilot = isGitHubCopilotSubscriptionProvider(profile.effective.providerId)
             lease = await state.subagentCoordinator.acquire({ agent: agentName, signal })
             const childApproval = approvalConfig(codexReadOnly ? 'plan' : 'agent', args.permMode)
@@ -3876,63 +3880,119 @@ export async function runCodexSubscriptionChat(
                     settleResume(outcome)
                     return outcome
                   })()
-                : nativeCopilot
+                : nativeCursor
                   ? await (async () => {
-                      const manager = getGitHubCopilotSubscriptionManager(
-                        subscriptionAccountId(profile.effective!.providerId)
-                      )
-                      const identity = manager.getAccountIdentity()
-                      if (!identity.fingerprint) {
-                        return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
-                      }
-                      return runGitHubCopilotSubagent({
-                        manager,
-                        accountIdentity: identity,
-                        conversationId: args.conversationId,
-                        cwd: args.cwd,
-                        profile,
-                        definition: effectiveDefinition,
-                        signal,
-                        agentName,
-                        task: resumeFor(profile.effective!.providerId, null).task,
-                        readOnly: codexReadOnly,
-                        tools: await copilotTools(
-                          Object.fromEntries(
+                      const providerId = profile.effective!.providerId
+                      const accountId = subscriptionAccountId(providerId)
+                      const manager = getCursorSubscriptionManager(accountId)
+                      args.acquirePhysicalProvider?.(providerId)
+                      try {
+                        signal.throwIfAborted()
+                        const status = await manager.getStatus()
+                        signal.throwIfAborted()
+                        if (!status.authenticated || !status.accountFingerprint) {
+                          return { text: '', error: 'Cursor subscription is not authenticated.' }
+                        }
+                        const accountIdentity = { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+                        const frozenModelSelection = await manager.resolveModelSelection(
+                          profile.effective!.modelId,
+                          profile.effective!.fastMode === true,
+                          false,
+                          profile.effective!.sentEffort
+                        )
+                        signal.throwIfAborted()
+                        manager.assertAccountIdentity(accountIdentity)
+                        const outcome = await runCursorSubagent({
+                          manager,
+                          accountIdentity,
+                          frozenModelSelection,
+                          isHostPending: () =>
+                            Boolean(
+                              args.broker.pendingFor?.(args.conversationId).length ||
+                                args.questionBroker.pendingFor?.(args.conversationId).length
+                            ),
+                          harness: harnessFor('cursor-subscription', profile.effective!.modelId, {
+                            resolvedModelId: frozenModelSelection.modelId,
+                            flags: harnessFlagsAtAdmission,
+                          }),
+                          conversationId: args.conversationId,
+                          cwd: args.cwd,
+                          profile,
+                          definition: effectiveDefinition,
+                          signal,
+                          agentName,
+                          task: resumeFor(providerId, accountId).task,
+                          readOnly: codexReadOnly,
+                          tools: Object.fromEntries(
                             Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                           ),
+                          allowSkillLoader: args.mode === 'maestro',
+                          progress,
+                          onTextUpdate,
+                        })
+                        settleResume({ resumed: false, resumeReason: 'resume-rejected' })
+                        return outcome
+                      } finally {
+                        args.releasePhysicalProvider?.(providerId)
+                      }
+                    })()
+                  : nativeCopilot
+                    ? await (async () => {
+                        const manager = getGitHubCopilotSubscriptionManager(
+                          subscriptionAccountId(profile.effective!.providerId)
+                        )
+                        const identity = manager.getAccountIdentity()
+                        if (!identity.fingerprint) {
+                          return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
+                        }
+                        return runGitHubCopilotSubagent({
+                          manager,
+                          accountIdentity: identity,
+                          conversationId: args.conversationId,
+                          cwd: args.cwd,
+                          profile,
+                          definition: effectiveDefinition,
                           signal,
-                          childDeferredToolNames
-                        ),
-                        allowSkillLoader: args.mode === 'maestro',
-                        progress,
-                        onTextUpdate,
-                      })
-                    })()
-                  : await (async () => {
-                      // BYOK: without a server-side session, resume replays the previous turn as history.
-                      const resume = resumeFor(profile.effective!.providerId, null)
-                      const outcome = await runSubagent({
-                        cwd: args.cwd,
-                        projectId: args.projectId,
-                        conversationId: args.conversationId,
-                        parentMessageId: assistantId,
-                        toolCallId,
-                        profile,
-                        definition: effectiveDefinition,
-                        broker: args.broker,
-                        signal,
-                        agentName,
-                        task: resume.task,
-                        ...(resume.replay ? { replayHistory: resume.replay } : {}),
-                        progress,
-                        onTextUpdate,
-                        readOnly: codexReadOnly,
-                        tools: childTools,
-                        allowSkillLoader: args.mode === 'maestro',
-                      })
-                      if (resume.replay) settleResume({ resumed: true })
-                      return outcome
-                    })()
+                          agentName,
+                          task: resumeFor(profile.effective!.providerId, null).task,
+                          readOnly: codexReadOnly,
+                          tools: await copilotTools(
+                            Object.fromEntries(
+                              Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
+                            ),
+                            signal,
+                            childDeferredToolNames
+                          ),
+                          allowSkillLoader: args.mode === 'maestro',
+                          progress,
+                          onTextUpdate,
+                        })
+                      })()
+                    : await (async () => {
+                        // BYOK: without a server-side session, resume replays the previous turn as history.
+                        const resume = resumeFor(profile.effective!.providerId, null)
+                        const outcome = await runSubagent({
+                          cwd: args.cwd,
+                          projectId: args.projectId,
+                          conversationId: args.conversationId,
+                          parentMessageId: assistantId,
+                          toolCallId,
+                          profile,
+                          definition: effectiveDefinition,
+                          broker: args.broker,
+                          signal,
+                          agentName,
+                          task: resume.task,
+                          ...(resume.replay ? { replayHistory: resume.replay } : {}),
+                          progress,
+                          onTextUpdate,
+                          readOnly: codexReadOnly,
+                          tools: childTools,
+                          allowSkillLoader: args.mode === 'maestro',
+                        })
+                        if (resume.replay) settleResume({ resumed: true })
+                        return outcome
+                      })()
             const runtimeEstimatedCostUsd = (result as { runtimeEstimatedCostUsd?: number }).runtimeEstimatedCostUsd
             if (
               result.model &&

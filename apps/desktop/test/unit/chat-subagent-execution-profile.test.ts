@@ -125,6 +125,46 @@ describe('subagent execution profile conversation switch', () => {
       fastMode: false,
     })
   })
+  it('selects a conversation Cursor default independently from a Codex parent', async () => {
+    const rules = {
+      version: 1 as const,
+      default: [
+        {
+          providerId: 'builtin_cursor_subscription',
+          modelId: 'gpt-5.6-luna',
+          effort: 'medium',
+        },
+      ],
+    }
+    const agent: ChatAgent = {
+      name: 'general-purpose',
+      description: 'General worker',
+      prompt: 'Complete the delegated task.',
+      source: 'test',
+    }
+    expect(setConversationSubagentProfileRules('c', rules).ok).toBe(true)
+
+    const resolved = await resolveSubagentExecutionProfile({
+      agentName: 'general-purpose',
+      agents: [agent],
+      conversationId: 'c',
+      parentFastMode: true,
+      parent: {
+        providerId: 'builtin_codex_subscription',
+        modelId: 'opus[1m]',
+        effort: 'xhigh',
+      },
+    })
+
+    expect(resolved.profile.effective).toMatchObject({
+      source: 'conversation-default',
+      providerId: 'builtin_cursor_subscription',
+      modelId: 'gpt-5.6-luna',
+      configuredEffort: 'medium',
+      sentEffort: 'medium',
+      fastMode: false,
+    })
+  })
 
   it('disabling bypasses all deterministic layers and preserves rules for reactivation', async () => {
     const globalRules = { version: 1 as const, default: [candidate('global-model')] }

@@ -8,6 +8,7 @@ import {
   isCodexSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
+  isCursorSubscriptionProvider,
   subscriptionAccountId,
 } from './catalog'
 import { hasApiKey } from './credentials'
@@ -15,6 +16,13 @@ import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './code
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getClaudeSubscriptionManager } from './claude-agent-sdk/manager'
 import { getGrokSubscriptionManager, type GrokSubscriptionModel } from './grok-subscription/manager'
+import { getCursorSubscriptionManager } from './cursor-subscription/manager'
+import {
+  cursorReasoningEfforts,
+  findCursorFastParameter,
+  pickFastOnValue,
+  type CursorModelCatalogEntry,
+} from './cursor-sdk/models'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import { fetchModelsWithStatus } from './models'
@@ -121,6 +129,27 @@ async function authenticatedGrokModels(accountId: string | null): Promise<readon
   return manager.listModels().catch(() => null)
 }
 
+function cursorModelMeta(model: CursorModelCatalogEntry): ChatModelMeta {
+  const fastParam = findCursorFastParameter(model)
+  const reasoningEfforts = cursorReasoningEfforts(model)
+  return {
+    reasoning: reasoningEfforts.length > 0,
+    ...(reasoningEfforts.length ? { reasoningEfforts } : {}),
+    chatCapable: true,
+    fastModeCapability: Boolean(fastParam && pickFastOnValue(fastParam)),
+    contextLimitEditable: false,
+  }
+}
+
+async function authenticatedCursorModels(
+  accountId: string | null
+): Promise<readonly CursorModelCatalogEntry[] | null> {
+  const manager = getCursorSubscriptionManager(accountId)
+  const status = await manager.getStatus().catch(() => null)
+  if (!status?.authenticated) return null
+  return manager.listModels().catch(() => null)
+}
+
 export async function subagentProviderStatus(providerId: string): Promise<SubagentProviderStatus> {
   if (!autonomousProviderAllowed(providerId)) return 'unsupported'
   if (!getProvider(providerId)) return 'missing'
@@ -148,6 +177,13 @@ export async function subagentProviderStatus(providerId: string): Promise<Subage
       .getStatus()
       .catch(() => null)
     return status?.authenticated ? 'available' : 'disconnected'
+  }
+  if (isCursorSubscriptionProvider(providerId)) {
+    const status = await getCursorSubscriptionManager(accountId)
+      .getStatus()
+      .catch(() => null)
+    if (!status?.available) return 'unsupported'
+    return status.authenticated ? 'available' : 'disconnected'
   }
   return hasApiKey(providerId) ? 'available' : 'no-key'
 }
@@ -193,6 +229,12 @@ export async function subagentModelCatalog(providerId: string): Promise<Subagent
       ? { status: 'available', models: visibleModelIds(providerId, models.map((model) => model.id)) }
       : { status: 'unavailable', models: [] }
   }
+  if (isCursorSubscriptionProvider(providerId)) {
+    const models = await authenticatedCursorModels(accountId)
+    return models
+      ? { status: 'available', models: visibleModelIds(providerId, models.map((model) => model.id)) }
+      : { status: 'unavailable', models: [] }
+  }
   const result = await fetchModelsWithStatus(providerId)
   return result.status === 'available'
     ? { ...result, models: visibleModelIds(providerId, result.models) }
@@ -223,6 +265,11 @@ export async function subagentModelMeta(providerId: string, modelId: string): Pr
     const models = await authenticatedGrokModels(accountId)
     const model = models?.find((entry) => entry.id === modelId)
     return model ? { status: 'available', meta: grokModelMeta(model) } : { status: 'unavailable', meta: null }
+  }
+  if (isCursorSubscriptionProvider(providerId)) {
+    const models = await authenticatedCursorModels(accountId)
+    const model = models?.find((entry) => entry.id === modelId)
+    return model ? { status: 'available', meta: cursorModelMeta(model) } : { status: 'unavailable', meta: null }
   }
   const provider = getProvider(providerId)
   const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null

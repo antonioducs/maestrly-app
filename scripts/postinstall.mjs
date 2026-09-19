@@ -53,3 +53,5 @@ function runNodeScript(script, args) {
 
 ensureElectron()
 runNodeScript('node_modules/electron-builder/install-app-deps.js', [])
+
+runNodeScript('scripts/fetch-cursor-sdk-platform.mjs', [])

@@ -59,6 +59,22 @@ import { patchConvUiPrefs, setAppSetting } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
+const cursorH = vi.hoisted(() => ({
+  run: vi.fn(),
+  managerCalls: vi.fn(),
+  manager: {
+    getStatus: vi.fn(async () => ({ authenticated: true, accountFingerprint: 'cursor-account', accountEpoch: 2 })),
+    assertAccountIdentity: vi.fn(),
+    resolveModelSelection: vi.fn(async () => ({ modelId: 'composer-2', params: [{ id: 'reasoning', value: 'high' }] })),
+  },
+}))
+vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
+  getCursorSubscriptionManager: (accountId: string | null) => {
+    cursorH.managerCalls(accountId)
+    return cursorH.manager
+  },
+}))
+vi.mock('../../src/main/chat/cursor-subscription/subagent-runner', () => ({ runCursorSubagent: cursorH.run }))
 vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()
   return { ...original, resolveSubagentExecutionProfile: vi.fn(original.resolveSubagentExecutionProfile) }
@@ -2829,6 +2845,128 @@ describe('Codex subscription runner', () => {
     })
     const assistant = assistantMessages(conversation.id)[0]
     expect(assistant.error).toBeUndefined()
+    expect(assistant.parts).toContainEqual(
+      expect.objectContaining({ type: 'text', text: 'Final overview after reconciling the agent.' })
+    )
+  })
+
+  it('tracks a native Cursor Maestro delegate through the final overview', async () => {
+    const delegation = await import('../../src/main/chat/maestro-delegation')
+    const originalPrepare = delegation.prepareMaestroDelegation
+    const prepare = vi.spyOn(delegation, 'prepareMaestroDelegation').mockImplementation(async (input) => {
+      const prepared = await originalPrepare(input)
+      prepared.execution.profile.effective = {
+        ...prepared.execution.profile.effective!,
+        providerId: 'builtin_cursor_subscription',
+        modelId: 'composer-2',
+      }
+      return prepared
+    })
+    let finishCursor!: (value: {
+      text: string
+      model: { providerId: string; modelId: string }
+      usage: { input: number; output: number; cacheRead: number; cacheCreate: number; totalInput: number }
+    }) => void
+    cursorH.run.mockReset().mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCursor = resolve
+        })
+    )
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { experience: 'maestro' })
+    persistUser(conversation.id, 'user_maestro_async_guard', 'Delegate and then provide an overview.', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_maestro_parent', notifications: [] })
+    client.queueTurn({
+      turnId: 'turn_maestro_overview',
+      notifications: [
+        {
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_maestro_overview',
+            itemId: 'maestro_overview',
+            delta: 'Final overview after reconciling the agent.',
+          },
+        },
+        completedNotification('thread_1', 'turn_maestro_overview'),
+      ],
+    })
+    const config = createDefaultMaestroConfig()
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.mode = 'maestro'
+    args.permMode = 'full'
+    args.maestro = {
+      version: 1,
+      strategy: config.strategy,
+      pool: config.pool,
+      source: 'safe-default',
+      diagnostics: [],
+      frozenAt: 1,
+    }
+    let rootResolved = false
+    const running = runCodexSubscriptionChat(args).then((result) => {
+      rootResolved = true
+      return result
+    })
+
+    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 10_000 })
+    await expect(
+      client.serverRequest({
+        id: 'delegate_maestro_async',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_maestro_parent',
+          itemId: 'delegate_maestro_async',
+          callId: 'delegate_maestro_async',
+          tool: 'delegate',
+          arguments: {
+            agent: 'generalist',
+            task: 'Do the delegated work.',
+            kind: 'implement',
+            domain: 'fullstack',
+            independent: true,
+          },
+        },
+      })
+    ).resolves.toMatchObject({ success: true })
+    await vi.waitFor(() => expect(cursorH.run).toHaveBeenCalledTimes(1), { timeout: 10_000 })
+    expect(cursorH.run).toHaveBeenCalledWith(
+      expect.objectContaining({ allowSkillLoader: true, readOnly: false, agentName: 'generalist' })
+    )
+
+    // The provider ends the parent round before the worker. This must trigger supervision, not teardown/timeout.
+    client.emit(completedNotification('thread_1', 'turn_maestro_parent'))
+    await waitImmediate()
+    expect(rootResolved).toBe(false)
+    expect(client.interruptTurnCalls).not.toContainEqual({
+      threadId: 'thread_2',
+      turnId: 'turn_maestro_child',
+    })
+
+    finishCursor({
+      text: 'Delegated work completed.',
+      model: { providerId: 'builtin_cursor_subscription', modelId: 'composer-2' },
+      usage: { input: 7, output: 3, cacheRead: 0, cacheCreate: 0, totalInput: 7 },
+    })
+
+    await expect(running).resolves.toEqual({ planSubmitted: false, threadId: 'thread_1' })
+    expect(client.startTurnCalls).toHaveLength(2)
+    expect(client.startTurnCalls[1]).toMatchObject({
+      threadId: 'thread_1',
+      input: [
+        expect.objectContaining({
+          type: 'text',
+          text: expect.stringContaining('Host guard: delegated sessions have settled.'),
+        }),
+      ],
+    })
+    const assistant = assistantMessages(conversation.id)[0]
+    expect(assistant.error).toBeUndefined()
+    expect(assistant.usage).toMatchObject({ subInput: 7, subOutput: 3 })
+    prepare.mockRestore()
     expect(assistant.parts).toContainEqual(
       expect.objectContaining({ type: 'text', text: 'Final overview after reconciling the agent.' })
     )
@@ -5640,6 +5778,92 @@ describe('Codex subscription runner', () => {
     expect(runSubagentMock).not.toHaveBeenCalled()
 
     client.emit(completedNotification('thread_1', 'turn_codex_to_copilot'))
+    await running
+  })
+
+  it.each([
+    false,
+    true,
+  ])('dispatches Cursor additional-account children and releases ownership (cancel=%s)', async (cancel) => {
+    cursorH.run.mockReset()
+    cursorH.managerCalls.mockClear()
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_codex_to_cursor', 'Use Cursor as a worker', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_codex_to_cursor', notifications: [] })
+    const profile = {
+      version: 1 as const,
+      agentName: 'general-purpose',
+      effective: {
+        providerId: 'builtin_cursor_subscription@acc_child',
+        modelId: 'composer-2',
+        configuredEffort: 'high',
+        sentEffort: 'high',
+        source: 'conversation-default' as const,
+        candidateIndex: 0,
+      },
+      attempts: [],
+    }
+    resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+      definition: {
+        name: 'general-purpose',
+        description: 'Worker',
+        prompt: 'Complete the delegated task.',
+        source: 'built-in',
+        tools: ['read', 'grep'],
+      },
+      profile,
+    })
+    cursorH.run.mockResolvedValueOnce({
+      text: 'Cursor result',
+      model: { providerId: 'builtin_cursor_subscription@acc_child', modelId: 'composer-2' },
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.mode = 'agent'
+    args.acquirePhysicalProvider = vi.fn()
+    args.releasePhysicalProvider = vi.fn()
+    const cursorAbort = new AbortController()
+    args.signal = cursorAbort.signal
+    if (cancel)
+      cursorH.run.mockReset().mockImplementationOnce(async ({ signal }) => {
+        cursorAbort.abort()
+        signal.throwIfAborted()
+      })
+    const running = runCodexSubscriptionChat(args)
+
+    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+    await expect(
+      client.serverRequest({
+        id: 'task_codex_to_cursor',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          itemId: 'task_codex_to_cursor',
+          callId: 'task_codex_to_cursor',
+          tool: 'task',
+          arguments: { agent: 'general-purpose', prompt: 'Review the flow with Cursor.' },
+        },
+      })
+    ).resolves.toMatchObject({ success: !cancel })
+    expect(cursorH.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile,
+        agentName: 'general-purpose',
+        task: 'Review the flow with Cursor.',
+        accountIdentity: { fingerprint: 'cursor-account', epoch: 2 },
+        allowSkillLoader: false,
+        frozenModelSelection: { modelId: 'composer-2', params: [{ id: 'reasoning', value: 'high' }] },
+        harness: expect.objectContaining({ identity: expect.any(Object) }),
+      })
+    )
+    expect(cursorH.managerCalls).toHaveBeenCalledWith('acc_child')
+    expect(args.acquirePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
+    expect(args.releasePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
+    expect(Object.keys(cursorH.run.mock.calls[0][0].tools)).not.toContain('task')
+    expect(runSubagentMock).not.toHaveBeenCalled()
+
+    client.emit(completedNotification('thread_1', 'turn_codex_to_cursor'))
     await running
   })
 
