@@ -1038,6 +1038,8 @@ export type ChatStreamEvent =
     }
   | { kind: 'context-usage'; messageId: string; snapshot: ChatContextSnapshot }
   | { kind: 'compaction-progress'; messageId: string; progress: ChatCompactionProgress }
+  /** Manual compaction released its reservation; only completed work may advance the send queue. */
+  | { kind: 'compaction-finished'; status: 'completed' | 'failed' | 'cancelled' }
   | { kind: 'text-start'; messageId: string; partId: string }
   | { kind: 'text-delta'; messageId: string; partId: string; delta: string }
   | { kind: 'reasoning-start'; messageId: string; partId: string }
@@ -1095,6 +1097,8 @@ export type ChatPermissionEvent =
 
 export interface ChatRuntimeState {
   streaming: boolean
+  /** Manual/preflight compaction, including its native binding cleanup. */
+  compacting?: boolean
   pendingPermissions: ChatPermissionRequest[]
   pendingQuestions: PendingChatQuestion[]
 

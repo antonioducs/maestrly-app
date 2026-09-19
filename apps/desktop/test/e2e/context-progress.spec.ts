@@ -342,3 +342,70 @@ for (const [label, model] of [
     await expect(stop).toHaveCount(0)
   })
 }
+
+interface ManualCompactQueueState {
+  calls: string[]
+  compactStarted: boolean
+  finish: () => void
+}
+
+test('manual compact queues a following message and dispatches it once after completion', async () => {
+  const { page, conversationId } = await openChat({
+    providerId: 'builtin_codex_subscription',
+    modelId: 'gpt-6',
+  })
+  await app!.evaluate(({ ipcMain }) => {
+    const state = { calls: [] as string[], compactStarted: false, finish: () => {} }
+    ;(globalThis as typeof globalThis & { __manualCompactQueue: ManualCompactQueueState }).__manualCompactQueue = state
+    ipcMain.removeHandler('chat:compact')
+    ipcMain.handle('chat:compact', () => {
+      state.compactStarted = true
+      return new Promise((resolve) => {
+        state.finish = () => resolve({ ok: true })
+      })
+    })
+    ipcMain.removeHandler('chat:send')
+    ipcMain.handle('chat:send', (_event, input: { text: string }) => {
+      state.calls.push(input.text)
+      return { ok: true }
+    })
+  })
+  const composer = page.locator('[role="textbox"][contenteditable="true"]:visible')
+  await composer.fill('/compact')
+  await page.getByText('Compact the history (summarize to free up context)', { exact: true }).click()
+  await expect
+    .poll(() =>
+      app!.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { __manualCompactQueue: ManualCompactQueueState }).__manualCompactQueue
+            .compactStarted
+      )
+    )
+    .toBe(true)
+  await composer.fill('Work after the compact finishes')
+  await composer.press('Enter')
+  await expect(page.getByText('1 queued', { exact: true })).toBeVisible()
+  expect(
+    await app!.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { __manualCompactQueue: ManualCompactQueueState }).__manualCompactQueue.calls
+    )
+  ).toEqual([])
+  // A stray stream completion must not drain the queue while compact still owns the conversation.
+  await emit(conversationId, { kind: 'done' })
+  await expect(page.getByText('1 queued', { exact: true })).toBeVisible()
+  await app!.evaluate(() =>
+    (globalThis as typeof globalThis & { __manualCompactQueue: ManualCompactQueueState }).__manualCompactQueue.finish()
+  )
+  await expect
+    .poll(() =>
+      app!.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { __manualCompactQueue: ManualCompactQueueState }).__manualCompactQueue
+            .calls
+      )
+    )
+    .toEqual(['Work after the compact finishes'])
+  await expect(page.getByText('1 queued', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Work after the compact finishes', { exact: true })).toBeVisible()
+})

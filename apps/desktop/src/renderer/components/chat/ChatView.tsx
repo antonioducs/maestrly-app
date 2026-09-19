@@ -270,7 +270,8 @@ export function ChatView({
   const streamingRef = useRef(false)
   streamingRef.current = streaming
   const compactingRef = useRef(false)
-  compactingRef.current = compacting
+  const localManualCompactionRef = useRef(false)
+  const compactionRevisionRef = useRef(0)
   const queueRef = useRef<QueuedMsg[]>(queue)
   const setQueueState = useCallback((next: QueuedMsg[] | ((current: QueuedMsg[]) => QueuedMsg[])) => {
     const resolved = typeof next === 'function' ? next(queueRef.current) : next
@@ -432,6 +433,7 @@ export function ChatView({
 
   useEffect(() => {
     if (status !== 'working' && status !== 'asking') return
+    if (compactingRef.current) return
     if (!visibleRef.current) {
       streamingRef.current = true
       return
@@ -789,6 +791,10 @@ export function ChatView({
 
   const finishTurn = useCallback(
     (hidden = false) => {
+      if (localManualCompactionRef.current) return
+      compactingRef.current = false
+      compactionRevisionRef.current++
+      setCompacting(false)
       streamingRef.current = false
       if (!hidden) setStreaming(false)
       if (stoppedRef.current) {
@@ -823,6 +829,18 @@ export function ChatView({
       const kind = (ev as { kind: string }).kind
       const hidden = !visibleRef.current
       const event = ev as ChatStreamEvent
+
+      if (event.kind === 'compaction-finished') {
+        // The local IPC promise owns history hydration and queue release when present.
+        if (localManualCompactionRef.current) return
+        compactionRevisionRef.current++
+        compactingRef.current = false
+        setCompacting(false)
+        streamingRef.current = false
+        if (!hidden) setStreaming(false)
+        if (event.status === 'completed') finishTurn(hidden)
+        return
+      }
 
       if (kind === 'done') {
         // The turn ended: drop every live capability before any further action can be routed.
@@ -939,12 +957,17 @@ export function ChatView({
 
     void reloadLatestPage()
     let alive = true
+    const compactionRevision = compactionRevisionRef.current
     const questionRevision = runtimeQuestionRevisionRef.current
     const maestroRevision = maestroLiveRevisionRef.current
     void window.api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
-      streamingRef.current = runtime.streaming
-      setStreaming(runtime.streaming)
+      if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
+        compactingRef.current = runtime.compacting ?? false
+        setCompacting(compactingRef.current)
+        streamingRef.current = runtime.streaming
+        setStreaming(runtime.streaming)
+      }
       setPending(runtime.pendingPermissions)
       setMidTurnSteering(runtime.midTurnSteering)
       setLiveReasoningUpdate(runtime.liveReasoningUpdate)
@@ -1187,6 +1210,10 @@ export function ChatView({
       setDraft('')
       setDraftMentions([])
       setAttachments([])
+      if (compactingRef.current) {
+        setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: atts, agentMentions }])
+        return
+      }
       if (streamingRef.current) {
         const live = maestroLiveRef.current
         if (isMaestro && maestroSendTarget === 'current' && atts.length === 0 && live?.run.status === 'active') {
@@ -1373,23 +1400,37 @@ export function ChatView({
 
   const runCompactAsync = useCallback(async (): Promise<boolean> => {
     if (streamingRef.current || compactingRef.current) return false
+    compactingRef.current = true
+    localManualCompactionRef.current = true
+    compactionRevisionRef.current++
     setCompacting(true)
+    let completed = false
     try {
       const res = await window.api.chatCompact(conversationId)
-      if (res.ok) {
-        await reloadLatestPage()
-        setCompactDismissed(false)
-        return true
-      }
-      if (res.error !== 'too-short') {
+      if (!res.ok && res.error !== 'too-short') {
         pushAssistantError(res.error === 'no-model' ? t('view.errNoModel') : t('view.errCompactFailed'))
         return false
       }
-      return true // No compaction is needed; continue.
+      await reloadLatestPage()
+      setCompactDismissed(false)
+      completed = true
+      return true
+    } catch {
+      pushAssistantError(t('view.errCompactFailed'))
+      return false
     } finally {
+      localManualCompactionRef.current = false
+      compactingRef.current = false
+      compactionRevisionRef.current++
       setCompacting(false)
+      // The local manual operation owns queue release, even if its completion event arrives first.
+      // Release its reservation only after
+      // history hydration, then advance the same queue used by completed turns.
+      streamingRef.current = false
+      if (completed) finishTurn(!visibleRef.current)
+      setStreaming(streamingRef.current)
     }
-  }, [conversationId, pushAssistantError, reloadLatestPage, t])
+  }, [conversationId, finishTurn, pushAssistantError, reloadLatestPage, t])
   const runCompact = useCallback(() => void runCompactAsync(), [runCompactAsync])
 
   const pickCommand = useCallback(

@@ -344,8 +344,9 @@ export async function runCodexEphemeralWithFailover<T>(args: RunCodexEphemeralWi
         settle('other')
         throw abortError(signal)
       }
-      const classification = await classifyCodexQuotaFailureWithRateLimits(error, () =>
-        target.manager.getRateLimits(true)
+      const classification = await classifyCodexQuotaFailureWithRateLimits(
+        error instanceof Error && 'rawFailure' in error ? (error.rawFailure ?? error) : error,
+        () => target.manager.getRateLimits(true)
       )
 
       if (signal.aborted) {
