@@ -5,6 +5,27 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-19
+
+### Added
+
+- Add standalone chats with private persistent files, isolated permissions,
+  provider support, and sidebar lifecycle controls outside project workspaces.
+- Add native Cursor subscription support across chat, Maestro, subagents, image
+  interpretation, desktop execution, and account-isolated sessions.
+
+### Changed
+
+- Redesign Kanban card and column-agent dialogs with responsive layouts,
+  clearer configuration, contextual prompts, and concurrent agent execution.
+- Replace the fixed drawer tool strip with searchable, reorderable, persistent
+  tabs stored per conversation.
+
+### Fixed
+
+- Keep messages visible and queued correctly during compaction, and align
+  portable Codex recovery with the resolved context configuration.
+
 ## [0.7.0] - 2026-09-16
 
 ### Added
