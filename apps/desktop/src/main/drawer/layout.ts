@@ -1,6 +1,8 @@
+import type { WebContentsView } from 'electron'
 import type { FloatTab } from '../store'
 import {
   PANEL_TABS,
+  isTabVisibleInSlot,
   OFFSCREEN,
   activeConvId,
   convHasPopup,
@@ -88,6 +90,29 @@ export function setLayout(opts: { convId: string | null; visibleKind: FloatTab |
   setSlot(opts.bounds ?? slot)
   applyLayout()
   if (activeConvId) emitBrowserState(activeConvId)
+}
+
+/**
+ * Still image (data URL) of the native view currently docked in the slot. Native views paint above every
+ * DOM z-index, so a DOM overlay (e.g. the tool palette) shows this frozen frame while the view is moved
+ * offscreen, avoiding a black slot. Null when nothing native is visible in the slot.
+ */
+export async function captureSlotView(convId: string): Promise<string | null> {
+  const d = drawers.get(convId)
+  const kind = visibleKind
+  if (!d || !kind || !isTabVisibleInSlot(convId, kind)) return null
+  let view: WebContentsView | null | undefined
+  if (kind === 'browser') view = d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view
+  else if (kind === 'vscode') view = d.vscodeView
+  else if (kind === 'chatgpt') view = d.chatgptView
+  else view = d.panelViews.get(kind)
+  if (!view || view.webContents.isDestroyed()) return null
+  try {
+    const image = await view.webContents.capturePage()
+    return image.isEmpty() ? null : image.toDataURL()
+  } catch {
+    return null
+  }
 }
 
 /** Move native views offscreen while an HTML modal must appear above them. */

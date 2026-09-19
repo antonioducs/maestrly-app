@@ -1,6 +1,6 @@
 /** Position native panel views inside the drawer slot and synchronize floating-window state.
  * Keep native surfaces aligned when surrounding layout changes, including sidebar resizes. */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import {
@@ -25,6 +25,8 @@ import {
   Settings2,
   Shield,
   X,
+  Plus,
+  LayoutGrid,
 } from 'lucide-react'
 import type { ChatGptWebSessionInfo, Conversation, PlanReceived } from '../../preload'
 import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
@@ -36,6 +38,7 @@ import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
 import { restartChatGptWebCompanion, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from '@/components/chat/ChatGptWebAccessEditor'
+import { ToolPalette } from '@/components/ToolPalette'
 
 export type Tab = DrawerTab
 
@@ -52,11 +55,17 @@ interface Props {
 
   activePlan: PlanReceived | null
 
-  tab: Tab
+  /** Active tab; null when no tool is open (empty state). */
+  tab: Tab | null
+  /** Activates (and opens when needed) a tab. */
   onTabChange: (tab: Tab) => void
 
-  mainTabOrder: Tab[]
-  onReorderMainTabs: (from: number, to: number) => void
+  /** Tabs currently shown in the bar, in display order. */
+  openTabs: Tab[]
+  onCloseTab: (tab: Tab) => void
+  onReorderOpenTabs: (from: number, to: number) => void
+  /** Catalog order used by the "+" palette (Settings → tab order). */
+  catalogOrder: Tab[]
 
   chatGptWebEnabled: boolean
 }
@@ -93,8 +102,10 @@ export function Drawer({
   activePlan,
   tab,
   onTabChange,
-  mainTabOrder,
-  onReorderMainTabs,
+  openTabs,
+  onCloseTab,
+  onReorderOpenTabs,
+  catalogOrder,
   chatGptWebEnabled,
 }: Props) {
   const { t } = useTranslation('ui')
@@ -106,7 +117,25 @@ export function Drawer({
     setTab(key)
   }
 
-  const mainReorder = useReorder(onReorderMainTabs)
+  const tabsReorder = useReorder(onReorderOpenTabs, { noDragSelector: '[data-tab-close]' })
+  // Native views paint above the DOM. While the palette is open, the docked view moves offscreen and a
+  // frozen frame of it (captured just before) fills the slot, so the popover floats over a still image.
+  const [palette, setPalette] = useState<{ open: boolean; snapshot: string | null }>({ open: false, snapshot: null })
+  const paletteOpen = palette.open
+  const addBtnRef = useRef<HTMLButtonElement>(null)
+  const closePalette = useCallback(() => setPalette({ open: false, snapshot: null }), [])
+  const openPalette = useCallback(async () => {
+    let snapshot: string | null = null
+    if (convId) {
+      try {
+        snapshot = await window.api.drawerCaptureSlot(convId)
+      } catch {
+        snapshot = null
+      }
+    }
+    setPalette({ open: true, snapshot })
+  }, [convId])
+  const paletteItems = catalogOrder.map((key) => ({ key, label: tabDefs[key].label, icon: tabDefs[key].icon }))
 
   const slotRef = useRef<HTMLDivElement>(null)
 
@@ -125,6 +154,11 @@ export function Drawer({
   const chatGptReviewLoopActive = isReviewLoopConversationReserved(chatGptSession?.reviewLoop?.status)
 
   const [restarting, setRestarting] = useState(false)
+  // Closing a floating tab reattaches it first so the native view returns to the drawer slot.
+  const closeTab = (t: Tab): void => {
+    if (convId && floating.has(t)) window.api.drawerReattach(convId, t)
+    onCloseTab(t)
+  }
   const toggleDetach = (t: Tab): void => {
     if (!convId || !DETACHABLE.has(t)) return
     if (floating.has(t)) {
@@ -309,7 +343,8 @@ export function Drawer({
   }
 
   useLayoutEffect(() => {
-    const kind = visible && SLOT_TABS.has(tab) && !suspended && convId && !floating.has(tab) ? tab : null
+    const kind =
+      visible && tab && SLOT_TABS.has(tab) && !suspended && !paletteOpen && convId && !floating.has(tab) ? tab : null
     const el = slotRef.current
     if (!kind || !el || !convId) {
       window.api.drawerLayout({ convId, visibleKind: null })
@@ -358,7 +393,7 @@ export function Drawer({
       window.visualViewport?.removeEventListener('scroll', scheduleMeasure)
       window.api.drawerLayout({ convId, visibleKind: null })
     }
-  }, [tab, suspended, convId, visible, floating, chatGptSessionActive, chatGptAccessOpen])
+  }, [tab, suspended, paletteOpen, convId, visible, floating, chatGptSessionActive, chatGptAccessOpen])
 
   useEffect(() => {
     if (visible && tab === 'browser' && convId) window.api.drawerEnsureBrowser(convId)
@@ -371,31 +406,56 @@ export function Drawer({
   }, [visible, tab, activeConv?.id, activeConv?.cwd])
 
   useEffect(() => {
-    if (visible && convId && !isFloating(tab) && PANEL_TABS_UI.has(tab)) {
+    if (visible && convId && tab && !isFloating(tab) && PANEL_TABS_UI.has(tab)) {
       window.api.drawerEnsurePanel(convId, tab as 'terminal' | 'plan' | 'review' | 'notes')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, tab, convId, floating])
 
   return (
-    <aside className="glass flex h-full min-w-0 flex-1 flex-col bg-surface">
+    <aside className="glass relative flex h-full min-w-0 flex-1 flex-col bg-surface">
       <div className="drag flex h-10 items-center gap-1 hairline-b px-2">
-        <div className="no-drag min-w-0 flex-1 overflow-x-auto">
-          <div className="flex w-max items-center gap-0.5 rounded-lg bg-white/[0.04] p-0.5 ring-1 ring-white/[0.05]">
-            {mainTabOrder.map((key, i) => (
-              <MainTab
-                key={key}
-                icon={tabDefs[key].icon}
-                label={tabDefs[key].label}
-                active={tab === key}
-                dot={key === 'plan' && !!activePlan}
-                onClick={() => selectTab(key)}
-                dragProps={mainReorder.props(i)}
-                dropTarget={mainReorder.overIndex === i}
-              />
-            ))}
-          </div>
+        <div
+          role="tablist"
+          aria-label={t('drawer.addTab')}
+          className="no-drag flex min-w-0 items-center gap-0.5 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {openTabs.map((key, i) => (
+            <OpenTab
+              key={key}
+              icon={tabDefs[key].icon}
+              label={tabDefs[key].label}
+              active={tab === key}
+              dot={key === 'plan' && !!activePlan}
+              closeLabel={t('drawer.closeTab', { tab: tabDefs[key].label })}
+              onClick={() => selectTab(key)}
+              onClose={() => closeTab(key)}
+              onNavigate={(dir) => {
+                const next = openTabs[(i + dir + openTabs.length) % openTabs.length]
+                if (next) selectTab(next)
+              }}
+              dragProps={tabsReorder.props(i)}
+              dropTarget={tabsReorder.overIndex === i}
+            />
+          ))}
         </div>
+        <button
+          ref={addBtnRef}
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={paletteOpen}
+          title={t('drawer.addTab')}
+          onClick={() => (paletteOpen ? closePalette() : void openPalette())}
+          className={cn(
+            'no-drag flex size-7 shrink-0 items-center justify-center rounded-md transition-all duration-150',
+            paletteOpen
+              ? 'rotate-45 bg-primary/15 text-primary'
+              : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground'
+          )}
+        >
+          <Plus className="size-4" />
+        </button>
+        <div className="min-w-0 flex-1" />
         {tab === 'vscode' && activeConv && (
           <Button
             variant="ghost"
@@ -408,7 +468,7 @@ export function Drawer({
             <RotateCw className={cn('size-4', restarting && 'animate-spin')} />
           </Button>
         )}
-        {DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
+        {tab && DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
           <Button
             variant={isFloating(tab) ? 'secondary' : 'ghost'}
             size="icon"
@@ -430,10 +490,32 @@ export function Drawer({
         </Button>
       </div>
 
+      <ToolPalette
+        open={paletteOpen}
+        items={paletteItems}
+        openTabs={openTabs}
+        onPick={selectTab}
+        onClose={closePalette}
+        ignoreRef={addBtnRef}
+      />
+
       {tab === 'browser' && !isFloating('browser') && convId && <BrowserChrome convId={convId} />}
 
       <div className="relative min-h-0 flex-1">
-        {SLOT_TABS.has(tab) &&
+        {tab === null && (
+          <EmptyState
+            title={t('drawer.emptyTitle')}
+            hint={t('drawer.emptyHint')}
+            more={t('drawer.emptyMore')}
+            quick={(['browser', 'terminal', 'vscode'] as Tab[])
+              .filter((k) => catalogOrder.includes(k))
+              .map((k) => ({ key: k, label: tabDefs[k].label, icon: tabDefs[k].icon }))}
+            onPick={selectTab}
+          />
+        )}
+
+        {tab &&
+          SLOT_TABS.has(tab) &&
           convId &&
           !isFloating(tab) &&
           (tab !== 'chatgpt' || (chatGptSessionActive && !chatGptAccessOpen)) && (
@@ -443,7 +525,16 @@ export function Drawer({
                 'absolute inset-x-0 bottom-0 bg-[#0A0A0B]',
                 tab === 'chatgpt' ? (chatGptPairingRequired ? 'top-[120px]' : 'top-11') : 'top-0'
               )}
-            />
+            >
+              {paletteOpen && palette.snapshot && (
+                <img
+                  src={palette.snapshot}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-left-top"
+                />
+              )}
+            </div>
           )}
 
         {tab === 'chatgpt' && chatGptSessionActive && !isFloating('chatgpt') && (
@@ -687,7 +778,7 @@ export function Drawer({
             </div>
           )}
 
-        {isFloating(tab) && (
+        {tab && isFloating(tab) && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface p-6 text-center">
             <div className="flex size-12 items-center justify-center rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.06]">
               <PictureInPicture2 className="size-6 text-muted-foreground" />
@@ -705,55 +796,133 @@ export function Drawer({
   )
 }
 
-function MainTab({
+/** Pill for an open tool. Middle click / Delete close it; ←/→ move focus between open tabs. */
+function OpenTab({
   icon,
   label,
   active,
   onClick,
+  onClose,
+  onNavigate,
+  closeLabel,
   dot,
   dragProps,
   dropTarget,
-  disabled,
 }: {
   icon: React.ReactNode
   label: string
   active: boolean
   onClick: () => void
+  onClose: () => void
+  onNavigate: (dir: -1 | 1) => void
+  closeLabel: string
   dot?: boolean
-  dragProps?: React.HTMLAttributes<HTMLButtonElement> & { draggable?: boolean }
+  dragProps?: React.HTMLAttributes<HTMLDivElement> & { draggable?: boolean }
   dropTarget?: boolean
-
-  disabled?: boolean
 }) {
-  const tabDragProps =
-    disabled && dragProps
-      ? { ...dragProps, draggable: false, onPointerDown: undefined, onDragStart: undefined }
-      : dragProps
-
   return (
-    <button
-      onClick={disabled ? undefined : onClick}
-      aria-disabled={disabled || undefined}
-      {...tabDragProps}
+    <div
+      role="tab"
+      tabIndex={active ? 0 : -1}
+      aria-selected={active}
+      title={label}
+      onClick={onClick}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault()
+          onClose()
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          e.preventDefault()
+          onNavigate(e.key === 'ArrowRight' ? 1 : -1)
+        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault()
+          onClose()
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onClick()
+        }
+      }}
+      {...dragProps}
       className={cn(
-        'relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-all duration-150',
-        disabled
-          ? 'cursor-not-allowed text-muted-foreground opacity-40'
-          : cn(
-              'cursor-pointer',
-              active
-                ? 'bg-white/[0.08] text-foreground shadow-sm ring-1 ring-white/[0.06]'
-                : 'text-muted-foreground hover:text-foreground'
-            ),
+        'group relative flex h-7 shrink-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap rounded-md pl-2 pr-1 text-xs font-medium outline-none transition-all duration-150',
+        'focus-visible:ring-2 focus-visible:ring-ring',
+        active
+          ? 'bg-white/[0.08] text-foreground shadow-sm ring-1 ring-white/[0.08]'
+          : 'text-muted-foreground hover:bg-white/[0.05] hover:text-foreground',
         dropTarget && 'ring-1 ring-primary/60'
       )}
     >
       {icon}
-      {label}
+      <span>{label}</span>
       {dot && (
         <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary shadow-[0_0_6px_rgba(237,234,227,0.5)]" />
       )}
-    </button>
+      <button
+        type="button"
+        data-tab-close
+        tabIndex={-1}
+        aria-label={closeLabel}
+        title={closeLabel}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+        className={cn(
+          'flex size-4 items-center justify-center rounded text-muted-foreground transition-all duration-150 hover:bg-white/[0.12] hover:text-foreground',
+          active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+        )}
+      >
+        <X className="size-3" />
+      </button>
+      {active && (
+        <span className="pointer-events-none absolute inset-x-2 -bottom-[5px] h-0.5 rounded-full bg-primary/90" />
+      )}
+    </div>
+  )
+}
+
+function EmptyState({
+  title,
+  hint,
+  more,
+  quick,
+  onPick,
+}: {
+  title: string
+  hint: string
+  more: string
+  quick: Array<{ key: Tab; label: string; icon: React.ReactNode }>
+  onPick: (tab: Tab) => void
+}) {
+  return (
+    <div className="flex h-full items-center justify-center overflow-auto p-8 [background:radial-gradient(520px_240px_at_50%_0%,rgba(237,234,227,0.05),transparent_60%)]">
+      <div className="flex w-full max-w-sm flex-col items-center gap-3 text-center">
+        <div className="flex size-14 items-center justify-center rounded-2xl border border-border-strong bg-surface-elevated text-primary shadow-xl shadow-black/30">
+          <LayoutGrid className="size-6" />
+        </div>
+        <h2 className="mt-1 text-base font-semibold tracking-tight text-foreground">{title}</h2>
+        <p className="text-sm leading-5 text-muted-foreground">{hint}</p>
+        {quick.length > 0 && (
+          <div className="mt-2 grid w-full grid-cols-3 gap-2">
+            {quick.map((q) => (
+              <button
+                key={q.key}
+                type="button"
+                onClick={() => onPick(q.key)}
+                className="flex flex-col items-start gap-2 rounded-lg border border-border bg-white/[0.03] p-3 text-left text-xs text-foreground transition-all duration-150 hover:-translate-y-px hover:border-border-strong hover:bg-white/[0.06]"
+              >
+                <span className="text-muted-foreground">{q.icon}</span>
+                <span>{q.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground/80">{more}</p>
+      </div>
+    </div>
   )
 }
 
