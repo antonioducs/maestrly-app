@@ -12,6 +12,11 @@ machines. Exports contain supported database state and app-owned assets with
 integrity metadata. They exclude provider credentials, repositories, worktrees,
 search indexes, embeddings, and reproducible caches.
 
+Standalone chats keep working files under `standalone-chats/<conversationId>` in
+the application profile. Exports include those files, skipping symbolic links
+and reporting unreadable or excluded entries. Archiving retains the directory;
+deleting the chat removes it. Back up the complete profile before reset.
+
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
