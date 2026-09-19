@@ -35,6 +35,8 @@ extraResources:
     to: licenses/
 
 asarUnpack:
+  - "node_modules/@cursor/sdk-*/bin/**"
+  - "node_modules/@cursor/sdk-*/vendor/**"
   - node_modules/node-pty/**
   - "**/*.node"
   - "**/*.dylib"

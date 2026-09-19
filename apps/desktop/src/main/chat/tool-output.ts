@@ -139,10 +139,7 @@ function notifyEphemeralImageConversationCleanup(cleanup: EphemeralImageConversa
 }
 
 /** Removes conversation-scoped tool-image metadata for the specific ids whose chat rows were deleted. */
-export function releaseConversationToolImageMetadata(
-  conversationId: string,
-  removedIds: ReadonlySet<string>
-): void {
+export function releaseConversationToolImageMetadata(conversationId: string, removedIds: ReadonlySet<string>): void {
   notifyEphemeralImageConversationCleanup({ kind: 'refs', conversationId, removedIds })
 }
 
@@ -909,6 +906,33 @@ export function toolOutputToMcpCallResult(
     ...(isError ? { isError: true } : {}),
     ...(typeof normalized === 'object' && normalized.structuredContent !== undefined
       ? { structuredContent: normalized.structuredContent }
+      : {}),
+  }
+}
+
+export function toolOutputToCursorResult(
+  output: unknown,
+  options: { isError?: boolean } = {}
+): {
+  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType?: string }>
+  isError?: boolean
+  structuredContent?: Record<string, JSONValue>
+} {
+  const normalized = modelOutputToChatToolOutput(output)
+  const isError = options.isError ?? toolOutputIsError(normalized)
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType?: string }> = [
+    { type: 'text', text: toolOutputAsText(normalized) },
+  ]
+  for (const image of toolOutputImages(normalized)) {
+    const resolved = resolveEphemeralToolImage(image)
+    if (resolved) content.push({ type: 'image', data: resolved.data, mimeType: resolved.mediaType })
+  }
+  const structured = typeof normalized === 'object' ? normalized.structuredContent : undefined
+  return {
+    content,
+    ...(isError ? { isError: true } : {}),
+    ...(structured && typeof structured === 'object' && !Array.isArray(structured)
+      ? { structuredContent: structured as Record<string, JSONValue> }
       : {}),
   }
 }

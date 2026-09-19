@@ -1,4 +1,4 @@
-import {autonomousProviderAllowed} from './autonomous'
+import { autonomousProviderAllowed } from './autonomous'
 import type { ToolSet } from 'ai'
 import type { ChatPermMode, SubagentResumeStatus, SubagentRuntimeHandle } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
@@ -9,6 +9,7 @@ import type { ChatAgent } from './agents'
 import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
+  isCursorSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   subscriptionAccountId,
 } from './catalog'
@@ -38,6 +39,9 @@ import { harnessFor } from './harness/execution'
 import { captureHarnessFlags } from './harness/flags'
 import type { ResolvedHarness } from './harness/types'
 import { resolveCodexSubagentServiceTier } from './subscription-failover/codex-adapter'
+import type { CursorSubscriptionAccountIdentity, CursorSubscriptionManager } from './cursor-subscription/manager'
+import { getCursorSubscriptionManager } from './cursor-subscription/manager'
+import { runCursorSubagent } from './cursor-subscription/subagent-runner'
 import type { GitHubCopilotAccountIdentity, GitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { runGitHubCopilotSubagent } from './github-copilot/subagent-runner'
@@ -66,6 +70,7 @@ export type { SubagentTextUpdate, SubagentTextUpdateHandler } from './subagent-t
 export interface SubagentExecutorAccountContext {
   parentProviderId?: string
   claude?: { manager: ClaudeSubscriptionManager; identity: ClaudeSubscriptionAccountIdentity }
+  cursor?: { manager: CursorSubscriptionManager; identity: CursorSubscriptionAccountIdentity }
   copilot?: { manager: GitHubCopilotSubscriptionManager; identity: GitHubCopilotAccountIdentity }
 }
 
@@ -277,7 +282,8 @@ export async function executeSubagent(args: {
     else recordResume('recreated', result.resumeReason ?? 'resume-rejected')
   }
   const runProvider = async (): Promise<SubagentExecutionResult> => {
-    if(!autonomousProviderAllowed(effective.providerId,args.conversationId))throw new Error('This provider account is not authorized for the desktop executor.')
+    if (!autonomousProviderAllowed(effective.providerId, args.conversationId))
+      throw new Error('This provider account is not authorized for the desktop executor.')
     if (isClaudeSubscriptionProvider(effective.providerId)) {
       let runtimeSignature = ''
       let childHarness: ResolvedHarness | undefined
@@ -341,6 +347,39 @@ export async function executeSubagent(args: {
         },
       })
       settleResume(result)
+      return result
+    }
+
+    if (isCursorSubscriptionProvider(effective.providerId)) {
+      const parent = effective.providerId === args.account?.parentProviderId ? args.account.cursor : undefined
+      const manager = parent?.manager ?? getCursorSubscriptionManager(subscriptionAccountId(effective.providerId))
+      let identity = parent?.identity
+      if (!identity) {
+        const status = await manager.getStatus()
+        if (!status.authenticated || !status.accountFingerprint) {
+          return { text: '', error: 'Cursor subscription is not authenticated.', errorCode: 'agent-unavailable' }
+        }
+        identity = { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+      }
+      manager.assertAccountIdentity(identity)
+      const result = await runCursorSubagent({
+        ...args,
+        task: resumeFor(effective.providerId, null).task,
+        definition: effectiveDefinition,
+        readOnly: effectiveReadOnly,
+        manager,
+        accountIdentity: identity,
+        isHostPending: () =>
+          Boolean(
+            args.broker.pendingFor(args.conversationId).length ||
+              args.questionBroker.pendingFor(args.conversationId).length
+          ),
+        tools,
+        allowSkillLoader: args.mode === 'maestro',
+        progress,
+        onTextUpdate,
+      })
+      manager.assertAccountIdentity(identity)
       return result
     }
 

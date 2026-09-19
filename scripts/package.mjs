@@ -96,6 +96,7 @@ try {
   mkdirSync(bundle, { recursive: true })
   copyFileSync(archivePath, path.join(bundle, archive))
 
+  run(process.execPath, ['scripts/fetch-cursor-sdk-platform.mjs', ...runtimeFetchArgs, '--prune'])
   runPackageBin('electron-vite', 'bin/electron-vite.js', ['build'], desktopRoot)
   runPackageBin('electron-builder', 'cli.js', builderArgs, desktopRoot)
 
@@ -127,6 +128,12 @@ try {
       : process.arch === 'arm64'
         ? 'arm64'
         : 'x64'
+  run(process.execPath, [
+    'scripts/verify-packaged-cursor-sdk.mjs',
+    path.join(desktopRoot, 'dist'),
+    `--platform=${runtimeTargets[0].split('-')[0]}`,
+    `--arch=${arch}`,
+  ])
   const reportFile = path.join(desktopRoot, 'dist', `bundle-size-${platform ?? process.platform}-${arch}.json`)
   run(process.execPath, [
     'scripts/report-bundle-size.mjs',
@@ -137,6 +144,15 @@ try {
   run(process.execPath, ['scripts/check-bundle-size.mjs', `--report=${reportFile}`])
 } catch (error) {
   failure = error
+}
+
+// Restore the host helper after a cross-build, including failed builds.
+if (runtimeTargets[0] !== hostTarget) {
+  try {
+    run(process.execPath, ['scripts/fetch-cursor-sdk-platform.mjs', '--target', hostTarget, '--prune'])
+  } catch (error) {
+    failure ??= error
+  }
 }
 
 if (failure instanceof CommandFailure) process.exit(failure.status)

@@ -96,6 +96,49 @@ beforeEach(() => {
   h.cancel.mockClear()
 })
 describe('desktop chat executor', () => {
+  it('publishes enabled Cursor models as Maestrly executions with the Cursor label', async () => {
+    const providerId = 'builtin_cursor_subscription@work'
+    h.models.mockResolvedValueOnce([
+      {
+        providerId,
+        modelId: 'cursor-model',
+        reasoningEfforts: ['high'],
+        fastMode: true,
+        providerLabel: 'Cursor · Work',
+      },
+    ])
+    const catalog = new DesktopModelCatalog(
+      desktopExecutorSettingsSchema.parse({ providerIds: [providerId] }),
+      async () => false
+    )
+    const capabilities = await catalog.read()
+    expect(capabilities.models).toEqual([
+      expect.objectContaining({
+        provider: 'maestrly',
+        label: 'Cursor · cursor-model',
+        efforts: ['high'],
+        fastMode: true,
+      }),
+    ])
+    await expect(catalog.resolve(capabilities.models[0]!.model)).resolves.toMatchObject({ providerId })
+    await expect(catalog.chatModels()).resolves.toEqual([expect.objectContaining({ providerLabel: 'Cursor · Work' })])
+  })
+
+  it('excludes Cursor models when the account is not enabled for the executor', async () => {
+    h.models.mockResolvedValueOnce([
+      {
+        providerId: 'builtin_cursor_subscription@work',
+        modelId: 'cursor-model',
+        reasoningEfforts: [],
+        fastMode: false,
+        providerLabel: 'Cursor · Work',
+      },
+    ])
+    const catalog = new DesktopModelCatalog(settings, async () => false)
+    expect((await catalog.read()).models).toEqual([])
+    await expect(catalog.chatModels()).resolves.toEqual([])
+  })
+
   it('publishes only selected account models and runs a persistent native conversation', async () => {
     const { catalog, executor, context, emit } = await setup()
     const caps = await catalog.read()

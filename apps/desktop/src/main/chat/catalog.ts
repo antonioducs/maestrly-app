@@ -101,12 +101,27 @@ export function isGrokSubscriptionProvider(providerId: string | null | undefined
   return !!providerId && subscriptionBaseProviderId(providerId) === GROK_SUBSCRIPTION_PROVIDER_ID
 }
 
+/** Cursor Agent SDK virtual provider, authenticated with the user's Cursor account. */
+export const CURSOR_SUBSCRIPTION_PROVIDER_ID = 'builtin_cursor_subscription'
+export const CURSOR_SUBSCRIPTION_PROVIDER: ChatProvider = {
+  id: CURSOR_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Cursor',
+  baseURL: 'cursor://subscription',
+  kind: 'cursor-subscription',
+  builtin: 'cursor-subscription',
+}
+
+export function isCursorSubscriptionProvider(providerId: string | null | undefined): boolean {
+  return !!providerId && subscriptionBaseProviderId(providerId) === CURSOR_SUBSCRIPTION_PROVIDER_ID
+}
+
 export function isSubscriptionProvider(providerId: string | null | undefined): boolean {
   return (
     isCodexSubscriptionProvider(providerId) ||
     isGitHubCopilotSubscriptionProvider(providerId) ||
     isClaudeSubscriptionProvider(providerId) ||
-    isGrokSubscriptionProvider(providerId)
+    isGrokSubscriptionProvider(providerId) ||
+    isCursorSubscriptionProvider(providerId)
   )
 }
 
@@ -145,6 +160,7 @@ const SUBSCRIPTION_BASE_PROVIDERS: Record<ChatSubscriptionProviderKind, ChatProv
   'github-copilot-subscription': GITHUB_COPILOT_SUBSCRIPTION_PROVIDER,
   'claude-subscription': CLAUDE_SUBSCRIPTION_PROVIDER,
   'grok-subscription': GROK_SUBSCRIPTION_PROVIDER,
+  'cursor-subscription': CURSOR_SUBSCRIPTION_PROVIDER,
 }
 
 /** Persisted additional accounts (creation order). */
@@ -346,6 +362,7 @@ export function listAvailableChatProviders(): ChatProvider[] {
     ...withAccounts(GITHUB_COPILOT_SUBSCRIPTION_PROVIDER),
     ...withAccounts(CLAUDE_SUBSCRIPTION_PROVIDER),
     ...withAccounts(GROK_SUBSCRIPTION_PROVIDER),
+    ...withAccounts(CURSOR_SUBSCRIPTION_PROVIDER),
     ...listUserProviders(),
   ]
 }

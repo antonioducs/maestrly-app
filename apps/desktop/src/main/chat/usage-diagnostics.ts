@@ -9,7 +9,12 @@ export interface DiagnosticUsage {
 }
 
 export function recordModelCallUsage(args: {
-  runtime: 'byok-ai-sdk' | 'codex-subscription' | 'github-copilot-subscription' | 'claude-subscription'
+  runtime:
+    | 'byok-ai-sdk'
+    | 'codex-subscription'
+    | 'github-copilot-subscription'
+    | 'claude-subscription'
+    | 'cursor-subscription'
   providerId: string
   modelId: string
   usage: DiagnosticUsage

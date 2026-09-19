@@ -21,6 +21,7 @@ import {
   isChatGptWebEnabled,
   isChatGptWebProvider,
   isClaudeSubscriptionProvider,
+  isCursorSubscriptionProvider,
   isCodexSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
@@ -139,6 +140,36 @@ import {
   type GrokLoginMethod,
   type GrokSubscriptionStatus,
 } from './grok-subscription'
+import {
+  buildCursorHarnessContext,
+  CURSOR_HARNESS_PROFILE,
+  getCursorAgentBinding,
+  hashCursorHarnessEnvelope,
+  hashCursorToolSignature,
+  isCursorAgentBindingCompatible,
+  cursorModelSelectionsEqual,
+  deleteAllManagedCursorAgents,
+  deleteCursorAgentForConversation,
+  disposeCursorSubscriptionManagers,
+  drainCursorAgentCleanup,
+  getCursorSubscriptionManager,
+  listCursorSubscriptionManagers,
+  resetCursorSubscriptionAccount,
+  runCursorSubscriptionChat,
+  summarizeWithCursorRuntime,
+  type CursorSubscriptionAccountIdentity,
+} from './cursor-subscription'
+import { cursorSdkErrorMessage } from './cursor-sdk/errors'
+import {
+  cursorProviderContextWindow,
+  cursorPublishedUsagePricing,
+  cursorReasoningEfforts,
+  findCursorFastParameter,
+  pickFastOnValue,
+} from './cursor-sdk/models'
+import { isCursorSdkPlatformSupported } from './cursor-sdk/platform'
+import { CursorServiceAuth } from './cursor-subscription/service-auth'
+import { abortCursorAccountRuns } from './cursor-subscription/account-runs'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
@@ -203,7 +234,8 @@ import {
 } from './maestro-delegation-registry'
 import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
-import { imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
+import { builtinToolNamesForMode } from './tools'
+import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
 import { supportsChatToolImages } from './tool-capabilities'
 import {
   getAppFlag,
@@ -610,6 +642,8 @@ interface ActiveRun {
   allowClaudePersistence: boolean
   /** Grok identity captured at admission; account changes/logout abort the turn (generic runner). */
   grokIdentity?: GrokAccountIdentity
+  cursorIdentity?: CursorSubscriptionAccountIdentity
+  allowCursorPersistence: boolean
   done: Promise<void>
   settleDone: () => void
   /** Structured terminal outcome (internal automated turn API, e.g. review loop). Resolves ONCE. */
@@ -1671,6 +1705,47 @@ async function validateGrokModelSelection(
   }
 }
 
+const cursorAuth = new CursorServiceAuth({
+  reset: resetCursorAccountSessions,
+  broadcast: broadcastCursorAuth,
+})
+const cursorAuthSnapshot = (accountId: string | null = null) => cursorAuth.snapshot(accountId)
+const cursorAuthStatus = (refresh = false, accountId: string | null = null) => cursorAuth.status(refresh, accountId)
+
+function broadcastCursorAuth(status: ChatSubscriptionAuthStatus): void {
+  notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
+  const wc = getMainWebContents()
+  if (!wc || wc.isDestroyed()) return
+  try {
+    wc.send('chat:cursor-subscription:auth-changed', status)
+  } catch {
+    /* window closed during authentication transition */
+  }
+}
+
+async function validateCursorModelSelection(
+  modelId: string,
+  accountId: string | null = null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!validSubscriptionAccountId('cursor-subscription', accountId)) return { ok: false, error: 'invalid-account' }
+  if (cursorAuth.busy(accountId)) return { ok: false, error: 'busy' }
+  if (!isCursorSdkPlatformSupported()) return { ok: false, error: 'unavailable' }
+  const manager = getCursorSubscriptionManager(accountId)
+  try {
+    const status = await cursorAuthStatus(true, accountId)
+    if (cursorAuth.busy(accountId)) return { ok: false, error: 'busy' }
+    if (!status.authenticated) return { ok: false, error: 'no-key' }
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+    const models = await manager.listModels(true)
+    if (cursorAuth.busy(accountId)) return { ok: false, error: 'busy' }
+    manager.assertAccountIdentity(identity)
+    return models.some((candidate) => candidate.id === modelId) ? { ok: true } : { ok: false, error: 'no-model' }
+  } catch (error) {
+    return { ok: false, error: cursorSdkErrorMessage(error) }
+  }
+}
+
 function broadcastGrokAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
   const wc = getMainWebContents()
@@ -1728,7 +1803,10 @@ function normalizeAccountId(value: unknown): string | null {
  * including path traversal in the directory suffix — or authenticate a slot belonging to another provider.
  */
 function validSubscriptionAccountId(kind: ChatSubscriptionProviderKind, accountId: string | null): boolean {
-  return !accountId || getSubscriptionAccount(accountId)?.kind === kind
+  return (
+    accountId === null ||
+    (typeof accountId === 'string' && accountId.length > 0 && getSubscriptionAccount(accountId)?.kind === kind)
+  )
 }
 
 /** Sanitizes effort from UI/IPC: a short slug without spaces (low/medium/high/xhigh/max…). */
@@ -1784,7 +1862,9 @@ function defaultSelection(): ChatModelRef | null {
             ? claudeAuthSnapshot(subscriptionAccountId(p.id)).authenticated
             : isGrokSubscriptionProvider(p.id)
               ? grokAuthSnapshot(subscriptionAccountId(p.id)).authenticated
-              : hasApiKey(p.id)
+              : isCursorSubscriptionProvider(p.id)
+                ? cursorAuthSnapshot(subscriptionAccountId(p.id)).authenticated
+                : hasApiKey(p.id)
     ) ?? providers[0]
   const modelId = isChatGptWebProvider(savedP) ? '' : (savedM ?? '')
   if (isChatGptWebProvider(savedP)) {
@@ -1882,7 +1962,12 @@ function buildConfig(): ChatConfig {
                   builtIn: true,
                   connected: p.accountId ? grokAuthSnapshot(p.accountId).authenticated : grokStatus.authenticated,
                 }
-              : { connected: hasApiKey(p.id) }),
+              : isCursorSubscriptionProvider(p.id)
+                ? {
+                    builtIn: true,
+                    connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
+                  }
+                : { connected: hasApiKey(p.id) }),
       ...(p.kind ? { kind: getProviderKind(p) } : {}),
       ...(p.accountId ? { accountId: p.accountId } : {}),
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
@@ -1993,6 +2078,21 @@ async function runnerCapabilityMetaFallback(providerId: string, modelId: string)
   if (isGrokSubscriptionProvider(providerId)) {
     return { ...grokReasoningMeta(modelId, null), fastModeCapability: true }
   }
+  if (isCursorSubscriptionProvider(providerId)) {
+    const model = (
+      await getCursorSubscriptionManager(accountId)
+        .listModels()
+        .catch(() => [])
+    ).find((candidate) => candidate.id === modelId)
+    if (!model) return null
+    const fastParam = findCursorFastParameter(model)
+    return {
+      reasoning: cursorReasoningEfforts(model).length > 0,
+      reasoningEfforts: cursorReasoningEfforts(model),
+      fastModeCapability: Boolean(fastParam && pickFastOnValue(fastParam)),
+    }
+  }
+
   return null
 }
 
@@ -2081,6 +2181,20 @@ export async function listChatExecutionModels(
                 : grokAuthSnapshot(accountId)
               if (!status.authenticated) return null
               const models = await getGrokSubscriptionManager(accountId)
+                .listModels()
+                .catch(() => [])
+              return {
+                id: provider.id,
+                name: provider.name,
+                models: filterChatModelsSnapshot(models.map((model) => model.id)),
+              }
+            }
+            if (isCursorSubscriptionProvider(provider.id)) {
+              const status = options.refreshSubscriptionAuth
+                ? await cursorAuthStatus(false, accountId).catch(() => cursorAuthSnapshot(accountId))
+                : cursorAuthSnapshot(accountId)
+              if (!status.authenticated) return null
+              const models = await getCursorSubscriptionManager(accountId)
                 .listModels()
                 .catch(() => [])
               return {
@@ -2739,6 +2853,40 @@ async function effectiveModelMeta(
     return { meta, providerWindow, catalogWindow }
   }
 
+  if (isCursorSubscriptionProvider(providerId)) {
+    const cursorModels = await getCursorSubscriptionManager(subscriptionAccount)
+      .listModels()
+      .catch(() => [])
+    const cursorModel = cursorModels.find((model) => model.id === modelId)
+    const catalogWindow = canonical?.contextWindow
+    const providerWindow = cursorProviderContextWindow(cursorModel?.id ?? modelId)
+    const effective = resolveContextWindow({ providerWindow, catalogWindow })
+    const canonicalFields = canonical ? { ...canonical } : {}
+    delete canonicalFields.contextWindow
+    const legacyPricing = cursorPublishedUsagePricing(cursorModel?.id ?? modelId, false)
+    const fastParam = cursorModel ? findCursorFastParameter(cursorModel) : undefined
+    const fastCapable = Boolean(fastParam && pickFastOnValue(fastParam))
+    const reasoningEfforts = cursorModel ? cursorReasoningEfforts(cursorModel) : []
+    const meta: ChatModelMeta | null =
+      canonical || cursorModel || legacyPricing
+        ? {
+            ...canonicalFields,
+            ...(legacyPricing ?? {}),
+            ...(effective ? { contextWindow: effective } : {}),
+            ...(cursorModel
+              ? {
+                  chatCapable: true,
+                  reasoning: reasoningEfforts.length > 0,
+                  ...(reasoningEfforts.length ? { reasoningEfforts } : {}),
+                  fastModeCapability: fastCapable,
+                  contextLimitEditable: false,
+                }
+              : {}),
+          }
+        : null
+    return { meta, providerWindow, catalogWindow }
+  }
+
   const provider = getProvider(providerId)
   const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
   // The same precedence powers the main selector and profiles: exact provider → canonical model ID.
@@ -3031,6 +3179,78 @@ async function currentChatHistoryStats(
     stats = chatHistoryStats(conversationId, {
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
     })
+  } else if (isCursorSubscriptionProvider(selection?.providerId)) {
+    usesNativeSeedProjection = true
+    const binding = getCursorAgentBinding(conversationId)
+    const manager = getCursorSubscriptionManager(subscriptionAccountId(selection?.providerId))
+    const identity = manager.getAccountIdentity()
+    runtimeReusable = false
+    if (
+      !autonomousPolicy(conversationId) &&
+      behaviorFor(conversationId) !== 'maestro' &&
+      binding &&
+      latestMessage?.usage &&
+      !latestMessage.usage.billingOnly &&
+      binding.lastMessageId === latestMessage.id &&
+      selection &&
+      identity.fingerprint
+    ) {
+      const conv = getConversation(conversationId)
+      if (conv) {
+        try {
+          const chatPrefs = getConvUiPrefs(conversationId).chat
+          const mode = behaviorFor(conversationId)
+          const cursorModel = (await manager.listModels()).find((model) => model.id === selection.modelId)
+          const effort = resolveNativeReasoningEffort({
+            requestedEffort: chatPrefs?.reasoning,
+            supportedEfforts: cursorModel ? cursorReasoningEfforts(cursorModel) : [],
+            defaultEffort: undefined,
+            strict: false,
+          })
+          const resolvedModel = await manager.resolveModelSelection(
+            selection.modelId,
+            chatPrefs?.fastMode === true,
+            false,
+            effort.ok ? effort.reasoningEffort : undefined
+          )
+          const { skills, agents, envelope } = await buildCursorHarnessContext({
+            projectId: conv.workspaceId,
+            cwd: conv.cwd,
+            conversationId,
+            mode,
+            ...(mode === 'maestro' ? { maestro: freezeMaestroTurn(conversationId) } : {}),
+            modelId: resolvedModel.modelId,
+            harness: harnessFor('cursor-subscription', selection.modelId, {
+              flags: captureHarnessFlags(),
+            }),
+            appToolsEnabled: convToolsFor(conversationId).app,
+            maestrlyUltra: effort.ok && effort.maestrlyUltra,
+          })
+          const names = new Set(builtinToolNamesForMode(mode))
+          if (await generateImageToolEnabled(conversationId, mode)) names.add(GENERATE_IMAGE_TOOL_NAME)
+          if (skills.length) names.add('use_skill')
+          if (agents.length) names.add('task')
+          runtimeReusable = isCursorAgentBindingCompatible({
+            binding,
+            previousMessageId: latestMessage.id,
+            modelId: resolvedModel.modelId,
+            modelParams: resolvedModel.params,
+            cwd: conv.cwd,
+            harnessProfile: CURSOR_HARNESS_PROFILE,
+            instructionHash: hashCursorHarnessEnvelope(envelope),
+            toolSignature: hashCursorToolSignature([...names]),
+            accountFingerprint: identity.fingerprint,
+            accountId: manager.accountId ?? null,
+          })
+        } catch {
+          runtimeReusable = false
+        }
+      }
+    }
+    runtimeWindowReusable = runtimeReusable
+    stats = chatHistoryStats(conversationId, {
+      isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
+    })
   } else {
     stats = chatHistoryStats(conversationId)
     runtimeReusable = !!(
@@ -3218,6 +3438,7 @@ async function startSend(
     if (result.reason === 'incompatible') return 'no-model'
     return 'unavailable'
   }
+  let cursorIdentityAtAdmission: CursorSubscriptionAccountIdentity | undefined
   let grokIdentityAtAdmission: GrokAccountIdentity | undefined
   let releaseCwdActivity: (() => void) | null = null
   let admittedRun: ActiveRun | null = null
@@ -3251,7 +3472,9 @@ async function startSend(
     const useClaudeSubscription = isClaudeSubscriptionProvider(selection.providerId)
     const useGrokSubscription = isGrokSubscriptionProvider(selection.providerId)
     // Grok uses the generic AI SDK runner — never mark it official or it would skip runChat.
-    const useOfficialSubscription = useCodexSubscription || useGitHubCopilot || useClaudeSubscription
+    const useCursorSubscription = isCursorSubscriptionProvider(selection.providerId)
+    const useOfficialSubscription =
+      useCodexSubscription || useGitHubCopilot || useClaudeSubscription || useCursorSubscription
     // Conversation subscription account slot (null = default). Global transition/login state machines govern
     // only the default account; additional slots have their own boundaries (explicit reset on login/removal).
     const selectionAccountId = subscriptionAccountId(selection.providerId)
@@ -3416,6 +3639,29 @@ async function startSend(
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
       }
+    } else if (useCursorSubscription) {
+      if (cursorAuth.busy(selectionAccountId)) {
+        return { ok: false, error: 'no-key' }
+      }
+      if (!isCursorSdkPlatformSupported()) return { ok: false, error: 'unavailable' }
+      const manager = getCursorSubscriptionManager(selectionAccountId)
+      const status = await cursorAuthStatus(true, selectionAccountId)
+      if (!conversationOperationIsCurrent(conversationId, operation) || cursorAuth.busy(selectionAccountId)) {
+        return { ok: false, error: 'busy' }
+      }
+      if (!status.authenticated) return { ok: false, error: 'no-key' }
+      cursorIdentityAtAdmission = manager.getAccountIdentity()
+      if (!cursorIdentityAtAdmission.fingerprint) return { ok: false, error: 'no-key' }
+      manager.assertAccountIdentity(cursorIdentityAtAdmission)
+      const models = await manager.listModels(true)
+      if (!conversationOperationIsCurrent(conversationId, operation) || cursorAuth.busy(selectionAccountId)) {
+        return { ok: false, error: 'busy' }
+      }
+      manager.assertAccountIdentity(cursorIdentityAtAdmission)
+      if (!selection.modelId) return { ok: false, error: 'no-model' }
+      if (!models.some((model) => model.id === selection?.modelId)) {
+        return { ok: false, error: 'no-model' }
+      }
     } else if (!hasApiKey(selection.providerId)) {
       return { ok: false, error: 'no-key' }
     }
@@ -3462,6 +3708,10 @@ async function startSend(
     }
     if (useGrokSubscription && grokIdentityAtAdmission) {
       getGrokSubscriptionManager(selectionAccountId).assertAccountIdentity(grokIdentityAtAdmission)
+    }
+    if (useCursorSubscription && cursorIdentityAtAdmission) {
+      if (cursorAuth.busy(selectionAccountId)) return { ok: false, error: 'busy' }
+      getCursorSubscriptionManager(selectionAccountId).assertAccountIdentity(cursorIdentityAtAdmission)
     }
     releaseCwdActivity = tryAcquireCwdActivity(conv.cwd, 'chat', internalLoop?.cwdActivityOwner)
     if (!releaseCwdActivity) return { ok: false, error: 'cwd-locked' }
@@ -3661,7 +3911,13 @@ async function startSend(
         meta: null,
       }))
       const modelSeesImages = supportsChatToolImages({
-        modelVision: visionMeta?.vision,
+        modelVision: useCursorSubscription ? undefined : visionMeta?.vision,
+        ...(useCursorSubscription
+          ? {
+              unknownVision: 'unsupported' as const,
+              imageInterpreterConfigured: !!getImageInterpreter(),
+            }
+          : {}),
         runtimeImageUnsupported: getConvUiPrefs(conversationId).chat?.imagesUnsupported === true,
       })
       if (!modelSeesImages) {
@@ -3984,6 +4240,8 @@ async function startSend(
       ...(useCodexSubscription ? { codexAccountEpoch: accountEpochAtAdmission } : {}),
       ...(githubCopilotIdentityAtAdmission ? { githubCopilotIdentity: githubCopilotIdentityAtAdmission } : {}),
       ...(claudeIdentityAtAdmission ? { claudeIdentity: claudeIdentityAtAdmission } : {}),
+      ...(cursorIdentityAtAdmission ? { cursorIdentity: cursorIdentityAtAdmission } : {}),
+      allowCursorPersistence: !isolated,
       ...(grokIdentityAtAdmission ? { grokIdentity: grokIdentityAtAdmission } : {}),
       // Ephemeral/isolated: persist messages, but do NOT resume/write the main conversation's native binding.
       // Lifecycle remains allowed: the ephemeral thread must execute but must not become a binding.
@@ -4139,7 +4397,13 @@ async function startSend(
         ? githubCopilotModelAtAdmission?.id
         : undefined
     const admittedHarness = admittedHarnessFor(
-      useClaudeSubscription ? 'claude-subscription' : useGitHubCopilot ? 'github-copilot-subscription' : 'openai',
+      useCursorSubscription
+        ? 'cursor-subscription'
+        : useClaudeSubscription
+          ? 'claude-subscription'
+          : useGitHubCopilot
+            ? 'github-copilot-subscription'
+            : 'openai',
       admittedBehaviorResolvedModelId
     )
     const compactActiveHistory = (
@@ -4730,6 +4994,75 @@ async function startSend(
           }
         })
       })()
+    } else if (useCursorSubscription && cursorIdentityAtAdmission) {
+      const admittedIdentity = cursorIdentityAtAdmission
+      const selectedCursorModelId = selection.modelId
+      turnPromise = (async () => {
+        const manager = getCursorSubscriptionManager(selectionAccountId)
+        manager.assertAccountIdentity(admittedIdentity)
+        const fastMode = isolated
+          ? frozenProfile?.fastMode === true
+          : getConvUiPrefs(conversationId).chat?.fastMode === true
+        const cursorModel = (await manager.listModels(isolated)).find((model) => model.id === selectedCursorModelId)
+        if (!cursorModel) throw new Error('no-model')
+        const resolved = resolveNativeReasoningEffort({
+          requestedEffort: turnReasoning(conversationId, frozenProfile),
+          supportedEfforts: cursorReasoningEfforts(cursorModel),
+          defaultEffort: undefined,
+          strict: isolated && !!frozenProfile,
+        })
+        if (!resolved.ok) throw new Error('executor-unavailable')
+        if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
+          throw new Error('executor-unavailable')
+        }
+        return runCursorSubscriptionChat({
+          conversationId,
+          projectId: conv.workspaceId,
+          cwd: conv.cwd,
+          selection,
+          mode: turnBehavior,
+          harness: admittedHarness,
+          permMode: permModeFor(conversationId),
+          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
+          maestro: maestroTurn,
+          maestroLive: run.maestroLive,
+          fastMode,
+          reasoningEffort: resolved.reasoningEffort,
+          maestrlyUltra: resolved.maestrlyUltra,
+          dropImages: !supportsChatToolImages({
+            unknownVision: 'unsupported',
+            imageInterpreterConfigured: !!getImageInterpreter(),
+            runtimeImageUnsupported: getConvUiPrefs(conversationId).chat?.imagesUnsupported === true,
+          }),
+          manager,
+          accountIdentity: admittedIdentity,
+          broker: getBroker(),
+          questionBroker: getQuestionBroker(),
+          emit,
+          signal: controller.signal,
+          responseStartedAt,
+          contextWindow: turnContextWindow,
+          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
+          ...(isolated && frozenProfile?.cursorModelSelection
+            ? { frozenModelSelection: frozenProfile.cursorModelSelection }
+            : {}),
+          canPersistSession: () => {
+            if (!run.allowCursorPersistence || cursorAuth.busy(selectionAccountId)) return false
+            try {
+              manager.assertAccountIdentity(admittedIdentity)
+              return true
+            } catch {
+              return false
+            }
+          },
+          ...(isolated && reviewLoopMessageMeta
+            ? {
+                ephemeralSession: true as const,
+                executionScope: reviewLoopMessageMeta.executionScope,
+              }
+            : {}),
+        })
+      })()
     } else {
       if (useGrokSubscription && grokIdentityAtAdmission) {
         getGrokSubscriptionManager(selectionAccountId).assertAccountIdentity(grokIdentityAtAdmission)
@@ -4885,13 +5218,15 @@ async function startSend(
           ? githubCopilotErrorMessage(e)
           : useClaudeSubscription
             ? claudeSubscriptionErrorMessage(e)
-            : useGrokSubscription
-              ? grokSubscriptionErrorMessage(e)
-              : e instanceof ChatConfigError
-                ? e.message
-                : e instanceof Error
+            : useCursorSubscription
+              ? cursorSdkErrorMessage(e)
+              : useGrokSubscription
+                ? grokSubscriptionErrorMessage(e)
+                : e instanceof ChatConfigError
                   ? e.message
-                  : String(e)
+                  : e instanceof Error
+                    ? e.message
+                    : String(e)
         const ev: ChatStreamEvent = {
           kind: 'error',
           messageId: run.messageId || undefined,
@@ -5173,6 +5508,13 @@ async function invalidateActiveGitHubCopilotRun(conversationId: string, run: Act
   await deleteGitHubCopilotSessionForConversation(conversationId)
 }
 
+async function invalidateActiveCursorRun(conversationId: string, run: ActiveRun): Promise<void> {
+  run.allowCursorPersistence = false
+  stop(conversationId)
+  await waitForRuns([run])
+  await deleteCursorAgentForConversation(conversationId)
+}
+
 async function invalidateActiveClaudeRun(conversationId: string, run: ActiveRun): Promise<void> {
   run.allowClaudePersistence = false
   stop(conversationId)
@@ -5192,6 +5534,8 @@ export async function stopChat(conversationId: string): Promise<void> {
     await invalidateActiveCodexRun(conversationId, run)
   } else if (run && isGitHubCopilotSubscriptionProvider(run.providerId)) {
     await invalidateActiveGitHubCopilotRun(conversationId, run)
+  } else if (run && isCursorSubscriptionProvider(run.providerId)) {
+    await invalidateActiveCursorRun(conversationId, run)
   } else if (run && isClaudeSubscriptionProvider(run.providerId)) {
     await invalidateActiveClaudeRun(conversationId, run)
   } else {
@@ -5289,6 +5633,18 @@ async function resetClaudeAccountSessions(): Promise<void> {
   await resetPhysicalClaudeAccount(subscriptionProviderIdFor('claude-subscription', null), null)
 }
 
+async function resetCursorAccountSessions(accountId: string | null = null): Promise<void> {
+  const manager = listCursorSubscriptionManagers().find((candidate) => candidate.accountId === accountId)
+  if (manager) abortCursorAccountRuns(manager)
+  const providerId = subscriptionProviderIdFor('cursor-subscription', accountId)
+  for (const operation of pendingConversationOperations.values()) {
+    if (operation.providerId === providerId) operation.controller.abort(new Error('Cursor account changed'))
+  }
+  const runs = [...active.entries()].filter(([, run]) => run.providerId === providerId)
+  await Promise.all(runs.map(([id, run]) => invalidateActiveCursorRun(id, run)))
+  await deleteAllManagedCursorAgents({ accountId })
+}
+
 async function resetGrokAccountSessions(): Promise<void> {
   cancelPendingGrokOperations()
   const runs = [...active.entries()].filter(
@@ -5333,6 +5689,10 @@ async function resetSubscriptionAccountState(providerId: string, accountId: stri
     await deleteAllManagedCodexThreads({ accountId })
     resetCodexRateLimitBinding(getCodexSubscriptionManager(accountId), providerId)
     getSubscriptionFailoverRouter().resetProvider(providerId)
+    return
+  }
+  if (isCursorSubscriptionProvider(providerId)) {
+    await resetCursorAccountSessions(accountId)
     return
   }
   if (isGitHubCopilotSubscriptionProvider(providerId)) {
@@ -5690,6 +6050,10 @@ async function removeSubscriptionAccountSlot(accountId: string): Promise<{ ok: b
       await getGitHubCopilotSubscriptionManager(accountId)
         .resetLocalData()
         .catch(() => undefined)
+    } else if (account.kind === 'cursor-subscription') {
+      const logout = await cursorAuth.logout(accountId)
+      if (!logout.ok) throw new Error(logout.error ?? 'Cursor logout failed')
+      await resetCursorSubscriptionAccount(accountId)
     } else if (account.kind === 'grok-subscription') {
       await getGrokSubscriptionManager(accountId)
         .resetLocalData()
@@ -5727,6 +6091,7 @@ async function deleteSubscriptionStateForConversation(
   await Promise.all([
     deleteCodexThreadForConversation(conversationId, { signal }),
     deleteGitHubCopilotSessionForConversation(conversationId),
+    deleteCursorAgentForConversation(conversationId),
     ...(options.preserveClaude ? [] : [deleteClaudeSessionForConversation(conversationId)]),
   ])
 }
@@ -5739,6 +6104,7 @@ async function retireIncompatibleSubscriptionState(
 ): Promise<void> {
   if (isCodexSubscriptionProvider(targetProviderId)) {
     await Promise.all([
+      deleteCursorAgentForConversation(conversationId),
       deleteGitHubCopilotSessionForConversation(conversationId),
       deleteClaudeSessionForConversation(conversationId),
     ])
@@ -5746,6 +6112,7 @@ async function retireIncompatibleSubscriptionState(
   }
   if (isGitHubCopilotSubscriptionProvider(targetProviderId)) {
     await Promise.all([
+      deleteCursorAgentForConversation(conversationId),
       deleteCodexThreadForConversation(conversationId, { signal }),
       deleteClaudeSessionForConversation(conversationId),
     ])
@@ -5753,8 +6120,17 @@ async function retireIncompatibleSubscriptionState(
   }
   if (isClaudeSubscriptionProvider(targetProviderId)) {
     await Promise.all([
+      deleteCursorAgentForConversation(conversationId),
       deleteCodexThreadForConversation(conversationId, { signal }),
       deleteGitHubCopilotSessionForConversation(conversationId),
+    ])
+    return
+  }
+  if (isCursorSubscriptionProvider(targetProviderId)) {
+    await Promise.all([
+      deleteCodexThreadForConversation(conversationId, { signal }),
+      deleteGitHubCopilotSessionForConversation(conversationId),
+      deleteClaudeSessionForConversation(conversationId),
     ])
     return
   }
@@ -5820,6 +6196,8 @@ async function retireNativeBindingAfterPortableCompaction(
     await deleteCodexThreadForConversation(conversationId, { signal }).catch(() => undefined)
   } else if (isGitHubCopilotSubscriptionProvider(providerId)) {
     await deleteGitHubCopilotSessionForConversation(conversationId)
+  } else if (isCursorSubscriptionProvider(providerId)) {
+    await deleteCursorAgentForConversation(conversationId)
   } else if (isClaudeSubscriptionProvider(providerId)) {
     await deleteClaudeSessionForConversation(conversationId)
   }
@@ -6264,6 +6642,44 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             ...(frozen ? { fastMode: frozen.fastMode } : {}),
           })
       }
+    } else if (isCursorSubscriptionProvider(selection.providerId)) {
+      if (cursorAuth.busy(compactAccountId)) return { ok: false, error: 'no-key' }
+      if (!isCursorSdkPlatformSupported()) return { ok: false, error: 'unavailable' }
+      const manager = getCursorSubscriptionManager(compactAccountId)
+      const status = await cursorAuthStatus(true, compactAccountId)
+      if (!status.authenticated) return { ok: false, error: 'no-key' }
+      const identity = manager.getAccountIdentity()
+      if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+      const compactFastMode = frozen ? frozen.fastMode : getConvUiPrefs(conversationId).chat?.fastMode === true
+      let compactReasoningEffort = frozen?.reasoningEffort
+      if (!frozen) {
+        const cursorModel = (await manager.listModels()).find((model) => model.id === selection.modelId)
+        const resolved = resolveNativeReasoningEffort({
+          requestedEffort: getConvUiPrefs(conversationId).chat?.reasoning,
+          supportedEfforts: cursorModel ? cursorReasoningEfforts(cursorModel) : [],
+          defaultEffort: undefined,
+          strict: false,
+        })
+        if (resolved.ok) compactReasoningEffort = resolved.reasoningEffort
+      }
+      summarize = (prompt) =>
+        summarizeWithCursorRuntime({
+          manager,
+          accountIdentity: frozen
+            ? {
+                fingerprint: frozen.identityFingerprint ?? identity.fingerprint,
+                epoch: frozen.identityEpoch ?? identity.epoch,
+              }
+            : identity,
+          cwd: conv.cwd,
+          modelId: selection.modelId,
+          system: COMPACT_SYSTEM,
+          prompt,
+          signal: compactSignal,
+          fastMode: compactFastMode,
+          ...(compactReasoningEffort ? { reasoningEffort: compactReasoningEffort } : {}),
+          ...(frozen?.cursorModelSelection ? { frozenModelSelection: frozen.cursorModelSelection } : {}),
+        })
     } else {
       if (isGrokSubscriptionProvider(selection.providerId)) {
         if (!compactAccountId && (grokLoginPending || grokIdentityTransitionPromise))
@@ -6417,6 +6833,8 @@ export async function resolveReviewLoopSelection(
     } else if (isGitHubCopilotSubscriptionProvider(selection.providerId)) {
       const models = await getGitHubCopilotSubscriptionManager(accountId).listModels(true)
       modelId = models.find((model) => model.policy?.state !== 'disabled')?.id ?? ''
+    } else if (isCursorSubscriptionProvider(selection.providerId)) {
+      return { ok: false, error: 'no-model' }
     } else if (isGrokSubscriptionProvider(selection.providerId)) {
       const models = await getGrokSubscriptionManager(accountId).listModels(true)
       modelId = models[0]?.id ?? ''
@@ -6433,6 +6851,7 @@ export async function resolveReviewLoopSelection(
   let providerFingerprint: string | undefined
   let serviceTier: string | undefined
   let resolvedModelId: string | undefined
+  let cursorModelSelection: FrozenChatSelection['cursorModelSelection']
   let claudeModelForFreeze: ClaudeModelInfo | undefined
   if (isCodexSubscriptionProvider(selection.providerId)) {
     const status = await codexAuthStatus(false, undefined, accountId)
@@ -6458,6 +6877,13 @@ export async function resolveReviewLoopSelection(
     claudeModelForFreeze = models.find((model) => model.value === modelId || model.resolvedModel === modelId)
     if (!claudeModelForFreeze) return { ok: false, error: 'no-model' }
     resolvedModelId = claudeModelForFreeze.resolvedModel ?? claudeModelForFreeze.value
+  } else if (isCursorSubscriptionProvider(selection.providerId)) {
+    const status = await cursorAuthStatus(true, accountId)
+    if (!status.authenticated) return { ok: false, error: 'no-key' }
+    const identity = getCursorSubscriptionManager(accountId).getAccountIdentity()
+    if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+    identityFingerprint = identity.fingerprint
+    identityEpoch = identity.epoch
   } else if (isGrokSubscriptionProvider(selection.providerId)) {
     const manager = getGrokSubscriptionManager(accountId)
     const identity = manager.getAccountIdentity()
@@ -6518,6 +6944,13 @@ export async function resolveReviewLoopSelection(
         claudeModel?.supportsEffort === true
           ? resolveFrozenSentEffort({ reasoning, supportedEfforts: claudeModel.supportedEffortLevels ?? [] })
           : null
+    } else if (isCursorSubscriptionProvider(selection.providerId)) {
+      const models = await getCursorSubscriptionManager(accountId).listModels(true)
+      const cursorModel = models.find((model) => model.id === modelId)
+      frozenEffort = resolveFrozenSentEffort({
+        reasoning,
+        supportedEfforts: cursorModel ? cursorReasoningEfforts(cursorModel) : [],
+      })
     } else {
       // BYOK/Grok: the runner validates against catalog metadata (same source as the turn).
       const selectedProvider = getProvider(selection.providerId)
@@ -6530,6 +6963,29 @@ export async function resolveReviewLoopSelection(
     }
     if (frozenEffort === null) return { ok: false, error: 'no-model' }
     reasoningEffort = frozenEffort
+  }
+  if (isCursorSubscriptionProvider(selection.providerId)) {
+    try {
+      const resolved = await getCursorSubscriptionManager(accountId).resolveModelSelection(
+        modelId,
+        fastMode,
+        true,
+        reasoningEffort
+      )
+      getCursorSubscriptionManager(accountId).assertAccountIdentity({
+        fingerprint: identityFingerprint ?? null,
+        epoch: identityEpoch ?? 0,
+      })
+      cursorModelSelection = {
+        modelId: resolved.modelId,
+        params: resolved.params.map((param) => ({
+          id: param.id,
+          value: param.value,
+        })),
+      }
+    } catch {
+      return { ok: false, error: 'no-model' }
+    }
   }
   const frozenHarness = harnessFor(providerKindOf(selection.providerId), modelId, {
     resolvedModelId,
@@ -6544,6 +7000,7 @@ export async function resolveReviewLoopSelection(
       reasoning: reasoning && reasoning !== 'off' ? reasoning : 'off',
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       fastMode,
+      ...(cursorModelSelection ? { cursorModelSelection } : {}),
       ...(serviceTier ? { serviceTier } : {}),
       ...(resolvedModelId ? { resolvedModelId } : {}),
       behaviorProfileId: frozenHarness.identity.behaviorProfileId,
@@ -6759,6 +7216,38 @@ export async function revalidateReviewLoopSelection(
           true
         )
         if (!axes.frozenReproducible || axes.reasoningEffort !== frozen.reasoningEffort) {
+          return { ok: false, error: 'executor-unavailable' }
+        }
+      } catch {
+        return { ok: false, error: 'executor-unavailable' }
+      }
+    }
+    return { ok: true }
+  }
+  if (isCursorSubscriptionProvider(frozen.providerId)) {
+    if (cursorAuth.busy(accountId)) return { ok: false, error: 'executor-unavailable' }
+    const status = await cursorAuthStatus(true, accountId)
+    if (!status.authenticated) return { ok: false, error: 'no-key' }
+    const manager = getCursorSubscriptionManager(accountId)
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+    if (frozen.identityFingerprint && identity.fingerprint !== frozen.identityFingerprint) {
+      return { ok: false, error: 'executor-unavailable' }
+    }
+    if (typeof frozen.identityEpoch === 'number' && identity.epoch !== frozen.identityEpoch) {
+      return { ok: false, error: 'executor-unavailable' }
+    }
+    if (!frozen.cursorModelSelection) return { ok: false, error: 'executor-unavailable' }
+    if (frozen.cursorModelSelection) {
+      try {
+        const liveSelection = await manager.resolveModelSelection(
+          frozen.modelId,
+          frozen.fastMode,
+          true,
+          frozen.reasoningEffort
+        )
+        manager.assertAccountIdentity(identity)
+        if (!cursorModelSelectionsEqual(liveSelection, frozen.cursorModelSelection)) {
           return { ok: false, error: 'executor-unavailable' }
         }
       } catch {
@@ -7074,7 +7563,18 @@ function pairedReviewLoops(): ConversationReviewLoopCoordinator {
 }
 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
+let cursorCleanupPromise: Promise<void> | null = null
+
 export function registerChatIpc(deps: ChatIpcDeps): void {
+  if (!cursorCleanupPromise) {
+    const cleanup = drainCursorAgentCleanup().catch((error) => {
+      console.warn('[cursor-subscription] pending cleanup failed:', cursorSdkErrorMessage(error))
+    })
+    cursorCleanupPromise = cleanup
+    void cleanup.finally(() => {
+      if (cursorCleanupPromise === cleanup) cursorCleanupPromise = null
+    })
+  }
   savedDeps = deps
   markInterruptedSubagentSessions()
   if (!subagentSessionUnsubscribe) {
@@ -7637,6 +8137,27 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
     }
   )
+  deps.mhandle(
+    'chat:cursor-subscription:status',
+    async (_event, payload?: { refresh?: boolean; accountId?: string | null }) => {
+      const accountId = payload?.accountId ?? null
+      if (!validSubscriptionAccountId('cursor-subscription', accountId))
+        return { state: 'unavailable', authenticated: false }
+      const status = await cursorAuthStatus(payload?.refresh === true, accountId)
+      return accountId ? { ...status, accountId } : status
+    }
+  )
+  deps.mhandle('chat:cursor-subscription:login', async (_event, payload?: { accountId?: string | null }) => {
+    const accountId = payload?.accountId ?? null
+    if (!validSubscriptionAccountId('cursor-subscription', accountId)) return { ok: false, error: 'invalid-account' }
+    return cursorAuth.login(accountId)
+  })
+  deps.mhandle('chat:cursor-subscription:logout', async (_event, payload?: { accountId?: string | null }) => {
+    const accountId = payload?.accountId ?? null
+    if (!validSubscriptionAccountId('cursor-subscription', accountId)) return { ok: false, error: 'invalid-account' }
+    return cursorAuth.logout(accountId)
+  })
+
   deps.mhandle('chat:grok-subscription:logout', async (_event, payload?: { accountId?: string | null }) => {
     const accountId = normalizeAccountId(payload?.accountId)
     if (accountId && !validSubscriptionAccountId('grok-subscription', accountId)) {
@@ -8301,6 +8822,18 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         throw new Error(claudeSubscriptionErrorMessage(error))
       }
     }
+    if (isCursorSubscriptionProvider(providerId)) {
+      if (!validSubscriptionAccountId('cursor-subscription', accountId)) return []
+      const status = await cursorAuthStatus(force === true, accountId)
+      if (!status.authenticated) return []
+      try {
+        return visible(
+          (await getCursorSubscriptionManager(accountId).listModels(force === true)).map((model) => model.id)
+        )
+      } catch (error) {
+        throw new Error(cursorSdkErrorMessage(error))
+      }
+    }
     if (isGrokSubscriptionProvider(providerId)) {
       const status = await grokAuthStatus(force === true, accountId)
       if (!status.authenticated) return []
@@ -8787,6 +9320,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
       if (!validated.ok) return validated
     }
+    if (isCursorSubscriptionProvider(sel?.providerId)) {
+      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      if (!validated.ok) return validated
+    }
     if (isGrokSubscriptionProvider(sel?.providerId) && sel?.modelId) {
       const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
       if (!validated.ok) return validated
@@ -8810,6 +9347,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
       if (isClaudeSubscriptionProvider(sel.providerId)) {
         const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        if (!validated.ok) return validated
+      }
+      if (isCursorSubscriptionProvider(sel.providerId)) {
+        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
         if (!validated.ok) return validated
       }
       if (isGrokSubscriptionProvider(sel.providerId)) {
@@ -8992,6 +9533,10 @@ export function disposeChat(): Promise<void> {
       claudeInstance.cancelLogin()
       claudeInstance.abortAllQueries()
     }
+    for (const manager of listCursorSubscriptionManagers()) {
+      manager.cancelPendingLogins()
+      abortCursorAccountRuns(manager)
+    }
     const pendingSnapshot = [...pendingConversationOperations.values()]
     const pairedReviewDispose = pairedReviewLoopCoordinator?.dispose() ?? Promise.resolve()
     for (const operation of pendingSnapshot) operation.controller.abort(new Error('Chat service is shutting down'))
@@ -9034,6 +9579,8 @@ export function disposeChat(): Promise<void> {
     await codexExternalAccountRefreshPromise
     await githubCopilotIdentityTransitionPromise
     await claudeIdentityTransitionPromise
+    await cursorAuth.dispose()
+    await cursorCleanupPromise
     await grokIdentityTransitionPromise
     const grokProviderIds = listGrokSubscriptionManagers().map((manager) =>
       subscriptionProviderIdFor('grok-subscription', manager.accountId)
@@ -9042,6 +9589,7 @@ export function disposeChat(): Promise<void> {
       ...listCodexSubscriptionManagers().map((manager) => manager.dispose()),
       ...listGitHubCopilotSubscriptionManagers().map((manager) => manager.dispose()),
       ...listClaudeSubscriptionManagers().map((manager) => Promise.resolve(manager.dispose())),
+      disposeCursorSubscriptionManagers(),
       disposeGrokSubscriptionManager(),
       disposeMcpRuntime(),
     ])

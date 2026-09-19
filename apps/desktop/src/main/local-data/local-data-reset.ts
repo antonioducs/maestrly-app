@@ -12,6 +12,8 @@ import { clearAllGitHubCopilotSessionCleanup } from '../chat/github-copilot/sess
 import { deleteAllManagedClaudeSessions } from '../chat/claude-agent-sdk/lifecycle'
 import { getClaudeSubscriptionManager } from '../chat/claude-agent-sdk/manager'
 import { clearAllClaudeSessionCleanup } from '../chat/claude-agent-sdk/session-store'
+import { deleteAllManagedCursorAgents, wipeAllCursorSubscriptionState } from '../chat/cursor-subscription/lifecycle'
+import { clearAllCursorAgentCleanup } from '../chat/cursor-subscription/session-store'
 import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
@@ -59,6 +61,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
   assertLocalDataResetAllowed()
   await attempt(() => clearEphemeralToolImages())
   assertComplete('Local data reset stopped because retired provider state could not be removed.')
+  await attempt(() => deleteAllManagedCursorAgents())
   await attempt(() => deleteAllManagedCodexThreads())
   await attempt(() => deleteAllManagedGitHubCopilotSessions())
   await attempt(() => deleteAllManagedClaudeSessions())
@@ -81,6 +84,14 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
   for (const id of accountIds('grok-subscription')) {
     await attempt(() => getGrokSubscriptionManager(id).resetLocalData())
   }
+  // Keep account slots and cleanup records discoverable if an isolated Cursor store
+  // cannot be removed. A later reset must be able to retry that account.
+  let cursorWiped = false
+  await attempt(async () => {
+    await wipeAllCursorSubscriptionState(accountIds('cursor-subscription'))
+    cursorWiped = true
+  })
+  if (!cursorWiped) assertComplete('Local data cleanup was incomplete.')
   for (const account of accounts) await attempt(() => removeSubscriptionAccount(account.id))
 
   // Remove cross-workspace conversation references before workspace owners, in one transaction.
@@ -95,6 +106,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
       clearAllCodexThreadCleanup()
       clearAllGitHubCopilotSessionCleanup()
       clearAllClaudeSessionCleanup()
+      clearAllCursorAgentCleanup()
       for (const table of ['chat_usage_ledger', 'workspace_groups', 'permission_saved', 'app_settings']) {
         db.prepare(`DELETE FROM ${table}`).run()
       }

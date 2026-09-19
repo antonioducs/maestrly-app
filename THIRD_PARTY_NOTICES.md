@@ -89,3 +89,14 @@ The archive preserves the license files shipped by those upstream packages.
 Models are obtained separately and remain subject to their own model-card
 licenses and terms. See
 [`apps/desktop/runtime-assets/local-ml/README.md`](apps/desktop/runtime-assets/local-ml/README.md).
+
+## Cursor SDK
+
+Maestrly packages `@cursor/sdk` 1.0.31 and one matching supported native helper
+package. These are proprietary Anysphere components, separate from Maestrly's
+MIT-licensed source. The upstream license is reproduced verbatim in
+[`cursor-sdk-LICENSE.md`](apps/desktop/resources/licenses/cursor-sdk-LICENSE.md);
+component attribution is in
+[`cursor-sdk-NOTICE.txt`](apps/desktop/resources/licenses/cursor-sdk-NOTICE.txt).
+Use of Cursor services remains subject to Cursor's terms. Maestrly is not
+affiliated with or endorsed by Anysphere or Cursor.

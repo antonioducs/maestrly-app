@@ -1,0 +1,12 @@
+Cursor SDK and target platform helpers
+
+Maestrly includes unmodified @cursor/sdk 1.0.31 and the matching supported
+@cursor/sdk-<platform>-<architecture> 1.0.31 optional dependency from npm.
+Copyright Anysphere Inc. All rights reserved.
+
+The upstream license is reproduced verbatim in cursor-sdk-LICENSE.md.
+It is separate from Maestrly's MIT license. Use of Cursor services is subject
+to Cursor's Terms of Service: https://cursor.com/terms-of-service
+
+Upstream: https://cursor.com/docs/api/sdk/typescript
+Maestrly is not affiliated with or endorsed by Anysphere or Cursor.

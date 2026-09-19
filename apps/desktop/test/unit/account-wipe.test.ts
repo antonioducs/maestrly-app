@@ -5,6 +5,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
+  wipeCursorLocalData: vi.fn(async (_ids?: readonly (string | null)[]) => {}),
+  deleteAllManagedCursorAgents: vi.fn(async () => {}),
   userData: '',
   deleteAllManagedCodexThreads: vi.fn(async () => {}),
   deleteAllManagedGitHubCopilotSessions: vi.fn(async () => {}),
@@ -44,6 +46,11 @@ vi.mock('../../src/main/chat/claude-agent-sdk/manager', () => ({
   getClaudeSubscriptionManager: () => ({ wipe: h.wipeClaudeLocalData }),
 }))
 
+vi.mock('../../src/main/chat/cursor-subscription/lifecycle', () => ({
+  wipeAllCursorSubscriptionState: h.wipeCursorLocalData,
+  deleteAllManagedCursorAgents: h.deleteAllManagedCursorAgents,
+}))
+
 vi.mock('../../src/main/chat/grok-subscription/manager', () => ({
   getGrokSubscriptionManager: () => ({ resetLocalData: h.resetGrokLocalData }),
 }))
@@ -52,6 +59,7 @@ vi.mock('../../src/main/memory/index', () => ({
   stopWorkspaceMemoryIndex: h.stopWorkspaceMemoryIndex,
 }))
 
+import { addSubscriptionAccount, listSubscriptionAccounts } from '../../src/main/chat/catalog'
 import { workspaceDataDir } from '../../src/main/app-paths'
 import { resetLocalAppData } from '../../src/main/local-data/local-data-reset'
 import {
@@ -80,6 +88,22 @@ describe('resetLocalAppData', () => {
     vi.restoreAllMocks()
     closeDb()
     rmSync(h.userData, { recursive: true, force: true })
+  })
+
+  it('wipes the default Cursor account and saved additional accounts', async () => {
+    const account = addSubscriptionAccount('cursor-subscription', 'Test Cursor')
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+    expect(h.wipeCursorLocalData).toHaveBeenCalledWith([null, account.id])
+    expect(listSubscriptionAccounts()).toEqual([])
+  })
+
+  it('preserves Cursor account discovery when its state cannot be wiped', async () => {
+    const account = addSubscriptionAccount('cursor-subscription', 'Test Cursor')
+    h.wipeCursorLocalData.mockRejectedValueOnce(new Error('Cursor store busy'))
+    await expect(resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })).rejects.toThrow(
+      'Local data cleanup was incomplete.'
+    )
+    expect(listSubscriptionAccounts().map((item) => item.id)).toContain(account.id)
   })
 
   it('finishes independent cleanup and rejects when an isolated runtime cannot be reset', async () => {

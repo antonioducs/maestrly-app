@@ -13,6 +13,7 @@ import { deleteConversationToolImageMetadata } from './chat/tool-output'
 import { tMain } from './i18n'
 import { deleteCodexThreadForConversation } from './chat/codex-subscription/lifecycle'
 import { deleteGitHubCopilotSessionForConversation } from './chat/github-copilot/lifecycle'
+import { deleteCursorAgentForConversation } from './chat/cursor-subscription/lifecycle'
 import { deleteClaudeSessionForConversation } from './chat/claude-agent-sdk/lifecycle'
 import { assertConversationMigrationMutationAllowed } from './conversation-migration/store'
 import { scheduleWorkspaceMemoryIndexWarmup, stopWorkspaceMemoryIndex } from './memory/index'
@@ -104,6 +105,7 @@ export async function deleteConversation(id: string, options: { preserveBranch?:
   if (!conv) return
   assertConversationMigrationMutationAllowed(id, 'Delete conversation')
 
+  await deleteCursorAgentForConversation(id)
   await deleteCodexThreadForConversation(id)
   await deleteGitHubCopilotSessionForConversation(id, { strict: true })
   await deleteClaudeSessionForConversation(id, { strict: true })
@@ -134,7 +136,6 @@ export async function deleteConversation(id: string, options: { preserveBranch?:
       /* The worktree may already have been removed manually. */
     }
     if (!options.preserveBranch) await git.deleteBranch(ws.path, conv.branch)
-
   }
 
   await deleteRowAndArtifacts()
@@ -174,7 +175,6 @@ export interface CreateConversationArgs {
   repos?: CreateConvRepo[]
 
   attach?: { cwd: string; branch: string; mode?: ConversationMode }
-
 }
 
 /** Prepare a worktree or an explicitly confirmed local attachment before persisting the conversation. */

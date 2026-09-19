@@ -55,7 +55,10 @@
     "audit:dependencies": "node scripts/audit-dependencies.mjs && npm audit --omit=dev --prefix apps/desktop/runtime-assets/local-ml",
     "check:history": "node scripts/check-commits.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
-    "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs"
+    "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs",
+    "smoke:packaged-cursor-sdk": "node scripts/smoke-packaged-cursor-sdk.mjs",
+    "smoke:cursor-sdk-authenticated": "node scripts/smoke-cursor-sdk-authenticated.mjs",
+    "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
@@ -68,5 +71,10 @@
   "engines": {
     "node": ">=22.15.0 <23",
     "npm": ">=10"
+  },
+  "overrides": {
+    "@connectrpc/connect-node": {
+      "undici": "6.28.1"
+    }
   }
 }

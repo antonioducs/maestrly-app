@@ -102,6 +102,12 @@ const SUBSCRIPTION_CHANNELS: Record<
     logout: 'chat:claude-subscription:logout',
     changed: 'chat:claude-subscription:auth-changed',
   },
+  'cursor-subscription': {
+    status: 'chat:cursor-subscription:status',
+    login: 'chat:cursor-subscription:login',
+    logout: 'chat:cursor-subscription:logout',
+    changed: 'chat:cursor-subscription:auth-changed',
+  },
   'grok-subscription': {
     status: 'chat:grok-subscription:status',
     login: 'chat:grok-subscription:login',

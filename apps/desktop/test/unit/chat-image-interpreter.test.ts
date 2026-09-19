@@ -11,6 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
+  cursorSummary: vi.fn(),
+  cursorIdentity: { fingerprint: 'cursor-a' as string | null, epoch: 1 },
+  cursorStatus: vi.fn(),
+  cursorManager: vi.fn(),
   generateText: vi.fn(),
   recordModelCallUsage: vi.fn(),
   hasApiKey: vi.fn((_providerId: string) => true),
@@ -24,6 +28,22 @@ const recordModelCallUsage = h.recordModelCallUsage
 const hasApiKey = h.hasApiKey
 /** Changing this fake API key changes interpreter identity even for the same model. */
 let apiKeyValue = 'test-key'
+vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
+  getCursorSubscriptionManager: (accountId: string | null) => {
+    h.cursorManager(accountId)
+    return {
+      getStatusSnapshot: () => ({
+        authenticated: !!h.cursorIdentity.fingerprint,
+        accountFingerprint: h.cursorIdentity.fingerprint,
+      }),
+      getStatus: h.cursorStatus,
+      getAccountIdentity: () => ({ ...h.cursorIdentity }),
+    }
+  },
+}))
+vi.mock('../../src/main/chat/cursor-subscription/portable-summarizer', () => ({
+  summarizeWithCursorRuntime: (...args: unknown[]) => h.cursorSummary(...args),
+}))
 vi.mock('ai', () => ({ generateText: (...args: unknown[]) => h.generateText(...args) }))
 vi.mock('../../src/main/chat/provider', () => ({
   resolveLanguageModel: () => ({ modelId: 'vision-model' }),
@@ -60,7 +80,13 @@ vi.mock('../../src/main/chat/portable-summarizer', async (importOriginal) => {
 })
 
 import type { ChatMessage, ChatToolImage, MessagePart, ToolOutput } from '../../src/shared/chat'
-import { addProvider, CODEX_SUBSCRIPTION_PROVIDER_ID, removeProvider } from '../../src/main/chat/catalog'
+import {
+  subscriptionProviderIdFor,
+  addSubscriptionAccount,
+  addProvider,
+  CODEX_SUBSCRIPTION_PROVIDER_ID,
+  removeProvider,
+} from '../../src/main/chat/catalog'
 import {
   clearChatMessages,
   deleteChatMessage,
@@ -118,6 +144,13 @@ afterEach(() => clearEphemeralToolImages())
 
 beforeEach(() => {
   freshDb()
+  h.cursorIdentity = { fingerprint: 'cursor-a', epoch: 1 }
+  h.cursorSummary.mockReset().mockResolvedValue({
+    text: 'Cursor pixels',
+    usage: { input: 10, output: 3, totalInput: 10, cacheRead: 0, cacheCreate: 0 },
+  })
+  h.cursorStatus.mockReset().mockResolvedValue({ authenticated: true })
+  h.cursorManager.mockClear()
   apiKeyValue = 'test-key'
   generateText.mockReset()
   recordModelCallUsage.mockReset()
@@ -1755,4 +1788,92 @@ it('changes the in-flight key when only a Claude fallback identity changes', asy
     primary.mockRestore()
     fallback.mockRestore()
   }
+})
+
+describe('Cursor image interpreter', () => {
+  it('uses local readiness and forwards image bytes, effort, identity and additional account', async () => {
+    const account = addSubscriptionAccount('cursor-subscription', 'Image account')
+    const cursorProviderId = subscriptionProviderIdFor('cursor-subscription', account.id)
+    setImageInterpreter({ providerId: cursorProviderId, modelId: 'composer-2', effort: 'high' })
+    hasApiKey.mockReturnValue(false)
+    expect(hasConfiguredImageInterpreter()).toBe(true)
+    expect(h.cursorStatus).not.toHaveBeenCalled()
+    const parts = [imagePart('cursor-image')]
+    expect(
+      await describeConversationImages({
+        conversationId: 'c',
+        cwd: '/tmp/w',
+        pendingParts: parts,
+        signal: new AbortController().signal,
+      })
+    ).toEqual({ described: 1, historyChanged: false })
+    expect(h.cursorManager).toHaveBeenCalledWith(account.id)
+    expect(h.cursorSummary).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountIdentity: { fingerprint: 'cursor-a', epoch: 1 },
+        reasoningEffort: 'high',
+        modelId: 'composer-2',
+        images: [expect.objectContaining({ data: 'AAAA', mimeType: 'image/png' })],
+      })
+    )
+    expect(recordModelCallUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtime: 'cursor-subscription',
+        providerId: cursorProviderId,
+        agent: 'image-interpreter',
+      })
+    )
+    expect(generateText).not.toHaveBeenCalled()
+    h.cursorIdentity.fingerprint = null
+    expect(hasConfiguredImageInterpreter()).toBe(false)
+  })
+
+  it('forwards cancellation and allows a fresh attempt after the consumer stops', async () => {
+    setImageInterpreter({ providerId: 'builtin_cursor_subscription', modelId: 'composer-2' })
+    const image = toolOutputImages(
+      mcpResultToChatToolOutput({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] })
+    )[0]!
+    h.cursorSummary.mockImplementationOnce(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+    )
+    const controller = new AbortController()
+    const args = { image, conversationId: 'c', cwd: '/tmp/w', signal: controller.signal }
+    const pending = describeEphemeralToolImage(args)
+    await vi.waitFor(() => expect(h.cursorSummary).toHaveBeenCalledTimes(1))
+    const stopped = expect(pending).rejects.toThrow()
+    controller.abort()
+    await stopped
+    expect(h.cursorSummary.mock.calls[0][0].signal.aborted).toBe(true)
+    h.cursorSummary.mockResolvedValue({ text: 'Fresh result' })
+    expect(await describeEphemeralToolImage({ ...args, signal: new AbortController().signal })).toMatchObject({
+      text: 'Fresh result',
+    })
+  })
+
+  it('isolates successful and failed descriptions by fingerprint and epoch', async () => {
+    setImageInterpreter({ providerId: 'builtin_cursor_subscription', modelId: 'composer-2' })
+    const image = toolOutputImages(
+      mcpResultToChatToolOutput({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] })
+    )[0]!
+    const args = { image, conversationId: 'c', cwd: '/tmp/w', signal: new AbortController().signal }
+    await describeEphemeralToolImage(args)
+    await describeEphemeralToolImage(args)
+    expect(h.cursorSummary).toHaveBeenCalledTimes(1)
+    h.cursorIdentity.epoch++
+    await describeEphemeralToolImage(args)
+    expect(h.cursorSummary).toHaveBeenCalledTimes(2)
+    h.cursorIdentity.fingerprint = 'cursor-b'
+    h.cursorSummary.mockRejectedValue(new Error('unavailable'))
+    await describeEphemeralToolImage(args)
+    await describeEphemeralToolImage(args)
+    await describeEphemeralToolImage(args)
+    expect(h.cursorSummary).toHaveBeenCalledTimes(4)
+    h.cursorIdentity.epoch++
+    h.cursorSummary.mockResolvedValue({ text: 'Recovered' })
+    expect(await describeEphemeralToolImage(args)).toMatchObject({ text: 'Recovered' })
+    expect(h.cursorSummary).toHaveBeenCalledTimes(5)
+  })
 })

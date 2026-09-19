@@ -45,6 +45,10 @@ vi.mock('../../src/main/chat/github-copilot/lifecycle', () => ({
   deleteGitHubCopilotSessionForConversation: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../../src/main/chat/cursor-subscription/lifecycle', () => ({
+  deleteCursorAgentForConversation: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../src/main/chat/claude-agent-sdk/lifecycle', () => ({
   deleteClaudeSessionForConversation: vi.fn().mockResolvedValue(undefined),
 }))
@@ -68,6 +72,7 @@ import * as git from '../../src/main/git-service'
 import * as store from '../../src/main/store'
 import * as codexLifecycle from '../../src/main/chat/codex-subscription/lifecycle'
 import * as githubCopilotLifecycle from '../../src/main/chat/github-copilot/lifecycle'
+import * as cursorLifecycle from '../../src/main/chat/cursor-subscription/lifecycle'
 import * as claudeLifecycle from '../../src/main/chat/claude-agent-sdk/lifecycle'
 import * as memoryIndex from '../../src/main/memory/index'
 import {
@@ -247,6 +252,7 @@ describe('workspace-service deleteConversation', () => {
 
     expect(git.removeWorktree).not.toHaveBeenCalled()
     expect(git.deleteBranch).not.toHaveBeenCalled()
+    expect(cursorLifecycle.deleteCursorAgentForConversation).toHaveBeenCalledWith('c-local')
     expect(codexLifecycle.deleteCodexThreadForConversation).toHaveBeenCalledWith('c-local')
     expect(githubCopilotLifecycle.deleteGitHubCopilotSessionForConversation).toHaveBeenCalledWith('c-local', {
       strict: true,

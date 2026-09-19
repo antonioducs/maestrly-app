@@ -49,6 +49,16 @@
     {
       "providerKind": "codex-subscription",
       "overrides": { "identity": { "promptIdentity": "maestrly-openai-generic-v1" } }
+    },
+    {
+      "providerKind": "cursor-subscription",
+      "overrides": {
+        "identity": {
+          "harnessProfileId": "cursor-native-v1",
+          "compatibilityGroup": "cursor-native-v1",
+          "promptIdentity": "cursor-native-with-host-v1"
+        }
+      }
     }
   ]
 }
