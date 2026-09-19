@@ -46,5 +46,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Scan only the history reachable from HEAD: main on push, and the PR merged into main on
+      # pull_request. Without --log-opts gitleaks walks every fetched ref, so unmerged side branches
+      # would fail this job on unrelated commits.
       - name: Scan Git history
-        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git . --config .gitleaks.toml --no-banner --redact
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git . --config .gitleaks.toml --no-banner --redact --log-opts=HEAD
