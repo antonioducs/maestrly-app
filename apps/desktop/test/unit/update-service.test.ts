@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The fake updater is hoisted with the mock factory: `vi.mock` runs before the module imports, so it
 // cannot close over an ordinary top-level constant.
@@ -40,8 +40,16 @@ vi.mock('../../src/main/test-mode', () => ({ isE2E: () => false }))
 import { app, net, shell } from 'electron'
 import * as svc from '../../src/main/update-service'
 
+// The resolved mode depends on the host platform, so every case pins it explicitly: a Linux runner
+// without $APPIMAGE would otherwise turn the installer cases into notify-only ones.
+const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+function setPlatform(value: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { value, configurable: true })
+}
+
 describe('update-service', () => {
   beforeEach(() => {
+    setPlatform('darwin')
     vi.useFakeTimers()
     settings.clear()
     broadcast.mockClear()
@@ -58,6 +66,9 @@ describe('update-service', () => {
   afterEach(() => {
     svc.disposeUpdateService()
     vi.useRealTimers()
+  })
+  afterAll(() => {
+    if (hostPlatform) Object.defineProperty(process, 'platform', hostPlatform)
   })
 
   it('is off outside packaged prod builds', () => {
@@ -133,7 +144,7 @@ describe('update-service', () => {
   })
 
   it('notify mode on linux without APPIMAGE uses the releases API and opens the page', async () => {
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    setPlatform('linux')
     const fetch = vi.spyOn(net, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -161,7 +172,6 @@ describe('update-service', () => {
       await svc.openRelease()
       expect(open).toHaveBeenCalledWith('https://github.com/antonioducs/maestrly-app/releases/tag/v9.9.9')
     } finally {
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
       fetch.mockRestore()
       open.mockRestore()
     }
