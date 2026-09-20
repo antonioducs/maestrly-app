@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import {
   checkResultSchema,
   codeRevisionSchema,
+  deliveryModeSchema,
   delegationModelCatalogSchema,
   reviewResultSchema,
   stageExecutionReceiptSchema,
@@ -24,6 +25,8 @@ import {
   type ArtifactLimits,
 } from './artifacts.js'
 import { enabledCheckConfigs, recordCheckResult } from './checks.js'
+import { confirmDelivery, deliveryConfirmationSchema, recordDeliveryIntention } from './delivery.js'
+import { pullRequestSnapshotSchema, recordPullRequestSnapshot } from './pull-requests.js'
 import { recordReviewResult } from './findings.js'
 import { claimInspection, completeInspection, inspectionCompletionSchema } from './inspections.js'
 import { publishDelegationCatalog } from './model-catalog.js'
@@ -152,6 +155,48 @@ export function registerDelegationRunnerRoutes(
         sizeBytes: artifact.sizeBytes,
       })
       return artifact
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/deliveries', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params)
+    const body = z
+      .object({
+        attemptId: z.string().uuid().nullable().default(null),
+        mode: deliveryModeSchema,
+        expectedRevision: z.string().min(16).max(191),
+      })
+      .strict()
+      .parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return recordDeliveryIntention(client, {
+        task,
+        attemptId: body.attemptId,
+        mode: body.mode,
+        expectedRevision: body.expectedRevision,
+      })
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/deliveries/confirm', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params)
+    const body = deliveryConfirmationSchema.parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return confirmDelivery(client, { task, body })
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/pull-request', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params)
+    const body = z.object({ snapshot: pullRequestSnapshotSchema }).strict().parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return recordPullRequestSnapshot(client, { task, snapshot: body.snapshot })
     })
   })
 

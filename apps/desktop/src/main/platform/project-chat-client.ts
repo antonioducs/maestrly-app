@@ -9,6 +9,7 @@ import type {
   DelegationCheckConfig,
   DelegationInspection,
   DelegationModelCatalog,
+  DeliveryMode,
   ProjectChatClaim,
   ProjectChatInteraction,
   ReviewResult,
@@ -92,6 +93,37 @@ export class DesktopProjectChatClient {
       `/api/v1/runners/delegations/tasks/${taskId}/artifacts/uploads/${uploadId}/complete`,
       { body }
     )
+  }
+  /** Durable delivery intention recorded before any external effect. */
+  recordDeliveryIntention(
+    taskId: string,
+    body: { attemptId: string | null; mode: DeliveryMode; expectedRevision: string }
+  ) {
+    return this.transport.request<{
+      deliveryId: string
+      mode: DeliveryMode
+      expectedRevision: string
+      alreadyConfirmed: { deliveryId: string; pullRequestNumber: number | null; commitSha: string | null } | null
+    }>('POST', `/api/v1/runners/delegations/tasks/${taskId}/deliveries`, { body })
+  }
+  confirmDelivery(
+    taskId: string,
+    body: {
+      deliveryId: string
+      state: 'confirmed' | 'failed' | 'needs_attention'
+      commitSha?: string | null
+      branch?: string | null
+      observedAccount?: string | null
+      error?: string | null
+      pullRequest?: Record<string, unknown>
+    }
+  ) {
+    return this.transport.request('POST', `/api/v1/runners/delegations/tasks/${taskId}/deliveries/confirm`, { body })
+  }
+  recordPullRequest(taskId: string, snapshot: Record<string, unknown>) {
+    return this.transport.request('POST', `/api/v1/runners/delegations/tasks/${taskId}/pull-request`, {
+      body: { snapshot },
+    })
   }
   claimInspection() {
     return this.transport.request<{

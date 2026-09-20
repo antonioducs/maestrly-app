@@ -29,6 +29,14 @@ import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopProjectChatClient } from './project-chat-client'
 import { uploadEvidence, type ArtifactUploader } from './delegation-artifacts'
 import { runNamedCheck } from './delegation-checks'
+import { commitAuthorizedRevision, deliveryBranchName, pushDeliveryBranch } from './delegation-git'
+import {
+  mergePullRequest,
+  observedAccount,
+  openOrUpdatePullRequest,
+  pullRequestBody,
+  readPullRequest,
+} from './delegation-github'
 import {
   ProjectChatWorker,
   chatWorkspaceKey,
@@ -70,8 +78,10 @@ export class DelegationWorker extends ProjectChatWorker {
   private prepared = new Map<string, PreparedStageWorkspace>()
   /** Host actions pending per conversation; set by prepare, consumed by the injected host. */
   private readonly hostStages: Map<string, HostStageRun>
-  /** Check results collected by a host stage, uploaded with the receipt. */
+  /** Check results collected by a host stage, keyed by attempt for the pull request body. */
   private checkOutcomes = new Map<string, CheckResult[]>()
+  /** Last remote head this computer observed per task, so a push never overwrites someone else's work. */
+  private knownRemoteSha = new Map<string, string>()
   /** Review contract per conversation, appended to the prompt of a read-only stage. */
   private reviewContracts = new Map<string, string>()
 
@@ -153,7 +163,7 @@ export class DelegationWorker extends ProjectChatWorker {
     const action = (delegation.snapshot as { action?: DelegationHostAction | null }).action ?? null
     if (action) {
       // A host stage carries a structured action, not a model selection.
-      this.hostStages.set(workspace.conversationId, this.hostStageRun(claim, delegation, workspace, action))
+      this.hostStages.set(workspace.conversationId, this.hostStageRun(delegation, workspace, action))
       return workspace.conversationId
     }
 
@@ -280,7 +290,6 @@ export class DelegationWorker extends ProjectChatWorker {
    * their logs are uploaded as evidence; a delivery action is handled by the delivery module.
    */
   private hostStageRun(
-    claim: ProjectChatClaim,
     delegation: ProjectChatDelegationClaim,
     workspace: PreparedStageWorkspace,
     action: DelegationHostAction
@@ -290,11 +299,8 @@ export class DelegationWorker extends ProjectChatWorker {
       cancel: () => controller.abort(),
       run: async (signal) => {
         signal.addEventListener('abort', () => controller.abort(), { once: true })
-        if (action.kind !== 'checks')
-          return {
-            status: 'error',
-            error: `The ${action.kind} host action is not available on this executor version.`,
-          }
+        if (action.kind === 'deliver') return this.runDelivery(delegation, workspace, action)
+        if (action.kind === 'pull_request_status') return this.runPullRequestStatus(delegation, workspace)
         const configured = (await this.client.delegationChecks(delegation.taskId)).items
         const captured = await captureCodeRevision({ cwd: workspace.cwd })
         const results: CheckResult[] = []
@@ -328,7 +334,7 @@ export class DelegationWorker extends ProjectChatWorker {
           })
           results.push(result)
         }
-        this.checkOutcomes.set(claim.turn.id, results)
+        this.checkOutcomes.set(delegation.attemptId, results)
         const failed = results.filter((result) => !result.passed)
         return failed.length
           ? {
@@ -337,6 +343,156 @@ export class DelegationWorker extends ProjectChatWorker {
             }
           : { status: 'success' }
       },
+    }
+  }
+
+  /**
+   * Git and GitHub delivery. The intention is recorded on the server first; the external effect then happens,
+   * and only an observed fact confirms it. A previously confirmed delivery is never repeated.
+   */
+  private async runDelivery(
+    delegation: ProjectChatDelegationClaim,
+    workspace: PreparedStageWorkspace,
+    action: Extract<DelegationHostAction, { kind: 'deliver' }>
+  ): Promise<{ status: string; error?: string }> {
+    const captured = await captureCodeRevision({ cwd: workspace.cwd })
+    const expected = action.expectedCodeRevision ?? captured.revision.contentDigest
+    if (expected !== captured.revision.contentDigest)
+      return {
+        status: 'error',
+        error: 'The workspace changed after this delivery was authorized. Re-review the current revision first.',
+      }
+    const intention = await this.client.recordDeliveryIntention(delegation.taskId, {
+      attemptId: delegation.attemptId,
+      mode: action.mode,
+      expectedRevision: expected,
+    })
+    if (intention.alreadyConfirmed) return { status: 'success' }
+
+    const context = { cwd: workspace.cwd }
+    try {
+      if (action.mode === 'patch') {
+        await uploadEvidence(this.uploader, {
+          taskId: delegation.taskId,
+          kind: 'patch',
+          name: 'delivery.patch',
+          contentType: 'text/x-diff',
+          bytes: captured.patch,
+          attemptId: delegation.attemptId,
+          codeRevisionDigest: captured.revision.contentDigest,
+        })
+        await this.client.confirmDelivery(delegation.taskId, {
+          deliveryId: intention.deliveryId,
+          state: 'confirmed',
+        })
+        return { status: 'success' }
+      }
+      const committed = await commitAuthorizedRevision({
+        cwd: workspace.cwd,
+        taskId: delegation.taskId,
+        expectedRevision: captured.revision,
+        title: action.title ?? delegation.stageType,
+      })
+      if (action.mode === 'commit') {
+        await this.client.confirmDelivery(delegation.taskId, {
+          deliveryId: intention.deliveryId,
+          state: 'confirmed',
+          commitSha: committed.commitSha,
+          branch: committed.branch,
+        })
+        return { status: 'success' }
+      }
+      const pushed = await pushDeliveryBranch({
+        cwd: workspace.cwd,
+        branch: committed.branch,
+        knownRemoteSha: this.knownRemoteSha.get(delegation.taskId) ?? null,
+      })
+      this.knownRemoteSha.set(delegation.taskId, pushed.remoteSha)
+      const account = await observedAccount(context).catch(() => null)
+      if (action.mode === 'push') {
+        await this.client.confirmDelivery(delegation.taskId, {
+          deliveryId: intention.deliveryId,
+          state: 'confirmed',
+          commitSha: committed.commitSha,
+          branch: committed.branch,
+          observedAccount: account,
+        })
+        return { status: 'success' }
+      }
+      if (action.mode === 'merge') {
+        const current = await readPullRequest(context, { branch: committed.branch })
+        if (!current) return { status: 'error', error: 'There is no pull request to merge for this branch.' }
+        if (!current.headSha) return { status: 'error', error: 'The pull request head commit is unknown.' }
+        const merged = await mergePullRequest(context, {
+          number: current.number,
+          expectedHeadSha: current.headSha,
+          method: 'squash',
+        })
+        await this.client.confirmDelivery(delegation.taskId, {
+          deliveryId: intention.deliveryId,
+          state: 'confirmed',
+          commitSha: committed.commitSha,
+          branch: committed.branch,
+          observedAccount: account,
+          pullRequest: merged as unknown as Record<string, unknown>,
+        })
+        return { status: 'success' }
+      }
+      const observed = await openOrUpdatePullRequest(context, {
+        branch: committed.branch,
+        baseBranch: delegation.baseBranch,
+        title: action.title ?? `Delegated change ${delegation.taskId.slice(0, 8)}`,
+        body: pullRequestBody({
+          taskId: delegation.taskId,
+          objective: (delegation.snapshot as { prompt?: string }).prompt ?? '',
+          acceptanceCriteria: this.acceptanceCriteria(delegation),
+          checks: (this.checkOutcomes.get(delegation.attemptId) ?? []).map((result) => ({
+            checkId: result.checkId,
+            passed: result.passed,
+            exitCode: result.exitCode,
+          })),
+          reviewVerdict: null,
+          evidenceUrl: `${this.url}/`,
+          taskUrl: `${this.url}/`,
+        }),
+        draft: action.mode === 'draft_pr',
+      })
+      await this.client.confirmDelivery(delegation.taskId, {
+        deliveryId: intention.deliveryId,
+        state: 'confirmed',
+        commitSha: committed.commitSha,
+        branch: committed.branch,
+        observedAccount: account,
+        pullRequest: observed as unknown as Record<string, unknown>,
+      })
+      return { status: 'success' }
+    } catch (error) {
+      const reason = (error as { reason?: string }).reason
+      // A diverged remote or a head mismatch preserves both sides and asks for a person.
+      const needsAttention = reason === 'remote-diverged' || reason === 'head-mismatch' || reason === 'revision-changed'
+      await this.client
+        .confirmDelivery(delegation.taskId, {
+          deliveryId: intention.deliveryId,
+          state: needsAttention ? 'needs_attention' : 'failed',
+          error: (error as Error).message.slice(0, 4000),
+        })
+        .catch(() => undefined)
+      return { status: 'error', error: (error as Error).message }
+    }
+  }
+
+  /** Read the pull request with this computer's own credentials and record what was observed. */
+  private async runPullRequestStatus(
+    delegation: ProjectChatDelegationClaim,
+    workspace: PreparedStageWorkspace
+  ): Promise<{ status: string; error?: string }> {
+    try {
+      const observed = await readPullRequest({ cwd: workspace.cwd }, { branch: deliveryBranchName(delegation.taskId) })
+      if (!observed) return { status: 'error', error: 'No pull request is linked to this task yet.' }
+      await this.client.recordPullRequest(delegation.taskId, observed as unknown as Record<string, unknown>)
+      return { status: 'success' }
+    } catch (error) {
+      return { status: 'error', error: (error as Error).message }
     }
   }
 
@@ -391,7 +547,7 @@ export class DelegationWorker extends ProjectChatWorker {
       this.reviewContracts.delete(workspace.conversationId)
       this.hostStages.delete(workspace.conversationId)
     }
-    this.checkOutcomes.delete(claim.turn.id)
+    if (claim.delegation) this.checkOutcomes.delete(claim.delegation.attemptId)
     this.prepared.delete(claim.turn.id)
     // Only the read-only copy is disposable; the task worktree survives for later stages and inspection.
     if (workspace && isReadOnlyStage(claim.delegation?.stageType ?? '')) await workspace.dispose()
