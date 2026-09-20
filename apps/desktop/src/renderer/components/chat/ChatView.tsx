@@ -815,7 +815,6 @@ export function ChatView({
 
   const finishTurn = useCallback(
     (hidden = false) => {
-      debugTrace(`finishTurn hidden=${hidden} manualCompaction=${localManualCompactionRef.current}`)
       if (localManualCompactionRef.current) return
       compactingRef.current = false
       compactionRevisionRef.current++
@@ -835,7 +834,7 @@ export function ChatView({
         void doSend(head.text, head.attachments, head.agentMentions, !hidden)
       }
     },
-    [doSend, setQueueState, debugTrace]
+    [doSend, setQueueState]
   )
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
