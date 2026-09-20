@@ -67,11 +67,10 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await page.locator('button[title="Send"]:visible').click()
   }
   const ready = async (label = '') => {
-    let failed = false
     try {
       await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
     } catch (error) {
-      failed = true
+      // Probes only run after the failure, so they cannot perturb the race that produced it.
       const runtimes = await page.evaluate(async () => {
         const api = (window as any).api
         const conversations = await api.listStandaloneConversations(true)
@@ -79,11 +78,17 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
         for (const conversation of conversations) entries[conversation.id.slice(0, 4)] = await api.chatRuntime(conversation.id)
         return entries
       })
-      console.log(`READY-FAILURE ${label} RUNTIMES ${JSON.stringify(runtimes)}`)
-      console.log('TRACE\n' + (await page.evaluate(() => ((window as any).__chatDebug ?? []) as string[])).join('\n'))
+      const before = requests.length
+      await page.locator('.chat-input[contenteditable="true"]:visible').fill('probe-turn')
+      await page.locator('.chat-input[contenteditable="true"]:visible').press('Enter')
+      await page.waitForTimeout(3000)
+      const queued = await page.locator('.queued-message, [data-queued-message]').count()
+      console.log(`READY-FAILURE ${label}`)
+      console.log(`RUNTIMES ${JSON.stringify(runtimes)}`)
+      console.log(`PROBE requestsBefore=${before} requestsAfter=${requests.length} queuedChips=${queued}`)
+      console.log(`PROBE-TEXT ${(await page.locator('body').innerText()).replace(/\n+/g, ' | ')}`)
       throw error
     }
-    if (!failed) console.log(`READY-OK ${label}`)
   }
   const launch = async () => {
     app = await electron.launch({

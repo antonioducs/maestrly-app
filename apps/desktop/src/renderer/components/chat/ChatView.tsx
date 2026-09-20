@@ -346,14 +346,6 @@ export function ChatView({
   convIdRef.current = conversationId
   const visibleRef = useRef(visible)
   visibleRef.current = visible
-  const debugTrace = useCallback(
-    (entry: string) => {
-      const store = window as unknown as { __chatDebug?: string[] }
-      store.__chatDebug = store.__chatDebug ?? []
-      store.__chatDebug.push(`${Date.now()} ${conversationId.slice(0, 4)} ${entry}`)
-    },
-    [conversationId]
-  )
 
   const backgroundCompactionRevisionRef = useRef({ conversationId, revision: -1 })
   const [backgroundCompactionState, setBackgroundCompactionState] = useState<{
@@ -886,7 +878,6 @@ export function ChatView({
   streamEventRef.current = (ev) => {
     const kind = (ev as { kind: string }).kind
     const hidden = !visibleRef.current
-    debugTrace(`event ${kind} hidden=${hidden}`)
     const event = ev as ChatStreamEvent
 
     if (event.kind === 'background-compaction') {
@@ -1069,7 +1060,6 @@ export function ChatView({
       if (runtime.backgroundCompaction) {
         applyBackgroundCompactionState(conversationId, runtime.backgroundCompaction)
       }
-      debugTrace(`runtime streaming=${runtime.streaming} guard=${compactionRevision === compactionRevisionRef.current}`)
       if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
         compactingRef.current = runtime.compacting ?? false
         setCompacting(compactingRef.current)
