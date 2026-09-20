@@ -454,6 +454,15 @@ export function ChatView({
   }, [reloadLatestPage])
 
   useEffect(() => {
+    debugTrace(`mount status=${status} visible=${visibleRef.current} streaming=${streamingRef.current}`)
+    return () => debugTrace('unmount')
+  }, [debugTrace])
+
+  useEffect(() => {
+    debugTrace(`visible=${visible}`)
+  }, [visible, debugTrace])
+
+  useEffect(() => {
     debugTrace(`status-effect status=${status} visible=${visibleRef.current} streamingRef=${streamingRef.current}`)
     if (status !== 'working' && status !== 'asking') return
     if (compactingRef.current) return

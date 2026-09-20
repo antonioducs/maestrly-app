@@ -67,9 +67,11 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await page.locator('button[title="Send"]:visible').click()
   }
   const ready = async (label = '') => {
+    let failed = false
     try {
       await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
     } catch (error) {
+      failed = true
       const trace = await page.evaluate(() => ((window as any).__chatDebug ?? []) as string[])
       const runtimes = await page.evaluate(async () => {
         const api = (window as any).api
@@ -84,6 +86,10 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
       console.log(`RUNTIMES ${JSON.stringify(runtimes)}`)
       console.log(`TRACE\n${trace.join('\n')}`)
       throw error
+    }
+    if (!failed) {
+      const trace = await page.evaluate(() => ((window as any).__chatDebug ?? []) as string[])
+      console.log(`READY-OK ${label}\nTRACE\n${trace.join('\n')}`)
     }
   }
   const launch = async () => {
