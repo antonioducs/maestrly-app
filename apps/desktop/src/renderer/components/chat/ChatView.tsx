@@ -39,6 +39,7 @@ import type {
   ChatMode,
   ChatModelMeta,
   ChatModelRef,
+  ChatPermissionEvent,
   ChatPermissionRequest,
   PendingChatQuestion,
   ChatProjectCommand,
@@ -868,176 +869,175 @@ export function ChatView({
     // A hidden standalone turn keeps its own live buffer; dropping the subscription would lose the
     // tokens emitted while hidden and later overwrite the history with that stale buffer.
     (workspaceId === null && status === 'working')
+
+  // The main process delivers conversation events only to subscribed renderers, so this
+  // subscription must survive callback identity changes: recreating it mid-turn leaves a window
+  // in which a terminal event is dropped, and the composer then reports a live response forever.
+  // Keep the handlers in refs and bind the subscription to the conversation and live need alone.
+  const streamEventRef = useRef<(ev: ChatStreamEvent | { kind: string }) => void>(() => undefined)
+  streamEventRef.current = (ev) => {
+    const kind = (ev as { kind: string }).kind
+    const hidden = !visibleRef.current
+    const event = ev as ChatStreamEvent
+
+    if (event.kind === 'background-compaction') {
+      applyBackgroundCompactionState(conversationId, event.state)
+      return
+    }
+
+    // Hidden standalone views do not render tokens, but must retain the active response before
+    // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
+    if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
+      // Compaction rewrites history, so the buffered response must not be replayed over it.
+      if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
+      if (event.kind !== 'compaction-finished') {
+        liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
+          .filter((message) => message.role === 'assistant')
+          .map((message) => (message.conversationId === conversationId ? message : { ...message, conversationId }))
+      }
+    }
+
+    if (event.kind === 'compaction-finished') {
+      // The local IPC promise owns history hydration and queue release when present.
+      if (localManualCompactionRef.current) return
+      compactionRevisionRef.current++
+      compactingRef.current = false
+      setCompacting(false)
+      streamingRef.current = false
+      if (!hidden) setStreaming(false)
+      if (event.status === 'completed') finishTurn(hidden)
+      return
+    }
+
+    // External preflight can reserve the conversation before user-saved. Progress is
+    // authoritative; sidebar status is not. Keep the reservation through progress
+    // completion until done (preflight) or compaction-finished (manual) releases it.
+    if (
+      event.kind === 'compaction-progress' &&
+      event.progress.scope === 'conversation' &&
+      event.progress.status === 'running'
+    ) {
+      compactionRevisionRef.current++
+      compactingRef.current = true
+      setCompacting(true)
+      streamingRef.current = true
+      if (!hidden) setStreaming(true)
+    }
+
+    if (kind === 'done') {
+      // The turn ended: drop every live capability before any further action can be routed.
+      setMidTurnSteering(false)
+      setLiveReasoningUpdate(false)
+      setLiveReasoningEfforts([])
+      setLiveReasoningReset(false)
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState([])
+      finishTurn(hidden)
+      if (hidden) return
+      refreshStats()
+
+      setModelRefresh((n) => n + 1)
+      return
+    }
+
+    if (event.kind === 'runtime-capabilities') {
+      setMidTurnSteering(event.midTurnSteering)
+      setLiveReasoningUpdate(event.liveReasoningUpdate)
+      setLiveReasoningEfforts(event.liveReasoningEfforts)
+      setLiveReasoningReset(event.liveReasoningReset)
+      return
+    }
+    if (event.kind === 'steering-accepted') {
+      if (!hidden) {
+        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
+      }
+      return
+    }
+
+    if (
+      kind !== 'finish' &&
+      kind !== 'aborted' &&
+      kind !== 'error' &&
+      kind !== 'context-usage' &&
+      kind !== 'compaction-progress'
+    ) {
+      streamingRef.current = true
+      if (!hidden) setStreaming(true)
+    }
+    if (kind === 'user-saved') {
+      const localSlash = slashSentRef.current
+      const localAgentMentions = agentMentionsSentRef.current
+      const localImages = imagesSentRef.current
+      slashSentRef.current = false
+      agentMentionsSentRef.current = false
+      imagesSentRef.current = false
+      const saved = ev as { compacted?: boolean; imagesDescribed?: number }
+      if (
+        shouldReloadOnUserSaved({
+          streaming: streamingRef.current,
+          compacted: saved.compacted,
+          imagesDescribed: saved.imagesDescribed,
+          localSlash,
+          localAgentMentions,
+          localImages,
+        })
+      )
+        if (!hidden) void reloadLatestPage()
+      return
+    }
+    if (event.kind === 'tool-state' && event.state.status !== 'pending' && event.state.status !== 'running') {
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState((current) => current.filter((question) => question.toolCallId !== event.toolCallId))
+    }
+
+    if (hidden) {
+      if (
+        event.kind === 'tool-state' &&
+        event.toolCallId === pendingQuestionToolCallId &&
+        event.state.status !== 'pending' &&
+        event.state.status !== 'running'
+      ) {
+        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
+      }
+    }
+    if (hidden) return
+
+    // Standalone views already fold every event into their live buffer. Mirroring that snapshot keeps
+    // the update idempotent, so a replayed or reordered updater cannot apply the same delta twice.
+    const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null
+    setMessages((prev) =>
+      normalizeHistoryWindow(
+        prev,
+        liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
+        'replace',
+        event.messageId
+      )
+    )
+
+    if (kind === 'finish' || kind === 'aborted' || kind === 'error') setStreaming(false)
+  }
+  const permissionEventRef = useRef<(ev: ChatPermissionEvent) => void>(() => undefined)
+  permissionEventRef.current = (ev) => {
+    if (ev.kind === 'request') {
+      if (visibleRef.current) setPending((prev) => [...prev.filter((r) => r.id !== ev.request.id), ev.request])
+    } else if (ev.kind === 'resolved') {
+      setPending((prev) => {
+        const next = prev.filter((r) => r.id !== ev.requestId)
+        return next.length === prev.length ? prev : next
+      })
+    }
+  }
+
   useEffect(() => {
     if (!needsLiveSubscription) return
 
-    const offStream = window.api.onChatStream(conversationId, (ev) => {
-      const kind = (ev as { kind: string }).kind
-      const hidden = !visibleRef.current
-      const event = ev as ChatStreamEvent
-
-      if (event.kind === 'background-compaction') {
-        applyBackgroundCompactionState(conversationId, event.state)
-        return
-      }
-
-      // Hidden standalone views do not render tokens, but must retain the active response before
-      // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
-      if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
-        // Compaction rewrites history, so the buffered response must not be replayed over it.
-        if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
-        if (event.kind !== 'compaction-finished') {
-          liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
-            .filter((message) => message.role === 'assistant')
-            .map((message) => (message.conversationId === conversationId ? message : { ...message, conversationId }))
-        }
-      }
-
-      if (event.kind === 'compaction-finished') {
-        // The local IPC promise owns history hydration and queue release when present.
-        if (localManualCompactionRef.current) return
-        compactionRevisionRef.current++
-        compactingRef.current = false
-        setCompacting(false)
-        streamingRef.current = false
-        if (!hidden) setStreaming(false)
-        if (event.status === 'completed') finishTurn(hidden)
-        return
-      }
-
-      // External preflight can reserve the conversation before user-saved. Progress is
-      // authoritative; sidebar status is not. Keep the reservation through progress
-      // completion until done (preflight) or compaction-finished (manual) releases it.
-      if (
-        event.kind === 'compaction-progress' &&
-        event.progress.scope === 'conversation' &&
-        event.progress.status === 'running'
-      ) {
-        compactionRevisionRef.current++
-        compactingRef.current = true
-        setCompacting(true)
-        streamingRef.current = true
-        if (!hidden) setStreaming(true)
-      }
-
-      if (kind === 'done') {
-        // The turn ended: drop every live capability before any further action can be routed.
-        setMidTurnSteering(false)
-        setLiveReasoningUpdate(false)
-        setLiveReasoningEfforts([])
-        setLiveReasoningReset(false)
-        runtimeQuestionRevisionRef.current += 1
-        setRuntimeQuestionState([])
-        finishTurn(hidden)
-        if (hidden) return
-        refreshStats()
-
-        setModelRefresh((n) => n + 1)
-        return
-      }
-
-      if (event.kind === 'runtime-capabilities') {
-        setMidTurnSteering(event.midTurnSteering)
-        setLiveReasoningUpdate(event.liveReasoningUpdate)
-        setLiveReasoningEfforts(event.liveReasoningEfforts)
-        setLiveReasoningReset(event.liveReasoningReset)
-        return
-      }
-      if (event.kind === 'steering-accepted') {
-        if (!hidden) {
-          setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
-        }
-        return
-      }
-
-      if (
-        kind !== 'finish' &&
-        kind !== 'aborted' &&
-        kind !== 'error' &&
-        kind !== 'context-usage' &&
-        kind !== 'compaction-progress'
-      ) {
-        streamingRef.current = true
-        if (!hidden) setStreaming(true)
-      }
-      if (kind === 'user-saved') {
-        const localSlash = slashSentRef.current
-        const localAgentMentions = agentMentionsSentRef.current
-        const localImages = imagesSentRef.current
-        slashSentRef.current = false
-        agentMentionsSentRef.current = false
-        imagesSentRef.current = false
-        const saved = ev as { compacted?: boolean; imagesDescribed?: number }
-        if (
-          shouldReloadOnUserSaved({
-            streaming: streamingRef.current,
-            compacted: saved.compacted,
-            imagesDescribed: saved.imagesDescribed,
-            localSlash,
-            localAgentMentions,
-            localImages,
-          })
-        )
-          if (!hidden) void reloadLatestPage()
-        return
-      }
-      if (event.kind === 'tool-state' && event.state.status !== 'pending' && event.state.status !== 'running') {
-        runtimeQuestionRevisionRef.current += 1
-        setRuntimeQuestionState((current) => current.filter((question) => question.toolCallId !== event.toolCallId))
-      }
-
-      if (hidden) {
-        if (
-          event.kind === 'tool-state' &&
-          event.toolCallId === pendingQuestionToolCallId &&
-          event.state.status !== 'pending' &&
-          event.state.status !== 'running'
-        ) {
-          setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
-        }
-      }
-      if (hidden) return
-
-      // Standalone views already fold every event into their live buffer. Mirroring that snapshot keeps
-      // the update idempotent, so a replayed or reordered updater cannot apply the same delta twice.
-      const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null
-      setMessages((prev) =>
-        normalizeHistoryWindow(
-          prev,
-          liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
-          'replace',
-          event.messageId
-        )
-      )
-
-      if (kind === 'finish' || kind === 'aborted' || kind === 'error') setStreaming(false)
-    })
-    const offPerm = window.api.onChatPermission(conversationId, (ev) => {
-      if (ev.kind === 'request') {
-        if (visibleRef.current) setPending((prev) => [...prev.filter((r) => r.id !== ev.request.id), ev.request])
-      } else if (ev.kind === 'resolved') {
-        setPending((prev) => {
-          const next = prev.filter((r) => r.id !== ev.requestId)
-          return next.length === prev.length ? prev : next
-        })
-      }
-    })
+    const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))
+    const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))
     return () => {
       offStream()
       offPerm()
     }
-  }, [
-    conversationId,
-    applyBackgroundCompactionState,
-    finishTurn,
-    needsLiveSubscription,
-    normalizeHistoryWindow,
-    pendingQuestionToolCallId,
-    reloadLatestPage,
-    refreshStats,
-    setRuntimeQuestionState,
-    workspaceId,
-  ])
+  }, [conversationId, needsLiveSubscription])
 
   useEffect(() => {
     if (!visible) return
