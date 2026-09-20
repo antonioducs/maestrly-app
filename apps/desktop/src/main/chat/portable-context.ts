@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { toolOutputText, type ChatMessage, type MessagePart } from '../../shared/chat'
 import type { NormalizedAiUsage } from './runner'
 import { activeChatContext, nativeSeedContextText, renderNativeSeedTranscript } from './message'
@@ -140,17 +141,40 @@ export function preflightContextLoad(
   }
 }
 
-/** Splits every character exactly once, preferring paragraph/newline boundaries where possible. */
+function utf8End(text: string, offset: number, byteLimit: number): number {
+  let low = offset + 1
+  // UTF-8 is never narrower than one byte per UTF-16 code unit for the ranges we can split.
+  let high = Math.min(text.length, offset + byteLimit)
+  let best = offset
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    // Never split a UTF-16 surrogate pair while enforcing the UTF-8 budget.
+    const end =
+      middle < text.length && /[\uDC00-\uDFFF]/.test(text[middle]) && /[\uD800-\uDBFF]/.test(text[middle - 1])
+        ? middle - 1
+        : middle
+    const bytes = Buffer.byteLength(text.slice(offset, end), 'utf8')
+    if (bytes <= byteLimit) {
+      best = Math.max(best, end)
+      low = middle + 1
+    } else {
+      high = middle - 1
+    }
+  }
+  return Math.max(offset + 1, best)
+}
+
+/** Splits every character exactly once under a UTF-8 byte budget, preferring newline boundaries. */
 export function splitPortableTranscript(text: string, maxChars: number): string[] {
   const limit = Math.max(1_000, Math.floor(maxChars))
   const chunks: string[] = []
   let offset = 0
   while (offset < text.length) {
-    let end = Math.min(text.length, offset + limit)
+    let end = utf8End(text, offset, limit)
     if (end < text.length) {
-      const floor = offset + Math.floor(limit * 0.6)
-      const paragraph = text.lastIndexOf('\n\n', end)
-      const newline = text.lastIndexOf('\n', end)
+      const floor = utf8End(text, offset, Math.floor(limit * 0.6))
+      const paragraph = text.lastIndexOf('\n\n', Math.max(offset, end - 2))
+      const newline = text.lastIndexOf('\n', Math.max(offset, end - 1))
       const boundary = paragraph >= floor ? paragraph + 2 : newline >= floor ? newline + 1 : end
       end = Math.max(offset + 1, boundary)
     }
@@ -184,14 +208,71 @@ export interface PortableSummaryProgress {
   attempt: number
 }
 
+export interface PortableSummaryCheckpoint {
+  version: 1
+  sourceHash: string
+  maxChunkBytes: number
+  phase: 'chunk' | 'consolidate'
+  level: number
+  /** Completed outputs from the previous level; source transcript is never duplicated here. */
+  levelInput?: string[]
+  inputHash: string
+  completed: string[]
+}
+
+function summaryStrings(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return null
+  return [...value] as string[]
+}
+
+export function parsePortableSummaryCheckpoint(value: unknown): PortableSummaryCheckpoint | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  const completed = summaryStrings(raw.completed)
+  const levelInput = raw.levelInput == null ? undefined : summaryStrings(raw.levelInput)
+  if (
+    raw.version !== 1 ||
+    typeof raw.sourceHash !== 'string' ||
+    !Number.isSafeInteger(raw.maxChunkBytes) ||
+    Number(raw.maxChunkBytes) < 1_000 ||
+    (raw.phase !== 'chunk' && raw.phase !== 'consolidate') ||
+    !Number.isSafeInteger(raw.level) ||
+    Number(raw.level) < 0 ||
+    typeof raw.inputHash !== 'string' ||
+    !completed ||
+    (raw.levelInput != null && !levelInput) ||
+    (raw.phase === 'chunk' && (Number(raw.level) !== 0 || levelInput != null)) ||
+    (raw.phase === 'consolidate' && (Number(raw.level) < 1 || !levelInput))
+  ) {
+    return null
+  }
+  return {
+    version: 1,
+    sourceHash: raw.sourceHash,
+    maxChunkBytes: Number(raw.maxChunkBytes),
+    phase: raw.phase,
+    level: Number(raw.level),
+    ...(levelInput ? { levelInput } : {}),
+    inputHash: raw.inputHash,
+    completed,
+  }
+}
+
 export interface PortableSummaryOptions {
   signal?: AbortSignal
   onProgress?: (progress: PortableSummaryProgress) => void
   stepTimeoutMs?: number
   totalTimeoutMs?: number
   maxRetries?: number
+  /** Delay before a retry. Background preparation uses 30s; foreground compaction keeps the legacy immediate retry. */
+  retryDelayMs?: number
+  /** Reject oversized model output as invalid so it can consume the single retry without becoming a candidate. */
+  maxSummaryTokens?: number
   /** Overrides transient-error classification; cancellation/auth/configuration remain terminal. */
   shouldRetry?: (error: unknown) => boolean
+  /** Durable completed-stage snapshot. Invalid/mismatched snapshots fail closed instead of repeating billed calls. */
+  resume?: PortableSummaryCheckpoint
+  onCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
 }
 
 const SUMMARY_STEP_TIMEOUT_MS = 3 * 60_000
@@ -203,6 +284,7 @@ class PortableSummaryStepTimeoutError extends Error {
 }
 
 class PortableSummaryEmptyError extends Error {}
+class PortableSummaryInvalidOutputError extends Error {}
 
 function summaryErrorChain(error: unknown): unknown[] {
   const chain: unknown[] = []
@@ -282,16 +364,22 @@ export async function summarizePortableTranscript(
   let calls = 0
   let pendingCalls = 0
   let finished = false
-  let chunks = splitPortableTranscript(transcript, maxChunkChars)
-  if (chunks.length === 0) throw new Error('There is no portable transcript to compact')
+  const maxChunkBytes = Math.max(1_000, Math.floor(maxChunkChars))
+  const transcriptHash = createHash('sha256').update(transcript).digest('hex')
+  const initialChunks = splitPortableTranscript(transcript, maxChunkBytes)
+  if (initialChunks.length === 0) throw new Error('There is no portable transcript to compact')
 
   const stepTimeoutMs = summaryTimeoutMs(options.stepTimeoutMs, SUMMARY_STEP_TIMEOUT_MS)
   const maxRetries = Number.isFinite(options.maxRetries) ? Math.max(0, Math.floor(options.maxRetries!)) : 1
+  const retryDelayMs = Number.isFinite(options.retryDelayMs) ? Math.max(0, Math.floor(options.retryDelayMs!)) : 0
+  const maxSummaryTokens = Number.isFinite(options.maxSummaryTokens)
+    ? Math.max(1, Math.floor(options.maxSummaryTokens!))
+    : null
   const totalTimeoutMs = summaryTimeoutMs(
     options.totalTimeoutMs,
     Math.min(
       SUMMARY_MAX_TOTAL_TIMEOUT_MS,
-      Math.max(SUMMARY_MIN_TOTAL_TIMEOUT_MS, stepTimeoutMs * (maxRetries + 1) * (chunks.length + 2))
+      Math.max(SUMMARY_MIN_TOTAL_TIMEOUT_MS, stepTimeoutMs * (maxRetries + 1) * (initialChunks.length + 2))
     )
   )
   const controller = new AbortController()
@@ -330,6 +418,24 @@ export async function summarizePortableTranscript(
   const report = (progress: PortableSummaryProgress) => {
     checkActive()
     options.onProgress?.(progress)
+    checkActive()
+  }
+
+  const waitForRetry = async (): Promise<void> => {
+    if (retryDelayMs <= 0) return
+    checkActive()
+    await new Promise<void>((resolve, reject) => {
+      const delay = Math.min(retryDelayMs, Math.max(1, deadline - Date.now()))
+      const timer = setTimeout(() => {
+        controller.signal.removeEventListener('abort', aborted)
+        resolve()
+      }, delay)
+      const aborted = () => {
+        clearTimeout(timer)
+        reject(controller.signal.reason)
+      }
+      controller.signal.addEventListener('abort', aborted, { once: true })
+    })
     checkActive()
   }
 
@@ -376,9 +482,17 @@ export async function summarizePortableTranscript(
     }
   }
 
-  const runLevel = async (source: string[], phase: 'chunk' | 'consolidate'): Promise<string[]> => {
-    const output: string[] = []
-    for (let index = 0; index < source.length; index += 1) {
+  const sourceHash = (source: readonly string[]) => createHash('sha256').update(JSON.stringify(source)).digest('hex')
+
+  const runLevel = async (
+    source: string[],
+    phase: 'chunk' | 'consolidate',
+    level: number,
+    levelInput: string[] | undefined,
+    completed: string[]
+  ): Promise<string[]> => {
+    const output = [...completed]
+    for (let index = completed.length; index < source.length; index += 1) {
       const label =
         phase === 'chunk' ? `Source chunk ${index + 1}/${source.length}` : `Summary group ${index + 1}/${source.length}`
       for (let attempt = 1; ; attempt += 1) {
@@ -391,10 +505,16 @@ export async function summarizePortableTranscript(
         })
         let text: string
         try {
-          const result = await runAttempt(`${label}:\n\n${source[index]}`, phase)
+          const limitInstruction = maxSummaryTokens
+            ? `\nReturn no more than ${maxSummaryTokens} portable tokens (conservative UTF-8 estimate).`
+            : ''
+          const result = await runAttempt(`${label}:${limitInstruction}\n\n${source[index]}`, phase)
           checkActive()
           text = result.text.trim()
           if (!text) throw new PortableSummaryEmptyError('The context compactor returned an empty summary')
+          if (maxSummaryTokens && estimateTextTokens(text) > maxSummaryTokens) {
+            throw new PortableSummaryInvalidOutputError('The context compactor returned an oversized summary')
+          }
         } catch (error) {
           checkActive()
           const chain = summaryErrorChain(error)
@@ -403,12 +523,25 @@ export async function summarizePortableTranscript(
             ? options.shouldRetry(error)
             : error instanceof PortableSummaryStepTimeoutError ||
               error instanceof PortableSummaryEmptyError ||
+              error instanceof PortableSummaryInvalidOutputError ||
               chain.some(isRetryableStreamError)
           if (!retry) throw error
+          await waitForRetry()
           continue
         }
         output.push(text)
         report({ status: 'running', phase, completed: index + 1, total: source.length, attempt })
+        options.onCheckpoint?.({
+          version: 1,
+          sourceHash: transcriptHash,
+          maxChunkBytes,
+          phase,
+          level,
+          ...(levelInput ? { levelInput: [...levelInput] } : {}),
+          inputHash: sourceHash(source),
+          completed: [...output],
+        })
+        checkActive()
         break
       }
     }
@@ -418,22 +551,60 @@ export async function summarizePortableTranscript(
   const hasUsage = () => Object.values(usage).some((value) => value > 0)
   const hasCompleteCost = () => runtimeCostKnown && runtimeCostComplete && pendingCalls === 0
   try {
-    chunks = await runLevel(chunks, 'chunk')
-    for (let level = 0; chunks.length > 1; level += 1) {
-      checkActive()
-      if (level >= 12) throw new Error('The context compactor did not converge')
-      const grouped = splitPortableTranscript(
-        chunks.map((chunk, index) => `Summary ${index + 1}:\n${chunk}`).join('\n\n'),
-        maxChunkChars
-      )
-      chunks = await runLevel(grouped, 'consolidate')
+    let phase: 'chunk' | 'consolidate' = 'chunk'
+    let level = 0
+    let levelInput: string[] | undefined
+    let source = initialChunks
+    let completed: string[] = []
+    if (options.resume) {
+      const resume = parsePortableSummaryCheckpoint(options.resume)
+      if (
+        !resume ||
+        resume.sourceHash !== transcriptHash ||
+        resume.maxChunkBytes !== maxChunkBytes ||
+        resume.completed.some(
+          (text) => !text.trim() || (maxSummaryTokens != null && estimateTextTokens(text) > maxSummaryTokens)
+        )
+      ) {
+        throw new Error('The context compactor checkpoint does not match its source')
+      }
+      phase = resume.phase
+      level = resume.level
+      levelInput = resume.levelInput
+      source =
+        phase === 'chunk'
+          ? initialChunks
+          : splitPortableTranscript(
+              levelInput!.map((chunk, index) => `Summary ${index + 1}:\n${chunk}`).join('\n\n'),
+              maxChunkBytes
+            )
+      if (resume.inputHash !== sourceHash(source) || resume.completed.length > source.length) {
+        throw new Error('The context compactor checkpoint is internally inconsistent')
+      }
+      completed = [...resume.completed]
     }
-    checkActive()
-    return {
-      summary: chunks[0],
-      ...(hasUsage() ? { usage } : {}),
-      ...(hasCompleteCost() ? { runtimeEstimatedCostUsd } : {}),
-      calls,
+
+    for (;;) {
+      checkActive()
+      const output = await runLevel(source, phase, level, levelInput, completed)
+      if (output.length === 1) {
+        checkActive()
+        return {
+          summary: output[0],
+          ...(hasUsage() ? { usage } : {}),
+          ...(hasCompleteCost() ? { runtimeEstimatedCostUsd } : {}),
+          calls,
+        }
+      }
+      if (level >= 12) throw new Error('The context compactor did not converge')
+      phase = 'consolidate'
+      level += 1
+      levelInput = output
+      source = splitPortableTranscript(
+        output.map((chunk, index) => `Summary ${index + 1}:\n${chunk}`).join('\n\n'),
+        maxChunkBytes
+      )
+      completed = []
     }
   } catch (error) {
     const failure = summaryFailure(error)

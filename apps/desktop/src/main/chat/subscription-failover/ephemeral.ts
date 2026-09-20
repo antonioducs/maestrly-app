@@ -56,6 +56,8 @@ export interface CodexEphemeralAttemptUsage {
 
 export interface RunCodexEphemeralWithFailoverArgs<T> {
   logicalProviderId: string
+  /** Frozen helper identities can pin execution to one physical provider and disable silent failover. */
+  chain?: readonly string[]
   modelId: string
   /** Explicitly used by imagegen to select an available orchestrator model per account. */
   resolveModelId?: CodexRuntimeModelResolver
@@ -223,7 +225,7 @@ export function anyCodexFailoverAccountConnected(logicalProviderId: string, now 
  */
 export async function runCodexEphemeralWithFailover<T>(args: RunCodexEphemeralWithFailoverArgs<T>): Promise<T> {
   const scope: SubscriptionFailoverScope = args.scope ?? 'helper'
-  const chain = freezeFailoverChain(args.logicalProviderId)
+  const chain = args.chain ? [...args.chain] : freezeFailoverChain(args.logicalProviderId)
   if (chain.length === 0) {
     throw new CodexRuntimeUnavailableError('unavailable', DEFAULT_UNAVAILABLE_MESSAGE)
   }
@@ -332,9 +334,7 @@ export async function runCodexEphemeralWithFailover<T>(args: RunCodexEphemeralWi
         throw abortError(signal)
       }
       settle('success')
-      return args.mergeAttemptUsage && failedAttemptUsage
-        ? args.mergeAttemptUsage(result, failedAttemptUsage)
-        : result
+      return args.mergeAttemptUsage && failedAttemptUsage ? args.mergeAttemptUsage(result, failedAttemptUsage) : result
     } catch (error) {
       const partialUsage = args.extractAttemptUsage?.(error)
       if (partialUsage) {

@@ -651,14 +651,35 @@ describe('Codex subscription runner', () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
     try {
       writeFileSync(path.join(cwd, 'AGENTS.md'), 'PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
-      insertConversation({ id: 'standalone', scope: 'standalone', workspaceId: null, branch: null, mode: null,
-        experience: 'standard', cwd, name: 'Chat', status: 'idle', createdAt: 1,
-        archived: 0, pinnedAt: null, lastActivityAt: 1, isMulti: 0 })
+      insertConversation({
+        id: 'standalone',
+        scope: 'standalone',
+        workspaceId: null,
+        branch: null,
+        mode: null,
+        experience: 'standard',
+        cwd,
+        name: 'Chat',
+        status: 'idle',
+        createdAt: 1,
+        archived: 0,
+        pinnedAt: null,
+        lastActivityAt: 1,
+        isMulti: 0,
+      })
       persistUser('standalone', 'standalone-user', 'Help me think', 1)
       const client = new FakeCodexClient()
-      client.queueTurn({ turnId: 'standalone-turn', notifications: [completedNotification('thread_1', 'standalone-turn')] })
+      client.queueTurn({
+        turnId: 'standalone-turn',
+        notifications: [completedNotification('thread_1', 'standalone-turn')],
+      })
       await runCodexSubscriptionChat(runArgs('standalone', null, cwd, client))
-      const request = client.startThreadCalls[0] as { baseInstructions?: string; developerInstructions: string; config: Record<string, unknown>; environments: unknown[] }
+      const request = client.startThreadCalls[0] as {
+        baseInstructions?: string
+        developerInstructions: string
+        config: Record<string, unknown>
+        environments: unknown[]
+      }
       expect(request.baseInstructions).toBeUndefined()
       expect(request.developerInstructions).toContain('general assistant')
       expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
@@ -668,7 +689,9 @@ describe('Codex subscription runner', () => {
       expect(request.config['features.shell_tool']).toBe(false)
       expect(request.config['skills.include_instructions']).toBe(false)
       expect(request.environments).toEqual([])
-    } finally { rmSync(cwd, { recursive: true, force: true }) }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 
   it('stops before dispatch when the full input exceeds the Codex transport limit', async () => {
@@ -8423,6 +8446,119 @@ describe('Codex subscription runner', () => {
       const replayInput = (clientB.startTurnCalls[0] as { input: Array<{ text?: string }> }).input
       expect(replayInput[0]?.text).toContain('Summary of the previous state.')
       expect(replayInput[0]?.text).not.toContain(priorTranscript)
+    })
+
+    it('activates a prepared replay boundary without losing same-message or later suffix', async () => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_prepared_prior', 'Earlier request', 1)
+      const coveredText = 'covered state '.repeat(36_000)
+      const priorAssistant: ChatMessage = {
+        id: 'assistant_prepared_prior',
+        conversationId: conversation.id,
+        role: 'assistant',
+        createdAt: 2,
+        parts: [{ type: 'text', id: 'prepared-covered', text: coveredText }],
+      }
+      upsertChatMessage(priorAssistant)
+      persistUser(conversation.id, 'user_prepared_current', 'LATER_USER_MESSAGE', 3)
+
+      const clientA = new FakeCodexClient()
+      const clientB = new FakeCodexClient()
+      codexManagerBridge.setClient(clientA, null)
+      codexManagerBridge.setClient(clientB, 'acc_b')
+      clientA.queueTurn({
+        turnId: 'turn_prepared_primary',
+        notifications: [
+          {
+            method: 'item/completed',
+            params: {
+              threadId: 'thread_1',
+              turnId: 'turn_prepared_primary',
+              item: { id: 'prepared-current-closed', type: 'agentMessage', text: 'CURRENT_COVERED_PREFIX' },
+            },
+          },
+          {
+            method: 'item/agentMessage/delta',
+            params: {
+              threadId: 'thread_1',
+              turnId: 'turn_prepared_primary',
+              itemId: 'prepared-partial',
+              delta: 'CURRENT_ASSISTANT_SUFFIX',
+            },
+          },
+          completedNotification('thread_1', 'turn_prepared_primary', 'failed', 'UsageLimitExceeded: weekly'),
+        ],
+      })
+      clientB.queueTurn({
+        turnId: 'turn_prepared_fallback',
+        notifications: [completedNotification('thread_1', 'turn_prepared_fallback')],
+      })
+
+      const compactHistory = vi.fn(async () => {
+        const durableCurrent = assistantMessages(conversation.id).find((message) => message.id !== priorAssistant.id)
+        if (!durableCurrent) throw new Error('current assistant was not durable before prepared compaction')
+        upsertChatMessage({
+          ...durableCurrent,
+          parts: [
+            durableCurrent.parts[0],
+            {
+              type: 'compaction',
+              id: 'prepared-marker',
+              text: 'PREPARED_SUMMARY',
+              strategy: 'summary',
+            },
+            ...durableCurrent.parts.slice(1),
+          ],
+        })
+        persistUser(conversation.id, 'user_prepared_steering', 'LATER_STEERING_MESSAGE', 4)
+        return {
+          summary: 'PREPARED_SUMMARY',
+          prepared: {
+            messageId: durableCurrent.id,
+            afterPartId: 'prepared-current-closed',
+            partId: 'prepared-marker',
+          },
+        }
+      })
+      const emitted: ChatStreamEvent[] = []
+      const run = runArgs(conversation.id, workspace.id, conversation.cwd, clientA, (event) => emitted.push(event))
+      run.contextWindow = 1_000_000
+      run.compactHistory = compactHistory
+      run.failoverChain = [PRIMARY, FALLBACK]
+      run.resolveNextTarget = vi.fn(async () => failoverTarget(clientB, FALLBACK, 'acc_b', 100_000))
+
+      await runCodexSubscriptionChat(run)
+
+      const replayInput = (clientB.startTurnCalls[0] as { input: Array<{ text?: string }> }).input[0]?.text ?? ''
+      expect(replayInput).toContain('PREPARED_SUMMARY')
+      expect(replayInput).toContain('CURRENT_ASSISTANT_SUFFIX')
+      expect(replayInput).toContain('LATER_STEERING_MESSAGE')
+      expect(replayInput).not.toContain(coveredText)
+      expect(replayInput).not.toContain('CURRENT_COVERED_PREFIX')
+      expect(replayInput.indexOf('PREPARED_SUMMARY')).toBeLessThan(replayInput.indexOf('CURRENT_ASSISTANT_SUFFIX'))
+      expect(replayInput.indexOf('CURRENT_ASSISTANT_SUFFIX')).toBeLessThan(
+        replayInput.indexOf('LATER_STEERING_MESSAGE')
+      )
+      expect(emitted.find((event) => event.kind === 'compaction')).toMatchObject({
+        partId: 'prepared-marker',
+        afterPartId: 'prepared-current-closed',
+      })
+
+      const messages = listChatMessages(conversation.id)
+      const markers = messages.flatMap((message) =>
+        message.parts.filter((part) => part.type === 'compaction' && part.strategy === 'summary')
+      )
+      expect(markers).toHaveLength(1)
+      const preparedMessage = messages.find((message) =>
+        message.parts.some((part) => part.type === 'compaction' && part.id === 'prepared-marker')
+      )
+      expect(preparedMessage?.parts.map((part) => part.id)).toEqual([
+        'prepared-current-closed',
+        'prepared-marker',
+        'prepared-partial',
+      ])
+      expect(preparedMessage?.parts.at(-1)).toMatchObject({ text: 'CURRENT_ASSISTANT_SUFFIX' })
     })
 
     it('compacts the original seed without output before starting the smaller fallback', async () => {

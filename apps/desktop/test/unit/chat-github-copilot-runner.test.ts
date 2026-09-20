@@ -166,6 +166,62 @@ describe('GitHub Copilot official runner', () => {
     rmSync(cwd, { recursive: true, force: true })
   })
 
+  it('notifies durable prefixes during an ongoing response without awaiting callback failures', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    persistUser(conversation.id, 'user-prefix', 'Inspect the repository', 1)
+    const manager = new FakeManager()
+    const boundaries: Array<{ messageId: string; partId: string; durablePartId: string | undefined }> = []
+    const onBackgroundCompactionPrefix = vi.fn((boundary: { messageId: string; partId: string }) => {
+      const durable = assistantMessages(conversation.id).find((message) => message.id === boundary.messageId)
+      boundaries.push({
+        ...boundary,
+        durablePartId: durable?.parts.find((part) => part.id === boundary.partId)?.id,
+      })
+      if (boundary.partId === 'tool-prefix') throw new Error('background callback failed')
+    })
+
+    manager.queue(async (onEvent) => {
+      onEvent(event('assistant.message_delta', { messageId: 'answer-prefix', deltaContent: 'Closed text.' }))
+      await Promise.resolve()
+      expect(boundaries).toEqual([])
+
+      onEvent(event('assistant.message', { messageId: 'answer-prefix', content: 'Closed text.' }))
+      await Promise.resolve()
+      expect(boundaries.map((boundary) => boundary.partId)).toEqual(['copilot_text_answer-prefix'])
+
+      onEvent(
+        event('tool.execution_start', {
+          toolCallId: 'tool-prefix',
+          toolName: 'read_file',
+          arguments: { path: 'src/index.ts' },
+        })
+      )
+      await Promise.resolve()
+      expect(boundaries.map((boundary) => boundary.partId)).toEqual(['copilot_text_answer-prefix'])
+
+      onEvent(
+        event('tool.execution_complete', {
+          toolCallId: 'tool-prefix',
+          success: true,
+          result: { content: 'done' },
+        })
+      )
+      await Promise.resolve()
+      expect(boundaries.map((boundary) => boundary.partId)).toEqual(['copilot_text_answer-prefix', 'tool-prefix'])
+    })
+
+    await expect(
+      runGitHubCopilotChat({
+        ...args(conversation.id, workspace.id, cwd, manager),
+        onBackgroundCompactionPrefix,
+      })
+    ).resolves.toMatchObject({ planSubmitted: false })
+
+    expect(boundaries.every((boundary) => boundary.durablePartId === boundary.partId)).toBe(true)
+    expect(assistantMessages(conversation.id)[0].finishReason).toBe('stop')
+  })
+
   it('preserves full transferred history and tool output in the native request', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })

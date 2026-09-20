@@ -60,6 +60,7 @@ import { ChatGptWebSettings } from './ChatGptWebSettings'
 import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
 import { supportsSubscriptionUsage } from './subscription-usage-presentation'
 import { MaestroSettings } from './MaestroSettings'
+import { BackgroundCompactionSettings } from './BackgroundCompactionSettings'
 
 const inputCls =
   'rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60'
@@ -1587,6 +1588,7 @@ export function ApiKeySettings() {
         {config.providers.some(isChatProviderConnected) && (
           <ImageInterpreterPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
         )}
+        <BackgroundCompactionSettings config={config} catalogRevision={modelFilterRevision} onChanged={refresh} />
         <SubagentProfilesSettings config={config} />
       </div>
       <div

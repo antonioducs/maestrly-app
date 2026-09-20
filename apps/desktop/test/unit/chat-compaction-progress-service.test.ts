@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BackgroundCompactionStore } from '../../src/main/chat/background-compaction/store'
 import type { ChatCompactionProgress, ChatStreamEvent } from '../../src/shared/chat'
 
 const h = vi.hoisted(() => ({
@@ -33,19 +34,22 @@ vi.mock('../../src/main/chat/provider', async (original) => ({
 vi.mock('../../src/main/chat/credentials', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/credentials')>()),
   hasApiKey: () => true,
+  getApiKey: () => 'synthetic-key',
 }))
 vi.mock('../../src/main/window-ipc', () => ({ getMainWebContents: () => h.webContents }))
 vi.mock('../../src/main/chat/model-meta', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/model-meta')>()),
-  getProviderModelMeta: async () => ({
-    contextWindow: 20_000,
+  getProviderModelMeta: async (id: string) => ({
+    contextWindow:
+      id === 'large-model' ? 1_000_000 : ['background-helper', 'small-model'].includes(id) ? 200_000 : 20_000,
     reasoning: true,
     reasoningEfforts: ['low', 'high', 'max'],
   }),
 }))
 vi.mock('../../src/main/chat/models', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/models')>()),
-  fetchModelWindow: async () => 20_000,
+  fetchModelWindow: async (_provider: string, id: string) =>
+    id === 'large-model' ? 1_000_000 : ['background-helper', 'small-model'].includes(id) ? 200_000 : 20_000,
 }))
 vi.mock('../../src/main/chat/portable-summarizer', async (original) => ({
   ...(await original<typeof import('../../src/main/chat/portable-summarizer')>()),
@@ -210,6 +214,101 @@ describe('service-owned compaction progress', () => {
       snapshot: { quality: 'estimated' },
     })
     expect(getConvUiPrefs(conversationId)).toEqual(beforePrefs)
+  })
+
+  it('prepares only on use, then consumes at the covered part without inference on send', async () => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    registerChatIpc({
+      mhandle: (channel, handler) => {
+        handlers.set(channel, handler)
+      },
+      mon: vi.fn(),
+      emitStatus: vi.fn(),
+    })
+    upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
+    await expect(
+      handlers.get('chat:background-compaction:set')!({ sender: wc } as never, {
+        enabled: true,
+        intervalTokens: 10_000,
+        selection: { providerId: model.providerId, modelId: 'background-helper', effort: 'off', fastMode: false },
+      })
+    ).resolves.toEqual({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(h.generateText).not.toHaveBeenCalled()
+    chatRuntimeState(conversationId)
+    await vi.waitFor(() => expect(chatRuntimeState(conversationId).backgroundCompaction?.status).toBe('ready'))
+    expect(
+      listChatMessages(conversationId).some((message) => message.parts.some((part) => part.type === 'compaction'))
+    ).toBe(false)
+    const calls = h.generateText.mock.calls.length
+    await expect(
+      handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    ).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(chatRuntimeState(conversationId).streaming).toBe(false))
+    expect(h.generateText).toHaveBeenCalledTimes(calls)
+    const messages = listChatMessages(conversationId)
+    expect(messages.flatMap((message) => message.parts).filter((part) => part.type === 'compaction')).toEqual([
+      expect.objectContaining({ text: 'Complete portable summary' }),
+    ])
+    expect(messages.flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: 'Pending task' })])
+    )
+    expect(chatRuntimeState(conversationId).backgroundCompaction).toMatchObject({ status: 'idle' })
+    expect(h.runChat).toHaveBeenCalledOnce()
+  })
+
+  it('switches an 800k conversation from a 1M model to 200k using prepared context without another model call', async () => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    registerChatIpc({
+      mhandle: (channel, handler) => {
+        handlers.set(channel, handler)
+      },
+      mon: vi.fn(),
+      emitStatus: vi.fn(),
+    })
+    patchConvUiPrefs(conversationId, { chat: { ...model, modelId: 'large-model', reasoning: 'off', fastMode: false } })
+    upsertChatMessage({
+      ...getChatMessage(conversationId, 'user')!,
+      parts: [{ type: 'text', id: 'user-text', text: 'Original request' }],
+    })
+    upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
+    for (let index = 0; index < 8; index++)
+      upsertChatMessage({
+        id: `block-${index}`,
+        conversationId,
+        role: 'assistant',
+        model: { ...model, modelId: 'large-model' },
+        createdAt: index + 3,
+        finishReason: 'stop',
+        parts: [{ type: 'text', id: `block-part-${index}`, text: 'x'.repeat(300_000) }],
+      })
+    await handlers.get('chat:background-compaction:set')!({ sender: wc } as never, {
+      enabled: true,
+      intervalTokens: 100_000,
+      selection: { providerId: model.providerId, modelId: 'background-helper', effort: 'off', fastMode: false },
+    })
+    chatRuntimeState(conversationId)
+    await vi.waitFor(
+      () => expect(new BackgroundCompactionStore().get(conversationId)?.ready?.boundary.messageId).toBe('block-7'),
+      { timeout: 5000 }
+    )
+    const calls = h.generateText.mock.calls.length
+    await handlers.get('chat:set-selection')!({ sender: wc } as never, conversationId, {
+      ...model,
+      modelId: 'small-model',
+    })
+    await expect(
+      handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Continue in smaller model' })
+    ).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(chatRuntimeState(conversationId).streaming).toBe(false))
+    expect(h.generateText).toHaveBeenCalledTimes(calls)
+    expect(new BackgroundCompactionStore().get(conversationId)?.ready).toBeNull()
+    expect(listChatMessages(conversationId).flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'compaction', text: 'Complete portable summary' }),
+        expect.objectContaining({ text: 'Continue in smaller model' }),
+      ])
+    )
   })
 
   it('keeps the last real observation when a manual compaction fails', async () => {

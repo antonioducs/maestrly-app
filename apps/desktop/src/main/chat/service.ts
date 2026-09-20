@@ -203,11 +203,13 @@ import {
   listConversationContextMessages,
   listExecutionContextMessages,
   listPublicChatMessagesPage,
+  recordChatUsageAttempt,
   reconcileInterruptedExecutionMessages,
   searchChatMessages,
   toPublicChatHistoryStats,
   upsertChatMessage,
   type StoredChatHistoryStats,
+  type StoredChatMessage,
 } from './chat-store'
 import { readGeneratedImage } from './generated-images'
 import {
@@ -389,6 +391,7 @@ import {
   preflightContextLoad,
   summarizePortableTranscript,
   type PortableSummaryProgress,
+  type PortableSummaryCheckpoint,
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { invalidateUnifiedUsageCache } from '../usage/usage-service'
@@ -407,6 +410,15 @@ import {
   setImageInterpreter,
 } from './image-interpreter'
 import { recordIpcSend } from '../performance/metrics'
+import {
+  previewPreparedActivation,
+  commitPreparedActivation,
+  type PreparedMarker,
+} from './background-compaction/activation'
+import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '../../shared/subagent-profile-effort'
+import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from '../../shared/background-compaction'
+import { ChatBackgroundCompactionCoordinator, parseBackgroundCompactionConfig } from './background-compaction'
+import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
 
 type SafeSend = (channel: string, payload: unknown) => void
 
@@ -866,6 +878,7 @@ const CHAT_DEFAULT_PROVIDER_KEY = 'chat.defaultProvider'
 const CHAT_DEFAULT_MODEL_KEY = 'chat.defaultModel'
 const CHAT_DEFAULT_REASONING_KEY = 'chat.defaultReasoning'
 const CHAT_DEFAULT_FAST_MODE_KEY = 'chat.defaultFastMode'
+const CHAT_BACKGROUND_COMPACTION_KEY = 'chat.backgroundCompaction'
 const CODEX_ACCOUNT_FINGERPRINT_KEY = 'chat.codexSubscription.accountFingerprint'
 const AUTO_COMPACT_RATIO = 0.9
 let codexLoginPending = false
@@ -1936,11 +1949,22 @@ function scheduleSubscriptionAccountConfigRefresh(providerId: string, accountId:
     .finally(() => subscriptionAccountConfigRefreshes.delete(accountId))
 }
 
+function backgroundCompactionConfig(): BackgroundCompactionConfig | undefined {
+  const stored = getAppSetting(CHAT_BACKGROUND_COMPACTION_KEY)
+  if (!stored) return undefined
+  try {
+    return parseBackgroundCompactionConfig(JSON.parse(stored)) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
   const claudeStatus = claudeAuthSnapshot()
   const grokStatus = grokAuthSnapshot()
+  const backgroundCompaction = backgroundCompactionConfig()
   const config: ChatConfig = {
     providers: listAvailableChatProviders().map((p) => ({
       id: p.id,
@@ -1997,6 +2021,7 @@ function buildConfig(): ChatConfig {
     defaultSelection: defaultSelection(),
     defaultReasoning: defaultReasoningEffort(),
     defaultFastMode: getAppFlag(CHAT_DEFAULT_FAST_MODE_KEY, false),
+    ...(backgroundCompaction ? { backgroundCompaction } : {}),
     imageInterpreter: getImageInterpreter(),
     subscriptionFailover: {
       supportedKinds: [...SUPPORTED_FAILOVER_KINDS],
@@ -2304,10 +2329,12 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
 
 /** Minimal live snapshot for a remounted ChatView; history still comes from chat-store. */
 export function chatRuntimeState(conversationId: string): ChatRuntimeState {
+  void maybeScheduleBackgroundCompaction(conversationId)
   const run = active.get(conversationId)
   return {
     streaming: active.has(conversationId) || pendingConversationOperations.has(conversationId),
     compacting: pendingConversationOperations.get(conversationId)?.compacting === true,
+    backgroundCompaction: backgroundCompactionStatus(conversationId),
     pendingPermissions: getBroker()
       .pendingFor(conversationId)
       .map((request) => toRequestPayload(request).request),
@@ -3019,6 +3046,26 @@ async function preflightContext(
     ) > CODEX_TRANSFER_MAX_CHARACTERS
   if (!load.shouldCompact && !exceedsTransport(source)) return { ok: true, compacted: false }
 
+  // Preparation is speculative and never delays ordinary turns. Only consume a ready candidate when this
+  // destination actually needs compaction and its summary plus the complete append-only suffix fits.
+  try {
+    const activated = await activateBackgroundCompactionCandidate(conversationId, selection, pendingParts, window)
+    if (activated) {
+      const activatedProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
+        .contextProjection
+      const activatedTokens = activatedProjection?.usedTokens ?? 0
+      const activatedSource = activatedProjection?.source ?? 'portable-transcript'
+      if (
+        !preflightContextLoad(window, activatedTokens, pending, activatedSource, AUTO_COMPACT_RATIO).overflow &&
+        !exceedsTransport(activatedSource)
+      ) {
+        return { ok: true, compacted: true }
+      }
+    }
+  } catch {
+    // A stale/unavailable candidate is invisible to foreground chat; normal compaction remains the fallback.
+  }
+
   const compacted = await compactReserved(conversationId, {
     allowActive: true,
     signal,
@@ -3378,12 +3425,14 @@ async function startSend(
   if (conv.scope === 'standalone') {
     try {
       const directory = await ensureStandaloneConversationDirectory(conv)
-      if (directory.recreated) return {
-        ok: false,
-        error: getLocale() === 'pt-BR'
-          ? 'A pasta deste chat estava ausente e foi recriada. O histórico foi preservado, mas os arquivos anteriores podem estar ausentes. Envie a mensagem novamente para continuar.'
-          : 'This chat folder was missing and has been recreated. History is preserved, but previous files may be missing. Send the message again to continue.',
-      }
+      if (directory.recreated)
+        return {
+          ok: false,
+          error:
+            getLocale() === 'pt-BR'
+              ? 'A pasta deste chat estava ausente e foi recriada. O histórico foi preservado, mas os arquivos anteriores podem estar ausentes. Envie a mensagem novamente para continuar.'
+              : 'This chat folder was missing and has been recreated. History is preserved, but previous files may be missing. Send the message again to continue.',
+        }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
@@ -4333,8 +4382,12 @@ async function startSend(
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
-    if (conv.scope === 'standalone' && !opts?.internal && !reviewLoopMessageMeta &&
-      nameStandaloneConversationFromText(conversationId, text)) {
+    if (
+      conv.scope === 'standalone' &&
+      !opts?.internal &&
+      !reviewLoopMessageMeta &&
+      nameStandaloneConversationFromText(conversationId, text)
+    ) {
       send('conversation:open', { conversation: getConversation(conversationId), focus: false })
     }
     if (!useOfficialSubscription) {
@@ -4445,11 +4498,27 @@ async function startSend(
             : 'openai',
       admittedBehaviorResolvedModelId
     )
-    const compactActiveHistory = (
+    const compactActiveHistory = async (
       claudeTarget?: ClaudeRuntimeTarget,
       onProgress?: (progress: PortableSummaryProgress) => void
-    ) =>
-      compact(conversationId, {
+    ): Promise<{
+      summary: string
+      usage?: NormalizedAiUsage
+      runtimeEstimatedCostUsd?: number
+      prepared?: PreparedMarker
+    } | null> => {
+      const window = claudeTarget?.contextWindow
+        ? Math.min(turnContextWindow ?? claudeTarget.contextWindow, claudeTarget.contextWindow)
+        : turnContextWindow
+      if (!isolated && selection && window && !controller.signal.aborted) {
+        try {
+          const prepared = await activateBackgroundCompactionCandidate(conversationId, selection, [], window)
+          if (prepared) return prepared
+        } catch {
+          // An unusable speculative candidate falls through to the existing required compactor.
+        }
+      }
+      return compact(conversationId, {
         allowActive: true,
         signal: controller.signal,
         persist: false,
@@ -4476,6 +4545,7 @@ async function startSend(
             runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
           })
         }
+        if (result.ok && result.summary && !isolated) backgroundCoordinator?.manualCompaction(conversationId)
         return result.ok && result.summary
           ? {
               summary: result.summary,
@@ -4487,7 +4557,16 @@ async function startSend(
             }
           : null
       })
+    }
 
+    const backgroundPrefixHook = !isolated
+      ? {
+          onBackgroundCompactionPrefix: (boundary: { messageId: string; partId: string }) => {
+            if (controller.signal.aborted) return
+            void maybeScheduleBackgroundCompaction(conversationId, boundary, turnContextWindow)
+          },
+        }
+      : {}
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
     if (useCodexSubscription && isolated) {
@@ -4570,6 +4649,7 @@ async function startSend(
           broker: getBroker(),
           questionBroker: getQuestionBroker(),
           emit,
+          ...backgroundPrefixHook,
           signal: controller.signal,
           ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
@@ -4670,6 +4750,7 @@ async function startSend(
           broker: getBroker(),
           questionBroker: getQuestionBroker(),
           emit,
+          ...backgroundPrefixHook,
           signal: controller.signal,
           ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
@@ -4831,6 +4912,7 @@ async function startSend(
           broker: getBroker(),
           questionBroker: getQuestionBroker(),
           emit,
+          ...backgroundPrefixHook,
           signal: controller.signal,
           ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
@@ -4989,6 +5071,7 @@ async function startSend(
           broker: getBroker(),
           questionBroker: getQuestionBroker(),
           emit,
+          ...backgroundPrefixHook,
           signal: controller.signal,
           ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
           responseStartedAt,
@@ -5083,6 +5166,7 @@ async function startSend(
           broker: getBroker(),
           questionBroker: getQuestionBroker(),
           emit,
+          ...backgroundPrefixHook,
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
@@ -5124,6 +5208,7 @@ async function startSend(
         broker: getBroker(),
         questionBroker: getQuestionBroker(),
         emit,
+        ...backgroundPrefixHook,
         signal: controller.signal,
         behaviorOverride: turnBehavior,
         ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
@@ -5307,6 +5392,7 @@ async function startSend(
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
         releaseCwdActivityOnce()
+        if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         const guard = maestroGuardContinuation
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
@@ -5472,6 +5558,7 @@ function reportDecisionTurnFailure(conversationId: string, r: { ok: boolean; err
 
 function stop(conversationId: string): void {
   releasePlanRevision(conversationId, 'maestrly-chat')
+  cancelBackgroundJob(conversationId, true)
   const run = active.get(conversationId)
   if (run) {
     run.maestroLive?.cancelPending()
@@ -6213,6 +6300,21 @@ interface CompactOpts {
   skipRetireBinding?: boolean
   /** Service metadata ownership must still match before committing the summary. */
   assertCurrent?: () => void
+  /** Immutable completed prefix selected by background preparation. */
+  historyOverride?: readonly StoredChatMessage[]
+  summaryMaxTokens?: number
+  summaryStepTimeoutMs?: number
+  summaryRetryDelayMs?: number
+  summaryAttemptId?: () => string
+  summaryResume?: PortableSummaryCheckpoint
+  onSummaryCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
+  beforeSummaryDispatch?: (signal?: AbortSignal) => Promise<void>
+  onSummaryAttempt?: (attempt: {
+    id: string
+    usage?: NormalizedAiUsage
+    runtimeEstimatedCostUsd?: number
+    error?: unknown
+  }) => void
 }
 
 interface CompactResult {
@@ -6524,10 +6626,15 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     if (!resolution.ok) return { ok: false, error: 'executor-unavailable' }
     compactHarness = resolution.harness
   }
-  const compactSystem = conv.scope === 'standalone' ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.` : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
-  const history = opts.executionId
-    ? listExecutionContextMessages(conversationId, opts.executionId)
-    : listConversationContextMessages(conversationId)
+  const compactSystem =
+    conv.scope === 'standalone'
+      ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
+      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
+  const history = opts.historyOverride
+    ? [...opts.historyOverride]
+    : opts.executionId
+      ? listExecutionContextMessages(conversationId, opts.executionId)
+      : listConversationContextMessages(conversationId)
   // Meter/progress observations do not change the transcript being summarized. All other
   // message fields still participate so edits, new turns, and model changes reject the commit.
   const historyIdentity = (messages: typeof history) =>
@@ -6574,12 +6681,27 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       includeSkillBodies: true,
     })
     if (!transcript) return { ok: false, error: 'too-short' }
-    const maxChunkChars = contextWindow
-      ? Math.max(
-          24_000,
-          Math.min(400_000, Math.floor((contextWindow - portableContextReserveTokens(contextWindow)) * 2))
-        )
-      : 240_000
+    if (opts.summaryMaxTokens && !contextWindow) throw new Error('summarizer-context-window-unknown')
+    const backgroundInputBudget = contextWindow
+      ? contextWindow -
+        portableContextReserveTokens(contextWindow) -
+        estimateTextTokens(compactSystem) -
+        (opts.summaryMaxTokens ?? 0) -
+        512
+      : 0
+    if (opts.summaryMaxTokens && backgroundInputBudget < 1_000) {
+      throw new Error('summarizer-context-window-too-small')
+    }
+    // The chunker enforces UTF-8 bytes, matching the portable bytes/3 estimator.
+    // The budget above also reserves the system prompt, labels and the maximum output.
+    const maxChunkChars = opts.summaryMaxTokens
+      ? Math.min(400_000, Math.floor(backgroundInputBudget * 3))
+      : contextWindow
+        ? Math.max(
+            24_000,
+            Math.min(400_000, Math.floor((contextWindow - portableContextReserveTokens(contextWindow)) * 2))
+          )
+        : 240_000
 
     let summarize: Parameters<typeof summarizePortableTranscript>[2]
     if (isCodexSubscriptionProvider(selection.providerId)) {
@@ -6587,6 +6709,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       summarize = (prompt, _phase, stageSignal = compactSignal) =>
         runCodexEphemeralWithFailover({
           logicalProviderId: selection.providerId,
+          ...(frozen ? { chain: [selection.providerId] } : {}),
           modelId: selection.modelId,
           signal: stageSignal,
           scope: 'helper',
@@ -6745,7 +6868,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         })
         if (resolved.ok) compactReasoningEffort = resolved.reasoningEffort
       }
-      summarize = (prompt) =>
+      summarize = (prompt, _phase, stageSignal = compactSignal) =>
         summarizeWithCursorRuntime({
           manager,
           accountIdentity: frozen
@@ -6758,7 +6881,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           modelId: selection.modelId,
           system: COMPACT_SYSTEM,
           prompt,
-          signal: compactSignal,
+          signal: stageSignal,
           fastMode: compactFastMode,
           ...(compactReasoningEffort ? { reasoningEffort: compactReasoningEffort } : {}),
           ...(frozen?.cursorModelSelection ? { frozenModelSelection: frozen.cursorModelSelection } : {}),
@@ -6794,15 +6917,53 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           system: compactSystem,
           prompt,
           abortSignal: stageSignal,
+          ...(opts.summaryMaxTokens ? { maxOutputTokens: opts.summaryMaxTokens } : {}),
           ...(frozenFastModeOptions ? { providerOptions: frozenFastModeOptions } : {}),
         })
         return { text: result.text ?? '', usage: normalizeAiUsage(result.totalUsage) }
       }
     }
 
+    if (opts.onSummaryAttempt) {
+      const rawSummarize = summarize
+      summarize = async (prompt, phase, stageSignal) => {
+        await opts.beforeSummaryDispatch?.(stageSignal)
+        const attemptId = opts.summaryAttemptId?.() ?? randomUUID()
+        try {
+          if (frozen) {
+            const checked = await revalidateReviewLoopSelection(frozen)
+            if (!checked.ok) throw new Error(checked.error)
+          }
+          const result = await rawSummarize(prompt, phase, stageSignal)
+          opts.onSummaryAttempt?.({
+            id: attemptId,
+            usage: result.usage,
+            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+          })
+          if (frozen) {
+            const checked = await revalidateReviewLoopSelection(frozen)
+            if (!checked.ok) throw new Error(checked.error)
+          }
+          return result
+        } catch (error) {
+          opts.onSummaryAttempt?.({
+            id: attemptId,
+            error,
+            usage: extractIsolatedSummaryAttemptUsage(error),
+            runtimeEstimatedCostUsd: (error as { runtimeEstimatedCostUsd?: number } | null)?.runtimeEstimatedCostUsd,
+          })
+          throw error
+        }
+      }
+    }
     const compacted = await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
       signal: compactSignal,
       onProgress: opts.onProgress,
+      ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
+      ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
+      ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
+      ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
+      ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
     })
     const summary = compacted.summary
     const usage = compacted.usage
@@ -6840,6 +7001,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         assertHistoryUnchanged()
         upsertChatMessage(marker)
       })
+      backgroundCoordinator?.manualCompaction(conversationId)
     }
     return {
       ok: true,
@@ -6867,6 +7029,320 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         : {}),
     }
   }
+}
+
+let backgroundCoordinator: ChatBackgroundCompactionCoordinator | null = null
+const backgroundAttemptOwners = new Map<string, string>()
+const backgroundProviderCooldown = new Map<string, number>()
+const backgroundNotificationEpochs = new Map<string, number>()
+
+function publishBackgroundCompactionStatus(conversationId: string, state: BackgroundCompactionStatus): void {
+  const event: ChatStreamEvent = { kind: 'background-compaction', state }
+  const channel = `chat:delta:${conversationId}`
+  const wc = getMainWebContents()
+  if (wc) sendChatEvent(wc, channel, event)
+  else emitChatHost(conversationId, channel, event)
+}
+
+function backgroundIdentityCurrent(frozen: FrozenChatSelection): boolean {
+  try {
+    const account = subscriptionAccountId(frozen.providerId)
+    if (isCodexSubscriptionProvider(frozen.providerId)) {
+      const status = getCodexSubscriptionManager(account).getStatusSnapshot()
+      return Boolean(
+        status?.authenticated &&
+          codexAccountFingerprint(toCodexAuthStatus(status, account)) === frozen.identityFingerprint &&
+          (account || frozen.identityEpoch == null || frozen.identityEpoch === codexAccountUpdateEpoch)
+      )
+    }
+    if (isClaudeSubscriptionProvider(frozen.providerId)) {
+      const status = getClaudeSubscriptionManager(account).getStatusSnapshot()
+      return Boolean(
+        status?.authenticated &&
+          status.accountFingerprint === frozen.identityFingerprint &&
+          (frozen.identityEpoch == null || status.accountEpoch === frozen.identityEpoch)
+      )
+    }
+    const manager = isGitHubCopilotSubscriptionProvider(frozen.providerId)
+      ? getGitHubCopilotSubscriptionManager(account)
+      : isCursorSubscriptionProvider(frozen.providerId)
+        ? getCursorSubscriptionManager(account)
+        : isGrokSubscriptionProvider(frozen.providerId)
+          ? getGrokSubscriptionManager(account)
+          : null
+    if (manager) {
+      const identity = manager.getAccountIdentity()
+      return Boolean(
+        identity.fingerprint &&
+          identity.fingerprint === frozen.identityFingerprint &&
+          (frozen.identityEpoch == null || identity.epoch === frozen.identityEpoch)
+      )
+    }
+    return (
+      hasApiKey(frozen.providerId) &&
+      resolveChatModel(frozen.providerId, frozen.modelId).providerFingerprint === frozen.providerFingerprint
+    )
+  } catch {
+    return false
+  }
+}
+
+async function waitForBackgroundDispatch(providerId: string, signal?: AbortSignal): Promise<void> {
+  while (pendingConversationOperations.size > 0 || (backgroundProviderCooldown.get(providerId) ?? 0) > Date.now()) {
+    signal?.throwIfAborted()
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        clearTimeout(timer)
+        reject(signal?.reason)
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', abort)
+        resolve()
+      }, 100)
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) {
+        signal.removeEventListener('abort', abort)
+        abort()
+      }
+    })
+  }
+  backgroundProviderCooldown.delete(providerId)
+  signal?.throwIfAborted()
+}
+
+function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
+  return (backgroundCoordinator ??= new ChatBackgroundCompactionCoordinator({
+    getConfig: () => backgroundCompactionConfig() ?? { enabled: false, intervalTokens: 100_000, selection: null },
+    getConversation: (id) => {
+      const conv = getConversation(id)
+      return conv ? { id, archived: Boolean(conv.archived) } : null
+    },
+    getMessages: listConversationContextMessages,
+    resolveSelection: async (id, profile, signal) => {
+      const result = await resolveReviewLoopSelection(id, profile)
+      signal.throwIfAborted()
+      if (!result.ok) return null
+      const { meta } = await effectiveModelMeta(profile.modelId, profile.providerId, signal)
+      signal.throwIfAborted()
+      return meta?.contextWindow ? { selection: result.selection, contextWindow: meta.contextWindow } : null
+    },
+    revalidate: backgroundIdentityCurrent,
+    summarize: async (input) => {
+      const attempts = new Map<string, BackgroundCompactionAttemptHandle>()
+      const result = await compactReservedWork(input.conversationId, {
+        allowActive: true,
+        persist: false,
+        skipRetireBinding: true,
+        selectionOverride: input.selection,
+        historyOverride: input.history,
+        contextWindow: input.contextWindow,
+        signal: input.signal,
+        summaryMaxTokens: input.maxSummaryTokens,
+        summaryStepTimeoutMs: 180_000,
+        summaryRetryDelayMs: 30_000,
+        summaryResume: input.resume,
+        onSummaryCheckpoint: input.onCheckpoint,
+        beforeSummaryDispatch: (signal) => waitForBackgroundDispatch(input.selection.providerId, signal),
+        summaryAttemptId: () => {
+          const attempt = input.onAttempt()
+          attempts.set(attempt.id, attempt)
+          backgroundAttemptOwners.set(attempt.id, input.conversationId)
+          return attempt.id
+        },
+        onSummaryAttempt: (attempt) => {
+          const handle = attempts.get(attempt.id)
+          attempts.delete(attempt.id)
+          handle?.settle({
+            outcome: attempt.error ? 'error' : 'success',
+            usage: attempt.usage,
+            runtimeEstimatedCostUsd: attempt.runtimeEstimatedCostUsd,
+            error: attempt.error,
+          })
+        },
+      })
+      if (!result.ok || !result.summary) throw new Error(result.error ?? 'Background summarizer returned no summary')
+      return { summary: result.summary }
+    },
+    recordAttempt: (id, model, attempt) => {
+      const conversationId = backgroundAttemptOwners.get(id)
+      backgroundAttemptOwners.delete(id)
+      const error = attempt.error as { status?: number; statusCode?: number; message?: string } | undefined
+      if (
+        error &&
+        (Number(error.statusCode ?? error.status) === 429 || /quota|rate.?limit|overloaded/i.test(error.message ?? ''))
+      ) {
+        backgroundProviderCooldown.set(model.providerId, Date.now() + 30_000)
+      }
+      if (!conversationId || (!attempt.usage && attempt.runtimeEstimatedCostUsd == null)) return
+      const billedModel = { providerId: model.providerId, modelId: model.resolvedModelId ?? model.modelId }
+      recordChatUsageAttempt({
+        id,
+        conversationId,
+        model: billedModel,
+        usage: attempt.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+        runtimeEstimatedCostUsd: attempt.runtimeEstimatedCostUsd,
+      })
+      chatDiag({
+        kind: 'background-compaction-attempt',
+        conv: conversationId,
+        ...billedModel,
+        usage: attempt.usage,
+        runtimeEstimatedCostUsd: attempt.runtimeEstimatedCostUsd,
+      })
+      invalidateUnifiedUsageCache()
+    },
+    publish: publishBackgroundCompactionStatus,
+    diagnostic: (entry) => chatDiag({ ...entry, kind: `background-compaction-${entry.kind}` }),
+  }))
+}
+
+function backgroundCompactionStatus(conversationId: string): BackgroundCompactionStatus {
+  try {
+    return getBackgroundCoordinator().status(conversationId)
+  } catch {
+    return { revision: 0, status: 'idle' }
+  }
+}
+
+function cancelBackgroundJob(conversationId: string, pause: boolean): void {
+  backgroundNotificationEpochs.set(conversationId, (backgroundNotificationEpochs.get(conversationId) ?? 0) + 1)
+  if (!backgroundCoordinator) return
+  if (pause) backgroundCoordinator.stop(conversationId)
+  else backgroundCoordinator.invalidate(conversationId)
+}
+
+async function maybeScheduleBackgroundCompaction(
+  conversationId: string,
+  boundary?: { messageId: string; partId: string },
+  contextWindow?: number
+): Promise<void> {
+  if (chatDisposePromise || !backgroundCompactionConfig()?.enabled || lookupReviewLoopByConversation(conversationId)) return
+  if (active.has(conversationId) && !boundary) return
+  const epoch = backgroundNotificationEpochs.get(conversationId) ?? 0
+  try {
+    const selection = selectionFor(conversationId)
+    const knownWindow =
+      contextWindow ??
+      (selection ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow : undefined)
+    // Unknown conversation metadata does not prevent preparation; admission still uses its own real limit.
+    const window = knownWindow ?? Math.min(backgroundCompactionConfig()?.intervalTokens ?? 100_000, 1_000_000_000) * 2
+    if (
+      !window ||
+      !getConversation(conversationId) ||
+      epoch !== (backgroundNotificationEpochs.get(conversationId) ?? 0)
+    )
+      return
+    getBackgroundCoordinator().notify(conversationId, { conversationWindow: window, ...(boundary ? { boundary } : {}) })
+  } catch {
+    // Missing provider metadata never makes a foreground send fail.
+  }
+}
+
+async function activateBackgroundCompactionCandidate(
+  conversationId: string,
+  destination: ChatModelRef,
+  pendingParts: readonly MessagePart[],
+  contextWindow: number
+): Promise<{ summary: string; prepared: PreparedMarker } | null> {
+  const startedAt = Date.now()
+  if (!backgroundCompactionConfig()?.enabled) return null
+  const coordinator = getBackgroundCoordinator()
+  const candidate = coordinator.getCandidate(conversationId)
+  if (!candidate) return null
+  const history = listConversationContextMessages(conversationId)
+  const prepared: PreparedMarker = {
+    messageId: candidate.boundary.messageId,
+    afterPartId: candidate.boundary.partId,
+    partId: randomUUID(),
+  }
+  const projected = previewPreparedActivation(history, prepared, candidate.summary)
+  if (!projected) return null
+  const nativeTransfer =
+    isCodexSubscriptionProvider(destination.providerId) ||
+    isClaudeSubscriptionProvider(destination.providerId) ||
+    isGitHubCopilotSubscriptionProvider(destination.providerId) ||
+    isCursorSubscriptionProvider(destination.providerId)
+  const tokens = nativeTransfer ? estimateNativeSeedContextTokens(projected) : estimatePortableContextTokens(projected)
+  if (
+    preflightContextLoad(
+      contextWindow,
+      tokens,
+      estimatePortablePartsTokens(pendingParts) + 16,
+      'portable-transcript',
+      AUTO_COMPACT_RATIO
+    ).shouldCompact
+  )
+    return null
+  if (
+    isCodexSubscriptionProvider(destination.providerId) &&
+    codexTransferCharacters(projected, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
+  )
+    return null
+
+  const consumed = coordinator.consume(conversationId, candidate.id, () =>
+    commitPreparedActivation({ conversationId, history: projected, marker: prepared, destination, contextWindow })
+  )
+  if (!consumed) return null
+  const observation = consumed.value
+  chatDiag({
+    kind: 'background-compaction-activated',
+    conv: conversationId,
+    coveredTokens: candidate.coveredTokens,
+    usedTokens: tokens,
+    waitMs: Date.now() - startedAt,
+  })
+  const channel = `chat:delta:${conversationId}`
+  const wc = getMainWebContents()
+  // The runner emits the positional marker after synchronizing its in-memory history.
+  const committedObservation = observation as ReturnType<typeof commitPreparedActivation>
+  if (!active.has(conversationId) && committedObservation) {
+    const event: ChatStreamEvent = { kind: 'context-usage', ...committedObservation }
+    if (wc) sendChatEvent(wc, channel, event)
+    else emitChatHost(conversationId, channel, event)
+  }
+  // Local bindings and retryable cleanup tombstones were committed atomically above.
+  void deleteSubscriptionStateForConversation(conversationId).catch(() => undefined)
+  return { summary: candidate.summary, prepared }
+}
+
+async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
+  const config = parseBackgroundCompactionConfig(value)
+  if (!config) return { ok: false, error: 'invalid-input' }
+  if (config.selection) {
+    const { meta } = await effectiveModelMeta(config.selection.modelId, config.selection.providerId)
+    const metadata = { status: meta ? ('available' as const) : ('unavailable' as const), meta }
+    const effort = validateSubagentProfileEffort(config.selection, metadata)
+    const fast = validateSubagentProfileFastMode(config.selection, metadata)
+    if (!effort.valid || !fast.valid) {
+      return {
+        ok: false,
+        error:
+          (
+            effort.diagnostics.find((item) => item.severity === 'error') ??
+            fast.diagnostics.find((item) => item.severity === 'error')
+          )?.message ?? 'invalid-summarizer-parameters',
+      }
+    }
+  }
+  setAppSetting(CHAT_BACKGROUND_COMPACTION_KEY, JSON.stringify(config))
+  getBackgroundCoordinator().configureChanged()
+  return { ok: true }
+}
+
+async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
+  if (!backgroundCompactionConfig()?.enabled) return { ok: false, error: 'not-configured' }
+  const selection = selectionFor(conversationId)
+  const window = selection
+    ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow
+    : undefined
+  return getBackgroundCoordinator().retry(conversationId, window ? { conversationWindow: window } : undefined)
+    ? { ok: true }
+    : { ok: false, error: 'context-window-unknown' }
+}
+
+export function resumeBackgroundCompaction(conversationId: string): void {
+  void maybeScheduleBackgroundCompaction(conversationId)
 }
 
 // Dependencies captured at registration for internal turns outside the normal IPC flow.
@@ -6901,9 +7377,12 @@ export async function validateReviewLoopStart(
 
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
 export async function resolveReviewLoopSelection(
-  conversationId: string
+  conversationId: string,
+  profileOverride?: BackgroundCompactionConfig['selection']
 ): Promise<{ ok: true; selection: FrozenChatSelection } | { ok: false; error: string }> {
-  const selection = selectionFor(conversationId)
+  const selection = profileOverride
+    ? { providerId: profileOverride.providerId, modelId: profileOverride.modelId }
+    : selectionFor(conversationId)
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
   const accountId = subscriptionAccountId(selection.providerId)
   let modelId = selection.modelId
@@ -6989,8 +7468,8 @@ export async function resolveReviewLoopSelection(
     }
   }
   const chatPrefs = getConvUiPrefs(conversationId).chat
-  const reasoning = chatPrefs?.reasoning
-  const fastMode = chatPrefs?.fastMode === true
+  const reasoning = profileOverride ? profileOverride.effort : chatPrefs?.reasoning
+  const fastMode = profileOverride ? profileOverride.fastMode : chatPrefs?.fastMode === true
   if (isCodexSubscriptionProvider(selection.providerId)) {
     const manager = getCodexSubscriptionManager(accountId)
     const preferred = await manager.preferredServiceTier(modelId, true)
@@ -7738,6 +8217,14 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
 
   deps.mhandle('chat:config', () => buildConfig())
+  deps.mhandle('chat:background-compaction:set', (_event, config: BackgroundCompactionConfig) =>
+    setBackgroundCompactionConfig(config)
+  )
+  deps.mhandle('chat:background-compaction:retry', (_event, conversationId: string) =>
+    typeof conversationId === 'string' && conversationId
+      ? retryBackgroundCompaction(conversationId)
+      : Promise.resolve({ ok: false, error: 'invalid-input' })
+  )
   deps.mhandle(
     'chat:codex-subscription:status',
     async (_event, payload?: { refresh?: boolean; accountId?: string | null }) => {
@@ -8580,7 +9067,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
             source: s.source,
           }))
       : []
-    return { prompts: listUserPrompts(), project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [], skills }
+    return {
+      prompts: listUserPrompts(),
+      project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [],
+      skills,
+    }
   })
   // ---- Skill management (Settings + conversation popover) ----
   // `conversationId` is optional: without it, show only GLOBAL skills (~/.agents|.claude/skills) — as in
@@ -8803,6 +9294,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
     // Active review loop: clearing history would break round context — the central guard also applies here.
     if (reviewLoopLockForConversation(conversationId)) return { ok: false, error: 'review-loop-active' }
+    cancelBackgroundJob(conversationId, false)
     const operation = reserveConversationOperation(conversationId, selectionFor(conversationId)?.providerId ?? null)
     if (!operation) return { ok: false, error: 'busy' }
     try {
@@ -8811,6 +9303,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       // Await artifact rm INSIDE the reservation: releasing early would let an in-flight rm delete an image
       // just written by the next turn.
       await clearChatMessages(conversationId)
+      publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
       clearMaestroLiveRunsForConversation(conversationId)
       return { ok: true }
     } finally {
@@ -9007,9 +9500,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         name: skill.name,
         description: skill.description || skill.name,
       })),
-    readSkill: (cwd, name, conversationId) => conversationId && getConversation(conversationId)?.scope === 'standalone'
-      ? findEffectiveSkill(cwd, conversationId, name).then(skill => skill?.body ?? null)
-      : readSkillBody(cwd, name),
+    readSkill: (cwd, name, conversationId) =>
+      conversationId && getConversation(conversationId)?.scope === 'standalone'
+        ? findEffectiveSkill(cwd, conversationId, name).then((skill) => skill?.body ?? null)
+        : readSkillBody(cwd, name),
     getConversationContext: (conversationId, signal) => {
       if (signal?.aborted) throw new Error('session-ended')
       if (!getConversation(conversationId)) throw new Error('invalid-conversation')
@@ -9585,7 +10079,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         // message are NOT automatically preserved: the user may have removed the chip in the editor.
         const agentMentions = Array.isArray(payload?.agentMentions) ? payload.agentMentions : undefined
         const seq = getMessageSeq(fromMessageId)
-        if (seq != null) deleteChatMessagesFrom(conversationId, seq)
+        if (seq != null) {
+          cancelBackgroundJob(conversationId, false)
+          deleteChatMessagesFrom(conversationId, seq)
+          publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
+        }
         return await startSend(deps, event.sender, conversationId, text, attachments, { operation }, agentMentions)
       } finally {
         releaseConversationOperation(conversationId, operation)
@@ -9620,15 +10118,9 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
 export function disposeChat(): Promise<void> {
   if (chatDisposePromise) return chatDisposePromise
   chatDisposePromise = (async () => {
-    // Multiple accounts: shut down ALL instances created in this process (default + additional slots).
-    for (const claudeInstance of listClaudeSubscriptionManagers()) {
-      claudeInstance.cancelLogin()
-      claudeInstance.abortAllQueries()
-    }
-    for (const manager of listCursorSubscriptionManagers()) {
-      manager.cancelPendingLogins()
-      abortCursorAccountRuns(manager)
-    }
+    const coordinator = backgroundCoordinator
+    coordinator?.dispose()
+    backgroundCoordinator = null
     const pendingSnapshot = [...pendingConversationOperations.values()]
     const pairedReviewDispose = pairedReviewLoopCoordinator?.dispose() ?? Promise.resolve()
     for (const operation of pendingSnapshot) operation.controller.abort(new Error('Chat service is shutting down'))
@@ -9650,6 +10142,7 @@ export function disposeChat(): Promise<void> {
       ]),
       pairedReviewDispose,
       maestroConfiguratorService.stop(),
+      coordinator?.settled(),
     ])
     active.clear()
     pendingConversationOperations.clear()

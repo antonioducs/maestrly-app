@@ -1,4 +1,4 @@
-import {executorSettings,recoverDesktopExecutions} from './platform/executor-settings'
+import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { fileURLToPath } from 'node:url'
@@ -117,6 +117,7 @@ import {
   primeChatTurnSelection,
   registerChatIpc,
   resolveReviewLoopSelection,
+  resumeBackgroundCompaction,
   stopChat,
 } from './chat/service'
 import { setConversationMaestroConfig } from './chat/maestro-config'
@@ -139,6 +140,8 @@ import { registerConversationMigrationIpc } from './conversation-migration/ipc'
 import { registerMemoryIpc } from './memory-ipc'
 import { registerReviewIpc } from './review-ipc'
 import { registerAppIpc } from './app-ipc'
+import { registerUpdateIpc } from './update-ipc'
+import { configureUpdateService, disposeUpdateService, finishInstall, isInstalling } from './update-service'
 import { registerLocalDataIpc } from './local-data/local-data-ipc'
 import { maestroConfiguratorService } from './chat/maestro-configurator'
 import { registerPerformanceIpc } from './performance/ipc'
@@ -345,7 +348,6 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
   } catch {
     /* The conversation may no longer exist in the store. */
   }
-
 }
 
 function setupSessionPermissions(): void {
@@ -456,6 +458,8 @@ async function createWindow(): Promise<void> {
 
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
+  // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
+  configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -492,7 +496,11 @@ async function createWindow(): Promise<void> {
   initTerminalManager(mainWindow)
 
   mainWindow.on('close', (e) => {
-    if(executorSettings().background&&!backgroundQuit){e.preventDefault();mainWindow?.hide();return}
+    if (executorSettings().background && !backgroundQuit) {
+      e.preventDefault()
+      mainWindow?.hide()
+      return
+    }
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
     floatingManager.flushPendingFloatPersists()
@@ -549,7 +557,7 @@ function registerIpc(): void {
     stopChat,
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
-  registerConversationIpc(reg, { stopChat })
+  registerConversationIpc(reg, { stopChat, resumeBackgroundCompaction })
   registerLocalConversationIpc(reg)
   disposeConversationMigrationIpc?.()
   disposeConversationMigrationIpc = registerConversationMigrationIpc(reg, {
@@ -599,6 +607,7 @@ function registerIpc(): void {
 
   registerReviewIpc(reg)
   registerAppIpc(reg)
+  registerUpdateIpc(reg)
   registerLocalDataIpc(reg, {
     getMainWindow: () => mainWindow,
     stopAllLiveWork,
@@ -715,22 +724,44 @@ app.whenReady().then(async () => {
 
   // macOS: template image (alpha-only glyph, auto-adapts to light/dark menu bar; @2x picked up by name).
   // Elsewhere: the coloured app icon — template images would render as a solid square.
-  const trayIcon=process.platform==='darwin'
-    ?nativeImage.createFromPath(path.join(__dirname,'../../resources/trayTemplate.png'))
-    :nativeImage.createFromPath(path.join(__dirname,'../../resources/icon.png')).resize({width:process.platform==='win32'?16:22,height:process.platform==='win32'?16:22})
-  if(!trayIcon.isEmpty()){
-    if(process.platform==='darwin')trayIcon.setTemplateImage(true)
-    executorTray=new Tray(trayIcon)
+  const trayIcon =
+    process.platform === 'darwin'
+      ? nativeImage.createFromPath(path.join(__dirname, '../../resources/trayTemplate.png'))
+      : nativeImage
+          .createFromPath(path.join(__dirname, '../../resources/icon.png'))
+          .resize({ width: process.platform === 'win32' ? 16 : 22, height: process.platform === 'win32' ? 16 : 22 })
+  if (!trayIcon.isEmpty()) {
+    if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
+    executorTray = new Tray(trayIcon)
     executorTray.setToolTip('Maestrly')
-    const reveal=()=>{if(mainWindow&&!mainWindow.isDestroyed()){mainWindow.show();mainWindow.focus();mainWindow.webContents.send('executor:open')}else void createWindow()}
-    executorTray.on('click',reveal)
-    executorTray.setContextMenu(Menu.buildFromTemplate([{label:'Maestrly',click:reveal},{label:getLocale().startsWith('pt')?'Pausar executor':'Pause executor',click:()=>void embeddedRunnerHost.stop()},{type:'separator'},{label:getLocale().startsWith('pt')?'Sair':'Quit',click:()=>app.quit()}]))
+    const reveal = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show()
+        mainWindow.focus()
+        mainWindow.webContents.send('executor:open')
+      } else void createWindow()
+    }
+    executorTray.on('click', reveal)
+    executorTray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: 'Maestrly', click: reveal },
+        {
+          label: getLocale().startsWith('pt') ? 'Pausar executor' : 'Pause executor',
+          click: () => void embeddedRunnerHost.stop(),
+        },
+        { type: 'separator' },
+        { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
+      ])
+    )
   }
   recoverDesktopExecutions()
-  const executor=executorSettings()
-  if(executor.autoStart&&executor.connectionId)void embeddedRunnerHost.start(executor.connectionId)
+  const executor = executorSettings()
+  if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   app.on('activate', () => {
-    if(mainWindow&&!mainWindow.isDestroyed()){mainWindow.show();mainWindow.focus()}else void createWindow()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show()
+      mainWindow.focus()
+    } else void createWindow()
   })
 })
 
@@ -779,8 +810,8 @@ let chatDisposing = false
 let platformRunnerStopped = false
 let platformRunnerStopping = false
 
-let executorTray:Tray|null=null
-let backgroundQuit=false
+let executorTray: Tray | null = null
+let backgroundQuit = false
 let quitConfirmed = false
 let quitDialogOpen = false
 
@@ -792,13 +823,17 @@ function shutdownConversationMigration(): void {
 
 /** Share one quit confirmation between window close and application quit; cancellation keeps all work alive. */
 function confirmQuitOnce(preventDefault: () => void): boolean {
-  if (quitConfirmed || isE2E()) return true
+  // Installing an update is already an explicit user decision, so it never reopens the quit prompt.
+  if (quitConfirmed || isE2E() || isInstalling()) return true
   preventDefault()
   if (quitDialogOpen) return false
   quitDialogOpen = true
   void confirmQuit()
     .then((ok) => {
-      if (!ok) {backgroundQuit=false;return}
+      if (!ok) {
+        backgroundQuit = false
+        return
+      }
       quitConfirmed = true
       app.quit()
     })
@@ -810,7 +845,7 @@ function confirmQuitOnce(preventDefault: () => void): boolean {
 
 // Wait for project cleanup, provider runtime teardown, and pending local memory writes before exiting.
 app.on('before-quit', (e) => {
-  backgroundQuit=true
+  backgroundQuit = true
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
@@ -885,4 +920,8 @@ app.on('before-quit', (e) => {
   }
   stopMlWorker()
   stopAsrWorker()
+
+  // Last step: every runner, chat and memory teardown already ran, so swapping the binary is safe.
+  disposeUpdateService()
+  finishInstall()
 })

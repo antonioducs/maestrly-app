@@ -206,6 +206,35 @@ describe('applyChatEvent (fold reusado main+renderer)', () => {
     expect(twice[0].usage).toEqual(usage)
   })
 
+  it('inserts prepared compaction markers at their recorded part boundary', () => {
+    const initial: ChatMessage[] = [
+      {
+        id: 'a1',
+        conversationId: 'c1',
+        role: 'assistant',
+        parts: [
+          { type: 'text', id: 'covered', text: 'covered prefix' },
+          { type: 'text', id: 'suffix', text: 'uncovered suffix' },
+        ],
+        createdAt: 1,
+      },
+    ]
+    const event = {
+      kind: 'compaction' as const,
+      messageId: 'a1',
+      partId: 'prepared',
+      afterPartId: 'covered',
+      text: 'summary',
+    }
+
+    const once = applyChatEvent(initial, event)
+    const twice = applyChatEvent(once, event)
+    expect(twice[0].parts.map((part) => part.id)).toEqual(['covered', 'prepared', 'suffix'])
+    expect(
+      applyChatEvent(initial, { ...event, partId: 'missing', afterPartId: 'not-found' })[0].parts.map((part) => part.id)
+    ).toEqual(['covered', 'suffix'])
+  })
+
   it('transitions tools from pending through running to completed', () => {
     let msgs: ChatMessage[] = [{ id: 'a1', conversationId: 'c1', role: 'assistant', parts: [], createdAt: 1 }]
     msgs = applyChatEvent(msgs, { kind: 'tool-input-start', messageId: 'a1', toolCallId: 'k', toolName: 'read' })
@@ -2300,7 +2329,6 @@ describe('builtinToolNamesForMode (built-in tools by mode)', () => {
     expect(set.has('edit')).toBe(false)
     expect(set.has('todo_write')).toBe(false)
   })
-
 })
 
 describe('wildcardMatch (port of util/wildcard)', () => {

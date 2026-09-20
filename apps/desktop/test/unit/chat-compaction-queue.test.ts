@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
+import type { ChatCompactionProgress, ChatStreamEvent } from '../../src/shared/chat'
 
 const source = readFileSync(new URL('../../src/renderer/components/chat/ChatView.tsx', import.meta.url), 'utf8')
 const start = source.indexOf('  const runCompactAsync = useCallback')
@@ -94,7 +95,9 @@ describe('manual compaction queue lifecycle', () => {
     expect(compactBranch).toContain('setQueueState((q) => [...q,')
     expect(compactBranch).toContain('return')
     expect(source).toContain('if (localManualCompactionRef.current) return')
-    expect(source).toContain('if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current)')
+    expect(source).toContain(
+      'if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current)'
+    )
   })
 })
 
@@ -117,11 +120,13 @@ function setupStream() {
   const finishTurn = new Function(...Object.keys(dependencies), `return (hidden = false) => {${finishBody}\n}`)(
     ...Object.values(dependencies)
   ) as (hidden?: boolean) => void
-  const eventStart = source.indexOf("      if (event.kind === 'compaction-finished') {")
-  const eventBody = source.slice(eventStart, source.indexOf("      if (kind === 'done')", eventStart))
-  const onEvent = new Function(...Object.keys(dependencies), 'finishTurn', `return (event, hidden = false) => {${eventBody}}`)(
-    ...Object.values(dependencies), finishTurn
-  ) as (event: { kind: 'compaction-finished'; status: string }, hidden?: boolean) => void
+  const eventStart = source.indexOf("    if (event.kind === 'compaction-finished') {")
+  const eventBody = source.slice(eventStart, source.indexOf("    if (kind === 'done')", eventStart))
+  const onEvent = new Function(
+    ...Object.keys(dependencies),
+    'finishTurn',
+    `return (event, hidden = false) => {${eventBody}}`
+  )(...Object.values(dependencies), finishTurn) as (event: ChatStreamEvent, hidden?: boolean) => void
   return { ...dependencies, finishTurn, onEvent }
 }
 
@@ -142,7 +147,11 @@ describe('hydrated compaction lifecycle', () => {
     expect(h.compactionRevisionRef.current).toBeGreaterThan(0)
   })
 
-  it.each(['completed', 'failed', 'cancelled'])('leaves local manual completion to its promise: %s', (status) => {
+  it.each([
+    'completed',
+    'failed',
+    'cancelled',
+  ] as const)('leaves local manual completion to its promise: %s', (status) => {
     const h = setupStream()
     h.localManualCompactionRef.current = true
     h.onEvent({ kind: 'compaction-finished', status })
@@ -152,12 +161,79 @@ describe('hydrated compaction lifecycle', () => {
     expect(h.compactionRevisionRef.current).toBe(0)
   })
 
-  it.each(['failed', 'cancelled'])('retains queued messages after hydrated manual %s', (status) => {
+  it.each(['failed', 'cancelled'] as const)('retains queued messages after hydrated manual %s', (status) => {
     const h = setupStream()
     h.onEvent({ kind: 'compaction-finished', status })
     expect(h.compactingRef.current).toBe(false)
     expect(h.streamingRef.current).toBe(false)
     expect(h.doSend).not.toHaveBeenCalled()
     expect(h.setQueueState).not.toHaveBeenCalled()
+  })
+})
+
+describe('external preflight compaction lifecycle', () => {
+  it.each([false, true])('reserves an idle composer until done (hidden=%s)', (hidden) => {
+    const h = setupStream()
+    h.compactingRef.current = false
+    h.streamingRef.current = false
+    // Approved-plan execution starts outside this view, before any user-saved event.
+    const progress = {
+      kind: 'compaction-progress',
+      messageId: 'previous-assistant',
+      progress: { id: 'preflight', scope: 'conversation', status: 'running', updatedAt: 1 },
+    } satisfies ChatStreamEvent
+    h.onEvent(progress, hidden)
+    expect(h.compactingRef.current).toBe(true)
+    expect(h.streamingRef.current).toBe(true)
+    expect(h.compactionRevisionRef.current).toBeGreaterThan(0)
+    if (!hidden) expect(h.setStreaming).toHaveBeenCalledWith(true)
+
+    const submit = source.slice(source.indexOf('  const submitDraft = useCallback'))
+    const compactBranch = submit.slice(
+      submit.indexOf('      if (compactingRef.current)'),
+      submit.indexOf('      if (streamingRef.current)')
+    )
+    const queue = vi.fn()
+    const sendOrSteer = vi.fn()
+    const route = new Function(
+      'compactingRef',
+      'setQueueState',
+      'sendOrSteer',
+      'text',
+      'atts',
+      'agentMentions',
+      `${compactBranch}\nsendOrSteer()`
+    )
+    route(h.compactingRef, queue, sendOrSteer, 'follow-up', [], [])
+    expect(queue).toHaveBeenCalledOnce()
+    expect(queue.mock.calls[0][0]([])).toEqual([expect.objectContaining({ text: 'follow-up' })])
+    expect(sendOrSteer).not.toHaveBeenCalled()
+
+    for (const status of ['completed', 'failed', 'cancelled'] as const) {
+      h.onEvent({ ...progress, progress: { ...progress.progress, status } }, hidden)
+      expect(h.compactingRef.current).toBe(true)
+      expect(h.streamingRef.current).toBe(true)
+      expect(h.doSend).not.toHaveBeenCalled()
+    }
+    h.finishTurn(hidden)
+    expect(h.compactingRef.current).toBe(false)
+    expect(h.streamingRef.current).toBe(false)
+    expect(h.doSend).toHaveBeenCalledExactlyOnceWith('queued', [], [], !hidden)
+  })
+
+  it('does not reserve an idle composer for turn-scoped or completed progress', () => {
+    const h = setupStream()
+    h.compactingRef.current = false
+    h.streamingRef.current = false
+    const observations: ChatCompactionProgress[] = [
+      { id: 'turn', scope: 'turn', status: 'running', updatedAt: 1 },
+      { id: 'preflight', scope: 'conversation', status: 'completed', updatedAt: 2 },
+    ]
+    for (const progress of observations) {
+      h.onEvent({ kind: 'compaction-progress', messageId: 'previous-assistant', progress })
+    }
+    expect(h.compactingRef.current).toBe(false)
+    expect(h.streamingRef.current).toBe(false)
+    expect(h.setStreaming).not.toHaveBeenCalled()
   })
 })

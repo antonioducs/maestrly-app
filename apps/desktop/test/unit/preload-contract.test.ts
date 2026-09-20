@@ -20,6 +20,7 @@ import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
 import { reviewApi } from '../../src/preload/api-review'
 import { settingsApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
+import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 
@@ -53,6 +54,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['reviewApi', reviewApi],
   ['settingsApi', settingsApi],
   ['soundApi', soundApi],
+  ['updateApi', updateApi],
   ['chatApi', chatApi],
   ['platformApi', platformApi],
 ]
@@ -150,7 +152,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(377)
+    expect(keys).toHaveLength(386)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -302,7 +304,6 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     api.getConversationBranchInfo('conv-1')
     expect(invokeSpy).toHaveBeenCalledWith('conversation:branch-info', 'conv-1')
   })
-
 })
 
 // ---------------------------------------------------------------------------
@@ -544,6 +545,24 @@ describe('channel cross-check group:* (preload -> main)', () => {
 // Check settings and runtime prefixes separately.
 // ---------------------------------------------------------------------------
 describe('preload API — Chat settings wrappers', () => {
+  it('preserves background compaction config and retry payloads', () => {
+    const config = {
+      enabled: true,
+      intervalTokens: 100_000,
+      selection: {
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        effort: 'off',
+        fastMode: false,
+      },
+    }
+    api.chatSetBackgroundCompaction(config)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:background-compaction:set', config)
+
+    api.chatRetryBackgroundCompaction('conversation-1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:background-compaction:retry', 'conversation-1')
+  })
+
   it('forwards Design mode through the existing chat mode IPC channel', () => {
     api.chatSetMode('conversation-design', 'design')
     expect(invokeSpy).toHaveBeenCalledWith('chat:set-mode', 'conversation-design', 'design')
@@ -656,7 +675,6 @@ describe('channel cross-check settings:* (preload -> main)', () => {
       expect(mainChannels.has(ch)).toBe(true)
     }
   })
-
 })
 
 // ---------------------------------------------------------------------------
@@ -673,17 +691,35 @@ describe('preload local data API', () => {
     expect(mainText).toContain(`'${channel}'`)
   })
 
-  it('does not expose hosted account, cloud, telemetry, or update methods', () => {
+  // `update:` is excluded from the removed list: the in-app updater reads public GitHub Releases and
+  // carries no hosted account, license or telemetry surface.
+  it('does not expose hosted account, cloud, or telemetry methods', () => {
     for (const method of [
-      'login', 'logout', 'getLicenseState', 'getDeviceId', 'onLicenseChanged', 'onSessionRevoked',
-      'acceptLegal', 'refreshLegalStatus', 'deleteAccount', 'reactivateAccount',
-      'accountLocalDataSummary', 'getTelemetryEnabled', 'setTelemetryEnabled', 'trackFeature',
-      'notifySessionStarted', 'getCrashReportingEnabled', 'setCrashReportingEnabled',
-      'getFeedbackDiagnostic', 'submitFeedback',
-    ]) expect(api).not.toHaveProperty(method)
+      'login',
+      'logout',
+      'getLicenseState',
+      'getDeviceId',
+      'onLicenseChanged',
+      'onSessionRevoked',
+      'acceptLegal',
+      'refreshLegalStatus',
+      'deleteAccount',
+      'reactivateAccount',
+      'accountLocalDataSummary',
+      'getTelemetryEnabled',
+      'setTelemetryEnabled',
+      'trackFeature',
+      'notifySessionStarted',
+      'getCrashReportingEnabled',
+      'setCrashReportingEnabled',
+      'getFeedbackDiagnostic',
+      'submitFeedback',
+    ])
+      expect(api).not.toHaveProperty(method)
     expect(Object.keys(api).filter((key) => /^cloud/i.test(key))).toEqual([])
-    const removedChannels = [...collectFirstCapture(preloadText, PRELOAD_API_CHANNEL_RE)]
-      .filter((channel) => /^(auth|license|legal|account|cloud-project|cloud-runner|telemetry|update|feedback):/.test(channel))
+    const removedChannels = [...collectFirstCapture(preloadText, PRELOAD_API_CHANNEL_RE)].filter((channel) =>
+      /^(auth|license|legal|account|cloud-project|cloud-runner|telemetry|feedback):/.test(channel)
+    )
     expect(removedChannels).toEqual([])
   })
 })
@@ -853,12 +889,7 @@ describe('preload API — chat pagination (#559)', () => {
     api.chatSetAstraHarness(false)
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:set-astra-harness', false)
     api.chatSteer('conversation-1', 'also verify lint', 'client-message-1')
-    expect(invokeSpy).toHaveBeenLastCalledWith(
-      'chat:steer',
-      'conversation-1',
-      'also verify lint',
-      'client-message-1'
-    )
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:steer', 'conversation-1', 'also verify lint', 'client-message-1')
     api.chatUpdateLiveReasoning('conversation-1', 'ultra')
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:update-live-reasoning', 'conversation-1', 'ultra')
   })

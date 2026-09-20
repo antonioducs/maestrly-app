@@ -5,10 +5,14 @@ const chatView = readFileSync(new URL('../../src/renderer/components/chat/ChatVi
 
 describe('ChatView streams for hidden conversations', () => {
   const streamEffect = chatView.slice(
-    chatView.indexOf('const offStream = window.api.onChatStream'),
+    chatView.indexOf('streamEventRef.current = (ev) => {'),
+    chatView.indexOf('const permissionEventRef =', chatView.indexOf('streamEventRef.current = (ev) => {'))
+  )
+  const permissionHandler = chatView.slice(
+    chatView.indexOf('permissionEventRef.current = (ev) => {'),
     chatView.indexOf(
       '  useEffect(() => {\n    Promise.all([window.api.chatGetSelection',
-      chatView.indexOf('const offStream = window.api.onChatStream')
+      chatView.indexOf('permissionEventRef.current = (ev) => {')
     )
   )
 
@@ -55,8 +59,8 @@ describe('ChatView streams for hidden conversations', () => {
     expect(savedIndex).toBeGreaterThan(-1)
     expect(savedSegment).toContain('slashSentRef.current = false')
     expect(savedSegment).toContain('agentMentionsSentRef.current = false')
-    expect(streamEffect).toContain('const next = prev.filter((r) => r.id !== ev.requestId)')
-    expect(streamEffect).toContain('return next.length === prev.length ? prev : next')
+    expect(permissionHandler).toContain('const next = prev.filter((r) => r.id !== ev.requestId)')
+    expect(permissionHandler).toContain('return next.length === prev.length ? prev : next')
   })
 
   it('drops unnecessary hidden subscriptions and reconciles visible runtimes', () => {
@@ -70,6 +74,29 @@ describe('ChatView streams for hidden conversations', () => {
     expect(chatView).toContain("(workspaceId === null && status === 'working')")
     expect(chatView).not.toContain('if (!runtime.streaming) stoppedRef.current = false')
     expect(chatView).not.toContain('historyDirtyRef')
+  })
+
+  it('keeps one subscription per conversation while live events are needed', () => {
+    // The main process only sends events to subscribed renderers, so recreating the subscription
+    // because an unrelated callback changed identity drops whatever arrives in between, including
+    // the terminal event that releases the composer.
+    const subscription = chatView.slice(
+      chatView.indexOf('const offStream = window.api.onChatStream'),
+      chatView.indexOf(
+        '  useEffect(() => {\n    if (!visible) return',
+        chatView.indexOf('const offStream = window.api.onChatStream')
+      )
+    )
+
+    expect(subscription).toContain(
+      'const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))'
+    )
+    expect(subscription).toContain(
+      'const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))'
+    )
+    expect(subscription).toContain('}, [conversationId, needsLiveSubscription])')
+    expect(chatView).toContain('streamEventRef.current = (ev) => {')
+    expect(chatView).toContain('permissionEventRef.current = (ev) => {')
   })
 
   it('reloads on visibility and rejects stale snapshots', () => {

@@ -22,6 +22,7 @@ import { PopupOverlay } from '@/components/PopupOverlay'
 import { Button } from '@/components/ui/button'
 import { SettingsProvider } from '@/lib/use-settings'
 import { OnboardingProvider } from '@/lib/use-onboarding'
+import { UpdateProvider } from '@/lib/use-update'
 import { SettingsView } from '@/components/SettingsView'
 import { OnboardingFlow } from '@/components/OnboardingFlow'
 import { AboutModal } from '@/components/AboutModal'
@@ -549,6 +550,7 @@ export function DesktopApp() {
 
   return (
     <SettingsProvider openSettings={openSettings}>
+      <UpdateProvider>
       <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
         <div className="relative flex h-full bg-background text-foreground">
           {sidebarOpen && (
@@ -869,6 +871,7 @@ export function DesktopApp() {
           <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
         </div>
       </OnboardingProvider>
+      </UpdateProvider>
     </SettingsProvider>
   )
 }

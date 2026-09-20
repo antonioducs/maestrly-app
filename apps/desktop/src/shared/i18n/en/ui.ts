@@ -285,6 +285,7 @@ export default {
       tools: 'Tools & drawer',
       execution: 'Execution',
       privacy: 'Privacy',
+      updates: 'Updates',
     },
     language: {
       heading: 'Language',
@@ -423,6 +424,31 @@ export default {
     title: 'About Maestrly',
     tagline: 'Orchestrate your AI coding agents.',
     version: 'Version {{version}}',
+  },
+
+  update: {
+    card: {
+      download: 'Download update',
+      downloading: 'Downloading update…',
+      restart: 'Restart to update',
+      view: 'New version available',
+      skip: 'Skip this version',
+    },
+    settings: {
+      title: 'Updates',
+      desc: 'Maestrly checks GitHub Releases on launch and every six hours. Downloads only start when you accept.',
+      current: 'Current version: {{version}}',
+      modeOff: 'Automatic updates are disabled in this build (dev, beta or unpackaged).',
+      modeNotify: 'This package (.deb) cannot update itself; you will be notified and can download the new version.',
+      check: 'Check now',
+      checking: 'Checking…',
+      lastChecked: 'Last checked {{time}}',
+      upToDate: 'You are on the latest version.',
+      available: 'Version {{version}} is available.',
+      downloaded: 'Version {{version}} is ready to install.',
+      error: 'Could not check for updates: {{error}}',
+      releaseNotes: 'Release notes',
+    },
   },
 
   sidebar: {

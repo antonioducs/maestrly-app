@@ -1,12 +1,13 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { closeStore, getConversation, getDb, initStore } from '../../src/main/store'
+import { closeStore, deleteWorkspace, getConversation, getDb, initStore } from '../../src/main/store'
 
 const LEGACY_MANAGEMENT_TABLES = [
+  'cloud_published_card_bindings',
   'delivery_memory_chunks',
   'delivery_memories',
   'card_body_history',
@@ -78,6 +79,18 @@ function createLegacyDatabase(options: { brokenChatMessages?: boolean; usageConv
     );
     CREATE TABLE column_agent_configs (
       column_id TEXT PRIMARY KEY REFERENCES board_columns(id) ON DELETE CASCADE
+    );
+    CREATE TABLE cloud_published_card_bindings (
+      local_card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
+      account_user_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL,
+      cloud_board_id TEXT NOT NULL,
+      cloud_card_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (account_user_id, local_card_id),
+      UNIQUE (account_user_id, project_id, cloud_card_id)
     );
     CREATE TABLE card_conversations (
       card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
@@ -219,6 +232,8 @@ function createLegacyDatabase(options: { brokenChatMessages?: boolean; usageConv
     INSERT INTO boards VALUES ('board-1', 'workspace-1');
     INSERT INTO board_columns VALUES ('column-1', 'workspace-1');
     INSERT INTO board_cards VALUES ('card-1', 'workspace-1', 'column-1', NULL);
+    INSERT INTO cloud_published_card_bindings VALUES
+      ('card-1', 'user-1', 'workspace-1', 'project-1', 'cloud-board-1', 'cloud-card-1', 1, 1);
     INSERT INTO column_agent_configs VALUES ('column-1');
     INSERT INTO card_conversations VALUES ('card-1', 'conversation-regular');
     INSERT INTO card_events VALUES ('event-1', 'card-1');
@@ -339,6 +354,37 @@ describe('legacy project-management schema migration', () => {
     })
   })
 
+  it.each([
+    true,
+    false,
+  ])('repairs an already purged database and allows workspace removal (project directory exists: %s)', (directoryExists) => {
+    const databasePath = createLegacyDatabase()
+    const projectPath = path.join(path.dirname(databasePath), 'project')
+    if (directoryExists) mkdirSync(projectPath)
+    const raw = new DatabaseSync(databasePath)
+    // Previous releases dropped the card tables but left this empty FK-bearing table behind.
+    raw.exec('PRAGMA foreign_keys = OFF')
+    raw.exec('DELETE FROM cloud_published_card_bindings')
+    for (const table of LEGACY_MANAGEMENT_TABLES) {
+      if (table !== 'cloud_published_card_bindings') raw.exec(`DROP TABLE ${table}`)
+    }
+    raw.prepare('UPDATE workspaces SET path = ?').run(projectPath)
+    raw.close()
+
+    initStore(databasePath)
+    expect(getConversation('conversation-regular')).toBeDefined()
+    expect(() => deleteWorkspace('workspace-1')).not.toThrow()
+    expect(getConversation('conversation-regular')).toBeUndefined()
+    expect(getDb().prepare('SELECT * FROM chat_messages').all()).toEqual([])
+    expect(getDb().prepare('SELECT * FROM workspaces').all()).toEqual([])
+    expect(getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(existsSync(projectPath)).toBe(directoryExists)
+
+    closeStore()
+    initStore(databasePath)
+    expect(getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  })
+
   it('rolls the purge back when a later schema step fails', () => {
     const databasePath = createLegacyDatabase({ brokenChatMessages: true })
 
@@ -351,6 +397,7 @@ describe('legacy project-management schema migration', () => {
       )
     )
     expect(tables).toContain('boards')
+    expect(tables).toContain('cloud_published_card_bindings')
     expect(
       (raw.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>).map(({ name }) => name)
     ).toContain('kind')

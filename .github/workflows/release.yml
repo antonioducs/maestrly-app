@@ -311,6 +311,11 @@ jobs:
             "Maestrly-App-${RELEASE_VERSION}-macos-arm64.dmg"
             "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip"
             "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip.blockmap"
+            "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe.blockmap"
+            "latest-linux.yml"
+            "latest-mac.yml"
+            "latest.yml"
           )
           for file in "${expected[@]}"; do
             test -s "release-assets/$file"
@@ -339,6 +344,11 @@ jobs:
             "Maestrly-App-${RELEASE_VERSION}-macos-arm64.dmg"
             "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip"
             "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe"
+            "Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip.blockmap"
+            "Maestrly-App-${RELEASE_VERSION}-windows-x64.exe.blockmap"
+            "latest-linux.yml"
+            "latest-mac.yml"
+            "latest.yml"
           )
           assets=()
           for file in "${expected[@]}"; do
@@ -352,8 +362,8 @@ jobs:
           mkdir release-verification
           gh release download "$GITHUB_REF_NAME" --dir release-verification
           verification_count="$(find release-verification -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          if [[ "$verification_count" -ne 6 ]]; then
-            echo "Draft release must contain exactly six assets."
+          if [[ "$verification_count" -ne 11 ]]; then
+            echo "Draft release must contain exactly eleven assets."
             exit 1
           fi
           (

@@ -9,6 +9,7 @@ import { closeDb, freshDb, restartDb } from '../helpers/db'
 // Keep the full local table inventory explicit so hosted cleanup cannot silently remove local data.
 const LOCAL_TABLES = [
   'app_settings',
+  'chat_background_compaction',
   'chat_claude_message_map',
   'chat_claude_session_cleanup',
   'chat_claude_sessions',

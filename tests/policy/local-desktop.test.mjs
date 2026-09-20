@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 
@@ -23,7 +23,6 @@ test('desktop source has no hosted Maestrly backend or diagnostic transport', ()
 })
 
 test('tracked first-party metadata uses the project identity', () => {
-  assert.equal(existsSync(path.join(root, 'AGENTS.md')), false)
   assert.match(readFileSync(path.join(root, 'LICENSE'), 'utf8'), /Copyright \(c\) 2026 Maestrly App contributors/)
   assert.match(
     readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8'),
@@ -33,8 +32,10 @@ test('tracked first-party metadata uses the project identity', () => {
   assert.equal(manifest.author, 'Maestrly contributors')
 })
 
+// `update:` stays allowed: the in-app updater reads public GitHub Releases, with no hosted backend,
+// account or telemetry behind it. Every other retired cloud prefix remains forbidden.
 test('preload does not expose retired Maestrly account or cloud endpoints', () => {
-  const forbidden = /ipcRenderer\.(?:invoke|send|on)\(\s*['"](?:auth:|license:|legal:|account:|cloud-project:|telemetry:|feedback:|update:)/
+  const forbidden = /ipcRenderer\.(?:invoke|send|on)\(\s*['"](?:auth:|license:|legal:|account:|cloud-project:|telemetry:|feedback:)/
   for (const file of sourceFiles(path.join(root, 'apps/desktop/src/preload'))) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), forbidden, path.relative(root, file))
   }

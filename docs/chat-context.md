@@ -65,3 +65,47 @@ includes the imported history and pending message; exceeding that limit also
 triggers compaction. A failed compaction blocks the request and preserves the
 original history. A fresh Codex transfer is blocked if its context window is
 unknown. Token estimates can differ from the provider's actual count.
+
+## Background preparation
+
+Background compaction is optional and starts disabled. In Settings → Maestrly
+Chat, choose a provider/account and model for preparation, its supported effort
+and Fast options, and the preparation interval (100,000 new estimated tokens by
+default). The selected model receives the conversation content to summarize.
+Preparation uses separate model calls and consumes that model's tokens or quota.
+
+The interval counts new portable conversation content, including tool results,
+text attachments and skill instructions, rather than cumulative billed input.
+For a known conversation window, the effective interval is capped at half that
+window. A summarizer with a smaller window processes the content in smaller
+chunks. Preparation can run after completed steps during a long task as well as
+after a response; it does not change the active context or pause the conversation.
+
+A prepared summary covers an exact point in the history. When the next request
+or a host-controlled continuation needs compaction, Maestrly checks whether that
+summary **plus all subsequent content** fits the destination model. If it does,
+the summary is activated without another summarization call. Selecting a model
+alone does not activate it. Cursor can prepare during a task and uses prepared
+context on a later send; provider-managed native compaction remains independent.
+
+Only the latest ready preparation and its replacement in progress are kept.
+After activation, the consumed preparation is removed, and later preparation
+builds on the active summary and new content. Earlier versions are not appended
+indefinitely. Original messages remain in visible history. Preparation usage is
+recorded separately and is not charged again when its summary is activated.
+
+Preparation failures appear beside the context indicator, with retry and settings
+actions, without turning the conversation into an error or blocking a send.
+Authentication/configuration errors pause preparation; transient failures have a
+bounded retry. A ready, still-valid summary can survive a later preparation
+failure. If no usable summary is available when context must be reduced, normal
+foreground compaction still runs and may require waiting. The configured helper
+model applies to background preparation; manual and fallback compaction retain
+their existing behavior.
+
+Turning preparation off cancels pending work and clears unused preparations,
+while preserving already active context. Stopping a conversation cancels its
+current preparation but preserves the latest ready candidate. Edits invalidate
+summaries covering changed content. Restarting preserves valid completed work;
+preparation resumes only when a conversation is used, rather than scanning and
+processing every old chat.

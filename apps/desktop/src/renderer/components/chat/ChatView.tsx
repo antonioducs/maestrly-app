@@ -39,6 +39,7 @@ import type {
   ChatMode,
   ChatModelMeta,
   ChatModelRef,
+  ChatPermissionEvent,
   ChatPermissionRequest,
   PendingChatQuestion,
   ChatProjectCommand,
@@ -55,6 +56,7 @@ import type {
   SubagentSessionSummary,
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
+import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
 import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
@@ -65,7 +67,11 @@ import {
 } from '../../../shared/chat-agent-mentions'
 
 import { ChatMessageList } from './ChatMessageList'
-import { boundChatHistoryWindow, mergeLiveChatHistory, CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE } from '@/lib/chat-history-window'
+import {
+  boundChatHistoryWindow,
+  mergeLiveChatHistory,
+  CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
+} from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -86,6 +92,7 @@ import { ChatFastModeToggle } from './ChatFastModeToggle'
 import { ChatPlusMenu } from './ChatPlusMenu'
 import { ChatContextMeter } from './ChatContextMeter'
 import { ContextCompactionStatus } from './ContextCompactionStatus'
+import { BackgroundCompactionStatus } from './BackgroundCompactionStatus'
 import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
@@ -110,6 +117,12 @@ interface Props {
 
   onEvictionSafetyChange?: (conversationId: string, safeToEvict: boolean) => void
 }
+
+/**
+ * Grace period between an authoritative turn ending and the local recovery check. The ordinary
+ * terminal event arrives first in normal operation; this only covers an event that never arrives.
+ */
+const TURN_RELEASE_RECOVERY_MS = 2_000
 
 interface QueuedMsg {
   id: string
@@ -175,6 +188,8 @@ export function ChatView({
   const [searchIndex, setSearchIndex] = useState(-1)
   const [searchLoading, setSearchLoading] = useState(false)
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  // Sidebar status only seeds initial state; the chat lifecycle owns it after mount.
+  // A sidebar status effect can commit `working` after `done` and resurrect Stop.
   const [streaming, setStreaming] = useState(() => status === 'working' || status === 'asking')
   const [stopPending, setStopPending] = useState(false)
   const [pending, setPending] = useState<ChatPermissionRequest[]>([])
@@ -275,7 +290,9 @@ export function ChatView({
   const streamingRef = useRef(false)
   streamingRef.current = streaming
   const liveHistoryRef = useRef<ChatMessage[]>([])
-  useEffect(() => { liveHistoryRef.current = [] }, [conversationId])
+  useEffect(() => {
+    liveHistoryRef.current = []
+  }, [conversationId])
   const compactingRef = useRef(false)
   const localManualCompactionRef = useRef(false)
   const compactionRevisionRef = useRef(0)
@@ -336,7 +353,34 @@ export function ChatView({
   const visibleRef = useRef(visible)
   visibleRef.current = visible
 
+  const backgroundCompactionRevisionRef = useRef({ conversationId, revision: -1 })
+  const [backgroundCompactionState, setBackgroundCompactionState] = useState<{
+    conversationId: string
+    state: BackgroundCompactionState
+  } | null>(null)
+  const applyBackgroundCompactionState = useCallback(
+    (targetConversationId: string, next: BackgroundCompactionState) => {
+      if (convIdRef.current !== targetConversationId) return
+      const current = backgroundCompactionRevisionRef.current
+      if (current.conversationId !== targetConversationId) {
+        backgroundCompactionRevisionRef.current = { conversationId: targetConversationId, revision: -1 }
+      }
+      if (next.revision <= backgroundCompactionRevisionRef.current.revision) return
+      backgroundCompactionRevisionRef.current = { conversationId: targetConversationId, revision: next.revision }
+      setBackgroundCompactionState({ conversationId: targetConversationId, state: next })
+    },
+    []
+  )
+  useEffect(() => {
+    backgroundCompactionRevisionRef.current = { conversationId, revision: -1 }
+    setBackgroundCompactionState((current) => (current?.conversationId === conversationId ? current : null))
+  }, [conversationId])
+  const backgroundCompaction =
+    backgroundCompactionState?.conversationId === conversationId ? backgroundCompactionState.state : undefined
+
   const historyReloadRevisionRef = useRef(0)
+  // Identifies the turn a delayed recovery was scheduled for, so a newer send is never released by it.
+  const turnRevisionRef = useRef(0)
 
   const messagePendingQuestion = useMemo(() => findPendingChatQuestion(messages), [messages])
   const pendingQuestion = messagePendingQuestion ?? runtimeQuestions.at(-1) ?? null
@@ -397,10 +441,16 @@ export function ChatView({
     // Snapshot the live buffer outside the updater: React may replay updaters, and reading the mutable
     // ref there would mix a newer response with a delta still queued, duplicating that delta.
     const live = liveHistoryRef.current
-    setMessages((prev) => normalizeHistoryWindow(prev,
-      preserveLive || (workspaceId === null && streamingRef.current)
-        ? mergeLiveChatHistory(hydrated, live) : hydrated,
-      'replace', hydrated.at(-1)?.id))
+    setMessages((prev) =>
+      normalizeHistoryWindow(
+        prev,
+        preserveLive || (workspaceId === null && streamingRef.current)
+          ? mergeLiveChatHistory(hydrated, live)
+          : hydrated,
+        'replace',
+        hydrated.at(-1)?.id
+      )
+    )
     setHasMore(page.hasMore)
     earliestSeqRef.current = page.earliestSeq
     anchoredRef.current = false
@@ -444,18 +494,6 @@ export function ChatView({
   useEffect(() => {
     void reloadLatestPage()
   }, [reloadLatestPage])
-
-  useEffect(() => {
-    if (status !== 'working' && status !== 'asking') return
-    if (compactingRef.current) return
-    if (!visibleRef.current) {
-      streamingRef.current = true
-      return
-    }
-    if (streamingRef.current) return
-    streamingRef.current = true
-    setStreaming(true)
-  }, [status])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -771,6 +809,7 @@ export function ChatView({
         )
       }
       streamingRef.current = true
+      turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
       const res = await window.api
         .chatSend(
@@ -826,6 +865,40 @@ export function ChatView({
     },
     [doSend, setQueueState]
   )
+  const finishTurnRef = useRef(finishTurn)
+  finishTurnRef.current = finishTurn
+
+  /**
+   * The terminal event is the only signal that releases the composer, and it reaches this renderer
+   * only while the main process has it subscribed: an event lost to a subscription gap, a crashed
+   * listener, or a hidden view would otherwise keep the conversation reporting an active response
+   * forever, with its queue frozen behind it. When the local stream outlives a non-running status,
+   * confirm with the main process shortly after and complete the turn locally if nothing is running.
+   * Also watch streaming: a fast turn can start and finish between sidebar refreshes, so its
+   * intermediate working status may never reach this renderer.
+   */
+  useEffect(() => {
+    if (!streaming) return
+    if (status === 'working' || status === 'asking') return
+
+    const revision = turnRevisionRef.current
+    let alive = true
+    const timer = window.setTimeout(() => {
+      // The ordinary terminal event usually lands first; only an unreleased turn reaches the runtime.
+      if (!streamingRef.current || compactingRef.current || localManualCompactionRef.current) return
+      if (revision !== turnRevisionRef.current) return
+      void window.api.chatRuntime(conversationId).then((runtime) => {
+        if (!alive || convIdRef.current !== conversationId) return
+        if (runtime.streaming || runtime.compacting) return
+        if (revision !== turnRevisionRef.current || !streamingRef.current) return
+        finishTurnRef.current(false)
+      })
+    }, TURN_RELEASE_RECOVERY_MS)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [conversationId, status, streaming])
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
   const needsLiveSubscription =
@@ -839,156 +912,175 @@ export function ChatView({
     // A hidden standalone turn keeps its own live buffer; dropping the subscription would lose the
     // tokens emitted while hidden and later overwrite the history with that stale buffer.
     (workspaceId === null && status === 'working')
+
+  // The main process delivers conversation events only to subscribed renderers, so this
+  // subscription must survive callback identity changes: recreating it mid-turn leaves a window
+  // in which a terminal event is dropped, and the composer then reports a live response forever.
+  // Keep the handlers in refs and bind the subscription to the conversation and live need alone.
+  const streamEventRef = useRef<(ev: ChatStreamEvent | { kind: string }) => void>(() => undefined)
+  streamEventRef.current = (ev) => {
+    const kind = (ev as { kind: string }).kind
+    const hidden = !visibleRef.current
+    const event = ev as ChatStreamEvent
+
+    if (event.kind === 'background-compaction') {
+      applyBackgroundCompactionState(conversationId, event.state)
+      return
+    }
+
+    // Hidden standalone views do not render tokens, but must retain the active response before
+    // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
+    if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
+      // Compaction rewrites history, so the buffered response must not be replayed over it.
+      if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
+      if (event.kind !== 'compaction-finished') {
+        liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
+          .filter((message) => message.role === 'assistant')
+          .map((message) => (message.conversationId === conversationId ? message : { ...message, conversationId }))
+      }
+    }
+
+    if (event.kind === 'compaction-finished') {
+      // The local IPC promise owns history hydration and queue release when present.
+      if (localManualCompactionRef.current) return
+      compactionRevisionRef.current++
+      compactingRef.current = false
+      setCompacting(false)
+      streamingRef.current = false
+      if (!hidden) setStreaming(false)
+      if (event.status === 'completed') finishTurn(hidden)
+      return
+    }
+
+    // External preflight can reserve the conversation before user-saved. Progress is
+    // authoritative; sidebar status is not. Keep the reservation through progress
+    // completion until done (preflight) or compaction-finished (manual) releases it.
+    if (
+      event.kind === 'compaction-progress' &&
+      event.progress.scope === 'conversation' &&
+      event.progress.status === 'running'
+    ) {
+      compactionRevisionRef.current++
+      compactingRef.current = true
+      setCompacting(true)
+      streamingRef.current = true
+      if (!hidden) setStreaming(true)
+    }
+
+    if (kind === 'done') {
+      // The turn ended: drop every live capability before any further action can be routed.
+      setMidTurnSteering(false)
+      setLiveReasoningUpdate(false)
+      setLiveReasoningEfforts([])
+      setLiveReasoningReset(false)
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState([])
+      finishTurn(hidden)
+      if (hidden) return
+      refreshStats()
+
+      setModelRefresh((n) => n + 1)
+      return
+    }
+
+    if (event.kind === 'runtime-capabilities') {
+      setMidTurnSteering(event.midTurnSteering)
+      setLiveReasoningUpdate(event.liveReasoningUpdate)
+      setLiveReasoningEfforts(event.liveReasoningEfforts)
+      setLiveReasoningReset(event.liveReasoningReset)
+      return
+    }
+    if (event.kind === 'steering-accepted') {
+      if (!hidden) {
+        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
+      }
+      return
+    }
+
+    if (
+      kind !== 'finish' &&
+      kind !== 'aborted' &&
+      kind !== 'error' &&
+      kind !== 'context-usage' &&
+      kind !== 'compaction-progress'
+    ) {
+      streamingRef.current = true
+      if (!hidden) setStreaming(true)
+    }
+    if (kind === 'user-saved') {
+      const localSlash = slashSentRef.current
+      const localAgentMentions = agentMentionsSentRef.current
+      const localImages = imagesSentRef.current
+      slashSentRef.current = false
+      agentMentionsSentRef.current = false
+      imagesSentRef.current = false
+      const saved = ev as { compacted?: boolean; imagesDescribed?: number }
+      if (
+        shouldReloadOnUserSaved({
+          streaming: streamingRef.current,
+          compacted: saved.compacted,
+          imagesDescribed: saved.imagesDescribed,
+          localSlash,
+          localAgentMentions,
+          localImages,
+        })
+      )
+        if (!hidden) void reloadLatestPage()
+      return
+    }
+    if (event.kind === 'tool-state' && event.state.status !== 'pending' && event.state.status !== 'running') {
+      runtimeQuestionRevisionRef.current += 1
+      setRuntimeQuestionState((current) => current.filter((question) => question.toolCallId !== event.toolCallId))
+    }
+
+    if (hidden) {
+      if (
+        event.kind === 'tool-state' &&
+        event.toolCallId === pendingQuestionToolCallId &&
+        event.state.status !== 'pending' &&
+        event.state.status !== 'running'
+      ) {
+        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
+      }
+    }
+    if (hidden) return
+
+    // Standalone views already fold every event into their live buffer. Mirroring that snapshot keeps
+    // the update idempotent, so a replayed or reordered updater cannot apply the same delta twice.
+    const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null
+    setMessages((prev) =>
+      normalizeHistoryWindow(
+        prev,
+        liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
+        'replace',
+        event.messageId
+      )
+    )
+
+    if (kind === 'finish' || kind === 'aborted' || kind === 'error') setStreaming(false)
+  }
+  const permissionEventRef = useRef<(ev: ChatPermissionEvent) => void>(() => undefined)
+  permissionEventRef.current = (ev) => {
+    if (ev.kind === 'request') {
+      if (visibleRef.current) setPending((prev) => [...prev.filter((r) => r.id !== ev.request.id), ev.request])
+    } else if (ev.kind === 'resolved') {
+      setPending((prev) => {
+        const next = prev.filter((r) => r.id !== ev.requestId)
+        return next.length === prev.length ? prev : next
+      })
+    }
+  }
+
   useEffect(() => {
     if (!needsLiveSubscription) return
 
-    const offStream = window.api.onChatStream(conversationId, (ev) => {
-      const kind = (ev as { kind: string }).kind
-      const hidden = !visibleRef.current
-      const event = ev as ChatStreamEvent
-
-      // Hidden standalone views do not render tokens, but must retain the active response before
-      // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
-      if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
-        // Compaction rewrites history, so the buffered response must not be replayed over it.
-        if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
-        if (event.kind !== 'compaction-finished') {
-          liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
-            .filter(message => message.role === 'assistant')
-            .map(message => message.conversationId === conversationId ? message : { ...message, conversationId })
-        }
-      }
-
-      if (event.kind === 'compaction-finished') {
-        // The local IPC promise owns history hydration and queue release when present.
-        if (localManualCompactionRef.current) return
-        compactionRevisionRef.current++
-        compactingRef.current = false
-        setCompacting(false)
-        streamingRef.current = false
-        if (!hidden) setStreaming(false)
-        if (event.status === 'completed') finishTurn(hidden)
-        return
-      }
-
-
-      if (kind === 'done') {
-        // The turn ended: drop every live capability before any further action can be routed.
-        setMidTurnSteering(false)
-        setLiveReasoningUpdate(false)
-        setLiveReasoningEfforts([])
-        setLiveReasoningReset(false)
-        runtimeQuestionRevisionRef.current += 1
-        setRuntimeQuestionState([])
-        finishTurn(hidden)
-        if (hidden) return
-        refreshStats()
-
-        setModelRefresh((n) => n + 1)
-        return
-      }
-
-      if (event.kind === 'runtime-capabilities') {
-        setMidTurnSteering(event.midTurnSteering)
-        setLiveReasoningUpdate(event.liveReasoningUpdate)
-        setLiveReasoningEfforts(event.liveReasoningEfforts)
-        setLiveReasoningReset(event.liveReasoningReset)
-        return
-      }
-      if (event.kind === 'steering-accepted') {
-        if (!hidden) {
-          setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.message.id))
-        }
-        return
-      }
-
-      if (
-        kind !== 'finish' &&
-        kind !== 'aborted' &&
-        kind !== 'error' &&
-        kind !== 'context-usage' &&
-        kind !== 'compaction-progress'
-      ) {
-        streamingRef.current = true
-        if (!hidden) setStreaming(true)
-      }
-      if (kind === 'user-saved') {
-        const localSlash = slashSentRef.current
-        const localAgentMentions = agentMentionsSentRef.current
-        const localImages = imagesSentRef.current
-        slashSentRef.current = false
-        agentMentionsSentRef.current = false
-        imagesSentRef.current = false
-        const saved = ev as { compacted?: boolean; imagesDescribed?: number }
-        if (
-          shouldReloadOnUserSaved({
-            streaming: streamingRef.current,
-            compacted: saved.compacted,
-            imagesDescribed: saved.imagesDescribed,
-            localSlash,
-            localAgentMentions,
-            localImages,
-          })
-        )
-          if (!hidden) void reloadLatestPage()
-        return
-      }
-      if (event.kind === 'tool-state' && event.state.status !== 'pending' && event.state.status !== 'running') {
-        runtimeQuestionRevisionRef.current += 1
-        setRuntimeQuestionState((current) => current.filter((question) => question.toolCallId !== event.toolCallId))
-      }
-
-      if (hidden) {
-        if (
-          event.kind === 'tool-state' &&
-          event.toolCallId === pendingQuestionToolCallId &&
-          event.state.status !== 'pending' &&
-          event.state.status !== 'running'
-        ) {
-          setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
-        }
-      }
-      if (hidden) return
-
-      // Standalone views already fold every event into their live buffer. Mirroring that snapshot keeps
-      // the update idempotent, so a replayed or reordered updater cannot apply the same delta twice.
-      const liveSnapshot = workspaceId === null ? liveHistoryRef.current : null
-      setMessages((prev) =>
-        normalizeHistoryWindow(
-          prev,
-          liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
-          'replace',
-          event.messageId
-        )
-      )
-
-      if (kind === 'finish' || kind === 'aborted' || kind === 'error') setStreaming(false)
-    })
-    const offPerm = window.api.onChatPermission(conversationId, (ev) => {
-      if (ev.kind === 'request') {
-        if (visibleRef.current) setPending((prev) => [...prev.filter((r) => r.id !== ev.request.id), ev.request])
-      } else if (ev.kind === 'resolved') {
-        setPending((prev) => {
-          const next = prev.filter((r) => r.id !== ev.requestId)
-          return next.length === prev.length ? prev : next
-        })
-      }
-    })
+    const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))
+    const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))
     return () => {
       offStream()
       offPerm()
     }
-  }, [
-    conversationId,
-    finishTurn,
-    needsLiveSubscription,
-    normalizeHistoryWindow,
-    pendingQuestionToolCallId,
-    reloadLatestPage,
-    refreshStats,
-    setRuntimeQuestionState,
-    workspaceId,
-  ])
+  }, [conversationId, needsLiveSubscription])
 
   useEffect(() => {
     if (!visible) return
@@ -998,7 +1090,7 @@ export function ChatView({
 
     if (workspaceId === null && streamingRef.current) {
       const live = liveHistoryRef.current
-      setMessages(prev => normalizeHistoryWindow(prev, mergeLiveChatHistory(prev, live), 'replace'))
+      setMessages((prev) => normalizeHistoryWindow(prev, mergeLiveChatHistory(prev, live), 'replace'))
     }
 
     void reloadLatestPage()
@@ -1008,6 +1100,9 @@ export function ChatView({
     const maestroRevision = maestroLiveRevisionRef.current
     void window.api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
+      if (runtime.backgroundCompaction) {
+        applyBackgroundCompactionState(conversationId, runtime.backgroundCompaction)
+      }
       if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
         compactingRef.current = runtime.compacting ?? false
         setCompacting(compactingRef.current)
@@ -1050,7 +1145,16 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
+  }, [
+    applyBackgroundCompactionState,
+    conversationId,
+    normalizeHistoryWindow,
+    reloadLatestPage,
+    setQueueState,
+    setRuntimeQuestionState,
+    visible,
+    workspaceId,
+  ])
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
@@ -2163,6 +2267,11 @@ export function ChatView({
                     {!isMaestro && <ChatPermModePicker conversationId={conversationId} />}
                     <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
                       <ContextCompactionStatus progress={contextObservation.progress} />
+                      <BackgroundCompactionStatus
+                        key={conversationId}
+                        conversationId={conversationId}
+                        state={backgroundCompaction}
+                      />
                       <ChatContextMeter
                         key={`${conversationId}:${selProviderId}:${selModelId}`}
                         stats={historyStats}

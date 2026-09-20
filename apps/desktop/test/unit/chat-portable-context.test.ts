@@ -317,6 +317,23 @@ describe('portable context', () => {
       expect(shouldRetry).toHaveBeenCalledWith(error)
     })
 
+    it('waits for the configured retry delay and rejects oversized output as invalid', async () => {
+      const summarize = vi
+        .fn()
+        .mockResolvedValueOnce(measured('x'.repeat(600)))
+        .mockResolvedValueOnce(measured('bounded'))
+      const pending = summarizePortableTranscript('source', 1_000, summarize, {
+        maxSummaryTokens: 100,
+        retryDelayMs: 30_000,
+      })
+
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(summarize).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(await pending).toMatchObject({ summary: 'bounded', calls: 2 })
+    })
+
     it('does not retry unclassified failures by default', async () => {
       const summarize = vi.fn().mockRejectedValue(new Error('Unexpected provider response'))
       await expect(summarizePortableTranscript('source', 1_000, summarize)).rejects.toThrow(

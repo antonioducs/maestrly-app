@@ -37,6 +37,7 @@ import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
 import { DefaultPermissionSection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
+import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 
 interface Props {
@@ -405,6 +406,8 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onClose }
             )}
 
             {section === 'privacy' && <PrivacySection t={t} />}
+
+            {section === 'updates' && <UpdatesSection t={t} />}
           </div>
         </div>
       </div>

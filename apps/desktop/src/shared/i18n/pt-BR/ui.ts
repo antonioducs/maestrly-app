@@ -292,6 +292,7 @@ export default {
       tools: 'Tools e gaveta',
       execution: 'Execução',
       privacy: 'Privacidade',
+      updates: 'Atualizações',
     },
     language: {
       heading: 'Idioma',
@@ -431,6 +432,31 @@ export default {
     title: 'Sobre o Maestrly',
     tagline: 'Orquestre seus agentes de IA.',
     version: 'Versão {{version}}',
+  },
+
+  update: {
+    card: {
+      download: 'Baixar atualização',
+      downloading: 'Baixando atualização…',
+      restart: 'Reiniciar para atualizar',
+      view: 'Nova versão disponível',
+      skip: 'Pular esta versão',
+    },
+    settings: {
+      title: 'Atualizações',
+      desc: 'O Maestrly consulta as GitHub Releases ao abrir e a cada seis horas. O download só começa quando você aceitar.',
+      current: 'Versão atual: {{version}}',
+      modeOff: 'Atualizações automáticas desativadas nesta build (dev, beta ou não empacotada).',
+      modeNotify: 'Este pacote (.deb) não se atualiza sozinho; você será avisado e poderá baixar a nova versão.',
+      check: 'Verificar agora',
+      checking: 'Verificando…',
+      lastChecked: 'Última verificação {{time}}',
+      upToDate: 'Você está na versão mais recente.',
+      available: 'Versão {{version}} disponível.',
+      downloaded: 'Versão {{version}} pronta para instalar.',
+      error: 'Não foi possível verificar atualizações: {{error}}',
+      releaseNotes: 'Notas da versão',
+    },
   },
 
   sidebar: {
