@@ -30,8 +30,19 @@ import { stagePlan } from '../../plan-broker'
 import { gitEnvInfo } from '../../git-service'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { chatDiag } from '../diag-log'
-import { lastConversationContextMessage, runnerContextHistory, upsertChatMessage } from '../chat-store'
+import {
+  lastConversationContextMessage,
+  runnerContextHistory,
+  upsertChatMessage,
+  type StoredChatMessage,
+} from '../chat-store'
 import { createDeltaCoalescer } from '../delta-coalescer'
+import {
+  activatePreparedCompaction,
+  createBackgroundCompactionPrefixNotifier,
+  historyWithCurrentAssistant,
+  type PreparedBackgroundCompaction,
+} from '../background-compaction/runner'
 import {
   clipPersistedToolOutput,
   droppedImageText,
@@ -205,7 +216,9 @@ export interface RunGitHubCopilotChatArgs {
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
+    prepared?: PreparedBackgroundCompaction
   } | null>
+  onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
@@ -233,6 +246,7 @@ type GitHubCopilotRuntimePreparationArgs = Omit<
   | 'onModelContextWindow'
   | 'contextWindow'
   | 'compactHistory'
+  | 'onBackgroundCompactionPrefix'
 >
 
 export interface CompactGitHubCopilotSessionArgs extends GitHubCopilotRuntimePreparationArgs {
@@ -402,7 +416,10 @@ async function retireSession(
 
 function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  return `${project ? 'Project' : 'Available'} skills available through \`use_skill\`:\n` + skills.map(skillCatalogLine).join('\n')
+  return (
+    `${project ? 'Project' : 'Available'} skills available through \`use_skill\`:\n` +
+    skills.map(skillCatalogLine).join('\n')
+  )
 }
 
 /**
@@ -713,7 +730,14 @@ async function prepareRuntime(
       `${copilot.profile} Maestrly harness selected from model ${args.selection.modelId}. Copilot is the transport; ` +
       `the selected model family governs behavioral instructions. Only the explicitly supplied tools are available.`
     let systemMessage =
-      buildMaestrlyBasePrompt({ harness, scope: args.projectId === null ? 'standalone' : 'project', cwd: args.cwd, appToolsEnabled, mode: args.mode, hasNotesTab: notes }) +
+      buildMaestrlyBasePrompt({
+        harness,
+        scope: args.projectId === null ? 'standalone' : 'project',
+        cwd: args.cwd,
+        appToolsEnabled,
+        mode: args.mode,
+        hasNotesTab: notes,
+      }) +
       runtimeOverlay +
       projectContext +
       (skillContext ? `\n\n# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillContext}` : '') +
@@ -742,7 +766,10 @@ async function prepareRuntime(
     }
 
     const toolSignature = gitHubCopilotToolSignature(tools, agents)
-    const signature = args.projectId === null ? createHash('sha256').update(`standalone:${toolSignature}:${systemMessage}`).digest('hex') : toolSignature
+    const signature =
+      args.projectId === null
+        ? createHash('sha256').update(`standalone:${toolSignature}:${systemMessage}`).digest('hex')
+        : toolSignature
     return {
       tools,
       hostTools: hostRuntime.tools,
@@ -895,7 +922,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
   const accountFingerprint = args.accountIdentity.fingerprint
   if (!accountFingerprint) throw new Error('GitHub Copilot is not authenticated')
   const responseStartedAt = args.responseStartedAt ?? Date.now()
-  const history = runnerContextHistory(args.conversationId, {
+  let history = runnerContextHistory(args.conversationId, {
     ephemeralSession: args.ephemeralSession,
     executionScope: args.messageMeta?.executionScope,
   })
@@ -915,6 +942,9 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       createdAt,
     },
   ]
+  let assistantHistoryIndex: number | null = null
+  const liveHistory = (): StoredChatMessage[] =>
+    historyWithCurrentAssistant(history, messages[0] as StoredChatMessage, assistantHistoryIndex)
   let lastPersistAt = 0
   let dirty = false
   const persist = (): void => {
@@ -922,8 +952,13 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
     dirty = false
     upsertChatMessage(messages[0])
   }
+  const backgroundPrefix = createBackgroundCompactionPrefixNotifier({
+    callback: args.onBackgroundCompactionPrefix,
+    message: () => messages[0],
+  })
   const coalescer = createDeltaCoalescer(args.emit)
   const apply = (event: ChatStreamEvent, force = false): void => {
+    if (event.kind === 'text-start' || event.kind === 'reasoning-start') backgroundPrefix.open(event.partId)
     messages = applyChatEvent(messages, event)
     coalescer.push(event)
     if (force || Date.now() - lastPersistAt > 300) persist()
@@ -1394,10 +1429,14 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
             return
           }
           collectCitations(event.data.citations, citationLines)
-          if (streamedText.has(event.data.messageId) || !event.data.content) return
           const partId = `copilot_text_${event.data.messageId}`
-          apply({ kind: 'text-start', messageId: assistantId, partId })
-          apply({ kind: 'text-delta', messageId: assistantId, partId, delta: event.data.content })
+          if (!streamedText.has(event.data.messageId) && event.data.content) {
+            apply({ kind: 'text-start', messageId: assistantId, partId })
+            apply({ kind: 'text-delta', messageId: assistantId, partId, delta: event.data.content })
+          }
+          backgroundPrefix.close(partId)
+          persist()
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         case 'assistant.reasoning_delta': {
@@ -1412,10 +1451,15 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
           return
         }
         case 'assistant.reasoning': {
-          if (event.agentId || streamedReasoning.has(event.data.reasoningId) || !event.data.content) return
+          if (event.agentId) return
           const partId = `copilot_reasoning_${event.data.reasoningId}`
-          apply({ kind: 'reasoning-start', messageId: assistantId, partId })
-          apply({ kind: 'reasoning-delta', messageId: assistantId, partId, delta: event.data.content })
+          if (!streamedReasoning.has(event.data.reasoningId) && event.data.content) {
+            apply({ kind: 'reasoning-start', messageId: assistantId, partId })
+            apply({ kind: 'reasoning-delta', messageId: assistantId, partId, delta: event.data.content })
+          }
+          backgroundPrefix.close(partId)
+          persist()
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         case 'tool.execution_start': {
@@ -1424,6 +1468,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
             if (parent) progressSubagent(parent, `${event.data.toolName} started`)
             return
           }
+          backgroundPrefix.closeAll()
           ensureTool(event.data.toolCallId, event.data.toolName, event.data.arguments ?? {})
           return
         }
@@ -1492,11 +1537,13 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
             },
             true
           )
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         case 'subagent.started': {
           const callId = event.data.toolCallId
           if (event.agentId) subagentCalls.set(event.agentId, callId)
+          backgroundPrefix.closeAll()
           ensureTool(callId, 'task', {
             agent: event.data.agentName,
             description: event.data.agentDescription,
@@ -1523,16 +1570,21 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
             },
             true
           )
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         case 'subagent.failed': {
           ensureTool(event.data.toolCallId, 'task', { agent: event.data.agentName })
-          apply({
-            kind: 'tool-state',
-            messageId: assistantId,
-            toolCallId: event.data.toolCallId,
-            state: { status: 'error', error: githubCopilotErrorMessage(event.data.error) },
-          })
+          apply(
+            {
+              kind: 'tool-state',
+              messageId: assistantId,
+              toolCallId: event.data.toolCallId,
+              state: { status: 'error', error: githubCopilotErrorMessage(event.data.error) },
+            },
+            true
+          )
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         case 'assistant.usage': {
@@ -1697,19 +1749,38 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       const summary = compacted?.summary.trim()
       if (!compacted || !summary) throw new Error('GitHub Copilot portable intra-turn compaction failed')
 
-      addPortableCompactionUsage(usage, compacted.usage)
+      if (!compacted.prepared) addPortableCompactionUsage(usage, compacted.usage)
       inTurnCompactions += 1
-      apply(
-        {
-          kind: 'compaction',
-          messageId: assistantId,
-          partId: randomUUID(),
-          text: summary,
-          strategy: 'summary',
-          usage: chatUsage(usage, [...managedSubagentUsage.values()]),
-        },
-        true
-      )
+      let preparedContextTokens: number | null = null
+      if (compacted.prepared) {
+        const activated = activatePreparedCompaction({
+          conversationId: args.conversationId,
+          assistantMessageId: assistantId,
+          prepared: compacted.prepared,
+          scope: {
+            ephemeralSession: args.ephemeralSession,
+            executionScope: args.messageMeta?.executionScope,
+          },
+        })
+        history = activated.history
+        messages = [activated.assistant]
+        assistantHistoryIndex = activated.assistantIndex
+        coalescer.push(activated.event)
+        preparedContextTokens = activated.contextTokens
+      } else {
+        apply(
+          {
+            kind: 'compaction',
+            messageId: assistantId,
+            partId: randomUUID(),
+            text: summary,
+            strategy: 'summary',
+            usage: chatUsage(usage, [...managedSubagentUsage.values()]),
+          },
+          true
+        )
+      }
+      if (preparedContextTokens != null) usage.contextInput = preparedContextTokens
       chatDiag({
         kind: 'github-copilot-subscription-in-turn-compact',
         compacts: inTurnCompactions,
@@ -1748,8 +1819,8 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         throw new Error('GitHub Copilot session was discarded because the conversation is being closed')
       }
 
-      usage.contextInput = 0
-      const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+      usage.contextInput = preparedContextTokens ?? 0
+      const continuationTranscript = renderNativeSeedTranscript(liveHistory())
       const continueMessage: ChatMessage = {
         id: randomUUID(),
         conversationId: args.conversationId,
@@ -1769,6 +1840,9 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         partId,
         delta: `\n\n### Sources\n${[...citationLines.values()].join('\n')}`,
       })
+      backgroundPrefix.close(partId)
+      persist()
+      backgroundPrefix.notifyAfterPersist()
     }
 
     if (args.signal.aborted) {
@@ -1803,7 +1877,9 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         },
         true
       )
+      backgroundPrefix.closeAll()
     }
+    backgroundPrefix.notifyAfterPersist()
 
     args.manager.assertAccountIdentity(args.accountIdentity)
     if (!args.signal.aborted && !fatal.message && !args.ephemeralSession && (args.canPersistSession?.() ?? true)) {

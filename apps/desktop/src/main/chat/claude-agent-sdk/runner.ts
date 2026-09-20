@@ -38,6 +38,12 @@ import {
   type StoredChatUsage,
 } from '../chat-store'
 import { createDeltaCoalescer } from '../delta-coalescer'
+import {
+  activatePreparedCompaction,
+  createBackgroundCompactionPrefixNotifier,
+  historyWithCurrentAssistant,
+  type PreparedBackgroundCompaction,
+} from '../background-compaction/runner'
 import { chatDiag } from '../diag-log'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { describeEphemeralToolImage } from '../image-interpreter'
@@ -184,7 +190,9 @@ export interface RunClaudeChatArgs {
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
+    prepared?: PreparedBackgroundCompaction
   } | null>
+  onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
@@ -923,7 +931,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     if (liveResolvedModelId !== args.frozenResolvedModelId) throw new Error('executor-unavailable')
   }
   const responseStartedAt = args.responseStartedAt ?? Date.now()
-  const history = runnerContextHistory(args.conversationId, {
+  let history = runnerContextHistory(args.conversationId, {
     ephemeralSession: args.ephemeralSession,
     executionScope: args.messageMeta?.executionScope,
   })
@@ -943,6 +951,9 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       createdAt,
     },
   ]
+  let assistantHistoryIndex: number | null = null
+  const liveHistory = (): StoredChatMessage[] =>
+    historyWithCurrentAssistant(history, messages[0], assistantHistoryIndex)
   let dirty = false
   let terminalCommitted = false
   let lastPersistAt = 0
@@ -951,11 +962,16 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     lastPersistAt = Date.now()
     upsertChatMessage(messages[0])
   }
+  const backgroundPrefix = createBackgroundCompactionPrefixNotifier({
+    callback: args.onBackgroundCompactionPrefix,
+    message: () => messages[0],
+  })
   const coalescer = createDeltaCoalescer(args.emit)
   /** `publicEvent` omits contextIdentity for IPC when an event carries internal usage. */
   const apply = (event: ChatStreamEvent, force = false, publicEvent?: ChatStreamEvent): void => {
     if (event.kind === 'finish' || event.kind === 'error' || event.kind === 'aborted') contextProgress.dispose()
     else if (event.kind === 'compaction') contextProgress.flush()
+    if (event.kind === 'text-start' || event.kind === 'reasoning-start') backgroundPrefix.open(event.partId)
     messages = applyChatEvent(messages, event) as StoredChatMessage[]
     coalescer.push(publicEvent ?? event)
     if (force || Date.now() - lastPersistAt > 300) persist()
@@ -974,12 +990,39 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         cancelled,
       }),
   })
-  const compactPortableHistory = (target?: ClaudeRuntimeTarget) =>
-    contextProgress.compact((onProgress) => args.compactHistory!(target, onProgress), {
-      signal: args.signal,
-      validate: (result) => Boolean(result?.summary.trim()),
-      failureMessage: 'Claude portable intra-turn compaction failed.',
+  let activatedPrepared: { partId: string; contextTokens: number } | null = null
+  const activatePrepared = (prepared: PreparedBackgroundCompaction): number => {
+    if (activatedPrepared?.partId === prepared.partId) return activatedPrepared.contextTokens
+    const activated = activatePreparedCompaction({
+      conversationId: args.conversationId,
+      assistantMessageId: assistantId,
+      prepared,
+      scope: {
+        ephemeralSession: args.ephemeralSession,
+        executionScope: args.messageMeta?.executionScope,
+      },
     })
+    history = activated.history
+    messages = [activated.assistant]
+    assistantHistoryIndex = activated.assistantIndex
+    coalescer.push(activated.event)
+    activatedPrepared = { partId: prepared.partId, contextTokens: activated.contextTokens }
+    return activated.contextTokens
+  }
+  const compactPortableHistory = (target?: ClaudeRuntimeTarget) =>
+    contextProgress.compact(
+      async (onProgress) => {
+        const compacted = await args.compactHistory!(target, onProgress)
+        // Completion progress persists synchronously; refresh first so it cannot overwrite an atomic marker.
+        if (compacted?.prepared && compacted.summary.trim()) activatePrepared(compacted.prepared)
+        return compacted
+      },
+      {
+        signal: args.signal,
+        validate: (result) => Boolean(result?.summary.trim()),
+        failureMessage: 'Claude portable intra-turn compaction failed.',
+      }
+    )
   const applyWithUsage = (base: ChatStreamEvent, usage: StoredChatUsage | undefined, force = true): void => {
     const stored = { ...base, ...(usage ? { usage } : {}) } as ChatStreamEvent
     const publicUsage = toPublicChatUsage(usage)
@@ -1016,6 +1059,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       },
       usage
     )
+    backgroundPrefix.notifyAfterPersist()
     terminalCommitted = true
   }
   upsertChatMessage(messages[0])
@@ -1360,7 +1404,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       }
       currentAttemptUsageArchived = true
     }
-    const fullTranscript = (): string => renderNativeSeedTranscript([...history, messages[0]])
+    const fullTranscript = (): string => renderNativeSeedTranscript(liveHistory())
     const performFailover = async (error: unknown): Promise<boolean> => {
       if (args.signal.aborted || state.planSubmitted || switchingAccount) return false
       if (!accountAttempt) return false
@@ -1407,7 +1451,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         args.signal.throwIfAborted()
         if (!compacted?.summary.trim())
           throw new Error('Claude continuation requires portable compaction, which failed.')
-        const usage = normalizedPortableUsage(compacted.usage)
+        const usage = compacted.prepared ? undefined : normalizedPortableUsage(compacted.usage)
         if (usage) portableCompactorUsage.push(usage)
         if (compacted.runtimeEstimatedCostUsd != null) {
           portableCompactorRuntimeCostUsd += Math.max(0, compacted.runtimeEstimatedCostUsd)
@@ -1418,16 +1462,33 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           for (const key of ['input', 'output', 'cacheRead', 'cacheCreate'] as const)
             portableCompactorCatalogUsage[key] += usage[key]
         }
-        apply(
-          {
-            kind: 'compaction',
-            messageId: assistantId,
-            partId: randomUUID(),
-            text: compacted.summary,
-            strategy: 'summary',
-          },
-          true
-        )
+        if (compacted.prepared) {
+          const contextTokens = activatePrepared(compacted.prepared)
+          const maxTokens = (context as ClaudeContextSnapshot | null)?.maxTokens ?? portableContextWindow
+          context = {
+            totalTokens: contextTokens,
+            maxTokens,
+            percentage: maxTokens ? (contextTokens / maxTokens) * 100 : 0,
+            model: runtimeModelId,
+          }
+          const observePrepared = contextProgress.observeAttempt()
+          observePrepared({
+            usedTokens: contextTokens,
+            ...(maxTokens ? { modelContextWindow: maxTokens } : {}),
+            quality: 'estimated',
+          })
+        } else {
+          apply(
+            {
+              kind: 'compaction',
+              messageId: assistantId,
+              partId: randomUUID(),
+              text: compacted.summary,
+              strategy: 'summary',
+            },
+            true
+          )
+        }
         transcript = fullTranscript()
         if (portableContextLoad(portableContextWindow, estimateTextTokens(transcript), 0).overflow) {
           throw new Error('Claude continuation still exceeds the fallback context window after compaction.')
@@ -1651,6 +1712,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               event.kind === 'tool-state' && (event.state.status === 'completed' || event.state.status === 'error')
             apply(event, finalToolState)
             if (!finalToolState) continue
+            backgroundPrefix.notifyAfterPersist()
             const toolResult = mapped.toolResults[toolResultIndex++]
             if (!toolResult) continue
             foldedToolResult = true
@@ -1708,7 +1770,12 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               if (sdkMessage.error && observeQuotaFailure(sdkMessage)) break
               // Local quota diagnostics are not model prose; a later rate event may
               // confirm them. Preserve usage but keep intermediate errors out of the bubble.
-              if (sdkMessage.error !== 'rate_limit' && sdkMessage.error !== 'billing_error') applyMappedEvents(mapped)
+              if (sdkMessage.error !== 'rate_limit' && sdkMessage.error !== 'billing_error') {
+                applyMappedEvents(mapped)
+                backgroundPrefix.closeAll()
+                persist()
+                backgroundPrefix.notifyAfterPersist()
+              }
               if (
                 sdkMessage.message.stop_reason != null &&
                 sdkMessage.message.stop_reason !== 'tool_use' &&
@@ -1745,16 +1812,20 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               for (const toolCallId of sdkMessage.preceding_tool_use_ids) {
                 const existingState = currentToolState(toolCallId)
                 if (existingState?.status === 'completed' || existingState?.status === 'error') continue
-                apply({
-                  kind: 'tool-state',
-                  messageId: assistantId,
-                  toolCallId,
-                  state: {
-                    status: 'completed',
-                    output: clipPersistedToolOutput(sdkMessage.summary),
-                    ...(state.subagentRuns.get(toolCallId) ? { sub: state.subagentRuns.get(toolCallId) } : {}),
+                apply(
+                  {
+                    kind: 'tool-state',
+                    messageId: assistantId,
+                    toolCallId,
+                    state: {
+                      status: 'completed',
+                      output: clipPersistedToolOutput(sdkMessage.summary),
+                      ...(state.subagentRuns.get(toolCallId) ? { sub: state.subagentRuns.get(toolCallId) } : {}),
+                    },
                   },
-                })
+                  true
+                )
+                backgroundPrefix.notifyAfterPersist()
               }
             } else if (sdkMessage.type === 'result') {
               result = sdkMessage
@@ -1806,7 +1877,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             const delegations = await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
             for (const delegation of delegations) markDelegationObserved(delegation.id)
             persist()
-            const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+            const continuationTranscript = renderNativeSeedTranscript(liveHistory())
             const guardMessage: ChatMessage = {
               id: randomUUID(),
               conversationId: args.conversationId,
@@ -1849,7 +1920,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         await state.toolJournal?.drain(args.signal)
         if (args.mode === 'maestro') await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
         persist()
-        const compactionContext = context as ClaudeContextSnapshot | null
+        let compactionContext = context as ClaudeContextSnapshot | null
 
         let compacted: Awaited<ReturnType<NonNullable<RunClaudeChatArgs['compactHistory']>>> = null
         try {
@@ -1878,7 +1949,25 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         }
 
         const attemptUsage = aggregateClaudeUsage(streamMapper.state().assistantUsageByMessageId.values())
-        const compactorUsage = normalizedPortableUsage(compacted.usage)
+        let preparedContextTokens: number | null = null
+        if (compacted.prepared) {
+          preparedContextTokens = activatePrepared(compacted.prepared)
+          const maxTokens = compactionContext?.maxTokens ?? portableContextWindow
+          compactionContext = {
+            totalTokens: preparedContextTokens,
+            maxTokens,
+            percentage: maxTokens ? (preparedContextTokens / maxTokens) * 100 : 0,
+            model: runtimeModelId,
+          }
+          context = compactionContext
+          const observePrepared = contextProgress.observeAttempt()
+          observePrepared({
+            usedTokens: preparedContextTokens,
+            ...(maxTokens ? { modelContextWindow: maxTokens } : {}),
+            quality: 'estimated',
+          })
+        }
+        const compactorUsage = compacted.prepared ? undefined : normalizedPortableUsage(compacted.usage)
         const markerUsage = aggregateClaudeUsage([
           ...completedAttemptUsage,
           ...portableCompactorUsage,
@@ -1907,24 +1996,26 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           runtimeCoveredTokens: portableCompactorRuntimeCoveredUsage,
         }
         inTurnCompactions += 1
-        applyWithUsage(
-          {
-            kind: 'compaction' as const,
-            messageId: assistantId,
-            partId: randomUUID(),
-            text: summary,
-            strategy: 'summary' as const,
-          },
-          usageFromResult(
-            null,
-            compactionContext,
-            [...subagentUsage.values()],
-            contextIdentity,
-            markerUsage,
-            markerUsage,
-            compactorAux
+        if (!compacted.prepared) {
+          applyWithUsage(
+            {
+              kind: 'compaction' as const,
+              messageId: assistantId,
+              partId: randomUUID(),
+              text: summary,
+              strategy: 'summary' as const,
+            },
+            usageFromResult(
+              null,
+              compactionContext,
+              [...subagentUsage.values()],
+              contextIdentity,
+              markerUsage,
+              markerUsage,
+              compactorAux
+            )
           )
-        )
+        }
         chatDiag({
           kind: 'claude-subscription-in-turn-compact',
           compacts: inTurnCompactions,
@@ -1966,7 +2057,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           )
           .digest('hex')
 
-        const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+        const continuationTranscript = renderNativeSeedTranscript(liveHistory())
         const continueMessage: ChatMessage = {
           id: randomUUID(),
           conversationId: args.conversationId,
@@ -2099,6 +2190,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         },
         chatUsage
       )
+      backgroundPrefix.notifyAfterPersist()
       terminalCommitted = true
       coalescer.flush()
       return {
@@ -2125,6 +2217,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         },
         chatUsage
       )
+      backgroundPrefix.notifyAfterPersist()
       terminalCommitted = true
       coalescer.flush()
       return {
@@ -2142,6 +2235,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         },
         chatUsage
       )
+      backgroundPrefix.closeAll()
+      backgroundPrefix.notifyAfterPersist()
       terminalCommitted = true
     }
     if (
@@ -2307,6 +2402,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         catchUsage
       )
     }
+    backgroundPrefix.notifyAfterPersist()
     coalescer.flush()
     return {
       planSubmitted: state.planSubmitted && state.planResultAcknowledged,
@@ -2336,7 +2432,10 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
 }
 
 export interface CompactClaudeSessionArgs
-  extends Omit<RunClaudeChatArgs, 'emit' | 'responseStartedAt' | 'onSessionReady' | 'canPersistSession'> {
+  extends Omit<
+    RunClaudeChatArgs,
+    'emit' | 'responseStartedAt' | 'onSessionReady' | 'canPersistSession' | 'onBackgroundCompactionPrefix'
+  > {
   customInstructions?: string
 }
 
@@ -2350,6 +2449,7 @@ export interface CompactClaudeSessionResult {
   incompatible?: boolean
   exhaustion?: MarkExhaustedInfo
   portable?: boolean
+  prepared?: PreparedBackgroundCompaction
 }
 
 /** Requests the runtime's native /compact command for the exact persisted session. */
@@ -2453,7 +2553,7 @@ export async function compactClaudeSession(args: CompactClaudeSessionArgs): Prom
     const summary = await args.compactHistory?.()
     const combinedUsage = aggregateClaudeUsage([
       ...(nativeUsage ? [nativeUsage] : []),
-      ...(summary?.usage ? [normalizedPortableUsage(summary.usage)!] : []),
+      ...(summary?.usage && !summary.prepared ? [normalizedPortableUsage(summary.usage)!] : []),
     ])
     const nativeCost = result?.total_cost_usd
     const summaryCost = summary?.runtimeEstimatedCostUsd
@@ -2472,6 +2572,7 @@ export async function compactClaudeSession(args: CompactClaudeSessionArgs): Prom
       summary: summary?.summary ?? null,
       exhaustion: classification.info,
       ...(summary?.summary.trim() ? { portable: true } : {}),
+      ...(summary?.prepared ? { prepared: summary.prepared } : {}),
       ...(combinedUsage
         ? { usage: { ...combinedUsage, ...(combinedCost != null ? { runtimeEstimatedCostUsd: combinedCost } : {}) } }
         : {}),
