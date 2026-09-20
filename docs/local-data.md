@@ -20,6 +20,20 @@ deleting the chat removes it. Back up the complete profile before reset.
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
+## Temporary tool output
+
+Large built-in chat tool results are saved under `chat-tool-output` so the agent
+can read beyond the shortened chat preview. These files are temporary: the app
+retains at most 256 MiB and 2,000 files, removing the oldest first, and expires
+files after seven days. Cleanup runs at startup, hourly, and when saving output;
+it also applies to files accumulated by older versions. Files above 16 MiB are
+not saved, and the preview reports when full output is unavailable.
+
+Conversation history and project files are retained, but paths in older tool
+messages can stop working after expiration or eviction. Save any output you need
+to keep in your project. Cleanup failures do not interrupt tools; if space cannot
+be reclaimed, the app stops saving full output until storage is available.
+
 ## Upgrades and reset
 
 SQLite upgrades are forward-only and transactional. If an upgrade fails, close

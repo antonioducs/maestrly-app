@@ -149,6 +149,7 @@ import { registerSoundIpc } from './sound/ipc'
 import { soundService } from './sound/service'
 import { attachWindowNavigation } from './mouse-navigation'
 import { cleanupOrphanRuntimeAssetTemps } from './runtime-assets/app-service'
+import { cleanupToolOutputs } from './chat/tool-output-store'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { embeddedRunnerHost } from './platform/runner-host'
@@ -671,6 +672,12 @@ app.whenReady().then(async () => {
     return
   }
   await cleanupOrphanRuntimeAssetTemps()
+  await cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
+  const toolOutputCleanupTimer = setInterval(() => {
+    void cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
+  }, 60 * 60 * 1000)
+  toolOutputCleanupTimer.unref()
+  app.once('will-quit', () => clearInterval(toolOutputCleanupTimer))
 
   const instanceId = getInstanceId()
   if (instanceId) writeInstanceLock(instanceId)

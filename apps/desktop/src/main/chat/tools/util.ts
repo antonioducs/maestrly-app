@@ -7,7 +7,7 @@ import type { PermissionScope } from '../../../shared/conversation-scope'
 
 import path from 'node:path'
 import fs from 'node:fs'
-import { app } from 'electron'
+import { saveToolOutput } from '../tool-output-store'
 import type { z } from 'zod'
 import type { PermissionAction } from '../permission'
 import type { ChatQuestion } from '../../../shared/chat'
@@ -279,17 +279,18 @@ export async function assertReviewerPathInside(
 const MAX_OUTPUT_LINES = 2000
 const MAX_OUTPUT_BYTES = 50 * 1024
 
-let spillDir: string | null = null
-function getSpillDir(): string {
-  if (!spillDir) {
-    spillDir = path.join(app.getPath('userData'), 'chat-tool-output')
-    try {
-      fs.mkdirSync(spillDir, { recursive: true })
-    } catch {
-      /* best-effort */
-    }
+/** Take a UTF-8 prefix or suffix without splitting a code point. */
+function byteSlice(text: string, maxBytes: number, tail = false): string {
+  const bytes = Buffer.from(text, 'utf8')
+  if (bytes.length <= maxBytes) return text
+  if (tail) {
+    let start = bytes.length - maxBytes
+    while ((bytes[start] & 0xc0) === 0x80) start++
+    return bytes.subarray(start).toString('utf8')
   }
-  return spillDir
+  let end = maxBytes
+  while ((bytes[end] & 0xc0) === 0x80) end--
+  return bytes.subarray(0, end).toString('utf8')
 }
 
 /** Bounds model-visible text (head+tail) and spills full output to a file on overflow. */
@@ -298,19 +299,14 @@ export function boundText(text: string, toolCallId: string): string {
   const lines = text.split('\n')
   if (lines.length <= MAX_OUTPUT_LINES && byteLen <= MAX_OUTPUT_BYTES) return text
 
-  let spillPath = ''
-  try {
-    spillPath = path.join(getSpillDir(), `tool_${toolCallId}.txt`)
-    fs.writeFileSync(spillPath, text, 'utf8')
-  } catch {
-    spillPath = ''
-  }
-  const headCount = Math.ceil(MAX_OUTPUT_LINES / 2)
-  const tailCount = Math.floor(MAX_OUTPUT_LINES / 2)
-  const head = lines.slice(0, headCount).join('\n')
-  const tail = lines.slice(Math.max(headCount, lines.length - tailCount)).join('\n')
+  const spillPath = saveToolOutput(text, toolCallId)
   const marker = spillPath
-    ? `\n\n… output truncated; full content saved to ${spillPath} …\n\n`
-    : '\n\n… output truncated …\n\n'
+    ? `\n\n… output truncated; full content saved temporarily to ${spillPath} (may expire or be evicted) …\n\n`
+    : '\n\n… output truncated; full content not saved (storage limit or unavailable) …\n\n'
+  const budget = Math.max(0, MAX_OUTPUT_BYTES - Buffer.byteLength(marker, 'utf8'))
+  const headCount = Math.ceil((MAX_OUTPUT_LINES - 4) / 2)
+  const tailCount = Math.floor((MAX_OUTPUT_LINES - 4) / 2)
+  const head = byteSlice(lines.slice(0, headCount).join('\n'), Math.ceil(budget / 2))
+  const tail = byteSlice(lines.slice(-tailCount).join('\n'), Math.floor(budget / 2), true)
   return head + marker + tail
 }

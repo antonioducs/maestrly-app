@@ -147,12 +147,27 @@ describe('chat tools', () => {
     expect(bounded).toContain('output truncated')
     expect(bounded).toContain('line-0')
     expect(bounded).toContain('line-2104')
+    expect(bounded.split('\n').length).toBeLessThanOrEqual(2000)
     expect(
       await fs.readFile(
         path.join(os.tmpdir(), 'agents-test-electron', 'chat-tool-output', 'tool_spill-test.txt'),
         'utf8'
       )
     ).toBe(text)
+  })
+
+  it('bounds a single long Unicode line by bytes while preserving both ends', () => {
+    const bounded = boundText(`START${'😀'.repeat(30_000)}END`, 'unicode-spill-test')
+    expect(Buffer.byteLength(bounded, 'utf8')).toBeLessThanOrEqual(50 * 1024)
+    expect(bounded.startsWith('START')).toBe(true)
+    expect(bounded.endsWith('END')).toBe(true)
+    expect(bounded).not.toContain('\ufffd')
+  })
+
+  it('keeps a bounded preview when full output exceeds the per-file limit', () => {
+    const bounded = boundText('x'.repeat(16 * 1024 * 1024 + 1), 'oversize-spill-test')
+    expect(Buffer.byteLength(bounded, 'utf8')).toBeLessThanOrEqual(50 * 1024)
+    expect(bounded).toContain('full content not saved')
   })
 
   it('scopes always permissions', () => {
