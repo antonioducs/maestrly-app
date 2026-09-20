@@ -79,6 +79,7 @@ import type {
   SubagentProfileSaveResult,
 } from '../shared/subagent-profiles'
 import type { MaestroToStandardResult, StandardToMaestroResult } from '../shared/conversation-experience'
+import type { BackgroundCompactionConfig } from '../shared/background-compaction'
 
 const SUBSCRIPTION_CHANNELS: Record<
   ChatSubscriptionProviderKind,
@@ -163,6 +164,12 @@ function onSubscriptionStatus(
 
 export const chatApi = {
   chatConfig: (): Promise<ChatConfig> => ipcRenderer.invoke('chat:config'),
+
+  chatSetBackgroundCompaction: (config: BackgroundCompactionConfig): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:background-compaction:set', config),
+
+  chatRetryBackgroundCompaction: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:background-compaction:retry', conversationId),
 
   chatSubscriptionStatus: subscriptionStatus,
 
@@ -488,8 +495,7 @@ export const chatApi = {
   chatSetPermMode: (conversationId: string, mode: 'full' | 'ask' | 'auto'): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('chat:set-perm-mode', conversationId, mode),
 
-  chatGetMode: (conversationId: string): Promise<ChatMode> =>
-    ipcRenderer.invoke('chat:get-mode', conversationId),
+  chatGetMode: (conversationId: string): Promise<ChatMode> => ipcRenderer.invoke('chat:get-mode', conversationId),
   chatSetMode: (conversationId: string, mode: ChatMode): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:set-mode', conversationId, mode),
 

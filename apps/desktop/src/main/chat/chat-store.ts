@@ -33,6 +33,7 @@ import {
   releaseUnreferencedEphemeralToolImages,
   sanitizeToolOutputForPersistence,
 } from './tool-output'
+import { invalidateBackgroundCompaction } from './background-compaction/invalidation'
 
 /**
  * PERSISTED/INTERNAL main-process usage. Extends public `ChatUsage` with the OPAQUE identity
@@ -722,7 +723,9 @@ export function updateChatMessageParts(conversationId: string, messageId: string
   const result = getDb()
     .prepare('UPDATE chat_messages SET parts_json = ? WHERE id = ? AND conversation_id = ?')
     .run(JSON.stringify(persistedParts(parts)), messageId, conversationId)
-  return result.changes > 0
+  if (result.changes <= 0) return false
+  invalidateBackgroundCompaction(conversationId)
+  return true
 }
 
 /** Conversation messages in seq ASC order. INTERNAL to main (StoredChatMessage) — project for IPC. */
@@ -1381,6 +1384,48 @@ export function recordStandaloneChatUsage(args: {
     .run(args.id, args.model.providerId, args.model.modelId, JSON.stringify(usage), args.createdAt ?? Date.now())
 }
 
+/** Immutable, idempotent billing entry for one auxiliary attempt; it never creates a visible message. */
+export function recordChatUsageAttempt(args: {
+  id: string
+  conversationId: string
+  model: ChatModelRef
+  usage: { input: number; output: number; cacheRead: number; cacheCreate: number }
+  runtimeEstimatedCostUsd?: number
+  createdAt?: number
+}): void {
+  const count = (value: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+  const runtimeEstimatedCostUsd =
+    typeof args.runtimeEstimatedCostUsd === 'number' &&
+    Number.isFinite(args.runtimeEstimatedCostUsd) &&
+    args.runtimeEstimatedCostUsd >= 0
+      ? args.runtimeEstimatedCostUsd
+      : undefined
+  const usage: ChatUsage = {
+    usageVersion: 2,
+    input: count(args.usage.input),
+    output: count(args.usage.output),
+    cachedInput: count(args.usage.cacheRead),
+    cacheCreate: count(args.usage.cacheCreate),
+    billingOnly: true,
+    ...(runtimeEstimatedCostUsd !== undefined ? { runtimeEstimatedCostUsd } : {}),
+  }
+  getDb()
+    .prepare(
+      `INSERT OR IGNORE INTO chat_usage_ledger
+         (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      args.id,
+      args.conversationId,
+      args.model.providerId,
+      args.model.modelId,
+      JSON.stringify(usage),
+      args.createdAt ?? Date.now()
+    )
+}
+
 /**
  * GLOBAL chat usage (all conversations) aggregated by provider+model. Subagents use effective models
  * with v2 breakdowns; legacy records stay on parent model. On demand (full ledger
@@ -1577,6 +1622,7 @@ export function findGeneratedImagePart(
  * finishes — in-flight rm could delete an artifact just written by the next generation.
  */
 export async function clearChatMessages(conversationId: string): Promise<void> {
+  invalidateBackgroundCompaction(conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ?',
     conversationId
@@ -1594,6 +1640,7 @@ export function deleteChatMessage(id: string): void {
   const pending = chatDeletionArtifacts('SELECT id, conversation_id, parts_json FROM chat_messages WHERE id = ?', id)
   getDb().prepare('DELETE FROM chat_messages WHERE id = ?').run(id)
   if (!pending) return
+  invalidateBackgroundCompaction(pending.conversationId)
   releaseRemovedToolImageRefs(pending.toolImageRefs)
   releaseConversationToolImageMetadata(pending.conversationId, deletionDescriptionIds(pending))
   if (pending.generatedImageIds.length) void deleteGeneratedImages(pending.conversationId, pending.generatedImageIds)
@@ -1608,6 +1655,7 @@ export function getMessageSeq(id: string): number | null {
 
 /** Deletes conversation messages with seq >= `fromSeq` (edit last message → rewrite from there). */
 export function deleteChatMessagesFrom(conversationId: string, fromSeq: number): void {
+  invalidateBackgroundCompaction(conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ? AND seq >= ?',
     conversationId,

@@ -1,5 +1,5 @@
 import type { PermissionScope } from '../../shared/conversation-scope'
-import { autonomousPolicy,interactiveTool,governAutonomousTools,AUTONOMOUS_INSTRUCTIONS } from './autonomous'
+import { autonomousPolicy, interactiveTool, governAutonomousTools, AUTONOMOUS_INSTRUCTIONS } from './autonomous'
 /**
  * BYOK chat agent loop. Conceptually ported from opencode `session/runner/llm.ts`, which manually
  * implements multi-step tools for durability. Here Vercel AI SDK `streamText` handles the loop
@@ -107,6 +107,12 @@ import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from './maestro-prompt'
 import type { MaestroLiveRunPort } from './maestro-live'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { applyFastModeServiceTier } from './fast-mode'
+import {
+  activatePreparedCompaction,
+  createBackgroundCompactionPrefixNotifier,
+  historyWithCurrentAssistant,
+  type PreparedBackgroundCompaction,
+} from './background-compaction/runner'
 import { renderDesignUltraGuidance } from './design-mode-prompt'
 export {
   canReplayOpenAILedger,
@@ -376,7 +382,9 @@ export interface RunChatArgs {
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
+    prepared?: PreparedBackgroundCompaction
   } | null>
+  onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /**
    * Frozen internal-turn selection (review-loop): runner does NOT reread ui_prefs. Service ALWAYS
    * sets an explicit loop value (`'off'` = no effort, materialized default); absence
@@ -484,7 +492,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // Turn context: isolated review-loop → execution only; normal turn → MAIN context
   // (isolated rounds NEVER seed/replay into manual turns). UI/audit still use listChatMessages.
-  const history = runnerContextHistory(conversationId, {
+  let history = runnerContextHistory(conversationId, {
     ephemeralSession: args.ephemeralSession,
     executionScope: args.messageMeta?.executionScope,
   })
@@ -521,6 +529,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       createdAt,
     },
   ]
+  let assistantHistoryIndex: number | null = null
+  const liveHistory = (): StoredChatMessage[] => historyWithCurrentAssistant(history, msgs[0], assistantHistoryIndex)
   let openAILifecycle: OpenAICompactionLifecycle | null = useOpenAIHarness
     ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
     : null
@@ -543,6 +553,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       })
     } else upsertChatMessage(msgs[0])
   }
+  const backgroundPrefix = createBackgroundCompactionPrefixNotifier({
+    callback: args.onBackgroundCompactionPrefix,
+    message: () => msgs[0],
+  })
   // Streaming coalescer (#559): batches text-delta/reasoning-delta for RENDERER (~40 ms), preserving
   // order (drain before every non-delta) and folding. Persistence below still processes every event.
   const coalescer = createDeltaCoalescer(emit)
@@ -556,6 +570,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Shared fold never creates/discards the bubble under construction (msgs[0] exists from start;
     // message-start finds it by ID → spread patch `...m`), so internal fingerprint + contextIdentity
     // survive intact; cast only supplies typing (public ChatMessage/ChatUsage omit them).
+    if (ev.kind === 'text-start' || ev.kind === 'reasoning-start') backgroundPrefix.open(ev.partId)
     msgs = applyChatEvent(msgs, ev) as StoredChatMessage[]
     coalescer.push(publicEv ?? ev)
     if (force) persistNow()
@@ -595,7 +610,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const hasNotesTab = Boolean(conversation)
   const enabledNames = args.reviewerRuntime ? new Set(REVIEWER_READONLY_TOOL_NAMES) : builtinToolNamesForMode(mode)
 
-  if(autonomousPolicy(conversationId))for(const name of enabledNames){if(interactiveTool(name))enabledNames.delete(name)}
+  if (autonomousPolicy(conversationId))
+    for (const name of enabledNames) {
+      if (interactiveTool(name)) enabledNames.delete(name)
+    }
 
   // Metadata must arrive before classifying `ultra`: GPT-5.6 treats it as REAL effort; older conversations
   // on models not advertising it used the same raw value as Maestrly's legacy sentinel.
@@ -730,10 +748,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   if (!args.reviewerRuntime && (await generateImageToolEnabled(conversationId, mode))) {
     enabledNames.add(GENERATE_IMAGE_TOOL_NAME)
   }
-  const tools = buildTools({executorReport:true,
-    enabled: enabledNames,
-    makeCtx: makeMainToolContext,
-  })
+  const tools = buildTools({ executorReport: true, enabled: enabledNames, makeCtx: makeMainToolContext })
 
   const mcpGate = (toolName: string, toolCallId: string, toolSignal?: AbortSignal) => {
     return broker.assert({
@@ -1376,28 +1391,29 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         : profileUltra
           ? `\n\n# ULTRA MODE\n${profileUltra}`
           : mode === 'agent'
-          ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-            'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
-            'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
-            'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
-            'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
-            'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
-            'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
-          : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-            'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
-            '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
-            'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
-            'and be critical of your first conclusion before finishing.'
-  const basePrompt = buildMaestrlyBasePrompt({ harness, scope: projectId === null ? 'standalone' : 'project', cwd, appToolsEnabled, mode, hasNotesTab })
+            ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+              'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
+              'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
+              'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
+              'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
+              'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
+              'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
+            : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+              'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
+              '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
+              'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
+              'and be critical of your first conclusion before finishing.'
+  const basePrompt = buildMaestrlyBasePrompt({
+    harness,
+    scope: projectId === null ? 'standalone' : 'project',
+    cwd,
+    appToolsEnabled,
+    mode,
+    hasNotesTab,
+  })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
-    basePrompt +
-    systemEnvContext +
-    projectContext +
-    skillsCatalog +
-    agentsCatalog +
-    maestroPolicyContext +
-    ultraBlock
+    basePrompt + systemEnvContext + projectContext + skillsCatalog + agentsCatalog + maestroPolicyContext + ultraBlock
   if (useOpenAIHarness) {
     // Responses protocol and textual prompt are separate axes. Pinned Codex has templates per
     // slug; only exact gpt-5.6-sol binding receives its port. Others retain the generic
@@ -1613,7 +1629,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       : [stepCountIs(turnMaxSteps), planStop]
     const result = streamText({
       model: streamModel,
-      system: system + (autonomousPolicy(conversationId) ? "\n\n"+AUTONOMOUS_INSTRUCTIONS : ""),
+      system: system + (autonomousPolicy(conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : ''),
       messages:
         harness.prompts.environment.placement === 'last-user-message'
           ? withEnvironmentOnLastUserMessage(messages, envDetails)
@@ -1712,7 +1728,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               step: steps,
               usage: stepUsage,
             })
-            if (openAILifecycle) persistNow()
+            persistNow()
+            backgroundPrefix.notifyAfterPersist()
             break
           }
           case 'text-start':
@@ -1724,7 +1741,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             break
           case 'text-end':
             // itemId/phase/annotations arrive at item close; checkpoint before any retry.
-            if (openAILifecycle) persistNow()
+            backgroundPrefix.close(p.id)
+            persistNow()
+            backgroundPrefix.notifyAfterPersist()
             break
           case 'reasoning-start':
             apply({ kind: 'reasoning-start', messageId: assistantId, partId: p.id })
@@ -1735,7 +1754,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             break
           case 'reasoning-end':
             // OpenAI adapter encrypted_content arrives here; without checkpoint the next turn loses it.
-            if (openAILifecycle) persistNow()
+            backgroundPrefix.close(p.id)
+            persistNow()
+            backgroundPrefix.notifyAfterPersist()
             break
           case 'custom':
             if (isOpenAINativeCompactionPart(p)) {
@@ -1802,6 +1823,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               },
               true
             )
+            backgroundPrefix.notifyAfterPersist()
             break
           }
           case 'tool-error': {
@@ -1828,6 +1850,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 true
               )
             }
+            backgroundPrefix.notifyAfterPersist()
             break
           }
           case 'finish': {
@@ -1884,6 +1907,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             }
             finished = true
             {
+              backgroundPrefix.closeAll()
               const pair = withStoredUsage(
                 {
                   kind: 'finish' as const,
@@ -1904,6 +1928,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               // Still persist fallback. Promote candidate only after entire iterator drains without throwing:
               // some transports send finish chunks before connection actually ends.
               apply(pair.stored, true, pair.public)
+              backgroundPrefix.notifyAfterPersist()
             }
             break
           }
@@ -1949,6 +1974,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 )
               )
               apply(pair.stored, true, pair.public)
+              backgroundPrefix.notifyAfterPersist()
             }
             errored = true
             break
@@ -1997,6 +2023,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           )
         )
         apply(pair.stored, true, pair.public)
+        backgroundPrefix.notifyAfterPersist()
       }
       discardPendingOpenAICompaction()
       return 'error'
@@ -2061,7 +2088,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           }
           break // No room and no way to free it → end with marker (preferable to repeated 502s).
         }
-        if (compacted.usage) {
+        if (compacted.usage && !compacted.prepared) {
           turnUsage.input += compacted.usage.input
           turnUsage.output += compacted.usage.output
           turnUsage.cacheRead += compacted.usage.cacheRead
@@ -2070,10 +2097,32 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         }
         inTurnCompacts++
         const preCompactOccupancy = lastStepInput + lastStepOutput
-        lastStepInput = compactedContextTokens(compacted.summary, compacted.usage)
+        let preparedContextTokens: number | null = null
+        if (compacted.prepared) {
+          const activated = activatePreparedCompaction({
+            conversationId,
+            assistantMessageId: assistantId,
+            prepared: compacted.prepared,
+            scope: {
+              ephemeralSession: args.ephemeralSession,
+              executionScope: args.messageMeta?.executionScope,
+            },
+          })
+          history = activated.history
+          msgs = [activated.assistant]
+          assistantHistoryIndex = activated.assistantIndex
+          if (openAILifecycle && compacted.prepared.messageId === assistantId) {
+            // The old whole-message ledger cannot represent a part-level portable boundary.
+            // Do not resurrect it on the next streaming persistence checkpoint.
+            openAILifecycle = createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
+          }
+          coalescer.push(activated.event)
+          preparedContextTokens = activated.contextTokens
+        }
+        lastStepInput = preparedContextTokens ?? compactedContextTokens(compacted.summary, compacted.usage)
         lastStepOutput = 0
         hasLastStepUsage = true
-        {
+        if (!compacted.prepared) {
           const pair = withStoredUsage(
             {
               kind: 'compaction' as const,
@@ -2105,7 +2154,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         continues = 0 // Compaction unblocked real progress → rearm continuation budget.
         if (signal.aborted) break
       }
-      outcome = await streamHistory(modelMessagesFor([...history, msgs[0]]))
+      outcome = await streamHistory(modelMessagesFor(liveHistory()))
       // PRODUCTIVE continuation (≥ N steps) rearms budget: legitimate long tasks exceed 3×48 steps;
       // an immediately failing continuation (failure burst) does not rearm and exhausts consecutive MAX_CONTINUE.
       if (steps >= PROGRESS_RESET_STEPS) continues = 0
@@ -2130,6 +2179,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           )
         )
         apply(pair.stored, true, pair.public)
+        backgroundPrefix.notifyAfterPersist()
       }
     } else if (outcome === 'truncated') {
       // Continuation exhausted (or empty partial) → mark 'interrupted' (UI suggests requesting continuation).
@@ -2153,6 +2203,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           )
         )
         apply(pair.stored, true, pair.public)
+        backgroundPrefix.notifyAfterPersist()
       }
     }
   } finally {

@@ -22,6 +22,7 @@ import { stagePlan } from '../../plan-broker'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { deleteChatMessage, runnerContextHistory, upsertChatMessage } from '../chat-store'
 import { createDeltaCoalescer } from '../delta-coalescer'
+import { createBackgroundCompactionPrefixNotifier } from '../background-compaction/runner'
 import { droppedImageText, nativeSeedContextText } from '../message'
 import { describeEphemeralToolImage } from '../image-interpreter'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
@@ -114,6 +115,7 @@ export interface RunCursorSubscriptionChatArgs {
   canPersistSession?: () => boolean
   onModelContextWindow?: (contextWindow: number) => void
   contextWindow?: number
+  onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
 
   runTask?: (
     input: { agent: string; prompt: string },
@@ -311,8 +313,13 @@ async function runCursorSubscriptionChatInScope(
     lastPersistAt = Date.now()
     upsertChatMessage(messages[0])
   }
+  const backgroundPrefix = createBackgroundCompactionPrefixNotifier({
+    callback: args.onBackgroundCompactionPrefix,
+    message: () => messages[0],
+  })
   const coalescer = createDeltaCoalescer(args.emit)
   const apply = (event: ChatStreamEvent, force = false): void => {
+    if (event.kind === 'text-start' || event.kind === 'reasoning-start') backgroundPrefix.open(event.partId)
     messages = applyChatEvent(messages, event)
     coalescer.push(event)
     if (force || Date.now() - lastPersistAt > 300) persist()
@@ -606,7 +613,8 @@ async function runCursorSubscriptionChatInScope(
                     ...(state.subagentRuns.get(toolCallId) ? { sub: state.subagentRuns.get(toolCallId) } : {}),
                   }
                   state.taskTerminalStates.set(toolCallId, terminal)
-                  apply({ kind: 'tool-state', messageId: assistantId, toolCallId, state: terminal })
+                  apply({ kind: 'tool-state', messageId: assistantId, toolCallId, state: terminal }, true)
+                  backgroundPrefix.notifyAfterPersist()
                   throw error
                 }
                 const sub = result.sub ?? state.subagentRuns.get(toolCallId)
@@ -616,7 +624,8 @@ async function runCursorSubscriptionChatInScope(
                   ? { status: 'error', error: resultError, ...(sub ? { sub } : {}) }
                   : { status: 'completed', output: result.output, ...(sub ? { sub } : {}) }
                 state.taskTerminalStates.set(toolCallId, terminal)
-                apply({ kind: 'tool-state', messageId: assistantId, toolCallId, state: terminal })
+                apply({ kind: 'tool-state', messageId: assistantId, toolCallId, state: terminal }, true)
+                backgroundPrefix.notifyAfterPersist()
                 if (resultError) throw new Error(resultError)
                 return result.output
               },
@@ -812,10 +821,32 @@ async function runCursorSubscriptionChatInScope(
         wait: run.supports('wait') ? () => run.wait() : undefined,
         cancel: () => run.cancel(),
         onMessage: (sdkMessage) => {
-          for (const event of mapper.push(sdkMessage)) {
+          const mapped = mapper.push(sdkMessage)
+          if (sdkMessage.type === 'tool_call' || sdkMessage.type === 'thinking') backgroundPrefix.closeAll()
+          let durableClose = false
+          for (const event of mapped) {
             const normalized = normalizeCursorToolEvent(event, bridge.nameFromSdk, state.taskTerminalStates)
-            apply(normalized, normalized.kind === 'tool-call' && normalized.toolName === 'ask_question')
+            const terminalTool =
+              normalized.kind === 'tool-state' &&
+              (normalized.state.status === 'completed' ||
+                normalized.state.status === 'error' ||
+                normalized.state.status === 'denied')
+            apply(
+              normalized,
+              terminalTool || (normalized.kind === 'tool-call' && normalized.toolName === 'ask_question')
+            )
+            durableClose ||= terminalTool
           }
+          if (sdkMessage.type === 'thinking' && typeof sdkMessage.thinking_duration_ms === 'number') {
+            backgroundPrefix.closeMany(
+              mapped.flatMap((event) =>
+                event.kind === 'reasoning-start' || event.kind === 'reasoning-delta' ? [event.partId] : []
+              )
+            )
+            persist()
+            durableClose = true
+          }
+          if (durableClose) backgroundPrefix.notifyAfterPersist()
         },
         signal: args.signal,
         isHostPending: () =>
@@ -863,8 +894,9 @@ async function runCursorSubscriptionChatInScope(
               ? 'Cursor run ended without a terminal status'
               : runResult?.error?.message)
         for (const event of mapper.reconcileOpenTools(reconcileStatus, reconcileDetail)) {
-          apply(event)
+          apply(event, true)
         }
+        backgroundPrefix.notifyAfterPersist()
       }
 
       usage = withSubagentUsage(enrichCursorMainUsage(mapper.state().lastUsage, args), subagentUsage)
@@ -985,6 +1017,8 @@ async function runCursorSubscriptionChatInScope(
       if (mayPersistMessage) {
         try {
           persist()
+          if (terminalSucceeded) backgroundPrefix.closeAll()
+          backgroundPrefix.notifyAfterPersist()
         } catch (error) {
           postRunFailure = error
         }
@@ -1090,6 +1124,7 @@ async function runCursorSubscriptionChatInScope(
     })()
     if (ephemeral || (canPersistBinding() && identityOk)) {
       persist()
+      backgroundPrefix.notifyAfterPersist()
     } else {
       deleteChatMessage(assistantId)
     }
