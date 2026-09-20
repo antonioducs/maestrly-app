@@ -120,8 +120,8 @@ function setupStream() {
   const finishTurn = new Function(...Object.keys(dependencies), `return (hidden = false) => {${finishBody}\n}`)(
     ...Object.values(dependencies)
   ) as (hidden?: boolean) => void
-  const eventStart = source.indexOf("      if (event.kind === 'compaction-finished') {")
-  const eventBody = source.slice(eventStart, source.indexOf("      if (kind === 'done')", eventStart))
+  const eventStart = source.indexOf("    if (event.kind === 'compaction-finished') {")
+  const eventBody = source.slice(eventStart, source.indexOf("    if (kind === 'done')", eventStart))
   const onEvent = new Function(
     ...Object.keys(dependencies),
     'finishTurn',
