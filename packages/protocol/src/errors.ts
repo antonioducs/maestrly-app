@@ -13,6 +13,14 @@ export const errorCodeSchema = z.enum([
   'CAPABILITY_MISMATCH',
   'RATE_LIMITED',
   'INTERNAL',
+  // Delegation conflicts carry a stable reason so clients can react without parsing prose.
+  'STALE_VERSION',
+  'STAGE_ALREADY_CLAIMED',
+  'WORKSPACE_BUSY',
+  'CATALOG_CHANGED',
+  'UNSUPPORTED_SETTING',
+  'SELECTION_UNAVAILABLE',
+  'EVIDENCE_STALE',
 ])
 
 export const apiErrorSchema = z.object({
