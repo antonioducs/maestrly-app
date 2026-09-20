@@ -495,10 +495,20 @@ export async function settleStageFromTurn(
   return { taskId: task.id }
 }
 
-/** Scan every organization for tasks that can move. Used by the server loop and by tests. */
-export async function runDelegationScheduler(pool: DatabasePool, limit = 50): Promise<number> {
+export interface SchedulerOptions {
+  /** Restrict the pass to one organization; the server loop scans all of them. */
+  organizationId?: string
+  limit?: number
+}
+
+/** Scan for tasks that can move. Used by the server loop and, scoped to one tenant, by tests. */
+export async function runDelegationScheduler(pool: DatabasePool, options: SchedulerOptions = {}): Promise<number> {
+  const limit = options.limit ?? 50
   let moved = 0
-  for (const organization of (await pool.query<{ id: string }>('select id from organizations')).rows) {
+  const organizations = options.organizationId
+    ? [{ id: options.organizationId }]
+    : (await pool.query<{ id: string }>('select id from organizations')).rows
+  for (const organization of organizations) {
     const candidates = await inTenantTransaction(
       pool,
       { organizationId: organization.id, actor: { type: 'system', service: 'delegation-scheduler' } },

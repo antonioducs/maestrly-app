@@ -85,8 +85,14 @@ async function candidates(pool: DatabasePool, organizationId: string): Promise<C
   )
 }
 
-export async function reconcileDelegations(pool: DatabasePool): Promise<void> {
-  for (const organization of (await pool.query<{ id: string }>('select id from organizations')).rows) {
+export async function reconcileDelegations(
+  pool: DatabasePool,
+  options: { organizationId?: string } = {}
+): Promise<void> {
+  const organizations = options.organizationId
+    ? [{ id: options.organizationId }]
+    : (await pool.query<{ id: string }>('select id from organizations')).rows
+  for (const organization of organizations) {
     for (const candidate of await candidates(pool, organization.id)) {
       const settled = await inTenantTransaction(
         pool,

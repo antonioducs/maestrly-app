@@ -112,7 +112,9 @@ describe.skipIf(!integrationAvailable)('delegation recovery', () => {
       expect(first.attempts).toHaveLength(1)
 
       // Two concurrent schedulers, as if two API instances restarted at once.
-      await Promise.all([runDelegationScheduler(pool), runDelegationScheduler(pool), reconcileDelegations(pool)])
+      await Promise.all([runDelegationScheduler(pool, { organizationId: context.organizationId }),
+        runDelegationScheduler(pool, { organizationId: context.organizationId }),
+        reconcileDelegations(pool, { organizationId: context.organizationId })])
       const after = await getDelegation(pool, context.scope, context.taskId, links)
       expect(after.attempts).toHaveLength(1)
       expect(after.attempts[0]!.id).toBe(first.attempts[0]!.id)
@@ -143,8 +145,8 @@ describe.skipIf(!integrationAvailable)('delegation recovery', () => {
       )
       // The existing chat reconciler expires the lease; the delegation reconciler then settles the stage.
       await reconcileChat(pool)
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const after = await getDelegation(pool, context.scope, context.taskId, links)
       expect(after.attempts[0]!.state).toBe('interrupted')
       expect(after.stages[0]!.state).toBe('interrupted')
@@ -165,7 +167,7 @@ describe.skipIf(!integrationAvailable)('delegation recovery', () => {
         userId: revokedContext.owner,
         runnerId: revokedContext.executorId,
       })
-      await reconcileDelegations(pool)
+      await reconcileDelegations(pool, { organizationId: revokedContext.organizationId })
       const revoked = await getDelegation(pool, revokedContext.scope, revokedContext.taskId, links)
       expect(revoked.task.state).toBe('needs_attention')
       expect(revoked.task.blocker?.reason).toBe('executor_offline')
@@ -196,7 +198,7 @@ describe.skipIf(!integrationAvailable)('delegation recovery', () => {
           ])
         }
       )
-      await runDelegationScheduler(pool)
+      await runDelegationScheduler(pool, { organizationId: accessContext.organizationId })
       const blocked = await getDelegation(pool, accessContext.scope, accessContext.taskId, links)
       expect(blocked.task.state).toBe('needs_attention')
       expect(blocked.task.blocker?.reason).toBe('permission_lost')
@@ -227,7 +229,7 @@ describe.skipIf(!integrationAvailable)('delegation recovery', () => {
           )
         }
       )
-      await reconcileDelegations(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
       const after = await getDelegation(pool, context.scope, context.taskId, links)
       expect(after.task.state).toBe('needs_attention')
       expect(after.task.blocker?.detail).toContain('did not complete')

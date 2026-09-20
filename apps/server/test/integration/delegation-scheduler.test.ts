@@ -214,16 +214,16 @@ describe.skipIf(!integrationAvailable)('delegation scheduler', () => {
 
       const ran = await runStage(pool, { organizationId: context.organizationId, executorId: context.executorId })
       expect(ran).not.toBeNull()
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const afterImplement = await getDelegation(pool, context.scope, view.task.id, links)
       expect(afterImplement.stages[0]!.state).toBe('succeeded')
       expect(afterImplement.stages[1]!.state).toBe('queued')
       expect(afterImplement.attempts[1]!.snapshot.settings).toMatchObject({ selectionId: 'sel-astra' })
 
       await runStage(pool, { organizationId: context.organizationId, executorId: context.executorId })
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const done = await getDelegation(pool, context.scope, view.task.id, links)
       expect(done.task.state).toBe('completed')
       expect(done.task.completedAt).not.toBeNull()
@@ -255,8 +255,8 @@ describe.skipIf(!integrationAvailable)('delegation scheduler', () => {
         executorId: context.executorId,
         selectionHonored: false,
       })
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const after = await getDelegation(pool, context.scope, view.task.id, links)
       expect(after.stages[0]!.state).toBe('failed')
       expect(after.task.state).toBe('needs_attention')
@@ -297,8 +297,8 @@ describe.skipIf(!integrationAvailable)('delegation scheduler', () => {
       // A pausing task admits nothing while its stage is live.
       expect((await advanceDelegation(pool, { organizationId: context.organizationId, taskId: view.task.id }))?.admitted).toEqual([])
       await runStage(pool, { organizationId: context.organizationId, executorId: context.executorId })
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const afterPause = await getDelegation(pool, context.scope, view.task.id, links)
       expect(afterPause.task.state).toBe('paused')
       expect(afterPause.stages[1]!.state).toBe('pending')
@@ -312,8 +312,8 @@ describe.skipIf(!integrationAvailable)('delegation scheduler', () => {
         { type: 'resume', expectedVersion: afterPause.task.version },
         'resume'
       )
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const blocked = await getDelegation(pool, context.scope, view.task.id, links)
       expect(blocked.task.state).toBe('needs_attention')
       expect(blocked.task.blocker?.reason).toBe('selection_unavailable')
@@ -393,8 +393,8 @@ describe.skipIf(!integrationAvailable)('delegation scheduler', () => {
         'configure-interrupt'
       )
       expect(interrupt.pendingInterrupt).toBe(true)
-      await reconcileDelegations(pool)
-      await runDelegationScheduler(pool)
+      await reconcileDelegations(pool, { organizationId: context.organizationId })
+      await runDelegationScheduler(pool, { organizationId: context.organizationId })
       const restarted = await getDelegation(pool, context.scope, view.task.id, links)
       const attempts = restarted.attempts.filter((attempt) => attempt.stageId === restarted.stages[0]!.id)
       expect(attempts.map((attempt) => attempt.attempt)).toEqual([1, 2])
