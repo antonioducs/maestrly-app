@@ -5,6 +5,11 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- In-app updates from GitHub Releases (macOS, Windows, AppImage); .deb users are
+  notified.
+
 ## [0.7.0] - 2026-09-16
 
 ### Added

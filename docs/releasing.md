@@ -76,18 +76,24 @@ git tag -a "v$release_version" -m "Maestrly App v$release_version" &&
   git push origin "refs/tags/v$release_version"
 ```
 
-The workflow publishes five native files named
-`Maestrly-App-<version>-<platform>-<arch>.<extension>`:
+The workflow publishes the native installers named
+`Maestrly-App-<version>-<platform>-<arch>.<extension>` plus the metadata the
+in-app updater (`electron-updater`, GitHub provider) reads:
 
 | Target | Files |
 | --- | --- |
-| Linux x64 | `.AppImage`, `.deb` |
-| Windows x64 | `.exe` |
-| macOS arm64 | `.dmg`, `.zip`, signed and notarized |
+| Linux x64 | `.AppImage`, `.deb`, `latest-linux.yml` |
+| Windows x64 | `.exe`, `.exe.blockmap`, `latest.yml` |
+| macOS arm64 | `.dmg`, `.zip`, `.zip.blockmap`, `latest-mac.yml` (signed and notarized) |
 
-`SHA256SUMS.txt` covers all five files. Linux and Windows packages are not
-code-signed. SemVer prerelease suffixes produce GitHub prereleases. Updates are
-installed manually.
+`SHA256SUMS.txt` covers all ten files. Linux and Windows packages are not
+code-signed. SemVer prerelease suffixes produce GitHub prereleases, which the
+updater ignores. Packaged `prod` builds check for updates on launch and every
+six hours, download only after the user accepts, and install on restart.
+AppImage, NSIS and the notarized macOS `.zip` self-update; `.deb` users are
+notified and download the new package manually. Only arm64 macOS builds are
+published, so Intel Macs receive no updates. `beta` and `dev` builds never
+check for updates.
 
 If publication fails, inspect the workflow logs and retained draft. Do not move
 tags, overwrite assets, or publish a draft without repeating checksum verification.

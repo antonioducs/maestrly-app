@@ -140,6 +140,8 @@ import { registerConversationMigrationIpc } from './conversation-migration/ipc'
 import { registerMemoryIpc } from './memory-ipc'
 import { registerReviewIpc } from './review-ipc'
 import { registerAppIpc } from './app-ipc'
+import { registerUpdateIpc } from './update-ipc'
+import { configureUpdateService, disposeUpdateService, finishInstall, isInstalling } from './update-service'
 import { registerLocalDataIpc } from './local-data/local-data-ipc'
 import { maestroConfiguratorService } from './chat/maestro-configurator'
 import { registerPerformanceIpc } from './performance/ipc'
@@ -456,6 +458,8 @@ async function createWindow(): Promise<void> {
 
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
+  // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
+  configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -603,6 +607,7 @@ function registerIpc(): void {
 
   registerReviewIpc(reg)
   registerAppIpc(reg)
+  registerUpdateIpc(reg)
   registerLocalDataIpc(reg, {
     getMainWindow: () => mainWindow,
     stopAllLiveWork,
@@ -818,7 +823,8 @@ function shutdownConversationMigration(): void {
 
 /** Share one quit confirmation between window close and application quit; cancellation keeps all work alive. */
 function confirmQuitOnce(preventDefault: () => void): boolean {
-  if (quitConfirmed || isE2E()) return true
+  // Installing an update is already an explicit user decision, so it never reopens the quit prompt.
+  if (quitConfirmed || isE2E() || isInstalling()) return true
   preventDefault()
   if (quitDialogOpen) return false
   quitDialogOpen = true
@@ -914,4 +920,8 @@ app.on('before-quit', (e) => {
   }
   stopMlWorker()
   stopAsrWorker()
+
+  // Last step: every runner, chat and memory teardown already ran, so swapping the binary is safe.
+  disposeUpdateService()
+  finishInstall()
 })

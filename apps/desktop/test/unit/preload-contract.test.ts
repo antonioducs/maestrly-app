@@ -20,6 +20,7 @@ import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
 import { reviewApi } from '../../src/preload/api-review'
 import { settingsApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
+import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 
@@ -53,6 +54,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['reviewApi', reviewApi],
   ['settingsApi', settingsApi],
   ['soundApi', soundApi],
+  ['updateApi', updateApi],
   ['chatApi', chatApi],
   ['platformApi', platformApi],
 ]
@@ -150,7 +152,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(378)
+    expect(keys).toHaveLength(385)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -689,7 +691,9 @@ describe('preload local data API', () => {
     expect(mainText).toContain(`'${channel}'`)
   })
 
-  it('does not expose hosted account, cloud, telemetry, or update methods', () => {
+  // `update:` is excluded from the removed list: the in-app updater reads public GitHub Releases and
+  // carries no hosted account, license or telemetry surface.
+  it('does not expose hosted account, cloud, or telemetry methods', () => {
     for (const method of [
       'login',
       'logout',
@@ -714,7 +718,7 @@ describe('preload local data API', () => {
       expect(api).not.toHaveProperty(method)
     expect(Object.keys(api).filter((key) => /^cloud/i.test(key))).toEqual([])
     const removedChannels = [...collectFirstCapture(preloadText, PRELOAD_API_CHANNEL_RE)].filter((channel) =>
-      /^(auth|license|legal|account|cloud-project|cloud-runner|telemetry|update|feedback):/.test(channel)
+      /^(auth|license|legal|account|cloud-project|cloud-runner|telemetry|feedback):/.test(channel)
     )
     expect(removedChannels).toEqual([])
   })

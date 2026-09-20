@@ -82,4 +82,8 @@ linux:
 
 npmRebuild: true
 
-publish: null
+publish:
+  provider: github
+  owner: antonioducs
+  repo: maestrly-app
+  releaseType: release

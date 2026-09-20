@@ -111,6 +111,26 @@ test('release workflow publishes verified native artifacts only from version tag
   assert.match(source, /--draft/)
   assert.match(source, /--generate-notes/)
   assert.match(source, /sha256sum --check SHA256SUMS\.txt/)
+
+  // The in-app updater reads this metadata from the release, so staging and publishing must include it.
+  for (const asset of [
+    'latest-linux.yml',
+    'latest.yml',
+    'latest-mac.yml',
+    'Maestrly-App-${RELEASE_VERSION}-windows-x64.exe.blockmap',
+    'Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip.blockmap',
+  ]) {
+    assert.equal(source.split(`"${asset}"`).length - 1, 2, `${asset} must be listed in both expected arrays`)
+  }
+  assert.match(source, /if \[\[ "\$verification_count" -ne 11 \]\]/)
+  assert.match(source, /Draft release must contain exactly eleven assets\./)
+  assert.match(
+    read('apps/desktop/electron-builder.yml'),
+    /^publish:\n  provider: github\n  owner: antonioducs\n  repo: maestrly-app\n  releaseType: release$/m
+  )
+  for (const file of ['electron-builder.beta.yml', 'electron-builder.dev.yml', 'electron-builder.release.beta.yml']) {
+    assert.match(read(`apps/desktop/${file}`), /^publish: null$/m, `${file} must not publish`)
+  }
   assert.match(source, /gh release edit "\$GITHUB_REF_NAME" --draft=false/)
   assert.doesNotMatch(source, /--clobber|\bnpm publish\b|\belectron-builder\b|--publish/)
 

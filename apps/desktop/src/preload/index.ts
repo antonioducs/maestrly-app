@@ -16,6 +16,7 @@ import { projectSetupApi } from './api-project-setup'
 import { reviewApi } from './api-review'
 import { settingsApi } from './api-settings'
 import { soundApi } from './api-sound'
+import { updateApi } from './api-update'
 import { workspaceApi } from './api-workspace'
 import { platformApi } from './api-platform'
 
@@ -122,6 +123,7 @@ export type * from './api-runtime-assets'
 export type * from './api-review'
 export type * from './api-settings'
 export type * from './api-sound'
+export type * from './api-update'
 export type * from './api-workspace'
 export type * from './api-platform'
 
@@ -142,6 +144,7 @@ const api = {
   ...reviewApi,
   ...settingsApi,
   ...soundApi,
+  ...updateApi,
   ...chatApi,
   ...platformApi,
 }
