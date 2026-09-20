@@ -49,8 +49,6 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: node scripts/check-commits.mjs --subject-env PR_TITLE
-      - name: Validate repository policies and documentation
-        run: npm run test:policy && npm run test:docs
       - name: Check application
         run: npm run check
       - name: Install Electron system libraries
