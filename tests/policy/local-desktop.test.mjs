@@ -32,8 +32,10 @@ test('tracked first-party metadata uses the project identity', () => {
   assert.equal(manifest.author, 'Maestrly contributors')
 })
 
+// `update:` stays allowed: the in-app updater reads public GitHub Releases, with no hosted backend,
+// account or telemetry behind it. Every other retired cloud prefix remains forbidden.
 test('preload does not expose retired Maestrly account or cloud endpoints', () => {
-  const forbidden = /ipcRenderer\.(?:invoke|send|on)\(\s*['"](?:auth:|license:|legal:|account:|cloud-project:|telemetry:|feedback:|update:)/
+  const forbidden = /ipcRenderer\.(?:invoke|send|on)\(\s*['"](?:auth:|license:|legal:|account:|cloud-project:|telemetry:|feedback:)/
   for (const file of sourceFiles(path.join(root, 'apps/desktop/src/preload'))) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), forbidden, path.relative(root, file))
   }
