@@ -5,6 +5,7 @@ import { mkdtemp,rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { nodeCommand } from './node-command.mjs'
 
 const root=await mkdtemp(path.join(os.tmpdir(),'maestrly-kanban-e2e-'))
 const container='maestrly-kanban-e2e-'+process.pid
@@ -14,6 +15,7 @@ const runtimePassword=randomBytes(24).toString('hex')
 const userPassword=randomBytes(24).toString('hex')
 let started=false
 function command(executable,args,env=process.env,capture=false) {
+  ;({command:executable,args}=nodeCommand(executable,args,env))
   const result=spawnSync(executable,args,{env,stdio:capture?'pipe':'inherit',encoding:'utf8',shell:false})
   if(result.status!==0)throw new Error(capture?'Fixture command failed.':`${executable} exited ${result.status}`)
   return result.stdout?.trim()
@@ -33,6 +35,7 @@ async function ready(url) {
   throw new Error('Fixture did not become ready: '+url)
 }
 function start(executable,args,env) {
+  ;({command:executable,args}=nodeCommand(executable,args,env))
   const child=spawn(executable,args,{env,stdio:['ignore','pipe','pipe'],shell:false,detached:process.platform!=='win32'})
   child.stdout.on('data',()=>{})
   child.stderr.on('data',chunk=>{if(/Error|error TS/.test(String(chunk)))process.stderr.write(chunk)})
