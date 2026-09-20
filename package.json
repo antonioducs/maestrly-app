@@ -62,7 +62,7 @@
     "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.2",
+    "@biomejs/biome": "2.5.14",
     "typescript": "5.9.3"
   },
   "repository": {
