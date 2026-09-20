@@ -156,7 +156,7 @@ function pruneCompletedTerminalTabs(convId: string, protectedId?: string): boole
 function shellProcess(id: string): string {
   const processName =
     getPtyInfo(id)
-      ?.process.toLowerCase()
+      ?.process?.toLowerCase()
       .replace(/\.exe$/, '') ?? ''
   return processName.split(/[\\/]/).at(-1) ?? processName
 }
