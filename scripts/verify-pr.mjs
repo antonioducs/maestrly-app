@@ -111,6 +111,18 @@ export function preparePush(input, cwd = root) {
 
 export function runSteps(steps, { cwd = root, env = process.env, run = spawnSync, log = console.log } = {}) {
   env = { ...env, CI: 'true' }
+  // Git exports repository context variables to hooks. Clear them for child
+  // checks so fixture repositories can run their own Git commands safely.
+  for (const key of [
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_NAMESPACE',
+  ])
+    delete env[key]
   // The harness supplies its own isolated endpoints. Do not reuse another
   // worktree's server or a previously packaged executable from the caller.
   for (const key of [
