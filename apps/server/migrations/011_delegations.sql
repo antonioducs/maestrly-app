@@ -48,6 +48,8 @@ create table delegation_tasks (
   event_sequence bigint not null default 0 check (event_sequence >= 0),
   pause_requested boolean not null default false,
   interrupt_requested boolean not null default false,
+  -- Stage whose attempt must stop before the replacement configuration is admitted.
+  interrupt_stage_id uuid,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -203,6 +205,24 @@ create table delegation_events (
     references delegation_tasks(organization_id, project_id, id) on delete cascade
 );
 create index delegation_events_task_idx on delegation_events(task_id, sequence);
+
+-- Stage conversations live in the existing chat queue so leases, cancellation, event upload and the
+-- journal are shared. They are never listed as a person's private project chat.
+alter table chat_sessions add column delegation_task_id uuid;
+alter table chat_sessions add column delegation_stage_id uuid;
+alter table chat_sessions add constraint chat_sessions_delegation_pair_check
+  check ((delegation_task_id is null) = (delegation_stage_id is null));
+alter table chat_sessions add constraint chat_sessions_delegation_stage_fkey
+  foreign key (organization_id, project_id, delegation_task_id, delegation_stage_id)
+  references delegation_stages(organization_id, project_id, task_id, id) on delete cascade;
+create unique index chat_sessions_delegation_stage_idx on chat_sessions(delegation_stage_id)
+  where delegation_stage_id is not null;
+create index chat_sessions_delegation_task_idx on chat_sessions(delegation_task_id)
+  where delegation_task_id is not null;
+
+alter table delegation_attempts add constraint delegation_attempts_turn_fkey
+  foreign key (organization_id, project_id, session_id, turn_id)
+  references chat_turns(organization_id, project_id, session_id, id) on delete set null;
 
 do $$
 declare tab text;

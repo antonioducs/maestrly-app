@@ -256,10 +256,30 @@ export interface ProjectChatSnapshot {
   cursor: number
   more: boolean
 }
+/**
+ * Additive delegation metadata on a claim. Present only for executors that advertised
+ * `delegation:stages:v1`; an older executor keeps receiving plain interactive-chat claims.
+ */
+export interface ProjectChatDelegationClaim {
+  taskId: string
+  stageId: string
+  attemptId: string
+  attempt: number
+  stageType: string
+  /** Immutable configuration the stage was admitted with. */
+  snapshot: Record<string, unknown>
+  catalogRevision: string
+  workspaceKey: string
+  baseBranch: string
+  repositoryBindingId: string | null
+  cardId: string
+  boardId: string
+}
 export interface ProjectChatClaim {
   session: ProjectChatSession
   turn: ProjectChatTurn
   message: ProjectChatMessage
   token: string
   decision?: { interaction: ProjectChatInteraction; decision: ChatDecision }
+  delegation?: ProjectChatDelegationClaim
 }

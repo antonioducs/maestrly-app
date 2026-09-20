@@ -44,14 +44,14 @@ export async function assertChatLease(
     await c.query('select session_id from chat_turns where id=$1 and runner_id=$2', [turnId, identity.runnerId])
   ).rows[0]
   if (!found) chatFail('Chat turn not found.', 404)
-  const s = mapSession(
-    (await c.query('select * from chat_sessions where id=$1 for update', [found.session_id])).rows[0]
-  )
+  const sessionRow = (await c.query('select * from chat_sessions where id=$1 for update', [found.session_id]))
+    .rows[0]
+  const s = mapSession(sessionRow)
   const row = (await c.query('select * from chat_turns where id=$1 for update', [turnId])).rows[0],
     t = mapTurn(row)
   if (t.leaseId !== leaseId) chatFail('The chat lease is no longer valid.')
   if (terminal && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(t.state))
-    return { session: s, turn: t, row }
+    return { session: s, turn: t, row, delegationTaskId: (sessionRow.delegation_task_id as string | null) ?? null }
   if (
     !['running', 'waiting_input', 'cancelling'].includes(t.state) ||
     !t.leaseExpiresAt ||
@@ -59,8 +59,32 @@ export async function assertChatLease(
   )
     chatFail('The chat lease expired.')
   await authorizeProject(c, s.organizationId, s.projectId, s.ownerUserId, 'execution:request')
-  await eligibleDestination(c, { organizationId: s.organizationId, projectId: s.projectId, userId: s.ownerUserId }, s)
-  return { session: s, turn: t, row }
+  // A delegation stage does not require the interactive-chat inventory; it validates its own capability.
+  if (sessionRow.delegation_task_id) await assertDelegationExecutor(c, identity, s)
+  else
+    await eligibleDestination(c, { organizationId: s.organizationId, projectId: s.projectId, userId: s.ownerUserId }, s)
+  return { session: s, turn: t, row, delegationTaskId: (sessionRow.delegation_task_id as string | null) ?? null }
+}
+
+/**
+ * The executor that owns a delegation session must still be this runner, bound to the project and still
+ * advertising the delegation capability. Checked on every lease use, not only at claim time.
+ */
+async function assertDelegationExecutor(
+  c: DatabaseClient,
+  identity: ChatRunnerIdentity,
+  session: ProjectChatSession
+) {
+  if (session.runnerId !== identity.runnerId) chatFail('This stage belongs to another executor.', 403)
+  const rows = await c.query(
+    `select r.delegation_capabilities from runners r
+     join runner_project_bindings b on b.runner_id=r.id and b.organization_id=r.organization_id
+     where r.organization_id=$1 and r.id=$2 and b.project_id=$3 and r.status<>'revoked'
+       and (r.owner_user_id is null or (r.owner_user_id=$4 and r.personal_enabled))`,
+    [session.organizationId, identity.runnerId, session.projectId, session.ownerUserId]
+  )
+  const capabilities = rows.rows[0]?.delegation_capabilities as { enabled?: boolean } | null | undefined
+  if (!capabilities?.enabled) chatFail('This executor no longer offers delegation stages.', 409)
 }
 export async function claimChat(pool: DatabasePool, identity: ChatRunnerIdentity): Promise<ProjectChatClaim | null> {
   return runnerTransaction(pool, identity, async (c) => {
@@ -80,7 +104,9 @@ export async function claimChat(pool: DatabasePool, identity: ChatRunnerIdentity
     if (Number(active.count) >= Number(runner.max_concurrency)) return null
     const srow = (
       await c.query(
+        // Delegation stages are claimed through their own route so they do not need interactive chat.
         `select s.* from chat_sessions s where s.runner_id=$1 and s.archived_at is null
+      and s.delegation_task_id is null
       and exists(select 1 from chat_turns t where t.session_id=s.id and t.state='queued')
       order by s.updated_at,s.id for update skip locked limit 1`,
         [identity.runnerId]

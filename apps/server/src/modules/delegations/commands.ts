@@ -17,6 +17,9 @@ import {
   type StageDefinition,
 } from '@maestrly/protocol'
 import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
+import { finishChat } from '../project-chat/dispatch.js'
+import { appendChatEvent } from '../project-chat/events.js'
+import { mapSession, mapTurn } from '../project-chat/service.js'
 import { executorDelegationCatalog } from './model-catalog.js'
 import {
   appendDelegationEvent,
@@ -68,6 +71,26 @@ async function activeAttemptFor(client: DatabaseClient, taskId: string) {
   return rows.rows[0] ?? null
 }
 
+/**
+ * Ask a stage turn to stop. A queued turn ends immediately because no executor holds it; a running turn is
+ * moved to `cancelling` and the executor confirms the terminal state.
+ */
+export async function requestTurnStop(client: DatabaseClient, sessionId: string, turnId: string): Promise<void> {
+  const session = mapSession((await client.query('select * from chat_sessions where id=$1', [sessionId])).rows[0]!)
+  const row = (await client.query('select * from chat_turns where id=$1 for update', [turnId])).rows[0]
+  if (!row) return
+  const turn = mapTurn(row)
+  if (turn.state === 'queued') {
+    await finishChat(client, session, turn, 'cancelled')
+    return
+  }
+  if (!['running', 'waiting_input'].includes(turn.state)) return
+  const updated = mapTurn(
+    (await client.query("update chat_turns set state='cancelling' where id=$1 returning *", [turn.id])).rows[0]
+  )
+  await appendChatEvent(client, session, { type: 'turn', turn: updated }, 'cancel-' + turn.id, turn.id)
+}
+
 async function stageOf(client: DatabaseClient, taskId: string, stageId: string): Promise<StageDefinition> {
   const rows = await client.query('select * from delegation_stages where task_id=$1 and id=$2 for update', [
     taskId,
@@ -115,18 +138,17 @@ async function applyConfigure(
   for (const stage of targets) {
     const activeHere = active && active.stage_id === stage.id
     if (activeHere && command.apply === 'interrupt_and_restart') {
-      // The successor attempt is only admitted after the running one reaches a terminal state.
+      // The successor attempt is only admitted after the running one reaches a terminal state, so the
+      // request is recorded and the current turn is asked to stop instead of being abandoned.
       await client.query(
-        'update delegation_tasks set interrupt_requested=true where organization_id=$1 and id=$2',
-        [scope.organizationId, task.id]
+        'update delegation_tasks set interrupt_requested=true, interrupt_stage_id=$3 where organization_id=$1 and id=$2',
+        [scope.organizationId, task.id, stage.id]
       )
-      await client.query("update delegation_attempts set state='cancelled', finished_at=now() where id=$1 and state <> 'succeeded'", [
-        active.id,
-      ])
+      await requestTurnStop(client, String(active.session_id), String(active.turn_id))
       pendingInterrupt = true
       appliesFromAttempt = Number(active.attempt) + 1
       await client.query(
-        "update delegation_stages set settings=$3, settings_revision=$4, state='pending', version=version+1, updated_at=now() where task_id=$1 and id=$2",
+        'update delegation_stages set settings=$3, settings_revision=$4, version=version+1, updated_at=now() where task_id=$1 and id=$2',
         [task.id, stage.id, settingsMap[stage.id]!, revision]
       )
       continue
@@ -331,12 +353,12 @@ export async function applyDelegationCommand(
         ])
         const active = await activeAttemptFor(client, task.id)
         if (command.immediate && active) {
-          await client.query("update delegation_attempts set state='cancelled', finished_at=now() where id=$1", [
-            active.id,
-          ])
-          await client.query("update delegation_stages set state='pending', version=version+1 where id=$1", [
-            active.stage_id,
-          ])
+          // The stage is reopened only after its turn actually stops, so no second writer can start.
+          await client.query(
+            'update delegation_tasks set interrupt_requested=true, interrupt_stage_id=$3 where organization_id=$1 and id=$2',
+            [scope.organizationId, task.id, active.stage_id]
+          )
+          await requestTurnStop(client, String(active.session_id), String(active.turn_id))
         }
         const paused = await setTaskState(
           client,
@@ -376,6 +398,7 @@ export async function applyDelegationCommand(
       }
       case 'cancel': {
         const active = await activeAttemptFor(client, task.id)
+        if (active) await requestTurnStop(client, String(active.session_id), String(active.turn_id))
         await client.query(
           "update delegation_stages set state='cancelled', version=version+1 where task_id=$1 and state in ('pending','queued')",
           [task.id]
