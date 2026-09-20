@@ -15,6 +15,7 @@ import {
 } from '@maestrly/protocol'
 import type { DatabaseClient } from '../../db/pool.js'
 import { appendDelegationEvent, mapStage } from './repository.js'
+import { requiredCheckGaps } from './checks.js'
 import { findingsSignature, latestReview, openFindings, type StoredReview } from './findings.js'
 
 export interface CompletionInput {
@@ -27,6 +28,8 @@ export interface CompletionInput {
   currentRevisionDigest: string | null
   /** Delivery facts, supplied by the delivery module. */
   pullRequest?: { number: number; state: string; ready: boolean; mergedAt: string | null } | null
+  /** Required checks that are missing or failing for the current revision. */
+  checkGaps?: Array<{ checkId: string; reason: 'missing' | 'failed' }>
 }
 
 const terminalStageStates = ['succeeded', 'superseded', 'cancelled']
@@ -65,6 +68,12 @@ export function evaluateCompletion(input: CompletionInput): CompletionDecision {
         detail: 'The code changed after the approving review. Review the current revision again.',
       })
   }
+
+  for (const gap of input.checkGaps ?? [])
+    missing.push({
+      reason: gap.reason === 'missing' ? 'required_check_missing' : 'required_check_failed',
+      detail: `Required check ${gap.checkId} is ${gap.reason} for the current revision.`,
+    })
 
   const unresolved = (input.review?.criteriaCoverage ?? []).filter((item) => !item.satisfied)
   if (unresolved.length)
@@ -145,14 +154,50 @@ export async function qualityContext(
   stages: StageDefinition[],
   attempts: StageAttempt[]
 ) {
+  const digest = currentRevisionDigest(attempts)
   return {
     findings: await openFindings(client, task.id),
     review: await latestReview(client, task.id),
-    currentRevisionDigest: currentRevisionDigest(attempts),
+    currentRevisionDigest: digest,
+    checkGaps: await requiredCheckGaps(client, { task, codeRevisionDigest: digest }),
     stages,
     attempts,
     task,
   }
+}
+
+/** Verify stage for the required checks that are missing on the current revision. */
+export async function appendVerifyStage(
+  client: DatabaseClient,
+  task: DelegationTask,
+  checkIds: string[]
+): Promise<StageDefinition> {
+  const position = Number(
+    (
+      await client.query<{ position: string }>(
+        'select coalesce(max(position)+1,0)::text as position from delegation_stages where task_id=$1',
+        [task.id]
+      )
+    ).rows[0]!.position
+  )
+  const inserted = await client.query(
+    `insert into delegation_stages(
+       organization_id, project_id, task_id, type, title, instructions, position, depends_on, settings, action,
+       required_for_completion, settings_revision
+     ) values ($1,$2,$3,'verify',$4,'',$5,'[]'::jsonb,null,$6,true,$7) returning *`,
+    [
+      task.organizationId,
+      task.projectId,
+      task.id,
+      `Run required checks (${checkIds.join(', ')})`.slice(0, 200),
+      position,
+      { kind: 'checks', checkIds },
+      task.settingsRevision,
+    ]
+  )
+  const stage = mapStage(inserted.rows[0]!)
+  await appendDelegationEvent(client, task, 'check.stage_planned', { stageId: stage.id, checkIds })
+  return stage
 }
 
 /** Append the fix stage produced by a review round, reusing the implementation profile by default. */

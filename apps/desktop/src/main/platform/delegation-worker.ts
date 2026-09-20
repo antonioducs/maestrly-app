@@ -6,7 +6,9 @@
  * account/model it must use, and the receipt that reports what the runtime actually did.
  */
 import type {
+  CheckResult,
   CodeRevision,
+  DelegationHostAction,
   ProjectChatClaim,
   ProjectChatDelegationClaim,
   ProjectChatSession,
@@ -25,7 +27,15 @@ import { DelegationWorkspaces, isReadOnlyStage, type PreparedStageWorkspace } fr
 import type { DesktopModelCatalog } from './desktop-executor'
 import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopProjectChatClient } from './project-chat-client'
-import { ProjectChatWorker, chatWorkspaceKey, projectChatPreferences } from './project-chat-worker'
+import { uploadEvidence, type ArtifactUploader } from './delegation-artifacts'
+import { runNamedCheck } from './delegation-checks'
+import {
+  ProjectChatWorker,
+  chatWorkspaceKey,
+  nativeRemoteChatHost,
+  projectChatPreferences,
+  type RemoteChatHost,
+} from './project-chat-worker'
 import * as journal from './project-chat-store'
 
 export const DELEGATION_STAGE_INSTRUCTIONS =
@@ -35,6 +45,12 @@ export const DELEGATION_STAGE_INSTRUCTIONS =
   'invent missing credentials, permissions or business requirements — stop with a concrete blocker instead. ' +
   'Use only the account and model this stage was configured with. Finish with what changed, what you ' +
   'verified and any unresolved blocker; describing a plan is not completion.'
+
+/** A host stage runs on this computer instead of a model; the chat turn only carries its lease. */
+interface HostStageRun {
+  run(signal: AbortSignal): Promise<{ status: string; error?: string }>
+  cancel(): void
+}
 
 export interface DelegationWorkerOptions {
   client: DesktopProjectChatClient
@@ -49,20 +65,35 @@ export interface DelegationWorkerOptions {
 
 /** Delegation stages never queue interactive plan or permission prompts; nobody is waiting at a screen. */
 export class DelegationWorker extends ProjectChatWorker {
+  private readonly reviewBaseDirectory: string | undefined
   private readonly workspaces: DelegationWorkspaces
   private prepared = new Map<string, PreparedStageWorkspace>()
+  /** Host actions pending per conversation; set by prepare, consumed by the injected host. */
+  private readonly hostStages: Map<string, HostStageRun>
+  /** Check results collected by a host stage, uploaded with the receipt. */
+  private checkOutcomes = new Map<string, CheckResult[]>()
   /** Review contract per conversation, appended to the prompt of a read-only stage. */
   private reviewContracts = new Map<string, string>()
 
   constructor(options: DelegationWorkerOptions) {
-    super(
-      options.client,
-      options.catalog,
-      options.settings,
-      options.bindings,
-      options.instanceId,
-      options.url
-    )
+    // Host stages (checks, delivery, inspection) are executed by this worker itself, so they never consume a
+    // model. Agent stages keep using the native chat engine.
+    const hostStages = new Map<string, HostStageRun>()
+    const hostActions: RemoteChatHost = {
+      async start(conversationId, prompt, signal) {
+        const pending = hostStages.get(conversationId)
+        if (!pending) return nativeRemoteChatHost.start(conversationId, prompt, signal)
+        const done = pending.run(signal).catch((error) => ({
+          status: 'error' as const,
+          error: (error as Error).message,
+        }))
+        return { done, cancel: () => pending.cancel() }
+      },
+      async decide() {},
+    }
+    super(options.client, options.catalog, options.settings, options.bindings, options.instanceId, options.url, hostActions)
+    this.hostStages = hostStages
+    this.reviewBaseDirectory = options.reviewBaseDirectory
     this.workspaces =
       options.workspaces ??
       new DelegationWorkspaces({
@@ -118,6 +149,13 @@ export class DelegationWorker extends ProjectChatWorker {
         workspace.conversationId,
         reviewContract(workspace.revision, this.acceptanceCriteria(delegation))
       )
+
+    const action = (delegation.snapshot as { action?: DelegationHostAction | null }).action ?? null
+    if (action) {
+      // A host stage carries a structured action, not a model selection.
+      this.hostStages.set(workspace.conversationId, this.hostStageRun(claim, delegation, workspace, action))
+      return workspace.conversationId
+    }
 
     const settings = (delegation.snapshot as { settings?: { selectionId: string; reasoning: string | null; fastMode: boolean } })
       .settings
@@ -207,7 +245,7 @@ export class DelegationWorker extends ProjectChatWorker {
           result = 'failed'
           blocker = `The review verdict could not be accepted (${outcome.failure}): ${outcome.detail}`
         }
-      } else if (!workspace.readOnly) {
+      } else if (!workspace.readOnly && !this.hostStages.has(workspace.conversationId)) {
         try {
           codeRevision = (await captureCodeRevision({ cwd: workspace.cwd })).revision
         } catch (error) {
@@ -237,6 +275,91 @@ export class DelegationWorker extends ProjectChatWorker {
     journal.finishDelegationAttempt(delegation.attemptId)
   }
 
+  /**
+   * Build the runnable host action for a stage. Checks are executed by the host with the resolved command and
+   * their logs are uploaded as evidence; a delivery action is handled by the delivery module.
+   */
+  private hostStageRun(
+    claim: ProjectChatClaim,
+    delegation: ProjectChatDelegationClaim,
+    workspace: PreparedStageWorkspace,
+    action: DelegationHostAction
+  ): HostStageRun {
+    const controller = new AbortController()
+    return {
+      cancel: () => controller.abort(),
+      run: async (signal) => {
+        signal.addEventListener('abort', () => controller.abort(), { once: true })
+        if (action.kind !== 'checks')
+          return {
+            status: 'error',
+            error: `The ${action.kind} host action is not available on this executor version.`,
+          }
+        const configured = (await this.client.delegationChecks(delegation.taskId)).items
+        const captured = await captureCodeRevision({ cwd: workspace.cwd })
+        const results: CheckResult[] = []
+        for (const checkId of action.checkIds) {
+          if (controller.signal.aborted) return { status: 'cancelled' }
+          const config = configured.find((candidate) => candidate.id === checkId)
+          if (!config)
+            return { status: 'error', error: `Check "${checkId}" is not configured for this project.` }
+          const outcome = await runNamedCheck(config, {
+            cwd: workspace.cwd,
+            revision: captured.revision,
+            copyBaseDirectory: this.reviewBaseDirectory,
+          })
+          let logArtifactId: string | null = null
+          if (outcome.log.byteLength > 0) {
+            const artifact = await uploadEvidence(this.uploader, {
+              taskId: delegation.taskId,
+              kind: 'log',
+              name: `${config.id}.log`,
+              contentType: 'text/plain; charset=utf-8',
+              bytes: outcome.log,
+              attemptId: delegation.attemptId,
+              codeRevisionDigest: captured.revision.contentDigest,
+            })
+            logArtifactId = artifact.id
+          }
+          const result = { ...outcome.result, logArtifactId }
+          await this.client.delegationCheckResult(delegation.taskId, {
+            attemptId: delegation.attemptId,
+            result,
+          })
+          results.push(result)
+        }
+        this.checkOutcomes.set(claim.turn.id, results)
+        const failed = results.filter((result) => !result.passed)
+        return failed.length
+          ? {
+              status: 'error',
+              error: `Check(s) failed on this revision: ${failed.map((result) => result.checkId).join(', ')}.`,
+            }
+          : { status: 'success' }
+      },
+    }
+  }
+
+  private get uploader(): ArtifactUploader {
+    return {
+      start: (input) =>
+        this.client.startArtifactUpload(input.taskId, {
+          kind: input.kind,
+          name: input.name,
+          contentType: input.contentType,
+          sizeBytes: input.sizeBytes,
+          ...(input.attemptId ? { attemptId: input.attemptId } : {}),
+          ...(input.codeRevisionDigest ? { codeRevisionDigest: input.codeRevisionDigest } : {}),
+        }),
+      chunk: (input) =>
+        this.client.uploadArtifactChunk(input.taskId, input.uploadId, {
+          index: input.index,
+          contentBase64: input.contentBase64,
+        }),
+      complete: (input) => this.client.completeArtifactUpload(input.taskId, input.uploadId, { digest: input.digest }),
+    }
+  }
+
   /** Acceptance criteria the stage prompt already carries, extracted for the review contract. */
   private acceptanceCriteria(delegation: ProjectChatDelegationClaim): string[] {
     const prompt = (delegation.snapshot as { prompt?: string }).prompt ?? ''
@@ -264,7 +387,11 @@ export class DelegationWorker extends ProjectChatWorker {
 
   protected override async afterTurn(claim: ProjectChatClaim): Promise<void> {
     const workspace = this.prepared.get(claim.turn.id)
-    if (workspace) this.reviewContracts.delete(workspace.conversationId)
+    if (workspace) {
+      this.reviewContracts.delete(workspace.conversationId)
+      this.hostStages.delete(workspace.conversationId)
+    }
+    this.checkOutcomes.delete(claim.turn.id)
     this.prepared.delete(claim.turn.id)
     // Only the read-only copy is disposable; the task worktree survives for later stages and inspection.
     if (workspace && isReadOnlyStage(claim.delegation?.stageType ?? '')) await workspace.dispose()

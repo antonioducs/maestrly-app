@@ -2,9 +2,16 @@ import { HttpTransport } from '@maestrly/client-sdk'
 import type {
   ChatInventory,
   ChatUpload,
+  CheckResult,
+  CodeRevision,
+  DelegationArtifact,
+  DelegationArtifactKind,
+  DelegationCheckConfig,
+  DelegationInspection,
   DelegationModelCatalog,
   ProjectChatClaim,
   ProjectChatInteraction,
+  ReviewResult,
   StageExecutionReceipt,
 } from '@maestrly/protocol'
 export class DesktopProjectChatClient {
@@ -45,7 +52,76 @@ export class DesktopProjectChatClient {
   claimDelegationStage() {
     return this.transport.request<ProjectChatClaim | null>('POST', '/api/v1/runners/delegations/claim', { body: {} })
   }
-  delegationReceipt(attemptId: string, body: { leaseId: string; receipt: StageExecutionReceipt }) {
+  /** Named checks this project configured, resolved by the server for the task's project. */
+  delegationChecks(taskId: string) {
+    return this.transport.request<{ items: DelegationCheckConfig[] }>(
+      'GET',
+      `/api/v1/runners/delegations/checks?taskId=${encodeURIComponent(taskId)}`
+    )
+  }
+  delegationCheckResult(taskId: string, body: { attemptId: string | null; result: CheckResult }) {
+    return this.transport.request<CheckResult>('POST', `/api/v1/runners/delegations/tasks/${taskId}/checks`, { body })
+  }
+  startArtifactUpload(
+    taskId: string,
+    body: {
+      kind: DelegationArtifactKind
+      name: string
+      contentType: string
+      sizeBytes: number
+      attemptId?: string
+      codeRevisionDigest?: string
+    }
+  ) {
+    return this.transport.request<{ uploadId: string; chunkBytes: number }>(
+      'POST',
+      `/api/v1/runners/delegations/tasks/${taskId}/artifacts/uploads`,
+      { body }
+    )
+  }
+  uploadArtifactChunk(taskId: string, uploadId: string, body: { index: number; contentBase64: string }) {
+    return this.transport.request<{ receivedBytes: number; nextIndex: number }>(
+      'POST',
+      `/api/v1/runners/delegations/tasks/${taskId}/artifacts/uploads/${uploadId}/chunks`,
+      { body }
+    )
+  }
+  completeArtifactUpload(taskId: string, uploadId: string, body: { digest: string }) {
+    return this.transport.request<DelegationArtifact>(
+      'POST',
+      `/api/v1/runners/delegations/tasks/${taskId}/artifacts/uploads/${uploadId}/complete`,
+      { body }
+    )
+  }
+  claimInspection() {
+    return this.transport.request<{
+      inspection: DelegationInspection
+      leaseId: string
+      taskId: string
+      workspaceKey: string
+    } | null>('POST', '/api/v1/runners/delegations/inspections/claim', { body: {} })
+  }
+  completeInspection(
+    inspectionId: string,
+    body: {
+      leaseId: string
+      state: 'succeeded' | 'failed'
+      result: Record<string, unknown> | null
+      artifactId: string | null
+      error: string | null
+      codeRevisionDigest: string | null
+    }
+  ) {
+    return this.transport.request<DelegationInspection>(
+      'POST',
+      `/api/v1/runners/delegations/inspections/${inspectionId}/complete`,
+      { body }
+    )
+  }
+  delegationReceipt(
+    attemptId: string,
+    body: { leaseId: string; receipt: StageExecutionReceipt; codeRevision?: CodeRevision; review?: ReviewResult }
+  ) {
     return this.transport.request('POST', `/api/v1/runners/delegations/attempts/${attemptId}/receipt`, { body })
   }
   controls(turnId: string, leaseId: string) {

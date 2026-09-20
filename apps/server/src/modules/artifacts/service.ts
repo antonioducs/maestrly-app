@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto'
-import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import type { Artifact } from '@maestrly/protocol'
+import { readBlob, removeBlob, writeBlob } from './blob-store.js'
 import type { DatabasePool } from '../../db/pool.js'
 import { inTenantTransaction } from '../../db/transaction.js'
 import { authorizeProject } from '../access/authorize.js'
@@ -17,22 +15,14 @@ export async function uploadRunArtifact(
   },
 ) {
   if (input.bytes.byteLength > MAX_ARTIFACT_BYTES) throw Object.assign(new Error('Artifact exceeds the 10 MiB limit.'), { statusCode: 413 })
-  const digest = createHash('sha256').update(input.bytes).digest('hex')
-  const nameDigest = createHash('sha256').update(input.name).digest('hex').slice(0, 16)
-  const storageKey = path.join('artifacts', input.organizationId, input.runId, `${digest}-${nameDigest}`)
-  const root = path.resolve(storageDirectory)
-  const target = path.resolve(root, storageKey)
-  if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Artifact storage path is invalid.')
-  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 })
-  const temporary = `${target}.${crypto.randomUUID()}.tmp`
-  await writeFile(temporary, input.bytes, { mode: 0o600, flag: 'wx' })
-  let created = false
-  try {
-    await link(temporary, target)
-    created = true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-  } finally { await rm(temporary, { force: true }) }
+  const { storageKey, digest } = await writeBlob({
+    storageDirectory,
+    prefix: 'artifacts',
+    organizationId: input.organizationId,
+    scope: input.runId,
+    name: input.name,
+    bytes: input.bytes,
+  })
   try {
     return await inTenantTransaction(pool, { organizationId: input.organizationId, actor: { type: 'runner', runnerId: input.runnerId } }, async (client) => {
       const run = await client.query<{ project_id: string }>(`
@@ -52,7 +42,7 @@ export async function uploadRunArtifact(
       }
     })
   } catch (error) {
-    if (created) await rm(target, { force: true })
+    await removeBlob(storageDirectory, storageKey)
     throw error
   }
 }
@@ -69,8 +59,9 @@ export async function readAuthorizedArtifact(
     await authorizeProject(client, input.organizationId, row.project_id, input.userId, 'project:read')
     return row
   })
-  const root = path.resolve(storageDirectory)
-  const target = path.resolve(root, metadata.storage_key)
-  if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Artifact storage path is invalid.')
-  return { bytes: await readFile(target), filename: metadata.name, contentType: metadata.content_type }
+  return {
+    bytes: await readBlob(storageDirectory, metadata.storage_key),
+    filename: metadata.name,
+    contentType: metadata.content_type,
+  }
 }

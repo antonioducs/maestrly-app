@@ -27,7 +27,7 @@ import {
 } from './repository.js'
 import { findingsSignature } from './findings.js'
 import { pullRequestFacts } from './pull-requests.js'
-import { appendFixStage, evaluateCompletion, planFixRound, qualityContext } from './quality.js'
+import { appendFixStage, appendVerifyStage, evaluateCompletion, planFixRound, qualityContext } from './quality.js'
 import { admitStage } from './stage-admission.js'
 
 
@@ -80,6 +80,26 @@ async function planQualityStage(
   attempts: StageAttempt[]
 ): Promise<{ appended: StageDefinition | null; blocked: DelegationBlocker | null }> {
   const context = await qualityContext(client, task, stages, attempts)
+  // Required checks come before a review: a reviewer should not judge code whose checks never ran.
+  const missingChecks = context.checkGaps.filter((gap) => gap.reason === 'missing').map((gap) => gap.checkId)
+  if (missingChecks.length && context.currentRevisionDigest) {
+    const alreadyQueued = stages.some(
+      (stage) =>
+        stage.type === 'verify' &&
+        ['pending', 'queued', 'running'].includes(stage.state) &&
+        stage.action?.kind === 'checks'
+    )
+    if (!alreadyQueued) return { appended: await appendVerifyStage(client, task, missingChecks), blocked: null }
+  }
+  const failedChecks = context.checkGaps.filter((gap) => gap.reason === 'failed')
+  if (failedChecks.length)
+    return {
+      appended: null,
+      blocked: blocker(
+        'check_setup_incomplete',
+        `Required check(s) failed on the current revision: ${failedChecks.map((gap) => gap.checkId).join(', ')}.`
+      ),
+    }
   // A fix round is only planned from a review of the CURRENT revision. After a fix changes the code, the
   // findings must be re-evaluated before another round is queued.
   const reviewIsCurrent =
@@ -348,6 +368,7 @@ export async function advanceDelegation(pool: DatabasePool, input: { organizatio
           findings: context.findings,
           review: context.review,
           currentRevisionDigest: context.currentRevisionDigest,
+          checkGaps: context.checkGaps,
           pullRequest: await pullRequestFacts(client, task.id),
         })
         if (decision.satisfied) {

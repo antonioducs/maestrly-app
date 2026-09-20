@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import {
+  checkResultSchema,
   codeRevisionSchema,
   delegationModelCatalogSchema,
   reviewResultSchema,
@@ -8,19 +9,172 @@ import {
 } from '@maestrly/protocol'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { DatabasePool } from '../../db/pool.js'
+import type { ServerConfig } from '../../config.js'
+import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
 import { chatRunnerIdentity } from '../project-chat/runner-routes.js'
 import { runnerTransaction, tokenHash } from '../project-chat/dispatch.js'
 import { appendChatEvent } from '../project-chat/events.js'
 import { mapMessage, mapSession, mapTurn } from '../project-chat/service.js'
+import {
+  appendArtifactChunk,
+  artifactChunkSchema,
+  artifactUploadStartSchema,
+  completeArtifactUpload,
+  startArtifactUpload,
+  type ArtifactLimits,
+} from './artifacts.js'
+import { enabledCheckConfigs, recordCheckResult } from './checks.js'
 import { recordReviewResult } from './findings.js'
+import { claimInspection, completeInspection, inspectionCompletionSchema } from './inspections.js'
 import { publishDelegationCatalog } from './model-catalog.js'
 import { appendDelegationEvent, delegationFail, loadTaskRow, mapAttempt } from './repository.js'
 
 /** Machine endpoints for delegation stages. Authentication reuses the runner credential contract. */
-export function registerDelegationRunnerRoutes(app: FastifyInstance, pool: DatabasePool): void {
+export function registerDelegationRunnerRoutes(
+  app: FastifyInstance,
+  pool: DatabasePool,
+  serverConfig: ServerConfig
+): void {
   const root = '/api/v1/runners/delegations'
   const config = { rateLimit: { max: 1800, timeWindow: '1 minute' } }
+  const limits: ArtifactLimits = {
+    maxArtifactBytes: serverConfig.maxDelegationArtifactBytes,
+    maxTaskBytes: serverConfig.maxDelegationTaskArtifactBytes,
+  }
+
+  /** Resolve the task an authenticated executor owns, so a machine cannot touch another task. */
+  async function ownedTask(client: DatabaseClient, organizationId: string, runnerId: string, taskId: string) {
+    const rows = await client.query<{ project_id: string }>(
+      'select project_id from delegation_tasks where organization_id=$1 and id=$2 and executor_id=$3',
+      [organizationId, taskId, runnerId]
+    )
+    if (!rows.rows[0]) delegationFail('This task does not belong to this executor.', 403)
+    return loadTaskRow(client, { organizationId, projectId: rows.rows[0].project_id }, taskId)
+  }
+
+  app.get(root + '/checks', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.query)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return {
+        items: await enabledCheckConfigs(client, {
+          organizationId: task.organizationId,
+          projectId: task.projectId,
+        }),
+      }
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/checks', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params)
+    const body = z
+      .object({ attemptId: z.string().uuid().nullable().default(null), result: checkResultSchema })
+      .strict()
+      .parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return recordCheckResult(client, { task, attemptId: body.attemptId, result: body.result })
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/artifacts/uploads', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId } = z.object({ taskId: z.string().uuid() }).parse(request.params)
+    const body = artifactUploadStartSchema.parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return startArtifactUpload(
+        client,
+        {
+          organizationId: task.organizationId,
+          projectId: task.projectId,
+          taskId: task.id,
+          runnerId: identity.runnerId,
+          storageDirectory: serverConfig.storageDirectory,
+          limits,
+        },
+        body
+      )
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/artifacts/uploads/:uploadId/chunks', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId, uploadId } = z
+      .object({ taskId: z.string().uuid(), uploadId: z.string().uuid() })
+      .parse(request.params)
+    const body = artifactChunkSchema.parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      return appendArtifactChunk(
+        client,
+        {
+          organizationId: task.organizationId,
+          projectId: task.projectId,
+          taskId: task.id,
+          runnerId: identity.runnerId,
+          storageDirectory: serverConfig.storageDirectory,
+          limits,
+        },
+        uploadId,
+        body
+      )
+    })
+  })
+
+  app.post(root + '/tasks/:taskId/artifacts/uploads/:uploadId/complete', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { taskId, uploadId } = z
+      .object({ taskId: z.string().uuid(), uploadId: z.string().uuid() })
+      .parse(request.params)
+    const body = z.object({ digest: z.string().min(16).max(191) }).strict().parse(request.body)
+    return runnerTransaction(pool, identity, async (client) => {
+      const task = await ownedTask(client, identity.organizationId, identity.runnerId, taskId)
+      const artifact = await completeArtifactUpload(
+        client,
+        {
+          organizationId: task.organizationId,
+          projectId: task.projectId,
+          taskId: task.id,
+          runnerId: identity.runnerId,
+          storageDirectory: serverConfig.storageDirectory,
+          limits,
+        },
+        uploadId,
+        body.digest
+      )
+      await appendDelegationEvent(client, task, 'artifact.stored', {
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        name: artifact.name,
+        sizeBytes: artifact.sizeBytes,
+      })
+      return artifact
+    })
+  })
+
+  app.post(root + '/inspections/claim', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    return runnerTransaction(pool, identity, (client) =>
+      claimInspection(client, { organizationId: identity.organizationId, runnerId: identity.runnerId })
+    )
+  })
+
+  app.post(root + '/inspections/:inspectionId/complete', { config }, async (request) => {
+    const identity = chatRunnerIdentity(request)
+    const { inspectionId } = z.object({ inspectionId: z.string().uuid() }).parse(request.params)
+    const body = inspectionCompletionSchema.parse(request.body)
+    return runnerTransaction(pool, identity, (client) =>
+      completeInspection(client, {
+        organizationId: identity.organizationId,
+        runnerId: identity.runnerId,
+        inspectionId,
+        body,
+      })
+    )
+  })
 
   app.post(root + '/inventory', { config }, async (request) => {
     const identity = chatRunnerIdentity(request)

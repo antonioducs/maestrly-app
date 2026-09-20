@@ -175,6 +175,145 @@ export const delegationPolicyPatchSchema = z
   })
   .strict()
 
+/**
+ * Named project check. The model selects a check by id; the host resolves the command, so a stage can never
+ * run an arbitrary shell line through this path.
+ */
+export const delegationCheckConfigSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9][a-z0-9:_-]{0,119}$/, 'Use a lowercase id with letters, digits, :, _ or -.'),
+    label: z.string().trim().min(1).max(200),
+    description: z.string().max(2000).default(''),
+    command: z.string().trim().min(1).max(200),
+    args: z.array(z.string().max(500)).max(50).default([]),
+    /** Directory relative to the workspace root; never absolute and never outside it. */
+    workingDirectory: z.string().max(300).default(''),
+    timeoutSeconds: z.number().int().min(1).max(7_200).default(900),
+    required: z.boolean().default(false),
+    /** A check that writes to disk runs in a disposable copy of the reviewed revision. */
+    mutatesWorkspace: z.boolean().default(false),
+    /** Environment variable names the check may read from the executor; values are never stored here. */
+    environmentAllowlist: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)).max(50).default([]),
+    /** Commands the executor may run once to install dependencies before the check. */
+    setup: z.array(z.string().trim().min(1).max(500)).max(10).default([]),
+    enabled: z.boolean().default(true),
+  })
+  .strict()
+
+export const checkResultSchema = z
+  .object({
+    checkId: z.string().min(1).max(120),
+    /** Command line the host actually executed, for the record. */
+    resolvedCommand: z.string().max(2000),
+    passed: z.boolean(),
+    exitCode: z.number().int().nullable(),
+    durationMs: z.number().int().nonnegative(),
+    timedOut: z.boolean().default(false),
+    /** True when the captured log was cut at the limit; the truncation itself is reported. */
+    truncated: z.boolean().default(false),
+    codeRevisionDigest: z.string().min(16).max(191),
+    logArtifactId: opaqueIdSchema.nullable().default(null),
+    /** Set when the check could not run at all, for example because setup is incomplete. */
+    setupIssue: z.string().max(2000).nullable().default(null),
+  })
+  .strict()
+
+export const delegationArtifactKindSchema = z.enum([
+  'patch',
+  'log',
+  'report',
+  'screenshot',
+  'recording',
+  'snapshot',
+  'attachment',
+])
+
+export const delegationArtifactSchema = z
+  .object({
+    id: opaqueIdSchema,
+    taskId: opaqueIdSchema,
+    attemptId: opaqueIdSchema.nullable(),
+    kind: delegationArtifactKindSchema,
+    name: z.string().min(1).max(500),
+    contentType: z.string().min(1).max(200),
+    sizeBytes: z.number().int().nonnegative(),
+    digest: z.string().min(16).max(191),
+    codeRevisionDigest: z.string().max(191).nullable(),
+    createdAt: utcDateTimeSchema,
+  })
+  .strict()
+
+/**
+ * Typed inspection operations. There is no arbitrary shell and no path outside the workspace; browser
+ * interaction requires its own capability and is refused on a read-only stage.
+ */
+export const inspectionOperationSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('read_file'),
+      path: z.string().min(1).max(500),
+      offset: z.number().int().nonnegative().max(1_000_000).default(0),
+      limit: z.number().int().min(1).max(2_000).default(400),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('search'),
+      pattern: z.string().min(1).max(2_000),
+      include: z.string().max(300).default(''),
+      limit: z.number().int().min(1).max(200).default(50),
+    })
+    .strict(),
+  z.object({ kind: z.literal('glob'), pattern: z.string().min(1).max(300), limit: z.number().int().min(1).max(300).default(100) }).strict(),
+  z.object({ kind: z.literal('diff'), base: z.string().max(240).default('') }).strict(),
+  z.object({ kind: z.literal('pull_request') }).strict(),
+  z.object({ kind: z.literal('preview_start'), checkId: z.string().min(1).max(120) }).strict(),
+  z.object({ kind: z.literal('preview_stop'), previewId: z.string().min(1).max(191) }).strict(),
+  z.object({ kind: z.literal('browser_snapshot'), previewId: z.string().min(1).max(191) }).strict(),
+  z.object({ kind: z.literal('browser_screenshot'), previewId: z.string().min(1).max(191) }).strict(),
+  z.object({ kind: z.literal('browser_text'), previewId: z.string().min(1).max(191) }).strict(),
+  z.object({ kind: z.literal('browser_console'), previewId: z.string().min(1).max(191), limit: z.number().int().min(1).max(200).default(50) }).strict(),
+  z.object({ kind: z.literal('browser_network'), previewId: z.string().min(1).max(191), onlyErrors: z.boolean().default(false) }).strict(),
+  z
+    .object({ kind: z.literal('browser_navigate'), previewId: z.string().min(1).max(191), url: z.string().url().max(2000) })
+    .strict(),
+  z.object({ kind: z.literal('browser_click'), previewId: z.string().min(1).max(191), ref: z.number().int().nonnegative() }).strict(),
+  z
+    .object({
+      kind: z.literal('browser_type'),
+      previewId: z.string().min(1).max(191),
+      ref: z.number().int().nonnegative(),
+      text: z.string().max(4_000),
+      clear: z.boolean().default(false),
+    })
+    .strict(),
+])
+
+export const INSPECTION_INTERACTIVE_KINDS = [
+  'browser_navigate',
+  'browser_click',
+  'browser_type',
+  'preview_start',
+  'preview_stop',
+] as const
+
+export const inspectionSchema = z
+  .object({
+    id: opaqueIdSchema,
+    taskId: opaqueIdSchema,
+    operation: inspectionOperationSchema,
+    state: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
+    /** Bounded structured result; large payloads are delivered as artifacts instead. */
+    result: z.record(z.string(), z.unknown()).nullable(),
+    artifactId: opaqueIdSchema.nullable(),
+    error: z.string().max(4_000).nullable(),
+    /** Revision the inspection observed, so a later edit does not silently reinterpret it. */
+    codeRevisionDigest: z.string().max(191).nullable(),
+    createdAt: utcDateTimeSchema,
+    finishedAt: utcDateTimeSchema.nullable(),
+  })
+  .strict()
+
 export const delegationStageStateSchema = z.enum([
   'pending',
   'queued',
@@ -529,6 +668,12 @@ export type CodeRevision = z.infer<typeof codeRevisionSchema>
 export type DelegationAutonomy = z.infer<typeof delegationAutonomySchema>
 export type DelegationLimits = z.infer<typeof delegationLimitsSchema>
 export type DelegationPolicy = z.infer<typeof delegationPolicySchema>
+export type DelegationCheckConfig = z.infer<typeof delegationCheckConfigSchema>
+export type CheckResult = z.infer<typeof checkResultSchema>
+export type DelegationArtifactKind = z.infer<typeof delegationArtifactKindSchema>
+export type DelegationArtifact = z.infer<typeof delegationArtifactSchema>
+export type InspectionOperation = z.infer<typeof inspectionOperationSchema>
+export type DelegationInspection = z.infer<typeof inspectionSchema>
 export type ReviewFindingSeverity = z.infer<typeof reviewFindingSeveritySchema>
 export type ReviewFindingState = z.infer<typeof reviewFindingStateSchema>
 export type ReviewFinding = z.infer<typeof reviewFindingSchema>
@@ -574,6 +719,23 @@ export function mergeDelegationPolicy(
 
 export function isAgentStageType(type: DelegationStageType): boolean {
   return (DELEGATION_AGENT_STAGE_TYPES as readonly string[]).includes(type)
+}
+
+/** True for operations that change something on the executor, not only read it. */
+export function inspectionRequiresInteraction(operation: InspectionOperation): boolean {
+  return (INSPECTION_INTERACTIVE_KINDS as readonly string[]).includes(operation.kind)
+}
+
+/**
+ * A workspace-relative path that stays inside the workspace. Absolute paths, parent traversal and NUL bytes
+ * are refused here, before any filesystem call.
+ */
+export function assertWorkspaceRelativePath(candidate: string): string {
+  if (!candidate || candidate.includes('\0')) throw new Error('The path is empty or contains a NUL byte.')
+  if (/^(?:[a-zA-Z]:)?[\\/]/.test(candidate)) throw new Error('The path must be relative to the workspace root.')
+  const segments = candidate.split(/[\\/]+/)
+  if (segments.some((segment) => segment === '..')) throw new Error('The path must stay inside the workspace.')
+  return segments.filter((segment) => segment && segment !== '.').join('/')
 }
 
 /**

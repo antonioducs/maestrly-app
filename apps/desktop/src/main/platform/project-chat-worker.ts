@@ -68,7 +68,7 @@ export interface RemoteChatHost {
   ): Promise<{ done: Promise<{ status: string; error?: string }>; cancel(): void }>
   decide(conversationId: string, interaction: ProjectChatInteraction): Promise<void>
 }
-const nativeHost: RemoteChatHost = {
+export const nativeRemoteChatHost: RemoteChatHost = {
   async start(conversationId, prompt, signal) {
     const { startExecutorChatTurn } = await import('../chat/service')
     return startExecutorChatTurn({ conversationId, prompt, signal, remoteAdmission: true })
@@ -100,7 +100,7 @@ export class ProjectChatWorker {
     protected bindings: PlatformProjectBinding[],
     protected instanceId: string,
     protected url: string,
-    protected host: RemoteChatHost = nativeHost
+    protected host: RemoteChatHost = nativeRemoteChatHost
   ) {}
   async inventory(): Promise<ChatInventory> {
     const workspaces: ChatInventory['workspaces'] = []

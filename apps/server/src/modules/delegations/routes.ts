@@ -10,7 +10,10 @@ import { z } from 'zod'
 import type { ServerConfig } from '../../config.js'
 import type { DatabasePool } from '../../db/pool.js'
 import type { HumanIdentity } from '../auth/routes.js'
+import { listDelegationArtifacts, readDelegationArtifact } from './artifacts.js'
+import { checkConfigPatchSchema, listCheckConfigs, saveCheckConfig } from './checks.js'
 import { applyDelegationCommand } from './commands.js'
+import { getInspection, startInspection } from './inspections.js'
 import { listDelegationExecutors } from './model-catalog.js'
 import { createDelegationPreset, listDelegationPresets, patchDelegationPreset } from './presets.js'
 import { delegationFail } from './repository.js'
@@ -133,6 +136,54 @@ export function registerDelegationRoutes(
       await new Promise((resolve) => setTimeout(resolve, 1_000))
     }
     return reply
+  })
+
+  app.get(root + '/delegations/:taskId/artifacts', async (request) => {
+    const current = await scope(request)
+    return { items: await listDelegationArtifacts(pool, current, current.taskId!) }
+  })
+
+  app.get(root + '/delegations/:taskId/artifacts/:artifactId/download', async (request, reply) => {
+    const current = await scope(request)
+    const { artifactId } = z.object({ artifactId: z.string().uuid() }).parse(request.params)
+    const found = await readDelegationArtifact(pool, current, {
+      taskId: current.taskId!,
+      artifactId,
+      storageDirectory: config.storageDirectory,
+    })
+    return reply
+      .header('content-type', found.artifact.contentType)
+      .header('content-disposition', `attachment; filename="${encodeURIComponent(found.artifact.name)}"`)
+      .header('x-maestrly-artifact-digest', found.artifact.digest)
+      .send(found.bytes)
+  })
+
+  app.post(root + '/delegations/:taskId/inspections', async (request, reply) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = z.object({ operation: z.unknown() }).parse(request.body)
+    return reply
+      .status(202)
+      .send(await startInspection(pool, current, { taskId: current.taskId!, operation: body.operation }))
+  })
+
+  app.get(root + '/delegations/:taskId/inspections/:inspectionId', async (request) => {
+    const current = await scope(request)
+    const { inspectionId } = z.object({ inspectionId: z.string().uuid() }).parse(request.params)
+    return getInspection(pool, current, { taskId: current.taskId!, inspectionId })
+  })
+
+  app.get(root + '/delegation-checks', async (request) => {
+    const current = await scope(request)
+    return { items: await listCheckConfigs(pool, current) }
+  })
+
+  app.put(root + '/delegation-checks/:checkId', async (request) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const { checkId } = z.object({ checkId: z.string().min(1).max(120) }).parse(request.params)
+    const body = checkConfigPatchSchema.parse({ ...(request.body as object), id: checkId })
+    return saveCheckConfig(pool, current, body)
   })
 
   app.get(root + '/delegation-presets', async (request) => {

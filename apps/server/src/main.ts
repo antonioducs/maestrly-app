@@ -6,6 +6,8 @@ import { reconcileExpiredLeases } from './modules/jobs/reconcile.js'
 import { reconcileChat } from './modules/project-chat/dispatch.js'
 import { reconcileDelegations } from './modules/delegations/reconcile.js'
 import { runDelegationScheduler } from './modules/delegations/scheduler.js'
+import { purgeExpiredArtifactUploads } from './modules/delegations/artifacts.js'
+import { expireInspections } from './modules/delegations/inspections.js'
 
 const config = loadConfig()
 const pool = createPool(config.databaseUrl)
@@ -15,6 +17,10 @@ const reconciler = setInterval(() => {
   void reconcileChat(pool).catch((error) => app.log.error({ err: error }, 'chat reconciliation failed'))
   void reconcileExpiredLeases(pool).catch((error) => app.log.error({ err: error }, 'lease reconciliation failed'))
   void reconcileDelegations(pool).catch((error) => app.log.error({ err: error }, 'delegation reconciliation failed'))
+  void expireInspections(pool).catch((error) => app.log.error({ err: error }, 'inspection expiry failed'))
+  void purgeExpiredArtifactUploads(pool, config.storageDirectory).catch((error) =>
+    app.log.error({ err: error }, 'artifact upload cleanup failed')
+  )
 }, 30_000)
 reconciler.unref()
 // Stage admission is cheap and short; a tighter interval keeps a pipeline responsive between turns.
