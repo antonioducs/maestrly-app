@@ -22,6 +22,7 @@ import { runGhCommand } from '../gh-command'
 import type { PlatformProjectBinding } from '../../shared/platform'
 import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopModelCatalog, LocalModelSelection } from './desktop-executor'
+import { chatWorkspaceKey } from './project-chat-projection'
 
 export interface DelegationCatalogProbes {
   /** Named project checks the host can run; configured per workspace. */
@@ -73,10 +74,6 @@ export interface DelegationCatalogInput {
   harnessIdentity?: (selection: LocalModelSelection) => { profileId: string | null; hash: string | null }
 }
 
-function workspaceKey(binding: PlatformProjectBinding) {
-  return binding.connectionId + ':' + binding.projectId + ':' + binding.workspaceId
-}
-
 export async function buildDelegationCatalog(input: DelegationCatalogInput): Promise<DelegationModelCatalog> {
   const probes = { ...defaultDelegationProbes, ...input.probes }
   const resolvePath = input.workspacePathFor ?? ((id: string) => getWorkspace(id)?.path ?? null)
@@ -86,7 +83,8 @@ export async function buildDelegationCatalog(input: DelegationCatalogInput): Pro
   for (const binding of input.bindings) {
     const path = resolvePath(binding.workspaceId)
     if (!path) continue
-    const key = workspaceKey(binding)
+    // The advertised key is the one this computer resolves back at stage preparation; both derive it here.
+    const key = chatWorkspaceKey(binding)
     const [repository] = await inspect([{ bindingId: key, localPath: path }])
     if (!repository?.available) continue
     paths.push(path)

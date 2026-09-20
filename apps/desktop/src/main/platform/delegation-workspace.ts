@@ -11,6 +11,7 @@ import type { CodeRevision, ProjectChatDelegationClaim, ProjectChatSession } fro
 import { getConversation, getWorkspace } from '../store'
 import type { PlatformProjectBinding } from '../../shared/platform'
 import { materializeReviewCopy, type ReviewCopy } from './delegation-snapshot'
+import { chatWorkspaceKey } from './project-chat-projection'
 import * as journal from './project-chat-store'
 
 export const READ_ONLY_STAGE_TYPES = ['plan', 'review', 'inspect'] as const
@@ -27,7 +28,8 @@ export interface ConversationHandle {
 export interface DelegationWorkspaceDeps {
   instanceId: string
   bindings: PlatformProjectBinding[]
-  workspaceKeyFor(binding: PlatformProjectBinding): string
+  /** Defaults to the identity the inventory advertises; injected only by tests. */
+  workspaceKeyFor?(binding: PlatformProjectBinding): string
   /** Injected for tests; production uses the real conversation service. */
   createWorktree?(input: {
     workspaceId: string
@@ -91,11 +93,14 @@ export class DelegationWorkspaces {
   constructor(private readonly deps: DelegationWorkspaceDeps) {}
 
   private binding(session: ProjectChatSession) {
+    // The session carries the key this computer advertised in its delegation inventory, so the lookup has to
+    // derive it exactly the same way; a second identity function would never match any real task.
+    const keyFor = this.deps.workspaceKeyFor ?? chatWorkspaceKey
     const found = this.deps.bindings.find(
       (candidate) =>
         candidate.projectId === session.projectId &&
         candidate.organizationId === session.organizationId &&
-        this.deps.workspaceKeyFor(candidate) === session.workspaceKey
+        keyFor(candidate) === session.workspaceKey
     )
     if (!found) throw new Error('The delegation workspace is no longer bound to this executor.')
     return found

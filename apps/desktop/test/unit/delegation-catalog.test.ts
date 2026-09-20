@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { resolveStageSettings, assertStageSettingsStillValid } from '@maestrly/protocol'
 import { buildDelegationCatalog } from '../../src/main/platform/delegation-catalog'
+import { chatWorkspaceKey } from '../../src/main/platform/project-chat-projection'
 import { desktopExecutorSettingsSchema } from '../../src/main/platform/executor-settings'
 import type { LocalModelSelection } from '../../src/main/platform/desktop-executor'
 import type { PlatformProjectBinding } from '../../src/main/../shared/platform'
@@ -74,15 +75,19 @@ it('publishes one opaque selection per account/model with the real efforts and F
   expect(catalog.features.github).toMatchObject({ available: true, login: 'octocat' })
   expect(catalog.revision).toMatch(/^[0-9a-f]{32}$/)
   expect(catalog.enabled).toBe(true)
+  // The advertised key is the identity this computer resolves back when a stage is prepared.
   expect(catalog.workspaces).toEqual([
     {
       projectId: 'project-1',
-      key: 'conn-1:project-1:workspace-1',
+      key: chatWorkspaceKey(binding()),
       label: 'project-1',
       branches: ['main'],
       repositoryBindingId: 'repo-1',
     },
   ])
+  // It is opaque: the connection and workspace identifiers of this computer never leave it.
+  expect(catalog.workspaces[0]!.key).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/)
+  expect(catalog.workspaces[0]!.key).not.toContain('workspace-1')
 
   // Two accounts serving the same model are distinct selections that resolve independently.
   const sameModel = await buildDelegationCatalog(

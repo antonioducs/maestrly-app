@@ -18,6 +18,9 @@ import {
 } from '../../src/main/platform/project-chat-store'
 import { DelegationWorkspaces, isReadOnlyStage } from '../../src/main/platform/delegation-workspace'
 import { DelegationWorker } from '../../src/main/platform/delegation-worker'
+import { buildDelegationCatalog } from '../../src/main/platform/delegation-catalog'
+import { desktopExecutorSettingsSchema } from '../../src/main/platform/executor-settings'
+import { chatWorkspaceKey } from '../../src/main/platform/project-chat-projection'
 import { ProjectChatWorker } from '../../src/main/platform/project-chat-worker'
 import { buildStageReceipt, selectionHonored } from '../../src/main/platform/delegation-receipt'
 import type { ProjectChatDelegationClaim, ProjectChatSession } from '@maestrly/protocol'
@@ -43,6 +46,9 @@ const settings = {
   delegationProfiles: [] as string[],
 }
 
+/** Key the workspace manager under test advertises for its binding; the real identity, not a stub. */
+let advertisedKey = ''
+
 const session = (overrides: Partial<ProjectChatSession> = {}) =>
   ({
     id: overrides.id ?? crypto.randomUUID(),
@@ -50,7 +56,7 @@ const session = (overrides: Partial<ProjectChatSession> = {}) =>
     projectId: 'project-1',
     ownerUserId: 'owner',
     runnerId: 'runner-1',
-    workspaceKey: 'workspace-key',
+    workspaceKey: advertisedKey,
     title: 'Delegated work',
     model: 'sel-opus',
     mode: 'agent',
@@ -75,7 +81,7 @@ const delegation = (overrides: Partial<ProjectChatDelegationClaim> = {}): Projec
   stageType: overrides.stageType ?? 'implement',
   snapshot: { settings, catalogRevision: 'rev', stageType: overrides.stageType ?? 'implement' },
   catalogRevision: 'rev',
-  workspaceKey: 'workspace-key',
+  workspaceKey: advertisedKey,
   baseBranch: 'main',
   repositoryBindingId: null,
   cardId: 'card-1',
@@ -93,10 +99,11 @@ function workspaces(workspaceId: string, created: { worktrees: string[]; sibling
     workspaceId,
     repositoryBindingId: null,
   } as unknown as PlatformProjectBinding
+  // No stubbed identity: the sessions below carry exactly the key the inventory would advertise.
+  advertisedKey = chatWorkspaceKey(binding)
   return new DelegationWorkspaces({
     instanceId: 'instance',
     bindings: [binding],
-    workspaceKeyFor: () => 'workspace-key',
     createWorktree: async (input) => {
       created.worktrees.push(input.branch)
       taskCwd = taskCwd || dir('task-')
@@ -175,6 +182,51 @@ it('reuses one task worktree for write stages and gives each read-only stage a s
   expect(created.reviews).toBe(0)
   expect(isReadOnlyStage('review')).toBe(true)
   expect(isReadOnlyStage('implement')).toBe(false)
+})
+
+it('prepares a stage created from the key the real catalog advertised', async () => {
+  // The whole path: the inventory publishes a workspace key, the server copies it into the session, and this
+  // computer has to resolve the same binding back. One identity function published and another one resolved
+  // would fail every first preparation with "no longer bound to this executor".
+  const workspace = makeWorkspace()
+  const binding = {
+    connectionId: 'conn-1',
+    organizationId: 'org-1',
+    projectId: 'project-1',
+    workspaceId: workspace.id,
+    repositoryBindingId: null,
+  } as unknown as PlatformProjectBinding
+  const catalog = await buildDelegationCatalog({
+    catalog: { selections: async () => [] },
+    settings: desktopExecutorSettingsSchema.parse({ providerIds: ['codex-subscription'] }),
+    bindings: [binding],
+    workspacePathFor: () => workspace.path,
+    inspect: async () => [{ bindingId: 'binding', available: true, branches: ['main'] }],
+    probes: {
+      profiles: async () => [],
+      github: async () => ({ available: true, login: 'octocat', issue: null }),
+      checks: async () => [],
+    },
+  })
+  const advertised = catalog.workspaces[0]!.key
+
+  taskCwd = ''
+  const created = { worktrees: [] as string[], siblings: [] as string[], attached: [] as string[], reviews: 0 }
+  const manager = workspaces(workspace.id, created)
+  const prepared = await manager.prepare(
+    session({ workspaceKey: advertised }),
+    delegation({ stageType: 'implement' })
+  )
+  expect(created.worktrees).toEqual(['delegation/task-1'])
+  expect(prepared.cwd).toBe(taskCwd)
+
+  // A session pointing at another workspace is still refused.
+  await expect(
+    manager.prepare(
+      session({ id: 'other-session', workspaceKey: 'some-other-key' }),
+      delegation({ taskId: 'task-2', stageType: 'implement', stageId: 'stage-9', attemptId: 'attempt-9' })
+    )
+  ).rejects.toThrow(/no longer bound to this executor/)
 })
 
 it('reports a missing stage workspace instead of silently creating another one', async () => {

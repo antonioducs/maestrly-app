@@ -21,11 +21,9 @@ import type { DesktopModelCatalog } from './desktop-executor'
 import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopProjectChatClient } from './project-chat-client'
 import { registerProjectChatContext } from './project-chat-context'
-import { ProjectChatProjection, chatPublicId, publicChatText } from './project-chat-projection'
+import { ProjectChatProjection, chatWorkspaceKey, publicChatText } from './project-chat-projection'
 import * as journal from './project-chat-store'
 
-export const chatWorkspaceKey = (b: PlatformProjectBinding) =>
-  chatPublicId(b.connectionId + ':' + b.projectId + ':' + b.workspaceId)
 export function projectChatPreferences(
   session: Pick<ProjectChatSession, 'mode' | 'reasoning' | 'fastMode' | 'permMode'>,
   settings: DesktopExecutorSettings,
