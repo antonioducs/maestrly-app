@@ -347,8 +347,8 @@ export async function downloadUpdate(): Promise<UpdateState> {
     return failWith(errorMessage(error))
   }
   // `update-downloaded` usually lands first; settle the phase when the promise wins the race.
-  if (state.phase === 'downloading') setState({ phase: 'downloaded', progressPercent: 100 })
-  return state
+  if (getUpdateState().phase === 'downloading') return setState({ phase: 'downloaded', progressPercent: 100 })
+  return getUpdateState()
 }
 
 /**
