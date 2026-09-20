@@ -35,5 +35,4 @@ jobs:
       - name: Build desktop
         run: npm run build:desktop
       - name: Trace standalone chats
-        run: npx playwright test test/e2e/standalone-chats.spec.ts:13 --repeat-each 2
-        working-directory: apps/desktop
+        run: npm run test:e2e
