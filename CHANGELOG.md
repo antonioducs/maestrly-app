@@ -5,8 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-20
+
 ### Added
 
+- Add standalone chats with private persistent files, isolated permissions,
+  provider support, and sidebar lifecycle controls outside project workspaces.
+- Add native Cursor subscription support across chat, Maestro, subagents, image
+  interpretation, desktop execution, and account-isolated sessions.
+- Add optional incremental background compaction with persistent checkpoints,
+  resume, cancellation, retry controls, and provider-specific configuration.
+- Add in-app update discovery and installation through GitHub Releases on
+  macOS, Windows, and AppImage, with release notifications for Debian packages.
 - Delegate development work to an external agent (for example a Grok Bot
   routine) through an authenticated MCP endpoint, with per-project and
   per-action grants the owner controls and can revoke at any time.
@@ -20,8 +30,21 @@ User-visible changes by version. Downloads are on
   polling, and manage connectors, delegations and OAuth consent in the web
   interface.
 
-- In-app updates from GitHub Releases (macOS, Windows, AppImage); .deb users are
-  notified.
+### Changed
+
+- Redesign Kanban card and column-agent dialogs with responsive layouts,
+  clearer configuration, contextual prompts, and concurrent agent execution.
+- Replace the fixed drawer tool strip with searchable, reorderable, persistent
+  tabs stored per conversation.
+- Update compatible minor and patch dependencies across all workspaces.
+
+### Fixed
+
+- Keep messages visible and queued correctly during compaction, align portable
+  Codex recovery with resolved context settings, and recover short turns whose
+  terminal events are lost.
+- Repair legacy databases during startup so workspace removal succeeds, while
+  preventing unrelated UI updates from interrupting live chat subscriptions.
 
 ## [0.7.0] - 2026-09-16
 
