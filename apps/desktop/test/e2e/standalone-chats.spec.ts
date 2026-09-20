@@ -66,7 +66,28 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await page.locator('.chat-input[contenteditable="true"]:visible').fill(text)
     await page.locator('button[title="Send"]:visible').click()
   }
-  const ready = () => expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
+  const ready = async (label = '') => {
+    let failed = false
+    try {
+      await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
+    } catch (error) {
+      failed = true
+      const runtimes = await page.evaluate(async () => {
+        const api = (window as any).api
+        const conversations = await api.listStandaloneConversations(true)
+        const entries: Record<string, unknown> = {}
+        for (const conversation of conversations) entries[conversation.id.slice(0, 4)] = await api.chatRuntime(conversation.id)
+        return entries
+      })
+      console.log(`READY-FAILURE ${label} RUNTIMES ${JSON.stringify(runtimes)}`)
+      console.log('TRACE\n' + (await page.evaluate(() => ((window as any).__chatDebug ?? []) as string[])).join('\n'))
+      throw error
+    }
+    if (!failed) {
+      console.log(`READY-OK ${label}`)
+      console.log('TRACE\n' + (await page.evaluate(() => ((window as any).__chatDebug ?? []) as string[])).join('\n'))
+    }
+  }
   const launch = async () => {
     app = await electron.launch({
       args: [path.join(desktop, 'out/main/index.js')],
@@ -167,7 +188,7 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await expect(page.getByText('Standalone streaming proof: hidden chunk incremental chunk', { exact: false })).toBeVisible()
     end(held!, 'complete.')
     held = undefined
-    await ready()
+    await ready("turn1")
     await expect(row('alpha-private-first-turn')).toBeVisible()
     await rename('alpha-private-first-turn', 'Alpha standalone')
     await page.locator('button[title^="Change model"]:visible').click()
@@ -175,7 +196,7 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await page.getByRole('button', { name: /standalone-secondary.*Standalone fixture/ }).click()
     await send('alpha-followup')
     await expect(page.getByText('Standalone reply 2.', { exact: true })).toBeVisible()
-    await ready()
+    await ready("turn2")
     expect(requests[1].model).toBe('standalone-secondary')
     expect(JSON.stringify(requests[1].messages)).toContain('alpha-private-first-turn')
     expect(JSON.stringify(requests[1].messages)).toContain('incremental chunk')
@@ -199,7 +220,7 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await expect(page.getByText('beta-evidence.txt', { exact: true }).first()).toBeVisible()
     await send('beta-private-turn')
     await expect(page.getByText('Standalone reply 3.', { exact: true })).toBeVisible()
-    await ready()
+    await ready("turn3")
     const betaRequest = JSON.stringify(requests[2].messages)
     expect(betaRequest).toContain('beta-attachment-proof')
     expect(betaRequest).not.toContain('alpha-private-first-turn')

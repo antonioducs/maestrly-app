@@ -336,6 +336,14 @@ export function ChatView({
   convIdRef.current = conversationId
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const debugTrace = useCallback(
+    (entry: string) => {
+      const store = window as unknown as { __chatDebug?: string[] }
+      store.__chatDebug = store.__chatDebug ?? []
+      store.__chatDebug.push(`${Date.now()} ${conversationId.slice(0, 4)} ${entry}`)
+    },
+    [conversationId]
+  )
 
   const historyReloadRevisionRef = useRef(0)
 
@@ -447,6 +455,7 @@ export function ChatView({
   }, [reloadLatestPage])
 
   useEffect(() => {
+    debugTrace(`status=${status} visible=${visibleRef.current} streamingRef=${streamingRef.current}`)
     if (status !== 'working' && status !== 'asking') return
     if (compactingRef.current) return
     if (!visibleRef.current) {
@@ -454,9 +463,19 @@ export function ChatView({
       return
     }
     if (streamingRef.current) return
+    debugTrace('status elevates streaming')
     streamingRef.current = true
     setStreaming(true)
-  }, [status])
+  }, [status, debugTrace])
+
+  useEffect(() => {
+    debugTrace(`mount visible=${visible}`)
+    return () => debugTrace('unmount')
+  }, [debugTrace])
+
+  useEffect(() => {
+    debugTrace(`visible=${visible}`)
+  }, [visible, debugTrace])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -849,6 +868,7 @@ export function ChatView({
   streamEventRef.current = (ev) => {
     const kind = (ev as { kind: string }).kind
     const hidden = !visibleRef.current
+    debugTrace(`event ${kind} hidden=${hidden}`)
     const event = ev as ChatStreamEvent
 
     // Hidden standalone views do not render tokens, but must retain the active response before
@@ -983,9 +1003,11 @@ export function ChatView({
   useEffect(() => {
     if (!needsLiveSubscription) return
 
+    debugTrace('subscribe')
     const offStream = window.api.onChatStream(conversationId, (ev) => streamEventRef.current(ev))
     const offPerm = window.api.onChatPermission(conversationId, (ev) => permissionEventRef.current(ev))
     return () => {
+      debugTrace('unsubscribe')
       offStream()
       offPerm()
     }
@@ -1009,6 +1031,7 @@ export function ChatView({
     const maestroRevision = maestroLiveRevisionRef.current
     void window.api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
+      debugTrace(`runtime streaming=${runtime.streaming} guard=${compactionRevision === compactionRevisionRef.current}`)
       if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
         compactingRef.current = runtime.compacting ?? false
         setCompacting(compactingRef.current)
@@ -1051,7 +1074,7 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
+  }, [debugTrace, conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
