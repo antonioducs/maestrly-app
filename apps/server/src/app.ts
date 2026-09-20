@@ -33,6 +33,10 @@ import { getProject } from './modules/projects/service.js'
 import { inTenantTransaction } from './db/transaction.js'
 import { authorizeProject } from './modules/access/authorize.js'
 import { registerAccessRoutes } from './modules/access/routes.js'
+import { createConnectorAuthenticator } from './modules/connectors/auth.js'
+import { createConnectorToolRegistry, registerConnectorMcp } from './modules/connectors/mcp.js'
+import { registerConnectorRoutes } from './modules/connectors/routes.js'
+import { connectorToolCatalog } from './modules/connectors/tool-catalog.js'
 
 export interface AppDependencies {
   config: ServerConfig
@@ -128,9 +132,9 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   app.get('/api/v1/health/ready', async (_request, reply) => {
     try {
       const result = await pool.query<{ count: string }>(`
-        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql')
+        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql','010_connector_grants.sql','011_delegations.sql')
       `)
-      if (Number(result.rows[0]?.count) !== 9) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
+      if (Number(result.rows[0]?.count) !== 11) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
       return { status: 'ready' }
     } catch {
       return reply.status(503).send({ status: 'not_ready', reason: 'database_unavailable' })
@@ -152,6 +156,12 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   registerAgentToolRoutes(app, pool)
   registerAccessRoutes(app, pool, config, authenticate)
   registerTeamRoutes(app,pool,config,authenticate)
+  registerConnectorRoutes(app, pool, auth, config, authenticate)
+  registerConnectorMcp(app, {
+    authenticate: createConnectorAuthenticator(auth, config, pool),
+    registry: createConnectorToolRegistry(connectorToolCatalog(pool, config)),
+    resourceMetadataUrl: `${config.canonicalUrl}/.well-known/oauth-protected-resource/mcp`,
+  })
 
   app.get('/api/v1/organizations', async (request) => {
     const human = await authenticate(request)

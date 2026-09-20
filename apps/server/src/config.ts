@@ -16,6 +16,8 @@ const environmentSchema = z.object({
   MAESTRLY_BOOTSTRAP_MODE: z.enum(['true', 'false']).default('false'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   MAESTRLY_STORAGE_DIR: z.string().min(1).default('.maestrly-data'),
+  /** Unauthenticated RFC 7591 registration for MCP clients that cannot use the preregistration UI. */
+  MAESTRLY_CONNECTOR_OPEN_REGISTRATION: z.enum(['true', 'false']).default('false'),
 })
 
 export interface ServerConfig {
@@ -34,6 +36,7 @@ export interface ServerConfig {
   bootstrapMode: boolean
   logLevel: string
   storageDirectory: string
+  connectorOpenRegistration: boolean
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -62,5 +65,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
     bootstrapMode: value.MAESTRLY_BOOTSTRAP_MODE === 'true',
     logLevel: value.LOG_LEVEL,
     storageDirectory: value.MAESTRLY_STORAGE_DIR,
+    connectorOpenRegistration: value.MAESTRLY_CONNECTOR_OPEN_REGISTRATION === 'true',
   }
 }
