@@ -200,6 +200,18 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await send('beta-private-turn')
     await expect(page.getByText('Standalone reply 3.', { exact: true })).toBeVisible()
     await ready()
+    await expect.poll(async () => (await call('chatRuntime', second.id)).streaming).toBe(false)
+    // Sidebar status is a separate notification path. A delayed working notification must
+    // not resurrect a turn after its authoritative stream completion has been consumed.
+    await app!.evaluate(({ BrowserWindow }, conversationId) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('agent:status', { agentId: conversationId, status: 'working' })
+    }, second.id)
+    // Wait for React to commit the status update before asserting the composer state.
+    await expect(row('Beta standalone').locator('.text-status-working')).toBeVisible()
+    await ready()
+    await app!.evaluate(({ BrowserWindow }, conversationId) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('agent:status', { agentId: conversationId, status: 'ready' })
+    }, second.id)
     const betaRequest = JSON.stringify(requests[2].messages)
     expect(betaRequest).toContain('beta-attachment-proof')
     expect(betaRequest).not.toContain('alpha-private-first-turn')

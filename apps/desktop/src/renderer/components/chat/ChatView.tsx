@@ -175,6 +175,8 @@ export function ChatView({
   const [searchIndex, setSearchIndex] = useState(-1)
   const [searchLoading, setSearchLoading] = useState(false)
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
+  // Sidebar status only seeds initial state; the chat lifecycle owns it after mount.
+  // A sidebar status effect can commit `working` after `done` and resurrect Stop.
   const [streaming, setStreaming] = useState(() => status === 'working' || status === 'asking')
   const [stopPending, setStopPending] = useState(false)
   const [pending, setPending] = useState<ChatPermissionRequest[]>([])
@@ -444,18 +446,6 @@ export function ChatView({
   useEffect(() => {
     void reloadLatestPage()
   }, [reloadLatestPage])
-
-  useEffect(() => {
-    if (status !== 'working' && status !== 'asking') return
-    if (compactingRef.current) return
-    if (!visibleRef.current) {
-      streamingRef.current = true
-      return
-    }
-    if (streamingRef.current) return
-    streamingRef.current = true
-    setStreaming(true)
-  }, [status])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -871,6 +861,21 @@ export function ChatView({
         return
       }
 
+
+      // External preflight can reserve the conversation before user-saved. Progress is
+      // authoritative; sidebar status is not. Keep the reservation through progress
+      // completion until done (preflight) or compaction-finished (manual) releases it.
+      if (
+        event.kind === 'compaction-progress' &&
+        event.progress.scope === 'conversation' &&
+        event.progress.status === 'running'
+      ) {
+        compactionRevisionRef.current++
+        compactingRef.current = true
+        setCompacting(true)
+        streamingRef.current = true
+        if (!hidden) setStreaming(true)
+      }
 
       if (kind === 'done') {
         // The turn ended: drop every live capability before any further action can be routed.
