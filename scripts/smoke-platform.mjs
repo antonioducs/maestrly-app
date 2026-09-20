@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { nodeCommand } from './node-command.mjs'
 
 function run(command, args) {
+  ;({ command, args } = nodeCommand(command, args))
   const result = spawnSync(command, args, { stdio: 'inherit', shell: false })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }

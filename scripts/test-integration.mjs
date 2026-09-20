@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { randomBytes } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { nodeCommand } from './node-command.mjs'
 
 const name = `maestrly-integration-pg-${process.pid}`
 const password = 'maestrly_integration_owner'
 
 function run(command, args, options = {}) {
+  ;({ command, args } = nodeCommand(command, args, options.env ?? process.env))
   const result = spawnSync(command, args, { encoding: 'utf8', stdio: options.capture ? 'pipe' : 'inherit', shell: false, env: options.env ?? process.env })
   if (result.status !== 0) throw new Error(result.stderr || `${command} exited with ${result.status}`)
   return result.stdout?.trim() ?? ''

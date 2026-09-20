@@ -54,6 +54,7 @@
     "postinstall": "node scripts/postinstall.mjs",
     "audit:dependencies": "node scripts/audit-dependencies.mjs && npm audit --omit=dev --prefix apps/desktop/runtime-assets/local-ml",
     "check:history": "node scripts/check-commits.mjs",
+    "verify:pr": "node scripts/verify-pr.mjs",
     "hooks:install": "git config core.hooksPath .githooks",
     "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs",
     "smoke:packaged-cursor-sdk": "node scripts/smoke-packaged-cursor-sdk.mjs",
