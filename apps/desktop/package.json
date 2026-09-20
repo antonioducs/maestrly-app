@@ -102,7 +102,7 @@
     "@openai/codex": "0.153.4",
     "@playwright/test": "^1.62.1",
     "@types/diff": "^7.0.2",
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.6.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@types/tar-stream": "^3.1.4",
