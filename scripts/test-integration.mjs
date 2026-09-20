@@ -31,7 +31,9 @@ try {
   const runtimeUrl = `postgres://maestrly_runtime:maestrly_integration_runtime@127.0.0.1:${port}/maestrly`
   const env = { ...process.env, MIGRATION_DATABASE_URL: migrationUrl, DATABASE_URL: runtimeUrl, MAESTRLY_TEST_DATABASE_URL: runtimeUrl, MAESTRLY_TEST_MIGRATION_DATABASE_URL: migrationUrl, BETTER_AUTH_SECRET: randomBytes(32).toString('hex') }
   run(process.execPath, ['--import', 'tsx', 'apps/server/src/db/migrate.ts'], { env })
-  run('npm', ['run', 'test:integration', '--workspace', '@maestrly/server'], { env })
+  // Optional spec filters keep the isolated database, migrations and non-BYPASSRLS runtime identical.
+  const filters = process.argv.slice(2)
+  run('npm', ['run', 'test:integration', '--workspace', '@maestrly/server', ...(filters.length ? ['--', ...filters] : [])], { env })
 } finally {
   if (started) spawnSync('docker', ['stop', name], { stdio: 'ignore', shell: false })
 }

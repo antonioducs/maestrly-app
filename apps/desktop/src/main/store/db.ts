@@ -191,6 +191,15 @@ function initializeSchema(): void {
       seq INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS platform_chat_outbox_turn ON platform_chat_outbox(turn_id,seq);
+    CREATE TABLE IF NOT EXISTS platform_delegation_workspaces (
+      instance_id TEXT NOT NULL, task_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+      PRIMARY KEY(instance_id, task_id)
+    );
+    CREATE TABLE IF NOT EXISTS platform_delegation_attempts (
+      attempt_id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, task_id TEXT NOT NULL, stage_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL, lease_id TEXT NOT NULL, state TEXT NOT NULL, receipt TEXT
+    );
+    CREATE INDEX IF NOT EXISTS platform_delegation_attempts_turn ON platform_delegation_attempts(turn_id);
   `)
   // Drop known ledger triggers before schema creation because IF NOT EXISTS would preserve an outdated
   // privacy implementation.

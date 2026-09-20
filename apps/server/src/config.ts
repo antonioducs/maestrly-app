@@ -16,6 +16,17 @@ const environmentSchema = z.object({
   MAESTRLY_BOOTSTRAP_MODE: z.enum(['true', 'false']).default('false'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   MAESTRLY_STORAGE_DIR: z.string().min(1).default('.maestrly-data'),
+  /** Unauthenticated RFC 7591 registration for MCP clients that cannot use the preregistration UI. */
+  MAESTRLY_CONNECTOR_OPEN_REGISTRATION: z.enum(['true', 'false']).default('false'),
+  MAESTRLY_MAX_DELEGATION_ARTIFACT_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
+  MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES: z.coerce.number().int().positive().default(250 * 1024 * 1024),
+  /** `keyId:base64key` entries, newest first. Required for connector callbacks and inbound webhooks. */
+  MAESTRLY_SECRET_KEYS: z.string().default(''),
+  /**
+   * Allow a connector callback to an address inside this network, and over plain HTTP. Only for a
+   * self-hosted instance whose receiver is internal; it disables the anti-SSRF guard for those callbacks.
+   */
+  MAESTRLY_CONNECTOR_ALLOW_PRIVATE_CALLBACKS: z.enum(['true', 'false']).default('false'),
 })
 
 export interface ServerConfig {
@@ -34,6 +45,11 @@ export interface ServerConfig {
   bootstrapMode: boolean
   logLevel: string
   storageDirectory: string
+  connectorOpenRegistration: boolean
+  maxDelegationArtifactBytes: number
+  maxDelegationTaskArtifactBytes: number
+  secretKeys: string
+  connectorAllowPrivateCallbacks: boolean
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -62,5 +78,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
     bootstrapMode: value.MAESTRLY_BOOTSTRAP_MODE === 'true',
     logLevel: value.LOG_LEVEL,
     storageDirectory: value.MAESTRLY_STORAGE_DIR,
+    connectorOpenRegistration: value.MAESTRLY_CONNECTOR_OPEN_REGISTRATION === 'true',
+    maxDelegationArtifactBytes: value.MAESTRLY_MAX_DELEGATION_ARTIFACT_BYTES,
+    maxDelegationTaskArtifactBytes: value.MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES,
+    secretKeys: value.MAESTRLY_SECRET_KEYS,
+    connectorAllowPrivateCallbacks: value.MAESTRLY_CONNECTOR_ALLOW_PRIVATE_CALLBACKS === 'true',
   }
 }

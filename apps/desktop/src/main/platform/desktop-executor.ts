@@ -30,6 +30,10 @@ interface LocalModel {
   providerLabel: string
   label: string
 }
+/** Opaque selection published to the platform; only this process maps it back to an account/model. */
+export interface LocalModelSelection extends LocalModel {
+  selectionId: string
+}
 const modelKey = (providerId: string, modelId: string) =>
   createHash('sha256')
     .update(providerId + '\0' + modelId)
@@ -97,6 +101,16 @@ export class DesktopModelCatalog {
     const model = this.models.get(key)
     if (!model) throw new Error('The selected desktop account or model is unavailable.')
     return model
+  }
+  /** Account/model pairs with their opaque selection id, for the delegation inventory. */
+  async selections(): Promise<LocalModelSelection[]> {
+    await this.read()
+    return [...this.models].map(([selectionId, model]) => ({ selectionId, ...model }))
+  }
+  /** Reverse lookup used when observing what a runtime actually used. Never resolves an unknown pair. */
+  selectionIdFor(providerId: string, modelId: string): string | null {
+    const key = modelKey(providerId, modelId)
+    return this.models.has(key) ? key : null
   }
   async chatModels(): Promise<ChatInventory['models']> {
     await this.read()

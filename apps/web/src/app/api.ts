@@ -1,7 +1,9 @@
-import { MaestrlyClient } from '@maestrly/client-sdk'
+import { ConnectorsApi, DelegationsApi, MaestrlyClient } from '@maestrly/client-sdk'
 
 export const serverUrl = (import.meta.env.VITE_MAESTRLY_SERVER_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 export const client = new MaestrlyClient({ baseUrl: serverUrl })
+export const connectors = new ConnectorsApi(client.transport)
+export const delegations = new DelegationsApi(client.transport)
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)

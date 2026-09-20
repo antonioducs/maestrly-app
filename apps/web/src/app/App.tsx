@@ -7,11 +7,12 @@ import { t, useLocale, LanguageSelector } from '../i18n/index.js'
 import { FormDialog } from '../components/FormDialog.js'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Activity, Bot, Columns3, LogOut, Moon, Sun, Users, BarChart3, GitBranch, PanelLeft, FolderKanban, Languages, Cpu, Monitor, MessageSquare } from 'lucide-react'
+import { Activity, Bot, Columns3, LogOut, Moon, Sun, Users, BarChart3, GitBranch, PanelLeft, FolderKanban, Languages, Cpu, Monitor, MessageSquare, Plug, Sparkles } from 'lucide-react'
 import type { Project, Board } from '@maestrly/protocol'
 import { api, write } from './api.js'
 import { Login } from '../features/auth/Login.js'
 import { DeviceApproval } from '../features/auth/DeviceApproval.js'
+import { ConsentApproval } from '../features/auth/ConsentApproval.js'
 import { Invitation } from '../features/auth/Invitation.js'
 import { ProjectSwitcher } from '../features/projects/ProjectSwitcher.js'
 import { BoardView, type BoardSnapshot } from '../features/boards/BoardView.js'
@@ -22,6 +23,8 @@ import { RunnersPanel } from '../features/runners/RunnersPanel.js'
 import { OperationsPanel } from '../features/executions/OperationsPanel.js'
 import { ReportsPanel } from '../features/reports/ReportsPanel.js'
 import { EmptyState } from '../components/EmptyState.js'
+import { ConnectorsPanel } from '../features/connectors/ConnectorsPanel.js'
+import { DelegationsPanel } from '../features/delegations/DelegationsPanel.js'
 
 const ProjectChatDrawer = lazy(() => import('../features/chat/ProjectChatDrawer.js').then(m => ({default:m.ProjectChatDrawer})))
 
@@ -33,11 +36,11 @@ interface Organization {
   name: string
   role: string
 }
-type View = 'board' | 'automations' | 'runners' | 'executions' | 'reports' | 'repositories' | 'team' | 'devices'
+type View = 'board' | 'delegations' | 'automations' | 'runners' | 'executions' | 'reports' | 'repositories' | 'team' | 'devices' | 'connectors'
 
 const navGroups: Array<{ caption: string; items: Array<{ id: View; label: string; icon: typeof Columns3 }> }> = [
-  { caption: 'Work', items: [ { id: 'board', label: 'Board', icon: Columns3 }, { id: 'executions', label: 'Executions', icon: Activity } ] },
-  { caption: 'Automation', items: [ { id: 'automations', label: 'Automations', icon: Bot }, { id: 'runners', label: 'Runners', icon: Cpu }, { id: 'devices', label: 'My computers', icon: Monitor } ] },
+  { caption: 'Work', items: [ { id: 'board', label: 'Board', icon: Columns3 }, { id: 'delegations', label: 'Delegations', icon: Sparkles }, { id: 'executions', label: 'Executions', icon: Activity } ] },
+  { caption: 'Automation', items: [ { id: 'automations', label: 'Automations', icon: Bot }, { id: 'runners', label: 'Runners', icon: Cpu }, { id: 'devices', label: 'My computers', icon: Monitor }, { id: 'connectors', label: 'Connectors', icon: Plug } ] },
   { caption: 'Project settings', items: [ { id: 'team', label: 'Team', icon: Users }, { id: 'repositories', label: 'Git repositories', icon: GitBranch }, { id: 'reports', label: 'Reports', icon: BarChart3 } ] },
 ]
 const nav = navGroups.flatMap((group) => group.items)
@@ -56,6 +59,20 @@ export function App() {
       <>
         <LanguageSelector />
         {session===undefined?<p role="status">{t('Loading…')}</p>:session?<DeviceApproval />:<Login onSignedIn={load}/>}
+      </>
+    )
+  // An OAuth client is sent here by the authorization endpoint; without a session the person signs in first.
+  if (location.pathname === '/consent')
+    return (
+      <>
+        <LanguageSelector />
+        {session === undefined ? (
+          <p role="status">{t('Loading…')}</p>
+        ) : session ? (
+          <ConsentApproval />
+        ) : (
+          <Login onSignedIn={load} />
+        )}
       </>
     )
   if (location.pathname === '/invite')
@@ -533,6 +550,17 @@ function Workspace({ session, onSignedOut }: { session: Session; onSignedOut(): 
           ) : null}
           {projectId && view === 'reports' ? (
             <ReportsPanel organizationId={organizationId} projectId={projectId} />
+          ) : null}
+          {projectId && view === 'delegations' ? (
+            <DelegationsPanel
+              key={organizationId + projectId}
+              organizationId={organizationId}
+              projectId={projectId}
+              boardId={boardId}
+            />
+          ) : null}
+          {organizationId && view === 'connectors' ? (
+            <ConnectorsPanel key={organizationId} organizationId={organizationId} projects={projects} />
           ) : null}
         </div>
       </main>

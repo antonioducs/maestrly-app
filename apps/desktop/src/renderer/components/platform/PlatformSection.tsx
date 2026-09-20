@@ -1,3 +1,4 @@
+import { DelegationSection } from './DelegationSection'
 import { ExecutorSection } from './ExecutorSection'
 import { ProjectBindingSection } from './ProjectBindingSection'
 import { useEffect, useState } from 'react'
@@ -154,6 +155,7 @@ export function PlatformSection() {
       ) : null}
       <ProjectBindingSection connections={connections} />
       <ExecutorSection connections={connections} />
+      <DelegationSection />
       {error ? (
         <p className="text-xs text-destructive" role="alert">
           {error}

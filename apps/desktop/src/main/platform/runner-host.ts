@@ -18,7 +18,11 @@ import {
   type RunnerClaim,
   type RunnerServer,
 } from '@maestrly/runner-core'
-import type { EmbeddedRunnerView } from '../../shared/platform'
+import type { DelegationModelCatalog } from '@maestrly/protocol'
+import { buildDelegationCatalog } from './delegation-catalog'
+import { DelegationWorker } from './delegation-worker'
+import type { DelegationStatusView, EmbeddedRunnerView } from '../../shared/platform'
+import { activeDelegationAttempts } from './project-chat-store'
 import { getWorkspace } from '../store'
 import { secureGet, secureSet, secureRemove } from '../secure-store'
 import { platformConnections } from './connection-service'
@@ -134,6 +138,10 @@ export class EmbeddedRunnerHost {
   private engine: RunnerEngine | null = null
   private chatWorker:ProjectChatWorker|null=null
   private chatLoop:Promise<void>|null=null
+  private delegationCatalog: DelegationModelCatalog | null = null
+  private delegationEnabled = false
+  private delegationWorker: DelegationWorker | null = null
+  private delegationLoop: Promise<void> | null = null
   private server: DesktopRunnerServer | null = null
   private loop: Promise<void> | null = null
   private state: EmbeddedRunnerView = { state: 'stopped' }
@@ -141,8 +149,47 @@ export class EmbeddedRunnerHost {
   private revision = 0
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private memory = new Map<string, MachineIdentity>()
+  private delegationInstanceId: string | null = null
+
   status(): EmbeddedRunnerView {
     return { ...this.state }
+  }
+
+  /**
+   * What this computer offers for delegated stages and what it is running now. It reports the published
+   * inventory rather than a guess: when delegation is off, the reasons are listed instead of hidden.
+   */
+  delegationStatus(): DelegationStatusView {
+    const catalog = this.delegationCatalog
+    const issues = [...(catalog?.issues ?? [])]
+    if (this.state.state !== 'running') issues.unshift('Start the executor to offer delegated stages.')
+    else if (!this.delegationEnabled && catalog)
+      issues.unshift('This Maestrly instance did not accept a stage inventory from this computer.')
+    return {
+      enabled: this.delegationEnabled && this.state.state === 'running',
+      revision: catalog?.revision ?? null,
+      issues,
+      workspaces: (catalog?.workspaces ?? []).map((workspace) => ({
+        key: workspace.key,
+        label: workspace.label,
+        branches: [...workspace.branches],
+      })),
+      selections: (catalog?.models ?? []).map((model) => ({
+        selectionId: model.selectionId,
+        accountLabel: model.accountLabel,
+        modelLabel: model.modelLabel,
+        efforts: [...model.efforts],
+        fastMode: model.fastMode,
+      })),
+      active: this.delegationInstanceId
+        ? activeDelegationAttempts(this.delegationInstanceId).map((attempt) => ({
+            attemptId: attempt.attempt_id,
+            taskId: attempt.task_id,
+            stageId: attempt.stage_id,
+            state: attempt.state,
+          }))
+        : [],
+    }
   }
   async start(connectionId: string): Promise<EmbeddedRunnerView> {
     if (this.state.state === 'error') await this.stop()
@@ -286,6 +333,38 @@ export class EmbeddedRunnerHost {
         this.chatWorker=chatWorker
         this.chatLoop=chatWorker.run().catch(error=>{this.state={state:'error',error:(error as Error).message};this.stopping=true;void engine.stop()})
       }
+      // Delegation is additive: a server without the capability answers 404, and a computer that cannot
+      // describe its stage inventory keeps running jobs and chat instead of failing to start.
+      try {
+        this.delegationCatalog = await buildDelegationCatalog({ catalog, settings, bindings })
+        const delegationClient = new DesktopProjectChatClient(connection.url, identity)
+        const published = await delegationClient
+          .delegationInventory(this.delegationCatalog)
+          .catch(() => ({ accepted: false }))
+        this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
+        this.delegationInstanceId = connection.instanceId ?? connection.url
+        if (this.delegationEnabled) {
+          const worker = new DelegationWorker({
+            client: delegationClient,
+            catalog,
+            settings,
+            bindings,
+            instanceId: connection.instanceId ?? connection.url,
+            url: connection.url,
+            reviewBaseDirectory: path.join(app.getPath('userData'), 'delegation-reviews'),
+          })
+          this.delegationWorker = worker
+          this.delegationLoop = worker.run().catch((error) => {
+            this.state = { state: 'error', error: (error as Error).message }
+            this.stopping = true
+            void engine.stop()
+          })
+        }
+      } catch (error) {
+        this.delegationCatalog = null
+        this.delegationEnabled = false
+        console.warn('[executor] stage delegation is unavailable on this computer', error)
+      }
       this.heartbeat = setInterval(
         () =>
           void server
@@ -340,6 +419,7 @@ export class EmbeddedRunnerHost {
     this.revision++
     this.stopping = true
     this.chatWorker?.stop()
+    this.delegationWorker?.stop()
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
     const offline = this.server?.presence(false).catch(() => {})
@@ -347,7 +427,11 @@ export class EmbeddedRunnerHost {
     await this.engine?.stop('Executor was stopped.')
     await this.loop
     await this.chatLoop
+    // Stage cancellation and cleanup are awaited before the executor reports itself stopped.
+    await this.delegationLoop
     this.chatWorker=null;this.chatLoop=null
+    this.delegationWorker=null;this.delegationLoop=null;this.delegationEnabled=false;this.delegationCatalog=null
+    this.delegationInstanceId=null
     await offline
     this.engine = null
     this.loop = null

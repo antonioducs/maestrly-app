@@ -252,8 +252,10 @@ export async function updateSession(c: DatabaseClient, s: ChatScope, id: string,
 }
 export async function listSessions(pool: DatabasePool, s: ChatScope, before = '') {
   return chatTransaction(pool, s, false, async (c) => {
+    // Delegation stage conversations share this queue but are not a person's private project chat.
     const r = await c.query(
       `select * from chat_sessions where organization_id=$1 and project_id=$2 and owner_user_id=$3 and archived_at is null
+      and delegation_task_id is null
       and ($4='' or (created_at,id)<(select created_at,id from chat_sessions where id=nullif($4,'')::uuid)) order by created_at desc,id desc limit 31`,
       [s.organizationId, s.projectId, s.userId, before]
     )

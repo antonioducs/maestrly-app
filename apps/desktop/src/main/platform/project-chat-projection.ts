@@ -12,6 +12,14 @@ export function chatPublicId(value: string) {
   const h = createHash('sha256').update(value).digest('hex')
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
+/**
+ * Opaque identity of a local workspace binding, as advertised to the server and as resolved back on this
+ * computer. Every inventory and every lookup derives the key here: a key built any other way stops matching
+ * the session the server recorded, and the work can no longer be placed in a workspace.
+ */
+export function chatWorkspaceKey(binding: { connectionId: string; projectId: string; workspaceId: string }): string {
+  return chatPublicId(binding.connectionId + ':' + binding.projectId + ':' + binding.workspaceId)
+}
 export function publicChatText(value: unknown, max = 65536): string {
   const redact = (s: string) =>
     s

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "maestrly": {
+      "type": "http",
+      "url": "https://maestrly.example.com/mcp",
+      "note": "Replace the host with your Maestrly instance. Authorization is OAuth: the client discovers the authorization server at /.well-known/oauth-protected-resource/mcp and no secret belongs in this file."
+    }
+  }
+}

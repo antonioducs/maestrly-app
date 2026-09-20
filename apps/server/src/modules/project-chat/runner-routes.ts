@@ -5,6 +5,7 @@ import type { DatabasePool } from '../../db/pool.js'
 import { assertChatLease, claimChat, finishChat, runnerTransaction, uploadChatEvents } from './dispatch.js'
 import { chatFail, mapInteraction } from './service.js'
 import { registerChatToolRoutes } from './tools.js'
+import { advanceDelegation, settleStageFromTurn } from '../delegations/scheduler.js'
 
 export function chatRunnerIdentity(r: FastifyRequest) {
   return z
@@ -99,13 +100,28 @@ export function registerChatRunnerRoutes(app: FastifyInstance, pool: DatabasePoo
         })
         .strict()
         .parse(r.body)
-    return runnerTransaction(pool, identity, async (c) => {
-      const { session, turn } = await assertChatLease(c, identity, turnId, body.leaseId, true)
+    const outcome = await runnerTransaction(pool, identity, async (c) => {
+      const { session, turn, delegationTaskId } = await assertChatLease(c, identity, turnId, body.leaseId, true)
       if (['succeeded', 'failed', 'cancelled', 'interrupted'].includes(turn.state)) {
         if (turn.state !== body.state) chatFail('Completion conflicts with the recorded outcome.')
-        return turn
+        return { turn, delegationTaskId, organizationId: session.organizationId }
       }
-      return finishChat(c, session, turn, turn.state === 'cancelling' ? 'cancelled' : body.state, body.error)
+      const finished = await finishChat(
+        c,
+        session,
+        turn,
+        turn.state === 'cancelling' ? 'cancelled' : body.state,
+        body.error
+      )
+      // A delegation stage concludes from its turn outcome plus its receipt, in the same transaction.
+      if (delegationTaskId) await settleStageFromTurn(c, { organizationId: session.organizationId, turnId })
+      return { turn: finished, delegationTaskId, organizationId: session.organizationId }
     })
+    // Advancing the pipeline runs outside the lock; the scheduler loop also picks it up on its own.
+    if (outcome.delegationTaskId)
+      void advanceDelegation(pool, { organizationId: outcome.organizationId, taskId: outcome.delegationTaskId }).catch(
+        () => undefined
+      )
+    return outcome.turn
   })
 }

@@ -87,6 +87,19 @@ vi.mock('../../src/main/platform/executor-settings', () => ({
 vi.mock('../../src/main/platform/desktop-executor', () => ({
   DesktopChatExecutor: class {},
   DesktopModelCatalog: class {
+    // The delegation inventory asks for the exact account/model selections this computer can offer.
+    async selections() {
+      return [
+        {
+          selectionId: 'selection-one',
+          providerId: 'codex-subscription',
+          providerLabel: 'Codex',
+          modelId: 'model',
+          reasoningEfforts: ['medium'],
+          fastMode: false,
+        },
+      ]
+    }
     async read() {
       return {
         version: 1,
@@ -108,7 +121,11 @@ vi.mock('../../src/main/platform/connection-service', () => ({
 vi.mock('../../src/main/platform/project-bindings', () => ({
   platformProjectBindings: { list: () => fixture.bindings },
 }))
-vi.mock('../../src/main/store', () => ({ getWorkspace: (id: string) => ({ path: '/fixture/' + id }) }))
+vi.mock('../../src/main/store', () => ({
+  getWorkspace: (id: string) => ({ path: '/fixture/' + id }),
+  // The local attempt table is read when the host reports what it is running.
+  getDb: () => ({ prepare: () => ({ all: () => [], get: () => undefined, run: () => ({ changes: 0 }) }) }),
+}))
 vi.mock('../../src/main/secure-store', () => ({ secureGet: () => null, secureSet: () => false, secureRemove: vi.fn() }))
 
 import { EmbeddedRunnerHost } from '../../src/main/platform/runner-host'
@@ -177,6 +194,28 @@ describe('embedded runner Git mapping', () => {
       await host.stop()
       expect(fixture.request).toHaveBeenCalledWith('POST','/api/v1/runners/presence',expect.objectContaining({body:{online:false}}))
     } finally {fixture.mode='personal';fixture.claim=null;await host.stop()}
+  })
+  it('says why this computer is not offering delegated stages, instead of hiding it', async () => {
+    fixture.request.mockClear()
+    fixture.available = true
+    const host = new EmbeddedRunnerHost()
+    // Stopped: the first thing to fix is starting the executor.
+    expect(host.delegationStatus()).toMatchObject({ enabled: false, revision: null, active: [] })
+    expect(host.delegationStatus().issues[0]).toContain('Start the executor')
+    try {
+      await host.start('connection')
+      const status = host.delegationStatus()
+      // The fixture repositories report no available checkout, so no workspace can be offered.
+      expect(status.enabled).toBe(false)
+      expect(status.workspaces).toEqual([])
+      expect(status.selections.map((selection) => selection.modelLabel)).toEqual(['model'])
+      expect(status.issues.join(' ')).toContain('Bind a project to a local workspace')
+      expect(status.revision).toMatch(/^[0-9a-f]{32}$/)
+    } finally {
+      await host.stop()
+    }
+    // After stopping, nothing is advertised any more.
+    expect(host.delegationStatus()).toMatchObject({ enabled: false, revision: null, selections: [] })
   })
   it('rejects unavailable local Git before creating a remote identity', async () => {
     fixture.request.mockClear()

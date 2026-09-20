@@ -7,6 +7,19 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- Delegate development work to an external agent (for example a Grok Bot
+  routine) through an authenticated MCP endpoint, with per-project and
+  per-action grants the owner controls and can revoke at any time.
+- Choose the account, model, reasoning effort, fast mode and execution mode for
+  each stage of a delegated task, and change them while it runs; an effort is
+  never translated between providers.
+- Follow a delegated task to delivery: independent review bound to the exact
+  code revision, required checks, artifacts, commit, push, pull request and
+  merge, plus follow-up rounds when checks fail or changes are requested.
+- Notify an external routine with a signed, at-least-once callback instead of
+  polling, and manage connectors, delegations and OAuth consent in the web
+  interface.
+
 - In-app updates from GitHub Releases (macOS, Windows, AppImage); .deb users are
   notified.
 

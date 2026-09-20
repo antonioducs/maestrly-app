@@ -59,7 +59,9 @@
     "test:e2e:kanban": "node scripts/test-kanban-e2e.mjs",
     "smoke:packaged-cursor-sdk": "node scripts/smoke-packaged-cursor-sdk.mjs",
     "smoke:cursor-sdk-authenticated": "node scripts/smoke-cursor-sdk-authenticated.mjs",
-    "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs"
+    "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs",
+    "test:e2e:grok-connector": "node scripts/test-grok-connector-e2e.mjs",
+    "smoke:grok-connector": "node scripts/smoke-grok-connector.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

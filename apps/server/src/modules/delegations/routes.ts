@@ -1,0 +1,245 @@
+import {
+  delegationCommandSchema,
+  delegationCreateSchema,
+  delegationPresetInputSchema,
+  delegationPresetPatchSchema,
+  delegationSubscriptionInputSchema,
+  delegationTaskStateSchema,
+} from '@maestrly/protocol'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { z } from 'zod'
+import type { ServerConfig } from '../../config.js'
+import type { DatabasePool } from '../../db/pool.js'
+import type { HumanIdentity } from '../auth/routes.js'
+import { executeIdempotent } from '../events/http-idempotency.js'
+import { listDelegationArtifacts, readDelegationArtifact } from './artifacts.js'
+import { checkConfigPatchSchema, listCheckConfigs, saveCheckConfig } from './checks.js'
+import { applyDelegationCommand } from './commands.js'
+import { getInspection, startInspection } from './inspections.js'
+import { listSubscriptions, setSubscriptionEnabled, subscribeTask } from './subscriptions.js'
+import { listDelegationExecutors } from './model-catalog.js'
+import { createDelegationPreset, listDelegationPresets, patchDelegationPreset } from './presets.js'
+import { delegationFail } from './repository.js'
+import {
+  createDelegation,
+  getDelegation,
+  listDelegationAttempts,
+  listDelegationEvents,
+  listDelegations,
+  type DelegationScope,
+} from './service.js'
+
+type Authenticate = (request: FastifyRequest, scopes?: readonly string[]) => Promise<HumanIdentity | null>
+
+const params = z.object({
+  organizationId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  taskId: z.string().uuid().optional(),
+  presetId: z.string().uuid().optional(),
+})
+
+function idempotencyKey(request: FastifyRequest): string {
+  const key = request.headers['idempotency-key']
+  if (typeof key !== 'string' || !key || key.length > 191)
+    delegationFail('A valid Idempotency-Key header is required.', 400)
+  return key
+}
+
+export function registerDelegationRoutes(
+  app: FastifyInstance,
+  pool: DatabasePool,
+  config: ServerConfig,
+  authenticate: Authenticate
+): void {
+  const root = '/api/v1/organizations/:organizationId/projects/:projectId'
+  const links = { webOrigin: config.webOrigin }
+
+  async function scope(request: FastifyRequest, write = false): Promise<DelegationScope & { taskId?: string; presetId?: string }> {
+    const human = await authenticate(request, write ? ['api:write'] : undefined)
+    if (!human) delegationFail('Authentication required.', 401)
+    const parsed = params.parse(request.params)
+    return { ...parsed, userId: human.userId, connectionId: null }
+  }
+
+  app.get(root + '/delegation-catalog', async (request) => {
+    const current = await scope(request)
+    return { executors: await listDelegationExecutors(pool, current) }
+  })
+
+  app.get(root + '/delegations', async (request) => {
+    const current = await scope(request)
+    const query = z
+      .object({
+        state: delegationTaskStateSchema.optional(),
+        cardId: z.string().uuid().optional(),
+        after: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(100).optional(),
+      })
+      .parse(request.query)
+    return listDelegations(pool, current, query, links)
+  })
+
+  app.post(root + '/delegations', async (request, reply) => {
+    const current = await scope(request, true)
+    const body = delegationCreateSchema.parse(request.body)
+    // A retried creation replays the first task instead of creating a second one with the same intent.
+    const result = await executeIdempotent(
+      pool,
+      {
+        organizationId: current.organizationId,
+        actorId: current.userId,
+        actor: { type: 'human', userId: current.userId },
+        key: idempotencyKey(request),
+        method: request.method,
+        path: request.url,
+        body,
+      },
+      async () => ({ status: 201, body: await createDelegation(pool, current, body, links) })
+    )
+    if (result.replayed) reply.header('idempotency-replayed', 'true')
+    return reply.status(result.status).send(result.body)
+  })
+
+  app.get(root + '/delegations/:taskId', async (request) => {
+    const current = await scope(request)
+    return getDelegation(pool, current, current.taskId!, links)
+  })
+
+  app.post(root + '/delegations/:taskId/commands', async (request) => {
+    const current = await scope(request, true)
+    const command = delegationCommandSchema.parse(request.body)
+    return applyDelegationCommand(pool, current, current.taskId!, command, idempotencyKey(request))
+  })
+
+  app.get(root + '/delegations/:taskId/attempts', async (request) => {
+    const current = await scope(request)
+    return { items: await listDelegationAttempts(pool, current, current.taskId!) }
+  })
+
+  app.get(root + '/delegations/:taskId/events', async (request, reply) => {
+    const current = await scope(request)
+    const query = z.object({ cursor: z.coerce.number().int().nonnegative().default(0) }).parse(request.query)
+    let cursor = Math.max(query.cursor, Number(request.headers['last-event-id'] ?? 0) || 0)
+    if (request.headers.accept?.includes('application/json'))
+      return { items: await listDelegationEvents(pool, current, current.taskId!, cursor) }
+    reply.hijack()
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      'x-accel-buffering': 'no',
+      connection: 'keep-alive',
+    })
+    let closed = false
+    request.raw.once('close', () => {
+      closed = true
+    })
+    while (!closed) {
+      let events: Awaited<ReturnType<typeof listDelegationEvents>>
+      try {
+        events = await listDelegationEvents(pool, current, current.taskId!, cursor)
+      } catch {
+        reply.raw.write('event: access_revoked\ndata: {}\n\n')
+        reply.raw.end()
+        break
+      }
+      if (!events.length) reply.raw.write(': keep-alive\n\n')
+      for (const event of events) {
+        cursor = event.sequence
+        reply.raw.write(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+    }
+    return reply
+  })
+
+  app.get(root + '/delegations/:taskId/artifacts', async (request) => {
+    const current = await scope(request)
+    return { items: await listDelegationArtifacts(pool, current, current.taskId!) }
+  })
+
+  app.get(root + '/delegations/:taskId/artifacts/:artifactId/download', async (request, reply) => {
+    const current = await scope(request)
+    const { artifactId } = z.object({ artifactId: z.string().uuid() }).parse(request.params)
+    const found = await readDelegationArtifact(pool, current, {
+      taskId: current.taskId!,
+      artifactId,
+      storageDirectory: config.storageDirectory,
+    })
+    return reply
+      .header('content-type', found.artifact.contentType)
+      .header('content-disposition', `attachment; filename="${encodeURIComponent(found.artifact.name)}"`)
+      .header('x-maestrly-artifact-digest', found.artifact.digest)
+      .send(found.bytes)
+  })
+
+  app.post(root + '/delegations/:taskId/inspections', async (request, reply) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = z.object({ operation: z.unknown() }).parse(request.body)
+    return reply
+      .status(202)
+      .send(await startInspection(pool, current, { taskId: current.taskId!, operation: body.operation }))
+  })
+
+  app.get(root + '/delegations/:taskId/inspections/:inspectionId', async (request) => {
+    const current = await scope(request)
+    const { inspectionId } = z.object({ inspectionId: z.string().uuid() }).parse(request.params)
+    return getInspection(pool, current, { taskId: current.taskId!, inspectionId })
+  })
+
+  app.get(root + '/delegations/:taskId/subscriptions', async (request) => {
+    const current = await scope(request)
+    return { items: await listSubscriptions(pool, current, current.taskId!) }
+  })
+
+  app.post(root + '/delegations/:taskId/subscriptions', async (request, reply) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = delegationSubscriptionInputSchema.parse(request.body)
+    return reply.status(201).send(await subscribeTask(pool, current, { taskId: current.taskId!, rule: body }))
+  })
+
+  app.patch(root + '/delegations/:taskId/subscriptions/:subscriptionId', async (request) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const { subscriptionId } = z.object({ subscriptionId: z.string().uuid() }).parse(request.params)
+    const body = z.object({ enabled: z.boolean() }).strict().parse(request.body)
+    return setSubscriptionEnabled(pool, current, {
+      taskId: current.taskId!,
+      subscriptionId,
+      enabled: body.enabled,
+    })
+  })
+
+  app.get(root + '/delegation-checks', async (request) => {
+    const current = await scope(request)
+    return { items: await listCheckConfigs(pool, current) }
+  })
+
+  app.put(root + '/delegation-checks/:checkId', async (request) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const { checkId } = z.object({ checkId: z.string().min(1).max(120) }).parse(request.params)
+    const body = checkConfigPatchSchema.parse({ ...(request.body as object), id: checkId })
+    return saveCheckConfig(pool, current, body)
+  })
+
+  app.get(root + '/delegation-presets', async (request) => {
+    const current = await scope(request)
+    return { items: await listDelegationPresets(pool, current) }
+  })
+
+  app.post(root + '/delegation-presets', async (request, reply) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = delegationPresetInputSchema.parse(request.body)
+    return reply.status(201).send(await createDelegationPreset(pool, current, body))
+  })
+
+  app.patch(root + '/delegation-presets/:presetId', async (request) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = delegationPresetPatchSchema.parse(request.body)
+    return patchDelegationPreset(pool, { ...current, presetId: current.presetId! }, body)
+  })
+}
