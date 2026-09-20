@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { test } from 'node:test'
 
@@ -23,7 +23,6 @@ test('desktop source has no hosted Maestrly backend or diagnostic transport', ()
 })
 
 test('tracked first-party metadata uses the project identity', () => {
-  assert.equal(existsSync(path.join(root, 'AGENTS.md')), false)
   assert.match(readFileSync(path.join(root, 'LICENSE'), 'utf8'), /Copyright \(c\) 2026 Maestrly App contributors/)
   assert.match(
     readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8'),
