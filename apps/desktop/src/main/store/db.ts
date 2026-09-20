@@ -347,6 +347,18 @@ function initializeSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, seq);
 
+    -- Optional incremental compaction keeps one activation-ready candidate alongside one resumable job.
+    -- The candidate may outlive a cancelled job, while conversation deletion cleans both atomically.
+    CREATE TABLE IF NOT EXISTS chat_background_compaction (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      revision        INTEGER NOT NULL DEFAULT 0,
+      status          TEXT NOT NULL CHECK (status IN ('idle','queued','running','ready','failed','paused')),
+      error           TEXT,
+      ready_json      TEXT,
+      work_json       TEXT,
+      updated_at      INTEGER NOT NULL
+    );
+
     -- Host-owned Maestro run identity stays stable across provider transport and before the visual
     -- assistant message exists. Permit one active run per conversation and preserve terminal history for
     -- reconciliation.

@@ -307,6 +307,28 @@ export default {
     queueRemove: 'Remove from queue',
     maestroLiveWaiting: 'waiting for Maestro',
   },
+  backgroundCompaction: {
+    errors: {
+      'summarizer-selection-unknown':
+        'The preparation model or its context window could not be verified. Check its settings and connection.',
+      'summarizer-authentication-required': 'Sign in to the preparation provider again, then retry.',
+      'summarizer-identity-changed': 'The preparation account changed. Retry to use the current account.',
+      'summarizer-timeout': 'Preparing the summary exceeded its time limit.',
+      'summarizer-invalid-output': 'The preparation model returned an empty or oversized summary.',
+      'background-compaction-failed':
+        'The summary could not be prepared. You can retry or change the preparation model.',
+    },
+    idle: 'Context preparation idle',
+    queued: 'Context preparation queued',
+    running: 'Preparing context…',
+    ready: 'Prepared context ready',
+    failed: 'Context preparation failed',
+    paused: 'Context preparation paused',
+    retry: 'Retry',
+    retrying: 'Retrying…',
+    settings: 'Settings',
+    nonBlocking: 'You can keep sending messages while this runs.',
+  },
   messages: {
     openMention: 'Open {{path}} in the Code tab',
     copy: 'Copy',
@@ -586,6 +608,18 @@ export default {
     close: 'Close (Esc)',
   },
   settings: {
+    backgroundCompactionHeading: 'Prepare context in the background',
+    backgroundCompactionDescription:
+      'Periodically prepare a compacted checkpoint with a separate model. The current conversation keeps working while preparation runs.',
+    backgroundCompactionToggle: 'Use background context preparation',
+    backgroundCompactionModel: 'Preparation model',
+    backgroundCompactionModelRequired: 'Choose a model before turning this on.',
+    backgroundCompactionInterval: 'Preparation interval',
+    backgroundCompactionTokens: 'tokens',
+    backgroundCompactionIntervalInvalid: 'Enter an interval greater than zero.',
+    backgroundCompactionSaving: 'Saving…',
+    backgroundCompactionSaved: 'Background preparation saved.',
+    backgroundCompactionSaveFailed: 'Could not save background preparation.',
     apiFormatCursorSubscription: 'Cursor subscription',
     subscriptionMemoryOnly: 'This account is connected for this session only. Sign in again after restarting the app.',
     cursorSubscriptionHeading: 'Cursor with subscription',

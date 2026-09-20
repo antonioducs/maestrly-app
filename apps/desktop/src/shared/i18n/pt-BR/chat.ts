@@ -313,6 +313,28 @@ export default {
     queueRemove: 'Remover da fila',
     maestroLiveWaiting: 'aguardando Maestro',
   },
+  backgroundCompaction: {
+    errors: {
+      'summarizer-selection-unknown':
+        'Não foi possível verificar o modelo de preparação ou sua janela de contexto. Confira as configurações e a conexão.',
+      'summarizer-authentication-required': 'Entre novamente na conta do provedor de preparação e tente de novo.',
+      'summarizer-identity-changed': 'A conta de preparação mudou. Tente novamente para usar a conta atual.',
+      'summarizer-timeout': 'A preparação do resumo excedeu o tempo limite.',
+      'summarizer-invalid-output': 'O modelo de preparação retornou um resumo vazio ou grande demais.',
+      'background-compaction-failed':
+        'Não foi possível preparar o resumo. Tente novamente ou altere o modelo de preparação.',
+    },
+    idle: 'Preparação de contexto inativa',
+    queued: 'Preparação de contexto na fila',
+    running: 'Preparando contexto…',
+    ready: 'Contexto preparado',
+    failed: 'Falha ao preparar contexto',
+    paused: 'Preparação de contexto pausada',
+    retry: 'Tentar novamente',
+    retrying: 'Tentando novamente…',
+    settings: 'Configurações',
+    nonBlocking: 'Você pode continuar enviando mensagens durante a preparação.',
+  },
   messages: {
     openMention: 'Abrir {{path}} na aba Código',
     copy: 'Copiar',
@@ -593,6 +615,18 @@ export default {
     close: 'Fechar (Esc)',
   },
   settings: {
+    backgroundCompactionHeading: 'Preparar contexto em segundo plano',
+    backgroundCompactionDescription:
+      'Prepara periodicamente um checkpoint compactado com outro modelo. A conversa atual continua funcionando durante a preparação.',
+    backgroundCompactionToggle: 'Usar preparação de contexto em segundo plano',
+    backgroundCompactionModel: 'Modelo de preparação',
+    backgroundCompactionModelRequired: 'Escolha um modelo antes de ativar.',
+    backgroundCompactionInterval: 'Intervalo de preparação',
+    backgroundCompactionTokens: 'tokens',
+    backgroundCompactionIntervalInvalid: 'Informe um intervalo maior que zero.',
+    backgroundCompactionSaving: 'Salvando…',
+    backgroundCompactionSaved: 'Preparação em segundo plano salva.',
+    backgroundCompactionSaveFailed: 'Não foi possível salvar a preparação em segundo plano.',
     apiFormatCursorSubscription: 'Assinatura Cursor',
     subscriptionMemoryOnly:
       'Esta conta está conectada apenas nesta sessão. Entre novamente após reiniciar o aplicativo.',

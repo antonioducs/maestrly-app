@@ -55,6 +55,7 @@ import type {
   SubagentSessionSummary,
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
+import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
 import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
@@ -65,7 +66,11 @@ import {
 } from '../../../shared/chat-agent-mentions'
 
 import { ChatMessageList } from './ChatMessageList'
-import { boundChatHistoryWindow, mergeLiveChatHistory, CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE } from '@/lib/chat-history-window'
+import {
+  boundChatHistoryWindow,
+  mergeLiveChatHistory,
+  CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
+} from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -86,6 +91,7 @@ import { ChatFastModeToggle } from './ChatFastModeToggle'
 import { ChatPlusMenu } from './ChatPlusMenu'
 import { ChatContextMeter } from './ChatContextMeter'
 import { ContextCompactionStatus } from './ContextCompactionStatus'
+import { BackgroundCompactionStatus } from './BackgroundCompactionStatus'
 import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
@@ -275,7 +281,9 @@ export function ChatView({
   const streamingRef = useRef(false)
   streamingRef.current = streaming
   const liveHistoryRef = useRef<ChatMessage[]>([])
-  useEffect(() => { liveHistoryRef.current = [] }, [conversationId])
+  useEffect(() => {
+    liveHistoryRef.current = []
+  }, [conversationId])
   const compactingRef = useRef(false)
   const localManualCompactionRef = useRef(false)
   const compactionRevisionRef = useRef(0)
@@ -335,6 +343,31 @@ export function ChatView({
   convIdRef.current = conversationId
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+
+  const backgroundCompactionRevisionRef = useRef({ conversationId, revision: -1 })
+  const [backgroundCompactionState, setBackgroundCompactionState] = useState<{
+    conversationId: string
+    state: BackgroundCompactionState
+  } | null>(null)
+  const applyBackgroundCompactionState = useCallback(
+    (targetConversationId: string, next: BackgroundCompactionState) => {
+      if (convIdRef.current !== targetConversationId) return
+      const current = backgroundCompactionRevisionRef.current
+      if (current.conversationId !== targetConversationId) {
+        backgroundCompactionRevisionRef.current = { conversationId: targetConversationId, revision: -1 }
+      }
+      if (next.revision <= backgroundCompactionRevisionRef.current.revision) return
+      backgroundCompactionRevisionRef.current = { conversationId: targetConversationId, revision: next.revision }
+      setBackgroundCompactionState({ conversationId: targetConversationId, state: next })
+    },
+    []
+  )
+  useEffect(() => {
+    backgroundCompactionRevisionRef.current = { conversationId, revision: -1 }
+    setBackgroundCompactionState((current) => (current?.conversationId === conversationId ? current : null))
+  }, [conversationId])
+  const backgroundCompaction =
+    backgroundCompactionState?.conversationId === conversationId ? backgroundCompactionState.state : undefined
 
   const historyReloadRevisionRef = useRef(0)
 
@@ -397,10 +430,16 @@ export function ChatView({
     // Snapshot the live buffer outside the updater: React may replay updaters, and reading the mutable
     // ref there would mix a newer response with a delta still queued, duplicating that delta.
     const live = liveHistoryRef.current
-    setMessages((prev) => normalizeHistoryWindow(prev,
-      preserveLive || (workspaceId === null && streamingRef.current)
-        ? mergeLiveChatHistory(hydrated, live) : hydrated,
-      'replace', hydrated.at(-1)?.id))
+    setMessages((prev) =>
+      normalizeHistoryWindow(
+        prev,
+        preserveLive || (workspaceId === null && streamingRef.current)
+          ? mergeLiveChatHistory(hydrated, live)
+          : hydrated,
+        'replace',
+        hydrated.at(-1)?.id
+      )
+    )
     setHasMore(page.hasMore)
     earliestSeqRef.current = page.earliestSeq
     anchoredRef.current = false
@@ -847,6 +886,11 @@ export function ChatView({
       const hidden = !visibleRef.current
       const event = ev as ChatStreamEvent
 
+      if (event.kind === 'background-compaction') {
+        applyBackgroundCompactionState(conversationId, event.state)
+        return
+      }
+
       // Hidden standalone views do not render tokens, but must retain the active response before
       // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
       if (workspaceId === null && kind !== 'done' && kind !== 'user-saved') {
@@ -854,8 +898,8 @@ export function ChatView({
         if (event.kind === 'message-start' || event.kind === 'compaction-finished') liveHistoryRef.current = []
         if (event.kind !== 'compaction-finished') {
           liveHistoryRef.current = applyChatEvent(liveHistoryRef.current, event)
-            .filter(message => message.role === 'assistant')
-            .map(message => message.conversationId === conversationId ? message : { ...message, conversationId })
+            .filter((message) => message.role === 'assistant')
+            .map((message) => (message.conversationId === conversationId ? message : { ...message, conversationId }))
         }
       }
 
@@ -870,7 +914,6 @@ export function ChatView({
         if (event.status === 'completed') finishTurn(hidden)
         return
       }
-
 
       if (kind === 'done') {
         // The turn ended: drop every live capability before any further action can be routed.
@@ -980,6 +1023,7 @@ export function ChatView({
     }
   }, [
     conversationId,
+    applyBackgroundCompactionState,
     finishTurn,
     needsLiveSubscription,
     normalizeHistoryWindow,
@@ -998,7 +1042,7 @@ export function ChatView({
 
     if (workspaceId === null && streamingRef.current) {
       const live = liveHistoryRef.current
-      setMessages(prev => normalizeHistoryWindow(prev, mergeLiveChatHistory(prev, live), 'replace'))
+      setMessages((prev) => normalizeHistoryWindow(prev, mergeLiveChatHistory(prev, live), 'replace'))
     }
 
     void reloadLatestPage()
@@ -1008,6 +1052,9 @@ export function ChatView({
     const maestroRevision = maestroLiveRevisionRef.current
     void window.api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
+      if (runtime.backgroundCompaction) {
+        applyBackgroundCompactionState(conversationId, runtime.backgroundCompaction)
+      }
       if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
         compactingRef.current = runtime.compacting ?? false
         setCompacting(compactingRef.current)
@@ -1050,7 +1097,16 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
+  }, [
+    applyBackgroundCompactionState,
+    conversationId,
+    normalizeHistoryWindow,
+    reloadLatestPage,
+    setQueueState,
+    setRuntimeQuestionState,
+    visible,
+    workspaceId,
+  ])
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
@@ -2163,6 +2219,11 @@ export function ChatView({
                     {!isMaestro && <ChatPermModePicker conversationId={conversationId} />}
                     <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
                       <ContextCompactionStatus progress={contextObservation.progress} />
+                      <BackgroundCompactionStatus
+                        key={conversationId}
+                        conversationId={conversationId}
+                        state={backgroundCompaction}
+                      />
                       <ChatContextMeter
                         key={`${conversationId}:${selProviderId}:${selModelId}`}
                         stats={historyStats}
