@@ -128,6 +128,44 @@ test('live chat subscriptions survive renderer churn during a turn', async () =>
     // The terminal event still reaches the renderer, so the composer stops reporting a live turn.
     await expect(page.getByText('Streaming answer: complete.', { exact: false })).toBeVisible()
     await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
+
+    // A terminal event that never reaches this renderer must still release the composer: the
+    // authoritative turn state in the main process decides, and a frozen queue would strand the
+    // conversation. Drop the next one at the preload boundary to reproduce that loss exactly.
+    await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents
+      const deliver = contents.send.bind(contents)
+      const state = { dropped: 0, done: false }
+      ;(globalThis as unknown as { __droppedTerminalEvents: typeof state }).__droppedTerminalEvents = state
+      contents.send = (channel: string, ...args: unknown[]) => {
+        const event = args[0] as { kind?: string } | undefined
+        // A subscription gap loses the whole tail of a turn, not a single frame.
+        const terminal = event?.kind === 'finish' || event?.kind === 'done'
+        if (channel.startsWith('chat:delta:') && terminal && !state.done) {
+          state.dropped++
+          if (event?.kind === 'done') state.done = true
+          return
+        }
+        deliver(channel, ...args)
+      }
+    })
+
+    await page.locator('.chat-input[contenteditable="true"]:visible').fill('recovered-turn')
+    await page.locator('button[title="Send"]:visible').click()
+    await expect(page.getByText('Streaming answer:', { exact: false }).last()).toBeVisible()
+    expect(requests).toBe(2)
+    chunk(live!, 'recovered.')
+    chunk(live!, '', 'stop')
+    live!.end('data: [DONE]\n\n')
+    live = undefined
+
+    await expect(page.getByText('Streaming answer: recovered.', { exact: false })).toBeVisible()
+    expect(
+      await app.evaluate(
+        () => (globalThis as unknown as { __droppedTerminalEvents: { dropped: number } }).__droppedTerminalEvents.dropped
+      )
+    ).toBe(2)
+    await expect(page.locator('button[title="Stop"]:visible')).toHaveCount(0)
   } finally {
     live?.end()
     await app?.close().catch(() => undefined)

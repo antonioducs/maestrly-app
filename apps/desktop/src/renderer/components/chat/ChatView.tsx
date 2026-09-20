@@ -118,6 +118,12 @@ interface Props {
   onEvictionSafetyChange?: (conversationId: string, safeToEvict: boolean) => void
 }
 
+/**
+ * Grace period between an authoritative turn ending and the local recovery check. The ordinary
+ * terminal event arrives first in normal operation; this only covers an event that never arrives.
+ */
+const TURN_RELEASE_RECOVERY_MS = 2_000
+
 interface QueuedMsg {
   id: string
   text: string
@@ -373,6 +379,9 @@ export function ChatView({
     backgroundCompactionState?.conversationId === conversationId ? backgroundCompactionState.state : undefined
 
   const historyReloadRevisionRef = useRef(0)
+  // Identifies the turn a delayed recovery was scheduled for, so a newer send is never released by it.
+  const turnRevisionRef = useRef(0)
+  const previousStatusRef = useRef(status)
 
   const messagePendingQuestion = useMemo(() => findPendingChatQuestion(messages), [messages])
   const pendingQuestion = messagePendingQuestion ?? runtimeQuestions.at(-1) ?? null
@@ -801,6 +810,7 @@ export function ChatView({
         )
       }
       streamingRef.current = true
+      turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
       const res = await window.api
         .chatSend(
@@ -856,6 +866,40 @@ export function ChatView({
     },
     [doSend, setQueueState]
   )
+  const finishTurnRef = useRef(finishTurn)
+  finishTurnRef.current = finishTurn
+
+  /**
+   * The terminal event is the only signal that releases the composer, and it reaches this renderer
+   * only while the main process has it subscribed: an event lost to a subscription gap, a crashed
+   * listener, or a hidden view would otherwise keep the conversation reporting an active response
+   * forever, with its queue frozen behind it. When the authoritative status leaves a running turn,
+   * confirm with the main process shortly after and complete the turn locally if nothing is running.
+   */
+  useEffect(() => {
+    const previous = previousStatusRef.current
+    previousStatusRef.current = status
+    if (previous !== 'working' && previous !== 'asking') return
+    if (status === 'working' || status === 'asking') return
+
+    const revision = turnRevisionRef.current
+    let alive = true
+    const timer = window.setTimeout(() => {
+      // The ordinary terminal event usually lands first; only an unreleased turn reaches the runtime.
+      if (!streamingRef.current || compactingRef.current || localManualCompactionRef.current) return
+      if (revision !== turnRevisionRef.current) return
+      void window.api.chatRuntime(conversationId).then((runtime) => {
+        if (!alive || convIdRef.current !== conversationId) return
+        if (runtime.streaming || runtime.compacting) return
+        if (revision !== turnRevisionRef.current || !streamingRef.current) return
+        finishTurnRef.current(false)
+      })
+    }, TURN_RELEASE_RECOVERY_MS)
+    return () => {
+      alive = false
+      window.clearTimeout(timer)
+    }
+  }, [conversationId, status])
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
   const needsLiveSubscription =
