@@ -107,6 +107,11 @@ export class DesktopModelCatalog {
     await this.read()
     return [...this.models].map(([selectionId, model]) => ({ selectionId, ...model }))
   }
+  /** Reverse lookup used when observing what a runtime actually used. Never resolves an unknown pair. */
+  selectionIdFor(providerId: string, modelId: string): string | null {
+    const key = modelKey(providerId, modelId)
+    return this.models.has(key) ? key : null
+  }
   async chatModels(): Promise<ChatInventory['models']> {
     await this.read()
     return [...this.models].map(([id, model]) => ({

@@ -20,6 +20,7 @@ import {
 } from '@maestrly/runner-core'
 import type { DelegationModelCatalog } from '@maestrly/protocol'
 import { buildDelegationCatalog } from './delegation-catalog'
+import { DelegationWorker } from './delegation-worker'
 import type { EmbeddedRunnerView } from '../../shared/platform'
 import { getWorkspace } from '../store'
 import { secureGet, secureSet, secureRemove } from '../secure-store'
@@ -138,6 +139,8 @@ export class EmbeddedRunnerHost {
   private chatLoop:Promise<void>|null=null
   private delegationCatalog: DelegationModelCatalog | null = null
   private delegationEnabled = false
+  private delegationWorker: DelegationWorker | null = null
+  private delegationLoop: Promise<void> | null = null
   private server: DesktopRunnerServer | null = null
   private loop: Promise<void> | null = null
   private state: EmbeddedRunnerView = { state: 'stopped' }
@@ -298,6 +301,23 @@ export class EmbeddedRunnerHost {
         .delegationInventory(this.delegationCatalog)
         .catch(() => ({ accepted: false }))
       this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
+      if (this.delegationEnabled) {
+        const worker = new DelegationWorker({
+          client: delegationClient,
+          catalog,
+          settings,
+          bindings,
+          instanceId: connection.instanceId ?? connection.url,
+          url: connection.url,
+          reviewBaseDirectory: path.join(app.getPath('userData'), 'delegation-reviews'),
+        })
+        this.delegationWorker = worker
+        this.delegationLoop = worker.run().catch((error) => {
+          this.state = { state: 'error', error: (error as Error).message }
+          this.stopping = true
+          void engine.stop()
+        })
+      }
       this.heartbeat = setInterval(
         () =>
           void server
@@ -352,6 +372,7 @@ export class EmbeddedRunnerHost {
     this.revision++
     this.stopping = true
     this.chatWorker?.stop()
+    this.delegationWorker?.stop()
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
     const offline = this.server?.presence(false).catch(() => {})
@@ -359,7 +380,10 @@ export class EmbeddedRunnerHost {
     await this.engine?.stop('Executor was stopped.')
     await this.loop
     await this.chatLoop
+    // Stage cancellation and cleanup are awaited before the executor reports itself stopped.
+    await this.delegationLoop
     this.chatWorker=null;this.chatLoop=null
+    this.delegationWorker=null;this.delegationLoop=null;this.delegationEnabled=false;this.delegationCatalog=null
     await offline
     this.engine = null
     this.loop = null

@@ -5,6 +5,7 @@ import type {
   DelegationModelCatalog,
   ProjectChatClaim,
   ProjectChatInteraction,
+  StageExecutionReceipt,
 } from '@maestrly/protocol'
 export class DesktopProjectChatClient {
   private transport: HttpTransport
@@ -39,6 +40,13 @@ export class DesktopProjectChatClient {
   }
   claim() {
     return this.transport.request<ProjectChatClaim | null>('POST', '/api/v1/runners/chat/claim', { body: {} })
+  }
+  /** Claim the next delegation stage. Lease, controls, events and completion reuse the chat machine routes. */
+  claimDelegationStage() {
+    return this.transport.request<ProjectChatClaim | null>('POST', '/api/v1/runners/delegations/claim', { body: {} })
+  }
+  delegationReceipt(attemptId: string, body: { leaseId: string; receipt: StageExecutionReceipt }) {
+    return this.transport.request('POST', `/api/v1/runners/delegations/attempts/${attemptId}/receipt`, { body })
   }
   controls(turnId: string, leaseId: string) {
     return this.transport.request<{ cancellationRequested: boolean; interactions: ProjectChatInteraction[] }>(
