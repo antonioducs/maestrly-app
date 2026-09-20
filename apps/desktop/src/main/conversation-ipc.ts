@@ -34,6 +34,7 @@ import {
 
 export interface ConversationIpcDeps {
   stopChat: (id: string) => void | Promise<void>
+  resumeBackgroundCompaction?: (id: string) => void
 }
 
 function assertReviewLoopMutationAllowed(conversationId: string): void {
@@ -106,6 +107,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
       cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
     }
     setConversationArchived(id, archived)
+    if (!archived) deps.resumeBackgroundCompaction?.(id)
   })
   reg.mhandle('conversation:delete', async (_e, id: string) => {
     assertReviewLoopMutationAllowed(id)

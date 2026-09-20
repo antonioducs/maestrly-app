@@ -4,6 +4,7 @@ import type { JSONObject, JSONValue, SharedV3ProviderOptions } from '@ai-sdk/pro
 import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
 import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
+import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -1052,6 +1053,7 @@ export type ChatStreamEvent =
   | { kind: 'compaction-progress'; messageId: string; progress: ChatCompactionProgress }
   /** Manual compaction released its reservation; only completed work may advance the send queue. */
   | { kind: 'compaction-finished'; status: 'completed' | 'failed' | 'cancelled' }
+  | { kind: 'background-compaction'; state: BackgroundCompactionStatus }
   | { kind: 'text-start'; messageId: string; partId: string }
   | { kind: 'text-delta'; messageId: string; partId: string; delta: string }
   | { kind: 'reasoning-start'; messageId: string; partId: string }
@@ -1073,6 +1075,8 @@ export type ChatStreamEvent =
       kind: 'compaction'
       messageId: string
       partId: string
+      /** Insert after this durable part; absent preserves the legacy append behavior. */
+      afterPartId?: string
       text: string
       strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
       usage?: ChatUsage
@@ -1111,6 +1115,7 @@ export interface ChatRuntimeState {
   streaming: boolean
   /** Manual/preflight compaction, including its native binding cleanup. */
   compacting?: boolean
+  backgroundCompaction?: BackgroundCompactionStatus
   pendingPermissions: ChatPermissionRequest[]
   pendingQuestions: PendingChatQuestion[]
 
@@ -1669,6 +1674,8 @@ export interface ChatConfig {
 
   defaultFastMode?: boolean
 
+  backgroundCompaction?: BackgroundCompactionConfig
+
   imageInterpreter: ChatImageInterpreter | null
   /** Failover between Claude or Codex subscription accounts. */
   subscriptionFailover: {
@@ -1928,15 +1935,18 @@ export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): Ch
         ...m,
         parts: m.parts.some((p) => p.type === 'compaction' && p.id === ev.partId)
           ? m.parts
-          : [
-              ...m.parts,
-              {
+          : (() => {
+              const marker: MessagePart = {
                 type: 'compaction',
                 id: ev.partId,
                 text: ev.text,
                 ...(ev.strategy ? { strategy: ev.strategy } : {}),
-              },
-            ],
+              }
+              if (!ev.afterPartId) return [...m.parts, marker]
+              const afterIndex = m.parts.findIndex((part) => part.id === ev.afterPartId)
+              if (afterIndex < 0) return m.parts
+              return [...m.parts.slice(0, afterIndex + 1), marker, ...m.parts.slice(afterIndex + 1)]
+            })(),
         usage: ev.usage ?? m.usage,
       }))
     case 'finish':

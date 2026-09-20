@@ -129,7 +129,13 @@ import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSub
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
-import { runnerContextHistory, upsertChatMessage } from '../chat-store'
+import {
+  activatePreparedCompaction,
+  createBackgroundCompactionPrefixNotifier,
+  historyWithCurrentAssistant,
+  type PreparedBackgroundCompaction,
+} from '../background-compaction/runner'
+import { runnerContextHistory, upsertChatMessage, type StoredChatMessage } from '../chat-store'
 import { deleteGeneratedImages, saveGeneratedImage, type StoredGeneratedImage } from '../generated-images'
 import {
   emitGeneratedImagePart,
@@ -338,7 +344,9 @@ export interface RunCodexSubscriptionChatArgs {
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
+    prepared?: PreparedBackgroundCompaction
   } | null>
+  onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /** Isolated review loop: do not resume the conversation binding; transcript = execution. */
   ephemeralSession?: boolean
   messageMeta?: {
@@ -2200,7 +2208,7 @@ export async function runCodexSubscriptionChat(
     throw new Error('Maestrly Ultra sentinel must be resolved before calling the Codex app-server')
   }
   const responseStartedAt = args.responseStartedAt ?? Date.now()
-  const history = runnerContextHistory(args.conversationId, {
+  let history = runnerContextHistory(args.conversationId, {
     ephemeralSession: args.ephemeralSession,
     executionScope: args.messageMeta?.executionScope,
   })
@@ -2337,6 +2345,9 @@ export async function runCodexSubscriptionChat(
       createdAt,
     },
   ]
+  let assistantHistoryIndex: number | null = null
+  const liveHistory = (): StoredChatMessage[] =>
+    historyWithCurrentAssistant(history, messages[0] as StoredChatMessage, assistantHistoryIndex)
   // Steering user messages are persisted after the in-progress assistant row. The binding follows the latest
   // accepted portable anchor so the next turn can still resume the same native thread.
   let lastBindingMessageId: string = assistantId
@@ -2347,10 +2358,15 @@ export async function runCodexSubscriptionChat(
     dirty = false
     upsertChatMessage(messages[0])
   }
+  const backgroundPrefix = createBackgroundCompactionPrefixNotifier({
+    callback: args.onBackgroundCompactionPrefix,
+    message: () => messages[0],
+  })
   const coalescer = createDeltaCoalescer(args.emit)
   const apply = (event: ChatStreamEvent, force = false): void => {
     if (event.kind === 'finish' || event.kind === 'error' || event.kind === 'aborted') contextProgress.dispose()
     else if (event.kind === 'compaction') contextProgress.flush()
+    if (event.kind === 'text-start' || event.kind === 'reasoning-start') backgroundPrefix.open(event.partId)
     messages = applyChatEvent(messages, event)
     coalescer.push(event)
     if (force || Date.now() - lastPersistAt > 300) persistNow()
@@ -2369,12 +2385,49 @@ export async function runCodexSubscriptionChat(
         cancelled,
       }),
   })
+  let activatedPrepared: { partId: string; contextTokens: number; contextObserved: boolean } | null = null
+  const activatePrepared = (prepared: PreparedBackgroundCompaction, observeContext = true): number => {
+    if (activatedPrepared?.partId !== prepared.partId) {
+      const activated = activatePreparedCompaction({
+        conversationId: args.conversationId,
+        assistantMessageId: assistantId,
+        prepared,
+        scope: {
+          ephemeralSession: args.ephemeralSession,
+          executionScope: args.messageMeta?.executionScope,
+        },
+      })
+      history = activated.history
+      messages = [activated.assistant]
+      assistantHistoryIndex = activated.assistantIndex
+      coalescer.push(activated.event)
+      activatedPrepared = { partId: prepared.partId, contextTokens: activated.contextTokens, contextObserved: false }
+    }
+    if (observeContext && !activatedPrepared.contextObserved) {
+      const observePrepared = contextProgress.observeAttempt()
+      observePrepared({
+        usedTokens: activatedPrepared.contextTokens,
+        ...(portableContextWindow ? { modelContextWindow: portableContextWindow } : {}),
+        quality: 'estimated',
+      })
+      activatedPrepared.contextObserved = true
+    }
+    return activatedPrepared.contextTokens
+  }
   const compactPortableHistory = () =>
-    contextProgress.compact((onProgress) => args.compactHistory!(onProgress), {
-      signal: args.signal,
-      validate: (result) => Boolean(result?.summary.trim()),
-      failureMessage: 'Codex portable intra-turn compaction failed',
-    })
+    contextProgress.compact(
+      async (onProgress) => {
+        const compacted = await args.compactHistory!(onProgress)
+        // Completion progress persists synchronously; refresh first so it cannot overwrite an atomic marker.
+        if (compacted?.prepared && compacted.summary.trim()) activatePrepared(compacted.prepared, false)
+        return compacted
+      },
+      {
+        signal: args.signal,
+        validate: (result) => Boolean(result?.summary.trim()),
+        failureMessage: 'Codex portable intra-turn compaction failed',
+      }
+    )
   const isFailoverResolutionFailure = (
     value: CodexFailoverRuntimeTarget | CodexFailoverResolutionFailure | null
   ): value is CodexFailoverResolutionFailure => value !== null && 'reason' in value && 'message' in value
@@ -2547,7 +2600,7 @@ export async function runCodexSubscriptionChat(
   const projectContext = await buildProjectContext(args.projectId, args.cwd)
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
     if (args.projectId === null) {
-      const standalone = (
+      const standalone =
         buildMaestrlyBasePrompt({
           harness: profile.harness,
           cwd: args.cwd,
@@ -2558,8 +2611,9 @@ export async function runCodexSubscriptionChat(
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +
         subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
-      )
-      return buildHarnessDeveloperInstructions(standalone, profile.harness, { asyncTools: profile.asyncQuestionGuidance })
+      return buildHarnessDeveloperInstructions(standalone, profile.harness, {
+        asyncTools: profile.asyncQuestionGuidance,
+      })
     }
     const base = profile.usesNativeOperatingPrompt
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
@@ -3863,7 +3917,10 @@ export async function runCodexSubscriptionChat(
                           modelId: target.runtimeModelId,
                           accountIdentity: target.accountIdentity,
                           behaviorProfileId: childHarness.identity.behaviorProfileId,
-                          prompt: args.projectId === null ? `standalone\n${effectiveDefinition.prompt}` : effectiveDefinition.prompt,
+                          prompt:
+                            args.projectId === null
+                              ? `standalone\n${effectiveDefinition.prompt}`
+                              : effectiveDefinition.prompt,
                           readOnly: codexReadOnly,
                           sentEffort: profile.effective!.sentEffort,
                           fastMode: profile.effective!.fastMode === true,
@@ -4355,12 +4412,16 @@ export async function runCodexSubscriptionChat(
     const persistGeneratedImage = async (item: Record<string, unknown>): Promise<void> => {
       const status = typeof item.status === 'string' ? item.status : 'completed'
       if (status === 'failed' || status === 'error') {
-        apply({
-          kind: 'tool-state',
-          messageId: assistantId,
-          toolCallId: String(item.id),
-          state: { status: 'error', error: 'Image generation failed.' },
-        })
+        apply(
+          {
+            kind: 'tool-state',
+            messageId: assistantId,
+            toolCallId: String(item.id),
+            state: { status: 'error', error: 'Image generation failed.' },
+          },
+          true
+        )
+        backgroundPrefix.notifyAfterPersist()
         return
       }
       const revisedPrompt = typeof item.revisedPrompt === 'string' ? item.revisedPrompt.trim() : ''
@@ -4392,14 +4453,19 @@ export async function runCodexSubscriptionChat(
           },
           true
         )
+        backgroundPrefix.notifyAfterPersist()
       } catch (error) {
         if (stored) await deleteGeneratedImages(args.conversationId, [stored.artifactId])
-        apply({
-          kind: 'tool-state',
-          messageId: assistantId,
-          toolCallId: String(item.id),
-          state: { status: 'error', error: `Failed to store the generated image: ${errorMessage(error)}` },
-        })
+        apply(
+          {
+            kind: 'tool-state',
+            messageId: assistantId,
+            toolCallId: String(item.id),
+            state: { status: 'error', error: `Failed to store the generated image: ${errorMessage(error)}` },
+          },
+          true
+        )
+        backgroundPrefix.notifyAfterPersist()
       }
     }
 
@@ -4812,6 +4878,7 @@ export async function runCodexSubscriptionChat(
         inspectItem(item)
         const tool = itemTool(item)
         if (!tool) return
+        backgroundPrefix.closeAll()
         apply({ kind: 'tool-input-start', messageId: assistantId, toolCallId: item.id, toolName: tool.name })
         apply({
           kind: 'tool-call',
@@ -4828,30 +4895,36 @@ export async function runCodexSubscriptionChat(
         if (!item || typeof item.id !== 'string') return
         if (!rootEvent && (item.type === 'agentMessage' || item.type === 'plan' || item.type === 'reasoning')) return
         inspectItem(item)
-        if (
-          (item.type === 'agentMessage' || item.type === 'plan') &&
-          typeof item.text === 'string' &&
-          !startedText.has(item.id)
-        ) {
-          startedText.add(item.id)
-          apply({ kind: 'text-start', messageId: assistantId, partId: item.id })
-          apply({ kind: 'text-delta', messageId: assistantId, partId: item.id, delta: item.text })
+        if (item.type === 'agentMessage' || item.type === 'plan') {
+          if (typeof item.text === 'string' && !startedText.has(item.id)) {
+            startedText.add(item.id)
+            apply({ kind: 'text-start', messageId: assistantId, partId: item.id })
+            apply({ kind: 'text-delta', messageId: assistantId, partId: item.id, delta: item.text })
+          }
+          backgroundPrefix.close(item.id)
+          persistNow()
+          backgroundPrefix.notifyAfterPersist()
           return
         }
-        if (item.type === 'reasoning' && !startedReasoning.has(item.id)) {
-          const summary = Array.isArray(item.summary)
-            ? item.summary.filter((v): v is string => typeof v === 'string').join('\n')
-            : ''
-          if (summary) {
-            startedReasoning.add(item.id)
-            apply({ kind: 'reasoning-start', messageId: assistantId, partId: item.id })
-            apply({ kind: 'reasoning-delta', messageId: assistantId, partId: item.id, delta: summary })
-            emitChatHost(args.conversationId, 'chat:public-summary', {
-              messageId: assistantId,
-              partId: item.id,
-              delta: summary,
-            })
+        if (item.type === 'reasoning') {
+          if (!startedReasoning.has(item.id)) {
+            const summary = Array.isArray(item.summary)
+              ? item.summary.filter((v): v is string => typeof v === 'string').join('\n')
+              : ''
+            if (summary) {
+              startedReasoning.add(item.id)
+              apply({ kind: 'reasoning-start', messageId: assistantId, partId: item.id })
+              apply({ kind: 'reasoning-delta', messageId: assistantId, partId: item.id, delta: summary })
+              emitChatHost(args.conversationId, 'chat:public-summary', {
+                messageId: assistantId,
+                partId: item.id,
+                delta: summary,
+              })
+            }
           }
+          backgroundPrefix.close(item.id)
+          persistNow()
+          backgroundPrefix.notifyAfterPersist()
           return
         }
         // Generated image (native imagegen): `result` is base64 and must become a file BEFORE the part exists.
@@ -4874,14 +4947,18 @@ export async function runCodexSubscriptionChat(
             ? clipPersistedToolOutput(output.output)
             : { ...output.output, text: clipPersistedToolOutput(output.output.text) }
         const sub = subagentRunMeta(item)
-        apply({
-          kind: 'tool-state',
-          messageId: assistantId,
-          toolCallId: item.id,
-          state: output.success
-            ? { status: 'completed', output: finalOutput, ...(sub ? { sub } : {}) }
-            : { status: 'error', error: toolOutputAsText(finalOutput) || 'Tool failed', ...(sub ? { sub } : {}) },
-        })
+        apply(
+          {
+            kind: 'tool-state',
+            messageId: assistantId,
+            toolCallId: item.id,
+            state: output.success
+              ? { status: 'completed', output: finalOutput, ...(sub ? { sub } : {}) }
+              : { status: 'error', error: toolOutputAsText(finalOutput) || 'Tool failed', ...(sub ? { sub } : {}) },
+          },
+          true
+        )
+        backgroundPrefix.notifyAfterPersist()
         return
       }
       if (method === 'turn/completed') {
@@ -5069,7 +5146,7 @@ export async function runCodexSubscriptionChat(
         let seedTranscript = ''
         let continuationTranscript = ''
         if (!useOriginalInput) {
-          continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+          continuationTranscript = renderNativeSeedTranscript(liveHistory())
         } else {
           // A failover always creates a fresh thread. Even when the original attempt resumed a native thread,
           // the fallback account cannot see that server-side history and must receive the portable seed.
@@ -5105,22 +5182,33 @@ export async function runCodexSubscriptionChat(
           }
           const summary = compacted?.summary.trim()
           if (summary) {
-            carryCompactorUsage(compacted?.usage)
-            apply(
-              {
-                kind: 'compaction',
-                messageId: assistantId,
-                partId: randomUUID(),
-                text: summary,
-                strategy: 'summary',
-                usage: withSubagentUsage(mainUsage(null), childUsage, args.selection.providerId, externalSubagentUsage),
-              },
-              true
-            )
-            if (useOriginalInput) {
-              seedTranscript = renderNativeSeedTranscript([...history.slice(0, -1), messages[0]])
+            if (compacted?.prepared) {
+              activatePrepared(compacted.prepared)
             } else {
-              continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+              carryCompactorUsage(compacted?.usage)
+              apply(
+                {
+                  kind: 'compaction',
+                  messageId: assistantId,
+                  partId: randomUUID(),
+                  text: summary,
+                  strategy: 'summary',
+                  usage: withSubagentUsage(
+                    mainUsage(null),
+                    childUsage,
+                    args.selection.providerId,
+                    externalSubagentUsage
+                  ),
+                },
+                true
+              )
+            }
+            if (useOriginalInput) {
+              seedTranscript = renderNativeSeedTranscript(
+                liveHistory().filter((message) => message.id !== currentUser.id)
+              )
+            } else {
+              continuationTranscript = renderNativeSeedTranscript(liveHistory())
             }
             if (
               replayNeedsCompaction &&
@@ -5504,19 +5592,22 @@ export async function runCodexSubscriptionChat(
           throw new Error('Codex portable intra-turn compaction failed')
         }
 
-        carryCompactorUsage(compacted.usage)
+        if (compacted.prepared) activatePrepared(compacted.prepared)
+        else carryCompactorUsage(compacted.usage)
         inTurnCompactions += 1
-        apply(
-          {
-            kind: 'compaction',
-            messageId: assistantId,
-            partId: randomUUID(),
-            text: summary,
-            strategy: 'summary',
-            usage: withSubagentUsage(mainUsage(null), childUsage, args.selection.providerId, externalSubagentUsage),
-          },
-          true
-        )
+        if (!compacted.prepared) {
+          apply(
+            {
+              kind: 'compaction',
+              messageId: assistantId,
+              partId: randomUUID(),
+              text: summary,
+              strategy: 'summary',
+              usage: withSubagentUsage(mainUsage(null), childUsage, args.selection.providerId, externalSubagentUsage),
+            },
+            true
+          )
+        }
         chatDiag({
           kind: 'codex-subscription-in-turn-compact',
           compacts: inTurnCompactions,
@@ -5535,7 +5626,7 @@ export async function runCodexSubscriptionChat(
           conv: args.conversationId,
         })
 
-        const continuationTranscript = renderNativeSeedTranscript([...history, messages[0]])
+        const continuationTranscript = renderNativeSeedTranscript(liveHistory())
         const continueMessage: ChatMessage = {
           id: randomUUID(),
           conversationId: args.conversationId,
@@ -5713,6 +5804,10 @@ export async function runCodexSubscriptionChat(
           true
         )
       }
+      if (result.turn.status === 'completed' || (result.turn.status === 'interrupted' && state.planSubmitted)) {
+        backgroundPrefix.closeAll()
+      }
+      backgroundPrefix.notifyAfterPersist()
 
       const mayPersistThread = !args.ephemeralSession && (args.canPersistThread?.() ?? true)
       if (

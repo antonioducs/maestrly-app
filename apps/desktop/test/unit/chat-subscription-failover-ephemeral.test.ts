@@ -96,6 +96,7 @@ beforeEach(() => {
     getHealth: vi.fn(() => ({ providerId: PRIMARY, state: 'unknown' })),
   }
   h.getSubscriptionFailoverRouter.mockReturnValue(router)
+  h.freezeFailoverChain.mockReset()
   h.freezeFailoverChain.mockReturnValue([PRIMARY, FALLBACK])
   h.classifyCodexQuotaFailure.mockReset()
   h.classifyCodexQuotaFailureWithRateLimits.mockReset()
@@ -155,6 +156,23 @@ describe('runCodexEphemeralWithFailover', () => {
 
     expect(h.ensureRuntimeAsset).toHaveBeenCalledOnce()
     expect(h.ensureRuntimeAsset).toHaveBeenCalledWith('codex-runtime', expect.any(AbortSignal))
+  })
+
+  it('uses an explicit frozen chain without consulting mutable failover configuration', async () => {
+    const primary = target(PRIMARY, null)
+    h.resolveCodexRuntimeTarget.mockResolvedValue({ ok: true, target: primary })
+
+    await expect(
+      runCodexEphemeralWithFailover({
+        logicalProviderId: PRIMARY,
+        chain: [PRIMARY],
+        modelId: 'gpt-5.6-mini',
+        operation: async () => 'frozen',
+      })
+    ).resolves.toBe('frozen')
+
+    expect(h.freezeFailoverChain).not.toHaveBeenCalled()
+    expect(h.resolveCodexRuntimeTarget).toHaveBeenCalledWith(expect.objectContaining({ chain: [PRIMARY] }))
   })
 
   it('preserves authentication errors after runtime preparation', async () => {
