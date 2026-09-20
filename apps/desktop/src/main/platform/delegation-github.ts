@@ -3,35 +3,61 @@
  *
  * The executor uses this computer's own login; no token is uploaded. Every operation is argument-based, a pull
  * request is always located by repository and branch (never by title), and a merge names the exact head SHA it
- * expects so it cannot merge something newer than what was reviewed.
+ * expects — the commit the caller authorized — so it cannot merge something newer than what was reviewed.
+ * What is observed is reported as observed: a failing or still running check is never read as "no check".
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { GhCommandError, runGhCommand } from '../gh-command'
+import { GhCommandError, ghProducedNoAnswer, runGhCommand } from '../gh-command'
 
 export type GhRunner = (cwd: string, args: string[], options?: { timeoutMs?: number }) => Promise<string>
 
+/** What the CLI still said while failing; a non-zero status is not the same as having no answer. */
+export interface GitHubFailureDetails {
+  stdout?: string
+  exitCode?: number | null
+  /** True when `gh` never produced an answer: missing CLI, no session, or an interrupted call. */
+  noAnswer?: boolean
+}
+
 export class GitHubDeliveryError extends Error {
   readonly reason: 'no-gh' | 'not-logged-in' | 'no-repo' | 'not-found' | 'head-mismatch' | 'blocked' | 'failed'
-  constructor(reason: GitHubDeliveryError['reason'], message: string) {
+  readonly stdout: string
+  readonly exitCode: number | null
+  readonly noAnswer: boolean
+  constructor(reason: GitHubDeliveryError['reason'], message: string, details: GitHubFailureDetails = {}) {
     super(message)
     this.name = 'GitHubDeliveryError'
     this.reason = reason
+    this.stdout = details.stdout ?? ''
+    this.exitCode = details.exitCode ?? null
+    this.noAnswer = details.noAnswer ?? this.exitCode === null
   }
 }
 
 function translate(error: unknown): GitHubDeliveryError {
   if (error instanceof GitHubDeliveryError) return error
   if (error instanceof GhCommandError) {
+    // The output the CLI printed travels with the failure: some commands report their result through the
+    // exit status while still answering on stdout, and that answer must not be thrown away here.
+    const details: GitHubFailureDetails = {
+      stdout: error.stdout,
+      exitCode: typeof error.exitCode === 'number' ? error.exitCode : null,
+      noAnswer: ghProducedNoAnswer(error),
+    }
     if (error.kind === 'no-gh')
-      return new GitHubDeliveryError('no-gh', 'The GitHub CLI is not installed on this computer.')
+      return new GitHubDeliveryError('no-gh', 'The GitHub CLI is not installed on this computer.', details)
     if (error.kind === 'not-logged-in')
-      return new GitHubDeliveryError('not-logged-in', 'This computer is not signed in with `gh auth login`.')
+      return new GitHubDeliveryError(
+        'not-logged-in',
+        'This computer is not signed in with `gh auth login`.',
+        details
+      )
     const detail = `${error.stderr || error.message}`.trim()
     if (/could not resolve to a pullrequest|no pull requests found/i.test(detail))
-      return new GitHubDeliveryError('not-found', 'No pull request matches this branch.')
-    return new GitHubDeliveryError('failed', detail.slice(0, 1000))
+      return new GitHubDeliveryError('not-found', 'No pull request matches this branch.', details)
+    return new GitHubDeliveryError('failed', detail.slice(0, 1000), details)
   }
   return new GitHubDeliveryError('failed', (error as Error).message)
 }
@@ -127,22 +153,55 @@ export async function readPullRequest(
   }
 }
 
-async function readChecks(context: GitHubContext, number: number): Promise<PullRequestObservation['checks']> {
+const CHECK_BUCKETS = ['pass', 'fail', 'pending', 'skipping', 'cancel'] as const
+/** The only silence that means "this pull request has no check", as opposed to "the read failed". */
+const NO_CHECKS_CONFIGURED = /no checks reported|no check runs|no checks found/i
+
+/** Parse the JSON `gh pr checks` prints. Anything that is not a check list is not an answer. */
+function parseChecks(raw: string): PullRequestObservation['checks'] | null {
+  let parsed: unknown
   try {
-    const raw = await gh(context, ['pr', 'checks', String(number), '--json', 'name,bucket,link,workflow'])
-    const parsed = JSON.parse(raw) as Array<{ name: string; bucket: string; link?: string; workflow?: string }>
-    return parsed.map((check) => ({
-      name: check.name,
-      bucket: (['pass', 'fail', 'pending', 'skipping', 'cancel'].includes(check.bucket)
-        ? check.bucket
-        : 'pending') as PullRequestObservation['checks'][number]['bucket'],
-      url: check.link ?? null,
-      workflow: check.workflow ?? '',
-    }))
+    parsed = JSON.parse(raw)
   } catch {
-    // No checks configured is not an error; it is simply nothing observed.
-    return []
+    return null
   }
+  if (!Array.isArray(parsed)) return null
+  return (parsed as Array<{ name?: string; bucket?: string; link?: string; workflow?: string }>).map((check) => ({
+    name: check.name ?? '',
+    // An unrecognized bucket is reported as still pending: it is never promoted to a pass.
+    bucket: ((CHECK_BUCKETS as readonly string[]).includes(check.bucket ?? '')
+      ? check.bucket
+      : 'pending') as PullRequestObservation['checks'][number]['bucket'],
+    url: check.link ?? null,
+    workflow: check.workflow ?? '',
+  }))
+}
+
+/**
+ * Read the checks of a pull request.
+ *
+ * `gh pr checks` uses its exit status to report the checks themselves — non-zero when one is failing, 8 when
+ * one is still running — and prints the requested JSON all the same. That output is the answer, so it is
+ * interpreted instead of discarded: a red pipeline must never be recorded as "no check was observed", which
+ * is exactly the state that would silence the configured follow-up. An empty list is returned only when the
+ * pull request genuinely has no check; a CLI that could not run, or is not signed in, fails loudly.
+ */
+async function readChecks(context: GitHubContext, number: number): Promise<PullRequestObservation['checks']> {
+  let raw: string
+  try {
+    raw = await gh(context, ['pr', 'checks', String(number), '--json', 'name,bucket,link,workflow'])
+  } catch (error) {
+    const failure = translate(error)
+    if (failure.noAnswer) throw failure
+    const reported = parseChecks(failure.stdout)
+    if (reported) return reported
+    if (NO_CHECKS_CONFIGURED.test(failure.message)) return []
+    throw failure
+  }
+  const parsed = parseChecks(raw)
+  if (!parsed)
+    throw new GitHubDeliveryError('failed', 'The checks of the pull request could not be read as a list.')
+  return parsed
 }
 
 export interface OpenPullRequestInput {
@@ -191,8 +250,10 @@ export async function openOrUpdatePullRequest(
 }
 
 /**
- * Merge only the exact head that was reviewed. Branch protection and required checks are respected; no
- * administrative bypass is used.
+ * Merge only the exact head that was reviewed: `expectedHeadSha` is the commit the caller authorized, not the
+ * head read back from the branch. The head is re-read here as a second line of defence against a change
+ * between that decision and this call. Branch protection and required checks are respected; no administrative
+ * bypass is used.
  */
 export async function mergePullRequest(
   context: GitHubContext,

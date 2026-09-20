@@ -29,17 +29,25 @@ import type { DesktopExecutorSettings } from './executor-settings'
 import type { DesktopProjectChatClient } from './project-chat-client'
 import { uploadEvidence, type ArtifactUploader } from './delegation-artifacts'
 import { runNamedCheck } from './delegation-checks'
-import { commitAuthorizedRevision, deliveryBranchName, pushDeliveryBranch } from './delegation-git'
 import {
+  authorizedCommitPatch,
+  commitAuthorizedRevision,
+  deliveryBranchName,
+  existingAuthorizedCommit,
+  pushDeliveryBranch,
+} from './delegation-git'
+import {
+  GitHubDeliveryError,
   mergePullRequest,
   observedAccount,
   openOrUpdatePullRequest,
   pullRequestBody,
   readPullRequest,
+  type GhRunner,
+  type GitHubContext,
 } from './delegation-github'
 import {
   ProjectChatWorker,
-  chatWorkspaceKey,
   nativeRemoteChatHost,
   projectChatPreferences,
   type RemoteChatHost,
@@ -69,12 +77,15 @@ export interface DelegationWorkerOptions {
   url: string
   reviewBaseDirectory?: string
   workspaces?: DelegationWorkspaces
+  /** Injected in tests; production uses this computer's own `gh` login. */
+  githubRunner?: GhRunner
 }
 
 /** Delegation stages never queue interactive plan or permission prompts; nobody is waiting at a screen. */
 export class DelegationWorker extends ProjectChatWorker {
   private readonly reviewBaseDirectory: string | undefined
   private readonly workspaces: DelegationWorkspaces
+  private readonly githubRunner: GhRunner | undefined
   private prepared = new Map<string, PreparedStageWorkspace>()
   /** Host actions pending per conversation; set by prepare, consumed by the injected host. */
   private readonly hostStages: Map<string, HostStageRun>
@@ -104,12 +115,12 @@ export class DelegationWorker extends ProjectChatWorker {
     super(options.client, options.catalog, options.settings, options.bindings, options.instanceId, options.url, hostActions)
     this.hostStages = hostStages
     this.reviewBaseDirectory = options.reviewBaseDirectory
+    this.githubRunner = options.githubRunner
     this.workspaces =
       options.workspaces ??
       new DelegationWorkspaces({
         instanceId: options.instanceId,
         bindings: options.bindings,
-        workspaceKeyFor: chatWorkspaceKey,
         reviewBaseDirectory: options.reviewBaseDirectory,
       })
   }
@@ -362,7 +373,15 @@ export class DelegationWorker extends ProjectChatWorker {
   ): Promise<{ status: string; error?: string }> {
     const captured = await captureCodeRevision({ cwd: workspace.cwd })
     const expected = action.expectedCodeRevision ?? captured.revision.contentDigest
-    if (expected !== captured.revision.contentDigest)
+    // Delivery modes accumulate on one authorized revision: the commit this task already created is reused
+    // instead of being demanded again, so push, pull request and merge work with nothing new to commit.
+    const alreadyCommitted = await existingAuthorizedCommit({
+      cwd: workspace.cwd,
+      taskId: delegation.taskId,
+      authorizedDigest: expected,
+      observedDigest: captured.revision.contentDigest,
+    })
+    if (!alreadyCommitted && expected !== captured.revision.contentDigest)
       return {
         status: 'error',
         error: 'The workspace changed after this delivery was authorized. Re-review the current revision first.',
@@ -374,15 +393,20 @@ export class DelegationWorker extends ProjectChatWorker {
     })
     if (intention.alreadyConfirmed) return { status: 'success' }
 
-    const context = { cwd: workspace.cwd }
+    const context: GitHubContext = { cwd: workspace.cwd, ...(this.githubRunner ? { run: this.githubRunner } : {}) }
     try {
       if (action.mode === 'patch') {
+        // Once the content is committed the workspace has no pending diff; the patch then comes from the
+        // commit itself, so the evidence is the real change instead of an empty file.
+        const bytes = alreadyCommitted
+          ? await authorizedCommitPatch({ cwd: workspace.cwd, commitSha: alreadyCommitted.commitSha })
+          : captured.patch
         await uploadEvidence(this.uploader, {
           taskId: delegation.taskId,
           kind: 'patch',
           name: 'delivery.patch',
           contentType: 'text/x-diff',
-          bytes: captured.patch,
+          bytes,
           attemptId: delegation.attemptId,
           codeRevisionDigest: captured.revision.contentDigest,
         })
@@ -392,12 +416,14 @@ export class DelegationWorker extends ProjectChatWorker {
         })
         return { status: 'success' }
       }
-      const committed = await commitAuthorizedRevision({
-        cwd: workspace.cwd,
-        taskId: delegation.taskId,
-        expectedRevision: captured.revision,
-        title: action.title ?? delegation.stageType,
-      })
+      const committed =
+        alreadyCommitted ??
+        (await commitAuthorizedRevision({
+          cwd: workspace.cwd,
+          taskId: delegation.taskId,
+          expectedRevision: captured.revision,
+          title: action.title ?? delegation.stageType,
+        }))
       if (action.mode === 'commit') {
         await this.client.confirmDelivery(delegation.taskId, {
           deliveryId: intention.deliveryId,
@@ -427,12 +453,23 @@ export class DelegationWorker extends ProjectChatWorker {
       if (action.mode === 'merge') {
         const current = await readPullRequest(context, { branch: committed.branch })
         if (!current) return { status: 'error', error: 'There is no pull request to merge for this branch.' }
-        if (!current.headSha) return { status: 'error', error: 'The pull request head commit is unknown.' }
-        const merged = await mergePullRequest(context, {
-          number: current.number,
-          expectedHeadSha: current.headSha,
-          method: 'squash',
-        })
+        // The merge is bound to the commit this delivery authorized, never to whatever head the branch shows
+        // now: another actor can advance it between the push and this read, and that newer head was never
+        // reviewed. The same identity decides whether an already merged pull request is this task's own work.
+        if (current.headSha !== committed.commitSha)
+          throw new GitHubDeliveryError(
+            'head-mismatch',
+            `The pull request head is ${current.headSha ?? 'unknown'}, not the authorized ${committed.commitSha}.`
+          )
+        // A merge that already happened is reconciled with what GitHub reports, never attempted twice.
+        const merged =
+          current.state === 'merged'
+            ? current
+            : await mergePullRequest(context, {
+                number: current.number,
+                expectedHeadSha: committed.commitSha,
+                method: 'squash',
+              })
         await this.client.confirmDelivery(delegation.taskId, {
           deliveryId: intention.deliveryId,
           state: 'confirmed',
@@ -492,7 +529,11 @@ export class DelegationWorker extends ProjectChatWorker {
     workspace: PreparedStageWorkspace
   ): Promise<{ status: string; error?: string }> {
     try {
-      const observed = await readPullRequest({ cwd: workspace.cwd }, { branch: deliveryBranchName(delegation.taskId) })
+      const context: GitHubContext = {
+        cwd: workspace.cwd,
+        ...(this.githubRunner ? { run: this.githubRunner } : {}),
+      }
+      const observed = await readPullRequest(context, { branch: deliveryBranchName(delegation.taskId) })
       if (!observed) return { status: 'error', error: 'No pull request is linked to this task yet.' }
       await this.client.recordPullRequest(delegation.taskId, observed as unknown as Record<string, unknown>)
       return { status: 'success' }

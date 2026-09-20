@@ -43,10 +43,16 @@ export function deliveryBranchName(taskId: string): string {
   return `maestrly/delegation-${taskId.replace(/-/g, '').slice(0, 12)}`
 }
 
+const DELIVERY_TASK_TRAILER = 'Maestrly-Delegation-Task'
+/** The revision the commit was authorized for, so a later delivery mode recognises its own commit. */
+const DELIVERY_REVISION_TRAILER = 'Maestrly-Delegation-Revision'
+
 /** Deterministic commit subject; the body carries the task identity for traceability. */
-export function commitMessageFor(input: { taskId: string; title: string }): string {
+export function commitMessageFor(input: { taskId: string; title: string; revisionDigest?: string | null }): string {
   const subject = input.title.trim().replace(/\s+/g, ' ').slice(0, 72) || 'apply delegated change'
-  return `${subject}\n\nMaestrly-Delegation-Task: ${input.taskId}\n`
+  const trailers = [`${DELIVERY_TASK_TRAILER}: ${input.taskId}`]
+  if (input.revisionDigest) trailers.push(`${DELIVERY_REVISION_TRAILER}: ${input.revisionDigest}`)
+  return `${subject}\n\n${trailers.join('\n')}\n`
 }
 
 async function currentRevision(cwd: string, git: GitRunner): Promise<CodeRevision> {
@@ -81,7 +87,15 @@ export async function commitAuthorizedRevision(input: DeliveryBranchInput): Prom
   const staged = (await git(['diff', '--cached', '--name-only'])).toString('utf8').trim()
   if (!staged) throw new DeliveryError('nothing-to-commit', 'There is nothing to commit in this workspace.')
   const message = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'maestrly-commit-')), 'message.txt')
-  await fs.writeFile(message, commitMessageFor({ taskId: input.taskId, title: input.title }), { mode: 0o600 })
+  await fs.writeFile(
+    message,
+    commitMessageFor({
+      taskId: input.taskId,
+      title: input.title,
+      revisionDigest: input.expectedRevision.contentDigest,
+    }),
+    { mode: 0o600 }
+  )
   try {
     await git([
       '-c',
@@ -98,6 +112,61 @@ export async function commitAuthorizedRevision(input: DeliveryBranchInput): Prom
   }
   const commitSha = (await git(['rev-parse', 'HEAD'])).toString('utf8').trim()
   return { commitSha, branch, revision: await currentRevision(input.cwd, git) }
+}
+
+export interface ExistingAuthorizedCommit {
+  commitSha: string
+  branch: string
+}
+
+/**
+ * The commit a previous delivery of this task already created, when the workspace still holds exactly it.
+ *
+ * Delivery modes are cumulative: a commit is followed by a push, a pull request and a merge with nothing new
+ * in between, and committing moves the revision identity (the digest covers the head commit plus the pending
+ * patch). Without this, every mode after the first would either fail with `nothing-to-commit` or look like a
+ * workspace that changed after the authorization.
+ *
+ * Reuse is accepted only when the delivery branch head is this task's own commit, the workspace is exactly
+ * that commit with nothing uncommitted, and the authorized revision is either what the workspace shows now or
+ * the digest that commit recorded. Anything else keeps the ordinary refusal.
+ */
+export async function existingAuthorizedCommit(input: {
+  cwd: string
+  taskId: string
+  /** Revision digest this delivery was authorized for. */
+  authorizedDigest: string
+  /** Revision digest captured from the workspace right now. */
+  observedDigest: string
+  git?: GitRunner
+}): Promise<ExistingAuthorizedCommit | null> {
+  const git = input.git ?? createGitRunner(input.cwd)
+  const branch = deliveryBranchName(input.taskId)
+  const head = (await git(['for-each-ref', '--format=%(objectname)', `refs/heads/${branch}`])).toString('utf8').trim()
+  if (!head) return null
+  const message = (await git(['log', '-1', '--format=%B', head])).toString('utf8')
+  if (!message.includes(`${DELIVERY_TASK_TRAILER}: ${input.taskId}`)) return null
+  if (
+    input.authorizedDigest !== input.observedDigest &&
+    !message.includes(`${DELIVERY_REVISION_TRAILER}: ${input.authorizedDigest}`)
+  )
+    return null
+  // The delivery branch must be what this workspace is on, with no change on top of the commit being reused.
+  const current = (await git(['rev-parse', 'HEAD'])).toString('utf8').trim()
+  if (current !== head) return null
+  const pending = (await git(['status', '--porcelain', '--untracked-files=all'])).toString('utf8').trim()
+  if (pending) return null
+  return { commitSha: head, branch }
+}
+
+/** Patch of an already committed delivery, so a patch delivery after a commit still carries the real change. */
+export async function authorizedCommitPatch(input: {
+  cwd: string
+  commitSha: string
+  git?: GitRunner
+}): Promise<Buffer> {
+  const git = input.git ?? createGitRunner(input.cwd)
+  return git(['show', '--binary', '--no-ext-diff', '--no-textconv', '--format=', input.commitSha])
 }
 
 export interface PushInput {
