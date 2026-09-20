@@ -381,7 +381,6 @@ export function ChatView({
   const historyReloadRevisionRef = useRef(0)
   // Identifies the turn a delayed recovery was scheduled for, so a newer send is never released by it.
   const turnRevisionRef = useRef(0)
-  const previousStatusRef = useRef(status)
 
   const messagePendingQuestion = useMemo(() => findPendingChatQuestion(messages), [messages])
   const pendingQuestion = messagePendingQuestion ?? runtimeQuestions.at(-1) ?? null
@@ -873,13 +872,13 @@ export function ChatView({
    * The terminal event is the only signal that releases the composer, and it reaches this renderer
    * only while the main process has it subscribed: an event lost to a subscription gap, a crashed
    * listener, or a hidden view would otherwise keep the conversation reporting an active response
-   * forever, with its queue frozen behind it. When the authoritative status leaves a running turn,
+   * forever, with its queue frozen behind it. When the local stream outlives a non-running status,
    * confirm with the main process shortly after and complete the turn locally if nothing is running.
+   * Also watch streaming: a fast turn can start and finish between sidebar refreshes, so its
+   * intermediate working status may never reach this renderer.
    */
   useEffect(() => {
-    const previous = previousStatusRef.current
-    previousStatusRef.current = status
-    if (previous !== 'working' && previous !== 'asking') return
+    if (!streaming) return
     if (status === 'working' || status === 'asking') return
 
     const revision = turnRevisionRef.current
@@ -899,7 +898,7 @@ export function ChatView({
       alive = false
       window.clearTimeout(timer)
     }
-  }, [conversationId, status])
+  }, [conversationId, status, streaming])
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
   const needsLiveSubscription =
