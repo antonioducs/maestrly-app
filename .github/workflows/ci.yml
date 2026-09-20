@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build desktop
-        run: npm run build:desktop
+      - name: Check application
+        run: npm run check
       - name: Trace standalone chats
         run: npm run test:e2e
