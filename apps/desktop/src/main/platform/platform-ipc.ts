@@ -65,6 +65,7 @@ export function registerPlatformIpc(reg: IpcRegistrar): void {
     if (conversation) broadcast('conversation:open', { conversation, focus: true })
   })
   reg.handle('platform:runner-status', () => embeddedRunnerHost.status())
+  reg.handle('platform:delegation-status', () => embeddedRunnerHost.delegationStatus())
   reg.mhandle('platform:runner-start', (_event, connectionId: string) => embeddedRunnerHost.start(connectionId))
   reg.mhandle('platform:runner-stop', () => embeddedRunnerHost.stop())
 }

@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron'
-import type { DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
+import type { DelegationStatusView, DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
 
 export const platformApi = {
   platformWorkspaceLinks: (): Promise<import('../shared/platform').WorkspaceKanbanLink[]> => ipcRenderer.invoke('platform:workspace-links'),
@@ -25,6 +25,7 @@ export const platformApi = {
   platformSetProjectBinding: (binding: PlatformProjectBinding): Promise<void> => ipcRenderer.invoke('platform:set-project-binding', binding),
   platformRemoveProjectBinding: (workspaceId: string): Promise<void> => ipcRenderer.invoke('platform:remove-project-binding', workspaceId),
   platformRunnerStatus: (): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-status'),
+  platformDelegationStatus: (): Promise<DelegationStatusView> => ipcRenderer.invoke('platform:delegation-status'),
   platformRunnerStart: (connectionId: string): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-start', connectionId),
   platformRunnerStop: (): Promise<void> => ipcRenderer.invoke('platform:runner-stop'),
 }

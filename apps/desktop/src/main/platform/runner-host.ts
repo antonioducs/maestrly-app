@@ -21,7 +21,8 @@ import {
 import type { DelegationModelCatalog } from '@maestrly/protocol'
 import { buildDelegationCatalog } from './delegation-catalog'
 import { DelegationWorker } from './delegation-worker'
-import type { EmbeddedRunnerView } from '../../shared/platform'
+import type { DelegationStatusView, EmbeddedRunnerView } from '../../shared/platform'
+import { activeDelegationAttempts } from './project-chat-store'
 import { getWorkspace } from '../store'
 import { secureGet, secureSet, secureRemove } from '../secure-store'
 import { platformConnections } from './connection-service'
@@ -148,8 +149,47 @@ export class EmbeddedRunnerHost {
   private revision = 0
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private memory = new Map<string, MachineIdentity>()
+  private delegationInstanceId: string | null = null
+
   status(): EmbeddedRunnerView {
     return { ...this.state }
+  }
+
+  /**
+   * What this computer offers for delegated stages and what it is running now. It reports the published
+   * inventory rather than a guess: when delegation is off, the reasons are listed instead of hidden.
+   */
+  delegationStatus(): DelegationStatusView {
+    const catalog = this.delegationCatalog
+    const issues = [...(catalog?.issues ?? [])]
+    if (this.state.state !== 'running') issues.unshift('Start the executor to offer delegated stages.')
+    else if (!this.delegationEnabled && catalog)
+      issues.unshift('This Maestrly instance did not accept a stage inventory from this computer.')
+    return {
+      enabled: this.delegationEnabled && this.state.state === 'running',
+      revision: catalog?.revision ?? null,
+      issues,
+      workspaces: (catalog?.workspaces ?? []).map((workspace) => ({
+        key: workspace.key,
+        label: workspace.label,
+        branches: [...workspace.branches],
+      })),
+      selections: (catalog?.models ?? []).map((model) => ({
+        selectionId: model.selectionId,
+        accountLabel: model.accountLabel,
+        modelLabel: model.modelLabel,
+        efforts: [...model.efforts],
+        fastMode: model.fastMode,
+      })),
+      active: this.delegationInstanceId
+        ? activeDelegationAttempts(this.delegationInstanceId).map((attempt) => ({
+            attemptId: attempt.attempt_id,
+            taskId: attempt.task_id,
+            stageId: attempt.stage_id,
+            state: attempt.state,
+          }))
+        : [],
+    }
   }
   async start(connectionId: string): Promise<EmbeddedRunnerView> {
     if (this.state.state === 'error') await this.stop()
@@ -302,6 +342,7 @@ export class EmbeddedRunnerHost {
           .delegationInventory(this.delegationCatalog)
           .catch(() => ({ accepted: false }))
         this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
+        this.delegationInstanceId = connection.instanceId ?? connection.url
         if (this.delegationEnabled) {
           const worker = new DelegationWorker({
             client: delegationClient,
@@ -390,6 +431,7 @@ export class EmbeddedRunnerHost {
     await this.delegationLoop
     this.chatWorker=null;this.chatLoop=null
     this.delegationWorker=null;this.delegationLoop=null;this.delegationEnabled=false;this.delegationCatalog=null
+    this.delegationInstanceId=null
     await offline
     this.engine = null
     this.loop = null

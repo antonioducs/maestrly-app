@@ -127,6 +127,13 @@ export function pendingDelegationReceipts(instanceId: string): StoredDelegationA
 export function finishDelegationAttempt(attemptId: string) {
   getDb().prepare("update platform_delegation_attempts set state='done' where attempt_id=?").run(attemptId)
 }
+
+/** Attempts this computer admitted and has not finished reporting, for the interface to show honestly. */
+export function activeDelegationAttempts(instanceId: string): StoredDelegationAttempt[] {
+  return getDb()
+    .prepare("select * from platform_delegation_attempts where instance_id=? and state<>'done' order by rowid")
+    .all(instanceId) as unknown as StoredDelegationAttempt[]
+}
 export function delegationAttemptFor(turnId: string): StoredDelegationAttempt | null {
   return (
     (getDb()

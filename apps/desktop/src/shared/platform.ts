@@ -43,6 +43,22 @@ export interface WorkspaceKanbanLink extends PlatformProjectBinding {
 
 export interface EmbeddedRunnerView { mode?:'personal'|'team'; deviceId?:string;ownerUserId?:string; state: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'; error?: string }
 
+/**
+ * What this computer currently offers for delegated stages, and what it is running right now. Read-only:
+ * a stage is controlled from Maestrly, never from here.
+ */
+export interface DelegationStatusView {
+  /** False when the executor is stopped, the server has no delegation capability, or nothing is publishable. */
+  enabled: boolean
+  /** Revision of the published inventory, so a mismatch with the server is visible. */
+  revision: string | null
+  issues: string[]
+  workspaces: Array<{ key: string; label: string; branches: string[] }>
+  selections: Array<{ selectionId: string; accountLabel: string; modelLabel: string; efforts: string[]; fastMode: boolean }>
+  /** Stage attempts this computer admitted and has not finished reporting. */
+  active: Array<{ attemptId: string; taskId: string; stageId: string; state: string }>
+}
+
 export interface RemotePlatformProject {
   organizationId: string
   organizationName: string
