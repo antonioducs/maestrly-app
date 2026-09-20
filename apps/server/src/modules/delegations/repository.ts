@@ -13,6 +13,7 @@ import {
   type StageDefinition,
 } from '@maestrly/protocol'
 import type { DatabaseClient } from '../../db/pool.js'
+import { enqueueConnectorNotifications } from '../connectors/notifications.js'
 
 export function delegationFail(message: string, statusCode = 409, code?: string): never {
   throw Object.assign(new Error(message), { statusCode, ...(code ? { delegationCode: code } : {}) })
@@ -118,7 +119,10 @@ export async function appendDelegationEvent(
     'insert into delegation_events(organization_id, project_id, task_id, sequence, type, data) values($1,$2,$3,$4,$5,$6) returning *',
     [task.organizationId, task.projectId, task.id, sequence, type, data]
   )
-  return mapDelegationEvent(inserted.rows[0]!)
+  const event = mapDelegationEvent(inserted.rows[0]!)
+  // Outbox: a connector notification is written in the same transaction as the event it describes.
+  await enqueueConnectorNotifications(client, task, event)
+  return event
 }
 
 export async function loadTaskRow(

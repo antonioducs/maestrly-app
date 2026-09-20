@@ -5,6 +5,7 @@ import {
   connectorConnectionCreateSchema,
   connectorConnectionPatchSchema,
   connectorMcpResource,
+  connectorNotificationEndpointInputSchema,
 } from '@maestrly/protocol'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -20,6 +21,11 @@ import {
   patchConnectorConnection,
   connectorFail,
 } from './grants.js'
+import {
+  deleteNotificationEndpoint,
+  getNotificationEndpoint,
+  setNotificationEndpoint,
+} from './notifications.js'
 
 type Authenticate = (request: FastifyRequest, scopes?: readonly string[]) => Promise<HumanIdentity | null>
 
@@ -139,5 +145,33 @@ export function registerConnectorRoutes(
     )
     if (result.replayed) reply.header('idempotency-replayed', 'true')
     return reply.status(result.status).send(result.body)
+  })
+
+  // The callback endpoint a routine listens on. The secret is write-only: only its fingerprint comes back.
+  const endpointPath = `${root}/:connectionId/notification-endpoint`
+  const endpointScope = async (request: FastifyRequest, write: boolean) => {
+    const human = await authenticate(request, write ? ['api:write'] : undefined)
+    if (!human) connectorFail('Authentication required.', 401)
+    const scope = params.parse(request.params)
+    if (!scope.connectionId) connectorFail('A connection id is required.', 400)
+    return { organizationId: scope.organizationId, userId: human.userId, connectionId: scope.connectionId }
+  }
+
+  app.get(endpointPath, async (request) => ({
+    endpoint: await getNotificationEndpoint(pool, await endpointScope(request, false)),
+  }))
+
+  app.put(endpointPath, async (request) =>
+    setNotificationEndpoint(
+      pool,
+      await endpointScope(request, true),
+      connectorNotificationEndpointInputSchema.parse(request.body),
+      { secretKeys: config.secretKeys, allowPrivateHosts: config.connectorAllowPrivateCallbacks }
+    )
+  )
+
+  app.delete(endpointPath, async (request, reply) => {
+    await deleteNotificationEndpoint(pool, await endpointScope(request, true))
+    return reply.status(204).send()
   })
 }

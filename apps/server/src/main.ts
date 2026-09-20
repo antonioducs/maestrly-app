@@ -9,6 +9,7 @@ import { runDelegationScheduler } from './modules/delegations/scheduler.js'
 import { purgeExpiredArtifactUploads } from './modules/delegations/artifacts.js'
 import { expireInspections } from './modules/delegations/inspections.js'
 import { reconcileDependencies, reconcileWatch, runDueTimers } from './modules/delegations/watcher.js'
+import { deliverPendingNotifications } from './modules/connectors/notifications.js'
 
 const config = loadConfig()
 const pool = createPool(config.databaseUrl)
@@ -32,6 +33,11 @@ const scheduler = setInterval(() => {
   void runDueTimers(pool, { webOrigin: config.webOrigin }).catch((error) =>
     app.log.error({ err: error }, 'delegation timers failed')
   )
+  void deliverPendingNotifications(pool, {
+    webOrigin: config.webOrigin,
+    secretKeys: config.secretKeys,
+    allowPrivateHosts: config.connectorAllowPrivateCallbacks,
+  }).catch((error) => app.log.error({ err: error }, 'connector notification delivery failed'))
 }, 5_000)
 scheduler.unref()
 

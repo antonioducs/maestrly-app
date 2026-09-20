@@ -23,6 +23,7 @@ import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
 import { inTenantTransaction } from '../../db/transaction.js'
 import { authorizeProject } from '../access/authorize.js'
 import { createCard } from '../cards/service.js'
+import { delegationLinks, type DelegationLinkOptions } from './links.js'
 import { executorDelegationCatalog } from './model-catalog.js'
 import { loadPreset } from './presets.js'
 import {
@@ -44,17 +45,8 @@ export interface DelegationScope {
   connectionId?: string | null
 }
 
-export interface DelegationLinkOptions {
-  webOrigin: string
-}
-
-export function delegationLinks(options: DelegationLinkOptions, task: DelegationTask) {
-  const base = `${options.webOrigin}/?organization=${task.organizationId}&project=${task.projectId}`
-  return {
-    task: `${base}&board=${task.boardId}&card=${task.cardId}&delegation=${task.id}`,
-    card: `${base}&board=${task.boardId}&card=${task.cardId}`,
-  }
-}
+export { delegationLinks }
+export type { DelegationLinkOptions }
 
 export async function delegationTransaction<T>(
   pool: DatabasePool,

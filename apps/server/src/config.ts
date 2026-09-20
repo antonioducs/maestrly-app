@@ -22,6 +22,11 @@ const environmentSchema = z.object({
   MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES: z.coerce.number().int().positive().default(250 * 1024 * 1024),
   /** `keyId:base64key` entries, newest first. Required for connector callbacks and inbound webhooks. */
   MAESTRLY_SECRET_KEYS: z.string().default(''),
+  /**
+   * Allow a connector callback to an address inside this network, and over plain HTTP. Only for a
+   * self-hosted instance whose receiver is internal; it disables the anti-SSRF guard for those callbacks.
+   */
+  MAESTRLY_CONNECTOR_ALLOW_PRIVATE_CALLBACKS: z.enum(['true', 'false']).default('false'),
 })
 
 export interface ServerConfig {
@@ -44,6 +49,7 @@ export interface ServerConfig {
   maxDelegationArtifactBytes: number
   maxDelegationTaskArtifactBytes: number
   secretKeys: string
+  connectorAllowPrivateCallbacks: boolean
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -76,5 +82,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
     maxDelegationArtifactBytes: value.MAESTRLY_MAX_DELEGATION_ARTIFACT_BYTES,
     maxDelegationTaskArtifactBytes: value.MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES,
     secretKeys: value.MAESTRLY_SECRET_KEYS,
+    connectorAllowPrivateCallbacks: value.MAESTRLY_CONNECTOR_ALLOW_PRIVATE_CALLBACKS === 'true',
   }
 }

@@ -135,9 +135,9 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   app.get('/api/v1/health/ready', async (_request, reply) => {
     try {
       const result = await pool.query<{ count: string }>(`
-        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql','010_connector_grants.sql','011_delegations.sql','012_delegation_evidence.sql','013_delegation_delivery.sql','014_delegation_events.sql')
+        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql','010_connector_grants.sql','011_delegations.sql','012_delegation_evidence.sql','013_delegation_delivery.sql','014_delegation_events.sql','015_connector_notifications.sql')
       `)
-      if (Number(result.rows[0]?.count) !== 14) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
+      if (Number(result.rows[0]?.count) !== 15) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
       return { status: 'ready' }
     } catch {
       return reply.status(503).send({ status: 'not_ready', reason: 'database_unavailable' })
