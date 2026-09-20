@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { constants } from 'node:fs'
-import { access, copyFile, lstat, mkdir, readFile, readdir, stat } from 'node:fs/promises'
+import { access, copyFile, lstat, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -9,19 +9,61 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SEMVER_PATTERN =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$/
 
+/**
+ * Definition order is the staging order: binaries are staged first so their public names are known
+ * when the updater metadata (`latest*.yml`) is rewritten. `binary` files are the published
+ * installers, `blockmap` files are the differential-download indexes electron-updater derives from
+ * each installer URL, and `metadata` files are the update feed manifests.
+ */
 export const RELEASE_ASSET_DEFINITIONS = Object.freeze({
   linux: Object.freeze([
-    Object.freeze({ suffix: '.AppImage', output: (version) => `Maestrly-App-${version}-linux-x64.AppImage` }),
-    Object.freeze({ suffix: '.deb', output: (version) => `Maestrly-App-${version}-linux-x64.deb` }),
+    Object.freeze({
+      kind: 'binary',
+      suffix: '.AppImage',
+      output: (version) => `Maestrly-App-${version}-linux-x64.AppImage`,
+    }),
+    Object.freeze({ kind: 'binary', suffix: '.deb', output: (version) => `Maestrly-App-${version}-linux-x64.deb` }),
+    Object.freeze({ kind: 'metadata', suffix: 'latest-linux.yml', output: () => 'latest-linux.yml' }),
   ]),
   windows: Object.freeze([
-    Object.freeze({ suffix: '.exe', output: (version) => `Maestrly-App-${version}-windows-x64.exe` }),
+    Object.freeze({ kind: 'binary', suffix: '.exe', output: (version) => `Maestrly-App-${version}-windows-x64.exe` }),
+    Object.freeze({
+      kind: 'blockmap',
+      suffix: '.exe.blockmap',
+      output: (version) => `Maestrly-App-${version}-windows-x64.exe.blockmap`,
+    }),
+    Object.freeze({ kind: 'metadata', suffix: 'latest.yml', output: () => 'latest.yml' }),
   ]),
   macos: Object.freeze([
-    Object.freeze({ suffix: '.dmg', output: (version) => `Maestrly-App-${version}-macos-arm64.dmg` }),
-    Object.freeze({ suffix: '.zip', output: (version) => `Maestrly-App-${version}-macos-arm64.zip` }),
+    Object.freeze({ kind: 'binary', suffix: '.dmg', output: (version) => `Maestrly-App-${version}-macos-arm64.dmg` }),
+    Object.freeze({ kind: 'binary', suffix: '.zip', output: (version) => `Maestrly-App-${version}-macos-arm64.zip` }),
+    Object.freeze({
+      kind: 'blockmap',
+      suffix: '.zip.blockmap',
+      output: (version) => `Maestrly-App-${version}-macos-arm64.zip.blockmap`,
+    }),
+    Object.freeze({ kind: 'metadata', suffix: 'latest-mac.yml', output: () => 'latest-mac.yml' }),
   ]),
 })
+
+/** Installers must not absorb their own blockmap, and feed manifests keep their exact published name. */
+function matchesDefinition(name, definition) {
+  if (definition.kind === 'metadata') return name === definition.suffix
+  if (definition.kind === 'binary') return name.endsWith(definition.suffix) && !name.endsWith('.blockmap')
+  return name.endsWith(definition.suffix)
+}
+
+/**
+ * Rewrite build-time artifact names to the published ones inside an updater manifest. Longest names
+ * are replaced first so a shorter name never truncates a longer one, and checksums stay untouched.
+ */
+function rewriteUpdaterMetadata(content, renames) {
+  let rewritten = content
+  for (const [original, staged] of [...renames].sort(([left], [right]) => right.length - left.length)) {
+    rewritten = rewritten.split(original).join(staged)
+  }
+  return rewritten
+}
 
 function resolvePath(value, label) {
   if (value instanceof URL) {
@@ -62,8 +104,9 @@ export async function stageReleaseAssets({ platform, sourceDir, outputDir, versi
 
   const entries = await readdir(source, { withFileTypes: true })
   const staged = []
+  const renames = new Map()
   for (const definition of definitions) {
-    const candidates = entries.filter((entry) => entry.name.endsWith(definition.suffix))
+    const candidates = entries.filter((entry) => matchesDefinition(entry.name, definition))
     if (candidates.length !== 1) {
       throw new Error(`Expected exactly one ${definition.suffix} release artifact; found ${candidates.length}`)
     }
@@ -75,12 +118,19 @@ export async function stageReleaseAssets({ platform, sourceDir, outputDir, versi
     const sourceFile = path.join(source, candidate.name)
     if ((await stat(sourceFile)).size === 0) throw new Error(`Release artifact is empty: ${candidate.name}`)
 
-    const destination = path.join(output, definition.output(version))
-    await copyFile(sourceFile, destination, constants.COPYFILE_EXCL)
+    const outputName = definition.output(version)
+    const destination = path.join(output, outputName)
+    if (definition.kind === 'metadata') {
+      const manifest = rewriteUpdaterMetadata(await readFile(sourceFile, 'utf8'), renames)
+      await writeFile(destination, manifest, { flag: 'wx' })
+    } else {
+      renames.set(candidate.name, outputName)
+      await copyFile(sourceFile, destination, constants.COPYFILE_EXCL)
+    }
     staged.push(destination)
   }
 
-  return staged.sort((left, right) => path.basename(left).localeCompare(path.basename(right), 'en'))
+  return staged
 }
 
 async function main() {
