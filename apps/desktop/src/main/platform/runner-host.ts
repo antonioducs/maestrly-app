@@ -18,6 +18,8 @@ import {
   type RunnerClaim,
   type RunnerServer,
 } from '@maestrly/runner-core'
+import type { DelegationModelCatalog } from '@maestrly/protocol'
+import { buildDelegationCatalog } from './delegation-catalog'
 import type { EmbeddedRunnerView } from '../../shared/platform'
 import { getWorkspace } from '../store'
 import { secureGet, secureSet, secureRemove } from '../secure-store'
@@ -134,6 +136,8 @@ export class EmbeddedRunnerHost {
   private engine: RunnerEngine | null = null
   private chatWorker:ProjectChatWorker|null=null
   private chatLoop:Promise<void>|null=null
+  private delegationCatalog: DelegationModelCatalog | null = null
+  private delegationEnabled = false
   private server: DesktopRunnerServer | null = null
   private loop: Promise<void> | null = null
   private state: EmbeddedRunnerView = { state: 'stopped' }
@@ -286,6 +290,14 @@ export class EmbeddedRunnerHost {
         this.chatWorker=chatWorker
         this.chatLoop=chatWorker.run().catch(error=>{this.state={state:'error',error:(error as Error).message};this.stopping=true;void engine.stop()})
       }
+      // Delegation is additive: a server without the capability answers 404 and this computer simply does
+      // not advertise stage execution.
+      this.delegationCatalog = await buildDelegationCatalog({ catalog, settings, bindings })
+      const delegationClient = new DesktopProjectChatClient(connection.url, identity)
+      const published = await delegationClient
+        .delegationInventory(this.delegationCatalog)
+        .catch(() => ({ accepted: false }))
+      this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
       this.heartbeat = setInterval(
         () =>
           void server

@@ -1,5 +1,11 @@
 import { HttpTransport } from '@maestrly/client-sdk'
-import type { ChatInventory, ChatUpload, ProjectChatClaim, ProjectChatInteraction } from '@maestrly/protocol'
+import type {
+  ChatInventory,
+  ChatUpload,
+  DelegationModelCatalog,
+  ProjectChatClaim,
+  ProjectChatInteraction,
+} from '@maestrly/protocol'
 export class DesktopProjectChatClient {
   private transport: HttpTransport
   constructor(url: string, identity: { organizationId: string; runnerId: string; credential: string }) {
@@ -17,6 +23,19 @@ export class DesktopProjectChatClient {
   }
   inventory(body: ChatInventory) {
     return this.transport.request('POST', '/api/v1/runners/chat/inventory', { body })
+  }
+  /**
+   * Publish the delegation inventory. A server without the capability answers 404; the caller treats that
+   * as "delegation unavailable" instead of failing the executor.
+   */
+  async delegationInventory(body: DelegationModelCatalog): Promise<{ accepted: boolean }> {
+    try {
+      await this.transport.request('POST', '/api/v1/runners/delegations/inventory', { body })
+      return { accepted: true }
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return { accepted: false }
+      throw error
+    }
   }
   claim() {
     return this.transport.request<ProjectChatClaim | null>('POST', '/api/v1/runners/chat/claim', { body: {} })

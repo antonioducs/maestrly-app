@@ -37,6 +37,7 @@ import { createConnectorAuthenticator } from './modules/connectors/auth.js'
 import { createConnectorToolRegistry, registerConnectorMcp } from './modules/connectors/mcp.js'
 import { registerConnectorRoutes } from './modules/connectors/routes.js'
 import { connectorToolCatalog } from './modules/connectors/tool-catalog.js'
+import { registerDelegationRunnerRoutes } from './modules/delegations/runner-routes.js'
 
 export interface AppDependencies {
   config: ServerConfig
@@ -156,6 +157,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   registerAgentToolRoutes(app, pool)
   registerAccessRoutes(app, pool, config, authenticate)
   registerTeamRoutes(app,pool,config,authenticate)
+  registerDelegationRunnerRoutes(app, pool)
   registerConnectorRoutes(app, pool, auth, config, authenticate)
   registerConnectorMcp(app, {
     authenticate: createConnectorAuthenticator(auth, config, pool),
