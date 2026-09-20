@@ -127,6 +127,11 @@ export class DelegationWorker extends ProjectChatWorker {
     return this.client.claimDelegationStage()
   }
 
+  /** Only stage attempts admitted on this computer; an interactive chat turn belongs to the other loop. */
+  protected override ownsTurn(turnId: string): boolean {
+    return !!journal.delegationAttemptFor(turnId)
+  }
+
   private delegationOf(claim: ProjectChatClaim): ProjectChatDelegationClaim {
     if (!claim.delegation) throw new Error('This claim is not a delegation stage.')
     return claim.delegation

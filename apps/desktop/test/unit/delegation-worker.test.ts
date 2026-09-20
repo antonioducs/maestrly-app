@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import {
+  admitChatTurn,
   admitDelegationAttempt,
   bindDelegationWorkspace,
   bindChatConversation,
@@ -16,6 +17,8 @@ import {
   recordDelegationReceipt,
 } from '../../src/main/platform/project-chat-store'
 import { DelegationWorkspaces, isReadOnlyStage } from '../../src/main/platform/delegation-workspace'
+import { DelegationWorker } from '../../src/main/platform/delegation-worker'
+import { ProjectChatWorker } from '../../src/main/platform/project-chat-worker'
 import { buildStageReceipt, selectionHonored } from '../../src/main/platform/delegation-receipt'
 import type { ProjectChatDelegationClaim, ProjectChatSession } from '@maestrly/protocol'
 import type { PlatformProjectBinding } from '../../src/shared/platform'
@@ -280,4 +283,51 @@ it('keeps the stage conversation binding stable across a restart', () => {
   restartDb()
   expect(chatConversation('instance', 'session-1')).toBe(conversation.id)
   expect(delegationWorkspace('instance', 'task-1')).toBe(conversation.id)
+})
+
+it('recovers only the turns it started, so two loops on one computer never interrupt each other', async () => {
+  // Both workers share the local journal. A chat turn that is still running must survive a delegation
+  // recovery pass, and a stage attempt must survive a chat recovery pass.
+  const chatTurn = crypto.randomUUID()
+  const stageTurn = crypto.randomUUID()
+  admitChatTurn('instance', chatTurn, crypto.randomUUID())
+  admitChatTurn('instance', stageTurn, crypto.randomUUID())
+  admitDelegationAttempt({
+    instanceId: 'instance',
+    attemptId: crypto.randomUUID(),
+    taskId: crypto.randomUUID(),
+    stageId: crypto.randomUUID(),
+    turnId: stageTurn,
+    leaseId: crypto.randomUUID(),
+  })
+
+  const completed: string[] = []
+  const client = {
+    complete: async (turnId: string) => {
+      completed.push(turnId)
+    },
+    inventory: async () => ({ accepted: true }),
+    delegationInventory: async () => ({ accepted: true }),
+    claim: async () => null,
+    claimDelegationStage: async () => null,
+  } as unknown as ConstructorParameters<typeof ProjectChatWorker>[0]
+  const catalog = { chatModels: async () => [], selections: async () => [] } as never
+  const executor = { interactiveChat: true } as never
+
+  const delegation = new DelegationWorker({
+    client: client as never,
+    catalog,
+    settings: executor,
+    bindings: [],
+    instanceId: 'instance',
+    url: 'http://instance.test',
+    workspaces: new DelegationWorkspaces({ bindings: [], instanceId: 'instance' } as never),
+  })
+  await delegation.recover()
+  expect(completed).toEqual([stageTurn])
+
+  completed.length = 0
+  const chat = new ProjectChatWorker(client, catalog, executor, [], 'instance', 'http://instance.test')
+  await chat.recover()
+  expect(completed).toEqual([chatTurn])
 })

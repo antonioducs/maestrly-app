@@ -144,8 +144,18 @@ export class ProjectChatWorker {
     this.stopped = true
     this.controller?.abort()
   }
+  /**
+   * Whether a pending turn belongs to this loop. Two workers share the local journal on one computer, so
+   * each one must only recover the turns it started: recovering someone else's would interrupt a turn that
+   * is still running.
+   */
+  protected ownsTurn(turnId: string): boolean {
+    return !journal.delegationAttemptFor(turnId)
+  }
+
   async recover() {
     for (const turn of journal.pendingChatTurns(this.instanceId)) {
+      if (!this.ownsTurn(turn.turn_id)) continue
       try {
         if (turn.state === 'finishing') await this.flush(turn.turn_id, turn.lease_id)
         await this.client.complete(
