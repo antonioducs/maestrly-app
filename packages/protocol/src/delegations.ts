@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { agentStageSettingsSchema, agentStageSettingsPatchSchema } from './delegation-models.js'
+/* Timer cadence helpers keep the next occurrence deterministic for a given timezone. */
 import { opaqueIdSchema, utcDateTimeSchema } from './identity.js'
 
 /**
@@ -311,6 +312,95 @@ export const inspectionSchema = z
     codeRevisionDigest: z.string().max(191).nullable(),
     createdAt: utcDateTimeSchema,
     finishedAt: utcDateTimeSchema.nullable(),
+  })
+  .strict()
+
+export const delegationSubscriptionSourceSchema = z.enum(['github', 'timer', 'dependency'])
+
+/**
+ * What to do when a source fires. The stage profile is chosen up front, so a reaction never has to guess which
+ * account or model should handle it.
+ */
+export const delegationSubscriptionRuleSchema = z.discriminatedUnion('action', [
+  z
+    .object({
+      action: z.literal('refresh_pull_request'),
+      /** Seconds between polls while the watch is active. */
+      intervalSeconds: z.number().int().min(15).max(3_600).default(60),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('fix_failing_checks'),
+      /** Stage configuration for the diagnosis and fix round the failure triggers. */
+      settings: agentStageSettingsPatchSchema,
+      instructions: z.string().max(100_000).default(''),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('address_review_comments'),
+      settings: agentStageSettingsPatchSchema,
+      instructions: z.string().max(100_000).default(''),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal('create_task_from_preset'),
+      presetId: opaqueIdSchema,
+      title: z.string().trim().min(1).max(500),
+      /**
+       * Profile for the pipeline the timer creates. A preset carries no account or model, so without this the
+       * profile of the task that owns the subscription is reused; one of the two must resolve.
+       */
+      settings: agentStageSettingsPatchSchema.nullable().default(null),
+      /** Cron-like schedule limited to a daily or hourly cadence with an explicit timezone. */
+      cadence: z.enum(['hourly', 'daily', 'weekly']),
+      atMinute: z.number().int().min(0).max(59).default(0),
+      atHour: z.number().int().min(0).max(23).default(9),
+      weekday: z.number().int().min(0).max(6).default(1),
+    })
+    .strict(),
+  z.object({ action: z.literal('notify_only') }).strict(),
+])
+
+export const delegationSubscriptionSchema = z
+  .object({
+    id: opaqueIdSchema,
+    taskId: opaqueIdSchema,
+    source: delegationSubscriptionSourceSchema,
+    rule: delegationSubscriptionRuleSchema,
+    enabled: z.boolean(),
+    timezone: z.string().min(1).max(80),
+    nextFireAt: utcDateTimeSchema.nullable(),
+    lastFiredAt: utcDateTimeSchema.nullable(),
+    expiresAt: utcDateTimeSchema.nullable(),
+    firedCount: z.number().int().nonnegative(),
+    createdAt: utcDateTimeSchema,
+    updatedAt: utcDateTimeSchema,
+  })
+  .strict()
+
+export const delegationSubscriptionInputSchema = z
+  .object({
+    source: delegationSubscriptionSourceSchema,
+    rule: delegationSubscriptionRuleSchema,
+    timezone: z.string().min(1).max(80).default('UTC'),
+    /** Watch window; the subscription disables itself afterwards and says so. */
+    expiresInSeconds: z.number().int().min(60).max(1_209_600).nullable().default(null),
+  })
+  .strict()
+
+/** Normalized external event. Ordering and duplicates are resolved from these fields, never from arrival time. */
+export const delegationSourceEventSchema = z
+  .object({
+    source: delegationSubscriptionSourceSchema,
+    externalId: z.string().min(1).max(300),
+    type: z.string().min(1).max(120),
+    pullRequestNumber: z.number().int().positive().nullable().default(null),
+    headSha: z.string().min(7).max(64).nullable().default(null),
+    payload: z.record(z.string(), z.unknown()).default({}),
+    occurredAt: utcDateTimeSchema,
   })
   .strict()
 
@@ -668,6 +758,11 @@ export type CodeRevision = z.infer<typeof codeRevisionSchema>
 export type DelegationAutonomy = z.infer<typeof delegationAutonomySchema>
 export type DelegationLimits = z.infer<typeof delegationLimitsSchema>
 export type DelegationPolicy = z.infer<typeof delegationPolicySchema>
+export type DelegationSubscriptionSource = z.infer<typeof delegationSubscriptionSourceSchema>
+export type DelegationSubscriptionRule = z.infer<typeof delegationSubscriptionRuleSchema>
+export type DelegationSubscription = z.infer<typeof delegationSubscriptionSchema>
+export type DelegationSubscriptionInput = z.infer<typeof delegationSubscriptionInputSchema>
+export type DelegationSourceEvent = z.infer<typeof delegationSourceEventSchema>
 export type DelegationCheckConfig = z.infer<typeof delegationCheckConfigSchema>
 export type CheckResult = z.infer<typeof checkResultSchema>
 export type DelegationArtifactKind = z.infer<typeof delegationArtifactKindSchema>
@@ -719,6 +814,57 @@ export function mergeDelegationPolicy(
 
 export function isAgentStageType(type: DelegationStageType): boolean {
   return (DELEGATION_AGENT_STAGE_TYPES as readonly string[]).includes(type)
+}
+
+/**
+ * Next occurrence for a timer rule in its declared timezone. A missed window schedules the next one instead of
+ * firing repeatedly to catch up.
+ */
+export function nextTimerOccurrence(
+  rule: Extract<DelegationSubscriptionRule, { action: 'create_task_from_preset' }>,
+  timezone: string,
+  from: Date
+): Date {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'short',
+  }).formatToParts(from)
+  const field = (type: string) => parts.find((part) => part.type === type)?.value ?? '0'
+  const localHour = Number(field('hour'))
+  const localMinute = Number(field('minute'))
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const localWeekday = weekdays.indexOf(field('weekday'))
+  const offsetMs = from.getTime() - Date.UTC(
+    Number(field('year')),
+    Number(field('month')) - 1,
+    Number(field('day')),
+    localHour,
+    localMinute,
+    Number(field('second'))
+  )
+  const local = (year: number, month: number, day: number, hour: number, minute: number) =>
+    new Date(Date.UTC(year, month, day, hour, minute, 0) + offsetMs)
+  const year = Number(field('year'))
+  const month = Number(field('month')) - 1
+  const day = Number(field('day'))
+  if (rule.cadence === 'hourly') {
+    const candidate = local(year, month, day, localHour, rule.atMinute)
+    return candidate > from ? candidate : local(year, month, day, localHour + 1, rule.atMinute)
+  }
+  if (rule.cadence === 'daily') {
+    const candidate = local(year, month, day, rule.atHour, rule.atMinute)
+    return candidate > from ? candidate : local(year, month, day + 1, rule.atHour, rule.atMinute)
+  }
+  const delta = (rule.weekday - localWeekday + 7) % 7
+  const candidate = local(year, month, day + delta, rule.atHour, rule.atMinute)
+  return candidate > from ? candidate : local(year, month, day + delta + 7, rule.atHour, rule.atMinute)
 }
 
 /** True for operations that change something on the executor, not only read it. */

@@ -8,6 +8,7 @@ import { reconcileDelegations } from './modules/delegations/reconcile.js'
 import { runDelegationScheduler } from './modules/delegations/scheduler.js'
 import { purgeExpiredArtifactUploads } from './modules/delegations/artifacts.js'
 import { expireInspections } from './modules/delegations/inspections.js'
+import { reconcileDependencies, reconcileWatch, runDueTimers } from './modules/delegations/watcher.js'
 
 const config = loadConfig()
 const pool = createPool(config.databaseUrl)
@@ -26,6 +27,11 @@ reconciler.unref()
 // Stage admission is cheap and short; a tighter interval keeps a pipeline responsive between turns.
 const scheduler = setInterval(() => {
   void runDelegationScheduler(pool).catch((error) => app.log.error({ err: error }, 'delegation scheduling failed'))
+  void reconcileWatch(pool).catch((error) => app.log.error({ err: error }, 'delegation watch failed'))
+  void reconcileDependencies(pool).catch((error) => app.log.error({ err: error }, 'dependency reconciliation failed'))
+  void runDueTimers(pool, { webOrigin: config.webOrigin }).catch((error) =>
+    app.log.error({ err: error }, 'delegation timers failed')
+  )
 }, 5_000)
 scheduler.unref()
 

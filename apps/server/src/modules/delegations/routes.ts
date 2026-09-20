@@ -3,6 +3,7 @@ import {
   delegationCreateSchema,
   delegationPresetInputSchema,
   delegationPresetPatchSchema,
+  delegationSubscriptionInputSchema,
   delegationTaskStateSchema,
 } from '@maestrly/protocol'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -14,6 +15,7 @@ import { listDelegationArtifacts, readDelegationArtifact } from './artifacts.js'
 import { checkConfigPatchSchema, listCheckConfigs, saveCheckConfig } from './checks.js'
 import { applyDelegationCommand } from './commands.js'
 import { getInspection, startInspection } from './inspections.js'
+import { listSubscriptions, setSubscriptionEnabled, subscribeTask } from './subscriptions.js'
 import { listDelegationExecutors } from './model-catalog.js'
 import { createDelegationPreset, listDelegationPresets, patchDelegationPreset } from './presets.js'
 import { delegationFail } from './repository.js'
@@ -171,6 +173,30 @@ export function registerDelegationRoutes(
     const current = await scope(request)
     const { inspectionId } = z.object({ inspectionId: z.string().uuid() }).parse(request.params)
     return getInspection(pool, current, { taskId: current.taskId!, inspectionId })
+  })
+
+  app.get(root + '/delegations/:taskId/subscriptions', async (request) => {
+    const current = await scope(request)
+    return { items: await listSubscriptions(pool, current, current.taskId!) }
+  })
+
+  app.post(root + '/delegations/:taskId/subscriptions', async (request, reply) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const body = delegationSubscriptionInputSchema.parse(request.body)
+    return reply.status(201).send(await subscribeTask(pool, current, { taskId: current.taskId!, rule: body }))
+  })
+
+  app.patch(root + '/delegations/:taskId/subscriptions/:subscriptionId', async (request) => {
+    const current = await scope(request, true)
+    idempotencyKey(request)
+    const { subscriptionId } = z.object({ subscriptionId: z.string().uuid() }).parse(request.params)
+    const body = z.object({ enabled: z.boolean() }).strict().parse(request.body)
+    return setSubscriptionEnabled(pool, current, {
+      taskId: current.taskId!,
+      subscriptionId,
+      enabled: body.enabled,
+    })
   })
 
   app.get(root + '/delegation-checks', async (request) => {

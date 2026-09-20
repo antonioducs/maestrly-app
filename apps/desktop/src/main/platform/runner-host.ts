@@ -293,30 +293,36 @@ export class EmbeddedRunnerHost {
         this.chatWorker=chatWorker
         this.chatLoop=chatWorker.run().catch(error=>{this.state={state:'error',error:(error as Error).message};this.stopping=true;void engine.stop()})
       }
-      // Delegation is additive: a server without the capability answers 404 and this computer simply does
-      // not advertise stage execution.
-      this.delegationCatalog = await buildDelegationCatalog({ catalog, settings, bindings })
-      const delegationClient = new DesktopProjectChatClient(connection.url, identity)
-      const published = await delegationClient
-        .delegationInventory(this.delegationCatalog)
-        .catch(() => ({ accepted: false }))
-      this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
-      if (this.delegationEnabled) {
-        const worker = new DelegationWorker({
-          client: delegationClient,
-          catalog,
-          settings,
-          bindings,
-          instanceId: connection.instanceId ?? connection.url,
-          url: connection.url,
-          reviewBaseDirectory: path.join(app.getPath('userData'), 'delegation-reviews'),
-        })
-        this.delegationWorker = worker
-        this.delegationLoop = worker.run().catch((error) => {
-          this.state = { state: 'error', error: (error as Error).message }
-          this.stopping = true
-          void engine.stop()
-        })
+      // Delegation is additive: a server without the capability answers 404, and a computer that cannot
+      // describe its stage inventory keeps running jobs and chat instead of failing to start.
+      try {
+        this.delegationCatalog = await buildDelegationCatalog({ catalog, settings, bindings })
+        const delegationClient = new DesktopProjectChatClient(connection.url, identity)
+        const published = await delegationClient
+          .delegationInventory(this.delegationCatalog)
+          .catch(() => ({ accepted: false }))
+        this.delegationEnabled = published.accepted && this.delegationCatalog.enabled
+        if (this.delegationEnabled) {
+          const worker = new DelegationWorker({
+            client: delegationClient,
+            catalog,
+            settings,
+            bindings,
+            instanceId: connection.instanceId ?? connection.url,
+            url: connection.url,
+            reviewBaseDirectory: path.join(app.getPath('userData'), 'delegation-reviews'),
+          })
+          this.delegationWorker = worker
+          this.delegationLoop = worker.run().catch((error) => {
+            this.state = { state: 'error', error: (error as Error).message }
+            this.stopping = true
+            void engine.stop()
+          })
+        }
+      } catch (error) {
+        this.delegationCatalog = null
+        this.delegationEnabled = false
+        console.warn('[executor] stage delegation is unavailable on this computer', error)
       }
       this.heartbeat = setInterval(
         () =>

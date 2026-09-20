@@ -20,6 +20,8 @@ const environmentSchema = z.object({
   MAESTRLY_CONNECTOR_OPEN_REGISTRATION: z.enum(['true', 'false']).default('false'),
   MAESTRLY_MAX_DELEGATION_ARTIFACT_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES: z.coerce.number().int().positive().default(250 * 1024 * 1024),
+  /** `keyId:base64key` entries, newest first. Required for connector callbacks and inbound webhooks. */
+  MAESTRLY_SECRET_KEYS: z.string().default(''),
 })
 
 export interface ServerConfig {
@@ -41,6 +43,7 @@ export interface ServerConfig {
   connectorOpenRegistration: boolean
   maxDelegationArtifactBytes: number
   maxDelegationTaskArtifactBytes: number
+  secretKeys: string
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -72,5 +75,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Server
     connectorOpenRegistration: value.MAESTRLY_CONNECTOR_OPEN_REGISTRATION === 'true',
     maxDelegationArtifactBytes: value.MAESTRLY_MAX_DELEGATION_ARTIFACT_BYTES,
     maxDelegationTaskArtifactBytes: value.MAESTRLY_MAX_DELEGATION_TASK_ARTIFACT_BYTES,
+    secretKeys: value.MAESTRLY_SECRET_KEYS,
   }
 }

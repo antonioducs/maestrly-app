@@ -35,6 +35,8 @@ const LOCAL_TABLES = [
   'platform_chat_outbox',
   'platform_chat_sessions',
   'platform_chat_turns',
+  'platform_delegation_attempts',
+  'platform_delegation_workspaces',
   'schema_migrations',
   'workspace_groups',
   'workspaces',

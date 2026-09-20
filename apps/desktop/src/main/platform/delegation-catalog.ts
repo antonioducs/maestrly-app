@@ -108,8 +108,9 @@ export async function buildDelegationCatalog(input: DelegationCatalogInput): Pro
       : { available: false, issue: 'Enable commands on this executor to start a preview.' },
     maestro: true,
     subagents: profiles.length > 0,
-    browserInspect: input.settings.allowWeb,
-    browserInteract: input.settings.allowWeb && input.settings.allowAppTools,
+    // Settings saved before a permission existed simply read as denied, instead of invalidating the catalog.
+    browserInspect: input.settings.allowWeb === true,
+    browserInteract: input.settings.allowWeb === true && input.settings.allowAppTools === true,
   }
   const models: DelegationModelEntry[] = (await input.catalog.selections()).map((selection) => {
     const harness = input.harnessIdentity?.(selection) ?? { profileId: null, hash: null }

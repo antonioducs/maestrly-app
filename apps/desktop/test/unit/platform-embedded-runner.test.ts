@@ -87,6 +87,19 @@ vi.mock('../../src/main/platform/executor-settings', () => ({
 vi.mock('../../src/main/platform/desktop-executor', () => ({
   DesktopChatExecutor: class {},
   DesktopModelCatalog: class {
+    // The delegation inventory asks for the exact account/model selections this computer can offer.
+    async selections() {
+      return [
+        {
+          selectionId: 'selection-one',
+          providerId: 'codex-subscription',
+          providerLabel: 'Codex',
+          modelId: 'model',
+          reasoningEfforts: ['medium'],
+          fastMode: false,
+        },
+      ]
+    }
     async read() {
       return {
         version: 1,

@@ -29,9 +29,16 @@ import { findingsSignature } from './findings.js'
 import { pullRequestFacts } from './pull-requests.js'
 import { appendFixStage, appendVerifyStage, evaluateCompletion, planFixRound, qualityContext } from './quality.js'
 import { admitStage } from './stage-admission.js'
+import { hasActiveSubscription } from './subscriptions.js'
 
 
 const LIVE_STAGE_STATES = ['queued', 'running', 'waiting_input'] as const
+
+/**
+ * Completion gaps that only an external actor can close: the executor has nothing left to do, so the task
+ * waits for the pull request to move instead of asking a person for a decision.
+ */
+const EXTERNAL_COMPLETION_REASONS = ['merge_missing', 'pull_request_not_ready'] as const
 
 function blocker(reason: DelegationBlocker['reason'], detail: string): DelegationBlocker {
   return { reason, detail: detail.slice(0, 2000), since: new Date().toISOString() }
@@ -377,6 +384,25 @@ export async function advanceDelegation(pool: DatabasePool, input: { organizatio
             completionTarget: task.policy.completionTarget,
             codeRevisionDigest: context.currentRevisionDigest,
           })
+          return { state: task.state, admitted: [], blocked: null }
+        }
+        // Nothing is left for the executor: the pull request has to move first. While a subscription is
+        // watching it, the task waits instead of demanding attention it cannot act on.
+        const externalOnly =
+          decision.missing.length > 0 &&
+          decision.missing.every((item) =>
+            (EXTERNAL_COMPLETION_REASONS as readonly string[]).includes(item.reason)
+          )
+        if (
+          externalOnly &&
+          (await hasActiveSubscription(client, {
+            organizationId: task.organizationId,
+            taskId: task.id,
+            source: 'github',
+          }))
+        ) {
+          task = await setTaskState(client, task.organizationId, task.id, 'watching')
+          await appendDelegationEvent(client, task, 'task.watching', { missing: decision.missing })
           return { state: task.state, admitted: [], blocked: null }
         }
         // The review loop may still be able to plan a fix round or a re-review by itself.
