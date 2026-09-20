@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useOnboarding } from '@/lib/use-onboarding'
 import { SUPPORT_LINKS } from '../../../shared/support'
+import { UpdateCard } from './UpdateCard'
 import { QuickSubscriptionUsageDialog } from '@/components/chat/QuickSubscriptionUsageDialog'
 import { connectedQuickUsageTargets, type QuickUsageTarget } from '@/components/chat/quick-subscription-usage'
 import {
@@ -63,6 +64,8 @@ export function SidebarFooter({
 
   return (
     <>
+      <UpdateCard />
+
       {(() => {
         const archivedTotal = standaloneArchivedCount + workspaces.reduce((n, w) => n + (w.archivedCount ?? 0), 0)
         if (archivedTotal === 0 && !showArchived) return null

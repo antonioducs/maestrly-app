@@ -8,7 +8,14 @@ import { getChannel } from './channel'
 import { getAppSetting, setAppSetting } from './store'
 import { isE2E } from './test-mode'
 import { broadcast } from './window-ipc'
-import { GITHUB_OWNER, GITHUB_REPO, releasePageUrl, semverLt, type UpdatePhase, type UpdateState } from '../shared/update'
+import {
+  GITHUB_OWNER,
+  GITHUB_REPO,
+  releasePageUrl,
+  semverLt,
+  type UpdatePhase,
+  type UpdateState,
+} from '../shared/update'
 
 let updaterSingleton: typeof electronUpdater.autoUpdater | undefined
 function au(): typeof electronUpdater.autoUpdater {
@@ -49,8 +56,11 @@ let installing = false
 let installLaunched = false
 let bootTimer: ReturnType<typeof setTimeout> | null = null
 let periodic: ReturnType<typeof setInterval> | null = null
-let pendingCheck: { resolve: (snapshot: UpdateState) => void; ignoreSkip: boolean; timer: ReturnType<typeof setTimeout> } | null =
-  null
+let pendingCheck: {
+  resolve: (snapshot: UpdateState) => void
+  ignoreSkip: boolean
+  timer: ReturnType<typeof setTimeout>
+} | null = null
 
 type UpdaterEventHandler = (payload?: unknown) => void
 const attachedListeners: { event: string; handler: UpdaterEventHandler }[] = []
@@ -113,12 +123,7 @@ function notesToString(notes: unknown): string | undefined {
  * Apply a version found in the feed. A version the user skipped stays silent until a newer one
  * appears, which also clears the skip; a manual check ignores the skip without discarding it.
  */
-function applyAvailable(
-  version: string,
-  notes: string | undefined,
-  url: string,
-  ignoreSkip: boolean
-): UpdateState {
+function applyAvailable(version: string, notes: string | undefined, url: string, ignoreSkip: boolean): UpdateState {
   const skipped = skippedVersion()
   if (skipped && semverLt(skipped, version)) writeSkippedVersion('')
   else if (!ignoreSkip && skipped === version) return setState({ phase: 'idle', lastCheckedAt: Date.now() })
