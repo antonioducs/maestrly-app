@@ -164,6 +164,32 @@ describe('terminal manager cwd activity', () => {
     }
   })
 
+  it.skipIf(process.platform === 'win32').each([undefined, null, ''])(
+    'keeps activity blocked when the process name is %s and recovers on later polls',
+    async (processName) => {
+      vi.useFakeTimers()
+      try {
+        const result = createShellTerminal('conv', '/repo')
+        if (!result.ok) throw new Error('terminal not created')
+        h.getPtyInfo.mockReturnValue({ pid: 1, process: processName })
+        expect(writeShellTerminal(result.id, 'sleep 60\r')).toBe(true)
+        await vi.advanceTimersByTimeAsync(1200)
+        expect(inspectCwdActivity('/repo')).toContainEqual({ kind: 'terminal', count: 1, blocking: true })
+
+        h.getPtyInfo.mockReturnValue({ pid: 1, process: 'sleep' })
+        await vi.advanceTimersByTimeAsync(200)
+        expect(inspectCwdActivity('/repo')).toContainEqual({ kind: 'terminal', count: 1, blocking: true })
+
+        h.getPtyInfo.mockReturnValue({ pid: 1, process: '/bin/ZSH' })
+        await vi.advanceTimersByTimeAsync(200)
+        expect(inspectCwdActivity('/repo')).toEqual([{ kind: 'terminal', count: 1, blocking: false }])
+      } finally {
+        disposeShellTerminals('conv')
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('synchronous spawn failure leaves no tab or idle lease', () => {
     h.createShellPty.mockImplementationOnce((args: { onExit: (code: number) => void }) => args.onExit(1))
     expect(createShellTerminal('conv', '/repo')).toEqual({ ok: false, reason: 'spawn-failed' })
