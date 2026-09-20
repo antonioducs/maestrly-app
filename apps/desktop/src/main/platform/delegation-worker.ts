@@ -6,16 +6,21 @@
  * account/model it must use, and the receipt that reports what the runtime actually did.
  */
 import type {
+  CodeRevision,
   ProjectChatClaim,
   ProjectChatDelegationClaim,
   ProjectChatSession,
+  ReviewResult,
   StageExecutionReceipt,
 } from '@maestrly/protocol'
 import { getConvUiPrefs, patchConvUiPrefs } from '../store'
+import { listChatMessages } from '../chat/chat-store'
 import { listMcpServers } from '../chat/mcp'
 import type { PlatformProjectBinding } from '../../shared/platform'
 import { buildDelegationCatalog } from './delegation-catalog'
 import { buildStageReceipt, type ObservedRuntimeSelection } from './delegation-receipt'
+import { parseReviewResult, reviewContract } from './delegation-review'
+import { captureCodeRevision } from './delegation-snapshot'
 import { DelegationWorkspaces, isReadOnlyStage, type PreparedStageWorkspace } from './delegation-workspace'
 import type { DesktopModelCatalog } from './desktop-executor'
 import type { DesktopExecutorSettings } from './executor-settings'
@@ -46,6 +51,8 @@ export interface DelegationWorkerOptions {
 export class DelegationWorker extends ProjectChatWorker {
   private readonly workspaces: DelegationWorkspaces
   private prepared = new Map<string, PreparedStageWorkspace>()
+  /** Review contract per conversation, appended to the prompt of a read-only stage. */
+  private reviewContracts = new Map<string, string>()
 
   constructor(options: DelegationWorkerOptions) {
     super(
@@ -106,6 +113,11 @@ export class DelegationWorker extends ProjectChatWorker {
     }
     const workspace = await this.workspaces.prepare(claim.session, delegation)
     this.prepared.set(claim.turn.id, workspace)
+    if (delegation.stageType === 'review' && workspace.revision)
+      this.reviewContracts.set(
+        workspace.conversationId,
+        reviewContract(workspace.revision, this.acceptanceCriteria(delegation))
+      )
 
     const settings = (delegation.snapshot as { settings?: { selectionId: string; reasoning: string | null; fastMode: boolean } })
       .settings
@@ -140,8 +152,9 @@ export class DelegationWorker extends ProjectChatWorker {
    * A stage runs unattended: nobody is available to approve a plan or answer a question, so the prompt says
    * so explicitly and the stage must end with a concrete result or a concrete blocker.
    */
-  protected override renderPrompt(_conversationId: string, _session: ProjectChatSession, prompt: string): string {
-    return DELEGATION_STAGE_INSTRUCTIONS + '\n\n' + prompt
+  protected override renderPrompt(conversationId: string, _session: ProjectChatSession, prompt: string): string {
+    const contract = this.reviewContracts.get(conversationId)
+    return [DELEGATION_STAGE_INSTRUCTIONS, prompt, contract ?? ''].filter(Boolean).join('\n\n')
   }
 
   /** Observe what the conversation actually used, without assuming the request was honored. */
@@ -173,23 +186,85 @@ export class DelegationWorker extends ProjectChatWorker {
       settings?: { selectionId: string; reasoning: string | null; fastMode: boolean; executionMode: string; delegationProfiles: string[] }
     }
     const admitted = snapshot.settings ?? null
+    const workspace = this.prepared.get(claim.turn.id) ?? null
+    let result = completion.state
+    let blocker = completion.state === 'succeeded' ? null : completion.error
+    let review: ReviewResult | undefined
+    let codeRevision: CodeRevision | undefined
+
+    if (completion.state === 'succeeded' && workspace) {
+      if (delegation.stageType === 'review') {
+        // The reviewed revision is the one the stable copy represents, never a later edit.
+        const revision = workspace.revision
+        const outcome = revision
+          ? parseReviewResult(this.finalText(context.conversationId), revision)
+          : ({ ok: false, failure: 'missing-block', detail: 'No reviewed revision was captured.' } as const)
+        if (outcome.ok) {
+          review = outcome.result
+          codeRevision = revision ?? undefined
+        } else {
+          // A review without a valid, bound verdict is a failure, not an approval.
+          result = 'failed'
+          blocker = `The review verdict could not be accepted (${outcome.failure}): ${outcome.detail}`
+        }
+      } else if (!workspace.readOnly) {
+        try {
+          codeRevision = (await captureCodeRevision({ cwd: workspace.cwd })).revision
+        } catch (error) {
+          result = 'failed'
+          blocker = `The produced revision could not be captured in full: ${(error as Error).message}`
+        }
+      }
+    }
+
     const receipt: StageExecutionReceipt = buildStageReceipt({
       requested: admitted as never,
       admitted: admitted as never,
       observed: this.observe(context.conversationId),
       conversationId: context.conversationId,
-      result: completion.state,
-      summary: completion.error ?? '',
-      blocker: completion.state === 'succeeded' ? null : completion.error,
+      result,
+      summary: blocker ?? '',
+      blocker,
       durationMs: Date.now() - context.startedAt,
     })
     journal.recordDelegationReceipt(delegation.attemptId, receipt)
-    await this.client.delegationReceipt(delegation.attemptId, { leaseId, receipt })
+    await this.client.delegationReceipt(delegation.attemptId, {
+      leaseId,
+      receipt,
+      ...(codeRevision ? { codeRevision } : {}),
+      ...(review ? { review } : {}),
+    })
     journal.finishDelegationAttempt(delegation.attemptId)
+  }
+
+  /** Acceptance criteria the stage prompt already carries, extracted for the review contract. */
+  private acceptanceCriteria(delegation: ProjectChatDelegationClaim): string[] {
+    const prompt = (delegation.snapshot as { prompt?: string }).prompt ?? ''
+    const section = /### Acceptance criteria\n([\s\S]*?)(\n\n|$)/.exec(prompt)
+    if (!section) return []
+    return section[1]!
+      .split('\n')
+      .map((line) => line.replace(/^-\s*/, '').trim())
+      .filter(Boolean)
+  }
+
+  /** Text of the final assistant message, where the structured verdict must appear. */
+  private finalText(conversationId: string | null): string {
+    if (!conversationId) return ''
+    const messages = listChatMessages(conversationId).filter(
+      (message) => message.role === 'assistant' && !message.internal
+    )
+    const last = messages.at(-1)
+    if (!last) return ''
+    return last.parts
+      .filter((part) => part.type === 'text')
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n')
   }
 
   protected override async afterTurn(claim: ProjectChatClaim): Promise<void> {
     const workspace = this.prepared.get(claim.turn.id)
+    if (workspace) this.reviewContracts.delete(workspace.conversationId)
     this.prepared.delete(claim.turn.id)
     // Only the read-only copy is disposable; the task worktree survives for later stages and inspection.
     if (workspace && isReadOnlyStage(claim.delegation?.stageType ?? '')) await workspace.dispose()

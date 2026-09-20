@@ -56,6 +56,72 @@ export const codeRevisionSchema = z
 
 export const delegationCompletionTargetSchema = z.enum(['patch_ready', 'pr_ready', 'merged'])
 
+export const reviewFindingSeveritySchema = z.enum(['blocking', 'important', 'optional'])
+export const reviewFindingStateSchema = z.enum(['open', 'fixed', 'accepted', 'reopened'])
+
+/** Structured finding. A fix stage and its re-review keep the same identifier, so progress is measurable. */
+export const reviewFindingSchema = z
+  .object({
+    id: z.string().min(1).max(128),
+    severity: reviewFindingSeveritySchema,
+    title: z.string().min(1).max(200),
+    details: z.string().max(4_000),
+    paths: z.array(z.string().min(1).max(300)).max(20).default([]),
+    recommendation: z.string().max(2_000).default(''),
+    state: reviewFindingStateSchema.default('open'),
+  })
+  .strict()
+
+export const criterionCoverageSchema = z
+  .object({
+    criterion: z.string().min(1).max(4_000),
+    satisfied: z.boolean(),
+    evidence: z.string().max(2_000).default(''),
+  })
+  .strict()
+
+/**
+ * Verdict of one review, bound to the exact revision it read. A verdict that does not echo the reviewed
+ * digest is refused: an approval can never float free of the code it approved.
+ */
+export const reviewResultSchema = z
+  .object({
+    verdict: z.enum(['approved', 'changes_requested', 'blocked']),
+    codeRevisionDigest: z.string().min(16).max(191),
+    findings: z.array(reviewFindingSchema).max(50).default([]),
+    criteriaCoverage: z.array(criterionCoverageSchema).max(100).default([]),
+    notes: z.string().max(4_000).default(''),
+  })
+  .strict()
+
+export const completionDecisionSchema = z
+  .object({
+    satisfied: z.boolean(),
+    target: delegationCompletionTargetSchema,
+    /** Concrete reasons the target is not met; empty only when `satisfied` is true. */
+    missing: z
+      .array(
+        z.object({
+          reason: z.enum([
+            'stage_incomplete',
+            'criteria_unresolved',
+            'required_check_missing',
+            'required_check_failed',
+            'review_missing',
+            'review_findings_open',
+            'evidence_stale',
+            'pull_request_missing',
+            'pull_request_not_ready',
+            'merge_missing',
+          ]),
+          detail: z.string().max(1_000).default(''),
+        })
+      )
+      .max(50)
+      .default([]),
+  })
+  .strict()
+
 /**
  * Autonomy is decided per capability. An already-authorized action is not confirmed again, and a connector
  * can never widen this policy for itself.
@@ -463,6 +529,12 @@ export type CodeRevision = z.infer<typeof codeRevisionSchema>
 export type DelegationAutonomy = z.infer<typeof delegationAutonomySchema>
 export type DelegationLimits = z.infer<typeof delegationLimitsSchema>
 export type DelegationPolicy = z.infer<typeof delegationPolicySchema>
+export type ReviewFindingSeverity = z.infer<typeof reviewFindingSeveritySchema>
+export type ReviewFindingState = z.infer<typeof reviewFindingStateSchema>
+export type ReviewFinding = z.infer<typeof reviewFindingSchema>
+export type CriterionCoverage = z.infer<typeof criterionCoverageSchema>
+export type ReviewResult = z.infer<typeof reviewResultSchema>
+export type CompletionDecision = z.infer<typeof completionDecisionSchema>
 export type DelegationPolicyPatch = z.infer<typeof delegationPolicyPatchSchema>
 export type DelegationCompletionTarget = z.infer<typeof delegationCompletionTargetSchema>
 export type DelegationStageState = z.infer<typeof delegationStageStateSchema>

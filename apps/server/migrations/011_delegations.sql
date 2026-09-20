@@ -191,6 +191,49 @@ create table delegation_dependencies (
 );
 create index delegation_dependencies_source_idx on delegation_dependencies(depends_on_task_id);
 
+create table delegation_findings (
+  organization_id uuid not null,
+  project_id uuid not null,
+  task_id uuid not null,
+  finding_id text not null check (length(finding_id) between 1 and 128),
+  severity text not null check (severity in ('blocking','important','optional')),
+  title text not null check (length(title) between 1 and 200),
+  details text not null default '' check (length(details) <= 4000),
+  paths jsonb not null default '[]'::jsonb check (jsonb_typeof(paths) = 'array'),
+  recommendation text not null default '' check (length(recommendation) <= 2000),
+  state text not null default 'open' check (state in ('open','fixed','accepted','reopened')),
+  -- Revision the finding was raised against and the one that resolved it, so evidence cannot drift.
+  raised_revision text not null,
+  resolved_revision text,
+  raised_stage_id uuid not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (task_id, finding_id),
+  foreign key (organization_id, project_id, task_id)
+    references delegation_tasks(organization_id, project_id, id) on delete cascade
+);
+create index delegation_findings_open_idx on delegation_findings(task_id) where state in ('open','reopened');
+
+create table delegation_reviews (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null,
+  project_id uuid not null,
+  task_id uuid not null,
+  stage_id uuid not null,
+  attempt_id uuid not null,
+  verdict text not null check (verdict in ('approved','changes_requested','blocked')),
+  code_revision_digest text not null,
+  criteria_coverage jsonb not null default '[]'::jsonb check (jsonb_typeof(criteria_coverage) = 'array'),
+  notes text not null default '' check (length(notes) <= 4000),
+  created_at timestamptz not null default now(),
+  unique (attempt_id),
+  foreign key (organization_id, project_id, task_id)
+    references delegation_tasks(organization_id, project_id, id) on delete cascade,
+  foreign key (organization_id, project_id, attempt_id)
+    references delegation_attempts(organization_id, project_id, id) on delete cascade
+);
+create index delegation_reviews_task_idx on delegation_reviews(task_id, created_at);
+
 create table delegation_events (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null,
@@ -229,7 +272,8 @@ declare tab text;
 begin
   foreach tab in array array[
     'delegation_presets','delegation_tasks','delegation_stages','delegation_settings_revisions',
-    'delegation_attempts','delegation_commands','delegation_dependencies','delegation_events'
+    'delegation_attempts','delegation_commands','delegation_dependencies','delegation_events',
+    'delegation_findings','delegation_reviews'
   ]
   loop
     execute format('alter table %I enable row level security', tab);
@@ -242,7 +286,8 @@ begin
   if exists (select 1 from pg_roles where rolname = 'maestrly_runtime') then
     grant select, insert, update, delete on
       delegation_presets, delegation_tasks, delegation_stages, delegation_settings_revisions,
-      delegation_attempts, delegation_commands, delegation_dependencies, delegation_events
+      delegation_attempts, delegation_commands, delegation_dependencies, delegation_events,
+      delegation_findings, delegation_reviews
       to maestrly_runtime;
   end if;
 end $$;

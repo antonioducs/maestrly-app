@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import {
+  codeRevisionSchema,
   delegationModelCatalogSchema,
+  reviewResultSchema,
   stageExecutionReceiptSchema,
   type ProjectChatClaim,
 } from '@maestrly/protocol'
@@ -11,6 +13,7 @@ import { chatRunnerIdentity } from '../project-chat/runner-routes.js'
 import { runnerTransaction, tokenHash } from '../project-chat/dispatch.js'
 import { appendChatEvent } from '../project-chat/events.js'
 import { mapMessage, mapSession, mapTurn } from '../project-chat/service.js'
+import { recordReviewResult } from './findings.js'
 import { publishDelegationCatalog } from './model-catalog.js'
 import { appendDelegationEvent, delegationFail, loadTaskRow, mapAttempt } from './repository.js'
 
@@ -127,7 +130,14 @@ export function registerDelegationRunnerRoutes(app: FastifyInstance, pool: Datab
     const identity = chatRunnerIdentity(request)
     const { attemptId } = z.object({ attemptId: z.string().uuid() }).parse(request.params)
     const body = z
-      .object({ leaseId: z.string().uuid(), receipt: stageExecutionReceiptSchema })
+      .object({
+        leaseId: z.string().uuid(),
+        receipt: stageExecutionReceiptSchema,
+        /** Revision this stage produced or read; reviews and checks are bound to it. */
+        codeRevision: codeRevisionSchema.optional(),
+        /** Structured verdict for a review stage. */
+        review: reviewResultSchema.optional(),
+      })
       .strict()
       .parse(request.body)
     return runnerTransaction(pool, identity, async (client) => {
@@ -140,12 +150,28 @@ export function registerDelegationRunnerRoutes(app: FastifyInstance, pool: Datab
       )
       if (!rows.rows[0]) delegationFail('The attempt does not belong to this lease.', 409)
       const attempt = mapAttempt(rows.rows[0])
-      await client.query('update delegation_attempts set receipt=$2 where id=$1', [attempt.id, body.receipt])
+      await client.query('update delegation_attempts set receipt=$2, code_revision=coalesce($3, code_revision) where id=$1', [
+        attempt.id,
+        body.receipt,
+        body.codeRevision ?? null,
+      ])
       const task = await loadTaskRow(
         client,
         { organizationId: identity.organizationId, projectId: String(rows.rows[0].project_id) },
         attempt.taskId
       )
+      if (body.review) {
+        const revision = body.codeRevision ?? attempt.codeRevision
+        if (!revision)
+          delegationFail('A review verdict requires the revision it reviewed.', 409, 'EVIDENCE_STALE')
+        await recordReviewResult(client, {
+          task,
+          stageId: attempt.stageId,
+          attemptId: attempt.id,
+          reviewedRevision: revision,
+          result: body.review,
+        })
+      }
       await appendDelegationEvent(client, task, 'stage.receipt', {
         stageId: attempt.stageId,
         attemptId: attempt.id,
@@ -153,6 +179,7 @@ export function registerDelegationRunnerRoutes(app: FastifyInstance, pool: Datab
         selectionHonored: body.receipt.selectionHonored,
         tokensObserved: body.receipt.tokensObserved,
         blocker: body.receipt.blocker,
+        codeRevisionDigest: body.codeRevision?.contentDigest ?? attempt.codeRevision?.contentDigest ?? null,
       })
       return { ok: true }
     })

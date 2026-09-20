@@ -95,6 +95,8 @@ async function fixture(pool: ReturnType<typeof runtimePool>, name: string) {
   }
 }
 
+// Stage ordering and control are the subject here; the review verdict contract is covered by the quality
+// suite, so this pipeline does not require an approving review to complete.
 const implementThenReview = (boardId: string, executorId: string) => ({
   boardId,
   title: 'Implement with Opus, review with Astra',
@@ -103,6 +105,7 @@ const implementThenReview = (boardId: string, executorId: string) => ({
   executorId,
   workspaceKey: 'workspace-key',
   baseBranch: 'main',
+  policy: { requireReview: false },
   stages: [
     {
       type: 'implement' as const,

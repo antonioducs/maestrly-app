@@ -8,6 +8,7 @@ import {
   type DelegationBlocker,
   type DelegationModelCatalog,
   type DelegationTask,
+  type StageAttempt,
   type StageDefinition,
 } from '@maestrly/protocol'
 import type { DatabaseClient, DatabasePool } from '../../db/pool.js'
@@ -17,12 +18,18 @@ import { executorDelegationCatalog } from './model-catalog.js'
 import {
   appendDelegationEvent,
   delegationFail,
+  loadAttempts,
   loadStages,
   loadTaskRow,
+  mapStage,
   mapTask,
   setTaskState,
 } from './repository.js'
+import { findingsSignature } from './findings.js'
+import { pullRequestFacts } from './pull-requests.js'
+import { appendFixStage, evaluateCompletion, planFixRound, qualityContext } from './quality.js'
 import { admitStage } from './stage-admission.js'
+
 
 const LIVE_STAGE_STATES = ['queued', 'running', 'waiting_input'] as const
 
@@ -62,10 +69,111 @@ function readyStages(stages: StageDefinition[]): StageDefinition[] {
   )
 }
 
-function completionSatisfied(stages: StageDefinition[]): boolean {
-  return stages
-    .filter((stage) => stage.requiredForCompletion)
-    .every((stage) => ['succeeded', 'superseded', 'cancelled'].includes(stage.state))
+/**
+ * Append the quality stage the review loop needs next: a fix round for open findings, or a re-review when the
+ * code changed after the last verdict. Returns null when nothing else can be planned.
+ */
+async function planQualityStage(
+  client: DatabaseClient,
+  task: DelegationTask,
+  stages: StageDefinition[],
+  attempts: StageAttempt[]
+): Promise<{ appended: StageDefinition | null; blocked: DelegationBlocker | null }> {
+  const context = await qualityContext(client, task, stages, attempts)
+  // A fix round is only planned from a review of the CURRENT revision. After a fix changes the code, the
+  // findings must be re-evaluated before another round is queued.
+  const reviewIsCurrent =
+    !!context.review &&
+    !!context.currentRevisionDigest &&
+    context.review.codeRevisionDigest === context.currentRevisionDigest
+  if (task.policy.requireReview && !reviewIsCurrent) {
+    const template = [...stages].reverse().find((stage) => stage.type === 'review' && stage.settings)
+    if (!template)
+      return {
+        appended: null,
+        blocked: blocker('awaiting_human_decision', 'A review is required but no review stage is configured.'),
+      }
+    return { appended: await cloneReviewStage(client, task, template), blocked: null }
+  }
+  const fix = planFixRound({
+    task,
+    stages,
+    findings: context.findings,
+    previousSignature: await previousFixSignature(client, task.id),
+  })
+  if (fix.create) {
+    const appended = await appendFixStage(client, task, fix.create)
+    await rememberFixSignature(client, task.id, findingsSignature(context.findings))
+    return { appended, blocked: null }
+  }
+  if (fix.reason === 'limit_reached' || fix.reason === 'no_progress')
+    return {
+      appended: null,
+      blocked: blocker(
+        'review_findings_open',
+        fix.reason === 'no_progress'
+          ? 'The last fix round did not change the review findings. They are published for a person to decide.'
+          : 'The configured number of fix rounds was reached with findings still open.'
+      ),
+    }
+  return { appended: null, blocked: null }
+}
+
+async function previousFixSignature(client: DatabaseClient, taskId: string): Promise<string | null> {
+  const rows = await client.query<{ data: { signature?: string } }>(
+    "select data from delegation_events where task_id=$1 and type='review.fix_signature' order by sequence desc limit 1",
+    [taskId]
+  )
+  return rows.rows[0]?.data.signature ?? null
+}
+
+async function rememberFixSignature(client: DatabaseClient, taskId: string, signature: string) {
+  const task = await client.query<{ organization_id: string; project_id: string }>(
+    'select organization_id, project_id from delegation_tasks where id=$1',
+    [taskId]
+  )
+  const row = task.rows[0]!
+  await appendDelegationEvent(
+    client,
+    { id: taskId, organizationId: row.organization_id, projectId: row.project_id },
+    'review.fix_signature',
+    { signature }
+  )
+}
+
+/** A new review round is a new stage; the previous verdict keeps its own history. */
+async function cloneReviewStage(
+  client: DatabaseClient,
+  task: DelegationTask,
+  template: StageDefinition
+): Promise<StageDefinition> {
+  const position = Number(
+    (
+      await client.query<{ position: string }>(
+        'select coalesce(max(position)+1,0)::text as position from delegation_stages where task_id=$1',
+        [task.id]
+      )
+    ).rows[0]!.position
+  )
+  const inserted = await client.query(
+    `insert into delegation_stages(
+       organization_id, project_id, task_id, type, title, instructions, position, depends_on, settings, action,
+       required_for_completion, settings_revision
+     ) values ($1,$2,$3,'review',$4,$5,$6,'[]'::jsonb,$7,null,true,$8) returning *`,
+    [
+      task.organizationId,
+      task.projectId,
+      task.id,
+      `${template.title} (again)`,
+      template.instructions,
+      position,
+      template.settings,
+      task.settingsRevision,
+    ]
+  )
+  const stage = mapStage(inserted.rows[0]!)
+  await appendDelegationEvent(client, task, 'review.rerun_planned', { stageId: stage.id, from: template.id })
+  return stage
 }
 
 async function catalogFor(client: DatabaseClient, task: DelegationTask): Promise<DelegationModelCatalog> {
@@ -225,27 +333,52 @@ export async function advanceDelegation(pool: DatabasePool, input: { organizatio
 
       const live = await liveStages(client, task.id)
       const slots = Math.max(0, task.policy.limits.maxParallelStages - live)
-      const ready = readyStages(stages)
+      let ready = readyStages(stages)
       if (!ready.length) {
         if (live > 0) {
           task = await setTaskState(client, task.organizationId, task.id, 'running')
           return { state: task.state, admitted: [], blocked: null }
         }
-        if (completionSatisfied(stages)) {
+        const attempts = await loadAttempts(client, task.id)
+        const context = await qualityContext(client, task, stages, attempts)
+        const decision = evaluateCompletion({
+          task,
+          stages,
+          attempts,
+          findings: context.findings,
+          review: context.review,
+          currentRevisionDigest: context.currentRevisionDigest,
+          pullRequest: await pullRequestFacts(client, task.id),
+        })
+        if (decision.satisfied) {
           task = await setTaskState(client, task.organizationId, task.id, 'completed')
           await appendDelegationEvent(client, task, 'task.completed', {
             completionTarget: task.policy.completionTarget,
+            codeRevisionDigest: context.currentRevisionDigest,
           })
           return { state: task.state, admitted: [], blocked: null }
         }
-        task = await setTaskState(
-          client,
-          task.organizationId,
-          task.id,
-          'needs_attention',
-          blocker('awaiting_human_decision', 'No stage can run and the completion target is not satisfied.')
-        )
-        return { state: task.state, admitted: [], blocked: task.blocker }
+        // The review loop may still be able to plan a fix round or a re-review by itself.
+        const planned = await planQualityStage(client, task, stages, attempts)
+        if (planned.appended) {
+          stages = await loadStages(client, task.id)
+          ready = readyStages(stages)
+        } else {
+          task = await setTaskState(
+            client,
+            task.organizationId,
+            task.id,
+            'needs_attention',
+            planned.blocked ??
+              blocker(
+                'awaiting_human_decision',
+                decision.missing.map((item) => `${item.reason}: ${item.detail}`).join(' ') ||
+                  'The completion target is not satisfied.'
+              )
+          )
+          await appendDelegationEvent(client, task, 'task.needs_attention', { missing: decision.missing })
+          return { state: task.state, admitted: [], blocked: task.blocker }
+        }
       }
       if (slots === 0) {
         task = await setTaskState(client, task.organizationId, task.id, 'running')
