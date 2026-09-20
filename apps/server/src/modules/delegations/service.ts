@@ -35,6 +35,7 @@ import {
   mapDelegationEvent,
   mapStage,
   mapTask,
+  setTaskState,
 } from './repository.js'
 
 export interface DelegationScope {
@@ -250,6 +251,12 @@ export async function createDelegation(
       executorId: input.executorId,
       catalogRevision: catalog.revision,
     })
+    // Asking for the task to start is part of creating it: the caller should not have to send a second
+    // command, and a task must never stay in draft while its author believes it is running.
+    if (input.start) {
+      await setTaskState(client, scope.organizationId, task.id, 'queued')
+      await appendDelegationEvent(client, task, 'task.started', { onCreate: true })
+    }
     return buildView(client, scope, task.id, links)
   })
 }

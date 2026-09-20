@@ -57,6 +57,23 @@ export async function listCheckConfigs(
   )
 }
 
+/** Check results recorded for one task, newest revision first. Read-only view for the API and connectors. */
+export async function listCheckResults(
+  pool: DatabasePool,
+  scope: { organizationId: string; projectId: string; userId: string },
+  taskId: string,
+  codeRevisionDigest?: string
+): Promise<CheckResult[]> {
+  return inTenantTransaction(
+    pool,
+    { organizationId: scope.organizationId, projectId: scope.projectId, actor: { type: 'human', userId: scope.userId } },
+    async (client) => {
+      await authorizeProject(client, scope.organizationId, scope.projectId, scope.userId, 'project:read')
+      return checkResultsFor(client, taskId, codeRevisionDigest)
+    }
+  )
+}
+
 /** Creating or changing a check is an automation management action, not something an execution can do. */
 export async function saveCheckConfig(
   pool: DatabasePool,

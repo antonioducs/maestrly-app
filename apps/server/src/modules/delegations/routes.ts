@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { ServerConfig } from '../../config.js'
 import type { DatabasePool } from '../../db/pool.js'
 import type { HumanIdentity } from '../auth/routes.js'
+import { executeIdempotent } from '../events/http-idempotency.js'
 import { listDelegationArtifacts, readDelegationArtifact } from './artifacts.js'
 import { checkConfigPatchSchema, listCheckConfigs, saveCheckConfig } from './checks.js'
 import { applyDelegationCommand } from './commands.js'
@@ -81,11 +82,22 @@ export function registerDelegationRoutes(
   app.post(root + '/delegations', async (request, reply) => {
     const current = await scope(request, true)
     const body = delegationCreateSchema.parse(request.body)
-    // Creation is idempotent through the shared command table on the created task; the header is still
-    // required so a retried POST is explicit about its intent.
-    idempotencyKey(request)
-    const view = await createDelegation(pool, current, body, links)
-    return reply.status(201).send(view)
+    // A retried creation replays the first task instead of creating a second one with the same intent.
+    const result = await executeIdempotent(
+      pool,
+      {
+        organizationId: current.organizationId,
+        actorId: current.userId,
+        actor: { type: 'human', userId: current.userId },
+        key: idempotencyKey(request),
+        method: request.method,
+        path: request.url,
+        body,
+      },
+      async () => ({ status: 201, body: await createDelegation(pool, current, body, links) })
+    )
+    if (result.replayed) reply.header('idempotency-replayed', 'true')
+    return reply.status(result.status).send(result.body)
   })
 
   app.get(root + '/delegations/:taskId', async (request) => {
