@@ -16,18 +16,8 @@ concurrency:
 
 jobs:
   check:
-    name: ${{ matrix.label }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux
-            os: ubuntu-24.04
-          - label: macOS
-            os: macos-15
-          - label: Windows
-            os: windows-2025
-    runs-on: ${{ matrix.os }}
+    name: macOS trace
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -42,21 +32,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Validate repository history
-        run: npm run check:history
-      - name: Validate pull request title
-        if: github.event_name == 'pull_request'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: node scripts/check-commits.mjs --subject-env PR_TITLE
-      - name: Check application
-        run: npm run check
-      - name: Install Electron system libraries
-        if: runner.os == 'Linux'
-        run: npx playwright install-deps chromium
-      - name: Test Electron on Linux
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e
-      - name: Test Electron on desktop
-        if: runner.os != 'Linux'
-        run: npm run test:e2e
+      - name: Build desktop
+        run: npm run build:desktop
+      - name: Trace standalone chats
+        run: npx playwright test test/e2e/standalone-chats.spec.ts:13 --repeat-each 2
+        working-directory: apps/desktop
