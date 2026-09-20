@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseOptions, runSmoke } from '../../scripts/smoke-cursor-sdk-authenticated.mjs'
 
 const options = { enabled: true, model: 'test-model', apiKey: 'SECRET-KEY', timeoutMs: 100 }
+const smokeRoot = path.resolve('isolated', 'smoke')
 const never = () => new Promise(() => {})
 
 function fixture(fault) {
@@ -41,7 +43,7 @@ function fixture(fault) {
     assert.deepEqual(policy.tools, ['mcp'])
     assert.deepEqual(policy.mcpServers, {})
     assert.deepEqual(policy.local.settingSources, [])
-    assert.equal(policy.local.cwd, '/isolated/smoke')
+    assert.equal(policy.local.cwd, smokeRoot)
     assert.equal(policy.local.store, currentStore)
     assert.deepEqual(Object.keys(policy.local.customTools), ['smoke_probe'])
     assert.deepEqual(policy.local.customTools.smoke_probe.annotations, {
@@ -141,7 +143,7 @@ function fixture(fault) {
       SqliteLocalAgentStore: {
         async open(value) {
           calls.opens.push(value)
-          assert.deepEqual(value, { workspaceRef: '/isolated/smoke', stateRoot: '/isolated/smoke/sdk-state' })
+          assert.deepEqual(value, { workspaceRef: smokeRoot, stateRoot: path.join(smokeRoot, 'sdk-state') })
           currentStore = {
             async dispose() {
               calls.disposed++
@@ -152,9 +154,9 @@ function fixture(fault) {
         },
       },
     }),
-    mkdtemp: async () => '/isolated/smoke',
+    mkdtemp: async () => smokeRoot,
     rm: async (root, value) => {
-      assert.equal(root, '/isolated/smoke')
+      assert.equal(root, smokeRoot)
       assert.deepEqual(value, { recursive: true, force: true })
       calls.removed++
     },
