@@ -335,6 +335,14 @@ export function ChatView({
   convIdRef.current = conversationId
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const debugTrace = useCallback(
+    (entry: string) => {
+      const store = window as unknown as { __chatDebug?: string[] }
+      store.__chatDebug = store.__chatDebug ?? []
+      store.__chatDebug.push(`${Date.now()} ${conversationId.slice(0, 4)} ${entry}`)
+    },
+    [conversationId]
+  )
 
   const historyReloadRevisionRef = useRef(0)
 
@@ -446,6 +454,7 @@ export function ChatView({
   }, [reloadLatestPage])
 
   useEffect(() => {
+    debugTrace(`status-effect status=${status} visible=${visibleRef.current} streamingRef=${streamingRef.current}`)
     if (status !== 'working' && status !== 'asking') return
     if (compactingRef.current) return
     if (!visibleRef.current) {
@@ -453,9 +462,10 @@ export function ChatView({
       return
     }
     if (streamingRef.current) return
+    debugTrace('status-effect elevates streaming')
     streamingRef.current = true
     setStreaming(true)
-  }, [status])
+  }, [status, debugTrace])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -805,6 +815,7 @@ export function ChatView({
 
   const finishTurn = useCallback(
     (hidden = false) => {
+      debugTrace(`finishTurn hidden=${hidden} manualCompaction=${localManualCompactionRef.current}`)
       if (localManualCompactionRef.current) return
       compactingRef.current = false
       compactionRevisionRef.current++
@@ -824,7 +835,7 @@ export function ChatView({
         void doSend(head.text, head.attachments, head.agentMentions, !hidden)
       }
     },
-    [doSend, setQueueState]
+    [doSend, setQueueState, debugTrace]
   )
 
   const pendingQuestionToolCallId = pendingQuestion?.toolCallId
@@ -841,11 +852,13 @@ export function ChatView({
     (workspaceId === null && status === 'working')
   useEffect(() => {
     if (!needsLiveSubscription) return
+    debugTrace('subscribe')
 
     const offStream = window.api.onChatStream(conversationId, (ev) => {
       const kind = (ev as { kind: string }).kind
       const hidden = !visibleRef.current
       const event = ev as ChatStreamEvent
+      debugTrace(`event ${kind} hidden=${hidden}`)
 
       // Hidden standalone views do not render tokens, but must retain the active response before
       // its throttled SQLite checkpoint. Use the same event reducer, with only one assistant cached.
@@ -975,10 +988,12 @@ export function ChatView({
       }
     })
     return () => {
+      debugTrace('unsubscribe')
       offStream()
       offPerm()
     }
   }, [
+    debugTrace,
     conversationId,
     finishTurn,
     needsLiveSubscription,
@@ -1008,6 +1023,9 @@ export function ChatView({
     const maestroRevision = maestroLiveRevisionRef.current
     void window.api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
+      debugTrace(
+        `runtime streaming=${runtime.streaming} guard=${compactionRevision === compactionRevisionRef.current}`
+      )
       if (!localManualCompactionRef.current && compactionRevision === compactionRevisionRef.current) {
         compactingRef.current = runtime.compacting ?? false
         setCompacting(compactingRef.current)
@@ -1050,7 +1068,7 @@ export function ChatView({
     return () => {
       alive = false
     }
-  }, [conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
+  }, [debugTrace, conversationId, normalizeHistoryWindow, reloadLatestPage, setQueueState, setRuntimeQuestionState, visible, workspaceId])
 
   useEffect(() => {
     Promise.all([window.api.chatGetSelection(conversationId), window.api.chatConfig()]).then(([sel, cfg]) => {
