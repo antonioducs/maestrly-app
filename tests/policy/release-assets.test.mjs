@@ -103,6 +103,47 @@ test('stages updater metadata and rewrites artifact names inside latest yml file
   assert.match(yml, /sha512: abc/)
 })
 
+test('rewrites the url-safe names electron-builder writes into the manifest', async (t) => {
+  const { sourceDir, outputDir } = await createWorkspace(t)
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64.dmg'), 'dmg')
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64-mac.zip'), 'zip')
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64-mac.zip.blockmap'), 'blockmap')
+  // electron-builder replaces spaces with hyphens in `url`/`path`, unlike the packaged file names.
+  await writeFile(
+    path.join(sourceDir, 'latest-mac.yml'),
+    [
+      'version: 0.7.0',
+      'files:',
+      '  - url: Maestrly-App-0.7.0-arm64-mac.zip',
+      '    sha512: zip-hash',
+      '  - url: Maestrly-App-0.7.0-arm64.dmg',
+      '    sha512: dmg-hash',
+      'path: Maestrly-App-0.7.0-arm64-mac.zip',
+      '',
+    ].join('\n')
+  )
+
+  await stageReleaseAssets({ platform: 'macos', sourceDir, outputDir, version: '0.7.0' })
+
+  const yml = await readFile(path.join(outputDir, 'latest-mac.yml'), 'utf8')
+  assert.match(yml, /^ {2}- url: Maestrly-App-0\.7\.0-macos-arm64\.zip$/m)
+  assert.match(yml, /^ {2}- url: Maestrly-App-0\.7\.0-macos-arm64\.dmg$/m)
+  assert.match(yml, /^path: Maestrly-App-0\.7\.0-macos-arm64\.zip$/m)
+})
+
+test('rejects updater metadata that still points at an unpublished artifact', async (t) => {
+  const { sourceDir, outputDir } = await createWorkspace(t)
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64.dmg'), 'dmg')
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64-mac.zip'), 'zip')
+  await writeFile(path.join(sourceDir, 'Maestrly App-0.7.0-arm64-mac.zip.blockmap'), 'blockmap')
+  await writeFile(path.join(sourceDir, 'latest-mac.yml'), 'path: Some-Other-Build.zip\n')
+
+  await assert.rejects(
+    stageReleaseAssets({ platform: 'macos', sourceDir, outputDir, version: '0.7.0' }),
+    /Updater metadata latest-mac\.yml references an unpublished artifact: Some-Other-Build\.zip/
+  )
+})
+
 test('requires updater metadata for windows and linux', async (t) => {
   const windows = await createWorkspace(t)
   await writeFile(path.join(windows.sourceDir, 'Maestrly App Setup 1.2.3.exe'), 'windows')

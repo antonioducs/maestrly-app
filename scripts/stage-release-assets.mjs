@@ -54,6 +54,15 @@ function matchesDefinition(name, definition) {
 }
 
 /**
+ * electron-builder writes URL-safe names in the manifests, so a file packaged as
+ * `Maestrly App-0.7.0-arm64-mac.zip` is referenced as `Maestrly-App-0.7.0-arm64-mac.zip`. Every
+ * variant must map to the published name, otherwise the updater downloads a URL that does not exist.
+ */
+function nameVariants(name) {
+  return [...new Set([name, name.replaceAll(' ', '-'), name.replaceAll(' ', '%20')])]
+}
+
+/**
  * Rewrite build-time artifact names to the published ones inside an updater manifest. Longest names
  * are replaced first so a shorter name never truncates a longer one, and checksums stay untouched.
  */
@@ -63,6 +72,18 @@ function rewriteUpdaterMetadata(content, renames) {
     rewritten = rewritten.split(original).join(staged)
   }
   return rewritten
+}
+
+/** A manifest pointing at a file the release will not contain would break every client update. */
+function assertMetadataReferences(manifest, file, stagedNames) {
+  const referenced = [...manifest.matchAll(/^\s*(?:-\s+url|path):\s*(.+?)\s*$/gm)].map((match) =>
+    match[1].replace(/^['"]|['"]$/g, '')
+  )
+  for (const reference of referenced) {
+    if (!stagedNames.has(reference)) {
+      throw new Error(`Updater metadata ${file} references an unpublished artifact: ${reference}`)
+    }
+  }
 }
 
 function resolvePath(value, label) {
@@ -104,6 +125,7 @@ export async function stageReleaseAssets({ platform, sourceDir, outputDir, versi
 
   const entries = await readdir(source, { withFileTypes: true })
   const staged = []
+  const stagedNames = new Set()
   const renames = new Map()
   for (const definition of definitions) {
     const candidates = entries.filter((entry) => matchesDefinition(entry.name, definition))
@@ -122,11 +144,13 @@ export async function stageReleaseAssets({ platform, sourceDir, outputDir, versi
     const destination = path.join(output, outputName)
     if (definition.kind === 'metadata') {
       const manifest = rewriteUpdaterMetadata(await readFile(sourceFile, 'utf8'), renames)
+      assertMetadataReferences(manifest, outputName, stagedNames)
       await writeFile(destination, manifest, { flag: 'wx' })
     } else {
-      renames.set(candidate.name, outputName)
+      for (const variant of nameVariants(candidate.name)) renames.set(variant, outputName)
       await copyFile(sourceFile, destination, constants.COPYFILE_EXCL)
     }
+    stagedNames.add(outputName)
     staged.push(destination)
   }
 
