@@ -82,19 +82,66 @@ function readBody(request: http.IncomingMessage, limit: number): Promise<string>
       return
     }
     let size = 0
-    const chunks: Buffer[] = []
+    let refused = false
+    let chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => {
+      if (refused) return
       size += chunk.length
       if (size > limit) {
+        // Refused: release what was read and keep nothing more, without ending the request here —
+        // the refusal still has to reach a client that is only now finishing its upload.
+        refused = true
+        chunks = []
         reject(new BodyTooLargeError('The request body is too large.'))
-        request.pause()
         return
       }
       chunks.push(chunk)
     })
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('end', () => {
+      if (!refused) resolve(Buffer.concat(chunks).toString('utf8'))
+    })
     request.on('error', reject)
   })
+}
+
+/** Longest a refused upload is drained so its client can read the answer before the socket closes. */
+const REFUSAL_DRAIN_MS = 2_000
+/** Most of a refused upload that is ever read and discarded while draining it. */
+const REFUSAL_DRAIN_BYTES = 4 * 1024 * 1024
+
+/**
+ * Close a refused request without cutting its client off mid-upload.
+ *
+ * A client still writing its body has not read the refusal yet, and a socket destroyed under it is
+ * observed as a connection reset rather than as the 413 it was sent — which is what Windows does
+ * instead of draining the pending bytes. The rest of the body is discarded as it arrives, never
+ * buffered, and the socket closes as soon as the client stops writing, or once this has waited long
+ * enough or discarded more than it is willing to read.
+ */
+function closeAfterRefusal(request: http.IncomingMessage): void {
+  const socket = request.socket
+  let discarded = 0
+  // The upload ended on its own: `Connection: close` already closes this socket in order, and cutting
+  // it here instead could land before the client has read the answer it is being closed for.
+  const stopDraining = (): void => {
+    clearTimeout(timer)
+    request.off('data', discard)
+  }
+  const cut = (): void => {
+    stopDraining()
+    socket?.destroy()
+  }
+  const discard = (chunk: Buffer): void => {
+    discarded += chunk.length
+    if (discarded > REFUSAL_DRAIN_BYTES) cut()
+  }
+  const timer = setTimeout(cut, REFUSAL_DRAIN_MS)
+  timer.unref?.()
+  request.once('end', stopDraining)
+  request.once('close', stopDraining)
+  request.once('error', cut)
+  request.on('data', discard)
+  request.resume()
 }
 
 /** Accept both the form encoding OAuth mandates and the JSON body some bot clients send anyway. */
@@ -196,7 +243,7 @@ export class BotHttpServer {
           { error: 'invalid_request', error_description: 'The request body is too large.' },
           { connection: 'close' }
         )
-        response.once('finish', () => request.socket?.destroy())
+        response.once('finish', () => closeAfterRefusal(request))
         return
       }
       if (error instanceof LocalBotOAuthError) {

@@ -135,6 +135,65 @@ async function rpc(message: unknown, token?: string) {
   return { status: response.status, headers: response.headers, body: text ? JSON.parse(text) : null }
 }
 
+/**
+ * An upload that is still being written when the endpoint refuses it.
+ *
+ * The refusal has to survive the rest of that upload. A socket cut under a client that has not
+ * finished writing is observed as a connection reset instead of the answer it was sent — which is
+ * exactly what Windows does rather than draining the bytes still in flight. The body is therefore
+ * written in pieces, well after the answer is already on the wire.
+ */
+function refusedUpload(pieces: number, pieceBytes: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const prefix = 'grant_type=refresh_token&refresh_token='
+    const piece = 'a'.repeat(pieceBytes)
+    const request = http.request(
+      `${origin}/oauth/token`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'content-length': String(prefix.length + pieces * pieceBytes),
+        },
+      },
+      (response) => {
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', (part: string) => (body += part))
+        response.once('end', () => {
+          answer = { status: response.statusCode ?? 0, error: JSON.parse(body).error }
+          settle()
+        })
+      }
+    )
+    // Both halves have to finish: an answer read while the upload is still being cut off would say
+    // nothing about the client that has to keep writing after it.
+    let answer: { status: number; error: string } | null = null
+    let uploaded = false
+    const settle = (): void => {
+      if (!answer || !uploaded) return
+      expect(answer.error).toBe('invalid_request')
+      resolve(answer.status)
+    }
+    request.once('error', reject)
+    request.once('finish', () => {
+      uploaded = true
+      settle()
+    })
+    request.write(prefix)
+    let written = 0
+    const pump = (): void => {
+      if (written >= pieces) {
+        request.end()
+        return
+      }
+      written += 1
+      request.write(piece, () => setTimeout(pump, 5))
+    }
+    pump()
+  })
+}
+
 /** A request with headers `fetch` refuses to forge, such as a foreign `Host`. */
 function rawGet(path: string, headers: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -524,6 +583,8 @@ it('answers malformed, oversized and foreign requests with short sanitized error
   })
   expect(oversized.status).toBe(413)
   expect((await oversized.json()).error).toBe('invalid_request')
+  // A client that learns of the refusal mid-upload still reads it, instead of a connection reset.
+  expect(await refusedUpload(12, 32 * 1024)).toBe(413)
 
   expect(await rawGet('/.well-known/oauth-authorization-server', { host: 'attacker.test' })).toBe(403)
   const foreignOrigin = await fetch(`${origin}/.well-known/oauth-authorization-server`, {
