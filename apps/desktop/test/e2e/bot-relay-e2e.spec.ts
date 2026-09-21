@@ -837,6 +837,10 @@ test('personal bot conversations: a private bot drives native chats through this
     await expect(rpc(botToken, 'tools/list')).rejects.toThrow()
     await launch()
     holdMarker = null
+    // The account belongs to the session that used it: with no keyring — the ordinary state of a
+    // headless machine — a provider key is kept in memory alone, so the person supplies it again after
+    // a restart. The bot connection, its chats and their worktrees survive on their own.
+    expect((await call('chatSetKey', provider.id, 'fixture-key')) as { ok: boolean }).toMatchObject({ ok: true })
     // The endpoint the person enabled comes back with the application, on the same address.
     await expect
       .poll(

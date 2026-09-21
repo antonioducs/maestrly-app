@@ -74,13 +74,6 @@ test('a bot is set up from the request that asked for it, and a dismissed reques
     await launch()
     await call('setOnboardingDone', true)
     const workspace = (await call('addWorkspace', repo)) as { id: string; name: string }
-    const provider = (await call('chatAddProvider', {
-      name: 'Conta de teste',
-      kind: 'openai',
-      key: 'fixture-key',
-      baseURL: `http://127.0.0.1:${modelPort}/v1`,
-    })) as { ok: boolean; id: string }
-    expect(provider.ok).toBe(true)
     expect(((await call('botSettings')) as any).pendingAuthorizations).toEqual([])
     await shutdown()
 
@@ -119,6 +112,15 @@ test('a bot is set up from the request that asked for it, and a dismissed reques
     }
 
     await launch()
+    // The account belongs to the session that uses it: with no keyring — the ordinary state of a
+    // headless machine — a provider key is kept in memory alone and never survives a restart.
+    const provider = (await call('chatAddProvider', {
+      name: 'Conta de teste',
+      kind: 'openai',
+      key: 'fixture-key',
+      baseURL: `http://127.0.0.1:${modelPort}/v1`,
+    })) as { ok: boolean; id: string }
+    expect(provider.ok).toBe(true)
     await page
       .getByRole('button', { name: /Configurações/ })
       .first()
