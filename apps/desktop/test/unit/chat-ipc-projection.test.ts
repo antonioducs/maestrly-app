@@ -1,4 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+/** Everything the main process pushed to the window, so an announcement can be read back verbatim. */
+const pushed = vi.hoisted(() => [] as Array<[string, unknown]>)
+vi.mock('../../src/main/window-ipc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/window-ipc')>()),
+  getMainWebContents: () => ({
+    isDestroyed: () => false,
+    send: (channel: string, payload?: unknown) => void pushed.push([channel, payload]),
+  }),
+}))
+
 vi.mock('../../src/main/chat/codex-subscription', () => ({
   compactCodexSubscriptionThread: vi.fn(),
   clearAllCodexThreadBindings: vi.fn(),
@@ -38,7 +49,15 @@ vi.mock('../../src/main/chat/portable-summarizer', () => ({
 }))
 
 import type { ChatIpcDeps } from '../../src/main/chat/service'
-import { disposeChat, registerChatIpc } from '../../src/main/chat/service'
+import {
+  chatRuntimeState,
+  disposeChat,
+  getChatPermissionBroker,
+  primeChatTurnSelection,
+  publishConvChatSettings,
+  registerChatIpc,
+} from '../../src/main/chat/service'
+import { registerRemoteChatPolicy } from '../../src/main/chat/remote-policy'
 import {
   deleteChatMessage,
   listChatMessages,
@@ -52,7 +71,7 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { addProvider, getProviderKind } from '../../src/main/chat/catalog'
 import { clearApiKey, setApiKey } from '../../src/main/chat/credentials'
 import { buildOpenAIProviderFingerprint } from '../../src/main/chat/provider'
-import { patchConvUiPrefs } from '../../src/main/store'
+import { getDb, patchConvUiPrefs } from '../../src/main/store'
 import {
   toolOutputImages,
   type ChatHistoryStats,
@@ -67,19 +86,173 @@ function register(): Map<string, Handler> {
   const handlers = new Map<string, Handler>()
   registerChatIpc({
     mhandle: (channel, fn) => void handlers.set(channel, fn as Handler),
-    mon: vi.fn(),
+    mon: (channel, fn) => void handlers.set(channel, fn as Handler),
     emitStatus: vi.fn(),
   } satisfies ChatIpcDeps)
   return handlers
 }
 
-beforeEach(freshDb)
+beforeEach(() => {
+  pushed.length = 0
+  freshDb()
+})
 afterEach(async () => {
   await disposeChat()
   closeDb()
 })
 
 const FP = 'a'.repeat(64)
+
+/** What the window was told about one conversation, in order. */
+const announcements = (conversationId: string) =>
+  pushed.filter(([channel]) => channel.endsWith(`:${conversationId}`)).map(([channel, payload]) => [channel, payload])
+
+describe('conversation settings the person did not choose', () => {
+  it('announces an account, effort and mode moved by something other than the picker', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const provider = addProvider({ name: 'Custom', baseURL: 'https://api.example.test/v1/', kind: 'openai' })
+    const handlers = register()
+    pushed.length = 0
+
+    // What a bot configuring its conversation does, and what a delegated stage or a failover does too.
+    const moved = { providerId: provider.id, modelId: 'deepseek-v4-pro', reasoning: 'high' }
+    primeChatTurnSelection(conversation.id, moved)
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+    // The composer reads the moved values through the handlers it already uses.
+    expect(handlers.get('chat:get-reasoning')!({}, conversation.id)).toBe('high')
+    expect(handlers.get('chat:get-selection')!({}, conversation.id)).toMatchObject({ modelId: 'deepseek-v4-pro' })
+
+    // Writing the same values again moves nothing, so a read that rewrites a fallback cannot loop.
+    pushed.length = 0
+    primeChatTurnSelection(conversation.id, moved)
+    expect(announcements(conversation.id)).toEqual([])
+
+    // The behavior mode is shown by the composer too, so moving it is announced the same way.
+    await handlers.get('chat:set-mode')!({}, conversation.id, 'plan')
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+    expect(handlers.get('chat:get-mode')!({}, conversation.id)).toBe('plan')
+
+    // A change the composer does not show is not worth waking it up for.
+    pushed.length = 0
+    await handlers.get('chat:set-conv-tools')!({}, conversation.id, { app: true })
+    expect(announcements(conversation.id)).toEqual([])
+  })
+
+  it('announces fast mode the moment a bot turns it on, and again when it goes out', () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const provider = addProvider({ name: 'Custom', baseURL: 'https://api.example.test/v1/', kind: 'openai' })
+    const handlers = register()
+    pushed.length = 0
+
+    // Exactly what a bot asking for fast mode leaves behind: the flag the next turn reads.
+    const selection = { providerId: provider.id, modelId: 'deepseek-v4-pro', reasoning: 'high' }
+    primeChatTurnSelection(conversation.id, { ...selection, fastMode: true })
+    expect(handlers.get('chat:get-fast-mode')!({}, conversation.id)).toBe(true)
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+
+    // Going out is announced too: a chip that only lit up would keep claiming a speed it no longer has.
+    pushed.length = 0
+    primeChatTurnSelection(conversation.id, { ...selection, fastMode: false })
+    expect(handlers.get('chat:get-fast-mode')!({}, conversation.id)).toBe(false)
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+  })
+
+  it('announces settings a caller wrote around the merge, as a bot host does', () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    register()
+    pushed.length = 0
+
+    // A bot host replaces ui_prefs.chat wholesale instead of merging, then says so itself.
+    patchConvUiPrefs(conversation.id, { chat: { mode: 'agent', permMode: 'auto' } })
+    expect(announcements(conversation.id)).toEqual([])
+
+    publishConvChatSettings(conversation.id)
+
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+  })
+
+  it('announces the permission mode a bot conversation runs under', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const handlers = register()
+    pushed.length = 0
+
+    await handlers.get('chat:set-perm-mode')!({}, conversation.id, 'auto')
+
+    expect(announcements(conversation.id)).toEqual([[`chat:settings:${conversation.id}`, undefined]])
+    expect(handlers.get('chat:get-perm-mode')!({}, conversation.id)).toBe('auto')
+  })
+})
+
+describe('bot permission replies', () => {
+  it('offers only one-operation approval and survives an unsupported persistent reply', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const release = registerRemoteChatPolicy({
+      conversationId: conversation.id,
+      cwd: conversation.cwd,
+      mode: 'agent',
+      permMode: 'ask',
+      providerIds: ['fixture'],
+      allowCommands: true,
+      allowWeb: true,
+      allowAppTools: true,
+      allowMcp: false,
+      allowPush: false,
+    })
+    const handler = register().get('chat:permission-respond')!
+    const broker = getChatPermissionBroker()
+    const decision = broker.assertDecision({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      action: 'bash',
+      resources: ['git status'],
+      save: ['git status'],
+    })
+    const [request] = broker.pendingFor(conversation.id)
+    try {
+      expect.soft(chatRuntimeState(conversation.id).pendingPermissions[0].allowAlways).not.toBe(true)
+      // A stale renderer can still send the old button's reply. It must not escape ipcMain.on.
+      expect(() => handler({}, request.id, 'always')).not.toThrow()
+      expect(broker.pendingFor(conversation.id)).toHaveLength(1)
+      expect(getDb().prepare('SELECT * FROM permission_saved').all()).toHaveLength(0)
+    } finally {
+      handler({}, request.id, 'once')
+      expect(await decision).toBe('once')
+      release()
+    }
+  })
+
+  it('keeps persistent approval available to local conversations', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    patchConvUiPrefs(conversation.id, { chat: { permMode: 'ask' } })
+    const handler = register().get('chat:permission-respond')!
+    const broker = getChatPermissionBroker()
+    const decision = broker.assertDecision({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      action: 'bash',
+      resources: ['git status'],
+      save: ['git status'],
+    })
+    const [request] = broker.pendingFor(conversation.id)
+    try {
+      expect(chatRuntimeState(conversation.id).pendingPermissions[0].allowAlways).toBe(true)
+      handler({}, request.id, 'always')
+      expect(await decision).toBe('always')
+      expect(getDb().prepare('SELECT action, resource FROM permission_saved').all()).toEqual([
+        { action: 'bash', resource: 'git status' },
+      ])
+    } finally {
+      broker.reply({ requestId: request.id, reply: 'once' })
+      await decision
+    }
+  })
+})
 
 function storedWithIdentity(conversationId: string, id: string, contextIdentity = FP): StoredChatMessage {
   return {
@@ -273,7 +446,7 @@ describe('history IPC contract: internal identity never crosses the boundary', (
     const conv = makeConversation(makeWorkspace().id, { mode: 'local' })
     upsertChatMessage(storedWithIdentity(conv.id, 'a1'))
     const handlers = register()
-    const { messages } = handlers.get('chat:history:page')?.({}, conv.id, { limit: 10 }) as {
+    const { messages } = handlers.get('chat:history:page')!({}, conv.id, { limit: 10 }) as {
       messages: ChatMessage[]
     }
     expect(messages).toHaveLength(1)
@@ -307,7 +480,7 @@ describe('history IPC contract: internal identity never crosses the boundary', (
     const conv = makeConversation(makeWorkspace().id, { mode: 'local' })
     upsertChatMessage(storedWithIdentity(conv.id, 'a1'))
     const handlers = register()
-    const { messages: publicMessages } = handlers.get('chat:history:page')?.({}, conv.id, { limit: 10 }) as {
+    const { messages: publicMessages } = handlers.get('chat:history:page')!({}, conv.id, { limit: 10 }) as {
       messages: ChatMessage[]
     }
     expect(publicMessages[0]).not.toHaveProperty('providerFingerprint')

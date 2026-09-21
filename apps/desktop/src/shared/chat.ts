@@ -922,6 +922,8 @@ export interface ChatMessage {
   model?: ChatModelRef
 
   source?: ChatMessageSource
+  /** Trusted bot identity captured when this particular message was admitted by main. */
+  botName?: string
   createdAt: number
 
   finishReason?: string

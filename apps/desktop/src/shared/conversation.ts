@@ -118,6 +118,15 @@ interface ConversationBase {
   repos?: ConvRepo[]
   /** Conversation UI preferences, including tab order and browser restoration. */
   uiPrefs?: ConvUiPrefs
+  /** Immutable origin, set only by the authenticated main-process bot service. */
+  botOrigin?: import('./bot').BotConversationOrigin
+  /** Independent of origin: a human can pause management while keeping the transcript. */
+  botManagementState?: import('./bot').BotManagementState
+  /**
+   * The person released this bot chat for their own messages, so writing here no longer takes the
+   * conversation away from the bot. Independent of management state, which stays the bot's ownership.
+   */
+  botManualChatEnabled?: boolean
 }
 
 export interface ProjectConversation extends ConversationBase {

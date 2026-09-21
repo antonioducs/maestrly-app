@@ -23,6 +23,7 @@ import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
+import { botApi } from '../../src/preload/api-bot'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -57,6 +58,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['updateApi', updateApi],
   ['chatApi', chatApi],
   ['platformApi', platformApi],
+  ['botApi', botApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -152,7 +154,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(386)
+    expect(keys).toHaveLength(397)
     expect(keys.sort()).toMatchSnapshot()
   })
 

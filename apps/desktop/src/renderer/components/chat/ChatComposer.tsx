@@ -29,6 +29,7 @@ interface Props {
   sendWhileStreaming?: boolean
   streamingPlaceholder?: string
   disabled?: boolean
+  disabledPlaceholder?: string
 
   onMentionsChange?: (mentions: StructuredAgentMentionDraft[]) => void
 
@@ -73,6 +74,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
     sendWhileStreaming = false,
     streamingPlaceholder,
     disabled,
+    disabledPlaceholder,
     onSend,
     onStop,
     leftSlot,
@@ -258,7 +260,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
           disabled={disabled}
           placeholder={
             disabled
-              ? t('composer.placeholderDisabled')
+              ? (disabledPlaceholder ?? t('composer.placeholderDisabled'))
               : streaming
                 ? (streamingPlaceholder ?? t('composer.placeholderQueue'))
                 : t('composer.placeholder')
