@@ -9,6 +9,7 @@ import { registerLinkedBoardToolRoutes } from './modules/kanban/agent-routes.js'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 import {
+  BOT_PROTECTED_RESOURCE_PATH,
   PROTOCOL_VERSION,
   supportsProtocol,
   type ApiError,
@@ -36,6 +37,9 @@ import { registerAccessRoutes } from './modules/access/routes.js'
 import { createConnectorAuthenticator } from './modules/connectors/auth.js'
 import { createConnectorToolRegistry, registerConnectorMcp } from './modules/connectors/mcp.js'
 import { registerConnectorRoutes } from './modules/connectors/routes.js'
+import { createBotAuthenticator } from './modules/bot-conversations/auth.js'
+import { botToolCatalog, createBotToolRegistry, registerBotMcp } from './modules/bot-conversations/mcp.js'
+import { registerBotRoutes } from './modules/bot-conversations/routes.js'
 import { connectorToolCatalog } from './modules/connectors/tool-catalog.js'
 import { registerDelegationRunnerRoutes } from './modules/delegations/runner-routes.js'
 import { registerDelegationRoutes } from './modules/delegations/routes.js'
@@ -66,7 +70,7 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     origin: config.webOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'authorization', 'idempotency-key', 'last-event-id', 'x-maestrly-protocol-version', 'x-maestrly-organization-id', 'x-maestrly-runner-id', 'x-maestrly-client-actor', 'x-maestrly-conversation-id'],
+    allowedHeaders: ['content-type', 'authorization', 'idempotency-key', 'last-event-id', 'x-maestrly-protocol-version', 'x-maestrly-organization-id', 'x-maestrly-runner-id', 'x-maestrly-client-actor', 'x-maestrly-conversation-id', 'x-maestrly-bot-desktop-id'],
   })
   await app.register(rateLimit, { max: 300, timeWindow: '1 minute' })
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
@@ -135,9 +139,9 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
   app.get('/api/v1/health/ready', async (_request, reply) => {
     try {
       const result = await pool.query<{ count: string }>(`
-        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql','010_connector_grants.sql','011_delegations.sql','012_delegation_evidence.sql','013_delegation_delivery.sql','014_delegation_events.sql','015_connector_notifications.sql')
+        select count(*)::text as count from schema_migrations where name in ('000_better_auth.sql', '001_platform.sql', '002_actor_context.sql', '003_kanban_workflows.sql', '004_column_automation.sql', '005_project_team.sql', '006_personal_devices.sql', '007_desktop_executor.sql','008_project_chat.sql','010_connector_grants.sql','011_delegations.sql','012_delegation_evidence.sql','013_delegation_delivery.sql','014_delegation_events.sql','015_connector_notifications.sql','016_bot_conversations.sql')
       `)
-      if (Number(result.rows[0]?.count) !== 15) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
+      if (Number(result.rows[0]?.count) !== 16) return reply.status(503).send({ status: 'not_ready', reason: 'schema_incompatible' })
       return { status: 'ready' }
     } catch {
       return reply.status(503).send({ status: 'not_ready', reason: 'database_unavailable' })
@@ -167,6 +171,14 @@ export async function buildApp(dependencies: AppDependencies): Promise<FastifyIn
     authenticate: createConnectorAuthenticator(auth, config, pool),
     registry: createConnectorToolRegistry(connectorToolCatalog(pool, config)),
     resourceMetadataUrl: `${config.canonicalUrl}/.well-known/oauth-protected-resource/mcp`,
+  })
+
+  // Personal bot conversations: owner API, desktop transport and the bot MCP endpoint. No tenant.
+  registerBotRoutes(app, pool, auth, config, authenticate)
+  registerBotMcp(app, {
+    authenticate: createBotAuthenticator(auth, config, pool),
+    registry: createBotToolRegistry(botToolCatalog(pool)),
+    resourceMetadataUrl: `${config.canonicalUrl}${BOT_PROTECTED_RESOURCE_PATH}`,
   })
 
   app.get('/api/v1/organizations', async (request) => {

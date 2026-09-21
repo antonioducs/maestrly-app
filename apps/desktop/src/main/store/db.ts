@@ -2,6 +2,8 @@ import { DatabaseSync } from 'node:sqlite'
 import { conversationScopeConstraint, migrateStandaloneConversations } from './standalone-conversation-migration'
 import { app } from 'electron'
 import { prepareProductionDatabasePath } from './database-path-migration'
+import { initializeBotCommandSchema } from '../bot/schema'
+import { initializeBotOAuthSchema } from '../bot/oauth'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -178,6 +180,8 @@ export function initStore(file?: string): void {
 }
 
 function initializeSchema(): void {
+  initializeBotCommandSchema(db)
+  initializeBotOAuthSchema(db)
   db.exec(`
     CREATE TABLE IF NOT EXISTS platform_chat_sessions (
       instance_id TEXT NOT NULL, session_id TEXT NOT NULL, conversation_id TEXT NOT NULL UNIQUE,
@@ -968,6 +972,33 @@ function initializeSchema(): void {
   if (!hasCol('experience')) {
     db.exec("ALTER TABLE conversations ADD COLUMN experience TEXT NOT NULL DEFAULT 'standard';")
   }
+  if (!hasCol('bot_origin')) db.exec('ALTER TABLE conversations ADD COLUMN bot_origin TEXT;')
+  if (!hasCol('bot_management_state'))
+    db.exec(
+      "ALTER TABLE conversations ADD COLUMN bot_management_state TEXT CHECK(bot_management_state IN ('active','paused','revoked'));"
+    )
+  // Only the person releases a bot chat for their own messages; a chat that predates the choice keeps none.
+  if (!hasCol('bot_manual_chat_enabled'))
+    db.exec('ALTER TABLE conversations ADD COLUMN bot_manual_chat_enabled INTEGER NOT NULL DEFAULT 0;')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_conversation_allocations (
+      instance_id TEXT NOT NULL, owner_user_id TEXT NOT NULL, desktop_id TEXT NOT NULL,
+      connection_id TEXT NOT NULL, request_id TEXT NOT NULL, allocation_id TEXT NOT NULL UNIQUE,
+      conversation_id TEXT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+      workspace_id TEXT NOT NULL, branch TEXT NOT NULL, cwd TEXT NOT NULL,
+      base_branch TEXT NOT NULL, name TEXT NOT NULL, fingerprint TEXT NOT NULL,
+      phase TEXT NOT NULL CHECK(phase IN ('reserved','allocating','prepared','ready','deleted','recovery')),
+      error TEXT,
+      PRIMARY KEY(instance_id,connection_id,request_id)
+    );
+    CREATE TRIGGER IF NOT EXISTS bot_conversation_tombstone BEFORE DELETE ON conversations
+    BEGIN
+      UPDATE bot_conversation_allocations SET phase='deleted' WHERE conversation_id=OLD.id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS bot_conversation_origin_immutable BEFORE UPDATE OF bot_origin ON conversations
+    WHEN OLD.bot_origin IS NOT NULL AND NEW.bot_origin IS NOT OLD.bot_origin
+    BEGIN SELECT RAISE(ABORT, 'Bot conversation origin is immutable'); END;
+  `)
   // Workspace project memory defaults enabled.
   const wsCols = db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>
   if (!wsCols.some((c) => c.name === 'memory_enabled')) {

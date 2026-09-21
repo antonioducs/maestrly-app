@@ -129,6 +129,20 @@ compromised process running as the same user.
 
 ## MCP, skills, and memory
 
+The optional personal bot endpoint runs inside Desktop and binds to loopback by
+default. The owner can explicitly select a network bind address and is responsible
+for publishing it over HTTPS. OAuth uses PKCE and requires consent in Desktop;
+tokens are scoped to a bot and the configured public audience. Workspace grants,
+pausing and revocation are enforced locally. Changing the public URL invalidates
+existing authorizations. Bot clients receive their own conversations and events,
+but cannot approve permission requests or plans. A bot conversation refuses the
+owner's own messages until the owner explicitly releases it; a released
+conversation still admits one turn at a time, and a bot can neither cancel nor
+steer a turn the owner started, nor change its account, model or approval mode.
+Reading a conversation back is scoped to one conversation of the calling
+connection and carries public message text only, never reasoning, tool results or
+attachments. See [bot setup](grok-connector.md).
+
 A stdio MCP server is an executable chosen by the user. A remote MCP server is a
 network service chosen by the user. Either can return hostile text, request
 powerful tool actions, or perform side effects outside Maestrly App's visibility.

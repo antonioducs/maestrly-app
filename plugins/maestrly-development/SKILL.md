@@ -1,99 +1,139 @@
 ---
 name: maestrly-development
-description: Delegate development work to Maestrly and follow it to delivery. Use this whenever the person asks for code to be written, changed, reviewed, tested or shipped in one of their repositories, or asks about work already delegated ("how is it going", "did the checks pass", "open the pull request", "ask it to also handle X").
+description: Work in the person's own repositories through Maestrly. Use this whenever they ask for code to be written, changed, reviewed, tested or shipped in one of their repositories, or ask about work already underway ("how is it going", "did the tests pass", "continue that chat", "also handle X"). The default path is a Maestrly chat on their computer; delegating a full pipeline to a project is a separate path, used only when they have it and ask for it.
 ---
 
-# Delegating development work to Maestrly
+# Working in a person's repositories through Maestrly
 
-Maestrly runs development work on the person's own computers, with their own accounts, models and
-repositories. You do not write the code: you describe the work, choose who does it, follow it, judge the
-evidence, and decide what happens next. Everything here goes through the `maestrly_*` MCP tools.
+Maestrly runs the work on the person's own computer, in their own repositories, with their own accounts and
+models. You do not write the code and you never touch their files directly: you describe the work, follow
+it, read the evidence, and decide what happens next. Everything goes through MCP tools.
+
+There are two paths, and they are not interchangeable:
+
+- **A chat on their computer** — the `bot_*` tools, the `/mcp/bots` endpoint, which their own Maestrly
+  Desktop serves. This is the default. Each chat runs in its own worktree on their machine. Use it unless
+  they asked for something else.
+- **A delegated pipeline** — the `maestrly_*` tools, the `/mcp` endpoint. A task with stages, review,
+  checks and a pull request, inside a project of an organization. Use it only when your connection has
+  those tools and the person asked for that kind of delivery. It is described at the end.
+
+If a tool you need is not in your catalog, that path is not granted to this connection. Say so instead of
+improvising with the other one.
 
 ## What you must never do
 
-- Never invent a `projectId`, `taskId`, `selectionId`, `checkId` or `artifactId`. Read each one from a
-  listing tool first. An id from memory or from an earlier conversation may belong to something else.
-- Never claim work is done because a stage finished, a pull request was opened, or a turn ended. Completion
-  is decided by the task's completion target and reported by `maestrly_get_task`.
-- Never report a result you did not read. Check output, diffs and screenshots come from
-  `maestrly_list_evidence` and `maestrly_read_artifact`; if you did not read them, say so.
-- Never assume a reasoning effort, fast mode or execution mode exists for an account and model. Only the
-  values listed by `maestrly_list_executors` are valid, and Maestrly refuses to translate an effort from one
-  provider to another.
-- Never repeat a mutating call with a new idempotency key after a timeout. Reuse the same key: a retry then
-  replays the first result instead of delegating the same work twice.
+- Never invent a `workspaceId`, `conversationId`, `selectionId`, `questionId`, `projectId` or `taskId`.
+  Read each one from a listing tool in this conversation. An id you remember from an earlier session may
+  belong to something else, or to nothing at all.
+- Never claim work is done because a turn ended, a message streamed, or a stage finished. Say what the
+  conversation actually reported, and what you still have not seen.
+- Never report a result you did not read. If you did not read the reply, the diff or the check output, say
+  so.
+- Never assume a model, reasoning effort or mode exists. Only what `bot_list_selections` (or
+  `maestrly_list_executors`) lists is real, and Maestrly refuses to translate an effort from one provider
+  to another.
+- Never retry a mutating call with a new idempotency key after a timeout or a network error. Reuse the same
+  idempotency key: the retry then replays the first result instead of sending the same instruction twice.
+- Never try to approve a permission request, a plan or an escalation. You receive an `ownerAttention`
+  status, not a decision capability. They belong to the person at the computer.
+- Never name a `permissionMode` outside the `permissionModes` of that selection. That list is the ceiling
+  the owner chose for you; asking for more fails the instruction. Omit it to run at their ceiling.
+- Never treat a connection error as a delay. That endpoint is their computer: when Maestrly is closed,
+  asleep or offline, nothing is queued anywhere and the instruction never arrived. Report that state, and
+  retry the same call with the same idempotency key once it is back.
+- Never start a second chat for a follow-up. Resume the existing conversation, so the work stays in the
+  same worktree with its own history.
 
-## The shape of a delegation
+## The normal flow: a chat on their computer
 
-A **task** belongs to a project and a card. It runs **stages**: `plan`, `implement`, `review`, `fix`, `qa`
-are done by an agent; `verify`, `deliver` and `inspect` are done by the executor itself. Each agent stage
-carries the exact account and model it must run with, its reasoning effort, whether fast mode is on, and
-whether it runs in standard or maestro mode. Two stages can use two different accounts and models on
-purpose: implementing with one and reviewing with another is the normal case, not an exception.
+1. **See what you may use.** `bot_list_workspaces` returns the computer, the workspaces this connection was
+   granted, and the actions allowed on each. `bot_list_selections` returns the account and model
+   selections that computer actually offers, with the reasoning efforts, modes and permission modes each
+   one supports. Choose from those lists; nothing else exists.
+2. **Agree on the work first.** Turn what they asked into something checkable before you send it. A vague
+   instruction produces a vague result you then have to explain away.
+3. **Start the chat.** `bot_create_chat` with the `workspaceId`, a name a person would recognise, the base
+   branch, a `selection` from the list, your first message, and a fresh `idempotencyKey`. Maestrly creates
+   a new worktree on that branch for this conversation alone.
+4. **Follow it.** `bot_wait_events` blocks for at most 20 seconds from the cursor you pass, then returns —
+   call it again, do not poll in a tight loop. `bot_read_chat` gives you the transcript, the pending
+   command and any pending question from a cursor.
+   If `ownerAttention` is present, report that the conversation is waiting for its owner. A successful
+   turn that submitted a plan is not completed implementation; wait for the owner's decision.
+5. **Read what actually happened.** The assistant messages are the evidence you have. Quote them, do not
+   paraphrase them into a success.
+6. **Continue the same chat.** `bot_send_message` with the `conversationId` sends the next instruction
+   into that same worktree and history: corrections, additional work, "now run the tests".
+7. **Adjust when it is worth it.** `bot_configure_chat` changes the selection, the effort, the mode or the
+   name of a conversation. Read the options again rather than guessing which values are valid.
+8. **Answer questions, when they are yours to answer.** A conversation can raise an ordinary question;
+   `bot_read_chat` and `bot_wait_events` surface it, and `bot_answer_question` answers it. Only answer on
+   the person's behalf when they told you what to answer, or when the answer follows unambiguously from
+   what they already said. Otherwise, ask them.
+9. **Stop when asked.** `bot_cancel_turn` stops the turn that is running. It does not undo what the turn
+   already did; say that plainly. A turn the person started themselves is not yours to cancel.
+10. **Catch up when the person wrote in the chat.** They may release a conversation and write in it
+    directly; nothing tells you when they do. `bot_read_chat_history` returns that conversation oldest
+    first, paginated — their messages, yours and the answers to both. Read it before you continue, and
+    pass back the cursor it returns until there is none.
 
-A task also carries a **policy**: what the execution may do on its own (edit, run checks, commit, push, open
-a pull request, comment, merge), how many fix rounds are allowed, whether a review is required, and the
-**completion target**: `patch_ready`, `pr_ready` or `merged`.
+### Resuming rather than restarting
 
-## The normal flow
+`bot_list_chats` shows every conversation this connection created and whether each one is `active` or
+`paused`. When the person comes back to something ("what happened with the import fix?"), find that
+conversation, read it, and continue it. Its worktree, branch and history are still there.
 
-1. **Find the project.** `maestrly_list_projects`. It also tells you which actions the owner authorized for
-   this connection. If an action you need is missing, say so and ask the person to grant it in Maestrly.
-2. **Find who can do the work.** `maestrly_list_executors` for that project. It returns the computers that
-   are online, the workspaces and base branches they expose, the named checks they can run, whether GitHub
-   is available, and the exact account/model selections with their allowed efforts. Choose a `selectionId`
-   for each agent stage from this list.
-3. **Agree on the work before creating it.** Confirm what "done" means with the person, and turn it into
-   acceptance criteria. Vague criteria produce vague reviews.
-4. **Create the task.** `maestrly_create_task` with the stages you want, each with its selection, and
-   `start: true` when the person wants it to begin now. Use `maestrly_list_presets` when a standard pipeline
-   fits; a preset declares stages and policy but never an account, so you still choose the selection.
-5. **Follow it.** `maestrly_wait_task` blocks for at most 20 seconds and then returns; call it again, or let
-   the routine callback wake you. `maestrly_read_events` gives you the durable timeline from a cursor. Do not
-   poll in a tight loop.
-6. **Read the evidence.** `maestrly_list_evidence` lists artifacts and check results, each tied to the code
-   revision it describes. `maestrly_read_artifact` returns the content. A check result recorded against an
-   older revision did not test the current code, and Maestrly says so.
-7. **Judge it.** If a review recorded blocking findings, Maestrly plans the fix round itself. If it asks for
-   a decision (`needs_attention`), read the blocker, explain it in plain words, and propose what to do.
-8. **Deliver only what was asked.** `maestrly_deliver` with the mode the person authorized: `commit`,
-   `push`, `draft_pr`, `ready_pr` or `merge`. Pass `expectedCodeRevision` with the digest you reviewed, so a
-   delivery is refused if the code changed after you looked at it.
-9. **Keep watching.** `maestrly_watch_task` subscribes to the pull request: refresh it on an interval, plan a
-   fix round with a chosen account and model when checks fail, or react to requested changes. Choose the
-   profile now, so the reaction never has to guess one later.
+A conversation the person **paused** refuses every instruction you send. Only they can resume it. Tell them
+it is paused rather than retrying.
 
-## Changing your mind mid-flight
+A conversation the person **released** is still yours to drive, and they write in it too. Only one turn
+runs at a time there: your instruction waits for theirs, and theirs waits for yours. You are never told
+what they wrote, so read it with `bot_read_chat_history` when they say they wrote something, and when a
+turn of yours ends differently than you expected.
 
-`maestrly_configure_task` changes the account, model, effort or mode for the task defaults, one stage, or
-only the next attempt. Decide when it takes effect:
+If a command comes back failed after their computer restarted or the application closed mid-turn, the
+instruction was **not** run again on purpose. Read the transcript to see how far it got, then decide with
+the person what to send next.
 
-- `after_current` — the change applies to the next attempt; the current one finishes.
-- `replace_queued` — replace what is queued but not started.
-- `interrupt_and_restart` — stop the current attempt and run it again with the new configuration. Work the
-  attempt already produced is not thrown away, but the attempt itself is abandoned; only ask for this when
-  the person accepts that.
+## Delegating a pipeline instead
 
-Always send the `expectedVersion` you just read from `maestrly_get_task`. If Maestrly refuses the command
-because the task changed, re-read it and decide again — do not retry blindly.
+This is the separate, still supported path, and it needs the `maestrly_*` tools in your catalog.
 
-## Follow-ups and questions
+A **task** belongs to a project and a card, and runs **stages**: `plan`, `implement`, `review`, `fix`, `qa`
+are done by an agent; `verify`, `deliver` and `inspect` are done by the executor. Each agent stage carries
+the exact account and model it must run with, its reasoning effort, whether fast mode is on, and whether it
+runs in standard or maestro mode. Implementing with one account and reviewing with another is the normal
+case. A task also carries a **policy**: what it may do on its own, how many fix rounds are allowed, whether
+a review is required, and the **completion target** — `patch_ready`, `pr_ready` or `merged`.
 
-- `maestrly_follow_up` sends an instruction into a task that is already running ("also update the tests",
-  "keep the public API unchanged"). It does not change the stage configuration.
-- A task in `waiting_input` is waiting for a person. `maestrly_list_questions` shows what it asked, and
-  `maestrly_answer_question` answers it. Only answer on the person's behalf when they told you what to
-  answer, or when the answer follows unambiguously from what they already said. Otherwise, ask them.
+1. `maestrly_list_projects` — the authorized projects and the actions granted on each.
+2. `maestrly_list_executors` — the computers, workspaces, base branches, named checks and the exact
+   selections. Choose a `selectionId` for each agent stage from this list.
+3. `maestrly_create_task` — the stages you want, each with its selection, and `start: true` when they want
+   it to begin now. `maestrly_list_presets` offers standard pipelines; a preset declares stages and policy
+   but never an account, so you still choose the selection.
+4. `maestrly_wait_task` and `maestrly_read_events` — follow the durable timeline from a cursor.
+5. `maestrly_list_evidence` and `maestrly_read_artifact` — artifacts and check results, each tied to the
+   code revision it describes. A result recorded against an older revision did not test the current code,
+   and Maestrly says so.
+6. `maestrly_follow_up` sends an instruction into a running task; `maestrly_configure_task` changes account,
+   model, effort or mode with `after_current` (default), `replace_queued` or `interrupt_and_restart`.
+   Always send the `expectedVersion` you just read, and re-read instead of retrying blindly when it is
+   refused.
+7. `maestrly_deliver` with the mode the person authorized — `commit`, `push`, `draft_pr`, `ready_pr` or
+   `merge` — passing `expectedCodeRevision` with the digest you reviewed, so a delivery is refused if the
+   code changed after you looked at it.
+8. `maestrly_watch_task` keeps following the pull request: refresh on an interval, plan a fix round with a
+   chosen account and model when checks fail, or react to requested changes.
 
-## Reading the code without running anything
-
-`maestrly_inspect` asks the executor for a read-only look: a file, the diff, a search, or the pull request
-status. It is asynchronous — read the answer with `maestrly_get_inspection`. Use it to explain a change in
-concrete terms instead of describing it from the task title.
+A task in `waiting_input` is waiting for a person: `maestrly_list_questions` shows what it asked and
+`maestrly_answer_question` answers it, under the same rule as above. `maestrly_inspect` and
+`maestrly_get_inspection` give you a read-only look at a file, the diff, a search or the pull request.
 
 ## How to report back
 
-Say what the task is doing, what evidence exists, and what it is waiting on, in that order. Be concrete:
-name the failing check, quote the review finding, give the pull request number. When something is missing,
-name what is missing rather than softening it. If the executor went offline, the account lost access, or the
-model selection disappeared, report that as the current state rather than as a delay.
+Say what is happening, what evidence you actually read, and what it is waiting on, in that order. Be
+concrete: name the failing test, quote the reply, give the pull request number. When something is missing,
+name it rather than softening it. If their computer went offline, a conversation was paused, a grant was
+revoked, or a model selection disappeared, report that as the current state rather than as a delay.

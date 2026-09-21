@@ -1,9 +1,14 @@
 {
   "mcpServers": {
+    "maestrly-bot": {
+      "type": "http",
+      "url": "https://bots.example.com/mcp/bots",
+      "note": "Your own chats on your own desktop. This endpoint is served by Maestrly Desktop itself, so replace the host with the public address that person configured in Settings > Bots; it must be reachable over HTTPS from wherever this bot runs, and it answers only while their application is running. Authorization is OAuth with PKCE: the client discovers the authorization server at /.well-known/oauth-protected-resource/mcp/bots, the owner approves the request on their desktop, and no secret belongs in this file."
+    },
     "maestrly": {
       "type": "http",
       "url": "https://maestrly.example.com/mcp",
-      "note": "Replace the host with your Maestrly instance. Authorization is OAuth: the client discovers the authorization server at /.well-known/oauth-protected-resource/mcp and no secret belongs in this file."
+      "note": "Delegated development inside a project of an organization, served by a Maestrly server. Separate connection, separate grant, separate token audience. Discovery lives at /.well-known/oauth-protected-resource/mcp. Keep only the endpoint you were granted."
     }
   }
 }

@@ -151,6 +151,8 @@ import { attachWindowNavigation } from './mouse-navigation'
 import { cleanupOrphanRuntimeAssetTemps } from './runtime-assets/app-service'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
+import { registerBotIpc } from './bot/ipc'
+import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -192,6 +194,7 @@ async function stopConversationLive(convId: string): Promise<void> {
 }
 
 async function stopAllLiveWork(): Promise<void> {
+  await botHost.stop()
   await cancelProjectSetupsAndWait?.()
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
@@ -617,6 +620,7 @@ function registerIpc(): void {
   registerSoundIpc(reg)
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
   registerPlatformIpc(reg)
+  registerBotIpc(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -757,6 +761,7 @@ app.whenReady().then(async () => {
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
+  void botHost.restore()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show()
@@ -865,7 +870,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     if (!platformRunnerStopping) {
       platformRunnerStopping = true
-      void embeddedRunnerHost.stop().finally(() => {
+      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop()]).finally(() => {
         platformRunnerStopped = true
         platformRunnerStopping = false
         app.quit()

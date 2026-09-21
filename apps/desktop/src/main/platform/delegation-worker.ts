@@ -112,7 +112,15 @@ export class DelegationWorker extends ProjectChatWorker {
       },
       async decide() {},
     }
-    super(options.client, options.catalog, options.settings, options.bindings, options.instanceId, options.url, hostActions)
+    super(
+      options.client,
+      options.catalog,
+      options.settings,
+      options.bindings,
+      options.instanceId,
+      options.url,
+      hostActions
+    )
     this.hostStages = hostStages
     this.reviewBaseDirectory = options.reviewBaseDirectory
     this.githubRunner = options.githubRunner
@@ -183,8 +191,9 @@ export class DelegationWorker extends ProjectChatWorker {
       return workspace.conversationId
     }
 
-    const settings = (delegation.snapshot as { settings?: { selectionId: string; reasoning: string | null; fastMode: boolean } })
-      .settings
+    const settings = (
+      delegation.snapshot as { settings?: { selectionId: string; reasoning: string | null; fastMode: boolean } }
+    ).settings
     if (!settings) throw new Error('This stage snapshot has no agent settings.')
     const selection = await this.catalog.resolve(settings.selectionId)
     if (!this.settings.providerIds.includes(selection.providerId))
@@ -196,19 +205,25 @@ export class DelegationWorker extends ProjectChatWorker {
 
     patchConvUiPrefs(workspace.conversationId, {
       chat: {
-        ...projectChatPreferences(claim.session, this.settings, listMcpServers().map((server) => server.id)),
+        ...projectChatPreferences(
+          claim.session,
+          this.settings,
+          listMcpServers().map((server) => server.id)
+        ),
         // A read-only stage keeps read-only tools whatever the session advertises.
         ...(workspace.readOnly ? { mode: 'ask' as const } : {}),
         subagentsEnabled: (settings as { delegationProfiles?: string[] }).delegationProfiles?.length !== 0,
       },
     })
-    const { primeChatTurnSelection } = await import('../chat/service')
+    const { primeChatTurnSelection, publishConvChatSettings } = await import('../chat/service')
     primeChatTurnSelection(workspace.conversationId, {
       providerId: selection.providerId,
       modelId: selection.modelId,
       reasoning: settings.reasoning ?? undefined,
       fastMode: settings.fastMode,
     })
+    // The stage replaced this conversation's settings wholesale, so the composer has to read them again.
+    publishConvChatSettings(workspace.conversationId)
     return workspace.conversationId
   }
 
@@ -247,7 +262,13 @@ export class DelegationWorker extends ProjectChatWorker {
     const delegation = claim.delegation
     if (!delegation) return
     const snapshot = delegation.snapshot as {
-      settings?: { selectionId: string; reasoning: string | null; fastMode: boolean; executionMode: string; delegationProfiles: string[] }
+      settings?: {
+        selectionId: string
+        reasoning: string | null
+        fastMode: boolean
+        executionMode: string
+        delegationProfiles: string[]
+      }
     }
     const admitted = snapshot.settings ?? null
     const workspace = this.prepared.get(claim.turn.id) ?? null
@@ -323,8 +344,7 @@ export class DelegationWorker extends ProjectChatWorker {
         for (const checkId of action.checkIds) {
           if (controller.signal.aborted) return { status: 'cancelled' }
           const config = configured.find((candidate) => candidate.id === checkId)
-          if (!config)
-            return { status: 'error', error: `Check "${checkId}" is not configured for this project.` }
+          if (!config) return { status: 'error', error: `Check "${checkId}" is not configured for this project.` }
           const outcome = await runNamedCheck(config, {
             cwd: workspace.cwd,
             revision: captured.revision,

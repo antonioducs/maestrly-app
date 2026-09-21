@@ -24,6 +24,7 @@ vi.mock('../../src/main/store', () => ({
   getConversation: vi.fn(),
   getWorkspaceByPath: vi.fn(),
   listConversations: vi.fn(),
+  listAllConversations: vi.fn(() => []),
   listWorkspaces: vi.fn(),
   insertWorkspace: vi.fn(),
   insertConversation: vi.fn(),

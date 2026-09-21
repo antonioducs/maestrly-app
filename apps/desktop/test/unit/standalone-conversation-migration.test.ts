@@ -33,6 +33,7 @@ describe('standalone conversation schema rebuild', () => {
     const tables = [
       'workspaces',
       'conversations',
+      'bot_conversation_allocations',
       'conversation_migrations',
       'conversation_repos',
       'chat_messages',

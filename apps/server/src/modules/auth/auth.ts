@@ -11,6 +11,11 @@ export function createAuth(config: ServerConfig, pool: DatabasePool) {
    * audience and a desktop/web token never satisfies the MCP audience.
    */
   const mcpResource = `${config.canonicalUrl}/mcp`
+  /**
+   * Personal bot connections are a third audience: a bot token is accepted only by `/mcp/bots`, and a
+   * connector or desktop token is never accepted there.
+   */
+  const botResource = `${config.canonicalUrl}/mcp/bots`
   return betterAuth({
     appName: config.instanceName,
     baseURL: config.canonicalUrl,
@@ -38,11 +43,11 @@ export function createAuth(config: ServerConfig, pool: DatabasePool) {
         loginPage: `${config.webOrigin}/login`,
         consentPage: `${config.webOrigin}/consent`,
         scopes: ['openid', 'profile', 'email', 'offline_access', 'api:read', 'api:write'],
-        resources: [apiResource, mcpResource],
+        resources: [apiResource, mcpResource, botResource],
         clientRegistrationDefaultResources: [apiResource],
         // Connector clients are narrowed to the MCP resource when the owner creates the connection, so a
         // bot token never reaches the REST API with the signed-in user's full authority.
-        clientRegistrationAllowedResources: [apiResource, mcpResource],
+        clientRegistrationAllowedResources: [apiResource, mcpResource, botResource],
         allowDynamicClientRegistration: true,
         allowUnauthenticatedClientRegistration: config.connectorOpenRegistration,
         refreshTokenReuseInterval: 30,

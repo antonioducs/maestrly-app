@@ -60,6 +60,7 @@ export function verificationSteps(options, platform = process.platform, env = pr
     npm('test:integration')
     npm('test:e2e:platform')
     desktop('node', ['scripts/test-project-chat-e2e.mjs'])
+    desktop('node', ['scripts/test-bot-conversations-e2e.mjs'])
     npm('smoke:platform')
   }
   if (options.package) {

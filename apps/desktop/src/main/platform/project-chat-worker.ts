@@ -262,13 +262,15 @@ export class ProjectChatWorker {
         listMcpServers().map((server) => server.id)
       ),
     })
-    const { primeChatTurnSelection } = await import('../chat/service')
+    const { primeChatTurnSelection, publishConvChatSettings } = await import('../chat/service')
     primeChatTurnSelection(id, {
       providerId: selection.providerId,
       modelId: selection.modelId,
       reasoning: claim.session.reasoning ?? undefined,
       fastMode: claim.session.fastMode,
     })
+    // The session replaced this conversation's settings wholesale, so the composer has to read them again.
+    publishConvChatSettings(id)
     return id
   }
   async runOnce(): Promise<boolean> {
