@@ -9,6 +9,9 @@ User-visible changes by version. Downloads are on
 
 - Update the integrated Codex runtime to 0.155.1 so connected accounts can
   discover GPT-6 Sol and GPT-6 Luna from the provider catalog.
+- Wait for the native macOS updater to finish preparing a downloaded update
+  before offering the restart, and keep Maestrly running with a retryable error
+  if the installer does not take over shutdown.
 
 ## [0.9.0] - 2026-09-22
 
