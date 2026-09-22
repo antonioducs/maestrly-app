@@ -82,7 +82,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
 
   it('reports pinned versions and exposes app-server stdio', async () => {
     const version = await execFileAsync(expectedBinary, ['--version'], { timeout: 10_000 })
-    expect(version.stdout.trim()).toBe('codex-cli 0.153.4')
+    expect(version.stdout.trim()).toBe('codex-cli 0.155.1')
 
     const help = await execFileAsync(expectedBinary, ['app-server', '--help'], { timeout: 10_000 })
     expect(help.stdout).toContain('Usage: codex app-server')
@@ -101,7 +101,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       const models = [modelFixture()]
       writeFileSync(
         path.join(codexHome, 'models_cache.json'),
-        JSON.stringify({ fetched_at: new Date().toISOString(), client_version: '0.153.4', models }),
+        JSON.stringify({ fetched_at: new Date().toISOString(), client_version: '0.155.1', models }),
         'utf8'
       )
       const promptInput = async (extra: string[]): Promise<string> => {
@@ -173,7 +173,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         isPackaged: false,
         resourcesPath: path.join(root, 'resources'),
       }).version
-      expect(runtimeVersion).toBe('0.153.4')
+      expect(runtimeVersion).toBe('0.155.1')
 
       // Use the exact field omission introduced by the historical 0.145.0 change.
       const { supports_reasoning_summaries: _dropped, ...futureModel } = modelFixture()

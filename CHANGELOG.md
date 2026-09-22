@@ -5,6 +5,11 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- Update the integrated Codex runtime to 0.155.1 so connected accounts can
+  discover GPT-6 Sol and GPT-6 Luna from the provider catalog.
+
 ## [0.9.0] - 2026-09-22
 
 ### Added

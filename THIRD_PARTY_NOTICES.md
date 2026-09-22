@@ -39,7 +39,7 @@ The remainder of Maestrly is not relicensed by this notice.
 ## OpenAI Codex runtime
 
 The optional Codex subscription integration downloads the pinned, unmodified
-`@openai/codex` 0.153.4 target runtime directly from npm when the user enables
+`@openai/codex` 0.155.1 target runtime directly from npm when the user enables
 it. The lean application package does not contain that runtime. Its Apache 2.0
 license and attribution are recorded in
 [`apps/desktop/resources/licenses/openai-codex-runtime-NOTICE.txt`](apps/desktop/resources/licenses/openai-codex-runtime-NOTICE.txt)

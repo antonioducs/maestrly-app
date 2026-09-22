@@ -5,7 +5,7 @@ import { app } from 'electron'
 import { findOnPath } from '../../platform'
 
 /**
- * Official `@openai/codex` 0.153.4 package layout. The main package declares optional per-platform aliases (e.g.
+ * Official `@openai/codex` 0.155.1 package layout. The main package declares optional per-platform aliases (e.g.
  * `@openai/codex-darwin-arm64`). Each alias contains a `vendor/<target>/` tree that must remain complete: besides
  * the executable, it carries `codex-path/` and `codex-resources/`, used by the native runtime.
  */
@@ -123,7 +123,8 @@ export function codexRuntimeTarget(
   if (target) return target
 
   throw new Error(
-    `Codex Subscription does not support ${platform}/${arch}. Supported targets: ` + Object.keys(TARGETS).sort().join(', ')
+    `Codex Subscription does not support ${platform}/${arch}. Supported targets: ` +
+      Object.keys(TARGETS).sort().join(', ')
   )
 }
 
