@@ -59,9 +59,12 @@ npm run verify:pr -- --title "build(desktop): update native runtime" --full --pa
 
 `--package` adds the current native platform's package command: `package:linux`
 on Linux (`linux`), `package:win` on Windows (`win32`), or `package` on macOS
-(`darwin`), including the existing packaging smoke checks. See the development
-guide for packaging prerequisites. Local verification cannot prove the complete
-Linux/macOS/Windows CI matrix.
+(`darwin`), including the existing packaging smoke checks. It first runs
+`check:local-ml-toolchain`, which requires an official Node.js build matching
+`.nvmrc` (for example through nvm or the nodejs.org installer, not Homebrew
+`node`) so the pinned Local ML archive hashes stay reproducible. See the
+development guide for packaging prerequisites. Local verification cannot prove
+the complete Linux/macOS/Windows CI matrix.
 
 Add `--plan` to any invocation to display the commands without running them:
 

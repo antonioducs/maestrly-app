@@ -154,6 +154,10 @@ For explicit channel/target selection, use
 `node scripts/package.mjs <prod|beta|dev> <electron-builder arguments>`.
 The wrapper builds and verifies Local ML, builds the app, checks package contents
 and size, and passes `--publish never`. Do not invoke electron-builder directly.
+Package with an official Node.js build matching `.nvmrc` (nodejs.org installer,
+nvm, or fnm); the Local ML build refuses distribution builds such as Homebrew
+`node`, which link the system zlib and would rewrite the pinned archive hashes.
+See the [Local ML guide](../apps/desktop/runtime-assets/local-ml/README.md).
 After packaging on the target host, run:
 
 ```sh
@@ -170,6 +174,11 @@ Signed publication follows [Releasing](releasing.md).
 
 - Node or native-module mismatch: check `.nvmrc` and host architecture, then run
   `npm ci` with the required compiler tools installed.
+- Packaging stops with "links a shared system zlib", or `manifest.json` changes
+  after packaging: put an official Node.js build first on `PATH` (for example
+  `nvm use`), restore the manifest with
+  `git checkout -- apps/desktop/runtime-assets/local-ml/manifest.json`, and
+  package again.
 - Instance collision: use or close the existing window; do not remove a live lock.
 - Missing provider: check its settings, authentication, and installed runtime.
 - Foreign runtime in packaging: use a clean checkout for a single target.
