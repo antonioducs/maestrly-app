@@ -5,6 +5,45 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Connect a personal bot, such as a Grok bot, to the native conversations on
+  your own desktop through an MCP endpoint the application serves itself, with
+  no server, database or relay, and no organization, project, board, card or
+  runner involved.
+- Turn that endpoint on in Settings, choosing the local address it binds to and
+  the public HTTPS address the bot dials; it is off until you enable it, and it
+  answers only requests that arrive under that address.
+- Approve or deny every bot authorization on the desktop itself, grant access
+  per bot and workspace, and revoke it at any time; a bot only ever sees the
+  conversations it created itself.
+- Give every bot conversation a fresh, exclusive worktree, and resume that same
+  worktree when the bot continues the conversation.
+- Show bot conversations in the sidebar with a badge naming the bot, and let
+  the person pause one so every bot instruction is refused until they resume it.
+- Choose how far each bot goes before it asks you — request approval, approve
+  for me, or full access — when you approve its request and later on its card;
+  the bot is offered only the modes at or under that ceiling, and plan
+  approvals always stay with you.
+- Release a bot conversation for your own messages, after a confirmation that
+  says what it means: the bot keeps the conversation and is not told what you
+  write, so ask it to read the conversation again when that matters. Only one
+  turn runs at a time, a bot instruction waits for the turn you started, and a
+  bot can neither cancel nor steer it. Blocking your messages again closes the
+  composer without interrupting anything, and pausing the bot still hands the
+  whole conversation back to you.
+- Let a bot read a conversation of its own back page by page, so it can pick up
+  what you wrote in it; it reads public message text alone, never reasoning,
+  tool work, attachments or any other conversation.
+
+### Fixed
+
+- Keep the composer showing the account, model, reasoning effort, fast mode,
+  permission mode and behavior mode a conversation will actually run with when
+  something other than you changes them — a bot configuring its conversation, a
+  delegated stage, or a provider failover — instead of the previous values until
+  the conversation is reopened.
+
 ## [0.8.0] - 2026-09-20
 
 ### Added

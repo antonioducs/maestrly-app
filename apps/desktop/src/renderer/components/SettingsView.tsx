@@ -39,15 +39,18 @@ import { DefaultPermissionSection } from '@/components/settings/ExecutionSection
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
+import { BotSection } from '@/components/bot/BotSection'
 
 interface Props {
   initialSection?: SettingsSection
 
   onShowSidebar?: () => void
+  /** Opens the project setup dialog, so a section that needs a project can offer it without guesswork. */
+  onAddProject?: () => Promise<unknown> | void
   onClose: () => void
 }
 
-export function SettingsView({ initialSection = 'chat', onShowSidebar, onClose }: Props) {
+export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProject, onClose }: Props) {
   const { t } = useTranslation('ui')
   const headingRef = useRef<HTMLHeadingElement>(null)
   const [locale, setLocale] = useLocale()
@@ -355,6 +358,9 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onClose }
             {section === 'chat' && <MaestrlyChatSection t={t} />}
 
             {section === 'platform' && <PlatformSection />}
+            {section === 'bots' && (
+              <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
+            )}
 
             {section === 'execution' && (
               <DefaultPermissionSection t={t} mode={defaultPermissionMode} onChange={updateDefaultPermissionMode} />

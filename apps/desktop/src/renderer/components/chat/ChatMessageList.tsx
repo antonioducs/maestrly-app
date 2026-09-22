@@ -421,9 +421,7 @@ function Part({
       <Compaction
         text={part.text}
         native={
-          part.strategy === 'openai-native' ||
-          part.strategy === 'codex-native' ||
-          part.strategy === 'claude-native'
+          part.strategy === 'openai-native' || part.strategy === 'codex-native' || part.strategy === 'claude-native'
         }
         onOpenMention={onOpenMention}
         searchQuery={searchQuery}
@@ -670,6 +668,14 @@ const Bubble = memo(function Bubble({
     }
     return (
       <div className="group flex w-full min-w-0 max-w-full flex-col gap-1">
+        {message.botName && (
+          <span
+            data-testid="bot-message-author"
+            className="w-fit rounded border border-sky-400/25 bg-sky-400/[0.08] px-2 py-0.5 text-[10px] text-sky-300"
+          >
+            {t('bots.sentBy', { ns: 'ui', name: message.botName })}
+          </span>
+        )}
         <FileParts
           files={files}
           onOpenImage={onOpenImage}
@@ -978,8 +984,7 @@ export const ChatMessageList = memo(function ChatMessageList({
 
   let latestTodoId: string | null = null
   for (const m of visibleMessages)
-    for (const p of m.parts)
-      if (p.type === 'tool' && p.toolName === 'todo_write') latestTodoId = p.toolCallId
+    for (const p of m.parts) if (p.type === 'tool' && p.toolName === 'todo_write') latestTodoId = p.toolCallId
 
   const nearBottomRef = useRef(true)
   const prevVisibleRef = useRef(false)

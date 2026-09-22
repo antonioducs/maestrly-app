@@ -401,7 +401,7 @@ describe('registerPlanIpc', () => {
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
   })
 
-  it('missing companion during Web revision returns an observable error without fallback', () => {
+  it('missing companion during Web revision returns an observable error without fallback', async () => {
     const { reg, mhandles } = createTestRegistrar()
     h.getConversation.mockReturnValue({ cli: 'chat' })
     h.decidePlan.mockReturnValue({
@@ -411,7 +411,7 @@ describe('registerPlanIpc', () => {
     })
     registerPlanIpc(reg, { sendToWindow: vi.fn() })
 
-    const result = mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'revise' })
+    const result = await mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'revise' })
 
     expect(result).toEqual({ ok: false, error: 'plan-review-unavailable' })
     expect(h.commitPlanDecision).not.toHaveBeenCalled()

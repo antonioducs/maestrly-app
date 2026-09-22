@@ -86,6 +86,7 @@ interface MetaJson {
   model?: ChatModelRef
   providerFingerprint?: string
   source?: ChatMessage['source']
+  botName?: string
   finishReason?: string
   usage?: StoredChatUsage
   error?: string
@@ -406,6 +407,7 @@ function rowToMessage(r: any): StoredChatMessage {
       ? { providerFingerprint: meta.providerFingerprint }
       : {}),
     ...(source ? { source } : {}),
+    ...(typeof meta.botName === 'string' && meta.botName ? { botName: meta.botName.slice(0, 160) } : {}),
     finishReason: meta.finishReason,
     usage: parseStoredUsage(meta.usage),
     contextSnapshot: parseContextSnapshot(meta.contextSnapshot),
@@ -431,6 +433,7 @@ function metaOf(m: StoredChatMessage): string {
     meta.providerFingerprint = m.providerFingerprint
   }
   if (m.source) meta.source = m.source
+  if (m.botName) meta.botName = m.botName.slice(0, 160)
   if (m.finishReason) meta.finishReason = m.finishReason
   if (m.usage) meta.usage = m.usage
   if (m.contextSnapshot) meta.contextSnapshot = m.contextSnapshot
@@ -801,6 +804,46 @@ export function listCompanionConversationMessages(conversationId: string): Compa
        ORDER BY seq ASC`
     )
     .all(conversationId) as any[]
+  return rows.map((row) => ({ seq: row.seq as number, message: rowToMessage(row) }))
+}
+
+/**
+ * Highest visible `seq` in a conversation, bounding a paginated read.
+ *
+ * `seq` starts at zero, so a conversation with nothing visible answers -1: a ceiling that matches no
+ * row, rather than one that would include the first message of a chat that has none to give.
+ */
+export function latestVisibleConversationSeq(conversationId: string): number {
+  const row = getDb()
+    .prepare(
+      `SELECT MAX(seq) AS seq FROM chat_messages
+       WHERE conversation_id = ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}`
+    )
+    .get(conversationId) as { seq: number | null } | undefined
+  return row?.seq === null || row?.seq === undefined ? -1 : Number(row.seq)
+}
+
+/**
+ * One page of visible conversation rows, in order, bounded above so later messages cannot shift it.
+ *
+ * `seq` is monotonic per conversation, so it orders rows that share a timestamp and survives restarts.
+ * The caller asks for one row more than it needs to learn whether another page exists, and must still
+ * sanitize the parts before anything leaves this computer.
+ */
+export function listVisibleConversationMessagePage(
+  conversationId: string,
+  afterSeq: number,
+  throughSeq: number,
+  limit: number
+): CompanionConversationMessageRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM chat_messages
+       WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}
+       ORDER BY seq ASC
+       LIMIT ?`
+    )
+    .all(conversationId, afterSeq, throughSeq, Math.max(0, Math.floor(limit))) as any[]
   return rows.map((row) => ({ seq: row.seq as number, message: rowToMessage(row) }))
 }
 

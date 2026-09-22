@@ -29,11 +29,16 @@ export function ChatFastModeToggle({ conversationId }: { conversationId: string 
     let alive = true
 
     setEnabled(false)
-    void window.api.chatGetFastMode(conversationId).then((value) => {
-      if (alive) setEnabled(value)
-    })
+    const load = () =>
+      void window.api.chatGetFastMode(conversationId).then((value) => {
+        if (alive) setEnabled(value)
+      })
+    load()
+    // The conversation is not only configured from here: a bot that configures it also decides this.
+    const unsubscribe = window.api.onChatSettingsChanged(conversationId, load)
     return () => {
       alive = false
+      unsubscribe()
     }
   }, [conversationId])
 

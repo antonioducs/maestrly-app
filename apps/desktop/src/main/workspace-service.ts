@@ -255,6 +255,9 @@ export async function createConversation(args: CreateConversationArgs): Promise<
   let cwd: string
   let branch: string
   if (args.attach) {
+    const owners = store.listAllConversations().filter((conversation) => conversation.cwd === args.attach!.cwd)
+    if (owners.some((conversation) => conversation.botOrigin))
+      throw new Error('Bot conversations own exclusive worktrees and cannot be attached.')
     cwd = args.attach.cwd
     branch = args.attach.branch
   } else if (args.mode === 'worktree') {
@@ -299,6 +302,7 @@ export async function createSiblingConversation(
   const source = store.getConversation(sourceConversationId)
   if (!source) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
   const src = requireProjectConversation(source)
+  if (src.botOrigin) throw new Error('Bot conversations own exclusive worktrees and cannot have siblings.')
   assertConversationMigrationMutationAllowed(sourceConversationId, 'Create sibling conversation')
 
   if (src.isMulti || src.archived === 1) {

@@ -19,6 +19,7 @@ import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
 import { workspaceApi } from './api-workspace'
 import { platformApi } from './api-platform'
+import { botApi } from './api-bot'
 
 export type {
   ConversationBranchInfo,
@@ -147,6 +148,7 @@ const api = {
   ...updateApi,
   ...chatApi,
   ...platformApi,
+  ...botApi,
 }
 
 contextBridge.exposeInMainWorld('api', api)

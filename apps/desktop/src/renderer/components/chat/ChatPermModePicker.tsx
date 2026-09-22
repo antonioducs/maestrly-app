@@ -28,7 +28,18 @@ export function ChatPermModePicker({ conversationId }: { conversationId: string 
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    window.api.chatGetPermMode(conversationId).then(setMode)
+    let alive = true
+    const load = () =>
+      void window.api.chatGetPermMode(conversationId).then((value) => {
+        if (alive) setMode(value)
+      })
+    load()
+    // A bot conversation runs at the ceiling its owner chose, and that is decided outside this picker.
+    const unsubscribe = window.api.onChatSettingsChanged(conversationId, load)
+    return () => {
+      alive = false
+      unsubscribe()
+    }
   }, [conversationId])
 
   useEffect(() => {

@@ -37,6 +37,7 @@ test('baseline preserves all workspace checks; full adds CI suites and platform-
     [
       'test:e2e',
       'scripts/test-project-chat-e2e.mjs',
+      'scripts/test-bot-conversations-e2e.mjs',
       'package:linux',
       'smoke:packaged-desktop',
       'smoke:packaged-local-ml-runtime',

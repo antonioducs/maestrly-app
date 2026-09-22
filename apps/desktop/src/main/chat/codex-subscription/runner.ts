@@ -2272,6 +2272,10 @@ export async function runCodexSubscriptionChat(
     liveReasoning: runtimeProfile.capabilities.configurationUpdates,
     asyncQuestions: runtimeProfile.asyncQuestionGuidance,
     nativeMultiAgent: 'disabled-host-task',
+    // Fast mode is otherwise invisible after the fact: the transcript looks the same either way, so a
+    // person asking whether a turn actually ran fast has nothing to read. Record what it ran with.
+    fastMode: args.fastMode === true,
+    serviceTier: currentServiceTier,
     modelCapabilities: runtimeProfile.harness.modelCapabilities,
     adapterCapabilities: runtimeProfile.harness.adapterCapabilities,
     effectiveCapabilities: runtimeProfile.capabilities,

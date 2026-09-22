@@ -12,6 +12,7 @@ import { ChatView } from '@/components/chat/ChatView'
 import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
 import { ReviewLoopSplitView } from '@/components/chat/ReviewLoopSplitView'
 import { ConversationBranchChip } from '@/components/ConversationBranchChip'
+import { BotConversationBadge, BotManagementControls } from '@/components/bot/BotConversationBadge'
 import { NewConversationDialog } from '@/components/NewConversationDialog'
 import { WorkspaceDefaultBranchDialog } from '@/components/WorkspaceDefaultBranchDialog'
 import { Drawer } from '@/components/Drawer'
@@ -285,12 +286,7 @@ export function DesktopApp() {
     }
   }, [active?.id])
   const chatGptDrawerVisibleConversationId =
-    active &&
-    drawerOpen &&
-    !mainOverride &&
-    !chatGptFloating &&
-    visiblePopupTab === null &&
-    drawerTab === 'chatgpt'
+    active && drawerOpen && !mainOverride && !chatGptFloating && visiblePopupTab === null && drawerTab === 'chatgpt'
       ? active.id
       : null
   const chatGptPopupVisibleConversationId = active && visiblePopupTab === 'chatgpt' ? active.id : null
@@ -376,6 +372,18 @@ export function DesktopApp() {
     if (!active) return
     lastVisibleAtRef.current[active.id] = Date.now()
   }, [active?.id])
+
+  // Conversation state the main process moved — a bot paused, a chat released — reaches the open chat
+  // itself, not only the sidebar: the composer and its notices read this object.
+  useEffect(
+    () =>
+      window.api.onConversationOpen(({ conversation }) => {
+        if (!conversation?.id) return
+        setActive((current) => (current?.id === conversation.id ? conversation : current))
+        setMountedConvs((current) => current.map((item) => (item.id === conversation.id ? conversation : item)))
+      }),
+    []
+  )
 
   useEffect(() => {
     return (
@@ -551,326 +559,333 @@ export function DesktopApp() {
   return (
     <SettingsProvider openSettings={openSettings}>
       <UpdateProvider>
-      <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
-        <div className="relative flex h-full bg-background text-foreground">
-          {sidebarOpen && (
-            <Sidebar
-              workspaces={workspaces}
-              standaloneConversations={standaloneConversations}
-              standaloneArchivedCount={standaloneArchivedCount}
-              onNewChat={handleNewChat}
-              creatingChat={creatingChat}
-              onReorderStandaloneConversations={handleReorderStandaloneConversations}
-              statuses={statuses}
-              attention={attention}
-              activeId={active?.id ?? null}
-              focusedWorkspaceId={focusedWorkspaceId}
-              pendingPlanIds={pendingPlanIds}
-              showArchived={showArchived}
-              onToggleArchived={() => setShowArchived((v) => !v)}
-              onSelect={handleSidebarConversationSelect}
-              onAddWorkspace={() => void requestProject()}
-              onRemoveWorkspace={handleRemoveWorkspace}
-              onNewConversation={(wsId) => setDialogWs(wsId)}
-              onOpenProjectNotes={(wsId) => {
-                setProjectNotesWs(wsId)
-                setProjectMemoryWs(null)
-                setSettingsOpen(false)
-                setOnboardingOpen(false)
-              }}
-              onOpenProjectMemory={(wsId) => {
-                setProjectMemoryWs(wsId)
-                setProjectNotesWs(null)
-                setSettingsOpen(false)
-                setOnboardingOpen(false)
-              }}
-              onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
-              onOpenAbout={() => setAboutOpen(true)}
-              onRenameConversation={handleRename}
-              onArchiveConversation={handleArchive}
-              onPinConversation={handlePinConversation}
-              onDeleteConversation={handleDelete}
-              onMigrateConversation={migration.openMigration}
-              onNewSiblingConversation={handleNewSiblingConversation}
-              onArchiveSiblings={handleArchiveSiblings}
-              onDeleteSiblings={handleDeleteSiblings}
-              onReorderWorkspaces={handleReorderWorkspaces}
-              onReorderConversations={handleReorderConversations}
-              groups={groups}
-              onCreateGroup={handleCreateGroup}
-              onRenameGroup={handleRenameGroup}
-              onDeleteGroup={handleDeleteGroup}
-              onReorderGroups={handleReorderGroups}
-              onToggleGroupCollapsed={handleToggleGroupCollapsed}
-              onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
-              onToggleWorkspaceCollapsed={handleToggleWorkspaceCollapsed}
-              onCollapseSidebar={() => setSidebarOpen(false)}
-              openTargets={openTargets}
-              onOpenExternal={(scope, id, target) =>
-                void window.api.openExternal(scope, id, target).then((r) => {
-                  if (!r.ok) console.error('[open-external]', target, r.error)
-                })
-              }
-            />
-          )}
-
-          <main
-            ref={mainRef}
-            className="flex min-w-0 flex-1 flex-col"
-            style={fullActive && !mainOverride ? { display: 'none' } : undefined}
-          >
-            {projectNotesWs && (
-              <ProjectNotesView
-                workspaceId={projectNotesWs}
-                workspaceName={workspaces.find((w) => w.id === projectNotesWs)?.name ?? ''}
-                onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                onClose={() => setProjectNotesWs(null)}
-              />
-            )}
-            {projectMemoryWs && (
-              <ProjectMemoryView
-                workspaceId={projectMemoryWs}
-                workspaceName={workspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
-                onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                onClose={() => setProjectMemoryWs(null)}
-              />
-            )}
-            {settingsOpen && (
-              <SettingsView
-                initialSection={settingsSection}
-                onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                onClose={() => setSettingsOpen(false)}
-              />
-            )}
-            {onboardingOpen && (
-              <OnboardingFlow
+        <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
+          <div className="relative flex h-full bg-background text-foreground">
+            {sidebarOpen && (
+              <Sidebar
                 workspaces={workspaces}
+                standaloneConversations={standaloneConversations}
+                standaloneArchivedCount={standaloneArchivedCount}
                 onNewChat={handleNewChat}
                 creatingChat={creatingChat}
-                onAddWorkspace={requestProject}
-                onCreateConversation={(wsId) => setDialogWs(wsId)}
-                onClose={completeOnboarding}
+                onReorderStandaloneConversations={handleReorderStandaloneConversations}
+                statuses={statuses}
+                attention={attention}
+                activeId={active?.id ?? null}
+                focusedWorkspaceId={focusedWorkspaceId}
+                pendingPlanIds={pendingPlanIds}
+                showArchived={showArchived}
+                onToggleArchived={() => setShowArchived((v) => !v)}
+                onSelect={handleSidebarConversationSelect}
+                onAddWorkspace={() => void requestProject()}
+                onRemoveWorkspace={handleRemoveWorkspace}
+                onNewConversation={(wsId) => setDialogWs(wsId)}
+                onOpenProjectNotes={(wsId) => {
+                  setProjectNotesWs(wsId)
+                  setProjectMemoryWs(null)
+                  setSettingsOpen(false)
+                  setOnboardingOpen(false)
+                }}
+                onOpenProjectMemory={(wsId) => {
+                  setProjectMemoryWs(wsId)
+                  setProjectNotesWs(null)
+                  setSettingsOpen(false)
+                  setOnboardingOpen(false)
+                }}
+                onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
+                onOpenAbout={() => setAboutOpen(true)}
+                onRenameConversation={handleRename}
+                onArchiveConversation={handleArchive}
+                onPinConversation={handlePinConversation}
+                onDeleteConversation={handleDelete}
+                onMigrateConversation={migration.openMigration}
+                onNewSiblingConversation={handleNewSiblingConversation}
+                onArchiveSiblings={handleArchiveSiblings}
+                onDeleteSiblings={handleDeleteSiblings}
+                onReorderWorkspaces={handleReorderWorkspaces}
+                onReorderConversations={handleReorderConversations}
+                groups={groups}
+                onCreateGroup={handleCreateGroup}
+                onRenameGroup={handleRenameGroup}
+                onDeleteGroup={handleDeleteGroup}
+                onReorderGroups={handleReorderGroups}
+                onToggleGroupCollapsed={handleToggleGroupCollapsed}
+                onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
+                onToggleWorkspaceCollapsed={handleToggleWorkspaceCollapsed}
+                onCollapseSidebar={() => setSidebarOpen(false)}
+                openTargets={openTargets}
+                onOpenExternal={(scope, id, target) =>
+                  void window.api.openExternal(scope, id, target).then((r) => {
+                    if (!r.ok) console.error('[open-external]', target, r.error)
+                  })
+                }
               />
             )}
 
-            <div className="flex min-h-0 flex-1 flex-col" style={mainOverride ? { display: 'none' } : undefined}>
-              <header
-                className={cn(
-                  'drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pr-2',
-                  sidebarOpen ? 'pl-3' : 'pl-[var(--tt-offset)]'
-                )}
-              >
-                <div className="no-drag flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                  {!sidebarOpen && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="size-7"
-                      onClick={() => setSidebarOpen(true)}
-                      title={t('common.showWorkspaces')}
-                    >
-                      <PanelLeft className="size-4" />
-                    </Button>
-                  )}
-                  <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
-                  {active?.scope === 'project' && (
-                    <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />
-                  )}
-                </div>
-                <div className="no-drag flex min-w-0 items-center gap-2">
-                  {active?.scope === 'project' &&
-                    active.archived === 0 &&
-                    !active.isMulti &&
-                    !runningReviewLoopForActive && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 min-w-0 gap-1.5 px-2 text-[11px]"
-                        onClick={() => setReviewPickerOpen(true)}
-                        title={t('reviewLoop.openPicker', { ns: 'chat' })}
-                      >
-                        <ScanSearch className="size-3.5" />
-                        <span className="truncate">{t('reviewLoop.openPicker', { ns: 'chat' })}</span>
-                      </Button>
-                    )}
-                  <Button
-                    variant={drawerOpen ? 'secondary' : 'ghost'}
-                    size="icon"
-                    className="size-7 shrink-0"
-                    onClick={() => setDrawerOpen((v) => !v)}
-                    title={t('app.toggleDrawer', { shortcut: drawerShortcutLabel })}
-                  >
-                    <PanelRight className="size-4" />
-                  </Button>
-                </div>
-              </header>
-
-              <div className="relative min-h-0 flex-1">
-                {splitReviewLoop && splitReviewLoop.participants.reviewer && (
-                  <ReviewLoopSplitView
-                    loop={splitReviewLoop}
-                    ratio={reviewSplitRatio}
-                    onRatioChange={setReviewSplitRatio}
-                    onFocus={focusReviewPane}
-                    onDismiss={() => setDismissedSplitLoopId(splitReviewLoop.loopId)}
-                  />
-                )}
-
-                {mountedConvs.map((c) => {
-                  const splitRole = splitReviewLoop
-                    ? splitReviewLoop.participants.executor.conversationId === c.id
-                      ? 'executor'
-                      : splitReviewLoop.participants.reviewer?.conversationId === c.id
-                        ? 'reviewer'
-                        : null
-                    : null
-                  const style: CSSProperties = splitReviewLoop
-                    ? splitRole === 'executor'
-                      ? { top: 28, bottom: 0, left: 0, right: `${100 - reviewSplitRatio}%` }
-                      : splitRole === 'reviewer'
-                        ? { top: 28, bottom: 0, left: `${reviewSplitRatio}%`, right: 0 }
-                        : { display: 'none' }
-                    : { display: active?.id === c.id ? undefined : 'none' }
-                  return (
-                    // Inactive conversations use display:none; terminal views must refit when shown.
-
-                    <div
-                      key={c.id}
-                      className="absolute inset-0"
-                      style={style}
-                      data-review-loop-pane={splitRole ?? undefined}
-                      onMouseDownCapture={() => {
-                        if (splitRole && active?.id !== c.id) focusReviewPane(c.id)
-                      }}
-                    >
-                      <ChatView
-                        key={c.id}
-                        conversationId={c.id}
-                        workspaceId={c.workspaceId}
-                        cwd={c.cwd}
-                        experience={c.experience}
-                        onExperienceChange={handleConversationExperienceChange}
-                        visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
-                        status={statuses[c.id] ?? c.status}
-                        onEvictionSafetyChange={onChatEvictionSafetyChange}
-                      />
-                    </div>
-                  )
-                })}
-                {!active && onboardingChecked && (
-                  <div className="flex h-full flex-col items-center justify-center gap-3.5 text-muted-foreground">
-                    <div className="flex size-14 items-center justify-center rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.06]">
-                      <MessagesSquare className="size-7 opacity-60" />
-                    </div>
-                    <p className="text-sm">{t('app.emptyState')}</p>
-                    <Button disabled={creatingChat} onClick={() => void handleNewChat()}>
-                      {t('sidebar.newChat')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </main>
-
-          {active && (
-            <>
-              {drawerOpen && !fullActive && !mainOverride && (
-                <div
-                  onMouseDown={() => {
-                    dragging.current = true
-                    document.body.style.cursor = 'col-resize'
-                    document.body.style.userSelect = 'none'
-                  }}
-                  className="w-1 shrink-0 cursor-col-resize bg-border/50 transition-colors hover:bg-primary/60"
-                  title={t('app.dragToResize')}
+            <main
+              ref={mainRef}
+              className="flex min-w-0 flex-1 flex-col"
+              style={fullActive && !mainOverride ? { display: 'none' } : undefined}
+            >
+              {projectNotesWs && (
+                <ProjectNotesView
+                  workspaceId={projectNotesWs}
+                  workspaceName={workspaces.find((w) => w.id === projectNotesWs)?.name ?? ''}
+                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                  onClose={() => setProjectNotesWs(null)}
                 />
               )}
-              <div
-                className={cn('flex flex-col', fullActive ? 'min-w-0 flex-1' : 'shrink-0')}
-                style={{
-                  width: fullActive ? undefined : drawerWidth,
-                  display: drawerOpen && !mainOverride ? undefined : 'none',
-                }}
-              >
-                <Drawer
-                  activeConv={active}
-                  visible={drawerOpen && !mainOverride}
-                  suspended={overlaysSuspendNativeViews}
-                  onClose={() => setDrawerOpen(false)}
-                  isFull={fullActive}
-                  onToggleFull={toggleDrawerFull}
-                  activePlan={plans[active.id] ?? null}
-                  tab={drawerTab}
-                  onTabChange={setActiveDrawerTab}
-                  openTabs={openTabs}
-                  onCloseTab={closeDrawerTab}
-                  onReorderOpenTabs={reorderOpenTabs}
-                  catalogOrder={mainTabOrder}
-                  chatGptWebEnabled={chatGptWebEnabled}
+              {projectMemoryWs && (
+                <ProjectMemoryView
+                  workspaceId={projectMemoryWs}
+                  workspaceName={workspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
+                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                  onClose={() => setProjectMemoryWs(null)}
                 />
+              )}
+              {settingsOpen && (
+                <SettingsView
+                  initialSection={settingsSection}
+                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                  onAddProject={requestProject}
+                  onClose={() => setSettingsOpen(false)}
+                />
+              )}
+              {onboardingOpen && (
+                <OnboardingFlow
+                  workspaces={workspaces}
+                  onNewChat={handleNewChat}
+                  creatingChat={creatingChat}
+                  onAddWorkspace={requestProject}
+                  onCreateConversation={(wsId) => setDialogWs(wsId)}
+                  onClose={completeOnboarding}
+                />
+              )}
+
+              <div className="flex min-h-0 flex-1 flex-col" style={mainOverride ? { display: 'none' } : undefined}>
+                <header
+                  className={cn(
+                    'drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pr-2',
+                    sidebarOpen ? 'pl-3' : 'pl-[var(--tt-offset)]'
+                  )}
+                >
+                  <div className="no-drag flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                    {!sidebarOpen && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        onClick={() => setSidebarOpen(true)}
+                        title={t('common.showWorkspaces')}
+                      >
+                        <PanelLeft className="size-4" />
+                      </Button>
+                    )}
+                    <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
+                    {active?.botOrigin && <BotConversationBadge conversation={active} />}
+                    {active?.scope === 'project' && (
+                      <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />
+                    )}
+                  </div>
+                  <div className="no-drag flex min-w-0 items-center gap-2">
+                    {active?.botOrigin && <BotManagementControls conversation={active} />}
+                    {active?.scope === 'project' &&
+                      active.archived === 0 &&
+                      !active.isMulti &&
+                      !active.botOrigin &&
+                      !runningReviewLoopForActive && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 min-w-0 gap-1.5 px-2 text-[11px]"
+                          onClick={() => setReviewPickerOpen(true)}
+                          title={t('reviewLoop.openPicker', { ns: 'chat' })}
+                        >
+                          <ScanSearch className="size-3.5" />
+                          <span className="truncate">{t('reviewLoop.openPicker', { ns: 'chat' })}</span>
+                        </Button>
+                      )}
+                    <Button
+                      variant={drawerOpen ? 'secondary' : 'ghost'}
+                      size="icon"
+                      className="size-7 shrink-0"
+                      onClick={() => setDrawerOpen((v) => !v)}
+                      title={t('app.toggleDrawer', { shortcut: drawerShortcutLabel })}
+                    >
+                      <PanelRight className="size-4" />
+                    </Button>
+                  </div>
+                </header>
+
+                <div className="relative min-h-0 flex-1">
+                  {splitReviewLoop && splitReviewLoop.participants.reviewer && (
+                    <ReviewLoopSplitView
+                      loop={splitReviewLoop}
+                      ratio={reviewSplitRatio}
+                      onRatioChange={setReviewSplitRatio}
+                      onFocus={focusReviewPane}
+                      onDismiss={() => setDismissedSplitLoopId(splitReviewLoop.loopId)}
+                    />
+                  )}
+
+                  {mountedConvs.map((c) => {
+                    const splitRole = splitReviewLoop
+                      ? splitReviewLoop.participants.executor.conversationId === c.id
+                        ? 'executor'
+                        : splitReviewLoop.participants.reviewer?.conversationId === c.id
+                          ? 'reviewer'
+                          : null
+                      : null
+                    const style: CSSProperties = splitReviewLoop
+                      ? splitRole === 'executor'
+                        ? { top: 28, bottom: 0, left: 0, right: `${100 - reviewSplitRatio}%` }
+                        : splitRole === 'reviewer'
+                          ? { top: 28, bottom: 0, left: `${reviewSplitRatio}%`, right: 0 }
+                          : { display: 'none' }
+                      : { display: active?.id === c.id ? undefined : 'none' }
+                    return (
+                      // Inactive conversations use display:none; terminal views must refit when shown.
+
+                      <div
+                        key={c.id}
+                        className="absolute inset-0"
+                        style={style}
+                        data-review-loop-pane={splitRole ?? undefined}
+                        onMouseDownCapture={() => {
+                          if (splitRole && active?.id !== c.id) focusReviewPane(c.id)
+                        }}
+                      >
+                        <ChatView
+                          key={c.id}
+                          conversationId={c.id}
+                          workspaceId={c.workspaceId}
+                          cwd={c.cwd}
+                          experience={c.experience}
+                          botManaged={!!c.botOrigin && c.botManagementState === 'active'}
+                          botConversation={c.botOrigin ? c : undefined}
+                          botName={c.botOrigin?.botName}
+                          onExperienceChange={handleConversationExperienceChange}
+                          visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
+                          status={statuses[c.id] ?? c.status}
+                          onEvictionSafetyChange={onChatEvictionSafetyChange}
+                        />
+                      </div>
+                    )
+                  })}
+                  {!active && onboardingChecked && (
+                    <div className="flex h-full flex-col items-center justify-center gap-3.5 text-muted-foreground">
+                      <div className="flex size-14 items-center justify-center rounded-2xl bg-white/[0.04] ring-1 ring-white/[0.06]">
+                        <MessagesSquare className="size-7 opacity-60" />
+                      </div>
+                      <p className="text-sm">{t('app.emptyState')}</p>
+                      <Button disabled={creatingChat} onClick={() => void handleNewChat()}>
+                        {t('sidebar.newChat')}
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </>
-          )}
+            </main>
 
-          <ConversationMigrationDialog
-            state={migration.dialog}
-            onDestinationBranchChange={migration.setDestinationBranch}
-            onPrepare={() => void migration.prepare()}
-            onClose={() => void migration.closeMigration()}
-            onEditBranch={() => void migration.editDestinationBranch()}
-            onIgnoredChange={migration.toggleIgnored}
-            onSensitiveConfirmationChange={migration.confirmSensitive}
-            onExecute={() => void migration.execute()}
-          />
+            {active && (
+              <>
+                {drawerOpen && !fullActive && !mainOverride && (
+                  <div
+                    onMouseDown={() => {
+                      dragging.current = true
+                      document.body.style.cursor = 'col-resize'
+                      document.body.style.userSelect = 'none'
+                    }}
+                    className="w-1 shrink-0 cursor-col-resize bg-border/50 transition-colors hover:bg-primary/60"
+                    title={t('app.dragToResize')}
+                  />
+                )}
+                <div
+                  className={cn('flex flex-col', fullActive ? 'min-w-0 flex-1' : 'shrink-0')}
+                  style={{
+                    width: fullActive ? undefined : drawerWidth,
+                    display: drawerOpen && !mainOverride ? undefined : 'none',
+                  }}
+                >
+                  <Drawer
+                    activeConv={active}
+                    visible={drawerOpen && !mainOverride}
+                    suspended={overlaysSuspendNativeViews}
+                    onClose={() => setDrawerOpen(false)}
+                    isFull={fullActive}
+                    onToggleFull={toggleDrawerFull}
+                    activePlan={plans[active.id] ?? null}
+                    tab={drawerTab}
+                    onTabChange={setActiveDrawerTab}
+                    openTabs={openTabs}
+                    onCloseTab={closeDrawerTab}
+                    onReorderOpenTabs={reorderOpenTabs}
+                    catalogOrder={mainTabOrder}
+                    chatGptWebEnabled={chatGptWebEnabled}
+                  />
+                </div>
+              </>
+            )}
 
-          <NewConversationDialog
-            workspaceId={dialogWs}
-            workspaces={workspaces}
-            requestProject={requestProject}
-            open={dialogWs !== null}
-            onOpenChange={(o) => !o && setDialogWs(null)}
-            onCreated={handleCreated}
-          />
+            <ConversationMigrationDialog
+              state={migration.dialog}
+              onDestinationBranchChange={migration.setDestinationBranch}
+              onPrepare={() => void migration.prepare()}
+              onClose={() => void migration.closeMigration()}
+              onEditBranch={() => void migration.editDestinationBranch()}
+              onIgnoredChange={migration.toggleIgnored}
+              onSensitiveConfirmationChange={migration.confirmSensitive}
+              onExecute={() => void migration.execute()}
+            />
 
-          <ReviewLoopPickerDialog
-            executor={active}
-            open={reviewPickerOpen}
-            onOpenChange={setReviewPickerOpen}
-            onStarted={handleReviewLoopStarted}
-            onReviewerCreated={handleReviewerCreated}
-          />
+            <NewConversationDialog
+              workspaceId={dialogWs}
+              workspaces={workspaces}
+              requestProject={requestProject}
+              open={dialogWs !== null}
+              onOpenChange={(o) => !o && setDialogWs(null)}
+              onCreated={handleCreated}
+            />
 
-          <ProjectSetupDialog
-            state={projectSetup.state}
-            onModeChange={projectSetup.setMode}
-            onStart={projectSetup.start}
-            onResolveEmptyRemote={projectSetup.resolveEmptyRemote}
-            onClose={projectSetup.close}
-          />
+            <ReviewLoopPickerDialog
+              executor={active}
+              open={reviewPickerOpen}
+              onOpenChange={setReviewPickerOpen}
+              onStarted={handleReviewLoopStarted}
+              onReviewerCreated={handleReviewerCreated}
+            />
 
-          <WorkspaceDefaultBranchDialog
-            workspaceId={branchDialogWs}
-            workspaceName={workspaces.find((w) => w.id === branchDialogWs)?.name}
-            currentDefault={workspaces.find((w) => w.id === branchDialogWs)?.defaultBranch ?? ''}
-            open={branchDialogWs !== null}
-            onOpenChange={(o) => !o && setBranchDialogWs(null)}
-            onSaved={() => void refreshWorkspaces()}
-          />
+            <ProjectSetupDialog
+              state={projectSetup.state}
+              onModeChange={projectSetup.setMode}
+              onStart={projectSetup.start}
+              onResolveEmptyRemote={projectSetup.resolveEmptyRemote}
+              onClose={projectSetup.close}
+            />
 
-          <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+            <WorkspaceDefaultBranchDialog
+              workspaceId={branchDialogWs}
+              workspaceName={workspaces.find((w) => w.id === branchDialogWs)?.name}
+              currentDefault={workspaces.find((w) => w.id === branchDialogWs)?.defaultBranch ?? ''}
+              open={branchDialogWs !== null}
+              onOpenChange={(o) => !o && setBranchDialogWs(null)}
+              onSaved={() => void refreshWorkspaces()}
+            />
 
-          <MigrationRecoveryGate
-            checking={migration.recoveriesChecking}
-            recoveries={migration.blockingRecoveries}
-            error={migration.recoveryError}
-            resolving={migration.resolvingRecovery}
-            onResolve={(recovery, action) => void migration.resolveRecovery(recovery, action)}
-            onRetry={() => void migration.retryRecoveries()}
-          />
+            <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
-          <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
-        </div>
-      </OnboardingProvider>
+            <MigrationRecoveryGate
+              checking={migration.recoveriesChecking}
+              recoveries={migration.blockingRecoveries}
+              error={migration.recoveryError}
+              resolving={migration.resolvingRecovery}
+              onResolve={(recovery, action) => void migration.resolveRecovery(recovery, action)}
+              onRetry={() => void migration.retryRecoveries()}
+            />
+
+            <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
+          </div>
+        </OnboardingProvider>
       </UpdateProvider>
     </SettingsProvider>
   )

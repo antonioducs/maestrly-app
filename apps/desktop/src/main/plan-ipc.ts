@@ -7,7 +7,8 @@ import { excludeFromGitInfo } from './git-service'
 import { commitPlanDecision, decidePlan, getPending as getPendingPlan, type PlanDecision } from './plan-broker'
 import { toForwardSlashes } from './platform'
 import { getConversation, type Conversation } from './store'
-import { runApprovedPlan, runPlanRevision, setChatMode } from './chat/service'
+import { runApprovedPlan, runPlanRevision, setChatMode, stopChatAndWait } from './chat/service'
+import { botSharesConversation, pauseBotForHuman } from './bot/control'
 import { OPEN_FILE_FILE } from './vscode/vscode-ext-source'
 import type { IpcRegistrar } from './ipc-registrar'
 
@@ -50,7 +51,7 @@ function positiveLine(value: unknown): number | undefined {
 }
 
 export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
-  reg.mhandle('plan:decide', (_e, agentId: string, decision: PlanDecision) => {
+  reg.mhandle('plan:decide', async (_e, agentId: string, decision: PlanDecision) => {
     if (isWebManagedConversation(agentId)) return { ok: false, error: 'Decide this plan in the Kanban web chat.' }
     if (
       decision.implementationTarget !== undefined &&
@@ -80,6 +81,14 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
     if (!sourceConversation) {
       commitPlanDecision(agentId, decision.action)
       return
+    }
+    if (sourceConversation.botOrigin) {
+      if (decision.implementationTarget === 'maestro')
+        return { ok: false, error: 'Bot conversations must keep their exclusive worktree.' }
+      // Deciding a plan takes a chat the person never released, as it always has. A released chat is
+      // already theirs to write in, so it stays shared; the implementation turn holds the slot instead.
+      if (!botSharesConversation(agentId)) pauseBotForHuman(agentId)
+      if (!(await stopChatAndWait(agentId))) return { ok: false, error: 'The bot turn is still stopping.' }
     }
     const webRoute = result.route?.kind === 'chatgpt-web' ? result.route : null
     const resolveWeb = (

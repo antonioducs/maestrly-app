@@ -23,6 +23,7 @@ describe('data export v7', () => {
         { key: 'license.state', value: '{"tier":"trial"}' },
         { key: 'license.device_id', value: 'device-1' },
         { key: 'provider.api_key', value: 'private' },
+        { key: 'bot.desktop.credential.bridge.device', value: 'enc:v1:synthetic-ciphertext' },
         { key: 'telemetry.enabled', value: 'true' },
         { key: 'cloud.state', value: '{}' },
         { key: 'ui.locale', value: 'pt-BR' },

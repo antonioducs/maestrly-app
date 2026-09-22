@@ -57,7 +57,9 @@ import type {
 } from '../../../shared/chat'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { BackgroundCompactionStatus as BackgroundCompactionState } from '../../../shared/background-compaction'
+import type { Conversation } from '../../../shared/conversation'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
+import { BotManualChatControl } from '../bot/BotManualChatControl'
 import { cycleChatMode } from '../../../shared/chat-mode'
 import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
 import {
@@ -106,6 +108,11 @@ import { SubagentActivityPill } from './SubagentActivityPill'
 import { routeHarnessComposerSubmit, routeHarnessReasoningChange } from './harness-turn-controls'
 
 interface Props {
+  /** A bot holds this conversation: it created it and the person has not paused or revoked it. */
+  botManaged?: boolean
+  /** The person released this bot chat, so they write in it without taking it from the bot. */
+  botConversation?: Conversation
+  botName?: string
   workspaceId: string | null
   conversationId: string
   cwd: string
@@ -143,6 +150,9 @@ function revokeAttachmentPreviews(attachments: readonly UIAttachment[]): void {
 }
 
 export function ChatView({
+  botManaged = false,
+  botConversation,
+  botName,
   workspaceId,
   conversationId,
   cwd: _cwd,
@@ -153,6 +163,8 @@ export function ChatView({
   onEvictionSafetyChange,
 }: Props) {
   const { t } = useTranslation('chat')
+  // A released chat still belongs to its bot; what changes is that the person may write in it too.
+  const botBlocked = botManaged && !botConversation?.botManualChatEnabled
   const [currentExperience, setCurrentExperience] = useState(experience)
   useEffect(() => setCurrentExperience(experience), [conversationId, experience])
   const isMaestro = currentExperience === 'maestro'
@@ -838,6 +850,7 @@ export function ChatView({
         if (visibleRef.current) setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }
+      return res
     },
     [conversationId, pushAssistantError, reloadLatestPage, subagents]
   )
@@ -1278,8 +1291,25 @@ export function ChatView({
   }, [conversationId, isMaestro])
 
   useEffect(() => {
-    window.api.chatGetReasoning(conversationId).then(setReasoning)
-  }, [conversationId])
+    const load = () =>
+      void window.api.chatGetReasoning(conversationId).then((effort) => {
+        if (convIdRef.current === conversationId) setReasoning(effort)
+      })
+    load()
+    // A bot, a delegated stage or a provider failover moves this conversation's account, model, effort
+    // and behavior mode without anyone touching the pickers. Read them again so the composer never
+    // shows a selection the next turn will not use.
+    return window.api.onChatSettingsChanged(conversationId, () => {
+      if (convIdRef.current !== conversationId) return
+      load()
+      setModelRefresh((n) => n + 1)
+      if (isMaestro) return
+      void window.api.chatGetMode(conversationId).then((storedMode) => {
+        // A change the person is making right now wins: their pending answer is not overwritten here.
+        if (convIdRef.current === conversationId && !modeChangeRequestRef.current) setMode(storedMode)
+      })
+    })
+  }, [conversationId, isMaestro])
   const applyReasoning = useCallback(
     (r: ChatReasoningEffort) => {
       setReasoning(r)
@@ -1443,7 +1473,13 @@ export function ChatView({
         if (isMaestro) setMaestroSendTarget('current')
         return
       }
-      void doSend(text, atts, agentMentions)
+      // A refused send must not cost what was written: a busy chat gives the draft back to be sent again.
+      void doSend(text, atts, agentMentions).then((result) => {
+        if (result?.error !== 'busy') return
+        setDraft((current) => current || text)
+        setDraftMentions((current) => (current.length ? current : agentMentions))
+        setAttachments((current) => (current.length ? current : atts))
+      })
     },
     [
       applyMaestroLiveEvent,
@@ -1704,7 +1740,7 @@ export function ChatView({
   }, [conversationId, setQueueState])
 
   const decide = useCallback((requestId: string, reply: 'once' | 'always' | 'reject') => {
-    setPending((prev) => prev.filter((r) => r.id !== requestId))
+    // The broker's resolved event dismisses the prompt only after it accepts the decision.
     window.api.chatPermissionRespond(requestId, reply)
   }, [])
 
@@ -2116,6 +2152,11 @@ export function ChatView({
               </div>
             )}
 
+            {botManaged && botConversation && (
+              <div className="mx-auto mb-1.5 w-full max-w-3xl px-3" data-testid="bot-manual-chat">
+                <BotManualChatControl conversation={botConversation} />
+              </div>
+            )}
             {pendingQuestion ? (
               <QuestionComposer
                 key={pendingQuestion.toolCallId}
@@ -2133,7 +2174,8 @@ export function ChatView({
                 streaming={streaming}
                 sendWhileStreaming={maestroLiveActive || midTurnSteering}
                 streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
-                disabled={keyMissing || reviewLoopActive}
+                disabled={keyMissing || reviewLoopActive || botBlocked}
+                disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                 onSend={submitDraft}
                 onStop={stop}
                 attachments={attachments}

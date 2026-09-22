@@ -13,6 +13,7 @@ import { requireProjectConversation } from '../../shared/conversation-scope'
 export function linkedConversationBinding(conversationId: string) {
   if (isWebManagedConversation(conversationId)) return null
   const conversation = getConversation(conversationId)
+  if (conversation?.botOrigin) return null
   return conversation && conversation.scope !== 'standalone'
     ? platformProjectBindings.forWorkspace(conversation.workspaceId)
     : null

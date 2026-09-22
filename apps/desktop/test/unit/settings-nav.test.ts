@@ -14,7 +14,7 @@ const chatMessageListSource = source('../../src/renderer/components/chat/ChatMes
 describe('settings navigation', () => {
   it('keeps Maestrly Chat without an external CLI section', () => {
     const ids = [...navSource.matchAll(/\{ id: '([^']+)'/g)].map((match) => match[1])
-    expect(ids).toEqual(['chat', 'platform', 'usage', 'appearance', 'tools', 'execution', 'privacy', 'updates'])
+    expect(ids).toEqual(['chat', 'bots', 'platform', 'usage', 'appearance', 'tools', 'execution', 'privacy', 'updates'])
     expect(settingsViewSource).toContain("{section === 'chat' && <MaestrlyChatSection")
     expect(settingsViewSource).not.toContain("{section === 'clis' && <MaestrlyChatSection")
   })
@@ -24,6 +24,8 @@ describe('settings navigation', () => {
     expect(resources['pt-BR'].ui.settings.nav.chat).toBe('Maestrly Chat')
     expect(resources.en.ui.settings.nav.platform).toBe('Platform')
     expect(resources['pt-BR'].ui.settings.nav.platform).toBe('Plataforma')
+    expect(resources.en.ui.settings.nav.bots).toBe('Bots')
+    expect(resources['pt-BR'].ui.settings.nav.bots).toBe('Bots')
   })
 
   it('accepts direct navigation to the Maestrly Chat settings section', () => {

@@ -233,6 +233,8 @@ export interface CreateWorktreeArgs {
    * retain the historical <top>/.claude/worktrees/<slug> fallback.
    */
   dest?: string
+  /** Bot allocation must never attach to a branch or checkout that already exists. */
+  exclusive?: boolean
 }
 
 /**
@@ -323,6 +325,15 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
   const { top, branch, base, isNewBranch, dest } = args
   const slug = slugifyBranch(branch)
   const wtPath = dest ?? path.join(top, '.claude', 'worktrees', slug)
+  if (args.exclusive) {
+    if (!isNewBranch) throw new Error('Exclusive worktree allocation requires a new branch.')
+    if (await branchExists(top, branch)) throw new Error('The exclusive worktree branch already exists.')
+    const existingPath = await fs.lstat(wtPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    if (existingPath) throw new Error('The exclusive worktree destination already exists.')
+  }
 
   // Keep .claude/worktrees out of the main repository's Git status.
   await ensureExclude(top)
@@ -330,6 +341,9 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
   // Check whether this branch already has a worktree.
   const existing = (await listWorktrees(top)).find((w) => w.branch === branch)
   if (existing) {
+    if (args.exclusive) throw new Error('The exclusive worktree branch is already checked out.')
+    if (await gitOrNull(existing.path, ['config', '--worktree', '--get', 'maestrly.botAllocation']))
+      throw new Error('This worktree is owned exclusively by a bot conversation. Resume that conversation instead.')
     if (dest && isInsidePath(top, existing.path)) {
       throw new Error(
         `Branch "${branch}" is already open in a worktree inside the repository. ` +
