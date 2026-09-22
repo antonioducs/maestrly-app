@@ -9,7 +9,7 @@ export interface MentionMatch {
   index: number
 }
 
-const MENTION_RE = /(?<!\w)@([\w./\-]+(?::L\d+(?:-\d+)?)?)/g
+const MENTION_RE = /(?<!\w)@([\w./-]+(?::L\d+(?:-\d+)?)?)/g
 
 export function findMentions(text: string): MentionMatch[] {
   if (typeof text !== 'string' || !text.includes('@')) return []

@@ -718,7 +718,7 @@ export function DesktopApp() {
                 </header>
 
                 <div className="relative min-h-0 flex-1">
-                  {splitReviewLoop && splitReviewLoop.participants.reviewer && (
+                  {splitReviewLoop?.participants.reviewer && (
                     <ReviewLoopSplitView
                       loop={splitReviewLoop}
                       ratio={reviewSplitRatio}

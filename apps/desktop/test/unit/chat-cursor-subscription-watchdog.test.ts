@@ -343,8 +343,9 @@ describe('Cursor active time budgets', () => {
         deadlineMs: 120,
         graceMs: 5,
         isHostPending: () => hostPending,
+        // A silent stream: it hangs before producing its first message.
         stream: async function* () {
-          await never<void>()
+          yield await never<SDKMessage>()
         },
       })
       await vi.advanceTimersByTimeAsync(1_000)

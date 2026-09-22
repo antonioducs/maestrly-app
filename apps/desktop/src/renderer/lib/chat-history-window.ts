@@ -60,7 +60,7 @@ export function boundChatHistoryWindow(input: HistoryWindowInput): HistoryWindow
     unique.push(message)
   }
 
-  let start = 0
+  const start = 0
   let end = unique.length
   let bytes = estimateHistoryWindowBytes(unique)
   let trimmedFront = false

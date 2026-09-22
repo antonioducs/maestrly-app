@@ -411,68 +411,64 @@ export async function copyConversationNotebookBetweenCwds(
   }
   const parent = await ensureSafeNotebookDestinationParent(destinationCwd)
   const staging = path.join(parent, `.notes-migration-${stagingToken}`)
+  // Failures leave the deterministic staging directory on disk for resume/recovery; no compensation is needed.
+  let stagingExists = false
   try {
-    let stagingExists = false
-    try {
-      const [staged, stagedStat] = await Promise.all([notebookSnapshot(staging), fsp.lstat(staging)])
-      if (
-        !stagedStat.isDirectory() ||
-        stagedStat.isSymbolicLink() ||
-        (stagedStat.mode & 0o7777) !== sourceMode ||
-        JSON.stringify(staged) !== JSON.stringify(before)
-      ) {
-        throw new Error('Notebook staging differs from the journal.')
-      }
-      stagingExists = true
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-    if (!stagingExists) {
-      await fsp.mkdir(staging, { mode: sourceMode })
-      await fsp.chmod(staging, sourceMode).catch(() => {})
-      for (const entry of before) {
-        const target = path.join(staging, ...entry.path.split('/'))
-        if (entry.kind === 'directory') {
-          await fsp.mkdir(target, { recursive: true, mode: entry.mode })
-          await fsp.chmod(target, entry.mode).catch(() => {})
-        } else {
-          await fsp.mkdir(path.dirname(target), { recursive: true })
-          await fsp.copyFile(path.join(source, ...entry.path.split('/')), target)
-          await fsp.chmod(target, entry.mode).catch(() => {})
-        }
-      }
-    }
-    const [sourceAfter, sourceAfterStat, staged, stagedStat] = await Promise.all([
-      notebookSnapshot(source),
-      fsp.lstat(source),
-      notebookSnapshot(staging),
-      fsp.lstat(staging),
-    ])
+    const [staged, stagedStat] = await Promise.all([notebookSnapshot(staging), fsp.lstat(staging)])
     if (
-      !sourceAfterStat.isDirectory() ||
-      sourceAfterStat.isSymbolicLink() ||
-      (sourceAfterStat.mode & 0o7777) !== sourceMode ||
       !stagedStat.isDirectory() ||
       stagedStat.isSymbolicLink() ||
       (stagedStat.mode & 0o7777) !== sourceMode ||
-      JSON.stringify(sourceAfter) !== JSON.stringify(before) ||
       JSON.stringify(staged) !== JSON.stringify(before)
     ) {
-      throw new Error('The notebook changed during copying.')
+      throw new Error('Notebook staging differs from the journal.')
     }
-    await assertSafeNotebookDestinationParent(destinationCwd, parent)
-    await fsp.rename(staging, destination)
-    return {
-      copied: true,
-      entries: before,
-      relativePath: path.posix.join(NOTES_DIR, CONV_SUB),
-      entry: 'directory',
-      sha256: notebookEntriesHash(before, sourceMode),
-      mode: sourceMode,
-    }
+    stagingExists = true
   } catch (error) {
-    // Leave deterministic staging on disk for resume/recovery; no compensation is needed here.
-    throw error
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (!stagingExists) {
+    await fsp.mkdir(staging, { mode: sourceMode })
+    await fsp.chmod(staging, sourceMode).catch(() => {})
+    for (const entry of before) {
+      const target = path.join(staging, ...entry.path.split('/'))
+      if (entry.kind === 'directory') {
+        await fsp.mkdir(target, { recursive: true, mode: entry.mode })
+        await fsp.chmod(target, entry.mode).catch(() => {})
+      } else {
+        await fsp.mkdir(path.dirname(target), { recursive: true })
+        await fsp.copyFile(path.join(source, ...entry.path.split('/')), target)
+        await fsp.chmod(target, entry.mode).catch(() => {})
+      }
+    }
+  }
+  const [sourceAfter, sourceAfterStat, staged, stagedStat] = await Promise.all([
+    notebookSnapshot(source),
+    fsp.lstat(source),
+    notebookSnapshot(staging),
+    fsp.lstat(staging),
+  ])
+  if (
+    !sourceAfterStat.isDirectory() ||
+    sourceAfterStat.isSymbolicLink() ||
+    (sourceAfterStat.mode & 0o7777) !== sourceMode ||
+    !stagedStat.isDirectory() ||
+    stagedStat.isSymbolicLink() ||
+    (stagedStat.mode & 0o7777) !== sourceMode ||
+    JSON.stringify(sourceAfter) !== JSON.stringify(before) ||
+    JSON.stringify(staged) !== JSON.stringify(before)
+  ) {
+    throw new Error('The notebook changed during copying.')
+  }
+  await assertSafeNotebookDestinationParent(destinationCwd, parent)
+  await fsp.rename(staging, destination)
+  return {
+    copied: true,
+    entries: before,
+    relativePath: path.posix.join(NOTES_DIR, CONV_SUB),
+    entry: 'directory',
+    sha256: notebookEntriesHash(before, sourceMode),
+    mode: sourceMode,
   }
 }
 

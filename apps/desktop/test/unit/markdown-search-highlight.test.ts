@@ -55,7 +55,7 @@ describe('rehypeMarkdownSearchHighlight', () => {
       paragraph.children
         ?.flatMap((child) => (child.tagName === 'mark' ? [child] : (child.children ?? [])))
         .filter((child) => child.tagName === 'mark')
-        .every((mark) => (mark.properties?.className as string[]).includes('chat-search-match--current'))
+        .every((mark) => (mark.properties!.className as string[]).includes('chat-search-match--current'))
     ).toBe(true)
   })
 

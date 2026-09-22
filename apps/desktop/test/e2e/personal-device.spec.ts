@@ -191,7 +191,7 @@ test('pairs the real desktop, exposes only an owner device and disables it on di
     await page.getByRole('option',{name:/Another local project/}).click()
     await expect(bindingPanel.getByRole('combobox',{name:'Folder on this computer',exact:true})).toHaveText('Select a local folder…')
     await bindingPanel.getByRole('combobox',{name:'Folder on this computer',exact:true}).click()
-    await page.getByRole('option',{name:new RegExp('maestrly-personal-desktop-')}).click()
+    await page.getByRole('option',{name:/maestrly-personal-desktop-/}).click()
     await expect(bindingPanel.getByRole('alert')).toContainText('already linked to another project')
     await bindingPanel.getByRole('button',{name:'Link project',exact:true}).click()
     await expect(bindingPanel.getByRole('alert').first()).toContainText('already linked to another project')

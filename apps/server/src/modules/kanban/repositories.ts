@@ -18,7 +18,7 @@ export const branchSchema = z
       !value.endsWith('.') &&
       !value.includes('..') &&
       !value.includes('@{') &&
-      !/[\s~^:?*\[\\\x00-\x1f\x7f]/.test(value) &&
+      !/[\s~^:?*[\\\x00-\x1f\x7f]/.test(value) &&
       value.split('/').every((part) => part && !part.startsWith('.') && !part.endsWith('.lock')),
     'Invalid Git branch.'
   )

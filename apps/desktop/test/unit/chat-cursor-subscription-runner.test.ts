@@ -452,7 +452,7 @@ describe('Cursor subscription runner', () => {
     })
 
     expect(manager.resolveModelSelection).toHaveBeenCalledWith('composer-2.5', true, false, 'xhigh')
-    expect((manager.lastAgent()?.sends[0].options as { model: unknown }).model).toEqual({
+    expect((manager.lastAgent()!.sends[0].options as { model: unknown }).model).toEqual({
       id: 'composer-2.5',
       params: [
         { id: 'fast', value: 'true' },

@@ -105,7 +105,7 @@ describe('GrokSubscriptionManager', () => {
         expiresAt: now + 30_000,
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {
@@ -138,7 +138,7 @@ describe('GrokSubscriptionManager', () => {
         expiresAt: now + 30_000,
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {
@@ -175,7 +175,7 @@ describe('GrokSubscriptionManager', () => {
         idToken: idTokenWithSubject('user-42'),
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {
@@ -207,7 +207,7 @@ describe('GrokSubscriptionManager', () => {
         idToken: idTokenWithSubject('user-42'),
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {
@@ -240,7 +240,7 @@ describe('GrokSubscriptionManager', () => {
         expiresAt: Date.now() - 1_000,
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       oauth: {
         ...baseOAuthMock(),
@@ -295,7 +295,7 @@ describe('GrokSubscriptionManager', () => {
         expiresAt: now + 60_000,
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {
@@ -333,7 +333,7 @@ describe('GrokSubscriptionManager', () => {
         expiresAt: now + 3_600_000,
       })
     )
-    const { oauth, manager } = makeManager({
+    const { manager } = makeManager({
       store,
       now: () => now,
       oauth: {

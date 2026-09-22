@@ -1,5 +1,5 @@
 /** `glob` tool — lists files by pattern. Uses fs.promises.glob (Node 22+) with walk fallback. */
-import fs from 'node:fs'
+import type fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'

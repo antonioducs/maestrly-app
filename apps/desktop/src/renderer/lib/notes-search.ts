@@ -259,7 +259,7 @@ export function replaceCurrent(view: EditorView, replacement: string): void {
 
 export function replaceAll(view: EditorView, replacement: string): void {
   const s = notesSearchKey.getState(view.state)
-  if (!s || !s.matches.length) return
+  if (!s?.matches.length) return
   const tr = view.state.tr
   for (let i = s.matches.length - 1; i >= 0; i--) {
     const m = s.matches[i]!

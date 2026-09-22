@@ -25,7 +25,7 @@ describe('sidebar pinned UI contract', () => {
     const pinnedBlock = sidebar.slice(start, end)
 
     expect(pinnedBlock).toContain("pl: 'pl-6'")
-    expect(pinnedBlock).toContain('instanceKey: `pinned:${item.conversation.id}`')
+    expect(pinnedBlock).toMatch(/instanceKey: `pinned:\$\{item\.conversation\.id\}`/)
     expect(pinnedBlock).toContain('contextLabel: pinnedWorkspaceLabels.get(item.workspace.id) ?? item.workspace.name')
     expect(pinnedBlock).toContain(contextTooltip)
     // Shortcuts are independent of folders and collapsed workspace trees.
@@ -54,7 +54,7 @@ describe('sidebar pinned UI contract', () => {
     // The tree receives all ws.conversations without filtering pinned entries.
     expect(sidebar).toContain('buildConvTopNodes(ws.conversations)')
     // Tree occurrences use tree:<id>, distinct from pinned:<id>, allowing one input per occurrence.
-    expect(sidebar).toContain('instanceKey: `tree:${conv.id}`')
+    expect(sidebar).toMatch(/instanceKey: `tree:\$\{conv\.id\}`/)
     // Workspace collapse hides only its tree list; the pinned section is outside that condition.
     expect(sidebar).toContain('const isCollapsed = ws.collapsed && !q')
     expect(sidebar).toContain('!isCollapsed && (')
@@ -71,7 +71,7 @@ describe('sidebar pinned UI contract', () => {
     // Dropdown and context menus receive the same instanceKey; renaming updates both occurrences.
     expect(rows).toContain('convMenuItems(conv, isArchived, opts.instanceKey, dropdownKit)')
     expect(rows).toContain('convMenuItems(conv, isArchived, opts.instanceKey, contextKit)')
-    expect(rows).toContain('instanceKey: `tree:${c.id}`')
+    expect(rows).toMatch(/instanceKey: `tree:\$\{c\.id\}`/)
   })
 
   it('shared menus select Pin or PinOff from pinnedAt and omit the action for archived conversations', () => {
