@@ -70,10 +70,64 @@ export interface RuntimeAssetServiceDependencies {
   >
   readonly availableBytes?: (directory: string) => Promise<number>
   readonly registry?: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>>
+  /**
+   * Accepted non-embedded definition for an exact version (independently updated runtimes). The embedded registry
+   * always wins for its own version; `null` rejects the installation. Throwing means the metadata is temporarily
+   * unavailable: status then fails without promoting, replacing, or removing any installation.
+   */
+  readonly acceptedDefinition?: (id: RuntimeAssetId, version: string) => RuntimeAssetDefinition | null
   readonly target?: RuntimeTargetId
   readonly now?: () => Date
   /** Receives status changes from explicit install/repair/remove operations. */
   readonly onStatusChanged?: (status: RuntimeAssetStatus) => void
+}
+
+export type RuntimeAssetUpdatePhase = 'downloading' | 'verifying' | 'installing' | 'validating'
+
+export interface RuntimeAssetUpdateProgress {
+  readonly phase: RuntimeAssetUpdatePhase
+  readonly bytesDownloaded?: number
+  readonly totalBytes?: number
+}
+
+export interface RuntimeAssetUpdateOptions {
+  readonly signal?: AbortSignal
+  /** Runs against the staged installation before activation; a rejection leaves the active version untouched. */
+  readonly validate?: (
+    installationPath: string,
+    definition: RuntimeAssetDefinition,
+    signal: AbortSignal
+  ) => Promise<void>
+  /** Persists the metadata needed to recognize the version offline; runs before the active pointer moves. */
+  readonly commit?: (definition: RuntimeAssetDefinition) => void | Promise<void>
+  readonly onProgress?: (progress: RuntimeAssetUpdateProgress) => void
+}
+
+export type RuntimeAssetUpdateErrorCode =
+  | 'download-failed'
+  | 'integrity'
+  | 'disk-space'
+  | 'incompatible'
+  | 'in-use'
+  | 'cancelled'
+  | 'rollback-unavailable'
+  | 'failed'
+
+/** Typed update failure: the active installation is always preserved when one of these is thrown. */
+export class RuntimeAssetUpdateError extends Error {
+  constructor(
+    readonly code: RuntimeAssetUpdateErrorCode,
+    message: string,
+    options?: ErrorOptions
+  ) {
+    super(message, options)
+    this.name = 'RuntimeAssetUpdateError'
+  }
+}
+
+export interface RuntimeAssetInstallation {
+  readonly version: string
+  readonly path: string
 }
 
 export interface RuntimeAssetServiceOptions extends RuntimeAssetServiceDependencies {
@@ -155,12 +209,15 @@ export class RuntimeAssetService {
   private readonly fullManifestFiles: NonNullable<RuntimeAssetServiceDependencies['fullManifestFiles']>
   private readonly availableBytes: NonNullable<RuntimeAssetServiceDependencies['availableBytes']>
   private readonly registry: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>>
+  private readonly acceptedDefinition?: RuntimeAssetServiceDependencies['acceptedDefinition']
   private readonly target: RuntimeTargetId
   private readonly now: () => Date
   private readonly onStatusChanged?: (status: RuntimeAssetStatus) => void
   private readonly flights = new Map<RuntimeAssetId, InstallFlight>()
   private readonly volatile = new Map<RuntimeAssetId, RuntimeAssetStatus>()
   private readonly assetMutations = new Map<RuntimeAssetId, Promise<void>>()
+  /** Serializes updates/rollbacks per asset; only their final pointer swap takes the asset mutation lock. */
+  private readonly updateLocks = new Map<RuntimeAssetId, Promise<void>>()
   /** Full verification is shared by concurrent leases and retained only while that lease session is active. */
   private readonly fullVerifications = new Map<string, Promise<VerifiedGeneration | string>>()
   private readonly leases = new Map<string, number>()
@@ -172,6 +229,7 @@ export class RuntimeAssetService {
     this.fullManifestFiles = options.fullManifestFiles ?? manifestFiles
     this.availableBytes = options.availableBytes ?? defaultAvailableBytes
     this.registry = options.registry ?? RUNTIME_ASSET_REGISTRY
+    this.acceptedDefinition = options.acceptedDefinition
     this.target = options.target ?? hostRuntimeTarget()
     this.now = options.now ?? (() => new Date())
     this.onStatusChanged = options.onStatusChanged
@@ -206,20 +264,44 @@ export class RuntimeAssetService {
     }
   }
 
-  private async withAssetMutation<T>(id: RuntimeAssetId, operation: () => Promise<T>): Promise<T> {
-    const previous = this.assetMutations.get(id) ?? Promise.resolve()
+  private withAssetMutation<T>(id: RuntimeAssetId, operation: () => Promise<T>): Promise<T> {
+    return this.serialize(this.assetMutations, id, operation)
+  }
+
+  private withUpdateLock<T>(id: RuntimeAssetId, operation: () => Promise<T>): Promise<T> {
+    return this.serialize(this.updateLocks, id, operation)
+  }
+
+  private async serialize<T>(
+    locks: Map<RuntimeAssetId, Promise<void>>,
+    id: RuntimeAssetId,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const previous = locks.get(id) ?? Promise.resolve()
     let release!: () => void
     const current = new Promise<void>((resolve) => {
       release = resolve
     })
-    this.assetMutations.set(id, current)
+    locks.set(id, current)
     await previous
     try {
       return await operation()
     } finally {
       release()
-      if (this.assetMutations.get(id) === current) this.assetMutations.delete(id)
+      if (locks.get(id) === current) locks.delete(id)
     }
+  }
+
+  /** Embedded registry for its own version, otherwise the accepted dynamic definition (may throw if unavailable). */
+  definitionFor(id: RuntimeAssetId, version: string): RuntimeAssetDefinition | null {
+    const embedded = this.registry[id]
+    if (embedded.version === version) return embedded
+    return this.acceptedDefinition?.(id, version) ?? null
+  }
+
+  private versionFromDirectory(directory: string): string | null {
+    const suffix = `-${this.target}`
+    return directory.endsWith(suffix) && directory.length > suffix.length ? directory.slice(0, -suffix.length) : null
   }
 
   private async readGenerationMarker(id: RuntimeAssetId, directory: string): Promise<InstallMarker | string> {
@@ -299,11 +381,17 @@ export class RuntimeAssetService {
     return verification
   }
 
+  /**
+   * Compare an installation with the accepted definition of ITS OWN version, so a newer accepted release does not
+   * invalidate the installation that is still active. Metadata unavailability propagates instead of being reported
+   * as a mismatch that would trigger promotion or reinstallation.
+   */
   private registryMismatch(id: RuntimeAssetId, marker: InstallMarker): string | null {
+    const definition = this.definitionFor(id, marker.version)
     try {
-      const definition = this.registry[id]
-      const target = definition.targets[this.target]
+      const target = definition?.targets[this.target]
       if (
+        !definition ||
         !target ||
         marker.version !== definition.version ||
         JSON.stringify(marker.archiveHash) !== JSON.stringify(target.hash)
@@ -508,13 +596,28 @@ export class RuntimeAssetService {
     return this.waitForAbortable(flight.promise, signal).finally(release)
   }
 
+  /**
+   * Install/repair reinstalls the accepted version of the active pointer, so repairing an independently updated
+   * runtime never silently downgrades it to the embedded pin. Without an accepted active version, use the pin.
+   */
+  private async installDefinition(id: RuntimeAssetId): Promise<RuntimeAssetDefinition> {
+    const pointer = await readJson<Pointer>(path.join(this.assetRoot(id), CURRENT))
+    if (pointer && /^[A-Za-z0-9._-]+$/.test(pointer.directory)) {
+      const marker = await this.readGenerationMarker(id, pointer.directory)
+      const version = typeof marker === 'string' ? this.versionFromDirectory(pointer.directory) : marker.version
+      const definition = version ? this.definitionFor(id, version) : null
+      if (definition?.targets[this.target]) return definition
+    }
+    return this.registry[id]
+  }
+
   private async performInstall(id: RuntimeAssetId, signal: AbortSignal, force: boolean): Promise<RuntimeAssetStatus> {
     return this.withAssetMutation(id, async () => {
-      const definition = this.registry[id]
+      const current = await this.statusWithinAssetMutation(id)
+      const definition = await this.installDefinition(id)
       const target = definition.targets[this.target]
       if (!target)
         return this.set({ id, state: 'failed', error: `No ${this.target} target is configured for ${id}` }, true)
-      const current = await this.statusWithinAssetMutation(id)
       if (!force && current.state === 'ready' && current.path) {
         const verified = await this.verifyGenerationFull(id, path.basename(current.path), { cache: false })
         if (typeof verified !== 'string' && !this.registryMismatch(id, verified.marker)) return this.set(current, true)
@@ -636,6 +739,265 @@ export class RuntimeAssetService {
     })
   }
 
+  /**
+   * Install `definition` beside the active version and activate it only after download, hash, layout, and the
+   * caller's validation succeed. Staging runs without the asset mutation lock, so leases on the active version
+   * stay available during the download; only the rename and pointer swap are serialized. Any failure throws a
+   * `RuntimeAssetUpdateError` and leaves the active installation untouched. Without a ready installation (first
+   * install), progress and failure are also published through `status` like `install`.
+   */
+  update(definition: RuntimeAssetDefinition, options: RuntimeAssetUpdateOptions = {}): Promise<RuntimeAssetStatus> {
+    return this.withUpdateLock(definition.id, () => this.performUpdate(definition, options))
+  }
+
+  private async performUpdate(
+    definition: RuntimeAssetDefinition,
+    options: RuntimeAssetUpdateOptions
+  ): Promise<RuntimeAssetStatus> {
+    const id = definition.id
+    const signal = options.signal ?? new AbortController().signal
+    const target = definition.targets[this.target]
+    if (!target) throw new RuntimeAssetUpdateError('failed', `No ${this.target} target is configured for ${id}`)
+    if (!/^[A-Za-z0-9.]+(?:-[A-Za-z0-9.]+)*$/.test(definition.version)) {
+      throw new RuntimeAssetUpdateError('failed', `Invalid runtime version: ${definition.version}`)
+    }
+    if (signal.aborted) throw new RuntimeAssetUpdateError('cancelled', 'Runtime asset update cancelled')
+    const directory = `${definition.version}-${this.target}`
+    const destination = path.join(this.versionsRoot(id), directory)
+    const before = await this.status(id)
+    if (before.state === 'ready' && before.path === destination) return before
+    const reportStatus = before.state !== 'ready'
+    const report = (phase: RuntimeAssetUpdatePhase, bytesDownloaded?: number, totalBytes?: number): void => {
+      options.onProgress?.({
+        phase,
+        ...(bytesDownloaded === undefined ? {} : { bytesDownloaded }),
+        ...(totalBytes === undefined ? {} : { totalBytes }),
+      })
+      if (reportStatus) {
+        const state = phase === 'validating' ? 'installing' : phase
+        this.set(
+          {
+            id,
+            state,
+            version: definition.version,
+            target: this.target,
+            ...(bytesDownloaded === undefined ? {} : { bytesDownloaded }),
+            ...(totalBytes === undefined ? {} : { totalBytes }),
+          },
+          true
+        )
+      }
+    }
+    if (this.leases.has(destination)) {
+      throw new RuntimeAssetUpdateError('in-use', `Cannot replace ${id} ${definition.version} while it is leased`)
+    }
+
+    await mkdir(this.versionsRoot(id), { recursive: true, mode: 0o700 })
+    const available = await this.availableBytes(this.root)
+    const required = requiredRuntimeAssetDiskBytes(target)
+    if (available < required) {
+      const error = new RuntimeAssetUpdateError(
+        'disk-space',
+        `Insufficient disk space (need ${required} bytes, have ${available})`
+      )
+      if (reportStatus) this.set({ id, state: 'failed', error: error.message }, true)
+      throw error
+    }
+
+    const temporary = path.join(this.root, `.tmp-${id}-${randomUUID()}`)
+    const archive = path.join(temporary, `download.${target.archive === 'zip' ? 'zip' : 'tgz'}`)
+    const staging = path.join(temporary, 'staging')
+    let phase: RuntimeAssetUpdatePhase = 'downloading'
+    try {
+      await mkdir(temporary, { recursive: true, mode: 0o700 })
+      report('downloading', 0)
+      const downloaded = await this.downloader(target, archive, {
+        signal,
+        onProgress: (bytesDownloaded, totalBytes) => report('downloading', bytesDownloaded, totalBytes),
+      })
+      phase = 'verifying'
+      report('verifying', downloaded.bytes)
+      if (downloaded.digest !== target.hash.digest) {
+        throw new RuntimeAssetUpdateError(
+          'integrity',
+          `Archive hash mismatch (expected ${target.hash.digest}, got ${downloaded.digest})`
+        )
+      }
+      phase = 'installing'
+      report('installing')
+      await this.extract(archive, staging, target.archive, { stripPrefix: target.stripPrefix, signal })
+      const files = await manifestFiles(staging)
+      for (const critical of target.criticalPaths) {
+        if (!files.some((file) => file.path === critical)) {
+          throw new RuntimeAssetUpdateError('integrity', `Archive is missing critical file: ${critical}`)
+        }
+      }
+      const marker: InstallMarker = {
+        schema: 1,
+        id,
+        version: definition.version,
+        target: this.target,
+        archiveHash: target.hash,
+        criticalPaths: target.criticalPaths,
+        files,
+        installedAt: this.now().toISOString(),
+      }
+      await writeFile(path.join(staging, MARKER), `${JSON.stringify(marker, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
+      phase = 'validating'
+      report('validating')
+      if (options.validate) {
+        try {
+          await options.validate(staging, definition, signal)
+        } catch (error) {
+          if (signal.aborted) throw error
+          throw new RuntimeAssetUpdateError('incompatible', `Runtime validation failed: ${message(error)}`, {
+            cause: error,
+          })
+        }
+      }
+      if (signal.aborted) throw signal.reason ?? new Error('Runtime asset update cancelled')
+      return await this.withAssetMutation(id, () => this.activateStaged(definition, staging, temporary, options))
+    } catch (error) {
+      const failure =
+        error instanceof RuntimeAssetUpdateError
+          ? error
+          : signal.aborted
+            ? new RuntimeAssetUpdateError('cancelled', 'Runtime asset update cancelled', { cause: error })
+            : new RuntimeAssetUpdateError(
+                phase === 'downloading' ? 'download-failed' : phase === 'installing' ? 'integrity' : 'failed',
+                message(error),
+                { cause: error }
+              )
+      if (reportStatus) {
+        this.set(
+          { id, state: 'failed', version: definition.version, target: this.target, error: failure.message },
+          true
+        )
+      }
+      throw failure
+    } finally {
+      await rm(temporary, { recursive: true, force: true })
+    }
+  }
+
+  private async activateStaged(
+    definition: RuntimeAssetDefinition,
+    staging: string,
+    temporary: string,
+    options: RuntimeAssetUpdateOptions
+  ): Promise<RuntimeAssetStatus> {
+    const id = definition.id
+    const directory = `${definition.version}-${this.target}`
+    const destination = path.join(this.versionsRoot(id), directory)
+    if (this.leases.has(destination)) {
+      throw new RuntimeAssetUpdateError('in-use', `Cannot replace ${id} ${definition.version} while it is leased`)
+    }
+    const oldCurrent = await readJson<Pointer>(path.join(this.assetRoot(id), CURRENT))
+    const validOldCurrent = oldCurrent && /^[A-Za-z0-9._-]+$/.test(oldCurrent.directory) ? oldCurrent : null
+    const backup = path.join(temporary, 'replaced')
+    let replaced = false
+    try {
+      await rename(destination, backup)
+      replaced = true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    try {
+      await rename(staging, destination)
+    } catch (error) {
+      if (replaced) await rename(backup, destination).catch(() => undefined)
+      throw error
+    }
+    let currentWritten = false
+    try {
+      await options.commit?.(definition)
+      if (validOldCurrent && validOldCurrent.directory !== directory) {
+        await this.writePointer(id, PREVIOUS, validOldCurrent)
+      }
+      await this.writePointer(id, CURRENT, { directory })
+      currentWritten = true
+    } catch (error) {
+      if (!currentWritten) {
+        await rm(destination, { recursive: true, force: true }).catch(() => undefined)
+        if (replaced) await rename(backup, destination).catch(() => undefined)
+      }
+      throw new RuntimeAssetUpdateError('failed', `Unable to activate ${id} ${definition.version}: ${message(error)}`, {
+        cause: error,
+      })
+    }
+    await rm(backup, { recursive: true, force: true })
+    this.volatile.delete(id)
+    this.invalidateFullVerifications(id)
+    await this.garbageCollect(id)
+    return this.set(await this.statusWithinAssetMutation(id), true)
+  }
+
+  /**
+   * Reactivate the previous installation without downloading. It is fully re-hashed and must still match accepted
+   * metadata before the pointers swap; leased generations are never removed by the swap.
+   */
+  rollback(id: RuntimeAssetId): Promise<RuntimeAssetStatus> {
+    return this.withUpdateLock(id, () =>
+      this.withAssetMutation(id, async () => {
+        const current = await readJson<Pointer>(path.join(this.assetRoot(id), CURRENT))
+        const previous = await readJson<Pointer>(path.join(this.assetRoot(id), PREVIOUS))
+        if (!previous || !/^[A-Za-z0-9._-]+$/.test(previous.directory) || previous.directory === current?.directory) {
+          throw new RuntimeAssetUpdateError('rollback-unavailable', `No previous ${id} installation is available`)
+        }
+        const verified = await this.verifyGenerationFull(id, previous.directory, { cache: false })
+        if (typeof verified === 'string') {
+          throw new RuntimeAssetUpdateError(
+            'rollback-unavailable',
+            `Previous ${id} installation is invalid: ${verified}`
+          )
+        }
+        const mismatch = this.registryMismatch(id, verified.marker)
+        if (mismatch) throw new RuntimeAssetUpdateError('rollback-unavailable', mismatch)
+        if (current && /^[A-Za-z0-9._-]+$/.test(current.directory)) await this.promotePrevious(id, current, previous)
+        else await this.writePointer(id, CURRENT, previous)
+        this.volatile.delete(id)
+        this.invalidateFullVerifications(id)
+        return this.set(await this.statusWithinAssetMutation(id), true)
+      })
+    )
+  }
+
+  /** Previous installation that passes the cheap layout probe and still matches accepted metadata. */
+  async previousInstallation(id: RuntimeAssetId): Promise<RuntimeAssetInstallation | null> {
+    const current = await readJson<Pointer>(path.join(this.assetRoot(id), CURRENT))
+    const previous = await readJson<Pointer>(path.join(this.assetRoot(id), PREVIOUS))
+    if (!previous || !/^[A-Za-z0-9._-]+$/.test(previous.directory) || previous.directory === current?.directory) {
+      return null
+    }
+    const generation = await this.verifyGenerationQuick(id, previous.directory)
+    if (typeof generation === 'string' || this.registryMismatch(id, generation.marker)) return null
+    return { version: generation.marker.version, path: generation.path }
+  }
+
+  /** Installed version directories currently held by runtime leases (active connections). */
+  leasedInstallations(id: RuntimeAssetId): readonly RuntimeAssetInstallation[] {
+    const prefix = `${this.versionsRoot(id)}${path.sep}`
+    return [...this.leases.keys()]
+      .filter((leased) => leased.startsWith(prefix))
+      .flatMap((leased) => {
+        const version = this.versionFromDirectory(path.basename(leased))
+        return version ? [{ version, path: leased }] : []
+      })
+  }
+
+  /** Versions referenced by the current and previous pointers, used to prune accepted metadata. */
+  async pointedVersions(id: RuntimeAssetId): Promise<readonly string[]> {
+    const versions: string[] = []
+    for (const name of [CURRENT, PREVIOUS]) {
+      const pointer = await readJson<Pointer>(path.join(this.assetRoot(id), name))
+      if (!pointer || !/^[A-Za-z0-9._-]+$/.test(pointer.directory)) continue
+      const marker = await this.readGenerationMarker(id, pointer.directory)
+      const version = typeof marker === 'string' ? this.versionFromDirectory(pointer.directory) : marker.version
+      if (version) versions.push(version)
+    }
+    return versions
+  }
+
   private async writePointer(id: RuntimeAssetId, name: string, pointer: Pointer) {
     const temporary = path.join(this.assetRoot(id), `.${name}-${randomUUID()}`)
     await writeFile(temporary, `${JSON.stringify(pointer)}\n`, { flag: 'wx', mode: 0o600 })
@@ -698,7 +1060,9 @@ export class RuntimeAssetService {
 
   async remove(id: RuntimeAssetId): Promise<RuntimeAssetStatus> {
     return this.withAssetMutation(id, async () => {
-      if (this.flights.has(id)) throw new Error(`Cannot remove ${id} while installation is active`)
+      if (this.flights.has(id) || this.updateLocks.has(id)) {
+        throw new Error(`Cannot remove ${id} while installation is active`)
+      }
       const prefix = `${this.versionsRoot(id)}${path.sep}`
       if ([...this.leases.keys()].some((leased) => leased.startsWith(prefix)))
         throw new Error(`Cannot remove ${id} while it is leased`)

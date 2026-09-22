@@ -154,7 +154,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(397)
+    expect(keys).toHaveLength(401)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -201,6 +201,14 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:repair', 'codex-runtime')
     api.runtimeAssetRemove('local-ml-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:remove', 'local-ml-runtime')
+    api.runtimeAssetCheckUpdate('codex-runtime')
+    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:check-update', 'codex-runtime')
+    api.runtimeAssetUpdate('codex-runtime')
+    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:update', 'codex-runtime')
+    api.runtimeAssetRollback('codex-runtime')
+    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:rollback', 'codex-runtime')
+    api.runtimeAssetSetAutoUpdate('codex-runtime', false)
+    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:set-auto-update', 'codex-runtime', false)
   })
 
   it('project setup preserves channels and discriminated payloads', () => {

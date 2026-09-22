@@ -61,6 +61,8 @@ import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
 import { supportsSubscriptionUsage } from './subscription-usage-presentation'
 import { MaestroSettings } from './MaestroSettings'
 import { BackgroundCompactionSettings } from './BackgroundCompactionSettings'
+import { RuntimeComponentsSettings } from './RuntimeComponentsSettings'
+import { assetProgress, formatBytes } from './runtime-asset-presentation'
 
 const inputCls =
   'rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60'
@@ -68,18 +70,6 @@ const inputCls =
 const PROVIDER_RUNTIME_ASSET: Partial<Record<ChatSubscriptionProviderKind, RuntimeAssetId>> = {
   'codex-subscription': 'codex-runtime',
   'github-copilot-subscription': 'github-copilot-runtime',
-}
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return '—'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  return `${(bytes / 1024 ** unit).toFixed(unit > 1 ? 1 : 0)} ${units[unit]}`
-}
-
-function assetProgress(asset: RuntimeAssetInfo): number {
-  const total = asset.status.totalBytes || asset.downloadBytes
-  return total > 0 ? Math.min(100, ((asset.status.bytesDownloaded ?? 0) / total) * 100) : 0
 }
 
 const PROVIDER_KINDS: Exclude<ChatProviderKind, ChatSubscriptionProviderKind>[] = [
@@ -1283,111 +1273,6 @@ const CHAT_SETTINGS_TABS: Array<{ id: ChatSettingsTab; labelKey: string }> = [
   { id: 'prompts', labelKey: 'settings.tabPrompts' },
   { id: 'components', labelKey: 'settings.tabComponents' },
 ]
-
-function RuntimeComponentsSettings() {
-  const { t } = useTranslation('chat')
-  const [assets, setAssets] = useState<readonly RuntimeAssetInfo[]>([])
-  const [busy, setBusy] = useState<RuntimeAssetId | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const refresh = () => window.api.runtimeAssetList().then(setAssets)
-  useEffect(() => {
-    void refresh()
-    return window.api.onRuntimeAssetChanged((next) =>
-      setAssets((current) => current.map((item) => (item.id === next.id ? next : item)))
-    )
-  }, [])
-  const act = async (id: RuntimeAssetId, action: 'install' | 'repair' | 'remove') => {
-    if (action === 'remove' && !confirm(t('settings.componentRemoveConfirm'))) return
-    setBusy(id)
-    setError(null)
-    try {
-      const next = await (action === 'install'
-        ? window.api.runtimeAssetInstall(id)
-        : action === 'repair'
-          ? window.api.runtimeAssetRepair(id)
-          : window.api.runtimeAssetRemove(id))
-      setAssets((current) => current.map((item) => (item.id === id ? next : item)))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(null)
-    }
-  }
-  const total = assets.reduce((sum, item) => sum + item.status.diskUsageBytes, 0)
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between">
-        <p className="text-[12px] text-muted-foreground">{t('settings.componentsDescription')}</p>
-        <span className="text-[11px] text-foreground">
-          {t('settings.componentsTotal', { size: formatBytes(total) })}
-        </span>
-      </div>
-      {assets.map((asset) => {
-        const active = ['downloading', 'verifying', 'installing', 'removing'].includes(asset.status.state)
-        return (
-          <div key={asset.id} className="rounded-md border border-border px-2.5 py-2">
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] font-medium text-foreground">{t(`settings.componentName_${asset.id}`)}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {t(`settings.componentRequiredBy_${asset.id}`)} · {t(`settings.componentState_${asset.status.state}`)}{' '}
-                  · v{asset.status.version ?? asset.availableVersion} ·{' '}
-                  {t('settings.componentSizes', {
-                    download: formatBytes(asset.downloadBytes),
-                    installed: formatBytes(asset.status.diskUsageBytes || asset.unpackedBytes),
-                  })}
-                </p>
-                {active && asset.status.state !== 'removing' && (
-                  <div className="mt-1 h-1 overflow-hidden rounded bg-white/10">
-                    <div className="h-full bg-indigo-400" style={{ width: `${assetProgress(asset)}%` }} />
-                  </div>
-                )}
-                {asset.status.error && <p className="mt-0.5 text-[11px] text-destructive">{asset.status.error}</p>}
-              </div>
-              {active ? (
-                <button
-                  className="text-[11px] text-muted-foreground hover:text-foreground"
-                  type="button"
-                  onClick={() => void window.api.runtimeAssetCancel(asset.id)}
-                >
-                  {t('settings.componentCancel')}
-                </button>
-              ) : asset.status.state === 'ready' ? (
-                <button
-                  className="rounded border border-border px-2 py-0.5 text-[11px]"
-                  disabled={busy === asset.id}
-                  type="button"
-                  onClick={() => void act(asset.id, 'remove')}
-                >
-                  {t('settings.componentRemove')}
-                </button>
-              ) : asset.status.state === 'corrupt' || asset.status.state === 'failed' ? (
-                <button
-                  className="rounded border border-border px-2 py-0.5 text-[11px]"
-                  disabled={busy === asset.id}
-                  type="button"
-                  onClick={() => void act(asset.id, 'repair')}
-                >
-                  {asset.status.state === 'corrupt' ? t('settings.componentRepair') : t('settings.componentRetry')}
-                </button>
-              ) : (
-                <button
-                  className="rounded border border-border px-2 py-0.5 text-[11px]"
-                  disabled={busy === asset.id || asset.downloadBytes === 0}
-                  type="button"
-                  onClick={() => void act(asset.id, 'install')}
-                >
-                  {t('settings.componentInstall')}
-                </button>
-              )}
-            </div>
-          </div>
-        )
-      })}
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
-    </div>
-  )
-}
 
 function AccountsSettingsPanel({
   config,

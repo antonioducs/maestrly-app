@@ -148,7 +148,11 @@ import { registerPerformanceIpc } from './performance/ipc'
 import { registerSoundIpc } from './sound/ipc'
 import { soundService } from './sound/service'
 import { attachWindowNavigation } from './mouse-navigation'
-import { cleanupOrphanRuntimeAssetTemps } from './runtime-assets/app-service'
+import {
+  cleanupOrphanRuntimeAssetTemps,
+  disposeRuntimeAssetUpdates,
+  startRuntimeAssetUpdates,
+} from './runtime-assets/app-service'
 import { cleanupToolOutputs } from './chat/tool-output-store'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
@@ -726,6 +730,9 @@ app.whenReady().then(async () => {
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
+  // Codex release checks: delayed, production-only, and never for a component the user has not installed.
+  startRuntimeAssetUpdates()
+  app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
   if (mainWindow) initPlanBroker((agentId) => registry.playPlanSound(agentId))

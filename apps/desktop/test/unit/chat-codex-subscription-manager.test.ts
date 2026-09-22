@@ -820,6 +820,77 @@ describe('CodexSubscriptionManager', () => {
     ])
   })
 
+  it('uses an independently activated runtime on the next connection and refreshes its catalog', async () => {
+    const codexHome = path.join(userDataPath, 'codex-subscription')
+    await mkdir(codexHome, { recursive: true })
+    const cachePath = path.join(codexHome, 'models_cache.json')
+    await writeFile(
+      cachePath,
+      JSON.stringify({ client_version: '0.155.1', models: [{ slug: 'gpt-5.6-sol', multi_agent_version: 'v2' }] }),
+      'utf8'
+    )
+    const active = { path: path.join(directory, 'versions/0.155.1/bin/codex'), version: '0.155.1' }
+    const leases: string[] = []
+    // Record the requested managed executable while the Node fixture plays the app-server.
+    const connectVersioned = vi.fn(async (options: CodexAppServerConnectOptions) => {
+      connectOptions.push(options)
+      return CodexAppServerClient.connect({ ...options, binaryPath: process.execPath, binaryArgs: [fixturePath] })
+    })
+    await manager?.dispose()
+    manager = new CodexSubscriptionManager({
+      resolveRuntime: () => runtime(active.path, active.version),
+      acquireRuntimeLease: async (runtimePath) => {
+        leases.push(runtimePath)
+        return { id: 'codex-runtime', path: runtimePath, release: () => undefined }
+      },
+      connectClient: connectVersioned,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+
+    await manager.getStatus()
+    // Matching snapshot: a single connection with the neutralized catalog, no refresh.
+    expect(connectOptions.map((options) => options.binaryPath)).toEqual([active.path])
+    expect(connectOptions[0].binaryArgs).toContain('-c')
+
+    // The update activates a new version; the open connection keeps its lease until it ends.
+    active.path = path.join(directory, 'versions/0.156.0/bin/codex')
+    active.version = '0.156.0'
+    const crash = await manager.request('test/crash').catch((error: unknown) => error)
+    expect(crash).toBeInstanceOf(CodexAppServerProcessError)
+    await waitImmediate()
+    connectVersioned.mockImplementationOnce(async (options: CodexAppServerConnectOptions) => {
+      connectOptions.push(options)
+      // The new runtime rewrites the snapshot during its catalog refresh window.
+      setTimeout(() => {
+        void writeFile(
+          cachePath,
+          JSON.stringify({ client_version: '0.156.0', models: [{ slug: 'gpt-6-sol', multi_agent_version: 'v2' }] }),
+          'utf8'
+        )
+      }, 25)
+      return CodexAppServerClient.connect({ ...options, binaryPath: process.execPath, binaryArgs: [fixturePath] })
+    })
+
+    await manager.getStatus(true)
+
+    expect(leases).toEqual([
+      path.join(directory, 'versions/0.155.1/bin/codex'),
+      path.join(directory, 'versions/0.156.0/bin/codex'),
+    ])
+    const [, refresh, reconnect] = connectOptions
+    expect(refresh.binaryPath).toBe(active.path)
+    expect(refresh.binaryArgs).not.toContain('-c')
+    expect(reconnect.binaryPath).toBe(active.path)
+    expect(reconnect.binaryArgs).toContain('-c')
+    const override = JSON.parse(await readFile(path.join(codexHome, 'maestrly-model-catalog.json'), 'utf8')) as {
+      client_version: string
+      models: Array<{ slug: string }>
+    }
+    expect(override.client_version).toBe('0.156.0')
+    expect(override.models.map((model) => model.slug)).toEqual(['gpt-6-sol'])
+  })
+
   it('reconnects without rejected catalogs until cache changes', async () => {
     const codexHome = path.join(userDataPath, 'codex-subscription')
     await mkdir(codexHome, { recursive: true })

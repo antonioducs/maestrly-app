@@ -134,18 +134,61 @@ function downloadCap(bytes: number): number {
   return Math.ceil((bytes * 1.05) / 1_000_000) * 1_000_000
 }
 
-const codexTargets = targetRecord(codex, ([id, suffix, triple, digest]) => ({
-  id: id as RuntimeTargetId,
-  url: `https://registry.npmjs.org/@openai/codex/-/codex-0.155.1-${suffix}.tgz`,
-  archive: 'tar.gz',
-  hash: { algorithm: 'sha512', digest, encoding: 'base64' },
-  downloadBytes: codexArchiveBytes[id as RuntimeTargetId],
-  maxDownloadBytes: downloadCap(codexArchiveBytes[id as RuntimeTargetId]),
-  unpackedBytes: codexUnpackedBytes[id as RuntimeTargetId],
-  stripPrefix: `package/vendor/${triple}`,
-  criticalPaths: [`bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`, 'codex-package.json'],
-  executablePath: `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`,
-}))
+/** Official npm platform alias suffix and native target triple of each Codex runtime target. */
+export const CODEX_TARGET_LAYOUT: Readonly<
+  Record<RuntimeTargetId, { readonly suffix: string; readonly triple: string }>
+> = Object.freeze(
+  Object.fromEntries(codex.map(([id, suffix, triple]) => [id, Object.freeze({ suffix, triple })])) as Record<
+    RuntimeTargetId,
+    { suffix: string; triple: string }
+  >
+)
+
+export const CODEX_NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
+
+/** Canonical tarball URL of one official Codex platform artifact; dynamic releases must match it exactly. */
+export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {
+  return `${CODEX_NPM_REGISTRY_ORIGIN}/@openai/codex/-/codex-${version}-${CODEX_TARGET_LAYOUT[id].suffix}.tgz`
+}
+
+/**
+ * Build one Codex target from verified metadata. The embedded pin and dynamically discovered releases share this
+ * layout so both install through the same extraction, critical-path, and executable contract.
+ */
+export function createCodexTarget(
+  id: RuntimeTargetId,
+  version: string,
+  metadata: {
+    readonly sha512Base64: string
+    readonly downloadBytes: number
+    readonly maxDownloadBytes: number
+    readonly unpackedBytes: number
+  }
+): RuntimeAssetTarget {
+  const executable = `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`
+  return Object.freeze({
+    id,
+    url: codexArtifactUrl(version, id),
+    archive: 'tar.gz' as const,
+    hash: Object.freeze({ algorithm: 'sha512' as const, digest: metadata.sha512Base64, encoding: 'base64' as const }),
+    downloadBytes: metadata.downloadBytes,
+    maxDownloadBytes: metadata.maxDownloadBytes,
+    unpackedBytes: metadata.unpackedBytes,
+    stripPrefix: `package/vendor/${CODEX_TARGET_LAYOUT[id].triple}`,
+    criticalPaths: Object.freeze([executable, 'codex-package.json']),
+    executablePath: executable,
+  })
+}
+
+const CODEX_PINNED_VERSION = '0.155.1'
+const codexTargets = targetRecord(codex, ([id, , , digest]) =>
+  createCodexTarget(id as RuntimeTargetId, CODEX_PINNED_VERSION, {
+    sha512Base64: digest,
+    downloadBytes: codexArchiveBytes[id as RuntimeTargetId],
+    maxDownloadBytes: downloadCap(codexArchiveBytes[id as RuntimeTargetId]),
+    unpackedBytes: codexUnpackedBytes[id as RuntimeTargetId],
+  })
+)
 const copilotTargets = targetRecord(copilot, ([id, suffix, digest]) => ({
   id: id as RuntimeTargetId,
   url: `https://registry.npmjs.org/@github/copilot-${suffix}/-/copilot-${suffix}-1.0.71.tgz`,
@@ -189,7 +232,7 @@ const localMlTargets = Object.freeze(
 )
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
-  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: '0.155.1', targets: codexTargets }),
+  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: CODEX_PINNED_VERSION, targets: codexTargets }),
   'github-copilot-runtime': Object.freeze({ id: 'github-copilot-runtime', version: '1.0.71', targets: copilotTargets }),
   'tunnel-client': Object.freeze({ id: 'tunnel-client', version: '0.0.10', targets: tunnelTargets }),
   'local-ml-runtime': Object.freeze({

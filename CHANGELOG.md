@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Update the Codex runtime without waiting for a Maestrly release. Settings ›
+  Maestrly Chat › Components checks the latest official stable release, tests
+  its compatibility before switching, keeps the previous version for rollback,
+  and can install updates automatically when enabled. Open conversations keep
+  their current version until Maestrly restarts.
+
 ### Fixed
 
 - Update the integrated Codex runtime to 0.155.1 so connected accounts can

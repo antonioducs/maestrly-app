@@ -8,6 +8,10 @@ Maestrly can download an unmodified, platform-specific native runtime from:
   Copyright 2025 OpenAI
   License: Apache License 2.0
 
+The version above is the reference and minimum version for this Maestrly build.
+The user can also install later stable releases of the same unmodified package
+from the app settings; they are distributed under the same license.
+
 The runtime is not included in the lean Maestrly package. When the user enables
 the integration, Maestrly downloads the matching runtime directly from npm and
 preserves its original vendor directory so the Codex executable can access its

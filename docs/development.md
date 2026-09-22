@@ -106,6 +106,27 @@ Optional provider assets can be installed through app settings or the scripts
 metadata or integrity. For models and offline setup, see the
 [Local ML guide](../apps/desktop/runtime-assets/local-ml/README.md).
 
+The Codex pin in `apps/desktop/src/main/runtime-assets/registry.ts`, the
+`@openai/codex` development dependency, and `fetch-codex-runtime.mjs` stay
+synchronized; they define the version used in development and tests and the
+minimum version a build accepts. Installed apps can move past the pin without a
+Maestrly release: **Settings › Maestrly Chat › Components › Codex runtime**
+checks the latest stable npm release, installs it beside the active version
+after a local compatibility check, and can return to the previous version.
+Checking is manual by default; packaged builds also check about a minute after
+startup and every six hours while the component is installed, and install
+automatically only when the user enables it. Development and E2E runs never
+check in the background. Conversations already open keep their runtime until
+Maestrly restarts.
+
+The compatibility check lives in `runtime-assets/codex-compatibility.ts`.
+Increase `CODEX_COMPATIBILITY_REVISION` when the app starts depending on a new
+Codex contract, so independently installed releases are validated again. The
+opt-in smoke `RUN_RUNTIME_ASSET_SMOKE=1 npx vitest run
+test/unit/runtime-assets-real-smoke.test.ts` (from `apps/desktop`) downloads the
+official artifacts and exercises install, update, validation, and rollback
+without credentials.
+
 Copilot login needs a distributor-owned public OAuth Client ID:
 `MAIN_VITE_GITHUB_COPILOT_CLIENT_ID` at package build time, or
 `MAESTRLY_GITHUB_COPILOT_CLIENT_ID` for unpackaged development.
