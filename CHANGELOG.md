@@ -5,6 +5,13 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-23
+
+### Fixed
+
+- Ignore malformed or incomplete task-list tool input in task cards instead of
+  interrupting the chat interface.
+
 ## [0.9.1] - 2026-09-23
 
 ### Added
