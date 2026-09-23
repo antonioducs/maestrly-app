@@ -1342,103 +1342,136 @@ function fileChangeResources(
   return fromItem.length ? { resources, save: fromItem } : { resources }
 }
 
+/** Only requests from the root thread become visible parts; descendants stay inside their task card. */
+function routeEmitter(route: RequestRoute, threadId: string): RequestRoute['emit'] {
+  return threadId === route.rootThreadId
+    ? (event, force) => {
+        if (!route.closed) route.emit(event, force)
+      }
+    : () => {}
+}
+
+function routeToolCallId(route: RequestRoute, id: string): string {
+  return route.toolCallIdPrefix ? namespaceSubagentToolCallId(route.toolCallIdPrefix, id) : id
+}
+
+/**
+ * Executes one host-owned tool for a Codex thread and mirrors its lifecycle into the transcript. Shared by
+ * dynamic tools (`item/tool/call`) and delegation tools served through the host MCP server.
+ */
+async function runRoutedTool(args: {
+  route: RequestRoute
+  threadId: string
+  /** Pending-request key; cancelled with the same rules as any other outstanding server request. */
+  requestKey: unknown
+  toolName: string
+  callId: string
+  itemId: string
+  input: unknown
+}): Promise<{ contentItems: CodexToolContentItem[]; success: boolean }> {
+  const { route, threadId, toolName, callId } = args
+  const runtime = route.threadTools.get(threadId)?.get(toolName) ?? route.tools.get(toolName)
+  if (!runtime) throw new Error(`Dynamic tool "${toolName}" is not available in this turn`)
+  const emit = routeEmitter(route, threadId)
+  const visibleItemId = routeToolCallId(route, args.itemId)
+  const visibleCallId = routeToolCallId(route, callId)
+  const pendingRequest = beginPendingServerRequest(route, threadId, args.requestKey, {
+    // Root delegation requests own a host-managed subagent even though the request originates on the
+    // root thread. Child-thread requests are managed by that same task/delegate lifecycle.
+    preserveOnAccountFailover: toolName === 'task' || toolName === 'delegate' || threadId !== route.rootThreadId,
+  })
+  emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleCallId, toolName })
+  emit({
+    kind: 'tool-call',
+    messageId: route.messageId,
+    toolCallId: visibleCallId,
+    toolName,
+    input: args.input,
+  })
+  let latestSub: SubagentRunMeta | undefined
+  emit({ kind: 'tool-state', messageId: route.messageId, toolCallId: visibleCallId, state: { status: 'running' } })
+  try {
+    const rawResult = await runtime.execute(args.input, callId, pendingRequest.signal, (state) => {
+      if (state.sub) {
+        latestSub = state.sub
+        route.subagentRuns.set(visibleCallId, state.sub)
+        route.subagentRuns.set(visibleItemId, state.sub)
+      }
+      emit({
+        kind: 'tool-state',
+        messageId: route.messageId,
+        toolCallId: visibleCallId,
+        state: {
+          status: 'running',
+          ...(state.output ? { output: clipPersistedToolOutput(state.output) } : {}),
+          ...(state.sub ? { sub: state.sub } : {}),
+        },
+      })
+    })
+    const raw: DynamicToolExecutionResult = typeof rawResult === 'string' ? { output: rawResult } : rawResult
+    // Cap at the source: MCP may return MB-sized payloads; without a cap, this inflates persisted parts_json
+    // and the thread's own server-side context.
+    const result: DynamicToolExecutionResult = {
+      ...raw,
+      output: clipPersistedToolOutput(raw.output),
+      ...(raw.toolOutput && typeof raw.toolOutput === 'object'
+        ? { toolOutput: { ...raw.toolOutput, text: clipPersistedToolOutput(raw.toolOutput.text) } }
+        : {}),
+      ...(raw.error ? { error: clipPersistedToolOutput(raw.error) } : {}),
+    }
+    const sub = result.sub ?? latestSub
+    if (sub) {
+      route.subagentRuns.set(visibleCallId, sub)
+      route.subagentRuns.set(visibleItemId, sub)
+    }
+    emit({
+      kind: 'tool-state',
+      messageId: route.messageId,
+      toolCallId: visibleCallId,
+      state: result.error
+        ? { status: 'error', error: result.error, ...(sub ? { sub } : {}) }
+        : { status: 'completed', output: result.toolOutput ?? result.output, ...(sub ? { sub } : {}) },
+    })
+    return {
+      contentItems: clipCodexContentItems(
+        result.contentItems ?? [{ type: 'inputText', text: result.error || result.output }]
+      ),
+      success: !result.error,
+    }
+  } catch (error) {
+    const message = errorMessage(error)
+    emit({
+      kind: 'tool-state',
+      messageId: route.messageId,
+      toolCallId: visibleCallId,
+      state: { status: 'error', error: message, ...(latestSub ? { sub: latestSub } : {}) },
+    })
+    return { contentItems: [{ type: 'inputText', text: clipPersistedToolOutput(message) }], success: false }
+  } finally {
+    pendingRequest.finish()
+  }
+}
+
 async function handleServerRequest(client: CodexAppServerClient, request: CodexServerRequest): Promise<unknown> {
   const params = isRecord(request.params) ? request.params : {}
   const threadId = typeof params.threadId === 'string' ? params.threadId : ''
   const route = requestRoutes.get(client)?.get(threadId)
   if (!route) throw new Error(`No active Maestrly turn for Codex thread ${threadId || '(unknown)'}`)
   const itemId = typeof params.itemId === 'string' ? params.itemId : `codex_${String(request.id)}`
-  const emit: RequestRoute['emit'] =
-    threadId === route.rootThreadId
-      ? (event, force) => {
-          if (!route.closed) route.emit(event, force)
-        }
-      : () => {}
-  const namespaceToolCallId = (id: string): string =>
-    route.toolCallIdPrefix ? namespaceSubagentToolCallId(route.toolCallIdPrefix, id) : id
+  const emit = routeEmitter(route, threadId)
+  const namespaceToolCallId = (id: string): string => routeToolCallId(route, id)
   const visibleItemId = namespaceToolCallId(itemId)
 
   if (request.method === 'item/tool/call') {
-    const toolName = typeof params.tool === 'string' ? params.tool : ''
-    const pendingRequest = beginPendingServerRequest(route, threadId, request.id, {
-      // Root delegation requests own a host-managed subagent even though the JSON-RPC request originates on the
-      // root thread. Child-thread requests are managed by that same task/delegate lifecycle.
-      preserveOnAccountFailover: toolName === 'task' || toolName === 'delegate' || threadId !== route.rootThreadId,
-    })
-    const callId = typeof params.callId === 'string' ? params.callId : itemId
-    const visibleCallId = namespaceToolCallId(callId)
-    const runtime = route.threadTools.get(threadId)?.get(toolName) ?? route.tools.get(toolName)
-    if (!runtime) throw new Error(`Dynamic tool "${toolName}" is not available in this turn`)
-    emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleCallId, toolName })
-    emit({
-      kind: 'tool-call',
-      messageId: route.messageId,
-      toolCallId: visibleCallId,
-      toolName,
+    return runRoutedTool({
+      route,
+      threadId,
+      requestKey: request.id,
+      toolName: typeof params.tool === 'string' ? params.tool : '',
+      callId: typeof params.callId === 'string' ? params.callId : itemId,
+      itemId,
       input: params.arguments ?? {},
     })
-    let latestSub: SubagentRunMeta | undefined
-    emit({ kind: 'tool-state', messageId: route.messageId, toolCallId: visibleCallId, state: { status: 'running' } })
-    try {
-      const rawResult = await runtime.execute(params.arguments ?? {}, callId, pendingRequest.signal, (state) => {
-        if (state.sub) {
-          latestSub = state.sub
-          route.subagentRuns.set(visibleCallId, state.sub)
-          route.subagentRuns.set(visibleItemId, state.sub)
-        }
-        emit({
-          kind: 'tool-state',
-          messageId: route.messageId,
-          toolCallId: visibleCallId,
-          state: {
-            status: 'running',
-            ...(state.output ? { output: clipPersistedToolOutput(state.output) } : {}),
-            ...(state.sub ? { sub: state.sub } : {}),
-          },
-        })
-      })
-      const raw: DynamicToolExecutionResult = typeof rawResult === 'string' ? { output: rawResult } : rawResult
-      // Cap at the source: MCP may return MB-sized payloads; without a cap, this inflates persisted parts_json
-      // and the thread's own server-side context.
-      const result: DynamicToolExecutionResult = {
-        ...raw,
-        output: clipPersistedToolOutput(raw.output),
-        ...(raw.toolOutput && typeof raw.toolOutput === 'object'
-          ? { toolOutput: { ...raw.toolOutput, text: clipPersistedToolOutput(raw.toolOutput.text) } }
-          : {}),
-        ...(raw.error ? { error: clipPersistedToolOutput(raw.error) } : {}),
-      }
-      const sub = result.sub ?? latestSub
-      if (sub) {
-        route.subagentRuns.set(visibleCallId, sub)
-        route.subagentRuns.set(visibleItemId, sub)
-      }
-      emit({
-        kind: 'tool-state',
-        messageId: route.messageId,
-        toolCallId: visibleCallId,
-        state: result.error
-          ? { status: 'error', error: result.error, ...(sub ? { sub } : {}) }
-          : { status: 'completed', output: result.toolOutput ?? result.output, ...(sub ? { sub } : {}) },
-      })
-      return {
-        contentItems: clipCodexContentItems(
-          result.contentItems ?? [{ type: 'inputText', text: result.error || result.output }]
-        ),
-        success: !result.error,
-      }
-    } catch (error) {
-      const message = errorMessage(error)
-      emit({
-        kind: 'tool-state',
-        messageId: route.messageId,
-        toolCallId: visibleCallId,
-        state: { status: 'error', error: message, ...(latestSub ? { sub: latestSub } : {}) },
-      })
-      return { contentItems: [{ type: 'inputText', text: clipPersistedToolOutput(message) }], success: false }
-    } finally {
-      pendingRequest.finish()
-    }
   }
 
   if (request.method === 'item/tool/requestUserInput' || request.method === 'item/tool/requestUserInputAsync') {
