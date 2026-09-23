@@ -1,14 +1,22 @@
 import { useTranslation } from 'react-i18next'
 import { Circle, CircleDot, CheckCircle2, ListChecks } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { cn } from '../../lib/utils'
 import type { ChatTodo, MessagePart } from '../../../shared/chat'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
 export function TodoCard({ part }: { part: ToolPart }) {
   const { t } = useTranslation('chat')
-  const todos = (((part.input as { todos?: unknown })?.todos as ChatTodo[] | undefined) ?? []).filter(
-    (x): x is ChatTodo => !!x && typeof x.content === 'string'
+  // Streamed and failed tool calls can contain input that never passed tool validation.
+  const inputTodos = (part.input as { todos?: unknown } | null)?.todos
+  const todos = (Array.isArray(inputTodos) ? inputTodos : []).filter(
+    (x: unknown): x is ChatTodo =>
+      typeof x === 'object' &&
+      x !== null &&
+      'content' in x &&
+      typeof x.content === 'string' &&
+      'status' in x &&
+      (x.status === 'pending' || x.status === 'in_progress' || x.status === 'completed')
   )
   if (todos.length === 0) return null
   const done = todos.filter((x) => x.status === 'completed').length
