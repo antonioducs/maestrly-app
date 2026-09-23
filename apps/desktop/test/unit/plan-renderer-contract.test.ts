@@ -39,4 +39,56 @@ describe('plan decision failure in the renderer', () => {
     expect(ptBR).toContain("implementWithMaestro: 'Implementar com Maestro'")
     expect(en).toContain("implementWithMaestro: 'Implement with Maestro'")
   })
+
+  it('offers implementation in a new Standard conversation with only supported settings', () => {
+    const panel = source('src/renderer/components/PlanPanel.tsx')
+    const dialog = source('src/renderer/components/StandardPlanHandoffDialog.tsx')
+    const ptBR = source('src/shared/i18n/pt-BR/ui.ts')
+    const en = source('src/shared/i18n/en/ui.ts')
+
+    expect(panel).toContain("implementationTarget: 'standard'")
+    expect(panel).toContain('standardHandoff,')
+    expect(panel).toContain('sourceConversationId={plan.agentId}')
+    expect(panel).toContain('setStandardHandoffOpen(true)')
+    expect(panel).toContain("t('plan.implementInNewConversation')")
+    // Reuses the composer's controlled pickers instead of a native <select>.
+    expect(dialog).toContain('<ChatModelChip')
+    expect(dialog).toContain('<ChatReasoningPicker')
+    expect(dialog).toContain('<FastModeChip')
+    expect(dialog).not.toContain('<select')
+    // Starts from the source settings without writing them back.
+    expect(dialog).toContain('window.api.chatGetSelection(sourceConversationId)')
+    expect(dialog).not.toMatch(/chatSet(Selection|Reasoning|FastMode|Mode)/)
+    // Late metadata for a previous model can neither unlock submission nor show stale choices.
+    expect(dialog).toContain('metaGeneration.current === generation')
+    expect(dialog).toContain("const metaReady = !!selection && meta?.key === currentKey")
+    expect(dialog).toContain('fastMode: fastAvailable && fastMode')
+    expect(dialog).toContain('role="radiogroup"')
+    expect(dialog).toContain('onOpenChange={(next) => !busy && onOpenChange(next)}')
+    expect(en).toContain("implementInNewConversation: 'Implement in new conversation'")
+    expect(ptBR).toContain("implementInNewConversation: 'Implementar em nova conversa'")
+    for (const catalog of [en, ptBR]) {
+      for (const key of ['placementShared', 'placementWorktree', 'fastUnavailable', 'start', 'cancel']) {
+        expect(catalog).toContain(`${key}:`)
+      }
+    }
+  })
+
+  it('shows dispatched conversations, their origin and a retry for a failed first turn', () => {
+    const list = source('src/renderer/components/chat/ChatMessageList.tsx')
+    const card = source('src/renderer/components/chat/ConversationDispatchCard.tsx')
+    const banner = source('src/renderer/components/chat/ConversationDispatchBanner.tsx')
+    const view = source('src/renderer/components/chat/ChatView.tsx')
+    const panels = source('src/renderer/lib/use-main-panels.ts')
+
+    expect(list).toContain("toolPart.toolName === 'start_conversations'")
+    expect(list).toContain("message.source === 'conversation-dispatch'")
+    expect(card).toContain('parseConversationDispatchBatchResult')
+    expect(card).toContain("new CustomEvent('maestrly:open-conversation'")
+    expect(panels).toContain("window.addEventListener('maestrly:open-conversation', listener)")
+    expect(view).toContain('<ConversationDispatchBanner conversationId={conversationId} />')
+    expect(banner).toContain("status?.phase !== 'start-failed'")
+    expect(banner).toContain('window.api.retryConversationDispatch(conversationId)')
+    expect(banner).toContain('window.api.onConversationDispatchChanged(')
+  })
 })

@@ -114,6 +114,20 @@ export const workspaceApi = {
     return () => ipcRenderer.removeListener('conversation:open', listener)
   },
 
+  /** Journal status of a conversation started from another conversation; null for ordinary conversations. */
+  conversationDispatchStatus: (
+    conversationId: string
+  ): Promise<{ phase: string; error: string | null; sourceConversationId: string } | null> =>
+    ipcRenderer.invoke('conversation-dispatch:status', conversationId),
+  /** Retry the first turn of a dispatched conversation whose start failed. */
+  retryConversationDispatch: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('conversation-dispatch:retry', conversationId),
+  onConversationDispatchChanged: (callback: (payload: { conversationId: string }) => void): (() => void) => {
+    const listener = (_event: unknown, payload: { conversationId: string }) => callback(payload)
+    ipcRenderer.on('conversation-dispatch:changed', listener)
+    return () => ipcRenderer.removeListener('conversation-dispatch:changed', listener)
+  },
+
   getConversationBranchInfo: (id: string): Promise<ConversationBranchInfo | null> =>
     ipcRenderer.invoke('conversation:branch-info', id),
   renameConversation: (id: string, name: string): Promise<void> => ipcRenderer.invoke('conversation:rename', id, name),

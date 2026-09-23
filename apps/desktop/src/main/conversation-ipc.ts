@@ -72,6 +72,17 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
       return createSiblingConversation(args.sourceConversationId, { experience: args.experience })
     }
   )
+  // Conversations started from another conversation: journal status and retry of a failed first turn.
+  reg.handle('conversation-dispatch:status', async (_e, conversationId: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId) return null
+    const { getConversationDispatchService } = await import('./conversation-dispatch-service')
+    return (await getConversationDispatchService()).status(conversationId)
+  })
+  reg.mhandle('conversation-dispatch:retry', async (_e, conversationId: unknown) => {
+    if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
+    const { getConversationDispatchService } = await import('./conversation-dispatch-service')
+    return (await getConversationDispatchService()).retryStart(conversationId)
+  })
   reg.handle('conversation:list', (_e, workspaceId: string) => listConversations(workspaceId))
   reg.handle('conversation:branch-info', (_e, id: string) => getConversationBranchInfo(id))
   reg.mhandle('conversation:rename', (_e, id: string, name: string) => {

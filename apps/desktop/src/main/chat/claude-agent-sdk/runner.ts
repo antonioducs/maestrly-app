@@ -60,6 +60,7 @@ import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-cata
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
 import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { builtinToolNamesForMode, buildTools, REVIEWER_READONLY_TOOL_NAMES } from '../tools'
+import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -564,10 +565,15 @@ async function prepareRuntime(
       ? { emitGeneratedImage: (image: GeneratedImageEmission) => state.emitGeneratedImage?.(toolCallId, image) }
       : {}),
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
+    ...(conversationDispatch ? { conversationDispatch } : {}),
   })
   const enabledBuiltins = args.reviewerRuntime
     ? new Set(REVIEWER_READONLY_TOOL_NAMES)
     : builtinToolNamesForMode(args.mode)
+  // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
+  const conversationDispatch = args.reviewerRuntime
+    ? undefined
+    : enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even here, in a conversation running on Claude).
   if (

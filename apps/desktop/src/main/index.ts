@@ -131,6 +131,7 @@ import { registerWorkspaceIpc } from './workspace-ipc'
 import { registerProjectSetupIpc } from './project-setup/ipc'
 
 import { registerPlanIpc } from './plan-ipc'
+import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
 import { registerConversationIpc } from './conversation-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
@@ -558,6 +559,29 @@ function registerIpc(): void {
       return available.ok ? { ok: true } : { ok: false, error: available.error }
     },
     markMaestroStrategyProfileUsed: setLastUsedMaestroStrategyProfile,
+    prepareStandardPlanHandoff: async (input) => {
+      try {
+        const service = await getConversationDispatchService()
+        const prepared = await service.prepare({
+          sourceConversationId: input.sourceConversationId,
+          originKey: input.planKey,
+          requestKey: 'plan',
+          kind: 'plan',
+          title: input.title,
+          prompt: input.plan,
+          placement: input.handoff.placement,
+          settings: input.handoff.settings,
+        })
+        return { ok: true, dispatchId: prepared.record.dispatchId, conversationId: prepared.conversation.id }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    },
+    discardStandardPlanHandoff: async (dispatchId) => (await getConversationDispatchService()).discard(dispatchId),
+    startStandardPlanHandoff: async (dispatchId) =>
+      (await getConversationDispatchService()).start(dispatchId, { focus: true }).catch((error) => {
+        console.warn('[plan] standard handoff did not start:', error)
+      }),
   })
 
   registerWorkspaceIpc(reg, {
@@ -595,6 +619,10 @@ function registerIpc(): void {
       sendToWindow('chat:chatgpt-web:turn-completed', { conversationId })
     },
   })
+  // Nothing in flight survives a restart: settle dispatches left mid-allocation/start from durable state.
+  void getConversationDispatchService()
+    .then((service) => service.reconcile())
+    .catch((error) => console.warn('[conversation-dispatch] reconciliation failed:', error))
 
   registerUsageIpc({ mhandle })
   registerMemoryIpc(reg)

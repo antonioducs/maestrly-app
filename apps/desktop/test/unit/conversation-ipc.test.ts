@@ -82,11 +82,13 @@ describe('registerConversationIpc', () => {
     registerConversationIpc(reg, { stopChat: h.stopChat })
 
     expect([...handles.keys()].sort()).toEqual([
+      'conversation-dispatch:status',
       'conversation:branch-info',
       'conversation:list',
       'conversation:list-standalone',
     ])
     expect([...mhandles.keys()].sort()).toEqual([
+      'conversation-dispatch:retry',
       'conversation:archive',
       'conversation:create',
       'conversation:create-standalone',

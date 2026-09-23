@@ -34,6 +34,7 @@ describe('standalone conversation schema rebuild', () => {
       'workspaces',
       'conversations',
       'bot_conversation_allocations',
+      'conversation_dispatches',
       'conversation_migrations',
       'conversation_repos',
       'chat_messages',

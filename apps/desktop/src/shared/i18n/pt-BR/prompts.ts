@@ -31,6 +31,24 @@ export default {
     feedbackEditedHeading: '## Versão editada pelo usuário (use como base)',
   },
 
+  // ---- conversation-dispatch-service.ts (primeiro turno de uma conversa iniciada a partir de outra) ----
+  conversationDispatch: {
+    taskSeed:
+      'Esta conversa foi iniciada a partir da conversa “{{source}}” do Maestrly para trabalhar em uma tarefa.\n\n' +
+      '## Tarefa: {{title}}\n{{reference}}\n{{workspace}}\n\n{{prompt}}\n\n' +
+      'Trabalhe apenas nesta tarefa. Não inicie outras conversas a menos que a pessoa peça isso explicitamente ' +
+      'nesta conversa.',
+    reference: 'Referência: {{label}} {{url}}',
+    sharedWorkspace:
+      'Workspace: esta conversa compartilha o checkout da conversa de origem (branch {{branch}}); outras conversas ' +
+      'podem estar alterando os mesmos arquivos.',
+    isolatedWorkspace:
+      'Workspace: esta conversa tem um worktree próprio na branch {{branch}}, criado a partir do commit {{revision}}. ' +
+      'Alterações não commitadas que existiam na conversa de origem NÃO estão incluídas.',
+    startFailed:
+      'Não foi possível iniciar esta conversa ({{reason}}). A tarefa foi preservada — use “Tentar iniciar de novo” acima do campo de mensagem.',
+  },
+
   // ---- review-loop.ts (turno interno + resumo auditável do review loop automático) ----
   reviewLoop: {
     pairedReviewerRound:

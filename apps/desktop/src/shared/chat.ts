@@ -883,7 +883,12 @@ export interface ChatReviewLoopMeta {
   reviewerConversationId?: string
 }
 
-export type ChatMessageSource = 'chatgpt-web' | 'chatgpt-web-review-loop' | 'maestrly-review-loop'
+/** `conversation-dispatch`: first message of a conversation started from another conversation (host-generated). */
+export type ChatMessageSource =
+  | 'chatgpt-web'
+  | 'chatgpt-web-review-loop'
+  | 'maestrly-review-loop'
+  | 'conversation-dispatch'
 
 /** Last observed occupancy of this message's runtime, independent of billing and next-request estimates. */
 export interface ChatContextSnapshot {

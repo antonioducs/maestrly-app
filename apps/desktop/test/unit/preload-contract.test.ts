@@ -154,7 +154,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(401)
+    expect(keys).toHaveLength(404)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -313,6 +313,28 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
   it('getConversationBranchInfo(id) sends only the ID, without a path', () => {
     api.getConversationBranchInfo('conv-1')
     expect(invokeSpy).toHaveBeenCalledWith('conversation:branch-info', 'conv-1')
+  })
+
+  it('conversation dispatch status/retry send only the destination ID', () => {
+    api.conversationDispatchStatus('conv-new')
+    api.retryConversationDispatch('conv-new')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['conversation-dispatch:status', 'conv-new'],
+      ['conversation-dispatch:retry', 'conv-new'],
+    ])
+  })
+
+  it('decidePlan forwards a Standard handoff unchanged for main-side validation', () => {
+    const decision = {
+      action: 'approve' as const,
+      implementationTarget: 'standard' as const,
+      standardHandoff: {
+        settings: { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: false },
+        placement: 'worktree' as const,
+      },
+    }
+    api.decidePlan('conv-1', decision)
+    expect(invokeSpy).toHaveBeenCalledWith('plan:decide', 'conv-1', decision)
   })
 })
 
