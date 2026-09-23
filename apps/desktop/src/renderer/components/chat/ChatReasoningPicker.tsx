@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Brain, Check, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 import { isMaestrlyUltraEffort, MAESTRLY_ULTRA_EFFORT, reasoningPickerUltraState } from '../../../shared/chat'
 import type { ChatReasoningEffort } from '../../../shared/chat'
 
@@ -28,18 +29,14 @@ export function ChatReasoningPicker({
   const ref = useRef<HTMLDivElement>(null)
   const positionPanel = useCallback(() => {
     if (!avoidOverflow) return
-    const rect = ref.current?.getBoundingClientRect()
-    if (!rect) return
-    const width = Math.min(224, window.innerWidth - 16)
-    const estimatedHeight = Math.min(288, window.innerHeight * 0.5)
-    const opensUp = rect.bottom + estimatedHeight > window.innerHeight && rect.top > estimatedHeight
-    setPanelStyle({
-      position: 'fixed',
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-      top: opensUp ? undefined : rect.bottom + 4,
-      bottom: opensUp ? window.innerHeight - rect.top + 4 : undefined,
-      width,
-    })
+    const root = ref.current
+    if (!root) return
+    setPanelStyle(
+      fixedPanelPlacement(root, {
+        width: Math.min(224, window.innerWidth - 16),
+        estimatedHeight: Math.min(288, window.innerHeight * 0.5),
+      }).style
+    )
   }, [avoidOverflow])
 
   const {
