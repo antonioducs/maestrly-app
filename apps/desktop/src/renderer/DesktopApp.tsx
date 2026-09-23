@@ -302,6 +302,11 @@ export function DesktopApp() {
   })
   const { statuses, attention, acknowledgeConversation } = agents
   useEffect(() => {
+    const openFleetAccounts = () => openSettings('chat')
+    window.addEventListener('fleet:open-accounts', openFleetAccounts)
+    return () => window.removeEventListener('fleet:open-accounts', openFleetAccounts)
+  }, [openSettings])
+  useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
     void window.api
@@ -572,6 +577,8 @@ export function DesktopApp() {
                 statuses={statuses}
                 attention={attention}
                 activeId={active?.id ?? null}
+                selectedConversation={active}
+                onOpenBotSettings={() => openSettings()}
                 focusedWorkspaceId={focusedWorkspaceId}
                 pendingPlanIds={pendingPlanIds}
                 showArchived={showArchived}

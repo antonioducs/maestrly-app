@@ -38,6 +38,14 @@ import { useSidebarMenus, type OpenTargets, type OpenExternalTarget } from '@/co
 import { useConvRows } from '@/components/sidebar/conv-rows'
 import { SidebarHeader } from '@/components/sidebar/SidebarHeader'
 import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
+import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
+import {
+  conversationSidebarTab,
+  crossTabMatches,
+  readSidebarTab,
+  workspaceFilterCount,
+  type SidebarTab,
+} from '@/components/sidebar/sidebar-tabs'
 
 export type { OpenTargets, OpenExternalTarget }
 
@@ -52,6 +60,13 @@ interface Props {
 
   attention: Set<string>
   activeId: string | null
+  selectedConversation: Conversation | null
+  requestedTab?: { tab: SidebarTab; requestId: number } | null
+  botServerConnected?: boolean
+  botPendingCount?: number
+  botFilterCount?: number
+  onCreateBot?: () => void
+  onOpenBotSettings: () => void
 
   focusedWorkspaceId: string | null
   pendingPlanIds: Set<string>
@@ -114,6 +129,13 @@ export function Sidebar({
   statuses,
   attention,
   activeId,
+  selectedConversation,
+  requestedTab,
+  botServerConnected = false,
+  botPendingCount = 0,
+  botFilterCount = 0,
+  onCreateBot,
+  onOpenBotSettings,
   focusedWorkspaceId,
   pendingPlanIds,
   showArchived,
@@ -150,12 +172,19 @@ export function Sidebar({
 }: Props) {
   const { t } = useTranslation('ui')
   const [query, setQuery] = useState('')
-  const [chatsCollapsed, setChatsCollapsed] = useState(() => localStorage.getItem('sidebar.chatsCollapsed') === '1')
-  const toggleChats = () =>
-    setChatsCollapsed((collapsed) => {
-      localStorage.setItem('sidebar.chatsCollapsed', collapsed ? '0' : '1')
-      return !collapsed
-    })
+  const [tab, setTab] = useState<SidebarTab>(() => readSidebarTab(localStorage.getItem('sidebar.tab')))
+  const selectTab = (next: SidebarTab) => {
+    setTab(next)
+    localStorage.setItem('sidebar.tab', next)
+  }
+
+  useEffect(() => {
+    if (selectedConversation) selectTab(conversationSidebarTab(selectedConversation))
+  }, [selectedConversation?.id, selectedConversation?.scope])
+
+  useEffect(() => {
+    if (requestedTab) selectTab(requestedTab.tab)
+  }, [requestedTab?.requestId])
 
   const [renaming, setRenaming] = useState<{ convId: string; instanceKey: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -171,6 +200,7 @@ export function Sidebar({
     if (!focusedWorkspaceId) return
     const workspace = workspaces.find((item) => item.id === focusedWorkspaceId)
     if (!workspace) return
+    selectTab('workspaces')
     setQuery('')
     if (workspace.collapsed) onToggleWorkspaceCollapsed(focusedWorkspaceId)
     requestAnimationFrame(() => {
@@ -200,6 +230,12 @@ export function Sidebar({
     () => filterStandaloneConversations(standaloneConversations, q).filter((chat) => q || chat.pinnedAt === null),
     [standaloneConversations, q]
   )
+  const filterCounts = {
+    chats: q ? filterStandaloneConversations(standaloneConversations, q).length : 0,
+    workspaces: workspaceFilterCount(workspaces, q),
+    bots: q ? botFilterCount : 0,
+  }
+  const crossMatches = q && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
   const pinnedChats = standaloneConversations
     .filter((chat) => chat.pinnedAt !== null && chat.archived !== 1)
     .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0))
@@ -507,45 +543,78 @@ export function Sidebar({
         onOpenAbout={onOpenAbout}
         onNewGroup={handleNewGroup}
         onAddWorkspace={onAddWorkspace}
+        tab={tab}
+        onTabChange={selectTab}
+        onNewChat={onNewChat}
+        creatingChat={creatingChat}
+        botServerConnected={botServerConnected}
+        botPendingCount={botPendingCount}
+        onCreateBot={onCreateBot}
       />
 
-      <div className="flex-1 overflow-y-auto py-1">
-        <section className="mb-2 border-b border-border/40 pb-2" aria-label={t('sidebar.chats')}>
-          <div className="flex items-center justify-between px-3 py-2">
-            <button
-              type="button"
-              onClick={toggleChats}
-              aria-expanded={!chatsCollapsed || Boolean(q)}
-              className="flex items-center gap-1 text-xs font-semibold text-muted-foreground"
-            >
-              {chatsCollapsed && !q ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}
-              {t('sidebar.chats')}
-            </button>
-            <Button variant="ghost" size="sm" disabled={creatingChat} onClick={() => void onNewChat()}>
-              <Plus className="size-3.5" /> {t('sidebar.newChat')}
-            </Button>
+      <div
+        id="sidebar-panel-chats"
+        role="tabpanel"
+        aria-labelledby="sidebar-tab-chats"
+        hidden={tab !== 'chats'}
+        className="min-h-0 flex-1 overflow-y-auto py-1"
+      >
+        {!q && pinnedChats.length > 0 && (
+          <div className="mb-1 border-b border-border/40 pb-1">
+            <div className="flex items-center gap-1.5 px-2 py-1">
+              <Pin className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                {t('sidebar.pinnedConversations')}
+              </span>
+              <span className="rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
+                {pinnedChats.length}
+              </span>
+            </div>
+            <ul>{pinnedChats.map((conv) => convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` }))}</ul>
           </div>
-          {(!chatsCollapsed || Boolean(q)) && (
-            <StandaloneChatList
-              conversations={filteredChats}
-              enabled={!q && renaming === null}
-              onReorder={onReorderStandaloneConversations}
-              renderConv={(conv, dnd, isOver) =>
-                convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
-              }
-            />
-          )}
-          {!chatsCollapsed && standaloneConversations.length === 0 && !q && (
-            <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
-          )}
-        </section>
-        {filtered.length === 0 && filteredChats.length === 0 && (
+        )}
+        <StandaloneChatList
+          conversations={filteredChats}
+          enabled={!q && renaming === null}
+          onReorder={onReorderStandaloneConversations}
+          renderConv={(conv, dnd, isOver) =>
+            convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
+          }
+        />
+        {standaloneConversations.length === 0 && !q && (
+          <p className="px-3 pb-1 text-xs text-muted-foreground">{t('sidebar.noChats')}</p>
+        )}
+        {q && filteredChats.length === 0 && (
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t('sidebar.nothingFound')}</p>
+        )}
+        {tab === 'chats' &&
+          crossMatches.map(({ tab: matchTab, count }) => (
+            <button
+              key={matchTab}
+              type="button"
+              onClick={() => selectTab(matchTab)}
+              className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+              <ChevronRight className="size-3.5" />
+            </button>
+          ))}
+      </div>
+
+      <div
+        id="sidebar-panel-workspaces"
+        role="tabpanel"
+        aria-labelledby="sidebar-tab-workspaces"
+        hidden={tab !== 'workspaces'}
+        className="min-h-0 flex-1 overflow-y-auto py-1"
+      >
+        {filtered.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
             {q ? t('sidebar.nothingFound') : t('sidebar.noWorkspaces')}
           </p>
         )}
 
-        {!q && (pinned.length > 0 || pinnedChats.length > 0) && (
+        {!q && pinned.length > 0 && (
           <div className="mb-1 border-b border-border/40 pb-1">
             <div className="flex items-center gap-1.5 px-2 py-1">
               <Pin className="size-3.5 shrink-0 text-muted-foreground" />
@@ -553,12 +622,11 @@ export function Sidebar({
                 {t('sidebar.pinnedConversations')}
               </span>
               <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
-                {pinned.length + pinnedChats.length}
+                {pinned.length}
               </span>
             </div>
 
             <ul>
-              {pinnedChats.map((conv) => convItem(conv, { pl: 'pl-6', instanceKey: `pinned:${conv.id}` }))}
               {pinned.map((item) =>
                 convItem(item.conversation, {
                   pl: 'pl-6',
@@ -648,6 +716,40 @@ export function Sidebar({
             </SortableContext>
           </DndContext>
         )}
+        {tab === 'workspaces' &&
+          crossMatches.map(({ tab: matchTab, count }) => (
+            <button
+              key={matchTab}
+              type="button"
+              onClick={() => selectTab(matchTab)}
+              className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+              <ChevronRight className="size-3.5" />
+            </button>
+          ))}
+      </div>
+
+      <div
+        id="sidebar-panel-bots"
+        role="tabpanel"
+        aria-labelledby="sidebar-tab-bots"
+        hidden={tab !== 'bots'}
+        className="min-h-0 flex-1 overflow-y-auto py-1"
+      >
+        <FleetSidebarPanel serverConnected={botServerConnected} onOpenBotSettings={onOpenBotSettings} />
+        {tab === 'bots' &&
+          crossMatches.map(({ tab: matchTab, count }) => (
+            <button
+              key={matchTab}
+              type="button"
+              onClick={() => selectTab(matchTab)}
+              className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+              <ChevronRight className="size-3.5" />
+            </button>
+          ))}
       </div>
 
       <SidebarFooter

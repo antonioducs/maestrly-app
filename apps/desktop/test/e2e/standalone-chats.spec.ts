@@ -164,7 +164,9 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     // Tokens emitted while the view was hidden must survive before the stream continues.
     await expect(page.getByText('Standalone streaming proof: hidden chunk', { exact: false })).toBeVisible()
     chunk(held!, 'incremental chunk ')
-    await expect(page.getByText('Standalone streaming proof: hidden chunk incremental chunk', { exact: false })).toBeVisible()
+    await expect(
+      page.getByText('Standalone streaming proof: hidden chunk incremental chunk', { exact: false })
+    ).toBeVisible()
     end(held!, 'complete.')
     held = undefined
     await ready()
@@ -227,10 +229,10 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
       expect(entries).toEqual([])
     }
 
-    await page.getByPlaceholder('Filter conversations…').fill('Alpha standalone')
+    await page.getByPlaceholder('Filter chats…').fill('Alpha standalone')
     await expect(row('Alpha standalone')).toBeVisible()
     await expect(row('Beta standalone')).toHaveCount(0)
-    await page.getByPlaceholder('Filter conversations…').fill('')
+    await page.getByPlaceholder('Filter chats…').fill('')
     await menu('Alpha standalone', 'Pin conversation')
     await expect.poll(async () => (await list()).find((c: any) => c.id === first.id).pinnedAt).not.toBeNull()
     await expect(page.locator('.conv-item').filter({ hasText: 'Alpha standalone' })).toHaveCount(1)
@@ -244,15 +246,15 @@ test('standalone chats: first use, streaming, isolation, persistence and lifecyc
     await menu('Beta standalone', 'Unarchive')
     await expect.poll(async () => (await list()).find((c: any) => c.id === second.id).archived).toBe(0)
 
-    await page.getByRole('button', { name: 'Chats', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Chats', exact: true })).toHaveAttribute('aria-expanded', 'false')
+    await page.getByRole('tab', { name: 'Workspaces' }).click()
+    await expect(page.getByRole('tab', { name: 'Chats' })).toHaveAttribute('aria-selected', 'false')
 
     await app!.close()
     app = undefined
     await launch()
     await expect(page.getByText('Welcome to Maestrly')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: 'Chats', exact: true })).toHaveAttribute('aria-expanded', 'false')
-    await page.getByRole('button', { name: 'Chats', exact: true }).click()
+    await expect(page.getByRole('tab', { name: 'Workspaces' })).toHaveAttribute('aria-selected', 'true')
+    await page.getByRole('tab', { name: 'Chats' }).click()
     expect((await list()).map((c: any) => c.id)).toEqual([second.id, first.id])
     await row('Alpha standalone').click()
     await expect(page.getByText('Standalone reply 2.', { exact: true })).toBeVisible()

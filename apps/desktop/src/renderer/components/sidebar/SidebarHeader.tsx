@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderPlus, Search, PanelLeft, Layers } from 'lucide-react'
+import { FolderPlus, Search, PanelLeft, Layers, Plus } from 'lucide-react'
 import { instanceBadgeStyle } from '../../../shared/instance-color'
 import type { AppInfo } from '../../../preload'
 import { cn } from '@/lib/utils'
-import { BrandMark } from '@/components/BrandMark'
 import { Button } from '@/components/ui/button'
+import { nextSidebarTab, sidebarTabs, type SidebarTab } from './sidebar-tabs'
 
 export function SidebarHeader({
   query,
@@ -14,6 +14,13 @@ export function SidebarHeader({
   onOpenAbout,
   onNewGroup,
   onAddWorkspace,
+  tab,
+  onTabChange,
+  onNewChat,
+  creatingChat,
+  botServerConnected,
+  botPendingCount,
+  onCreateBot,
 }: {
   query: string
   onQueryChange: (value: string) => void
@@ -21,6 +28,13 @@ export function SidebarHeader({
   onOpenAbout: () => void
   onNewGroup: () => Promise<void>
   onAddWorkspace: () => void
+  tab: SidebarTab
+  onTabChange: (tab: SidebarTab) => void
+  onNewChat: () => Promise<void>
+  creatingChat: boolean
+  botServerConnected: boolean
+  botPendingCount: number
+  onCreateBot?: () => void
 }) {
   const { t } = useTranslation('ui')
 
@@ -43,6 +57,14 @@ export function SidebarHeader({
     }
     return undefined
   }, [appInfo?.channel, appInfo?.instanceId])
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const next = nextSidebarTab(tab, event.key)
+    if (!next) return
+    event.preventDefault()
+    onTabChange(next)
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#sidebar-tab-${next}`)?.focus()
+  }
 
   return (
     <>
@@ -80,30 +102,87 @@ export function SidebarHeader({
         )}
       </div>
 
-      <div className="drag flex h-9 items-center justify-between gap-2 hairline-b px-2.5">
-        <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          <BrandMark variant="mark" tone="mono" className="h-3.5 opacity-90" />
-          {t('sidebar.workspaces')}
-        </span>
-        <div className="no-drag flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={() => void onNewGroup()}
-            title={t('sidebar.newGroup')}
-          >
-            <Layers className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={onAddWorkspace}
-            title={t('sidebar.addWorkspace')}
-          >
-            <FolderPlus className="size-4" />
-          </Button>
+      <div className="drag flex h-9 shrink-0 items-stretch gap-1.5 hairline-b px-2">
+        <div role="tablist" aria-label={t('sidebar.tabs')} className="no-drag flex min-w-0 items-stretch gap-2">
+          {sidebarTabs.map((item) => (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              id={`sidebar-tab-${item}`}
+              aria-controls={`sidebar-panel-${item}`}
+              aria-selected={tab === item}
+              tabIndex={tab === item ? 0 : -1}
+              onClick={() => onTabChange(item)}
+              onKeyDown={handleTabKeyDown}
+              className={cn(
+                'relative inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground hover:text-foreground',
+                'after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:rounded-t after:bg-primary after:content-[" "]',
+                tab === item ? 'text-foreground after:opacity-100' : 'after:opacity-0'
+              )}
+            >
+              {t(`sidebar.${item}`)}
+              {item === 'bots' && botPendingCount > 0 && (
+                <span className="rounded-full bg-primary/15 px-1 text-[10px] tracking-normal text-primary">
+                  {botPendingCount}
+                  <span className="sr-only"> {t('sidebar.pendingBots', { count: botPendingCount })}</span>
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="no-drag ml-auto flex shrink-0 items-center gap-0.5">
+          {tab === 'chats' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              disabled={creatingChat}
+              onClick={() => void onNewChat()}
+              title={t('sidebar.newChat')}
+              aria-label={t('sidebar.newChat')}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          )}
+          {tab === 'workspaces' && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                onClick={() => void onNewGroup()}
+                title={t('sidebar.newGroup')}
+                aria-label={t('sidebar.newGroup')}
+              >
+                <Layers className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                onClick={onAddWorkspace}
+                title={t('sidebar.addWorkspace')}
+                aria-label={t('sidebar.addWorkspace')}
+              >
+                <FolderPlus className="size-3.5" />
+              </Button>
+            </>
+          )}
+          {tab === 'bots' && (
+            <span title={botServerConnected ? t('sidebar.createBot') : t('sidebar.noServerConnected')}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                disabled={!botServerConnected || !onCreateBot}
+                onClick={onCreateBot}
+                aria-label={t('sidebar.createBot')}
+              >
+                <Plus className="size-3.5" />
+              </Button>
+            </span>
+          )}
         </div>
       </div>
 
@@ -114,7 +193,20 @@ export function SidebarHeader({
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder={t('sidebar.filterPlaceholder')}
+            placeholder={t(
+              tab === 'chats'
+                ? 'sidebar.filterChats'
+                : tab === 'bots'
+                  ? 'sidebar.filterBots'
+                  : 'sidebar.filterPlaceholder'
+            )}
+            aria-label={t(
+              tab === 'chats'
+                ? 'sidebar.filterChats'
+                : tab === 'bots'
+                  ? 'sidebar.filterBots'
+                  : 'sidebar.filterPlaceholder'
+            )}
             className="h-6 w-full bg-transparent text-xs outline-none placeholder:text-muted-foreground"
           />
         </div>
