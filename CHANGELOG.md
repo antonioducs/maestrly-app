@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-23
+
 ### Added
 
 - Update the Codex runtime without waiting for a Maestrly release. Settings ›
