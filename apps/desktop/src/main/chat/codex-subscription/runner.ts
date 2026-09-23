@@ -32,6 +32,7 @@ import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabiliti
 import {
   chatToolOutputToAiSdkOutput,
   codexContentItemsToChatToolOutput,
+  mcpResultToChatToolOutput,
   modelOutputToChatToolOutput,
   stripToolOutputMetadata,
   toolOutputAsText,
@@ -159,6 +160,13 @@ import {
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import {
+  CODEX_HOST_MCP_SERVER_NAME,
+  CODEX_HOST_MCP_TOOL_NAMES,
+  codexContentItemsToHostMcpContent,
+  codexHostMcpThreadConfig,
+  setCodexHostMcpCallHandler,
+} from './host-mcp'
 import {
   codexTextInput,
   type CodexCollaborationMode,
@@ -1049,10 +1057,22 @@ function currentUserInputs(message: ChatMessage, seedTranscript: string, dropIma
   return inputs
 }
 
+/** Delegation tools served by the host MCP server keep their Maestrly name so the transcript renders a task card. */
+function hostMcpToolName(item: Record<string, unknown>): string | null {
+  return item.type === 'mcpToolCall' &&
+    item.server === CODEX_HOST_MCP_SERVER_NAME &&
+    typeof item.tool === 'string' &&
+    CODEX_HOST_MCP_TOOL_NAMES.has(item.tool)
+    ? item.tool
+    : null
+}
+
 function itemTool(item: Record<string, unknown>): { name: string; input: unknown } | null {
   const type = item.type
   if (type === 'commandExecution') return { name: 'bash', input: { command: item.command, cwd: item.cwd } }
   if (type === 'fileChange') return { name: 'edit', input: { changes: item.changes } }
+  const hosted = hostMcpToolName(item)
+  if (hosted) return { name: hosted, input: item.arguments ?? {} }
   if (type === 'mcpToolCall') {
     const server = typeof item.server === 'string' ? item.server : 'mcp'
     const tool = typeof item.tool === 'string' ? item.tool : 'tool'
@@ -1111,6 +1131,10 @@ function itemOutput(item: Record<string, unknown>, progress: string): { success:
   }
   if (item.type === 'mcpToolCall') {
     const error = isRecord(item.error) ? textOf(item.error.message ?? item.error) : textOf(item.error)
+    if (hostMcpToolName(item) && isRecord(item.result)) {
+      const output = mcpResultToChatToolOutput(item.result)
+      return { success: item.status !== 'failed' && !toolOutputIsError(output), output }
+    }
     if (isRecord(item.result) && Array.isArray(item.result.contentItems)) {
       return {
         success: item.status !== 'failed',
@@ -1198,6 +1222,33 @@ interface RequestRoute {
 
 const requestRoutes = new WeakMap<CodexAppServerClient, Map<string, RequestRoute>>()
 const routedClients = new WeakSet<CodexAppServerClient>()
+/** Host MCP calls arrive over HTTP without a client; Codex thread ids are globally unique. */
+const routesByThreadId = new Map<string, RequestRoute>()
+
+setCodexHostMcpCallHandler(async (call) => {
+  const route = routesByThreadId.get(call.threadId)
+  // Only root threads receive the host MCP server; child threads never own delegation.
+  if (!route || route.closed || route.rootThreadId !== call.threadId) {
+    return {
+      content: [{ type: 'text', text: `No active Maestrly turn for Codex thread ${call.threadId}.` }],
+      isError: true,
+    }
+  }
+  const callId = call.callId || `mcp_${randomUUID()}`
+  const result = await runRoutedTool({
+    route,
+    threadId: call.threadId,
+    requestKey: `mcp:${callId}`,
+    toolName: call.name,
+    callId,
+    itemId: callId,
+    input: call.arguments,
+  })
+  return {
+    content: codexContentItemsToHostMcpContent(result.contentItems),
+    ...(result.success ? {} : { isError: true }),
+  }
+})
 
 function serverRequestKey(value: unknown): string | null {
   return typeof value === 'string' || typeof value === 'number' ? `${typeof value}:${String(value)}` : null
@@ -1700,6 +1751,7 @@ function registerRequestRoute(
   const addThread = (id: string, runtimes?: DynamicToolRuntime[]): boolean => {
     if (!id || closed) return false
     routes?.set(id, route)
+    routesByThreadId.set(id, route)
     if (runtimes) route.threadTools.set(id, new Map(runtimes.map((runtime) => [runtime.spec.name, runtime])))
     registered.add(id)
     return true
@@ -1707,6 +1759,7 @@ function registerRequestRoute(
   const removeThread = (id: string): void => {
     if (!id) return
     if (routes?.get(id) === route) routes.delete(id)
+    if (routesByThreadId.get(id) === route) routesByThreadId.delete(id)
     route.threadTools.delete(id)
     registered.delete(id)
     cancelPendingServerRequests(route, id)
@@ -1728,6 +1781,7 @@ function registerRequestRoute(
       route.closed = true
       cancelPendingServerRequests(route)
       for (const id of registered) if (routes?.get(id) === route) routes.delete(id)
+      for (const id of registered) if (routesByThreadId.get(id) === route) routesByThreadId.delete(id)
       for (const id of registered) route.threadTools.delete(id)
       registered.clear()
       offResolved()
@@ -2577,8 +2631,22 @@ export async function runCodexSubscriptionChat(
     }),
   }
   let dynamic: Awaited<ReturnType<typeof buildDynamicTools>>
+  // Delegation runs through the host MCP server: Codex serializes every dynamic tool behind one write lock,
+  // while an MCP server declared parallel-safe lets independent `task` calls overlap.
+  let hostMcpConfig: Record<string, unknown> | null = null
   try {
     dynamic = await buildDynamicTools(args, state)
+    const hostedSpecs = dynamic.runtimes
+      .filter((runtime) => CODEX_HOST_MCP_TOOL_NAMES.has(runtime.spec.name))
+      .map((runtime) => runtime.spec)
+    if (hostedSpecs.length) {
+      try {
+        hostMcpConfig = await codexHostMcpThreadConfig({ conversationId: args.conversationId, tools: hostedSpecs })
+      } catch (error) {
+        await dynamic.close().catch(() => undefined)
+        throw error
+      }
+    }
   } catch (error) {
     settleCurrentAttempt('other')
     apply(
@@ -2640,9 +2708,17 @@ export async function runCodexSubscriptionChat(
           }),
         ])
     )
-  const registrations = dynamicToolRegistrations(specs)
-  const toolProfile = profileDynamicTools(specs)
-  const signature = dynamicToolSignature(specs)
+  const dynamicSpecs = hostMcpConfig ? specs.filter((spec) => !CODEX_HOST_MCP_TOOL_NAMES.has(spec.name)) : specs
+  const registrations = dynamicToolRegistrations(dynamicSpecs)
+  const toolProfile = profileDynamicTools(dynamicSpecs)
+  // Host MCP tools still belong to the thread identity: a thread created with dynamic `task`, or with the other
+  // delegation mode, cannot swap its catalog on resume.
+  const signature = dynamicToolSignature([
+    ...dynamicSpecs,
+    ...specs
+      .filter((spec) => !dynamicSpecs.includes(spec))
+      .map((spec) => ({ name: `mcp:${CODEX_HOST_MCP_SERVER_NAME}/${spec.name}` })),
+  ])
   const projectContext = await buildProjectContext(args.projectId, args.cwd)
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
     if (args.projectId === null) {
@@ -2798,6 +2874,8 @@ export async function runCodexSubscriptionChat(
       // dynamic `generate_image` tool uses an ephemeral Codex thread with exactly the same behavior as other
       // providers. The explicit flag also protects Plan/Ask against runtime defaults.
       'features.image_generation': false,
+      // Applied on start AND resume: after an app restart the host MCP server listens on a new port.
+      ...hostMcpConfig,
     } as Record<string, unknown>,
     developerInstructions,
     ...(runtimeProfile.personality ? { personality: runtimeProfile.personality } : {}),
@@ -4239,8 +4317,8 @@ export async function runCodexSubscriptionChat(
     }
     const subagentRunMeta = (item: Record<string, unknown>) => {
       if (
-        item.type === 'dynamicToolCall' &&
-        (item.tool === 'task' || item.tool === 'delegate') &&
+        ((item.type === 'dynamicToolCall' && (item.tool === 'task' || item.tool === 'delegate')) ||
+          hostMcpToolName(item)) &&
         typeof item.id === 'string'
       ) {
         return route.subagentRuns.get(item.id)
