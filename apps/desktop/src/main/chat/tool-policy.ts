@@ -171,6 +171,25 @@ export function isHostToolReadOnly(name: string, metadata?: unknown): boolean {
   return value.readOnly === true && value.destructive !== true
 }
 
+/** Built-in host tools that may overlap when no explicit tool metadata says otherwise. */
+export const PARALLEL_SAFE_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'glob',
+  'grep',
+  'read',
+  'use_skill',
+  'webfetch',
+])
+
+/** Explicit `metadata.parallelSafe` wins; otherwise only the built-in read tools may overlap. */
+export function isHostToolParallelSafe(name: string, metadata?: unknown): boolean {
+  if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)) {
+    const parallelSafe = (metadata as Record<string, unknown>).parallelSafe
+    if (parallelSafe === true) return true
+    if (parallelSafe === false) return false
+  }
+  return PARALLEL_SAFE_HOST_TOOL_NAMES.has(name)
+}
+
 export function appToolAllowed(mode: ChatBehavior, name: string): boolean {
   if (name === 'review_plan') return false
   if (capabilityBehaviorFor(mode) === 'agent') return true
