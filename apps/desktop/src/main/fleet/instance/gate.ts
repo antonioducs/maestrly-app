@@ -1,0 +1,99 @@
+import type { FleetInstanceHold } from '@maestrly/bot-fleet-protocol'
+import { isBotMode } from './config'
+
+const refusal = {
+  takeover: 'The owner has taken over your screen. End your turn now.',
+  paused: 'The owner has paused you. End your turn now.',
+}
+export class InstanceHoldManager {
+  private current: FleetInstanceHold = { state: 'none', reason: null, since: null, interruptedTurn: false }
+  private inflight = 0
+  private pausedAfterTakeover = false
+  private settling: Promise<void> | null = null
+  private waiters = new Set<() => void>()
+  constructor(private readonly onChange: () => void = () => {}) {}
+  get state(): FleetInstanceHold {
+    return { ...this.current }
+  }
+  get activeCalls(): number {
+    return this.inflight
+  }
+  async gate<T>(conversationId: string, primaryConversationId: string | null, call: () => Promise<T>): Promise<T> {
+    if (!isBotMode() || conversationId !== primaryConversationId) return call()
+    if (this.current.state !== 'none') throw new Error(refusal[this.current.reason ?? 'takeover'])
+    this.inflight++
+    try {
+      return await call()
+    } finally {
+      this.inflight--
+      if (!this.inflight) {
+        for (const wake of this.waiters) wake()
+        this.waiters.clear()
+      }
+    }
+  }
+  async hold(
+    reason: 'takeover' | 'paused',
+    running: boolean,
+    cancel: () => Promise<unknown>
+  ): Promise<FleetInstanceHold> {
+    if (this.current.state !== 'none') {
+      if (
+        (reason === 'takeover' && this.current.reason === 'paused') ||
+        (reason === 'paused' && this.current.reason === 'takeover')
+      )
+        this.pausedAfterTakeover = true
+      if (reason === 'paused') this.current.reason = 'paused'
+      this.onChange()
+      await this.settling
+      return this.state
+    }
+    this.current = { state: 'holding', reason, since: new Date().toISOString(), interruptedTurn: false }
+    this.onChange()
+    this.settling = (async () => {
+      if (this.inflight)
+        await new Promise<void>((resolve) => {
+          const wake = () => {
+            clearTimeout(timer)
+            this.waiters.delete(wake)
+            resolve()
+          }
+          const timer = setTimeout(wake, 10_000)
+          this.waiters.add(wake)
+        })
+      if (running) {
+        await cancel()
+        this.current.interruptedTurn = true
+      }
+      this.current.state = 'held'
+      this.onChange()
+    })()
+    try {
+      await this.settling
+    } finally {
+      this.settling = null
+    }
+    return this.state
+  }
+  release(): FleetInstanceHold {
+    if (this.pausedAfterTakeover) {
+      this.pausedAfterTakeover = false
+      this.current = { ...this.current, state: 'held', reason: 'paused', interruptedTurn: false }
+    } else this.current = { state: 'none', reason: null, since: null, interruptedTurn: false }
+    this.onChange()
+    return this.state
+  }
+}
+
+let activeGate: { manager: InstanceHoldManager; conversationId: string } | null = null
+export function registerInstanceHoldGate(manager: InstanceHoldManager, conversationId: string): () => void {
+  const entry = { manager, conversationId }
+  activeGate = entry
+  return () => {
+    if (activeGate === entry) activeGate = null
+  }
+}
+export async function gateInstanceAppTool<T>(conversationId: string, call: () => Promise<T>): Promise<T> {
+  if (!isBotMode() || !activeGate) return call()
+  return activeGate.manager.gate(conversationId, activeGate.conversationId, call)
+}

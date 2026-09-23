@@ -1,0 +1,189 @@
+import { randomUUID } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import {
+  FLEET_TOOL_OUTPUT_MAX,
+  fleetTranscriptItemSchema,
+  type FleetTranscriptItem,
+  type FleetTranscriptPage,
+  type FleetQuestion,
+} from '@maestrly/bot-fleet-protocol'
+import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
+import type { QueuedInput } from './queue'
+
+const at = (time: number): string => new Date(time).toISOString()
+const textOf = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? ''))
+const short = (value: string, max: number): string => value.slice(0, max)
+export function fleetQuestions(questions: ChatQuestion[]): FleetQuestion[] {
+  return questions.map((question) => ({
+    question: question.question,
+    header: question.header || null,
+    options: question.options.map((option) => ({ label: option.label, description: option.description ?? null })),
+    multiSelect: !!question.multiSelect,
+  }))
+}
+export function toolTarget(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const value = input as Record<string, unknown>
+  const url = value.url
+  if (typeof url === 'string') {
+    try {
+      const parsed = new URL(url)
+      return short(parsed.host + parsed.pathname, 80)
+    } catch {
+      return short(url, 80)
+    }
+  }
+  for (const key of ['path', 'filePath', 'command', 'cmd'])
+    if (typeof value[key] === 'string') return short(value[key], 80)
+  if (typeof value.x === 'number' && typeof value.y === 'number') return `(${value.x}, ${value.y})`
+  if (typeof value.text === 'string') return short(value.text, 40)
+  return null
+}
+function toolItem(
+  message: ChatMessage,
+  part: Extract<MessagePart, { type: 'tool' }>,
+  index: number
+): FleetTranscriptItem {
+  const status = part.state.status
+  const interrupted =
+    (message.finishReason === 'aborted' && status !== 'completed') ||
+    (status === 'error' && part.state.error === 'Aborted')
+  const output =
+    status === 'error'
+      ? part.state.error
+      : status === 'denied'
+        ? part.state.reason
+        : status === 'completed' || status === 'running'
+          ? textOf(part.state.output ?? '')
+          : ''
+  return {
+    kind: 'tool',
+    id: `${message.id}:${index}`,
+    at: at(message.createdAt),
+    name: part.toolName,
+    target: toolTarget(part.input),
+    state: interrupted
+      ? 'interrupted'
+      : status === 'completed'
+        ? 'done'
+        : status === 'error' || status === 'denied'
+          ? 'error'
+          : 'running',
+    output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
+  }
+}
+export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput[] = []): FleetTranscriptItem[] {
+  const mappedInputs = inputs.filter((item) => item.started && !item.nativeMessageId)
+  const byMessage = new Map(inputs.filter((item) => item.nativeMessageId).map((item) => [item.nativeMessageId, item]))
+  let userIndex = 0
+  const items: FleetTranscriptItem[] = []
+  for (const message of messages) {
+    if (message.internal) continue
+    const linked = message.role === 'user' ? (byMessage.get(message.id) ?? mappedInputs[userIndex++]) : undefined
+    for (const [index, part] of message.parts.entries()) {
+      const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
+      const time = at(message.createdAt)
+      if (part.type === 'reasoning') continue
+      if (part.type === 'text') {
+        if (message.role === 'user') {
+          if (!part.text && !linked) continue
+          items.push({
+            kind: 'user',
+            id,
+            at: time,
+            text: linked?.input.text ?? part.text,
+            source: linked?.input.source ?? 'owner',
+            routine: linked?.input.routine,
+            peer: linked?.input.peer,
+            queued: false,
+          })
+        } else if (message.role === 'assistant') {
+          items.push({
+            kind: 'assistant',
+            id,
+            at: time,
+            text: part.text,
+            streaming: !message.finishReason && !message.error,
+          })
+        }
+      } else if (part.type === 'tool' && message.role === 'assistant') {
+        if (part.toolName === 'ask_question') {
+          const input = part.input as { questions?: ChatQuestion[] }
+          items.push({
+            kind: 'question',
+            id,
+            at: time,
+            toolCallId: part.toolCallId,
+            questions: fleetQuestions(input?.questions ?? []),
+            state:
+              part.state.status === 'completed' ? 'answered' : part.state.status === 'denied' ? 'dismissed' : 'pending',
+            answers: null,
+          })
+        } else if (part.toolName === 'request_owner_help') {
+          // The help store supplies this item with its own stable id and resolution state.
+        } else if (part.toolName === 'bot_peers_send') {
+          const input = part.input as { to?: string; text?: string; name?: string }
+          if (input?.to && input?.text)
+            items.push({
+              kind: 'peer_out',
+              id,
+              at: time,
+              to: { botId: input.to, name: input.name ?? input.to },
+              text: input.text,
+              delivered: part.state.status === 'completed',
+            })
+        } else items.push(toolItem(message, part, index))
+      }
+    }
+  }
+  return items.filter((item) => fleetTranscriptItemSchema.safeParse(item).success)
+}
+export function transcriptPage(items: FleetTranscriptItem[], before?: string | null, limit = 200): FleetTranscriptPage {
+  const sorted = [...items].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+  const boundary = before ? sorted.findIndex((item) => item.id === before) : sorted.length
+  const end = boundary < 0 ? sorted.length : boundary
+  const start = Math.max(0, end - Math.max(1, Math.min(500, limit)))
+  return { items: sorted.slice(start, end), before: start ? sorted[start].id : null }
+}
+
+export class InstanceTranscriptExtras {
+  private items: FleetTranscriptItem[] = []
+  private writeTail: Promise<void> = Promise.resolve()
+  constructor(
+    private readonly file: string,
+    private readonly onUpsert: (item: FleetTranscriptItem) => void
+  ) {}
+  async load(): Promise<void> {
+    try {
+      const data: unknown = JSON.parse(await fs.readFile(this.file, 'utf8'))
+      if (!Array.isArray(data)) throw new Error('Invalid instance transcript extras')
+      this.items = data.map((item) => fleetTranscriptItemSchema.parse(item))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  list(): FleetTranscriptItem[] {
+    return [...this.items]
+  }
+  async upsert(item: FleetTranscriptItem): Promise<void> {
+    const valid = fleetTranscriptItemSchema.parse(item)
+    const index = this.items.findIndex((existing) => existing.id === item.id)
+    if (index < 0) this.items.push(valid)
+    else this.items[index] = valid
+    const contents = JSON.stringify(this.items)
+    const write = this.writeTail.then(async () => {
+      await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
+      const temporary = this.file + '.' + randomUUID() + '.tmp'
+      try {
+        await fs.writeFile(temporary, contents, { mode: 0o600 })
+        await fs.rename(temporary, this.file)
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => undefined)
+      }
+    })
+    this.writeTail = write.catch(() => undefined)
+    await write
+    this.onUpsert(valid)
+  }
+}

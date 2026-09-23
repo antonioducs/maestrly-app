@@ -1,4 +1,5 @@
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
+import { botIdentityPrompt } from '../../fleet/instance/identity'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
@@ -107,6 +108,7 @@ This is a standalone conversation, with no project, repository or workspace memo
 This directory is an execution location, not an operating-system sandbox. Answer ordinary conversation without requiring file inspection, tests or commits. Profile guidance about code applies only when the user requests work on files or code.
 Do not discover project instructions in this directory or its ancestors, consult workspace memory, or infer a repository. Online research requires an actually available tool; webfetch reads URLs and is not a general search engine. Never claim to have searched without using an available search tool.`,
       harnessBehaviorHeader(input.harness),
+      botIdentityPrompt(input.cwd),
       standaloneProfileText(input.harness.prompts.styleAndWork),
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),

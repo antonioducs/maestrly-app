@@ -18,6 +18,7 @@ import { tool, jsonSchema, type Tool, type ToolSet } from 'ai'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
 import { getAppSetting, setAppSetting } from '../store'
+import { gateInstanceAppTool } from '../fleet/instance/gate'
 import type { ChatToolImage, ToolOutput } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
@@ -268,7 +269,8 @@ export async function toolsFromClient(
    * pass NO_TIMEOUT_MS because review_plan may block minutes/hours until a user decides. */
   callTimeoutMs?: number,
   metadataFor?: (listedTool: ListedMcpTool) => Record<string, boolean> | undefined,
-  outputOptions: McpToolOutputOptions = {}
+  outputOptions: McpToolOutputOptions = {},
+  appConversationId?: string
 ): Promise<ToolSet> {
   return toolsFromConnection(
     connectionFromClient(client),
@@ -278,7 +280,8 @@ export async function toolsFromClient(
     filter,
     callTimeoutMs,
     metadataFor,
-    outputOptions
+    outputOptions,
+    appConversationId
   )
 }
 
@@ -290,7 +293,8 @@ async function toolsFromConnection(
   filter?: (listedTool: ListedMcpTool) => boolean,
   callTimeoutMs?: number,
   metadataFor?: (listedTool: ListedMcpTool) => Record<string, boolean> | undefined,
-  outputOptions: McpToolOutputOptions = {}
+  outputOptions: McpToolOutputOptions = {},
+  appConversationId?: string
 ): Promise<ToolSet> {
   const out: ToolSet = {}
   let listed: ListedMcpTool[]
@@ -307,31 +311,32 @@ async function toolsFromConnection(
       description: t.description ?? describeFallback(t.name),
       ...(metadata == null ? {} : { metadata }),
       inputSchema: jsonSchema((t.inputSchema as object) ?? { type: 'object', properties: {} }),
-      execute: async (input: unknown, opts: { toolCallId: string; abortSignal?: AbortSignal }) => {
-        // Preserve the historical two-argument contract without a signal; the third appears only for cancellable
-        // executions (especially Codex adapter), avoiding observable `undefined` in existing gates.
-        if (opts.abortSignal) await gate(advertised, opts.toolCallId, opts.abortSignal)
-        else await gate(advertised, opts.toolCallId)
-        const requestOptions =
-          callTimeoutMs != null || opts.abortSignal
-            ? {
-                ...(callTimeoutMs != null ? { timeout: callTimeoutMs } : {}),
-                ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
-              }
-            : undefined
-        const res = await connection.callTool(t.name, (input as Record<string, unknown>) ?? {}, requestOptions)
-        // Vision-capable models receive the cached image directly. Running the interpreter here would
-        // serialize an unnecessary second model call into the tool latency; non-vision/unknown consumers
-        // still get the best-effort description used by their model-facing projection.
-        const describeImage = outputOptions.supportsImages === true ? undefined : outputOptions.describeImage
-        const output = await describeToolOutputImages(mcpResultToChatToolOutput(res), describeImage)
-        if (typeof output === 'string') return output
-        if (output.structuredContent === undefined && !output.isError && toolOutputImages(output).length === 0)
-          return output.text
-        // Return the canonical host output. `toModelOutput` is the model boundary; it must not be used to
-        // replace the value that the runtime folds into ChatToolOutput/state.
-        return output
-      },
+      execute: async (input: unknown, opts: { toolCallId: string; abortSignal?: AbortSignal }) =>
+        gateInstanceAppTool(appConversationId ?? '', async () => {
+          // Preserve the historical two-argument contract without a signal; the third appears only for cancellable
+          // executions (especially Codex adapter), avoiding observable `undefined` in existing gates.
+          if (opts.abortSignal) await gate(advertised, opts.toolCallId, opts.abortSignal)
+          else await gate(advertised, opts.toolCallId)
+          const requestOptions =
+            callTimeoutMs != null || opts.abortSignal
+              ? {
+                  ...(callTimeoutMs != null ? { timeout: callTimeoutMs } : {}),
+                  ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
+                }
+              : undefined
+          const res = await connection.callTool(t.name, (input as Record<string, unknown>) ?? {}, requestOptions)
+          // Vision-capable models receive the cached image directly. Running the interpreter here would
+          // serialize an unnecessary second model call into the tool latency; non-vision/unknown consumers
+          // still get the best-effort description used by their model-facing projection.
+          const describeImage = outputOptions.supportsImages === true ? undefined : outputOptions.describeImage
+          const output = await describeToolOutputImages(mcpResultToChatToolOutput(res), describeImage)
+          if (typeof output === 'string') return output
+          if (output.structuredContent === undefined && !output.isError && toolOutputImages(output).length === 0)
+            return output.text
+          // Return the canonical host output. `toModelOutput` is the model boundary; it must not be used to
+          // replace the value that the runtime folds into ChatToolOutput/state.
+          return output
+        }),
       // AI SDK otherwise serializes every non-string execute result as JSON. This hook is the actual model-facing
       // projection for BYOK streamText; native bridges call their equivalent projection before provider conversion.
       toModelOutput: ({ output }: { output: unknown }) => {
@@ -631,7 +636,8 @@ export async function buildAppTools(args: {
     accept,
     NO_TIMEOUT_MS,
     restricted ? (listedTool) => appToolMetadata(listedTool.name) : undefined,
-    { supportsImages: args.supportsImages, describeImage: args.describeImage }
+    { supportsImages: args.supportsImages, describeImage: args.describeImage },
+    args.conversationId
   )
   if (Object.keys(tools).length === 0) {
     console.warn('[chat] buildAppTools: in-process registry returned no tools.')
