@@ -1,6 +1,8 @@
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
+import { isBotMode } from './fleet/instance/config'
+import { startBotInstanceMode } from './fleet/instance'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -157,6 +159,7 @@ import { cleanupToolOutputs } from './chat/tool-output-store'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
+import { registerFleetClientIpc } from './fleet/client/ipc'
 import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
 
@@ -405,6 +408,7 @@ function setupApplicationMenu(): void {
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
   mainWindow = new BrowserWindow({
+    show: !isBotMode(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -467,7 +471,7 @@ async function createWindow(): Promise<void> {
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
   // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
-  configureUpdateService()
+  if (!isBotMode()) configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -504,6 +508,11 @@ async function createWindow(): Promise<void> {
   initTerminalManager(mainWindow)
 
   mainWindow.on('close', (e) => {
+    if (isBotMode() && !backgroundQuit) {
+      e.preventDefault()
+      mainWindow?.hide()
+      return
+    }
     if (executorSettings().background && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
@@ -518,7 +527,7 @@ async function createWindow(): Promise<void> {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    wc.openDevTools({ mode: 'detach' })
+    if (!isBotMode()) wc.openDevTools({ mode: 'detach' })
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -626,6 +635,7 @@ function registerIpc(): void {
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
   registerPlatformIpc(reg)
   registerBotIpc(reg)
+  registerFleetClientIpc(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -731,7 +741,7 @@ app.whenReady().then(async () => {
 
   conversationMigrationService.replayIncomplete()
   // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  startRuntimeAssetUpdates()
+  if (!isBotMode()) startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
@@ -772,6 +782,19 @@ app.whenReady().then(async () => {
       ])
     )
   }
+  if (isBotMode() && mainWindow) {
+    try {
+      await startBotInstanceMode(mainWindow, (id) => {
+        floatingManager.detach(id, 'browser')
+        floatingManager.setPinned(id, 'browser', true)
+      })
+    } catch (error) {
+      console.error(JSON.stringify({ component: 'bot-instance', level: 'error',
+        message: error instanceof Error ? error.message : 'Startup failed' }))
+      app.exit(1)
+      return
+    }
+  }
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
@@ -785,6 +808,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  if (isBotMode()) return
   flushPendingBrowserPersists()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()

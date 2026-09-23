@@ -20,6 +20,7 @@ import { updateApi } from './api-update'
 import { workspaceApi } from './api-workspace'
 import { platformApi } from './api-platform'
 import { botApi } from './api-bot'
+import { fleetApi } from './api-fleet'
 
 export type {
   ConversationBranchInfo,
@@ -127,6 +128,7 @@ export type * from './api-sound'
 export type * from './api-update'
 export type * from './api-workspace'
 export type * from './api-platform'
+export type * from './api-fleet'
 
 const api = {
   ...ptyApi,
@@ -149,6 +151,7 @@ const api = {
   ...chatApi,
   ...platformApi,
   ...botApi,
+  ...fleetApi,
 }
 
 contextBridge.exposeInMainWorld('api', api)
