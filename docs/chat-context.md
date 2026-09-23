@@ -22,6 +22,13 @@ Archiving preserves history and files for restoration. Deleting removes that
 chat's managed files and saved permissions; deleting a project does not delete
 standalone chats. Back up the application profile to preserve these files.
 
+## Task lists
+
+The task card shows valid entries from the agent's latest task list. Malformed
+or incomplete task data is omitted instead of interrupting the chat interface;
+valid entries appear when the agent supplies them. This also applies when
+reopening saved conversations and does not change the stored tool input.
+
 ## Context meter
 
 The context meter shows how much of the model's working context is occupied.
