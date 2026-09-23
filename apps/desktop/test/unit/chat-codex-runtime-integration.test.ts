@@ -300,7 +300,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(client.initializeResult).toEqual(expect.any(Object))
     } finally {
       await client?.close({ gracePeriodMs: 1_000 })
-      rmSync(codexHome, { recursive: true, force: true })
+      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   }, 20_000)
 })
