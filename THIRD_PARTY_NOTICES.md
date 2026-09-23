@@ -19,6 +19,17 @@ Maestrly applies no normalization or other transformation. The source license is
 distributed beside it as
 [`apps/desktop/resources/sounds/LICENSE.txt`](apps/desktop/resources/sounds/LICENSE.txt).
 
+## noVNC
+
+The desktop app includes [noVNC](https://github.com/novnc/noVNC) 1.7.0 for
+remote bot screen viewing and control. Its core is licensed under MPL-2.0.
+The upstream notice, authors, and license are distributed in
+[`novnc-NOTICE.txt`](apps/desktop/resources/licenses/novnc-NOTICE.txt),
+[`novnc-AUTHORS.txt`](apps/desktop/resources/licenses/novnc-AUTHORS.txt), and
+[`novnc-MPL-2.0.txt`](apps/desktop/resources/licenses/novnc-MPL-2.0.txt).
+The bundled pako code's MIT license and noVNC's other upstream license texts
+are distributed in the same `resources/licenses` directory.
+
 ## OpenAI Codex-derived source
 
 Portions of the OpenAI-specific chat harness are adapted from

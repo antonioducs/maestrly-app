@@ -1,0 +1,363 @@
+import { z } from 'zod'
+import {
+  FLEET_PROTOCOL_VERSION,
+  FLEET_QUEUE_PREVIEW_MAX,
+  FLEET_ROUTINE_PROMPT_MAX,
+  FLEET_ROUTINE_TITLE_MAX,
+} from './constants.js'
+import {
+  fleetActivityEntrySchema,
+  fleetBotIdSchema,
+  fleetBotSchema,
+  fleetBotStatusSchema,
+  fleetCeilingSchema,
+  fleetHostInfoSchema,
+  fleetIdSchema,
+  fleetIdempotencyKeySchema,
+  fleetInboxItemSchema,
+  fleetInstructionsSchema,
+  fleetInteractionResolutionSchema,
+  fleetMessageTextSchema,
+  fleetNameSchema,
+  fleetNonNegativeIntSchema,
+  fleetNoteSchema,
+  fleetPeerMessageSchema,
+  fleetPeerTextSchema,
+  fleetRoleSchema,
+  fleetRoutineScheduleSchema,
+  fleetRoutineSchema,
+  fleetSelectionOptionSchema,
+  fleetSelectionSchema,
+  fleetTakeoverStateSchema,
+  fleetTimestampSchema,
+  fleetTranscriptItemSchema,
+  fleetTranscriptPageSchema,
+  fleetActivitySchema,
+  fleetPendingInteractionSchema,
+} from './domain.js'
+
+export const fleetMetaResponseSchema = z.object({
+  protocol: z.literal(FLEET_PROTOCOL_VERSION),
+  gatewayVersion: z.string(),
+  botImage: z.string(),
+  botImageVersion: z.string().nullable(),
+})
+export type FleetMetaResponse = z.infer<typeof fleetMetaResponseSchema>
+
+export const fleetPairRequestSchema = z.object({
+  code: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
+  deviceName: z.string().min(1),
+})
+export type FleetPairRequest = z.infer<typeof fleetPairRequestSchema>
+export const fleetPairResponseSchema = z.object({ deviceId: fleetIdSchema, token: fleetIdSchema })
+export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
+
+export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) })
+export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
+export const fleetCreateBotRequestSchema = z.object({
+  name: fleetNameSchema,
+  instructions: fleetInstructionsSchema,
+  ceiling: fleetCeilingSchema,
+  talksTo: z.array(fleetBotIdSchema),
+  idempotencyKey: fleetIdempotencyKeySchema,
+})
+export type FleetCreateBotRequest = z.infer<typeof fleetCreateBotRequestSchema>
+export const fleetPatchBotRequestSchema = z.object({
+  name: fleetNameSchema.optional(),
+  instructions: fleetInstructionsSchema.optional(),
+  role: fleetRoleSchema.optional(),
+  ceiling: fleetCeilingSchema.optional(),
+  talksTo: z.array(fleetBotIdSchema).optional(),
+  selection: fleetSelectionSchema.nullable().optional(),
+})
+export type FleetPatchBotRequest = z.infer<typeof fleetPatchBotRequestSchema>
+export const fleetSelectionsResponseSchema = z.object({
+  options: z.array(fleetSelectionOptionSchema),
+  current: fleetSelectionSchema.nullable(),
+})
+export type FleetSelectionsResponse = z.infer<typeof fleetSelectionsResponseSchema>
+export const fleetSendMessageRequestSchema = z.object({
+  text: fleetMessageTextSchema,
+  idempotencyKey: fleetIdempotencyKeySchema,
+})
+export type FleetSendMessageRequest = z.infer<typeof fleetSendMessageRequestSchema>
+export const fleetInputReceiptSchema = z.object({ inputId: fleetIdSchema, itemId: fleetIdSchema, queued: z.boolean() })
+export type FleetInputReceipt = z.infer<typeof fleetInputReceiptSchema>
+export const fleetTakeoverReleaseRequestSchema = z.object({ note: fleetNoteSchema.nullable(), continue: z.boolean() })
+export type FleetTakeoverReleaseRequest = z.infer<typeof fleetTakeoverReleaseRequestSchema>
+export const fleetScreenTicketRequestSchema = z.object({ mode: z.enum(['view', 'control']) })
+export type FleetScreenTicketRequest = z.infer<typeof fleetScreenTicketRequestSchema>
+export const fleetScreenTicketResponseSchema = z.object({
+  ticket: fleetIdSchema,
+  path: z.string().startsWith('/v1/screen?ticket='),
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
+export const fleetUiOpenRequestSchema = z.object({ target: z.enum(['accounts', 'main']) })
+export type FleetUiOpenRequest = z.infer<typeof fleetUiOpenRequestSchema>
+export const fleetRoutinesResponseSchema = z.object({ routines: z.array(fleetRoutineSchema) })
+export type FleetRoutinesResponse = z.infer<typeof fleetRoutinesResponseSchema>
+export const fleetCreateRoutineRequestSchema = z.object({
+  title: z.string().min(1).max(FLEET_ROUTINE_TITLE_MAX),
+  prompt: z.string().min(1).max(FLEET_ROUTINE_PROMPT_MAX),
+  schedule: fleetRoutineScheduleSchema,
+  enabled: z.boolean(),
+  idempotencyKey: fleetIdempotencyKeySchema,
+})
+export type FleetCreateRoutineRequest = z.infer<typeof fleetCreateRoutineRequestSchema>
+export const fleetPatchRoutineRequestSchema = fleetCreateRoutineRequestSchema.omit({ idempotencyKey: true }).partial()
+export type FleetPatchRoutineRequest = z.infer<typeof fleetPatchRoutineRequestSchema>
+export const fleetInboxResponseSchema = z.object({ items: z.array(fleetInboxItemSchema) })
+export type FleetInboxResponse = z.infer<typeof fleetInboxResponseSchema>
+export const fleetPeerMessagesResponseSchema = z.object({ messages: z.array(fleetPeerMessageSchema) })
+export type FleetPeerMessagesResponse = z.infer<typeof fleetPeerMessagesResponseSchema>
+export const fleetActivityResponseSchema = z.object({
+  entries: z.array(fleetActivityEntrySchema),
+  lastSeq: fleetNonNegativeIntSchema,
+})
+export type FleetActivityResponse = z.infer<typeof fleetActivityResponseSchema>
+
+export const fleetInternalPeersResponseSchema = z.object({
+  peers: z.array(
+    z.object({ botId: fleetBotIdSchema, name: fleetNameSchema, role: fleetRoleSchema, status: fleetBotStatusSchema })
+  ),
+})
+export type FleetInternalPeersResponse = z.infer<typeof fleetInternalPeersResponseSchema>
+export const fleetInternalPeerMessageRequestSchema = z.object({
+  to: fleetBotIdSchema,
+  text: fleetPeerTextSchema,
+  idempotencyKey: fleetIdempotencyKeySchema,
+})
+export type FleetInternalPeerMessageRequest = z.infer<typeof fleetInternalPeerMessageRequestSchema>
+export const fleetInternalPeerMessageResponseSchema = z.object({ messageId: fleetIdSchema, delivered: z.boolean() })
+export type FleetInternalPeerMessageResponse = z.infer<typeof fleetInternalPeerMessageResponseSchema>
+
+export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
+export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
+export const fleetInstanceProfileSchema = z.object({
+  botId: fleetBotIdSchema,
+  name: fleetNameSchema,
+  instructions: fleetInstructionsSchema,
+  ceiling: fleetCeilingSchema,
+  selection: fleetSelectionSchema.nullable(),
+  gateway: z.object({ peersEnabled: z.boolean() }),
+})
+export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
+export const fleetInstanceHoldSchema = z.object({
+  state: z.enum(['none', 'holding', 'held']),
+  reason: z.enum(['takeover', 'paused']).nullable(),
+  since: fleetTimestampSchema.nullable(),
+  interruptedTurn: z.boolean(),
+})
+export type FleetInstanceHold = z.infer<typeof fleetInstanceHoldSchema>
+export const fleetInstanceStatusSchema = z.object({
+  appVersion: z.string(),
+  protocol: z.literal(FLEET_PROTOCOL_VERSION),
+  ready: z.boolean(),
+  accounts: z.object({
+    connected: z.boolean(),
+    providers: z.array(z.object({ id: fleetIdSchema, label: z.string() })),
+  }),
+  selection: fleetSelectionSchema.nullable(),
+  ceiling: fleetCeilingSchema,
+  profile: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).nullable(),
+  conversationId: fleetIdSchema.nullable(),
+  turn: z.object({ state: z.enum(['idle', 'running', 'cancelling']), startedAt: fleetTimestampSchema.nullable() }),
+  hold: fleetInstanceHoldSchema,
+  queue: z.array(
+    z.object({
+      inputId: fleetIdSchema,
+      source: fleetInputSourceSchema,
+      preview: z.string().max(FLEET_QUEUE_PREVIEW_MAX),
+    })
+  ),
+  activity: fleetActivitySchema.nullable(),
+  pending: z.array(fleetPendingInteractionSchema),
+  lastEventSeq: fleetNonNegativeIntSchema,
+})
+export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>
+export const fleetInstanceInputSchema = z.object({
+  idempotencyKey: fleetIdempotencyKeySchema,
+  text: fleetMessageTextSchema,
+  source: fleetInputSourceSchema,
+  routine: z.object({ id: fleetIdSchema, title: z.string() }).optional(),
+  peer: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).optional(),
+})
+export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
+export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    seq: fleetNonNegativeIntSchema,
+    at: fleetTimestampSchema,
+    type: z.literal('status'),
+    status: fleetInstanceStatusSchema,
+  }),
+  z.object({
+    seq: fleetNonNegativeIntSchema,
+    at: fleetTimestampSchema,
+    type: z.literal('transcript.upsert'),
+    item: fleetTranscriptItemSchema,
+  }),
+  z.object({
+    seq: fleetNonNegativeIntSchema,
+    at: fleetTimestampSchema,
+    type: z.literal('turn.finished'),
+    outcome: z.enum(['completed', 'cancelled', 'failed']),
+    summary: z.string().nullable(),
+  }),
+  z.object({ seq: fleetNonNegativeIntSchema, at: fleetTimestampSchema, type: z.literal('reset') }),
+])
+export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
+export const fleetInstanceHealthSchema = z.object({
+  ok: z.literal(true),
+  appVersion: z.string(),
+  protocol: z.literal(FLEET_PROTOCOL_VERSION),
+  ready: z.boolean(),
+})
+export type FleetInstanceHealth = z.infer<typeof fleetInstanceHealthSchema>
+export const fleetInstanceHoldRequestSchema = z.object({ reason: z.enum(['takeover', 'paused']) })
+export type FleetInstanceHoldRequest = z.infer<typeof fleetInstanceHoldRequestSchema>
+export const fleetInstanceReleaseRequestSchema = z.object({
+  note: fleetNoteSchema.nullable(),
+  durationMs: z.number().finite().nonnegative().nullable(),
+  continue: z.boolean(),
+})
+export type FleetInstanceReleaseRequest = z.infer<typeof fleetInstanceReleaseRequestSchema>
+
+export type FleetRoute = {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  path: string
+  body: z.ZodType | null
+  response: z.ZodType | null
+}
+
+export const FLEET_GATEWAY_ROUTES = {
+  meta: { method: 'GET', path: '/v1/meta', body: null, response: fleetMetaResponseSchema },
+  pair: { method: 'POST', path: '/v1/pair', body: fleetPairRequestSchema, response: fleetPairResponseSchema },
+  devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
+  host: { method: 'GET', path: '/v1/host', body: null, response: fleetHostInfoSchema },
+  botsList: { method: 'GET', path: '/v1/bots', body: null, response: fleetBotsResponseSchema },
+  botsCreate: { method: 'POST', path: '/v1/bots', body: fleetCreateBotRequestSchema, response: fleetBotSchema },
+  botGet: { method: 'GET', path: '/v1/bots/:id', body: null, response: fleetBotSchema },
+  botPatch: { method: 'PATCH', path: '/v1/bots/:id', body: fleetPatchBotRequestSchema, response: fleetBotSchema },
+  botStart: { method: 'POST', path: '/v1/bots/:id/start', body: null, response: fleetBotSchema },
+  botStop: { method: 'POST', path: '/v1/bots/:id/stop', body: null, response: fleetBotSchema },
+  botRestart: { method: 'POST', path: '/v1/bots/:id/restart', body: null, response: fleetBotSchema },
+  botArchive: { method: 'POST', path: '/v1/bots/:id/archive', body: null, response: fleetBotSchema },
+  botPause: { method: 'POST', path: '/v1/bots/:id/pause', body: null, response: fleetBotSchema },
+  botResume: { method: 'POST', path: '/v1/bots/:id/resume', body: null, response: fleetBotSchema },
+  botCancel: { method: 'POST', path: '/v1/bots/:id/cancel', body: null, response: null },
+  botSelections: {
+    method: 'GET',
+    path: '/v1/bots/:id/selections',
+    body: null,
+    response: fleetSelectionsResponseSchema,
+  },
+  botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
+  botMessageSend: {
+    method: 'POST',
+    path: '/v1/bots/:id/messages',
+    body: fleetSendMessageRequestSchema,
+    response: fleetInputReceiptSchema,
+  },
+  botMessageDelete: { method: 'DELETE', path: '/v1/bots/:id/messages/:inputId', body: null, response: null },
+  botInteractionResolve: {
+    method: 'POST',
+    path: '/v1/bots/:id/interactions/:interactionId',
+    body: fleetInteractionResolutionSchema,
+    response: null,
+  },
+  botTakeover: { method: 'POST', path: '/v1/bots/:id/takeover', body: null, response: fleetTakeoverStateSchema },
+  botTakeoverRelease: {
+    method: 'POST',
+    path: '/v1/bots/:id/takeover/release',
+    body: fleetTakeoverReleaseRequestSchema,
+    response: fleetTakeoverStateSchema,
+  },
+  botScreenTicket: {
+    method: 'POST',
+    path: '/v1/bots/:id/screen-tickets',
+    body: fleetScreenTicketRequestSchema,
+    response: fleetScreenTicketResponseSchema,
+  },
+  screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
+  botUiOpen: { method: 'POST', path: '/v1/bots/:id/ui/open', body: fleetUiOpenRequestSchema, response: null },
+  botRoutinesList: { method: 'GET', path: '/v1/bots/:id/routines', body: null, response: fleetRoutinesResponseSchema },
+  botRoutinesCreate: {
+    method: 'POST',
+    path: '/v1/bots/:id/routines',
+    body: fleetCreateRoutineRequestSchema,
+    response: fleetRoutineSchema,
+  },
+  botRoutinePatch: {
+    method: 'PATCH',
+    path: '/v1/bots/:id/routines/:rid',
+    body: fleetPatchRoutineRequestSchema,
+    response: fleetRoutineSchema,
+  },
+  botRoutineDelete: { method: 'DELETE', path: '/v1/bots/:id/routines/:rid', body: null, response: null },
+  botRoutineRun: { method: 'POST', path: '/v1/bots/:id/routines/:rid/run', body: null, response: fleetRoutineSchema },
+  inbox: { method: 'GET', path: '/v1/inbox', body: null, response: fleetInboxResponseSchema },
+  peerMessages: { method: 'GET', path: '/v1/peer-messages', body: null, response: fleetPeerMessagesResponseSchema },
+  activity: { method: 'GET', path: '/v1/activity', body: null, response: fleetActivityResponseSchema },
+  events: { method: 'GET', path: '/v1/events', body: null, response: null },
+} as const satisfies Record<string, FleetRoute>
+
+export const FLEET_INTERNAL_ROUTES = {
+  peers: { method: 'GET', path: '/internal/v1/peers', body: null, response: fleetInternalPeersResponseSchema },
+  peerMessageSend: {
+    method: 'POST',
+    path: '/internal/v1/peers/messages',
+    body: fleetInternalPeerMessageRequestSchema,
+    response: fleetInternalPeerMessageResponseSchema,
+  },
+} as const satisfies Record<string, FleetRoute>
+
+export const FLEET_INSTANCE_ROUTES = {
+  health: { method: 'GET', path: '/v1/health', body: null, response: fleetInstanceHealthSchema },
+  status: { method: 'GET', path: '/v1/status', body: null, response: fleetInstanceStatusSchema },
+  profile: {
+    method: 'PUT',
+    path: '/v1/profile',
+    body: fleetInstanceProfileSchema,
+    response: fleetInstanceStatusSchema,
+  },
+  selections: { method: 'GET', path: '/v1/selections', body: null, response: fleetSelectionsResponseSchema },
+  transcript: { method: 'GET', path: '/v1/transcript', body: null, response: fleetTranscriptPageSchema },
+  inputSend: { method: 'POST', path: '/v1/inputs', body: fleetInstanceInputSchema, response: fleetInputReceiptSchema },
+  inputDelete: { method: 'DELETE', path: '/v1/inputs/:inputId', body: null, response: null },
+  turnCancel: { method: 'POST', path: '/v1/turn/cancel', body: null, response: null },
+  interactionResolve: {
+    method: 'POST',
+    path: '/v1/interactions/:id/resolve',
+    body: fleetInteractionResolutionSchema,
+    response: null,
+  },
+  hold: { method: 'POST', path: '/v1/hold', body: fleetInstanceHoldRequestSchema, response: fleetInstanceHoldSchema },
+  holdRelease: {
+    method: 'POST',
+    path: '/v1/hold/release',
+    body: fleetInstanceReleaseRequestSchema,
+    response: fleetInstanceHoldSchema,
+  },
+  uiOpen: { method: 'POST', path: '/v1/ui/open', body: fleetUiOpenRequestSchema, response: null },
+  events: { method: 'GET', path: '/v1/events', body: null, response: null },
+} as const satisfies Record<string, FleetRoute>
+
+export function buildPath(
+  pattern: string,
+  params: Record<string, string | number> = {},
+  query?: Record<string, string | number | boolean | null | undefined>
+): string {
+  const path = pattern.replace(/:([A-Za-z][A-Za-z0-9_]*)/g, (_match, key: string) => {
+    const value = params[key]
+    if (value === undefined) throw new Error('Missing path parameter: ' + key)
+    return encodeURIComponent(String(value))
+  })
+  if (!query) return path
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== null && value !== undefined) search.set(key, String(value))
+  }
+  const suffix = search.toString()
+  return suffix ? path + '?' + suffix : path
+}

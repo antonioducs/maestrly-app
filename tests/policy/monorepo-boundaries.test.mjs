@@ -4,8 +4,8 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 const root = path.resolve(import.meta.dirname, '../..')
-const products = ['desktop', 'web', 'server', 'runner']
-const libraries = ['protocol', 'client-sdk', 'runner-core']
+const products = ['desktop', 'web', 'server', 'runner', 'bot-gateway']
+const libraries = ['protocol', 'bot-fleet-protocol', 'client-sdk', 'runner-core']
 
 function sourceFiles(directory) {
   if (!existsSync(directory)) return []
@@ -15,7 +15,7 @@ function sourceFiles(directory) {
   })
 }
 
-test('the repository exposes four independent applications and focused packages', () => {
+test('the repository exposes five independent applications and focused packages', () => {
   const workspace = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
   assert.deepEqual(workspace.workspaces, ['apps/*', 'packages/*'])
   for (const name of products) assert.equal(existsSync(path.join(root, 'apps', name, 'package.json')), true, name)
@@ -37,7 +37,7 @@ test('headless and browser packages do not import Electron or desktop implementa
 })
 
 test('server owns domain persistence and clients depend only on public contracts', () => {
-  for (const packageName of ['protocol', 'client-sdk', 'runner-core']) {
+  for (const packageName of libraries) {
     const manifest = JSON.parse(readFileSync(path.join(root, 'packages', packageName, 'package.json'), 'utf8'))
     assert.equal(manifest.dependencies?.['@maestrly/server'], undefined, packageName)
   }
