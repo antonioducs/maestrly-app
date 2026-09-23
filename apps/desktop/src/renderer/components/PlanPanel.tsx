@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { preparePlanPanelMemoryEviction, usePanelMemoryEviction } from '@/lib/panel-memory-eviction'
 import { useTranslation } from 'react-i18next'
 import { diffLines } from 'diff'
-import { Check, MessageSquarePlus, Trash2, Pencil, BookOpen, GitCompare, Sparkles } from 'lucide-react'
+import { Check, MessageSquarePlus, Trash2, Pencil, BookOpen, GitCompare, Sparkles, SquarePlus } from 'lucide-react'
 import type { PlanReceived, PlanDecision, PlanDecisionResponse } from '../../preload'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { MarkdownViewer, type CommentCtx } from '@/components/MarkdownViewer'
 import { planDecisionError } from '@/lib/plan-decision'
 import { MaestroPlanProfileDialog } from '@/components/MaestroPlanProfileDialog'
+import { StandardPlanHandoffDialog } from '@/components/StandardPlanHandoffDialog'
 
 interface Props {
   plan: PlanReceived
@@ -33,6 +34,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const [busy, setBusy] = useState(false)
   const [decisionError, setDecisionError] = useState<string | null>(null)
   const [maestroProfileOpen, setMaestroProfileOpen] = useState(false)
+  const [standardHandoffOpen, setStandardHandoffOpen] = useState(false)
 
   const [lineComments, setLineComments] = useState<Record<number, string>>({})
   const [editingLine, setEditingLine] = useState<number | null>(null)
@@ -241,6 +243,16 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
           >
             <Sparkles className="size-4" /> {t('plan.implementWithMaestro')}
           </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="col-span-2 h-8 gap-1.5"
+            disabled={busy}
+            title={t('plan.implementInNewConversationHint')}
+            onClick={() => setStandardHandoffOpen(true)}
+          >
+            <SquarePlus className="size-4" /> {t('plan.implementInNewConversation')}
+          </Button>
           <div className="col-span-2 flex items-center gap-2">
             <Button
               size="sm"
@@ -282,6 +294,21 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
             action: 'approve',
             implementationTarget: 'maestro',
             maestroStrategyProfileId: profileId,
+            editedPlan: edited ? text : undefined,
+          })
+        }
+      />
+      <StandardPlanHandoffDialog
+        open={standardHandoffOpen}
+        sourceConversationId={plan.agentId}
+        busy={busy}
+        decisionError={decisionError}
+        onOpenChange={setStandardHandoffOpen}
+        onConfirm={(standardHandoff) =>
+          decide({
+            action: 'approve',
+            implementationTarget: 'standard',
+            standardHandoff,
             editedPlan: edited ? text : undefined,
           })
         }

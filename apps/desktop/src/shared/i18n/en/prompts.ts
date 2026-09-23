@@ -27,6 +27,24 @@ export default {
     feedbackEditedHeading: '## Version edited by the user (use as a base)',
   },
 
+  // ---- conversation-dispatch-service.ts (first turn of a conversation started from another conversation) ----
+  conversationDispatch: {
+    taskSeed:
+      'This conversation was started from the Maestrly conversation “{{source}}” to work on one task.\n\n' +
+      '## Task: {{title}}\n{{reference}}\n{{workspace}}\n\n{{prompt}}\n\n' +
+      'Work on this task only. Do not start other conversations unless the person explicitly asks for it in this ' +
+      'conversation.',
+    reference: 'Reference: {{label}} {{url}}',
+    sharedWorkspace:
+      'Workspace: this conversation shares the checkout of the source conversation (branch {{branch}}); other ' +
+      'conversations may be changing the same files.',
+    isolatedWorkspace:
+      'Workspace: this conversation has its own worktree on branch {{branch}}, created from commit {{revision}}. ' +
+      'Uncommitted changes that existed in the source conversation are NOT included.',
+    startFailed:
+      'Could not start this conversation ({{reason}}). Its task was kept — use “Retry start” above the composer to try again.',
+  },
+
   // ---- review-loop.ts (internal turn + auditable summary of the automatic review loop) ----
   reviewLoop: {
     pairedReviewerRound:

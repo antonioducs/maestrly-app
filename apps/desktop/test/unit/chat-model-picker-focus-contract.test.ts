@@ -58,7 +58,8 @@ describe('model shortcuts and composer focus contract', () => {
 
   it('escapes overflow and reapplies the hidden-model filter to the cache', () => {
     expect(modelChipSource).toContain('avoidOverflow = false')
-    expect(modelChipSource).toContain("position: 'fixed'")
+    // Fixed placement goes through the helper that also corrects for transformed ancestors such as dialogs.
+    expect(modelChipSource).toContain('fixedPanelPlacement(root, {')
     expect(modelChipSource).toContain("window.addEventListener('scroll', reposition, true)")
     expect(modelChipSource).toContain('chatHiddenModels()')
     expect(modelChipSource).toContain('!(hiddenModels[r.providerId] ?? []).includes(r.modelId)')

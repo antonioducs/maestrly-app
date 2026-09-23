@@ -29,6 +29,84 @@ or incomplete task data is omitted instead of interrupting the chat interface;
 valid entries appear when the agent supplies them. This also applies when
 reopening saved conversations and does not change the stored tool input.
 
+## Starting other conversations
+
+A project conversation can start new Standard conversations that keep working on
+their own. They appear in the sidebar and belong to you like any other
+conversation; they are not subagents and they do not end with the current turn.
+
+### From an approved plan
+
+In the **Plan** tab, **Implement in new conversation** opens a dialog with the
+model, effort, Fast mode and workspace for the new conversation. It starts from
+the current conversation's settings and offers only the effort levels and Fast
+mode the chosen model supports. For the workspace, **Same checkout** works on
+this conversation's branch and files, including uncommitted changes. **New
+worktree** creates a branch from the current commit and does not include
+uncommitted changes.
+
+Approving creates the conversation in Agent mode and sends it the final plan,
+including your edits. The current conversation keeps its model and mode. If the
+new conversation cannot be created, for example because the model is no longer
+available, the plan stays pending so you can choose again. If it is created but
+its first turn cannot start, it shows **Retry start** above the composer and
+keeps the plan.
+
+### By asking the agent
+
+In an Agent or Design turn you can ask for new conversations in plain language,
+for example:
+
+- "Open one conversation for each of these cards and start development with
+  Opus, high effort, Fast off."
+- "Abra uma conversa para cada card e comece o desenvolvimento."
+- "Send this plan to a new conversation."
+
+The agent starts conversations only when your latest message explicitly asks for
+them. It does not start them when you ask for analysis or planning, ask whether
+it is possible, give an example, describe a feature, or quote text, code or card
+content. If you state a number ("open 3 conversations"), no more than that are
+started for that message. When the request is not explicit, the agent tells you
+why and does nothing.
+
+Model, effort and Fast mode follow what you said. The agent matches names such
+as "Opus" against your connected providers and asks you to choose when the same
+model is available from more than one account. Settings you do not mention come
+from the current conversation when the chosen model supports them; otherwise the
+provider default is used, and the result says so. A setting you asked for
+explicitly is never replaced: if the model does not support it, nothing is
+started and the agent explains why. Fast mode is a separate on/off setting and
+never means low effort.
+
+By default each task gets its own worktree and branch (`task/<title>-<id>`) from
+the current commit; uncommitted changes are not included. You can ask for the
+same checkout instead. Each new conversation receives a self-contained task
+from the agent, marked **Started from another conversation**, rather than a
+copy of this transcript. The agent's reply lists each conversation with its
+status and an **Open** link.
+
+Repeating the same request does not create duplicates: the existing
+conversations are reported again, and one whose first turn failed is retried.
+A conversation you delete is not recreated. New conversations cannot start
+further conversations on their own. They can do so later only if you ask for
+it in that conversation.
+
+### Limits
+
+Up to 20 conversations can be started per request; ask again for more.
+Starting conversations requires a local project conversation. It is unavailable
+in standalone chats, bot conversations, Kanban web chats, archived
+conversations, conversations with an unfinished migration and multi-repository
+conversations, and the app gives the reason. A review loop blocks only the
+**Same checkout** option. Card contents come from whatever the agent can
+already read, such as a connected MCP server or text you paste; no Jira
+integration is added. Nothing is pushed, opened as a pull request or merged
+automatically.
+
+The request history is stored in the local database and is removed by a local
+data reset. Worktrees follow the usual conversation rules: deleting a
+conversation removes the worktree and branch it created.
+
 ## Context meter
 
 The context meter shows how much of the model's working context is occupied.

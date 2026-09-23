@@ -30,6 +30,7 @@ import {
   gitEnvInfo,
   getDefaultBranch,
   currentGitHead,
+  resolveCommit,
 } from '../../src/main/git-service'
 import { worktreeRelPath, workspaceDataRelPath } from '../../src/main/app-paths'
 
@@ -151,6 +152,42 @@ describe('worktreeRelPath and workspaceDataRelPath are pure with an injected bas
   })
   it('workspaceDataRelPath anchors paths by workspace', () => {
     expect(workspaceDataRelPath('/base', 'ws1')).toBe(path.join('/base', 'workspace-data', 'ws1'))
+  })
+})
+
+describe('createWorktree with a pinned base revision (task dispatch)', () => {
+  it('starts the new branch at the exact validated commit, not at the moving branch tip', async () => {
+    const pinned = await resolveCommit(repo)
+    expect(pinned).toMatch(/^[0-9a-f]{40}$/)
+    writeFileSync(path.join(repo, 'later.txt'), 'later\n')
+    git(repo, ['add', '-A'])
+    git(repo, ['commit', '-q', '-m', 'later'])
+    // Uncommitted work in the source checkout is never copied into the task worktree.
+    writeFileSync(path.join(repo, 'README.md'), '# uncommitted\n')
+
+    const dest = worktreeRelPath(ext, 'ws1', 'task/proj-1-abcdef12')
+    const wt = await createWorktree({
+      top: repo,
+      branch: 'task/proj-1-abcdef12',
+      base: 'main',
+      isNewBranch: true,
+      dest,
+      baseRevision: pinned!,
+      exclusive: true,
+    })
+
+    expect(git(wt, ['rev-parse', 'HEAD'])).toBe(pinned)
+    expect(existsSync(path.join(wt, 'later.txt'))).toBe(false)
+    expect(readFileSync(path.join(wt, 'README.md'), 'utf8')).toBe('# repo\n')
+    await expect(
+      createWorktree({ top: repo, branch: 'task/x', base: 'main', isNewBranch: true, dest, baseRevision: '--help' })
+    ).rejects.toThrow(/must be a commit id/)
+  })
+
+  it('resolves only real commits', async () => {
+    expect(await resolveCommit(repo, 'does-not-exist')).toBeNull()
+    expect(await resolveCommit(repo, '--all')).toBeNull()
+    expect(await resolveCommit(ext)).toBeNull()
   })
 })
 

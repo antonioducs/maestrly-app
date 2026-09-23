@@ -10,6 +10,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Check, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 
 export interface SearchOption {
   id: string
@@ -72,20 +73,22 @@ export function SearchSelect({
   const listboxId = useId()
 
   const positionPanel = useCallback(() => {
-    const r = btnRef.current?.getBoundingClientRect()
-    if (!r) return
+    const button = btnRef.current
+    const wrap = wrapRef.current
+    if (!button || !wrap) return
+    const r = button.getBoundingClientRect()
     const PANEL = 280
     const opensUp = r.bottom + PANEL > window.innerHeight && r.top > PANEL
     setUp(opensUp)
     if (avoidOverflow) {
-      const width = panelWidth ?? r.width
-      setPanelStyle({
-        position: 'fixed',
-        left: panelAlign === 'end' ? Math.max(8, r.right - width) : Math.min(r.left, window.innerWidth - width - 8),
-        top: opensUp ? undefined : r.bottom + 4,
-        bottom: opensUp ? window.innerHeight - r.top + 4 : undefined,
-        width,
-      })
+      setPanelStyle(
+        fixedPanelPlacement(wrap, {
+          anchor: button,
+          width: panelWidth ?? r.width,
+          estimatedHeight: PANEL,
+          align: panelAlign,
+        }).style
+      )
     }
   }, [avoidOverflow, panelAlign, panelWidth])
 

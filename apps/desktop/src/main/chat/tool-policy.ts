@@ -186,3 +186,14 @@ export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 
 }
 
 export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: false } as const
+
+/**
+ * Built-in, parent-only tools that start persistent conversations. They mutate (worktrees, conversations, turns),
+ * so they never enter read-only modes, the structurally read-only Maestro parent, subagents or Maestro workers.
+ * Runners add them only for a turn admitted from text the person typed (see conversation-dispatch-authorization).
+ */
+export const CONVERSATION_DISPATCH_TOOL_NAMES = ['list_conversation_models', 'start_conversations'] as const
+
+export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
+  return mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent'
+}

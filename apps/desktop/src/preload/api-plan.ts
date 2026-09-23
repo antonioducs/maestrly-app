@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { StandardPlanHandoff } from '../shared/conversation-dispatch'
 
 export interface PlanLineComment {
   line: number
@@ -8,9 +9,11 @@ export interface PlanLineComment {
 export interface PlanDecision {
   action: 'approve' | 'revise' | 'discard'
 
-  implementationTarget?: 'source' | 'maestro'
+  implementationTarget?: 'source' | 'maestro' | 'standard'
 
   maestroStrategyProfileId?: string
+
+  standardHandoff?: StandardPlanHandoff
   editedPlan?: string
   feedback?: string
   lineComments?: PlanLineComment[]

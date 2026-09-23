@@ -36,6 +36,26 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     return () => window.removeEventListener('maestrly:open-memory', open)
   }, [workspaces])
 
+  // Links to other conversations (e.g. conversations started by start_conversations) focus them in place.
+  useEffect(() => {
+    const open = async (event: Event) => {
+      const conversationId = (event as CustomEvent<{ conversationId?: string }>).detail?.conversationId
+      if (!conversationId) return
+      const find = (items: WorkspaceWithConversations[]) =>
+        items.flatMap((item) => item.conversations).find((conversation) => conversation.id === conversationId)
+      const conversation = find(workspaces) ?? find(await refreshWorkspaces())
+      if (!conversation) return
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setSettingsOpen(false)
+      setOnboardingOpen(false)
+      setActive(conversation)
+    }
+    const listener = (event: Event) => void open(event)
+    window.addEventListener('maestrly:open-conversation', listener)
+    return () => window.removeEventListener('maestrly:open-conversation', listener)
+  }, [refreshWorkspaces, setActive, workspaces])
+
   const mainOverride =
     projectNotesWs ||
     projectMemoryWs ||

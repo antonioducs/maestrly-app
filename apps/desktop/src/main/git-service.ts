@@ -235,6 +235,14 @@ export interface CreateWorktreeArgs {
   dest?: string
   /** Bot allocation must never attach to a branch or checkout that already exists. */
   exclusive?: boolean
+  /** New branches only: start at this exact commit instead of the freshest `base` ref. */
+  baseRevision?: string
+}
+
+/** Full commit id of a revision in `cwd`, or null when it does not resolve to a commit. */
+export async function resolveCommit(cwd: string, revision = 'HEAD'): Promise<string | null> {
+  if (!revision || revision.startsWith('-')) return null
+  return gitOrNull(cwd, ['rev-parse', '--verify', '--quiet', `${revision}^{commit}`], 5_000)
 }
 
 /**
@@ -356,8 +364,11 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
 
   if (isNewBranch) {
     // Start from the freshest base, using remote state when local is behind, so recent PR merges are
-    // included.
-    const startPoint = await freshestBase(top, base)
+    // included. A pinned revision (task dispatch) wins so the new branch matches what the caller validated.
+    if (args.baseRevision && !/^[0-9a-f]{7,64}$/i.test(args.baseRevision)) {
+      throw new Error('The pinned base revision must be a commit id.')
+    }
+    const startPoint = args.baseRevision ?? (await freshestBase(top, base))
     // --no-track avoids inheriting origin/base as upstream. Worktree-local current/autoSetupRemote settings
     // make the first bare push create and track the same-named remote branch.
     const expectedHead = await git(top, ['rev-parse', '--verify', `${startPoint}^{commit}`])
