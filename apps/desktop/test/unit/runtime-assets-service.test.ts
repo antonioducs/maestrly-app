@@ -653,3 +653,316 @@ describe('RuntimeAssetService', () => {
     expect(deps.downloader).not.toHaveBeenCalled()
   })
 })
+
+describe('RuntimeAssetService independent updates', () => {
+  const root = () => path.join(userData, 'runtime-assets/tunnel-client')
+  const pointer = async (name: 'current' | 'previous') =>
+    (JSON.parse(await readFile(path.join(root(), `${name}.json`), 'utf8')) as { directory: string }).directory
+
+  function updatable(options: { available?: number; delayDownload?: boolean } = {}) {
+    const accepted = new Map<string, RuntimeAssetDefinition>()
+    let unavailable = false
+    const deps = fixtureDependencies({ version: 'dynamic', ...options })
+    const onStatusChanged = vi.fn()
+    const create = () =>
+      new RuntimeAssetService({
+        userDataPath: userData,
+        registry: registry('1.0.0'),
+        target: 'mac-arm64',
+        acceptedDefinition: (id, version) => {
+          if (unavailable) throw new Error('metadata unavailable')
+          return id === 'tunnel-client' ? (accepted.get(version) ?? null) : null
+        },
+        onStatusChanged,
+        ...deps,
+      })
+    const commit = vi.fn((candidate: RuntimeAssetDefinition) => {
+      accepted.set(candidate.version, candidate)
+    })
+    return {
+      service: create(),
+      restart: create,
+      deps,
+      accepted,
+      commit,
+      onStatusChanged,
+      setUnavailable: (value: boolean) => {
+        unavailable = value
+      },
+    }
+  }
+
+  async function tempEntries(): Promise<string[]> {
+    return (await readdir(path.join(userData, 'runtime-assets'))).filter((entry) => entry.startsWith('.tmp-'))
+  }
+
+  it('keeps the active installation ready while a newer candidate is known or fails', async () => {
+    const { service, deps, commit } = updatable()
+    const installed = await service.install('tunnel-client')
+    deps.downloader.mockImplementationOnce(async (_target, destination) => {
+      await writeFile(destination, 'tampered')
+      return { bytes: 8, digest: 'wrong', finalUrl: 'https://fixture.test/runtime.zip' }
+    })
+
+    const failure = await service.update(definition('2.0.0'), { commit }).catch((error) => error)
+    expect(failure).toMatchObject({ name: 'RuntimeAssetUpdateError', code: 'integrity' })
+    expect(commit).not.toHaveBeenCalled()
+    expect(await service.status('tunnel-client')).toMatchObject({
+      state: 'ready',
+      version: '1.0.0',
+      path: installed.path,
+    })
+    expect(await readdir(path.join(root(), 'versions'))).toEqual(['1.0.0-mac-arm64'])
+    expect(await tempEntries()).toEqual([])
+  })
+
+  it('validates in staging, persists metadata, then swaps current and previous', async () => {
+    const { service, commit, onStatusChanged } = updatable()
+    const installed = await service.install('tunnel-client')
+    onStatusChanged.mockClear()
+    const validate = vi.fn(async (installation: string) => {
+      expect(installation).not.toContain(`${path.sep}versions${path.sep}`)
+      expect(await readFile(path.join(installation, 'bin/tool'), 'utf8')).toBe('binary-dynamic')
+    })
+    commit.mockImplementationOnce(async (candidate) => {
+      // Metadata must be durable while the old version is still active.
+      expect(await pointer('current')).toBe('1.0.0-mac-arm64')
+      commit.getMockImplementation()?.(candidate)
+    })
+    const onProgress = vi.fn()
+
+    const updated = await service.update(definition('2.0.0'), { validate, commit, onProgress })
+
+    expect(updated).toMatchObject({ state: 'ready', version: '2.0.0' })
+    expect(validate).toHaveBeenCalledTimes(1)
+    expect(await pointer('current')).toBe('2.0.0-mac-arm64')
+    expect(await pointer('previous')).toBe(path.basename(installed.path!))
+    expect([...new Set(onProgress.mock.calls.map(([progress]) => progress.phase))]).toEqual([
+      'downloading',
+      'verifying',
+      'installing',
+      'validating',
+    ])
+    // The active installation's status is never replaced by update progress.
+    expect(onStatusChanged.mock.calls.map(([status]) => status.state)).toEqual(['ready'])
+    expect(await service.previousInstallation('tunnel-client')).toMatchObject({ version: '1.0.0' })
+  })
+
+  it('preserves the active installation on insufficient disk space', async () => {
+    const { service, deps, commit } = updatable({ available: 199 })
+    await writeFile(path.join(userData, 'marker'), '')
+    // Install first with enough space, then update with too little.
+    deps.availableBytes.mockResolvedValueOnce(100_000_000)
+    await service.install('tunnel-client')
+    deps.downloader.mockClear()
+
+    await expect(service.update(definition('2.0.0'), { commit })).rejects.toMatchObject({ code: 'disk-space' })
+    expect(deps.downloader).not.toHaveBeenCalled()
+    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+  })
+
+  it('cancels a download without touching the active installation or blocking leases', async () => {
+    const { service, deps } = updatable({ delayDownload: true })
+    deps.unblock()
+    await service.install('tunnel-client')
+    // A second instance over the same profile whose download stays blocked until cancelled.
+    const blocked = updatable({ delayDownload: true })
+    const commit = blocked.commit
+    const controller = new AbortController()
+    const pending = blocked.service.update(definition('2.0.0'), { commit, signal: controller.signal })
+    // Same userData: the second instance sees the first installation.
+    await vi.waitFor(() => expect(blocked.deps.downloader).toHaveBeenCalled())
+    const lease = await blocked.service.acquireLease('tunnel-client')
+    controller.abort(new Error('user cancelled'))
+
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    expect(await blocked.service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await tempEntries()).toEqual([])
+    lease.release()
+    expect(commit).not.toHaveBeenCalled()
+  })
+
+  it('rejects an incompatible candidate before it is activated', async () => {
+    const { service, commit } = updatable()
+    await service.install('tunnel-client')
+    await expect(
+      service.update(definition('2.0.0'), {
+        commit,
+        validate: async () => {
+          throw new Error('app-server handshake failed')
+        },
+      })
+    ).rejects.toMatchObject({ code: 'incompatible', message: expect.stringMatching(/handshake/) })
+    expect(commit).not.toHaveBeenCalled()
+    expect(await readdir(path.join(root(), 'versions'))).toEqual(['1.0.0-mac-arm64'])
+    expect(await pointer('current')).toBe('1.0.0-mac-arm64')
+  })
+
+  it('keeps the previous pointer usable when metadata persistence fails', async () => {
+    const { service, commit } = updatable()
+    await service.install('tunnel-client')
+    commit.mockImplementationOnce(() => {
+      throw new Error('database is locked')
+    })
+    await expect(service.update(definition('2.0.0'), { commit })).rejects.toMatchObject({ code: 'failed' })
+    expect(await pointer('current')).toBe('1.0.0-mac-arm64')
+    expect(await readdir(path.join(root(), 'versions'))).toEqual(['1.0.0-mac-arm64'])
+    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+  })
+
+  it('recovers consistently when the process stops between pointer writes', async () => {
+    const { service, commit, restart } = updatable()
+    await service.install('tunnel-client')
+    type WritePointer = (id: RuntimeAssetId, name: string, pointer: { readonly directory: string }) => Promise<void>
+    const internals = service as unknown as { writePointer: WritePointer }
+    const original = internals.writePointer.bind(service)
+    vi.spyOn(internals, 'writePointer').mockImplementation(async (id, name, next) => {
+      if (name === 'current.json') throw new Error('process stopped')
+      return original(id, name, next)
+    })
+    await expect(service.update(definition('2.0.0'), { commit })).rejects.toMatchObject({ code: 'failed' })
+
+    // A new process sees the old active version; accepted metadata without an installation is harmless.
+    const restarted = restart()
+    expect(await restarted.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+  })
+
+  it('recognizes an activated dynamic version after an offline restart', async () => {
+    const { service, commit, restart, deps } = updatable()
+    await service.install('tunnel-client')
+    await service.update(definition('2.0.0'), { commit })
+    deps.downloader.mockClear()
+
+    const restarted = restart()
+    expect(await restarted.status('tunnel-client')).toMatchObject({ state: 'ready', version: '2.0.0' })
+    const lease = await restarted.acquireLease('tunnel-client')
+    expect(lease.path).toContain('2.0.0-mac-arm64')
+    lease.release()
+    expect(deps.downloader).not.toHaveBeenCalled()
+  })
+
+  it('rolls back offline after full verification and refuses a tampered previous version', async () => {
+    const { service, commit, deps } = updatable()
+    await service.install('tunnel-client')
+    await service.update(definition('2.0.0'), { commit })
+    deps.downloader.mockClear()
+
+    await expect(service.rollback('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await pointer('current')).toBe('1.0.0-mac-arm64')
+    expect(await pointer('previous')).toBe('2.0.0-mac-arm64')
+    expect(deps.downloader).not.toHaveBeenCalled()
+
+    await writeFile(path.join(root(), 'versions/2.0.0-mac-arm64/README'), 'tampered')
+    await expect(service.rollback('tunnel-client')).rejects.toMatchObject({ code: 'rollback-unavailable' })
+    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+  })
+
+  it('reports no rollback without a distinct previous installation', async () => {
+    const { service } = updatable()
+    await service.install('tunnel-client')
+    expect(await service.previousInstallation('tunnel-client')).toBeNull()
+    await expect(service.rollback('tunnel-client')).rejects.toMatchObject({ code: 'rollback-unavailable' })
+  })
+
+  it('serializes concurrent updates', async () => {
+    const { service, commit, deps } = updatable()
+    await service.install('tunnel-client')
+    let active = 0
+    let overlap = false
+    const original = deps.downloader.getMockImplementation()!
+    deps.downloader.mockImplementation(async (...args) => {
+      active += 1
+      if (active > 1) overlap = true
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      try {
+        return await original(...args)
+      } finally {
+        active -= 1
+      }
+    })
+
+    const [second, third] = await Promise.all([
+      service.update(definition('2.0.0'), { commit }),
+      service.update(definition('3.0.0'), { commit }),
+    ])
+    expect(second.version).toBe('2.0.0')
+    expect(third.version).toBe('3.0.0')
+    expect(overlap).toBe(false)
+    expect(await pointer('current')).toBe('3.0.0-mac-arm64')
+    expect(await pointer('previous')).toBe('2.0.0-mac-arm64')
+  })
+
+  it('keeps a leased older version until its connection releases it', async () => {
+    const { service, commit } = updatable()
+    const first = await service.install('tunnel-client')
+    const lease = await service.acquireLease('tunnel-client')
+    await service.update(definition('2.0.0'), { commit })
+    await service.update(definition('3.0.0'), { commit })
+
+    expect(existsSync(first.path!)).toBe(true)
+    expect(service.leasedInstallations('tunnel-client')).toEqual([{ version: '1.0.0', path: first.path }])
+    lease.release()
+    await vi.waitFor(() => expect(existsSync(first.path!)).toBe(false))
+    expect(service.leasedInstallations('tunnel-client')).toEqual([])
+  })
+
+  it('repairs a dynamic version by reinstalling that accepted version, not the embedded pin', async () => {
+    const { service, commit, deps } = updatable()
+    await service.install('tunnel-client')
+    const updated = await service.update(definition('2.0.0'), { commit })
+    // Same-size tamper keeps passive status ready; an explicit repair still reinstalls 2.0.0.
+    await writeFile(path.join(updated.path!, 'bin/tool'), 'tampered-bytes')
+    deps.downloader.mockClear()
+    await expect(service.repair('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
+    expect(deps.downloader.mock.calls[0][0].hash.digest).toBe('archive-2.0.0')
+  })
+
+  it('reinstalls a corrupt dynamic version without a previous fallback instead of downgrading', async () => {
+    const { service, commit, deps } = updatable()
+    const updated = await service.update(definition('2.0.0'), { commit })
+    await writeFile(path.join(updated.path!, 'bin/tool'), 'tampered: different size')
+    expect(await service.status('tunnel-client')).toMatchObject({ state: 'corrupt', path: updated.path })
+    deps.downloader.mockClear()
+
+    await expect(service.install('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
+    expect(deps.downloader.mock.calls[0][0].hash.digest).toBe('archive-2.0.0')
+  })
+
+  it('fails status without promotion when accepted metadata is unavailable', async () => {
+    const { service, commit, setUnavailable, deps } = updatable()
+    await service.install('tunnel-client')
+    await service.update(definition('2.0.0'), { commit })
+    deps.downloader.mockClear()
+
+    setUnavailable(true)
+    await expect(service.status('tunnel-client')).rejects.toThrow('metadata unavailable')
+    await expect(service.install('tunnel-client')).rejects.toThrow('metadata unavailable')
+    expect(await pointer('current')).toBe('2.0.0-mac-arm64')
+    expect(deps.downloader).not.toHaveBeenCalled()
+    setUnavailable(false)
+    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '2.0.0' })
+  })
+
+  it('publishes first-install progress through status when nothing is installed', async () => {
+    const { service, commit, onStatusChanged } = updatable()
+    await expect(service.update(definition('2.0.0'), { commit })).resolves.toMatchObject({
+      state: 'ready',
+      version: '2.0.0',
+    })
+    const states = onStatusChanged.mock.calls.map(([status]) => status.state)
+    expect(states[0]).toBe('downloading')
+    expect(states.at(-1)).toBe('ready')
+  })
+
+  it('does not remove an asset while an update is active', async () => {
+    const { service, deps } = updatable({ delayDownload: true })
+    deps.unblock()
+    await service.install('tunnel-client')
+    const blocked = updatable({ delayDownload: true })
+    const pending = blocked.service.update(definition('2.0.0'), { commit: blocked.commit })
+    await vi.waitFor(() => expect(blocked.deps.downloader).toHaveBeenCalled())
+    await expect(blocked.service.remove('tunnel-client')).rejects.toThrow(/active/)
+    blocked.deps.unblock()
+    await expect(pending).resolves.toMatchObject({ version: '2.0.0' })
+  })
+})

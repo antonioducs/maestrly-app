@@ -205,8 +205,8 @@ describe('OpenAI tool optimization', () => {
     expect(Object.keys(result.tools)).toEqual(['alpha', 'notes_append', 'notes_read', 'toolSearch', 'zeta'])
     expect(result.toolSearchEnabled).toBe(true)
     expect(result.tools.toolSearch.type).toBe('provider')
-    expect((result.tools.notes_read.providerOptions?.openai as Record<string, unknown>).deferLoading).toBe(true)
-    expect((result.tools.notes_append.providerOptions?.openai as Record<string, unknown>).namespace).toEqual({
+    expect((result.tools.notes_read.providerOptions!.openai as Record<string, unknown>).deferLoading).toBe(true)
+    expect((result.tools.notes_append.providerOptions!.openai as Record<string, unknown>).namespace).toEqual({
       name: 'maestrly_notes',
       description: 'Maestrly notes tools available on demand.',
     })

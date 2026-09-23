@@ -36,7 +36,10 @@ function setup(options: { state?: string; resumeFails?: boolean; decodeFails?: b
     createGain: vi.fn(() => gain),
     close: vi.fn().mockResolvedValue(undefined),
   }
-  const Ctor = vi.fn(function () { return context }) as unknown as AudioContextConstructor
+  // A named function expression stays constructible: the player calls `new AudioContextCtor()`.
+  const Ctor = vi.fn(function AudioContextMock() {
+    return context
+  }) as unknown as AudioContextConstructor
   let now = 1000
   const player = createSoundPlayer(api, Ctor, () => now)
   const emit = (request: Partial<SoundPlayRequest> = {}) => {

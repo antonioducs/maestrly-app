@@ -37,6 +37,11 @@ import type {
   CodexNotification,
 } from './protocol'
 import { isMethodNotFoundError, mergeRateLimits, parseCodexRateLimits } from './rate-limits'
+import {
+  CODEX_SUBSCRIPTION_APP_SERVER_ARGS,
+  CODEX_SUBSCRIPTION_UNSET_ENV,
+  CODEX_SUBSCRIPTION_UNSET_ENV_PREFIXES,
+} from './app-server-contract'
 import { resolveCodexRuntime, type CodexRuntimeResolution, type CodexRuntimeSource } from './runtime-resolver'
 import { acquireRuntimeAssetLease, readyRuntimeAsset } from '../../runtime-assets/app-service'
 import type { RuntimeAssetLease } from '../../../shared/runtime-assets'
@@ -180,34 +185,6 @@ interface CachedModelContextWindow {
 const DEFAULT_LOGIN_TIMEOUT_MS = 10 * 60_000
 const MODEL_PAGE_LIMIT = 100
 const MAX_MODEL_PAGES = 100
-/**
- * Feature gates resolved at process start. Cover ONLY LEGACY multi-agent (v1): for 5.6 models, remote catalog
- * `multi_agent_version` registers `spawn_agent`/`wait_agent` regardless of these flags or per-thread
- * `features.multi_agent*: false`. Do NOT rely on these as a gate; actual suppression comes from
- * `model_catalog_json` in process argv (see model-catalog-override.ts).
- */
-const CODEX_SUBSCRIPTION_APP_SERVER_ARGS = [
-  'app-server',
-  '--disable',
-  'multi_agent',
-  '--disable',
-  'multi_agent_v2',
-] as const
-/** This provider is exclusively first-party ChatGPT; host-injected credentials/endpoints are not accepted. */
-const CODEX_SUBSCRIPTION_UNSET_ENV = [
-  'OPENAI_API_KEY',
-  'OPENAI_BASE_URL',
-  'AZURE_OPENAI_API_KEY',
-  'CODEX_API_KEY',
-  'CODEX_ACCESS_TOKEN',
-  'CODEX_AUTHAPI_BASE_URL',
-  'CODEX_REFRESH_TOKEN_URL_OVERRIDE',
-  'CODEX_REVOKE_TOKEN_URL_OVERRIDE',
-  'CODEX_APP_SERVER_LOGIN_CLIENT_ID',
-  'CODEX_APP_SERVER_LOGIN_ISSUER',
-  // The provider database must live alongside isolated CODEX_HOME so logout/wipe are complete.
-  'CODEX_SQLITE_HOME',
-] as const
 
 async function defaultEnsureDirectory(directory: string): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 })
@@ -903,7 +880,7 @@ export class CodexSubscriptionManager {
         capabilities: { experimentalApi: true },
         env: { CODEX_HOME: codexHome },
         unsetEnv: CODEX_SUBSCRIPTION_UNSET_ENV,
-        unsetEnvPrefixes: ['CODEX_', 'OPENAI_', 'AZURE_OPENAI_'],
+        unsetEnvPrefixes: CODEX_SUBSCRIPTION_UNSET_ENV_PREFIXES,
         signal,
       })
       // Boot itself triggers refresh; `model/list` only ensures the runtime served a request
@@ -957,7 +934,7 @@ export class CodexSubscriptionManager {
         unsetEnv: CODEX_SUBSCRIPTION_UNSET_ENV,
         // First-party provider: no inherited key, base URL, or development config may redirect the runtime.
         // The client applies app-owned CODEX_HOME above only after this cleanup.
-        unsetEnvPrefixes: ['CODEX_', 'OPENAI_', 'AZURE_OPENAI_'],
+        unsetEnvPrefixes: CODEX_SUBSCRIPTION_UNSET_ENV_PREFIXES,
         signal,
       })
 

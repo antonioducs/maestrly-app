@@ -95,6 +95,11 @@ notified and download the new package manually. Only arm64 macOS builds are
 published, so Intel Macs receive no updates. `beta` and `dev` builds never
 check for updates.
 
+On macOS, download progress can remain at 100% while the native updater prepares
+and validates the package. Restart becomes available only after that step finishes.
+During installation, the updater controls the final exit and relaunch; preparation
+errors leave the app running and can be retried from Settings.
+
 If publication fails, inspect the workflow logs and retained draft. Do not move
 tags, overwrite assets, or publish a draft without repeating checksum verification.
 For a defective release, identify the affected version and issue a new patch/tag;

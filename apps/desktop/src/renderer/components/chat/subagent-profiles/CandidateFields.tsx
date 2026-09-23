@@ -14,7 +14,7 @@ import {
   subagentProfileProviders,
 } from '@/lib/subagent-profile-editor'
 import { subagentEffortLabel } from '@/lib/subagent-profile-display'
-import { type ChatConfig } from '../../../../shared/chat'
+import type { ChatConfig } from '../../../../shared/chat'
 import {
   validateSubagentProfileEffort,
   type SubagentProfileModelMetaResult,

@@ -184,7 +184,7 @@ export function registerPressureSampleSource(source: PressureSampleSource | null
   if (source) void runPressureSample()
 }
 
-function deadlineOf(resource: ReclaimableResource, at = now()): number {
+function deadlineOf(resource: ReclaimableResource): number {
   return resource.lastActiveAt() + resource.coldTtlMs
 }
 
@@ -349,7 +349,7 @@ export function scheduleMemoryReclaim(): void {
   const at = now()
   let nextAt: number | null = null
   for (const resource of resources.values()) {
-    const due = deadlineOf(resource, at)
+    const due = deadlineOf(resource)
     const candidate = due > at ? due : at + MEMORY_RECLAIM_RETRY_MS
     nextAt = nextAt === null ? candidate : Math.min(nextAt, candidate)
   }
@@ -376,7 +376,7 @@ export function getMemoryReclaimerSnapshot(): MemoryReclaimerSnapshot {
   const snapshots: MemoryReclaimerResourceSnapshot[] = []
   let hot = 0
   let cold = 0
-  let protectedCount = 0
+  const protectedCount = 0
   let nextDeadlineAt: number | null = null
   for (const resource of resources.values()) {
     const lastActiveAt = resource.lastActiveAt()

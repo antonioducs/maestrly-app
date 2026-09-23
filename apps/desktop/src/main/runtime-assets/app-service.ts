@@ -7,12 +7,21 @@ import type {
   RuntimeAssetLease,
   RuntimeAssetPublicStatus,
   RuntimeAssetStatus,
+  RuntimeAssetUpdateInfo,
 } from '../../shared/runtime-assets'
+import { getAppSetting, setAppSetting } from '../store/app-settings'
+import { isE2E } from '../test-mode'
+import { validateCodexRuntime } from './codex-compatibility'
+import { CODEX_RELEASE_STORE_KEY, CodexReleaseStore } from './codex-release-store'
+import { compareStableVersions, discoverCodexRelease } from './codex-releases'
+import { CodexUpdateController } from './codex-updates'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
 
 let service: RuntimeAssetService | null = null
+let codexReleases: CodexReleaseStore | null = null
+let codexUpdates: CodexUpdateController | null = null
 const diskUsageCache = new Map<RuntimeAssetId, number>()
 const runtimeAssetNotificationTimers = new Map<RuntimeAssetId, ReturnType<typeof setTimeout>>()
 const pendingRuntimeAssetNotifications = new Set<RuntimeAssetId>()
@@ -34,6 +43,19 @@ export class RuntimeAssetComponentRequiredError extends Error {
   }
 }
 
+/** Persisted metadata of independently installed Codex releases (local SQLite app settings). */
+export function codexReleaseStore(): CodexReleaseStore {
+  codexReleases ??= new CodexReleaseStore({
+    storage: {
+      read: () => getAppSetting(CODEX_RELEASE_STORE_KEY),
+      write: (value) => setAppSetting(CODEX_RELEASE_STORE_KEY, value),
+    },
+    target: hostRuntimeTarget(),
+    embedded: RUNTIME_ASSET_REGISTRY['codex-runtime'],
+  })
+  return codexReleases
+}
+
 export function runtimeAssetService(): RuntimeAssetService {
   service ??= new RuntimeAssetService({
     userDataPath: app.getPath('userData'),
@@ -42,9 +64,36 @@ export function runtimeAssetService(): RuntimeAssetService {
         ? path.join(process.resourcesPath, 'local-ml')
         : path.join(app.getAppPath(), 'runtime-assets', 'local-ml', 'archives')
     ),
+    // Consulted only for a Codex installation whose version differs from the embedded pin.
+    acceptedDefinition: (id, version) =>
+      id === 'codex-runtime' ? codexReleaseStore().acceptedDefinition(version) : null,
     onStatusChanged: (status) => scheduleRuntimeAssetChanged(status.id),
   })
   return service
+}
+
+/** Independent Codex release channel; scheduling is enabled only in packaged, non-E2E builds. */
+export function codexRuntimeUpdates(): CodexUpdateController {
+  codexUpdates ??= new CodexUpdateController({
+    service: runtimeAssetService(),
+    store: codexReleaseStore(),
+    target: hostRuntimeTarget(),
+    embedded: RUNTIME_ASSET_REGISTRY['codex-runtime'],
+    discover: (target, signal) => discoverCodexRelease(target, signal),
+    validate: (installationPath, definition, signal) =>
+      validateCodexRuntime(installationPath, definition, signal, { clientVersion: app.getVersion() }),
+    onChanged: () => scheduleRuntimeAssetChanged('codex-runtime'),
+    schedule: app.isPackaged && !isE2E(),
+  })
+  return codexUpdates
+}
+
+export function startRuntimeAssetUpdates(): void {
+  codexRuntimeUpdates().start()
+}
+
+export function disposeRuntimeAssetUpdates(): void {
+  codexUpdates?.dispose()
 }
 
 function scheduleRuntimeAssetChanged(id: RuntimeAssetId): void {
@@ -98,10 +147,35 @@ async function directoryBytes(root: string): Promise<number> {
   return total
 }
 
+/**
+ * Version a Codex first install would receive: the latest checked stable release when newer than the embedded pin
+ * and not rejected, otherwise the pin. Other assets always install their embedded version.
+ */
+function installableDefinition(id: RuntimeAssetId) {
+  const embedded = RUNTIME_ASSET_REGISTRY[id]
+  if (id !== 'codex-runtime') return embedded
+  try {
+    const store = codexReleaseStore()
+    const candidate = store.candidate()
+    const newer = candidate && (compareStableVersions(candidate.version, embedded.version) ?? 0) > 0
+    return newer && store.rejected()?.version !== candidate.version ? candidate : embedded
+  } catch {
+    return embedded
+  }
+}
+
 async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boolean): Promise<RuntimeAssetInfo> {
   const runtimeService = runtimeAssetService()
-  const status = await runtimeService.status(id)
-  const definition = RUNTIME_ASSET_REGISTRY[id]
+  const status = await runtimeService.status(id).catch(
+    (error: unknown): RuntimeAssetStatus => ({
+      id,
+      state: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+    })
+  )
+  const update: RuntimeAssetUpdateInfo | undefined =
+    id === 'codex-runtime' ? await codexRuntimeUpdates().snapshot() : undefined
+  const definition = installableDefinition(id)
   const target = definition.targets[hostRuntimeTarget()]
   const diskUsageBytes = includeDiskUsage
     ? await directoryBytes(path.join(runtimeService.root, id))
@@ -128,6 +202,7 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
     downloadBytes: target?.downloadBytes ?? 0,
     unpackedBytes: target?.unpackedBytes ?? 0,
     status: safeStatus,
+    ...(update ? { update } : {}),
   }
 }
 
@@ -171,7 +246,10 @@ export async function ensureRuntimeAsset(id: RuntimeAssetId, signal?: AbortSigna
   if (signal?.aborted) throw signal.reason ?? new Error('Runtime asset installation cancelled')
   const current = await runtimeAssetService().status(id)
   if (current.state === 'ready' && current.path) return current
-  const installed = await runtimeAssetService().install(id, signal)
+  const installed =
+    id === 'codex-runtime'
+      ? await codexRuntimeUpdates().installInitial(signal)
+      : await runtimeAssetService().install(id, signal)
   if (installed.state !== 'ready' || !installed.path) {
     throw new RuntimeAssetComponentRequiredError(id, installed.error ?? `Installation ended in ${installed.state}.`)
   }
@@ -187,6 +265,9 @@ export function resetRuntimeAssetAppServiceForTests(): void {
   runtimeAssetNotificationTimers.clear()
   pendingRuntimeAssetNotifications.clear()
   emitRuntimeAssetChanged = null
+  codexUpdates?.dispose()
+  codexUpdates = null
+  codexReleases = null
   service = null
   diskUsageCache.clear()
 }

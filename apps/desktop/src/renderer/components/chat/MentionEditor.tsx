@@ -335,7 +335,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   const detectMention = () => {
     if (composingRef.current) return
     const sel = window.getSelection()
-    if (!sel || !sel.isCollapsed || !sel.anchorNode || sel.anchorNode.nodeType !== Node.TEXT_NODE) {
+    if (!sel?.isCollapsed || !sel.anchorNode || sel.anchorNode.nodeType !== Node.TEXT_NODE) {
       setMention(null)
       return
     }
@@ -412,7 +412,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 
   const insertTextAtCaret = (text: string) => {
     const sel = window.getSelection()
-    if (!sel || !sel.rangeCount) return
+    if (!sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
     const node = document.createTextNode(text)
@@ -425,7 +425,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 
   const insertLineBreak = () => {
     const sel = window.getSelection()
-    if (!sel || !sel.rangeCount) return
+    if (!sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     range.deleteContents()
     const br = document.createElement('br')

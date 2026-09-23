@@ -186,7 +186,7 @@ describe.skipIf(!integrationAvailable)('connector MCP endpoint', () => {
       expect(notified.status).toBe(202)
 
       const list = (await (await mcp({ jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as JsonRpcReply
-      const names = (list.result?.tools as Array<{ name: string }>).map((tool) => tool.name)
+      const names = (list.result!.tools as Array<{ name: string }>).map((tool) => tool.name)
       expect(names).toContain('maestrly_list_projects')
 
       const called = (await (

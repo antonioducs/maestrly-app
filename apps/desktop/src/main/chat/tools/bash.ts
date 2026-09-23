@@ -180,7 +180,7 @@ export function commandSegments(command: string): string[] {
 async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<BashResult> {
   const { abs: cwd, external } = resolveInside(ctx.cwd, args.workdir ?? '.')
   const stat = await fs.stat(cwd).catch(() => null)
-  if (!stat || !stat.isDirectory()) throw new Error(`Invalid directory: ${cwd}`)
+  if (!stat?.isDirectory()) throw new Error(`Invalid directory: ${cwd}`)
   if (external) await ctx.ask('external_directory', [cwd], [cwd])
   // Chained command → one resource PER subcommand (all need allow); "always" saves each prefix.
   const segments = commandSegments(args.command)

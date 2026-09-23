@@ -178,6 +178,25 @@ selection, and integrity or manifest checks where their upstream format permits.
 The package wrapper stages one target architecture, rejects foreign native
 packages, verifies resources outside the ASAR, and enforces size/leakage budgets.
 
+The Codex runtime can also be updated independently of Maestrly releases. The
+main process reads only the `latest` stable version document of `@openai/codex`
+and its declared platform alias from `https://registry.npmjs.org`, with a
+10-second timeout, a response size limit, and no redirects to other origins. It
+accepts the release only when the package name, stable version, alias, canonical
+tarball URL, and SHA-512 integrity are all coherent, and it never accepts a
+version older than the build's pinned reference. The renderer supplies only the
+asset ID; URLs, hashes, and paths are chosen in the main process.
+
+A candidate is downloaded under an explicit size ceiling, checked against the
+published SHA-512, extracted beside the active version, and validated before
+activation in a temporary profile without credentials: native manifest, reported
+version, the neutralized sub-agent catalog, and an `app-server` handshake with
+model listing and deferred dynamic tools. Only then is its metadata persisted and
+the active pointer swapped. Failures leave the active version in place, open
+connections keep the version they leased, and the previous version remains
+available for an offline rollback. Checks are notify-only by default; automatic
+installation is opt-in and skips versions that failed or were rolled back.
+
 The electron-builder base configuration is an allowlist. Source trees, private
 environment files, unrelated build output, and unstaged runtime families must
 not be packaged. GitHub Actions are pinned to immutable commits. Dependency
@@ -193,6 +212,11 @@ secrets.
   tenants.
 - External MCP servers, skills, provider CLIs, Git helpers, browser pages, and
   downloaded editor/runtime components have independent security behavior.
+- Independently updated Codex releases are trusted through the npm registry's
+  TLS endpoint and published SHA-512 integrity, not through a Maestrly-signed
+  manifest; npm provenance attestations are not verified. The local
+  compatibility check covers the contracts Maestrly uses, not every possible
+  upstream regression.
 - Local SQLite, notes, repositories, terminal output, and logs are visible to
   software with the same OS user's filesystem access.
 - Provider and browser data already sent cannot be removed by resetting the local

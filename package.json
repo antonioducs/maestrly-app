@@ -33,6 +33,7 @@
     "check:sdk": "npm run build:protocol && npm run check --workspace @maestrly/client-sdk",
     "check:runner-core": "npm run build:sdk && npm run check --workspace @maestrly/runner-core",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "check:local-ml-toolchain": "node scripts/local-ml-toolchain.mjs",
     "check": "npm run check:boundaries && npm run check:protocol && npm run check:sdk && npm run check:runner-core && npm run check:server && npm run check:runner && npm run check:web && npm run check:desktop",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",

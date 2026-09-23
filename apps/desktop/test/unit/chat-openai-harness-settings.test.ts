@@ -231,14 +231,14 @@ describe('OpenAI harness kill switch', () => {
     const handlers = register()
 
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { imageGenEnabled: boolean }).imageGenEnabled
+      ((await handlers.get('chat:config')!(undefined as never)) as { imageGenEnabled: boolean }).imageGenEnabled
     ).toBe(true)
     expect(h.getAppFlag).toHaveBeenCalledWith('chat.imageGen', true)
 
     expect(handlers.get('chat:set-image-gen')?.(undefined as never, false)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenCalledWith('chat.imageGen', false)
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { imageGenEnabled: boolean }).imageGenEnabled
+      ((await handlers.get('chat:config')!(undefined as never)) as { imageGenEnabled: boolean }).imageGenEnabled
     ).toBe(false)
   })
 
@@ -248,7 +248,7 @@ describe('OpenAI harness kill switch', () => {
     expect(handlers.get('chat:set-bash-filters')?.(undefined as never, false)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenCalledWith('chat.bashFilters', false)
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { bashFiltersEnabled: boolean }).bashFiltersEnabled
+      ((await handlers.get('chat:config')!(undefined as never)) as { bashFiltersEnabled: boolean }).bashFiltersEnabled
     ).toBe(false)
   })
 
@@ -275,7 +275,7 @@ describe('OpenAI harness kill switch', () => {
     expect(handlers.get('chat:set-openai-harness')?.(undefined as never, false)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenCalledWith('chat.openAIHarness', false)
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { openAIHarnessEnabled: boolean })
+      ((await handlers.get('chat:config')!(undefined as never)) as { openAIHarnessEnabled: boolean })
         .openAIHarnessEnabled
     ).toBe(false)
   })
@@ -286,7 +286,7 @@ describe('OpenAI harness kill switch', () => {
     expect(handlers.get('chat:set-openai-harness')?.(undefined as never, true)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenLastCalledWith('chat.openAIHarness', true)
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { openAIHarnessEnabled: boolean })
+      ((await handlers.get('chat:config')!(undefined as never)) as { openAIHarnessEnabled: boolean })
         .openAIHarnessEnabled
     ).toBe(true)
   })
@@ -296,8 +296,7 @@ describe('OpenAI harness kill switch', () => {
     expect(handlers.get('chat:set-astra-harness')?.(undefined as never, false)).toEqual({ ok: true })
     expect(h.setAppFlag).toHaveBeenCalledWith('chat.astraHarness', false)
     expect(
-      ((await handlers.get('chat:config')?.(undefined as never)) as { astraHarnessEnabled: boolean })
-        .astraHarnessEnabled
+      ((await handlers.get('chat:config')!(undefined as never)) as { astraHarnessEnabled: boolean }).astraHarnessEnabled
     ).toBe(false)
   })
 

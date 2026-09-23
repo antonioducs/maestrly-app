@@ -57,9 +57,9 @@ describe('runtime asset registry', () => {
   })
 
   it('matches the exact versions and representative script pins', () => {
-    expect(RUNTIME_ASSET_REGISTRY['codex-runtime']).toMatchObject({ version: '0.153.4' })
+    expect(RUNTIME_ASSET_REGISTRY['codex-runtime']).toMatchObject({ version: '0.155.1' })
     expect(RUNTIME_ASSET_REGISTRY['codex-runtime'].targets['mac-arm64']?.hash.digest).toBe(
-      'B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg=='
+      'cYxzGcRRoBrncyHlR8ed4yXwcoVJZC1pipGULSyJkGFKXJw/Uu57BklvzayuAptjJIipamnOk32CfUkk1F0bLw=='
     )
     expect(RUNTIME_ASSET_REGISTRY['github-copilot-runtime']).toMatchObject({ version: '1.0.71' })
     expect(RUNTIME_ASSET_REGISTRY['tunnel-client']).toMatchObject({ version: '0.0.10' })
@@ -73,12 +73,12 @@ describe('runtime asset registry', () => {
     // Measured sizes of the pinned (immutable) archives; a cap below these blocks the install.
     const measured: Record<string, Record<string, number>> = {
       'codex-runtime': {
-        'mac-arm64': 115_669_249,
-        'mac-x64': 123_497_670,
-        'linux-arm64': 121_675_259,
-        'linux-x64': 129_259_793,
-        'win-arm64': 132_143_077,
-        'win-x64': 141_510_231,
+        'mac-arm64': 127_465_533,
+        'mac-x64': 135_811_357,
+        'linux-arm64': 135_126_766,
+        'linux-x64': 142_140_011,
+        'win-arm64': 135_509_012,
+        'win-x64': 145_165_338,
       },
       'github-copilot-runtime': {
         'mac-arm64': 130_336_069,

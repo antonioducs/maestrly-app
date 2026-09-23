@@ -27,7 +27,14 @@ test('baseline preserves all workspace checks; full adds CI suites and platform-
     ['check:history', 'test:policy', 'test:docs', 'check']
   )
   const steps = verificationSteps(parseOptions(['--full', '--package']), 'linux', {})
-  assert.deepEqual(steps.slice(0, baseline.length), baseline)
+  // The Local ML toolchain preflight fails packaging runs before the slower suites.
+  assert.deepEqual(steps[0], { command: 'npm', args: ['run', 'check:local-ml-toolchain'] })
+  assert.deepEqual(steps.slice(1, baseline.length + 1), baseline)
+  assert.ok(
+    !verificationSteps(parseOptions(['--full']), 'linux', {}).some((step) =>
+      step.args.includes('check:local-ml-toolchain')
+    )
+  )
   assert.ok(steps.some((step) => step.command === 'go' && step.args.includes('--log-opts=HEAD')))
   assert.ok(steps.some((step) => step.args.includes('test:integration')))
   assert.ok(steps.some((step) => step.args.includes('test:e2e:platform')))

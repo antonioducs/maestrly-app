@@ -6,8 +6,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createGzip } from 'node:zlib'
 import { ensureLocalMlDependencies } from './local-ml-npm.mjs'
+import { assertBundledZlib } from './local-ml-toolchain.mjs'
 import { signMacRuntimeEntries } from './sign-macos-runtime.mjs'
 import tar from 'tar-stream'
+
+// Compression must match the pinned manifest; fail before installing dependencies or touching tracked files.
+assertBundledZlib()
 
 export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-1'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')

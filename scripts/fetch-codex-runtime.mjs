@@ -17,7 +17,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
-export const CODEX_RUNTIME_VERSION = '0.153.4'
+export const CODEX_RUNTIME_VERSION = '0.155.1'
 
 const TARGETS = [
   {
@@ -26,7 +26,7 @@ const TARGETS = [
     arch: 'arm64',
     npmSuffix: 'darwin-arm64',
     triple: 'aarch64-apple-darwin',
-    integrity: 'sha512-B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
+    integrity: 'sha512-cYxzGcRRoBrncyHlR8ed4yXwcoVJZC1pipGULSyJkGFKXJw/Uu57BklvzayuAptjJIipamnOk32CfUkk1F0bLw==',
   },
   {
     id: 'mac-x64',
@@ -34,7 +34,7 @@ const TARGETS = [
     arch: 'x64',
     npmSuffix: 'darwin-x64',
     triple: 'x86_64-apple-darwin',
-    integrity: 'sha512-vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
+    integrity: 'sha512-FDpc+PdELYlyDnhd76Ckm6jNLF+1n3x34Ygd4QLQger810Vkxx/InQ5LY5jwkecJYKcbvyhMmuxTspaj1dLZrA==',
   },
   {
     id: 'linux-arm64',
@@ -42,7 +42,7 @@ const TARGETS = [
     arch: 'arm64',
     npmSuffix: 'linux-arm64',
     triple: 'aarch64-unknown-linux-musl',
-    integrity: 'sha512-QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
+    integrity: 'sha512-X3fRXm2orhJ3KeB8LgKym4XDUiQaqaOGuaa181bcHTsQI7C8m6tcQQbQsKDzT/2IibikzgYL82jvsgMbq43jww==',
   },
   {
     id: 'linux-x64',
@@ -50,7 +50,7 @@ const TARGETS = [
     arch: 'x64',
     npmSuffix: 'linux-x64',
     triple: 'x86_64-unknown-linux-musl',
-    integrity: 'sha512-x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
+    integrity: 'sha512-atv3HF0mubqB0J/XkQ2JopqKzXJ+/7aQtTB2MkJ9MrraujMIz8zbCCLylLkN3PzpVGTJzzQFN/wD1oq8oJPJKg==',
   },
   {
     id: 'win-arm64',
@@ -58,7 +58,7 @@ const TARGETS = [
     arch: 'arm64',
     npmSuffix: 'win32-arm64',
     triple: 'aarch64-pc-windows-msvc',
-    integrity: 'sha512-/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
+    integrity: 'sha512-k5x8VO1aF8Xx/nuh1P31TeBgs11WA6i2GJiHqx5YCndFbWzOzUz6aeBaq9+PO6Qfe/Ivennh3I1FKJBU6Q8mpg==',
   },
   {
     id: 'win-x64',
@@ -66,7 +66,7 @@ const TARGETS = [
     arch: 'x64',
     npmSuffix: 'win32-x64',
     triple: 'x86_64-pc-windows-msvc',
-    integrity: 'sha512-lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ==',
+    integrity: 'sha512-MO+cCZrgU0Ec7lJP/5NsTe5obJ9/qtRMkQUK0jYWTY1omxLA3lp5IOD2IAmsejlEJB931XRo51LZ7hl178CDjA==',
   },
 ]
 

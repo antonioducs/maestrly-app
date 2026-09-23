@@ -5,6 +5,13 @@ use Transformers.js, ONNX Runtime, and Sharp. Their licenses remain in the archi
 
 ## Build and package
 
+Use an official Node.js build that matches `.nvmrc` (nodejs.org installer, nvm, or
+fnm), as CI does. The build writes the archive hash into the tracked
+`manifest.json`, and gzip output depends on the zlib that compresses it: official
+builds bundle their own, while distribution builds such as Homebrew `node` link
+the system zlib and produce different hashes. The build and
+`npm run check:local-ml-toolchain` refuse a Node.js that uses a shared zlib.
+
 1. Run `npm ci` in the repository root.
 2. Run `node scripts/build-local-ml-runtime.mjs` for the host architecture.
 3. Run `node scripts/smoke-local-ml-runtime.mjs` to load both native libraries.

@@ -3,7 +3,7 @@
  * (skipping .git/node_modules/etc), filters by case-insensitive substring, and prioritizes name matches.
  * Folders have kind:'dir' (chat references their listing). Caps both scan and result counts.
  */
-import fs from 'node:fs'
+import type fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type { ChatFileHit } from '../../shared/chat'

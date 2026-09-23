@@ -33,37 +33,37 @@ const codex = [
     'mac-arm64',
     'darwin-arm64',
     'aarch64-apple-darwin',
-    'B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
+    'cYxzGcRRoBrncyHlR8ed4yXwcoVJZC1pipGULSyJkGFKXJw/Uu57BklvzayuAptjJIipamnOk32CfUkk1F0bLw==',
   ],
   [
     'mac-x64',
     'darwin-x64',
     'x86_64-apple-darwin',
-    'vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
+    'FDpc+PdELYlyDnhd76Ckm6jNLF+1n3x34Ygd4QLQger810Vkxx/InQ5LY5jwkecJYKcbvyhMmuxTspaj1dLZrA==',
   ],
   [
     'linux-arm64',
     'linux-arm64',
     'aarch64-unknown-linux-musl',
-    'QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
+    'X3fRXm2orhJ3KeB8LgKym4XDUiQaqaOGuaa181bcHTsQI7C8m6tcQQbQsKDzT/2IibikzgYL82jvsgMbq43jww==',
   ],
   [
     'linux-x64',
     'linux-x64',
     'x86_64-unknown-linux-musl',
-    'x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
+    'atv3HF0mubqB0J/XkQ2JopqKzXJ+/7aQtTB2MkJ9MrraujMIz8zbCCLylLkN3PzpVGTJzzQFN/wD1oq8oJPJKg==',
   ],
   [
     'win-arm64',
     'win32-arm64',
     'aarch64-pc-windows-msvc',
-    '/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
+    'k5x8VO1aF8Xx/nuh1P31TeBgs11WA6i2GJiHqx5YCndFbWzOzUz6aeBaq9+PO6Qfe/Ivennh3I1FKJBU6Q8mpg==',
   ],
   [
     'win-x64',
     'win32-x64',
     'x86_64-pc-windows-msvc',
-    'lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ==',
+    'MO+cCZrgU0Ec7lJP/5NsTe5obJ9/qtRMkQUK0jYWTY1omxLA3lp5IOD2IAmsejlEJB931XRo51LZ7hl178CDjA==',
   ],
 ] as const
 const copilot = [
@@ -105,21 +105,21 @@ function targetRecord(rows: readonly (readonly string[])[], make: (row: readonly
 
 /** Measured size of each pinned tarball; the archives are immutable, so these are exact. */
 const codexArchiveBytes: Readonly<Record<RuntimeTargetId, number>> = {
-  'mac-arm64': 115_672_312,
-  'mac-x64': 123_544_033,
-  'linux-arm64': 121_707_000,
-  'linux-x64': 129_272_137,
-  'win-arm64': 132_173_674,
-  'win-x64': 141_495_386,
+  'mac-arm64': 127_465_533,
+  'mac-x64': 135_811_357,
+  'linux-arm64': 135_126_766,
+  'linux-x64': 142_140_011,
+  'win-arm64': 135_509_012,
+  'win-x64': 145_165_338,
 }
 /** npm dist.unpackedSize; includes the tiny package envelope, so disk preflight remains conservative. */
 const codexUnpackedBytes: Readonly<Record<RuntimeTargetId, number>> = {
-  'mac-arm64': 288_140_243,
-  'mac-x64': 308_574_766,
-  'linux-arm64': 291_867_383,
-  'linux-x64': 334_960_666,
-  'win-arm64': 342_783_649,
-  'win-x64': 395_725_468,
+  'mac-arm64': 317_014_114,
+  'mac-x64': 337_809_946,
+  'linux-arm64': 327_523_648,
+  'linux-x64': 370_485_590,
+  'win-arm64': 351_334_049,
+  'win-x64': 407_521_436,
 }
 const copilotArchiveBytes: Readonly<Record<RuntimeTargetId, number>> = {
   'mac-arm64': 130_336_069,
@@ -134,18 +134,61 @@ function downloadCap(bytes: number): number {
   return Math.ceil((bytes * 1.05) / 1_000_000) * 1_000_000
 }
 
-const codexTargets = targetRecord(codex, ([id, suffix, triple, digest]) => ({
-  id: id as RuntimeTargetId,
-  url: `https://registry.npmjs.org/@openai/codex/-/codex-0.153.4-${suffix}.tgz`,
-  archive: 'tar.gz',
-  hash: { algorithm: 'sha512', digest, encoding: 'base64' },
-  downloadBytes: codexArchiveBytes[id as RuntimeTargetId],
-  maxDownloadBytes: downloadCap(codexArchiveBytes[id as RuntimeTargetId]),
-  unpackedBytes: codexUnpackedBytes[id as RuntimeTargetId],
-  stripPrefix: `package/vendor/${triple}`,
-  criticalPaths: [`bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`, 'codex-package.json'],
-  executablePath: `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`,
-}))
+/** Official npm platform alias suffix and native target triple of each Codex runtime target. */
+export const CODEX_TARGET_LAYOUT: Readonly<
+  Record<RuntimeTargetId, { readonly suffix: string; readonly triple: string }>
+> = Object.freeze(
+  Object.fromEntries(codex.map(([id, suffix, triple]) => [id, Object.freeze({ suffix, triple })])) as Record<
+    RuntimeTargetId,
+    { suffix: string; triple: string }
+  >
+)
+
+export const CODEX_NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
+
+/** Canonical tarball URL of one official Codex platform artifact; dynamic releases must match it exactly. */
+export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {
+  return `${CODEX_NPM_REGISTRY_ORIGIN}/@openai/codex/-/codex-${version}-${CODEX_TARGET_LAYOUT[id].suffix}.tgz`
+}
+
+/**
+ * Build one Codex target from verified metadata. The embedded pin and dynamically discovered releases share this
+ * layout so both install through the same extraction, critical-path, and executable contract.
+ */
+export function createCodexTarget(
+  id: RuntimeTargetId,
+  version: string,
+  metadata: {
+    readonly sha512Base64: string
+    readonly downloadBytes: number
+    readonly maxDownloadBytes: number
+    readonly unpackedBytes: number
+  }
+): RuntimeAssetTarget {
+  const executable = `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`
+  return Object.freeze({
+    id,
+    url: codexArtifactUrl(version, id),
+    archive: 'tar.gz' as const,
+    hash: Object.freeze({ algorithm: 'sha512' as const, digest: metadata.sha512Base64, encoding: 'base64' as const }),
+    downloadBytes: metadata.downloadBytes,
+    maxDownloadBytes: metadata.maxDownloadBytes,
+    unpackedBytes: metadata.unpackedBytes,
+    stripPrefix: `package/vendor/${CODEX_TARGET_LAYOUT[id].triple}`,
+    criticalPaths: Object.freeze([executable, 'codex-package.json']),
+    executablePath: executable,
+  })
+}
+
+const CODEX_PINNED_VERSION = '0.155.1'
+const codexTargets = targetRecord(codex, ([id, , , digest]) =>
+  createCodexTarget(id as RuntimeTargetId, CODEX_PINNED_VERSION, {
+    sha512Base64: digest,
+    downloadBytes: codexArchiveBytes[id as RuntimeTargetId],
+    maxDownloadBytes: downloadCap(codexArchiveBytes[id as RuntimeTargetId]),
+    unpackedBytes: codexUnpackedBytes[id as RuntimeTargetId],
+  })
+)
 const copilotTargets = targetRecord(copilot, ([id, suffix, digest]) => ({
   id: id as RuntimeTargetId,
   url: `https://registry.npmjs.org/@github/copilot-${suffix}/-/copilot-${suffix}-1.0.71.tgz`,
@@ -189,7 +232,7 @@ const localMlTargets = Object.freeze(
 )
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
-  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: '0.153.4', targets: codexTargets }),
+  'codex-runtime': Object.freeze({ id: 'codex-runtime', version: CODEX_PINNED_VERSION, targets: codexTargets }),
   'github-copilot-runtime': Object.freeze({ id: 'github-copilot-runtime', version: '1.0.71', targets: copilotTargets }),
   'tunnel-client': Object.freeze({ id: 'tunnel-client', version: '0.0.10', targets: tunnelTargets }),
   'local-ml-runtime': Object.freeze({

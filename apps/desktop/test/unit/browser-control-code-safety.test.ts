@@ -8,7 +8,7 @@ vi.mock('../../src/main/performance/metrics', () => ({ incrementPerformanceCount
 const hostileText = [
   '</script><script>globalThis.injected=true</script>',
   '";globalThis.injected=true;//',
-  '${globalThis.injected=true}',
+  `\${globalThis.injected=true}`,
   '\\"\n\r\u2028\u2029',
 ]
 

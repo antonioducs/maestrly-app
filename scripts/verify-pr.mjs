@@ -32,6 +32,8 @@ export function parseOptions(args) {
 export function verificationSteps(options, platform = process.platform, env = process.env) {
   const steps = []
   const npm = (script) => steps.push({ command: 'npm', args: ['run', script] })
+  // Packaging rebuilds the pinned Local ML archive. Check the Node that npm scripts resolve before slower suites run.
+  if (options.package) npm('check:local-ml-toolchain')
   npm('check:history')
   npm('test:policy')
   npm('test:docs')

@@ -148,7 +148,11 @@ import { registerPerformanceIpc } from './performance/ipc'
 import { registerSoundIpc } from './sound/ipc'
 import { soundService } from './sound/service'
 import { attachWindowNavigation } from './mouse-navigation'
-import { cleanupOrphanRuntimeAssetTemps } from './runtime-assets/app-service'
+import {
+  cleanupOrphanRuntimeAssetTemps,
+  disposeRuntimeAssetUpdates,
+  startRuntimeAssetUpdates,
+} from './runtime-assets/app-service'
 import { cleanupToolOutputs } from './chat/tool-output-store'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
@@ -726,6 +730,9 @@ app.whenReady().then(async () => {
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
+  // Codex release checks: delayed, production-only, and never for a component the user has not installed.
+  startRuntimeAssetUpdates()
+  app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
   if (mainWindow) initPlanBroker((agentId) => registry.playPlanSound(agentId))
@@ -816,6 +823,9 @@ async function confirmQuit(): Promise<boolean> {
 let projectSetupsFlushed = false
 let projectSetupFlushInFlight = false
 let mlFlushed = false
+let mlFlushInFlight = false
+let quitResourcesDisposed = false
+let shutdownComplete = false
 
 let chatDisposed = false
 let chatDisposing = false
@@ -858,6 +868,10 @@ function confirmQuitOnce(preventDefault: () => void): boolean {
 // Wait for project cleanup, provider runtime teardown, and pending local memory writes before exiting.
 app.on('before-quit', (e) => {
   backgroundQuit = true
+  if (shutdownComplete) {
+    if (!finishInstall(() => e.preventDefault())) disposeUpdateService()
+    return
+  }
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
@@ -901,22 +915,27 @@ app.on('before-quit', (e) => {
     return
   }
 
-  releaseInstanceLock()
-  floatingManager.flushPendingFloatPersists()
-  floatingManager.disposeAll()
-  popupManager.disposeAll()
-  releasePowerBlocker() // Release the keep-awake assertion on shutdown.
+  if (!quitResourcesDisposed) {
+    quitResourcesDisposed = true
+    releaseInstanceLock()
+    floatingManager.flushPendingFloatPersists()
+    floatingManager.disposeAll()
+    popupManager.disposeAll()
+    releasePowerBlocker() // Release the keep-awake assertion on shutdown.
 
-  shutdownConversationMigration()
-  killAllPtys()
-  stopVSCodeServer()
-  disposeDrawer()
-  disposeMemoryReclaimer()
-  disposeMemoryIndexService()
-  disposeOwnedProcesses()
+    shutdownConversationMigration()
+    killAllPtys()
+    stopVSCodeServer()
+    disposeDrawer()
+    disposeMemoryReclaimer()
+    disposeMemoryIndexService()
+    disposeOwnedProcesses()
+  }
 
   if (!mlFlushed && hasPendingMemoryWrites() && !isE2E()) {
     e.preventDefault()
+    if (mlFlushInFlight) return
+    mlFlushInFlight = true
 
     const flushBudgetMs = 10_000
     void flushPendingMemoryWrites(flushBudgetMs).then((flushed) => {
@@ -924,8 +943,7 @@ app.on('before-quit', (e) => {
         console.warn('[local-ml] Shutdown indexing exceeded 10s; pending records will be reindexed on next startup')
       }
       mlFlushed = true
-      stopMlWorker()
-      stopAsrWorker()
+      mlFlushInFlight = false
       app.quit()
     })
     return
@@ -934,6 +952,6 @@ app.on('before-quit', (e) => {
   stopAsrWorker()
 
   // Last step: every runner, chat and memory teardown already ran, so swapping the binary is safe.
-  disposeUpdateService()
-  finishInstall()
+  shutdownComplete = true
+  if (!finishInstall(() => e.preventDefault())) disposeUpdateService()
 })

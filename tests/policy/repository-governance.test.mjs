@@ -49,10 +49,10 @@ test('main ruleset has no bypass and requires every stable check', () => {
 test('package smoke validates packaging changes and cannot publish', () => {
   const source = read('.github/workflows/package-smoke.yml')
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
-  const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
+  const triggers = [...triggerBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]).sort()
 
   assert.deepEqual(triggers, ['pull_request', 'schedule', 'workflow_dispatch'])
-  assert.match(triggerBlock, /^  pull_request:\n    branches: \[main\]\n    paths:/m)
+  assert.match(triggerBlock, /^ {2}pull_request:\n {4}branches: \[main\]\n {4}paths:/m)
   assert.doesNotMatch(source, /actions\/upload-artifact|\bgh release\b|--publish|\bnpm publish\b/i)
   const manifest = JSON.parse(read('package.json'))
   const packageScripts = [...source.matchAll(/^\s+package-script: ([A-Za-z0-9:_-]+)$/gm)].map((match) => match[1])
@@ -70,16 +70,16 @@ test('release workflow publishes verified native artifacts only from version tag
   const source = read('.github/workflows/release.yml')
   const manifest = JSON.parse(read('package.json'))
   const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
-  const triggers = [...triggerBlock.matchAll(/^  ([a-z_]+):/gm)].map((match) => match[1]).sort()
+  const triggers = [...triggerBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]).sort()
 
   assert.deepEqual(triggers, ['push'])
-  assert.match(triggerBlock, /^    tags:\n      - "v\*"$/m)
+  assert.match(triggerBlock, /^ {4}tags:\n {6}- "v\*"$/m)
   assert.doesNotMatch(triggerBlock, /pull_request|pull_request_target|workflow_dispatch/)
-  assert.match(source, /^permissions:\n  contents: read$/m)
-  assert.match(source, /^concurrency:\n  group: release-\$\{\{ github\.ref \}\}\n  cancel-in-progress: false$/m)
+  assert.match(source, /^permissions:\n {2}contents: read$/m)
+  assert.match(source, /^concurrency:\n {2}group: release-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: false$/m)
 
-  assert.match(source, /^  macos:\n[\s\S]*?^    runs-on: macos-15$/m)
-  assert.match(source, /^  macos:\n[\s\S]*?^    environment: release$/m)
+  assert.match(source, /^ {2}macos:\n[\s\S]*?^ {4}runs-on: macos-15$/m)
+  assert.match(source, /^ {2}macos:\n[\s\S]*?^ {4}environment: release$/m)
   assert.match(source, /npm run package:linux/)
   assert.match(source, /npm run package:win/)
   assert.match(source, /npm run package:release/)
@@ -97,11 +97,11 @@ test('release workflow publishes verified native artifacts only from version tag
   const desktopBuilder = read('apps/desktop/electron-builder.yml')
   assert.match(
     desktopBuilder,
-    /^deb:\n  packageName: maestrly-app\n  artifactName: maestrly-app_\$\{version\}_\$\{arch\}\.\$\{ext\}$/m
+    /^deb:\n {2}packageName: maestrly-app\n {2}artifactName: maestrly-app_\$\{version\}_\$\{arch\}\.\$\{ext\}$/m
   )
 
-  assert.match(source, /^  publish:\n    name: Publish GitHub Release\n    needs: \[validate, linux, windows, macos\]$/m)
-  assert.match(source, /^  publish:\n[\s\S]*?^    permissions:\n      contents: write$/m)
+  assert.match(source, /^ {2}publish:\n {4}name: Publish GitHub Release\n {4}needs: \[validate, linux, windows, macos\]$/m)
+  assert.match(source, /^ {2}publish:\n[\s\S]*?^ {4}permissions:\n {6}contents: write$/m)
   const publishBlock = source.slice(source.indexOf('\n  publish:'))
   assert.match(
     publishBlock,
@@ -117,8 +117,8 @@ test('release workflow publishes verified native artifacts only from version tag
     'latest-linux.yml',
     'latest.yml',
     'latest-mac.yml',
-    'Maestrly-App-${RELEASE_VERSION}-windows-x64.exe.blockmap',
-    'Maestrly-App-${RELEASE_VERSION}-macos-arm64.zip.blockmap',
+    `Maestrly-App-\${RELEASE_VERSION}-windows-x64.exe.blockmap`,
+    `Maestrly-App-\${RELEASE_VERSION}-macos-arm64.zip.blockmap`,
   ]) {
     assert.equal(source.split(`"${asset}"`).length - 1, 2, `${asset} must be listed in both expected arrays`)
   }
@@ -126,7 +126,7 @@ test('release workflow publishes verified native artifacts only from version tag
   assert.match(source, /Draft release must contain exactly eleven assets\./)
   assert.match(
     read('apps/desktop/electron-builder.yml'),
-    /^publish:\n  provider: github\n  owner: antonioducs\n  repo: maestrly-app\n  releaseType: release$/m
+    /^publish:\n {2}provider: github\n {2}owner: antonioducs\n {2}repo: maestrly-app\n {2}releaseType: release$/m
   )
   for (const file of ['electron-builder.beta.yml', 'electron-builder.dev.yml', 'electron-builder.release.beta.yml']) {
     assert.match(read(`apps/desktop/${file}`), /^publish: null$/m, `${file} must not publish`)
@@ -142,7 +142,7 @@ test('release workflow publishes verified native artifacts only from version tag
 
 test('CI is read-only and exposes stable platform names', () => {
   const source = read('.github/workflows/ci.yml')
-  assert.match(source, /^permissions:\n  contents: read$/m)
+  assert.match(source, /^permissions:\n {2}contents: read$/m)
   const platforms = [...source.matchAll(/^\s+- label: (Linux|macOS|Windows)$/gm)].map((match) => match[1]).sort()
   assert.deepEqual(platforms, ['Linux', 'Windows', 'macOS'].sort())
   assert.match(source, /check-commits\.mjs --subject-env PR_TITLE/)

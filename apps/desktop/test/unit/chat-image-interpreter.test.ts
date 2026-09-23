@@ -1258,7 +1258,7 @@ describe('description lifecycle on conversation and message deletion', () => {
     expect(described).toEqual({ described: 1, historyChanged: true })
     expect(generateText).toHaveBeenCalledTimes(5)
     const reborn = listChatMessages('c').find((m) => m.id === 'm-reborn')
-    expect((reborn?.parts[0] as Extract<MessagePart, { type: 'file' }>).description).toBe('Agora vai.')
+    expect((reborn!.parts[0] as Extract<MessagePart, { type: 'file' }>).description).toBe('Agora vai.')
   })
 
   it('clears positive and negative caches without killing live conversations', async () => {

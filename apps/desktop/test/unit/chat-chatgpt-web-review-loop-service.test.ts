@@ -444,7 +444,7 @@ describe('review loop internal service API', () => {
         }),
       })
     )
-    const messageMeta = (h.runChat.mock.calls[0]?.[0] as { messageMeta?: { internal?: boolean } }).messageMeta
+    const messageMeta = (h.runChat.mock.calls[0]![0] as { messageMeta?: { internal?: boolean } }).messageMeta
     expect(messageMeta?.internal).toBeUndefined()
     const assistantMessage = h.upsertChatMessage.mock.calls.find(
       ([message]) => (message as { role: string }).role === 'assistant'
@@ -728,8 +728,8 @@ describe('review loop internal service API', () => {
       executionScope: { kind: 'review-summary', loopId: 'rl_abc' },
     })
     // Without round metadata, summaries remain summaries in the renderer.
-    expect((saved?.[0] as { reviewLoop?: unknown }).reviewLoop).toBeUndefined()
-    expect((saved?.[0] as { internal?: boolean }).internal).toBeUndefined()
+    expect((saved![0] as { reviewLoop?: unknown }).reviewLoop).toBeUndefined()
+    expect((saved![0] as { internal?: boolean }).internal).toBeUndefined()
     // Retrying the SAME loopId uses the same messageId (upsert without duplication).
     const retry = await persistReviewLoopSummary({
       conversationId: 'conv-chat',
@@ -969,10 +969,10 @@ describe('review loop internal service API', () => {
 
     expect(first.handle.executionId).not.toBe(second.handle.executionId)
     const meta1 = (
-      h.runChat.mock.calls[0]?.[0] as { messageMeta?: { executionScope?: { executionId: string; iteration: number } } }
+      h.runChat.mock.calls[0]![0] as { messageMeta?: { executionScope?: { executionId: string; iteration: number } } }
     ).messageMeta
     const meta2 = (
-      h.runChat.mock.calls[1]?.[0] as { messageMeta?: { executionScope?: { executionId: string; iteration: number } } }
+      h.runChat.mock.calls[1]![0] as { messageMeta?: { executionScope?: { executionId: string; iteration: number } } }
     ).messageMeta
     expect(meta1?.executionScope?.executionId).toBe(first.handle.executionId)
     expect(meta2?.executionScope?.executionId).toBe(second.handle.executionId)

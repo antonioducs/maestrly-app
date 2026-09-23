@@ -263,7 +263,7 @@ describe('Codex lifecycle chat IPC integration', () => {
       contextProjection: { source: 'portable-transcript', quality: 'estimated' },
     })
     expect(
-      ((await handlers.get('chat:history:stats')?.({}, conversation.id)) as any).contextProjection.usedTokens
+      ((await handlers.get('chat:history:stats')!({}, conversation.id)) as any).contextProjection.usedTokens
     ).toBeGreaterThan(390_000)
     await handlers.get('chat:set-selection')?.({}, conversation.id, {
       providerId: CODEX_SUBSCRIPTION_PROVIDER_ID,

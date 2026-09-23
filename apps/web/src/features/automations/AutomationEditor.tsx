@@ -187,7 +187,7 @@ export function AutomationEditor({
       : !target
         ? t('Select a runner.')
         : issues[0] ?? (target.status === 'online' ? t('Online. Only this runner will claim the jobs.') : t('Offline. Jobs will wait in the queue.'))
-  const runnerTone = issues.length || (config.runnerSelector === 'runner' && (!target || target.status !== 'online')) ? 'warn' : config.runnerSelector === 'runner' ? 'good' : ''
+  const runnerTone = issues.length || (config.runnerSelector === 'runner' && target?.status !== 'online') ? 'warn' : config.runnerSelector === 'runner' ? 'good' : ''
   const activationHint =
     config.provider === 'maestrly'
       ? t('The Maestrly executor applies the desktop permissions; prior approval does not apply.')

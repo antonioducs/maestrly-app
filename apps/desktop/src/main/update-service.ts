@@ -1,4 +1,4 @@
-import { app, net, shell } from 'electron'
+import { app, autoUpdater as nativeUpdater, net, shell } from 'electron'
 // electron-updater is CommonJS while the main process is bundled as ESM with the dependency
 // externalized, so a named import would fail to resolve at load time. Default import plus LAZY
 // singleton access is the supported pattern: reading `electronUpdater.autoUpdater` instantiates the
@@ -45,6 +45,8 @@ const PERIOD_MS = 6 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 10_000
 /** An updater that never answers must not hold the IPC call open forever. */
 const CHECK_TIMEOUT_MS = 30_000
+/** A silent installer failure must not prevent every subsequent attempt to quit. */
+const INSTALL_HANDOFF_TIMEOUT_MS = 30_000
 const FIXTURE_VERSION = '0.0.0-fixture'
 const LATEST_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 
@@ -54,6 +56,8 @@ let fixture: string | null = null
 /** The quit came from `installUpdate()`, so the quit confirmation is skipped. */
 let installing = false
 let installLaunched = false
+let installerOwnsQuit = false
+let installTimer: ReturnType<typeof setTimeout> | null = null
 let bootTimer: ReturnType<typeof setTimeout> | null = null
 let periodic: ReturnType<typeof setInterval> | null = null
 let pendingCheck: {
@@ -140,6 +144,13 @@ function applyAvailable(version: string, notes: string | undefined, url: string,
 }
 
 function failWith(message: string): UpdateState {
+  clearInstallTimer()
+  if (installing) {
+    installing = false
+    installLaunched = false
+    installerOwnsQuit = false
+    nativeUpdater.removeListener('before-quit-for-update', onInstallerQuit)
+  }
   console.warn('[update]', message)
   const snapshot = setState({ phase: 'error', error: message, lastCheckedAt: Date.now() })
   resolveCheck()
@@ -179,10 +190,28 @@ function listen(event: string, handler: UpdaterEventHandler): void {
 }
 
 function removeListeners(): void {
+  nativeUpdater.removeListener('update-downloaded', onNativeUpdateDownloaded)
+  nativeUpdater.removeListener('before-quit-for-update', onInstallerQuit)
   if (attachedListeners.length === 0) return
   const updater = au() as unknown as NodeJS.EventEmitter
   for (const { event, handler } of attachedListeners) updater.removeListener(event, handler)
   attachedListeners.length = 0
+}
+
+function onNativeUpdateDownloaded(): void {
+  if (state.phase === 'downloading') {
+    setState({ phase: 'downloaded', progressPercent: 100, error: undefined })
+  }
+}
+
+function onInstallerQuit(): void {
+  clearInstallTimer()
+  installerOwnsQuit = true
+}
+
+function clearInstallTimer(): void {
+  if (installTimer) clearTimeout(installTimer)
+  installTimer = null
 }
 
 function wireListeners(): void {
@@ -213,7 +242,16 @@ function wireListeners(): void {
     setState({ phase: 'downloading', progressPercent: Math.max(0, Math.min(100, Math.round(percent))) })
   })
 
-  listen('update-downloaded', () => setState({ phase: 'downloaded', progressPercent: 100, error: undefined }))
+  listen('update-downloaded', () => {
+    // On macOS this event only means the ZIP is ready to serve to Squirrel. Keep the app's
+    // services alive until the native updater has finished preparing and validating it.
+    setState({
+      phase: process.platform === 'darwin' ? 'downloading' : 'downloaded',
+      progressPercent: 100,
+      error: undefined,
+    })
+  })
+  if (process.platform === 'darwin') nativeUpdater.on('update-downloaded', onNativeUpdateDownloaded)
 
   listen('error', (error) => failWith(errorMessage(error)))
 }
@@ -223,6 +261,9 @@ function wireListeners(): void {
 /** Idempotent: re-running it re-resolves the mode and never duplicates listeners or timers. */
 export function configureUpdateService(): void {
   disposeUpdateService()
+  installing = false
+  installLaunched = false
+  installerOwnsQuit = false
   fixture = resolveFixture()
   const mode = resolveMode(fixture)
   state = { phase: 'idle', mode, currentVersion: app.getVersion() }
@@ -267,14 +308,19 @@ function applyFixture(simulated: string): void {
   })
 }
 
-/** Stops scheduled work. Installation intent survives so the quit path can complete it. */
-export function disposeUpdateService(): void {
+function stopUpdateChecks(): void {
   if (bootTimer) clearTimeout(bootTimer)
   if (periodic) clearInterval(periodic)
   bootTimer = null
   periodic = null
   if (pendingCheck) clearTimeout(pendingCheck.timer)
   pendingCheck = null
+}
+
+/** Dispose only on ordinary quit or after the installer has taken ownership of the exit. */
+export function disposeUpdateService(): void {
+  stopUpdateChecks()
+  clearInstallTimer()
   removeListeners()
 }
 
@@ -352,7 +398,9 @@ export async function downloadUpdate(): Promise<UpdateState> {
     return failWith(errorMessage(error))
   }
   // `update-downloaded` usually lands first; settle the phase when the promise wins the race.
-  if (getUpdateState().phase === 'downloading') return setState({ phase: 'downloaded', progressPercent: 100 })
+  if (process.platform !== 'darwin' && getUpdateState().phase === 'downloading') {
+    return setState({ phase: 'downloaded', progressPercent: 100 })
+  }
   return getUpdateState()
 }
 
@@ -361,21 +409,32 @@ export async function downloadUpdate(): Promise<UpdateState> {
  * memory writes, and `finishInstall()` replaces the binary as the last step.
  */
 export function installUpdate(): void {
-  if (state.phase !== 'downloaded') return
+  if (state.phase !== 'downloaded' || installing) return
   installing = true
   app.quit()
 }
 
-/** Called once at the end of the quit sequence; a no-op unless `installUpdate()` requested it. */
-export function finishInstall(): void {
-  if (!installing || installLaunched) return
+/**
+ * Transfer the exit to the installer after teardown. Return true while the original quit must
+ * remain cancelled, keeping error listeners alive. Only the installer's own exit may proceed.
+ */
+export function finishInstall(preventDefault: () => void): boolean {
+  if (!installing || fixture || installerOwnsQuit) return false
+  preventDefault()
+  if (installLaunched) return true
   installLaunched = true
-  if (fixture) return
+  stopUpdateChecks()
+  nativeUpdater.once('before-quit-for-update', onInstallerQuit)
+  installTimer = setTimeout(() => {
+    failWith('The update installer did not take over application shutdown. Please try again.')
+  }, INSTALL_HANDOFF_TIMEOUT_MS)
+  unrefTimer(installTimer)
   try {
     au().quitAndInstall(false, true)
   } catch (error) {
-    console.warn('[update] installation on quit failed:', errorMessage(error))
+    failWith(errorMessage(error))
   }
+  return true
 }
 
 export async function skipVersion(): Promise<UpdateState> {

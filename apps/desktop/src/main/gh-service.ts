@@ -223,7 +223,7 @@ async function getReviewForCwd(cwd: string, branch: string): Promise<ReviewData>
 
   const comments: ReviewComment[] = []
   for (const r of view?.reviews ?? [])
-    if ((r.body && r.body.trim()) || (r.state && r.state !== 'COMMENTED'))
+    if (r.body?.trim() || (r.state && r.state !== 'COMMENTED'))
       comments.push({
         kind: 'review',
         author: r.author?.login ?? '?',

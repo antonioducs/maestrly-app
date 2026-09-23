@@ -9,6 +9,10 @@ const webSettings = readFileSync(
   new URL('../../src/renderer/components/chat/ChatGptWebSettings.tsx', import.meta.url),
   'utf8'
 )
+const componentSettings = readFileSync(
+  new URL('../../src/renderer/components/chat/RuntimeComponentsSettings.tsx', import.meta.url),
+  'utf8'
+)
 
 describe('managed runtime renderer contract', () => {
   it('gates Codex and Copilot login behind their explicit managed runtime installs', () => {
@@ -42,12 +46,31 @@ describe('managed runtime renderer contract', () => {
   })
 
   it('shows all managed components through list/onChanged with install, cancel, repair, and remove actions', () => {
-    expect(apiSettings).toContain('window.api.runtimeAssetList()')
-    expect(apiSettings).toContain('window.api.onRuntimeAssetChanged')
-    expect(apiSettings).toContain('window.api.runtimeAssetInstall(id)')
-    expect(apiSettings).toContain('window.api.runtimeAssetCancel(asset.id)')
-    expect(apiSettings).toContain('window.api.runtimeAssetRepair(id)')
-    expect(apiSettings).toContain('window.api.runtimeAssetRemove(id)')
+    expect(apiSettings).toContain('<RuntimeComponentsSettings />')
+    expect(componentSettings).toContain('window.api.runtimeAssetList()')
+    expect(componentSettings).toContain('window.api.onRuntimeAssetChanged')
+    expect(componentSettings).toContain('window.api.runtimeAssetInstall(id)')
+    expect(componentSettings).toContain('window.api.runtimeAssetCancel(asset.id)')
+    expect(componentSettings).toContain('window.api.runtimeAssetRepair(id)')
+    expect(componentSettings).toContain('window.api.runtimeAssetRemove(id)')
+  })
+
+  it('offers independent release controls only for updatable, installed components', () => {
+    expect(componentSettings).toContain('isUpdatableRuntimeAssetId(asset.id)')
+    expect(componentSettings).toContain("asset.status.state !== 'ready'")
+    for (const call of [
+      'window.api.runtimeAssetCheckUpdate(id)',
+      'window.api.runtimeAssetUpdate(id)',
+      'window.api.runtimeAssetRollback(id)',
+      'window.api.runtimeAssetSetAutoUpdate(id,',
+    ]) {
+      expect(componentSettings).toContain(call)
+    }
+    // Update failures use their own translated copy and never reuse the installation's error slot.
+    expect(componentSettings).toMatch(/settings\.componentUpdateError_\$\{update\.error\}/)
+    expect(componentSettings).toContain('update.restartRequired')
+    expect(componentSettings).toContain('disabled={locked}')
+    expect(componentSettings).not.toMatch(/relaunch|app\.quit|restartApp/)
   })
 
   it('requires an explicit tunnel-client install before tunnel creation', () => {

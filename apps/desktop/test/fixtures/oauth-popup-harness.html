@@ -79,7 +79,7 @@
         $('popup-ui').hidden = false
         try {
           if (window.opener) window.opener.postMessage('oauth-ok', '*')
-        } catch (e) {
+        } catch {
           /* opener cross-origin não bloqueia '*'; aqui mesma origem */
         }
         // pequeno atraso só p/ a janela ser visível antes de fechar
@@ -94,7 +94,6 @@
           log.appendChild(line)
         }
         let gotMessage = false
-        let gotClosed = false
 
         window.addEventListener('message', (ev) => {
           if (ev.data === 'oauth-ok') {
@@ -114,7 +113,6 @@
           const t = setInterval(() => {
             if (popup.closed) {
               clearInterval(t)
-              gotClosed = true
               say('✓ poll detectou popup.closed', 'ok')
               say(
                 gotMessage ? '✅ SUCESSO: canal opener↔popup íntegro' : '✗ fechou mas a mensagem NÃO chegou',

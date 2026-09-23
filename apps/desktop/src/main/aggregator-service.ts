@@ -33,7 +33,7 @@ export function aggregatorDir(convId: string): string {
 function linkNames(repos: RepoSpec[]): string[] {
   const used = new Set<string>()
   return repos.map((r) => {
-    let base = path.basename(r.repoTop) || 'repo'
+    const base = path.basename(r.repoTop) || 'repo'
     let name = base
     let i = 2
     while (used.has(name)) name = `${base}-${i++}`
