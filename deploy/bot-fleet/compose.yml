@@ -1,0 +1,38 @@
+services:
+  maestrly-bot-gateway:
+    image: ${MAESTRLY_GATEWAY_IMAGE:-maestrly/bot-gateway:local}
+    hostname: maestrly-bot-gateway
+    init: true
+    environment:
+      MAESTRLY_GATEWAY_DATA_DIR: /data
+      MAESTRLY_GATEWAY_PUBLIC_HOST: 0.0.0.0
+      MAESTRLY_GATEWAY_PUBLIC_PORT: '7443'
+      MAESTRLY_GATEWAY_INTERNAL_PORT: '7444'
+      MAESTRLY_GATEWAY_INTERNAL_URL: http://maestrly-bot-gateway:7444
+      MAESTRLY_GATEWAY_BOT_IMAGE: ${MAESTRLY_GATEWAY_BOT_IMAGE:-maestrly/bot-instance:local}
+      MAESTRLY_GATEWAY_BOT_SECURITY_OPT: ${MAESTRLY_GATEWAY_BOT_SECURITY_OPT:-auto}
+      MAESTRLY_GATEWAY_BOT_MEMORY: ${MAESTRLY_GATEWAY_BOT_MEMORY:-4g}
+      MAESTRLY_GATEWAY_BOT_SHM: ${MAESTRLY_GATEWAY_BOT_SHM:-1g}
+      MAESTRLY_GATEWAY_NETWORK: maestrly-bots
+      MAESTRLY_GATEWAY_DOCKER_SOCKET: /var/run/docker.sock
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gateway-data:/data
+    ports:
+      - ${MAESTRLY_GATEWAY_BIND:-127.0.0.1}:7443:7443
+    networks:
+      - bots
+    healthcheck:
+      test: [CMD, curl, -fsS, -H, "X-Maestrly-Fleet-Protocol: 1", http://127.0.0.1:7443/v1/meta]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  bots:
+    name: maestrly-bots
+
+volumes:
+  gateway-data:

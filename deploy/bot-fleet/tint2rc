@@ -1,0 +1,22 @@
+# Compact taskbar and notification tray for the 1280x800 bot screen.
+panel_items = TSC
+panel_size = 100% 32
+panel_position = bottom center horizontal
+panel_layer = top
+panel_monitor = all
+panel_shrink = 0
+panel_margin = 0 0
+panel_padding = 8 2 8
+panel_background_id = 0
+taskbar_mode = single_desktop
+taskbar_padding = 4 2 4
+task_padding = 6 3 6
+task_icon = 1
+task_text = 1
+task_font_color = #ffffff 100
+task_maximum_size = 180 30
+systray_padding = 4 2 4
+systray_icon_size = 22
+systray_sort = ascending
+time1_format = %H:%M
+clock_

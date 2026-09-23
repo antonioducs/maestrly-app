@@ -1,0 +1,54 @@
+FROM node:22.22.0-bookworm-slim AS build
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/server/package.json apps/server/package.json
+COPY apps/runner/package.json apps/runner/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
+COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/client-sdk/package.json packages/client-sdk/package.json
+COPY packages/runner-core/package.json packages/runner-core/package.json
+COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
+COPY scripts scripts
+RUN npm ci --include-workspace-root=false --workspace @maestrly/desktop --workspace @maestrly/runner-core --workspace @maestrly/client-sdk --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol
+COPY apps/desktop apps/desktop
+COPY packages packages
+COPY config config
+COPY LICENSE THIRD_PARTY_NOTICES.md ./
+RUN npm run build:desktop
+RUN node scripts/fetch-codex-runtime.mjs --target linux-${TARGETARCH} && \
+    node scripts/fetch-github-copilot-runtime.mjs --target linux-${TARGETARCH} && \
+    node scripts/fetch-cursor-sdk-platform.mjs --target linux-${TARGETARCH} && \
+    node scripts/fetch-tunnel-client.mjs --target linux-${TARGETARCH}
+
+FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC HOME=/home/bot DISPLAY=:0 XDG_CURRENT_DESKTOP=Openbox
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates chromium curl dbus-x11 fontconfig fonts-dejavu-core fonts-noto-color-emoji \
+    fonts-noto-cjk gnome-keyring libsecret-1-0 locales openbox tint2 x11vnc xvfb x11-utils \
+    xdotool xdg-utils xauth tini imagemagick libasound2 libatk-bridge2.0-0 libgtk-3-0 \
+    libnss3 libgbm1 libdrm2 libxss1 libxtst6 libxkbcommon0 libatspi2.0-0 \
+    && sed -i 's/^# *\(pt_BR.UTF-8 UTF-8\)/\1/' /etc/locale.gen && locale-gen \
+    && install -d -m 1777 /tmp/.X11-unix \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /app/node_modules /opt/maestrly/node_modules
+COPY --from=build /app/apps/desktop/out /opt/maestrly/apps/desktop/out
+COPY --from=build /app/apps/desktop/package.json /opt/maestrly/apps/desktop/package.json
+COPY --from=build /app/apps/desktop/resources /opt/maestrly/apps/desktop/resources
+COPY --from=build /app/packages /opt/maestrly/packages
+COPY --from=build /app/config /opt/maestrly/config
+COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
+COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
+COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
+RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoint && \
+    mkdir -p /home/bot/.config/tint2 && chown -R bot:bot /home/bot && \
+    chmod 4755 /opt/maestrly/node_modules/electron/dist/chrome-sandbox
+USER bot
+WORKDIR /opt/maestrly
+VOLUME /home/bot
+EXPOSE 7680 5900 5901
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/usr/local/bin/bot-entrypoint"]
+HEALTHCHECK --interval=15s --timeout=3s --start-period=90s CMD curl -fsS -H "Authorization: Bearer ${MAESTRLY_BOT_CONTROL_TOKEN}" -H 'X-Maestrly-Fleet-Protocol: 1' http://127.0.0.1:${MAESTRLY_BOT_CONTROL_PORT:-7680}/v1/health >/dev/null || exit 1
