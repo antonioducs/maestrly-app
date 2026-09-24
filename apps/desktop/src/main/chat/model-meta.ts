@@ -95,6 +95,7 @@ export function parseCatalog(json: unknown): Map<string, ChatModelMeta> {
       const inputs = m?.modalities?.input
       const outputs = m?.modalities?.output
       const vision = Array.isArray(inputs) ? inputs.includes('image') : undefined
+      const pdf = Array.isArray(inputs) ? inputs.includes('pdf') : undefined
       // Text/code chat requires text input and output. Filter out TTS (audio output),
       // ASR (audio-only input), and image/video generation only when both modalities are known.
       const chatCapable =
@@ -135,6 +136,7 @@ export function parseCatalog(json: unknown): Map<string, ChatModelMeta> {
         reasoningEfforts,
         interleavedReasoning,
         vision,
+        pdf,
         chatCapable,
       }
       if (meta.contextWindow == null && meta.inputPer1M == null) continue // Entry contains no useful metadata.
@@ -357,6 +359,7 @@ export function composeEffectiveMeta(
     reasoningEfforts: source.reasoningEfforts,
     interleavedReasoning: source.interleavedReasoning,
     vision: source.vision,
+    pdf: source.pdf,
     chatCapable: source.chatCapable,
   }
 }
