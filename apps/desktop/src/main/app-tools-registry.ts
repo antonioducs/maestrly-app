@@ -8,6 +8,7 @@ import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
 import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
+import { registerBotModeTools } from './mcp/tools/bot-instance'
 
 /**
  * In-process native Chat tool registry. Client and server connect exclusively through
@@ -38,5 +39,6 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   }
   registerDebugTools(ctx)
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
+  registerBotModeTools(ctx)
   return server
 }

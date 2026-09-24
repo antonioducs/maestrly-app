@@ -123,4 +123,5 @@ export const fleetApi = {
   onFleetDigest: (cb: (digest: FleetDigest) => void): (() => void) => subscribe('fleet:digest', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),
+  onFleetInstanceOpenAccounts: (cb: () => void): (() => void) => subscribe('fleet:instance:open-accounts', cb),
 }

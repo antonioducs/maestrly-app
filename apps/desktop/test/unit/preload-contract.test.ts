@@ -156,7 +156,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(437)
+    expect(keys).toHaveLength(438)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -333,6 +333,17 @@ describe('preload API — popup opening uses SEND', () => {
 // Main-to-renderer events: subscribe, return unsubscribe, and verify main emission.
 // ---------------------------------------------------------------------------
 describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
+  it('onFleetInstanceOpenAccounts subscribes to the main event and removes its listener', () => {
+    const callback = vi.fn()
+    const off = api.onFleetInstanceOpenAccounts(callback) as () => void
+    expect(onSpy).toHaveBeenCalledWith('fleet:instance:open-accounts', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown) => void
+    listener({})
+    expect(callback).toHaveBeenCalledTimes(1)
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:instance:open-accounts', listener)
+    expect(mainText).toContain("broadcast('fleet:instance:open-accounts')")
+  })
   it('onToggleDrawerShortcut registers drawer:toggle-shortcut and removes the exact listener', () => {
     const callback = vi.fn()
     const off = api.onToggleDrawerShortcut(callback) as () => void

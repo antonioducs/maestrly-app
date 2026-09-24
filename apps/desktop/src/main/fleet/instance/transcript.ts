@@ -37,8 +37,31 @@ export function toolTarget(input: unknown): string | null {
   for (const key of ['path', 'filePath', 'command', 'cmd'])
     if (typeof value[key] === 'string') return short(value[key], 80)
   if (typeof value.x === 'number' && typeof value.y === 'number') return `(${value.x}, ${value.y})`
+  if (
+    typeof value.fromX === 'number' &&
+    typeof value.fromY === 'number' &&
+    typeof value.toX === 'number' &&
+    typeof value.toY === 'number'
+  )
+    return `(${value.fromX}, ${value.fromY}) → (${value.toX}, ${value.toY})`
+  if (typeof value.keys === 'string') return short(value.keys, 80)
   if (typeof value.text === 'string') return short(value.text, 40)
   return null
+}
+function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
+  if (typeof output === 'string') {
+    try {
+      return peerOutput(JSON.parse(output))
+    } catch {
+      return {}
+    }
+  }
+  if (!output || typeof output !== 'object') return {}
+  const value = output as Record<string, unknown>
+  if (typeof value.delivered === 'boolean')
+    return { delivered: value.delivered, name: typeof value.name === 'string' ? value.name : undefined }
+  if (typeof value.text === 'string') return peerOutput(value.text)
+  return {}
 }
 function toolItem(
   message: ChatMessage,
@@ -124,14 +147,15 @@ export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput
           // The help store supplies this item with its own stable id and resolution state.
         } else if (part.toolName === 'bot_peers_send') {
           const input = part.input as { to?: string; text?: string; name?: string }
+          const result = peerOutput(part.state.status === 'completed' ? part.state.output : undefined)
           if (input?.to && input?.text)
             items.push({
               kind: 'peer_out',
               id,
               at: time,
-              to: { botId: input.to, name: input.name ?? input.to },
+              to: { botId: input.to, name: result.name ?? input.name ?? input.to },
               text: input.text,
-              delivered: part.state.status === 'completed',
+              delivered: result.delivered === true,
             })
         } else items.push(toolItem(message, part, index))
       }

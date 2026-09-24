@@ -21,6 +21,19 @@ const shape = (name: string, props: string[] = [], required: string[] = []): Too
   required,
 })
 
+const BOT_INSTANCE_TOOL_NAMES = [
+  'computer_screenshot',
+  'computer_click',
+  'computer_move',
+  'computer_drag',
+  'computer_scroll',
+  'computer_type',
+  'computer_key',
+  'bot_peers_list',
+  'bot_peers_send',
+  'request_owner_help',
+]
+
 const EXPECTED_TOOL_NAMES = [
   'browser_navigate',
   'browser_back',
@@ -346,7 +359,7 @@ describe('MCP app tools inventory', () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
     expect(registered).toHaveLength(75)
-    expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES].sort())
+    expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
   it('builds the exact Agent app catalog', async () => {

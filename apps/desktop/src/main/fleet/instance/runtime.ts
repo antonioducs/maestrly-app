@@ -39,6 +39,7 @@ import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, projectChatMessages, transcriptPage, fleetQuestions, toolTarget } from './transcript'
 import { InstanceHelpStore } from './help'
 import { setBotIdentity } from './identity'
+import { broadcast } from '../../window-ipc'
 import type { BotInstanceConfig } from './config'
 
 export function canDispatch(
@@ -562,10 +563,7 @@ export class BotInstanceRuntime implements InstanceControl {
     this.window.show()
     this.window.focus()
     if (target === 'accounts') {
-      await this.window.webContents.executeJavaScript(
-        "window.dispatchEvent(new CustomEvent('fleet:open-accounts'))",
-        true
-      )
+      broadcast('fleet:instance:open-accounts')
     }
   }
   private async system(
