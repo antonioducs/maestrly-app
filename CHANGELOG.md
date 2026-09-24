@@ -5,6 +5,17 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-24
+
+### Added
+
+- Send requested tasks to new conversations in isolated worktrees, and hand
+  approved plans to new Standard conversations.
+
+### Fixed
+
+- Run independent subagent tasks in parallel for Claude and Codex conversations.
+
 ## [0.9.2] - 2026-09-23
 
 ### Fixed
