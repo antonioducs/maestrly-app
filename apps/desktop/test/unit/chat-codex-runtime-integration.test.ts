@@ -106,6 +106,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
   it('neutralizes native multi-agent catalogs independently of feature flags', async () => {
     // Spaces reproduce Electron application-support paths.
     const codexHome = mkdtempSync(path.join(os.tmpdir(), 'maestrly codex multiagent-'))
+    const commandTimeoutMs = process.platform === 'win32' ? 60_000 : 20_000
     try {
       const models = [modelFixture()]
       writeFileSync(
@@ -117,7 +118,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         const result = await execFileAsync(
           expectedBinary,
           ['debug', 'prompt-input', '-c', 'model=gpt-5.6-sol', ...extra, 'hi'],
-          { timeout: 20_000, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
+          { timeout: commandTimeoutMs, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
         )
         return result.stdout
       }
@@ -152,7 +153,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
           `model_context_window=${CODEX_LONG_CONTEXT_WINDOW_TOKENS}`,
           ...modelCatalogOverrideArgs(overridePath),
         ],
-        { timeout: 20_000, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
+        { timeout: commandTimeoutMs, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
       )
       const resolvedModels = JSON.parse(debugModels.stdout) as { models: Array<Record<string, unknown>> }
       expect(resolvedModels.models.find((model) => model.slug === 'gpt-5.6-sol')).toMatchObject({
@@ -165,9 +166,9 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(nativeSubagentSuppressionConfig()).not.toHaveProperty('model_catalog_json')
     } finally {
       resetNativeSubagentCatalogOverrideCache(codexHome)
-      rmSync(codexHome, { recursive: true, force: true })
+      rmSync(codexHome, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
     }
-  }, 60_000)
+  }, process.platform === 'win32' ? 200_000 : 60_000)
 
   /**
    * Production regression: a newer Codex rewrote the app-owned
@@ -468,7 +469,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(client.initializeResult).toEqual(expect.any(Object))
     } finally {
       await client?.close({ gracePeriodMs: 1_000 })
-      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      rmSync(codexHome, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
     }
-  }, 20_000)
+  }, process.platform === 'win32' ? 60_000 : 20_000)
 })
