@@ -17,7 +17,7 @@
     "lint:fix": "biome lint --write src test *.ts",
     "format": "biome format --write src test *.ts",
     "test": "npm run test:unit",
-    "test:unit": "vitest run",
+    "test:unit": "vitest run --exclude test/unit/chat-codex-runtime-integration.test.ts && vitest run test/unit/chat-codex-runtime-integration.test.ts",
     "test:watch": "vitest",
     "build:local-ml-runtime": "node ../../scripts/build-local-ml-runtime.mjs",
     "smoke:local-ml-runtime": "node ../../scripts/smoke-local-ml-runtime.mjs",
