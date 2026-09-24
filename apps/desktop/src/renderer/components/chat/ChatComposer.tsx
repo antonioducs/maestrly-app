@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Square, X, FileText } from 'lucide-react'
+import { ArrowUp, Square, X, FileText, Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { hasDraggedFiles } from '@/lib/attachment-kind'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ChatAttachmentKind, ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
@@ -169,9 +170,45 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
 
   const canSend = value.trim().length > 0 || attachments.length > 0
 
+  // Files dragged from the operating system onto the composer are attached like picked or pasted ones. Text and
+  // in-app drags keep the editor's default behavior.
+  const [dropActive, setDropActive] = useState(false)
+  const acceptsFiles = !disabled && !!onAddFiles
+  useEffect(() => {
+    if (!acceptsFiles) setDropActive(false)
+  }, [acceptsFiles])
+  const onFileDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!acceptsFiles || !hasDraggedFiles(Array.from(e.dataTransfer.types))) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    setDropActive(true)
+  }
+  const onFileDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropActive(false)
+  }
+  const onFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!acceptsFiles || !hasDraggedFiles(Array.from(e.dataTransfer.types))) return
+    e.preventDefault()
+    setDropActive(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length) onAddFiles?.(files)
+  }
+
   return (
     <div className="px-3 pb-3 pt-1">
-      <div className="chat-composer-shell relative mx-auto w-full max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 pb-2 pt-2.5 transition-[border-color,background,box-shadow] duration-300 focus-within:border-white/[0.16]">
+      <div
+        className="chat-composer-shell relative mx-auto w-full max-w-3xl rounded-2xl border border-white/[0.08] bg-white/[0.03] px-3 pb-2 pt-2.5 transition-[border-color,background,box-shadow] duration-300 focus-within:border-white/[0.16]"
+        onDragEnter={onFileDragOver}
+        onDragOver={onFileDragOver}
+        onDragLeave={onFileDragLeave}
+        onDrop={onFileDrop}
+      >
+        {dropActive && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-2xl border border-dashed border-white/30 bg-background/90 text-[13px] text-foreground">
+            <Paperclip className="h-4 w-4 text-muted-foreground" />
+            {t('composer.dropFiles')}
+          </div>
+        )}
         {slashOpen && (
           <div className="absolute bottom-full left-3 z-50 mb-1 max-h-72 w-96 overflow-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl">
             {filteredCommands.map((c, i) => (

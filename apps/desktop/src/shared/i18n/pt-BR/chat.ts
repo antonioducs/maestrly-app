@@ -228,6 +228,7 @@ export default {
       'Pergunte algo ou peça uma tarefa… (@ referencia arquivos/pastas, # referencia agents, ⌘V cola imagens)',
     placeholderDisabled: 'Conecte um provedor em Configurações › Maestrly Chat…',
     placeholderQueue: 'Enfileirar mensagem (envia ao terminar)…',
+    dropFiles: 'Solte os arquivos para anexar',
     placeholderMaestroLive: 'Fale com o run Maestro em andamento…',
     maestroTargetCurrent: 'Run atual',
     maestroTargetNext: 'Próximo turno',

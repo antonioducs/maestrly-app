@@ -222,6 +222,7 @@ export default {
     placeholder: 'Ask something or request a task… (@ references files/folders, # references agents, ⌘V pastes images)',
     placeholderDisabled: 'Connect a provider in Settings › Maestrly Chat…',
     placeholderQueue: 'Queue message (sends when finished)…',
+    dropFiles: 'Drop files to attach',
     placeholderMaestroLive: 'Message the active Maestro run…',
     maestroTargetCurrent: 'Current run',
     maestroTargetNext: 'Next turn',

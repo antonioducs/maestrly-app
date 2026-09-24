@@ -30,6 +30,14 @@ describe('PDF attachments in the chat UI', () => {
     )
   })
 
+  it('attaches operating-system files dropped on the composer', () => {
+    const composer = read('../../src/renderer/components/chat/ChatComposer.tsx')
+    expect(composer).toContain('onDrop={onFileDrop}')
+    expect(composer).toContain('onDragOver={onFileDragOver}')
+    expect(composer).toContain('hasDraggedFiles(Array.from(e.dataTransfer.types))')
+    expect(composer).toContain('onAddFiles?.(files)')
+  })
+
   it('has English and Portuguese strings', async () => {
     const { default: en } = await import('../../src/shared/i18n/en/chat')
     const { default: pt } = await import('../../src/shared/i18n/pt-BR/chat')
@@ -40,6 +48,7 @@ describe('PDF attachments in the chat UI', () => {
       expect(catalog.messages.pdfPages_other).toContain('{{count}}')
       expect(catalog.messages.openPdf).toContain('{{name}}')
       expect(catalog.messages.pdfOpenFailed).toBeTruthy()
+      expect(catalog.composer.dropFiles).toBeTruthy()
     }
   })
 })
