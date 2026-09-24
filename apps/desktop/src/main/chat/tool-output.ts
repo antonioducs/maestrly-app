@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import type { JSONValue } from '@ai-sdk/provider'
 import type { ToolResultOutput } from '@ai-sdk/provider-utils'
 import type { ChatToolImage, ChatToolOutput, ToolOutput } from '../../shared/chat'
 import { toolOutputImages, toolOutputText } from '../../shared/chat'
 import { registerReclaimable, unregisterReclaimable } from '../performance/memory-reclaimer'
+import { sniffImageFormat } from './image-magic'
 import {
   TOOL_IMAGE_CACHE_BUDGET_BYTES,
   TOOL_IMAGE_CACHE_HARD_TRIM_BYTES,
@@ -888,6 +891,29 @@ export function codexContentItemsToChatToolOutput(items: unknown, isError = fals
     text: text.join('\n') || (images.length ? '(image output)' : '(no output)'),
     ...(images.length ? { images } : {}),
     ...(isError ? { isError: true } : {}),
+  }
+}
+
+/**
+ * Output of a runtime's native image viewer (Codex `view_image`). The runtime sends the pixels to its model only, so
+ * without this the user sees a bare path while the model says "the image is above"; in a bot, the file is also out
+ * of the owner's reach. Only a regular file within the ephemeral limit whose bytes are an image is read; a FIFO or
+ * device would block the read, so anything else keeps the text alone.
+ */
+export function viewedImageToolOutput(filePath: unknown): ToolOutput {
+  if (typeof filePath !== 'string' || !filePath) return 'Viewed an image.'
+  const text = `Viewed image: ${filePath}`
+  const unavailable = `${text}\n(No preview: the file is missing, not an image, or larger than ${MAX_EPHEMERAL_IMAGE_BYTES / 1024 / 1024} MB.)`
+  if (!path.isAbsolute(filePath)) return unavailable
+  try {
+    const stat = fs.statSync(filePath)
+    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_EPHEMERAL_IMAGE_BYTES) return unavailable
+    const bytes = fs.readFileSync(filePath)
+    const format = sniffImageFormat(bytes)
+    const image = format ? cacheImage(bytes, format.mime, { name: path.basename(filePath) }) : null
+    return image ? { text, images: [image] } : unavailable
+  } catch {
+    return unavailable
   }
 }
 

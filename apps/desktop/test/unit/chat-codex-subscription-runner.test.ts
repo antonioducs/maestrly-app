@@ -57,7 +57,7 @@ import { chatDiag } from '../../src/main/chat/diag-log'
 import { BYOK_DEFAULT_RULESET, PermissionBroker } from '../../src/main/chat/permission'
 import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
-import { toolOutputImages } from '../../src/shared/chat'
+import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
@@ -777,6 +777,48 @@ describe('Codex subscription runner', () => {
     if (part?.type !== 'tool' || part.state.status !== 'completed') throw new Error('Missing screenshot tool part')
     expect(toolOutputImages(part.state.output)).toHaveLength(1)
     expect(JSON.stringify(part)).not.toContain(imageData)
+  })
+
+  it('shows the image a native view_image looked at, instead of only its path', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'codex-view-image-'))
+    try {
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82])
+      const imageFile = path.join(dir, 'crop.png')
+      const textFile = path.join(dir, 'fake.png')
+      writeFileSync(imageFile, png)
+      writeFileSync(textFile, 'plain text')
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_view_image', 'Show me the crop', 1)
+      const client = new FakeCodexClient()
+      const viewed = { id: 'view_real', type: 'imageView', path: imageFile }
+      const notImage = { id: 'view_fake', type: 'imageView', path: textFile }
+      client.queueTurn({
+        turnId: 'turn_view_image',
+        notifications: [
+          { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: viewed } },
+          { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: viewed } },
+          { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: notImage } },
+          { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: notImage } },
+          completedNotification('thread_1', 'turn_view_image'),
+        ],
+      })
+      await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+      const parts = assistantMessages(conversation.id)[0]?.parts ?? []
+      const part = parts.find((entry) => entry.type === 'tool' && entry.id === 'view_real')
+      expect(part).toMatchObject({ type: 'tool', toolName: 'view_image', state: { status: 'completed' } })
+      if (part?.type !== 'tool' || part.state.status !== 'completed') throw new Error('Missing view_image part')
+      expect(toolOutputImages(part.state.output)).toEqual([
+        expect.objectContaining({ mediaType: 'image/png', name: 'crop.png' }),
+      ])
+      expect(JSON.stringify(part)).not.toContain(png.toString('base64'))
+      const fake = parts.find((entry) => entry.type === 'tool' && entry.id === 'view_fake')
+      if (fake?.type !== 'tool' || fake.state.status !== 'completed') throw new Error('Missing view_image part')
+      expect(toolOutputImages(fake.state.output)).toHaveLength(0)
+      expect(toolOutputText(fake.state.output)).toContain(textFile)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('runs standalone Ask with general native instructions and unchanged restricted capabilities', async () => {

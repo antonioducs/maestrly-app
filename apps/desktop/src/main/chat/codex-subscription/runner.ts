@@ -38,6 +38,7 @@ import {
   stripToolOutputMetadata,
   toolOutputAsText,
   toolOutputIsError,
+  viewedImageToolOutput,
   toolOutputToCodexContentItems,
   type CodexToolContentItem,
 } from '../tool-output'
@@ -1180,6 +1181,7 @@ function itemOutput(item: Record<string, unknown>, progress: string): { success:
       output: messages.join('\n\n') || (status === 'completed' ? fallback : `Subagent operation failed: ${operation}`),
     }
   }
+  if (item.type === 'imageView') return { success: true, output: viewedImageToolOutput(item.path) }
   if (item.type === 'imageGeneration') {
     const status = typeof item.status === 'string' ? item.status : 'completed'
     // The generic fallback below would serialize the item WITH base64, hence the explicit case here.

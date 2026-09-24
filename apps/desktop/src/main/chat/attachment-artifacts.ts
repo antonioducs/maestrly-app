@@ -10,6 +10,7 @@ import {
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
   MAX_ATTACHMENT_TEXT_BYTES,
 } from '../../shared/memory-policy'
+import { IMAGE_FORMATS_BY_MAGIC, sniffImageFormat } from './image-magic'
 
 export {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -17,25 +18,6 @@ export {
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
   MAX_ATTACHMENT_TEXT_BYTES,
 }
-
-const MIME_BY_MAGIC: ReadonlyArray<{ mime: string; ext: string; match: (buf: Buffer) => boolean }> = [
-  {
-    mime: 'image/png',
-    ext: 'png',
-    match: (b) =>
-      b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
-  },
-  { mime: 'image/jpeg', ext: 'jpg', match: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  {
-    mime: 'image/webp',
-    ext: 'webp',
-    match: (b) =>
-      b.length >= 12 &&
-      b.subarray(0, 4).toString('latin1') === 'RIFF' &&
-      b.subarray(8, 12).toString('latin1') === 'WEBP',
-  },
-  { mime: 'image/gif', ext: 'gif', match: (b) => b.length >= 6 && b.subarray(0, 3).toString('latin1') === 'GIF' },
-]
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -52,14 +34,10 @@ function conversationDir(conversationId: string): string {
   return path.join(root(), conversationId)
 }
 
-function sniff(buffer: Buffer): { mime: string; ext: string } | null {
-  return MIME_BY_MAGIC.find((candidate) => candidate.match(buffer)) ?? null
-}
-
 function artifactPath(conversationId: string, artifactId: string): string | null {
   if (!SAFE_ID.test(artifactId)) return null
   const dir = conversationDir(conversationId)
-  for (const { ext } of MIME_BY_MAGIC) {
+  for (const { ext } of IMAGE_FORMATS_BY_MAGIC) {
     const candidate = path.join(dir, `${artifactId}.${ext}`)
     if (fs.existsSync(candidate)) return candidate
   }
@@ -82,7 +60,7 @@ export function decodeAttachmentImage(input: Uint8Array | string): { buffer: Buf
   if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_IMAGE_BYTES) {
     throw new AttachmentArtifactError(`The attachment exceeds ${MAX_ATTACHMENT_IMAGE_BYTES} bytes.`)
   }
-  const format = sniff(buffer)
+  const format = sniffImageFormat(buffer)
   if (!format) throw new AttachmentArtifactError('The attachment is not a supported image format.')
   return { buffer, ...format }
 }
@@ -118,9 +96,7 @@ export async function saveAttachmentImage(args: {
  * Legacy image data URL embedded in a part — same write limit. Check encoded length
  * BEFORE Buffer.from: reject tampered/oversized payloads without allocating a huge buffer in main.
  */
-export function decodeLegacyAttachmentData(
-  data: string | undefined
-): { bytes: Buffer; mediaType: string } | null {
+export function decodeLegacyAttachmentData(data: string | undefined): { bytes: Buffer; mediaType: string } | null {
   if (typeof data !== 'string') return null
   const match = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(data)
   if (!match) return null
@@ -132,7 +108,10 @@ export function decodeLegacyAttachmentData(
   return { bytes, mediaType: match[1]! }
 }
 
-function validArtifactStat(stat: { size: number; isFile: () => boolean; isSymbolicLink: () => boolean }, expectedByteSize: number | null): boolean {
+function validArtifactStat(
+  stat: { size: number; isFile: () => boolean; isSymbolicLink: () => boolean },
+  expectedByteSize: number | null
+): boolean {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > MAX_ATTACHMENT_IMAGE_BYTES) return false
   if (expectedByteSize !== null && stat.size !== expectedByteSize) return false
   return true
@@ -175,7 +154,7 @@ export async function readAttachmentImage(
   // Revalidate AFTER reading: the file may change between lstat and readFile.
   if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_IMAGE_BYTES) return { ok: false, error: 'invalid' }
   if (expected !== null && buffer.length !== expected) return { ok: false, error: 'invalid' }
-  const format = sniff(buffer)
+  const format = sniffImageFormat(buffer)
   if (!format) return { ok: false, error: 'invalid' }
   return { ok: true, bytes: buffer, mediaType: format.mime, byteSize: buffer.length }
 }
@@ -213,7 +192,7 @@ export function resolveFileImageBytesSync(
       const buffer = fs.readFileSync(file)
       if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_IMAGE_BYTES) return null
       if (expected !== null && buffer.length !== expected) return null
-      const format = sniff(buffer)
+      const format = sniffImageFormat(buffer)
       if (!format) return null
       return { bytes: buffer, mediaType: format.mime }
     } catch {

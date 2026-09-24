@@ -1,6 +1,9 @@
+import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { jsonSchema } from 'ai'
-import { toolOutputImages, type ToolOutput } from '../../src/shared/chat'
+import { toolOutputImages, toolOutputText, type ToolOutput } from '../../src/shared/chat'
 import { TOOL_IMAGE_CACHE_HARD_TRIM_BYTES, TOOL_IMAGE_CACHE_TTL_MS } from '../../src/shared/memory-policy'
 
 const reclaimH = vi.hoisted(() => {
@@ -39,13 +42,49 @@ import {
   toolOutputToCursorResult,
   toolOutputToCopilotResult,
   toolOutputToMcpCallResult,
+  viewedImageToolOutput,
 } from '../../src/main/chat/tool-output'
 import { adaptToolSetForModel, supportsChatToolImages } from '../../src/main/chat/tool-capabilities'
 
 const IMAGE_DATA = 'aGVsbG8='
 const IMAGE_URL = `data:image/png;base64,${IMAGE_DATA}`
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82])
 
 afterEach(() => clearEphemeralToolImages())
+
+describe('image files a runtime showed its model (Codex view_image)', () => {
+  let dir = ''
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'viewed-image-'))
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('turns a real image file into an in-memory tool image named after the file', () => {
+    const file = path.join(dir, 'calculator-crop.png')
+    writeFileSync(file, PNG_BYTES)
+    const output = viewedImageToolOutput(file)
+    const [image] = toolOutputImages(output)
+    expect(image).toMatchObject({ mediaType: 'image/png', byteSize: PNG_BYTES.length, name: 'calculator-crop.png' })
+    expect(Buffer.from(getEphemeralToolImage(image)!.bytes)).toEqual(PNG_BYTES)
+    expect(JSON.stringify(sanitizeToolOutputForPersistence(output))).not.toContain(PNG_BYTES.toString('base64'))
+    expect(typeof output === 'object' && output.text).toContain(file)
+  })
+
+  it('shows only the path for anything that is not a readable image within the limit', () => {
+    const text = path.join(dir, 'notes.png')
+    writeFileSync(text, 'not an image, whatever the extension says')
+    const huge = path.join(dir, 'huge.png')
+    writeFileSync(huge, PNG_BYTES)
+    // Sparse: the size check refuses it before reading any byte.
+    truncateSync(huge, MAX_EPHEMERAL_IMAGE_BYTES + 1)
+    for (const candidate of [text, huge, dir, path.join(dir, 'missing.png'), 'relative.png', undefined]) {
+      const output = viewedImageToolOutput(candidate)
+      expect(toolOutputImages(output)).toHaveLength(0)
+      if (typeof candidate === 'string') expect(toolOutputText(output)).toContain(candidate)
+    }
+    expect(getEphemeralToolImageCacheSnapshot().entries).toBe(0)
+  })
+})
 
 describe('host-owned multimodal tool output', () => {
   it('projects images and structured errors to Cursor without exposing persisted image bytes', () => {
