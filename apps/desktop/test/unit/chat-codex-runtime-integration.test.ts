@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import http from 'node:http'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { CodexAppServerClient } from '../../src/main/chat/codex-subscription/client'
@@ -53,6 +55,20 @@ const packageRoot = optionalPackageJson
   ? path.dirname(optionalPackageJson)
   : path.join(root, 'node_modules', '__missing__')
 const expectedBinary = target ? path.join(packageRoot, 'vendor', target.targetTriple, 'bin', target.executableName) : ''
+
+async function removeTemporaryDirectory(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      await rm(directory, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (!['EBUSY', 'EPERM', 'ENOTEMPTY'].includes(code ?? '') || attempt === 19) throw error
+      // Windows can retain a just-closed Codex process's directory handle briefly.
+      await delay(250)
+    }
+  }
+}
 
 /** Minimal pinned-runtime model fields; production overrides copy official catalogs. */
 function modelFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -106,6 +122,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
   it('neutralizes native multi-agent catalogs independently of feature flags', async () => {
     // Spaces reproduce Electron application-support paths.
     const codexHome = mkdtempSync(path.join(os.tmpdir(), 'maestrly codex multiagent-'))
+    const commandTimeoutMs = process.platform === 'win32' ? 60_000 : 20_000
     try {
       const models = [modelFixture()]
       writeFileSync(
@@ -117,7 +134,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         const result = await execFileAsync(
           expectedBinary,
           ['debug', 'prompt-input', '-c', 'model=gpt-5.6-sol', ...extra, 'hi'],
-          { timeout: 20_000, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
+          { timeout: commandTimeoutMs, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
         )
         return result.stdout
       }
@@ -152,7 +169,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
           `model_context_window=${CODEX_LONG_CONTEXT_WINDOW_TOKENS}`,
           ...modelCatalogOverrideArgs(overridePath),
         ],
-        { timeout: 20_000, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
+        { timeout: commandTimeoutMs, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, CODEX_HOME: codexHome } }
       )
       const resolvedModels = JSON.parse(debugModels.stdout) as { models: Array<Record<string, unknown>> }
       expect(resolvedModels.models.find((model) => model.slug === 'gpt-5.6-sol')).toMatchObject({
@@ -165,9 +182,9 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(nativeSubagentSuppressionConfig()).not.toHaveProperty('model_catalog_json')
     } finally {
       resetNativeSubagentCatalogOverrideCache(codexHome)
-      rmSync(codexHome, { recursive: true, force: true })
+      await removeTemporaryDirectory(codexHome)
     }
-  }, 60_000)
+  }, process.platform === 'win32' ? 200_000 : 60_000)
 
   /**
    * Production regression: a newer Codex rewrote the app-owned
@@ -208,7 +225,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(existsSync(path.join(codexHome, 'maestrly-model-catalog.json'))).toBe(false)
     } finally {
       resetNativeSubagentCatalogOverrideCache(codexHome)
-      rmSync(codexHome, { recursive: true, force: true })
+      await removeTemporaryDirectory(codexHome)
     }
   }, 30_000)
 
@@ -240,7 +257,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         tools: { type: 'array' },
       })
     } finally {
-      rmSync(output, { recursive: true, force: true })
+      await removeTemporaryDirectory(output)
     }
   }, 20_000)
 
@@ -287,7 +304,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
     } finally {
       if (threadId) await client?.deleteThread({ threadId }).catch(() => undefined)
       await client?.close({ gracePeriodMs: 1_000 })
-      rmSync(codexHome, { recursive: true, force: true })
+      await removeTemporaryDirectory(codexHome)
     }
   }, 20_000)
 
@@ -446,7 +463,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       await client?.close({ gracePeriodMs: 1_000 })
       await closeCodexHostMcpServer()
       await new Promise<void>((resolve) => provider.close(() => resolve()))
-      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      await removeTemporaryDirectory(codexHome)
     }
   }, 60_000)
 
@@ -468,7 +485,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(client.initializeResult).toEqual(expect.any(Object))
     } finally {
       await client?.close({ gracePeriodMs: 1_000 })
-      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+      await removeTemporaryDirectory(codexHome)
     }
-  }, 20_000)
+  }, process.platform === 'win32' ? 60_000 : 20_000)
 })
