@@ -31,11 +31,17 @@ const { deleteChatMessagesFrom, getChatMessage, getMessageSeq, upsertChatMessage
   '../../src/main/chat/chat-store'
 )
 const {
+  AttachmentArtifactError,
   MAX_ATTACHMENT_IMAGE_BYTES,
+  MAX_ATTACHMENT_PDF_BYTES,
+  deleteAttachmentImages,
   preserveResendAttachments,
   readAttachmentImage,
+  readAttachmentPdf,
   resolveFileImageBytesSync,
+  resolveFilePdfBytesSync,
   saveAttachmentImage,
+  savePdfAttachment,
 } = await import('../../src/main/chat/attachment-artifacts')
 
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
@@ -249,5 +255,101 @@ describe('bounded attachment reads (review loop, round 2)', () => {
     expect(resolveFileImageBytesSync(conv.id, { data: `data:image/png;base64,${PNG_1X1}` })?.mediaType).toBe(
       'image/png'
     )
+  })
+})
+
+/** Minimal bytes carrying the PDF signature; storage validates the signature, not the document structure. */
+const PDF = Buffer.from('%PDF-1.4\n%%EOF\n')
+
+const pdfFile = (conversationId: string, artifactId: string): string =>
+  path.join(h.userData, 'chat-attachment-images', conversationId, `${artifactId}.pdf`)
+
+describe('PDF attachment artifacts', () => {
+  it('stores a PDF sidecar and reads the same bytes back', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF, label: 'Spec v2' })
+
+    expect(stored).toMatchObject({ mediaType: 'application/pdf', name: 'Spec-v2.pdf', byteSize: PDF.length })
+    expect(existsSync(pdfFile(conv.id, stored.artifactId))).toBe(true)
+    const read = await readAttachmentPdf(conv.id, stored.artifactId, stored.byteSize)
+    expect(read.ok).toBe(true)
+    if (read.ok) expect(Buffer.from(read.bytes).equals(PDF)).toBe(true)
+    expect(Buffer.from(resolveFilePdfBytesSync(conv.id, stored) ?? []).equals(PDF)).toBe(true)
+  })
+
+  it('rejects bytes without the PDF signature and oversized PDFs', async () => {
+    const conv = chatConv()
+    await expect(savePdfAttachment({ conversationId: conv.id, bytes: Buffer.from('not a pdf') })).rejects.toBeInstanceOf(
+      AttachmentArtifactError
+    )
+    const oversized = Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(MAX_ATTACHMENT_PDF_BYTES - 4)])
+    expect(oversized.length).toBe(MAX_ATTACHMENT_PDF_BYTES + 1)
+    await expect(savePdfAttachment({ conversationId: conv.id, bytes: oversized })).rejects.toBeInstanceOf(
+      AttachmentArtifactError
+    )
+  })
+
+  it('never serves a PDF artifact through the image readers', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+
+    expect(await readAttachmentImage(conv.id, stored.artifactId, stored.byteSize)).toMatchObject({
+      ok: false,
+      error: 'invalid',
+    })
+    expect(resolveFileImageBytesSync(conv.id, stored)).toBeNull()
+  })
+
+  it('validates persisted byteSize and rejects symlinked PDF sidecars', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+
+    expect(await readAttachmentPdf(conv.id, stored.artifactId, stored.byteSize + 1)).toMatchObject({
+      ok: false,
+      error: 'invalid',
+    })
+    expect(resolveFilePdfBytesSync(conv.id, { artifactId: stored.artifactId, byteSize: stored.byteSize + 1 })).toBeNull()
+
+    const file = pdfFile(conv.id, stored.artifactId)
+    rmSync(file)
+    const outside = path.join(h.userData, 'outside.pdf')
+    writeFileSync(outside, PDF)
+    symlinkSync(outside, file)
+    expect(await readAttachmentPdf(conv.id, stored.artifactId)).toMatchObject({ ok: false, error: 'invalid' })
+    expect(resolveFilePdfBytesSync(conv.id, { artifactId: stored.artifactId })).toBeNull()
+  })
+
+  it('copies PDF bytes for edit and resend', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF, label: 'spec' })
+
+    const attachments = await preserveResendAttachments(conv.id, [
+      {
+        type: 'file',
+        id: 'p1',
+        name: 'spec.pdf',
+        mediaType: 'application/pdf',
+        kind: 'pdf',
+        artifactId: stored.artifactId,
+        byteSize: stored.byteSize,
+        data: '--- Page 1 ---\nHi',
+        pageCount: 1,
+      },
+    ])
+
+    expect(attachments).toHaveLength(1)
+    expect(attachments[0]).toMatchObject({ name: 'spec.pdf', mediaType: 'application/pdf', kind: 'pdf' })
+    expect(attachments[0]!.artifactId).toBeUndefined()
+    expect(Buffer.from(attachments[0]!.bytes!).equals(PDF)).toBe(true)
+  })
+
+  it('deletes PDF sidecars with the attachment cleanup', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    expect(existsSync(pdfFile(conv.id, stored.artifactId))).toBe(true)
+
+    await deleteAttachmentImages(conv.id, [stored.artifactId])
+
+    expect(existsSync(pdfFile(conv.id, stored.artifactId))).toBe(false)
   })
 })
