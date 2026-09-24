@@ -1,7 +1,20 @@
 /** Coordinate mutually exclusive project panels, settings, and onboarding. */
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction, type SyntheticEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+  type SyntheticEvent,
+} from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import type { SettingsSection } from '@/components/settings/nav'
+
+export type FleetView =
+  | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
+  | { kind: 'server' }
+  | { kind: 'inbox' }
 
 type UseMainPanelsParams = {
   workspaces: WorkspaceWithConversations[]
@@ -13,6 +26,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [fleetView, setFleetView] = useState<FleetView | null>(null)
+  const [createBot, setCreateBot] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('chat')
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingChecked, setOnboardingChecked] = useState(false)
@@ -28,6 +43,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       )
       if (!workspace) return
       setProjectNotesWs(null)
+      setFleetView(null)
+      setCreateBot(false)
       setSettingsOpen(false)
       setOnboardingOpen(false)
       setProjectMemoryWs(workspace.id)
@@ -40,7 +57,9 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs ||
     projectMemoryWs ||
     (settingsOpen ? 'settings' : null) ||
-    (onboardingOpen ? 'onboarding' : null)
+    (onboardingOpen ? 'onboarding' : null) ||
+    (fleetView ? 'fleet' : null) ||
+    (createBot ? 'fleet-create' : null)
 
   useEffect(
     () =>
@@ -51,6 +70,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         setProjectMemoryWs(null)
         setSettingsOpen(false)
         setOnboardingOpen(false)
+        setFleetView(null)
+        setCreateBot(false)
         setActive(conversation)
       }),
     [refreshWorkspaces, setActive]
@@ -64,6 +85,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         window.api.setOnboardingDone(true)
         setOnboardingOpen(false)
       }
+      setFleetView(null)
+      setCreateBot(false)
       setActive(conversation)
     },
     [refreshWorkspaces, setActive]
@@ -71,6 +94,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat') => {
     const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
+    setFleetView(null)
+    setCreateBot(false)
     setSettingsSection(section)
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
@@ -82,6 +107,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
     setSettingsOpen(false)
+    setFleetView(null)
+    setCreateBot(false)
     setOnboardingOpen(true)
   }, [])
 
@@ -106,12 +133,32 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setProjectMemoryWs(null)
       setSettingsOpen(false)
       setOnboardingOpen(false)
+      setFleetView(null)
+      setCreateBot(false)
       setActive(conversation)
     },
     [setActive]
   )
 
+  const openFleetView = useCallback(
+    (view: FleetView) => {
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setSettingsOpen(false)
+      setOnboardingOpen(false)
+      setCreateBot(false)
+      setActive(null)
+      setFleetView(view)
+    },
+    [setActive]
+  )
+
   return {
+    fleetView,
+    setFleetView,
+    createBot,
+    setCreateBot,
+    openFleetView,
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,

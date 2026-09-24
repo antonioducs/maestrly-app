@@ -424,6 +424,7 @@ export default {
     // Side menu (#556): groups the settings by theme so the window stops being one giant list.
     nav: {
       bots: 'Bots',
+      fleet: 'Bot server',
       platform: 'Platform',
       chat: 'Maestrly Chat',
       usage: 'Usage & cost',

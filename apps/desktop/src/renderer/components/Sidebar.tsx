@@ -39,6 +39,7 @@ import { useConvRows } from '@/components/sidebar/conv-rows'
 import { SidebarHeader } from '@/components/sidebar/SidebarHeader'
 import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
+import type { FleetController } from '@/lib/fleet/use-fleet'
 import {
   conversationSidebarTab,
   crossTabMatches,
@@ -62,9 +63,13 @@ interface Props {
   activeId: string | null
   selectedConversation: Conversation | null
   requestedTab?: { tab: SidebarTab; requestId: number } | null
+  fleet: FleetController
+  selectedFleet: string | null
+  onOpenFleetBot: (id: string) => void
+  onOpenFleetServer: () => void
+  onOpenFleetInbox: () => void
   botServerConnected?: boolean
   botPendingCount?: number
-  botFilterCount?: number
   onCreateBot?: () => void
   onOpenBotSettings: () => void
 
@@ -131,9 +136,13 @@ export function Sidebar({
   activeId,
   selectedConversation,
   requestedTab,
+  fleet,
+  selectedFleet,
+  onOpenFleetBot,
+  onOpenFleetServer,
+  onOpenFleetInbox,
   botServerConnected = false,
   botPendingCount = 0,
-  botFilterCount = 0,
   onCreateBot,
   onOpenBotSettings,
   focusedWorkspaceId,
@@ -233,7 +242,11 @@ export function Sidebar({
   const filterCounts = {
     chats: q ? filterStandaloneConversations(standaloneConversations, q).length : 0,
     workspaces: workspaceFilterCount(workspaces, q),
-    bots: q ? botFilterCount : 0,
+    bots: q
+      ? fleet.state.snapshot.bots.filter(
+          (bot) => bot.name.toLowerCase().includes(q) || bot.role.toLowerCase().includes(q)
+        ).length
+      : 0,
   }
   const crossMatches = q && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
   const pinnedChats = standaloneConversations
@@ -737,7 +750,15 @@ export function Sidebar({
         hidden={tab !== 'bots'}
         className="min-h-0 flex-1 overflow-y-auto py-1"
       >
-        <FleetSidebarPanel serverConnected={botServerConnected} onOpenBotSettings={onOpenBotSettings} />
+        <FleetSidebarPanel
+          fleet={fleet}
+          query={q}
+          selected={selectedFleet}
+          onOpenBotSettings={onOpenBotSettings}
+          onOpenBot={onOpenFleetBot}
+          onOpenServer={onOpenFleetServer}
+          onOpenInbox={onOpenFleetInbox}
+        />
         {tab === 'bots' &&
           crossMatches.map(({ tab: matchTab, count }) => (
             <button

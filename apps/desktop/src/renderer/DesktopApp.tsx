@@ -29,7 +29,11 @@ import { OnboardingFlow } from '@/components/OnboardingFlow'
 import { AboutModal } from '@/components/AboutModal'
 import { useDrawerState } from '@/lib/use-drawer-state'
 import { useWorkspaces } from '@/lib/use-workspaces'
-import { useMainPanels } from '@/lib/use-main-panels'
+import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
+import { useFleet } from '@/lib/fleet/use-fleet'
+import { BotView } from '@/components/fleet/BotView'
+import { ServerView } from '@/components/fleet/ServerView'
+import { InboxView } from '@/components/fleet/InboxView'
 import { useAgentStatuses } from '@/lib/use-agent-statuses'
 import { usePlans } from '@/lib/use-plans'
 import { ProjectSetupDialog } from '@/project-setup/ProjectSetupDialog'
@@ -199,6 +203,21 @@ export function DesktopApp() {
     [projectSetup.requestProject]
   )
   const nav = useMainPanels({ workspaces, setActive, refreshWorkspaces })
+  const fleet = useFleet()
+  const [fleetTabRequest, setFleetTabRequest] = useState(0)
+  const openFleetView = useCallback(
+    (view: FleetView) => {
+      nav.openFleetView(view)
+      setFleetTabRequest((value) => value + 1)
+    },
+    [nav.openFleetView]
+  )
+  const openFleetBot = useCallback(
+    (botId: string, screen = false) => {
+      openFleetView({ kind: 'bot', botId, tab: screen ? 'screen' : 'conversation' })
+    },
+    [openFleetView]
+  )
   const {
     projectNotesWs,
     setProjectNotesWs,
@@ -211,6 +230,8 @@ export function DesktopApp() {
     setOnboardingOpen,
     onboardingChecked,
     mainOverride,
+    fleetView,
+    setCreateBot,
     openSettings,
     openOnboarding,
     handleSelect,
@@ -301,11 +322,8 @@ export function DesktopApp() {
     chatGptVisibleConversationId,
   })
   const { statuses, attention, acknowledgeConversation } = agents
-  useEffect(() => {
-    const openFleetAccounts = () => openSettings('chat')
-    window.addEventListener('fleet:open-accounts', openFleetAccounts)
-    return () => window.removeEventListener('fleet:open-accounts', openFleetAccounts)
-  }, [openSettings])
+  // Bot instance mode: the gateway asks this (headless) app to show where model accounts are connected.
+  useEffect(() => window.api.onFleetInstanceOpenAccounts(() => openSettings('chat')), [openSettings])
   useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
@@ -578,7 +596,19 @@ export function DesktopApp() {
                 attention={attention}
                 activeId={active?.id ?? null}
                 selectedConversation={active}
-                onOpenBotSettings={() => openSettings()}
+                requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
+                fleet={fleet}
+                selectedFleet={fleetView?.kind === 'bot' ? fleetView.botId : (fleetView?.kind ?? null)}
+                onOpenFleetBot={openFleetBot}
+                onOpenFleetServer={() => openFleetView({ kind: 'server' })}
+                onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
+                botServerConnected={fleet.state.connection.state === 'connected'}
+                botPendingCount={fleet.state.snapshot.inbox.length}
+                onCreateBot={() => {
+                  setCreateBot(true)
+                  setFleetTabRequest((value) => value + 1)
+                }}
+                onOpenBotSettings={() => openSettings('fleet')}
                 focusedWorkspaceId={focusedWorkspaceId}
                 pendingPlanIds={pendingPlanIds}
                 showArchived={showArchived}
@@ -589,12 +619,16 @@ export function DesktopApp() {
                 onNewConversation={(wsId) => setDialogWs(wsId)}
                 onOpenProjectNotes={(wsId) => {
                   setProjectNotesWs(wsId)
+                  nav.setFleetView(null)
+                  setCreateBot(false)
                   setProjectMemoryWs(null)
                   setSettingsOpen(false)
                   setOnboardingOpen(false)
                 }}
                 onOpenProjectMemory={(wsId) => {
                   setProjectMemoryWs(wsId)
+                  nav.setFleetView(null)
+                  setCreateBot(false)
                   setProjectNotesWs(null)
                   setSettingsOpen(false)
                   setOnboardingOpen(false)
@@ -652,12 +686,24 @@ export function DesktopApp() {
               )}
               {settingsOpen && (
                 <SettingsView
+                  fleet={fleet}
                   initialSection={settingsSection}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onAddProject={requestProject}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
+              {fleetView?.kind === 'bot' && fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId) && (
+                <BotView
+                  bot={fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId)!}
+                  view={fleetView}
+                  fleet={fleet}
+                  onView={openFleetView}
+                  onOpenBot={openFleetBot}
+                />
+              )}
+              {fleetView?.kind === 'server' && <ServerView fleet={fleet} onOpenBot={openFleetBot} />}
+              {fleetView?.kind === 'inbox' && <InboxView fleet={fleet} onOpenBot={openFleetBot} />}
               {onboardingOpen && (
                 <OnboardingFlow
                   workspaces={workspaces}

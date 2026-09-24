@@ -40,8 +40,11 @@ import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 import { BotSection } from '@/components/bot/BotSection'
+import { FleetSettings } from '@/components/settings/FleetSettings'
+import type { FleetController } from '@/lib/fleet/use-fleet'
 
 interface Props {
+  fleet?: FleetController
   initialSection?: SettingsSection
 
   onShowSidebar?: () => void
@@ -50,7 +53,7 @@ interface Props {
   onClose: () => void
 }
 
-export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProject, onClose }: Props) {
+export function SettingsView({ fleet, initialSection = 'chat', onShowSidebar, onAddProject, onClose }: Props) {
   const { t } = useTranslation('ui')
   const headingRef = useRef<HTMLHeadingElement>(null)
   const [locale, setLocale] = useLocale()
@@ -358,6 +361,7 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProj
             {section === 'chat' && <MaestrlyChatSection t={t} />}
 
             {section === 'platform' && <PlatformSection />}
+            {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
             {section === 'bots' && (
               <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
             )}
