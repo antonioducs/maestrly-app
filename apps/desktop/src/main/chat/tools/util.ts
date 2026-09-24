@@ -75,6 +75,11 @@ export interface ToolContext {
   onGeneratedImageUsage?: (usage: GeneratedImageUsage) => void
   /** Reviewer-only host runtime. Normal turns deliberately omit it. */
   reviewer?: ReviewerToolRuntime
+  /**
+   * Main-turn-only runtime for start_conversations, bound to the admitted human turn. Absent in child/subagent,
+   * reviewer, restricted-mode and host-generated turns, where the tools refuse to run.
+   */
+  conversationDispatch?: import('./conversation-dispatch').ConversationDispatchToolRuntime
 }
 
 /** Artifact already written to the store (`generated-images.ts`) — only the opaque handle travels, never bytes. */

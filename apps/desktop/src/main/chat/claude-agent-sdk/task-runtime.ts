@@ -23,6 +23,7 @@ import {
 } from '../subagent-selection-guard'
 import { namespaceSubagentToolSet } from '../subagent-runner'
 import { isSubagentReadOnly, isSubagentToolAllowed, READ_ONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
+import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../image-interpreter'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
@@ -95,7 +96,15 @@ export function selectedSubagentToolNames(
 ): Set<string> {
   if (definition) return selectSubagentToolNames({ definition, readOnly, providedHostTools })
   const selected = new Set(readOnly ? READ_ONLY_TOOL_NAMES : configured?.length ? configured : READ_ONLY_TOOL_NAMES)
-  for (const forbidden of ['task', 'delegate', 'review_plan', 'ask_question', 'todo_write', 'use_skill']) {
+  for (const forbidden of [
+    'task',
+    'delegate',
+    'review_plan',
+    'ask_question',
+    'todo_write',
+    'use_skill',
+    ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ]) {
     selected.delete(forbidden)
   }
   const providedHostToolNames = new Set(Object.keys(providedHostTools))

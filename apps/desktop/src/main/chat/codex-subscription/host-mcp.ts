@@ -1,16 +1,18 @@
 /**
- * Loopback MCP server for image-returning screenshot tools on root Codex threads.
+ * Loopback MCP server that hosts Maestrly's delegation tools (`task` / `delegate`) for root Codex threads.
  *
- * Why MCP instead of a dynamic tool: in GPT-6 code mode, dynamic tool images flatten to a string inside exec.
- * MCP tools return content items, so the model can forward an image with image(result.content[index]).
- * Both hosted tools only capture pixels. Input tools remain dynamic tools under Codex's write lock; hosted
- * screenshots use the shared read lock.
+ * Why MCP instead of a dynamic tool: Codex runs every dynamic tool under its turn-wide write lock, so
+ * independent `task` calls emitted in one response executed one after another. Tools from an MCP server
+ * configured with `supports_parallel_tool_calls` take the shared read lock and overlap (verified against the
+ * pinned 0.155.1 runtime; 0.153.4 still ran these MCP calls serially, with otherwise identical results).
+ * Screenshots also use MCP because GPT-6 code mode can forward MCP image items; dynamic tool images flatten to text.
  *
  * Security: binds 127.0.0.1, rejects non-loopback `Host` headers (DNS rebinding), bounds the body and requires a
  * per-process bearer token. Codex reads the token from its own environment (`bearer_token_env_var`), so the
  * secret never enters thread config, rollouts or argv.
  *
- * Cancellation is tied to Maestrly's active turn route rather than the HTTP connection.
+ * Cancellation is deliberately NOT tied to the HTTP request: Maestrly owns the task lifecycle (turn abort,
+ * pending-request cancellation, and quota failover that must let in-flight subagents settle).
  */
 import http from 'node:http'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
@@ -24,12 +26,18 @@ export const CODEX_HOST_MCP_IMAGE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'browser_screenshot',
   'computer_screenshot',
 ])
-export const CODEX_HOST_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([...CODEX_HOST_MCP_IMAGE_TOOL_NAMES])
+/** Delegation tools overlap, while screenshot content remains visible to code-mode models. */
+export const CODEX_HOST_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'task',
+  'delegate',
+  ...CODEX_HOST_MCP_IMAGE_TOOL_NAMES,
+])
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 const MAX_TOOLSETS = 256
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
-const TOOL_TIMEOUT_SEC = 120
+/** Subagents may legitimately run for hours; Maestrly, not the Codex MCP client, bounds their lifetime. */
+const TOOL_TIMEOUT_SEC = 7 * 24 * 60 * 60
 const STARTUP_TIMEOUT_SEC = 30
 
 export interface CodexHostMcpToolSpec {
@@ -80,7 +88,7 @@ export function setCodexHostMcpCallHandler(handler: CodexHostMcpCallHandler | nu
   callHandler = handler
 }
 
-/** Projects the routed response items Maestrly already builds onto MCP `CallToolResult` content. */
+/** Projects the dynamic-tool response items Maestrly already builds onto MCP `CallToolResult` content. */
 export function codexContentItemsToHostMcpContent(items: readonly CodexToolContentItem[]): CodexHostMcpContent[] {
   const content = items.flatMap((item): CodexHostMcpContent[] => {
     if (item.type === 'inputText') return [{ type: 'text', text: item.text }]
@@ -247,7 +255,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
 async function ensureServer(): Promise<number> {
   listening ??= (async () => {
     const server = http.createServer(handleRequest)
-    // Screenshot capture can outlast Node's default idle timeout while the browser is starting.
+    // Subagents run for minutes; Node would otherwise close idle or slow requests after its defaults.
     server.keepAliveTimeout = 0
     server.headersTimeout = 0
     server.requestTimeout = 0
@@ -299,9 +307,9 @@ async function codexHostMcpServerConfig(args: {
     bearer_token_env_var: CODEX_HOST_MCP_TOKEN_ENV,
     required: true,
     supports_parallel_tool_calls: true,
-    // Maestrly's permission broker and bot-mode hold gate run inside the routed tool.
+    // Maestrly gates the subagent's own actions; the delegation call itself needs no Codex prompt.
     default_tools_approval_mode: 'approve',
-    // These two screenshot tools stay visible; the large remaining catalog stays in dynamic deferral.
+    // Codex defers every MCP tool behind tool search when the model supports it; delegation must stay visible.
     omit_tools_from: ['deferred'],
     startup_timeout_sec: STARTUP_TIMEOUT_SEC,
     tool_timeout_sec: TOOL_TIMEOUT_SEC,

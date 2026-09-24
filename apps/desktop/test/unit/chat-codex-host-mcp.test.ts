@@ -4,6 +4,7 @@ import {
   CODEX_HOST_MCP_SERVER_NAME,
   CODEX_HOST_MCP_TOKEN_ENV,
   CODEX_HOST_MCP_IMAGE_TOOL_NAMES,
+  CODEX_HOST_MCP_TOOL_NAMES,
   closeCodexHostMcpServer,
   codexContentItemsToHostMcpContent,
   codexHostMcpProcessEnv,
@@ -60,6 +61,28 @@ describe('Codex host MCP server', () => {
 
   it('hosts only the registered read-only app image producers', () => {
     expect([...CODEX_HOST_MCP_IMAGE_TOOL_NAMES]).toEqual(['browser_screenshot', 'computer_screenshot'])
+    expect([...CODEX_HOST_MCP_TOOL_NAMES]).toEqual(['task', 'delegate', 'browser_screenshot', 'computer_screenshot'])
+  })
+
+  it('also routes delegation through the same server', async () => {
+    const url = await serverUrl()
+    const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'delegated' }] }))
+    setCodexHostMcpCallHandler(handler)
+    const response = await post(
+      url,
+      rpc(8, 'tools/call', {
+        name: 'task',
+        arguments: { agent: 'explore', prompt: 'Map it.' },
+        _meta: { threadId: 'thread-1', callId: 'call-2' },
+      })
+    )
+    expect(response.json).toEqual({ jsonrpc: '2.0', id: 8, result: { content: [{ type: 'text', text: 'delegated' }] } })
+    expect(handler).toHaveBeenCalledWith({
+      name: 'task',
+      arguments: { agent: 'explore', prompt: 'Map it.' },
+      threadId: 'thread-1',
+      callId: 'call-2',
+    })
   })
 
   it('attaches a loopback, parallel-safe, pre-approved and always-visible server without leaking the token', async () => {

@@ -393,7 +393,10 @@ function rowToMessage(r: any): StoredChatMessage {
   const reviewLoop = reviewLoopMetaOf(executionScope)
   const memoryContext = parseMemoryContext(meta.memoryContext)
   const source =
-    meta.source === 'chatgpt-web' || meta.source === 'chatgpt-web-review-loop' || meta.source === 'maestrly-review-loop'
+    meta.source === 'chatgpt-web' ||
+    meta.source === 'chatgpt-web-review-loop' ||
+    meta.source === 'maestrly-review-loop' ||
+    meta.source === 'conversation-dispatch'
       ? meta.source
       : undefined
   return {

@@ -5,6 +5,8 @@ import { nameStandaloneConversationFromText } from '../standalone-conversation-t
 import { autonomousPolicy } from './autonomous'
 import { emitChatHost } from './host-events'
 import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
+import { clearHumanTurnOrigin, isHumanTurnAdmission, recordHumanTurnOrigin } from './conversation-dispatch-authorization'
+import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
 import {
   assertBotTurnAdmission,
   botBlocksManualSend,
@@ -3495,7 +3497,10 @@ interface StartSendOpts {
   }
   /** Review-turn callback; releases the reservation if no v2 is accepted. */
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
+  /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
+  dispatchSeed?: { dispatchId: string; sourceConversationId: string }
 }
+
 
 async function startSend(
   deps: ChatIpcDeps,
@@ -4483,19 +4488,31 @@ async function startSend(
     }
     // Persist the user message BEFORE running (include it in the next turn's history).
     // Isolated: centralize source + executionScope here (runners receive messageMeta and cannot omit them).
+    const userMessageId = operation.pendingMessage?.id ?? randomUUID()
     upsertChatMessage({
-      id: operation.pendingMessage?.id ?? randomUUID(),
+      id: userMessageId,
       conversationId,
       role: 'user',
       parts,
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
+      ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
       ...(reviewLoopMessageMeta ?? {}),
       createdAt: Date.now(),
     })
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
+    // Provenance is decided here, at admission, from how the turn entered — never from transcript roles.
+    if (isHumanTurnAdmission(opts)) {
+      recordHumanTurnOrigin({
+        token: run,
+        conversationId,
+        messageId: userMessageId,
+        text: typeof text === 'string' ? text : '',
+        signal: controller.signal,
+      })
+    }
     if (
       conv.scope === 'standalone' &&
       !opts?.internal &&
@@ -5505,6 +5522,7 @@ async function startSend(
           void releaseTurnDelegationRuntimes(conversationId, run.messageId).catch(() => undefined)
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
+        clearHumanTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         const guard = maestroGuardContinuation
@@ -5551,6 +5569,7 @@ async function startSend(
     return { ok: true }
   } catch (error) {
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
+    if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
     releaseCwdActivityOnce()
     if (admittedRun) {
       admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
@@ -5665,6 +5684,16 @@ function reportDecisionTurnFailure(conversationId: string, r: { ok: boolean; err
   if (r.ok || r.error === 'busy') return // 'busy' = a turn is already running; do not overwrite with an error.
   const wc = getMainWebContents()
   const message = tFor(getLocale(), 'prompts')('planBroker.decisionTurnFailed', { reason: r.error ?? 'unknown-error' })
+  if (wc) sendChatEvent(wc, `chat:delta:${conversationId}`, { kind: 'error', message })
+  updateConversationStatus(conversationId, 'error')
+  savedDeps?.emitStatus(conversationId, 'error')
+}
+
+/** Visible error on a conversation whose dispatched first turn could not start; the journal keeps it retryable. */
+export function reportConversationDispatchStartFailure(conversationId: string, reason: string): void {
+  if (reason === 'busy') return
+  const wc = getMainWebContents()
+  const message = tFor(getLocale(), 'prompts')('conversationDispatch.startFailed', { reason })
   if (wc) sendChatEvent(wc, `chat:delta:${conversationId}`, { kind: 'error', message })
   updateConversationStatus(conversationId, 'error')
   savedDeps?.emitStatus(conversationId, 'error')
@@ -9490,70 +9519,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // and finally by the USER filter (models hidden in Settings). `includeHidden` returns the full
   // list — consumed by the filter management screen itself.
 
-  deps.mhandle('chat:models', async (_e, providerId: string, force?: boolean, includeHidden?: boolean) => {
-    if (typeof providerId !== 'string') return []
-    const visible = (models: string[]) => {
-      if (includeHidden === true) return models
-      const hidden = new Set(getHiddenChatModels()[providerId] ?? [])
-      return hidden.size === 0 ? models : models.filter((model) => !hidden.has(model))
-    }
-    const accountId = subscriptionAccountId(providerId)
-    if (isCodexSubscriptionProvider(providerId)) {
-      const status = await codexAuthStatus(force === true, undefined, accountId)
-      if (!status.authenticated) return []
-      const models = await getCodexSubscriptionManager(accountId).listModels(force === true)
-      return visible(
-        models.filter((model) => !model.hidden && model.inputModalities.includes('text')).map((model) => model.id)
-      )
-    }
-    if (isGitHubCopilotSubscriptionProvider(providerId)) {
-      const status = await githubCopilotAuthStatus(force === true, accountId)
-      if (!status.authenticated) return []
-      try {
-        const models = await getGitHubCopilotSubscriptionManager(accountId).listModels(force === true)
-        return visible(models.filter((model) => model.policy?.state !== 'disabled').map((model) => model.id))
-      } catch (error) {
-        throw new Error(githubCopilotErrorMessage(error))
-      }
-    }
-    if (isClaudeSubscriptionProvider(providerId)) {
-      const status = await claudeAuthStatus(force === true, accountId)
-      if (!status.authenticated) return []
-      try {
-        return visible(
-          (await getClaudeSubscriptionManager(accountId).listModels(undefined, force === true)).map(
-            (model) => model.value
-          )
-        )
-      } catch (error) {
-        throw new Error(claudeSubscriptionErrorMessage(error))
-      }
-    }
-    if (isCursorSubscriptionProvider(providerId)) {
-      if (!validSubscriptionAccountId('cursor-subscription', accountId)) return []
-      const status = await cursorAuthStatus(force === true, accountId)
-      if (!status.authenticated) return []
-      try {
-        return visible(
-          (await getCursorSubscriptionManager(accountId).listModels(force === true)).map((model) => model.id)
-        )
-      } catch (error) {
-        throw new Error(cursorSdkErrorMessage(error))
-      }
-    }
-    if (isGrokSubscriptionProvider(providerId)) {
-      const status = await grokAuthStatus(force === true, accountId)
-      if (!status.authenticated) return []
-      try {
-        return visible(
-          (await getGrokSubscriptionManager(accountId).listModels(force === true)).map((model) => model.id)
-        )
-      } catch (error) {
-        throw new Error(grokSubscriptionErrorMessage(error))
-      }
-    }
-    return visible(await filterChatModels(await fetchModels(providerId, force === true)))
-  })
+  deps.mhandle('chat:models', (_e, providerId: string, force?: boolean, includeHidden?: boolean) =>
+    typeof providerId === 'string'
+      ? listChatProviderModels(providerId, { force: force === true, includeHidden: includeHidden === true })
+      : []
+  )
 
   // DISPLAYED model filter per provider (Settings › Chat). Store the HIDDEN models.
   deps.mhandle('chat:hidden-models:get', () => getHiddenChatModels())
@@ -10316,6 +10286,179 @@ export function disposeChat(): Promise<void> {
     for (const providerId of grokProviderIds) invalidateProvider(providerId)
   })()
   return chatDisposePromise
+}
+
+/**
+ * Usable models of one provider/account slot, honoring authentication and the user's hidden-model filter unless
+ * `includeHidden`. Shared by the model picker IPC and conversation dispatch validation.
+ */
+export async function listChatProviderModels(
+  providerId: string,
+  options: { force?: boolean; includeHidden?: boolean } = {}
+): Promise<string[]> {
+  const force = options.force === true
+  const includeHidden = options.includeHidden === true
+  const visible = (models: string[]) => {
+    if (includeHidden === true) return models
+    const hidden = new Set(getHiddenChatModels()[providerId] ?? [])
+    return hidden.size === 0 ? models : models.filter((model) => !hidden.has(model))
+  }
+  const accountId = subscriptionAccountId(providerId)
+  if (isCodexSubscriptionProvider(providerId)) {
+    const status = await codexAuthStatus(force, undefined, accountId)
+    if (!status.authenticated) return []
+    const models = await getCodexSubscriptionManager(accountId).listModels(force)
+    return visible(
+      models.filter((model) => !model.hidden && model.inputModalities.includes('text')).map((model) => model.id)
+    )
+  }
+  if (isGitHubCopilotSubscriptionProvider(providerId)) {
+    const status = await githubCopilotAuthStatus(force, accountId)
+    if (!status.authenticated) return []
+    try {
+      const models = await getGitHubCopilotSubscriptionManager(accountId).listModels(force)
+      return visible(models.filter((model) => model.policy?.state !== 'disabled').map((model) => model.id))
+    } catch (error) {
+      throw new Error(githubCopilotErrorMessage(error))
+    }
+  }
+  if (isClaudeSubscriptionProvider(providerId)) {
+    const status = await claudeAuthStatus(force, accountId)
+    if (!status.authenticated) return []
+    try {
+      return visible(
+        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map(
+          (model) => model.value
+        )
+      )
+    } catch (error) {
+      throw new Error(claudeSubscriptionErrorMessage(error))
+    }
+  }
+  if (isCursorSubscriptionProvider(providerId)) {
+    if (!validSubscriptionAccountId('cursor-subscription', accountId)) return []
+    const status = await cursorAuthStatus(force, accountId)
+    if (!status.authenticated) return []
+    try {
+      return visible(
+        (await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
+      )
+    } catch (error) {
+      throw new Error(cursorSdkErrorMessage(error))
+    }
+  }
+  if (isGrokSubscriptionProvider(providerId)) {
+    const status = await grokAuthStatus(force, accountId)
+    if (!status.authenticated) return []
+    try {
+      return visible(
+        (await getGrokSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
+      )
+    } catch (error) {
+      throw new Error(grokSubscriptionErrorMessage(error))
+    }
+  }
+  return visible(await filterChatModels(await fetchModels(providerId, force)))
+}
+
+/**
+ * Settings the next turn of `conversationId` would use (selection, effective effort and Fast). Inheritance source
+ * for conversations started from it; null when no provider/model is configured.
+ */
+export function conversationExecutionSettings(conversationId: string): ConversationDispatchSettings | null {
+  const selection = selectionFor(conversationId)
+  if (!selection?.providerId || !selection.modelId) return null
+  const prefs = getConvUiPrefs(conversationId).chat
+  const reasoning = typeof prefs?.reasoning === 'string' && prefs.reasoning.trim() ? prefs.reasoning : defaultReasoningEffort()
+  return {
+    providerId: selection.providerId,
+    modelId: selection.modelId,
+    reasoning: reasoning || 'off',
+    fastMode: prefs?.fastMode === true,
+  }
+}
+
+/** Settings persisted on a conversation, without defaults; used to verify what a destination will really run. */
+export function persistedConversationSettings(conversationId: string): ConversationDispatchSettings | null {
+  const prefs = getConvUiPrefs(conversationId).chat
+  if (!prefs?.providerId || !prefs.modelId) return null
+  return {
+    providerId: prefs.providerId,
+    modelId: prefs.modelId,
+    reasoning: typeof prefs.reasoning === 'string' && prefs.reasoning ? prefs.reasoning : 'off',
+    fastMode: prefs.fastMode === true,
+  }
+}
+
+/** Capability snapshot of one provider/model pair, from the same sources as the pickers. */
+export interface DispatchModelCapability {
+  /** The provider lists the model for an authenticated account. */
+  available: boolean
+  reasoning: boolean
+  /** Advertised efforts; empty when the model has no known effort axis. */
+  reasoningEfforts: string[]
+  nativeUltraMode: boolean
+  /** True only when the model advertises Fast/Priority; unknown is false. */
+  fastMode: boolean
+}
+
+export async function describeChatModelForDispatch(
+  providerId: string,
+  modelId: string
+): Promise<DispatchModelCapability> {
+  if (!listAvailableChatProviders().some((provider) => provider.id === providerId)) {
+    return { available: false, reasoning: false, reasoningEfforts: [], nativeUltraMode: false, fastMode: false }
+  }
+  const models = await bestEffortWithin(
+    listChatProviderModels(providerId, { includeHidden: true }).catch(() => [] as string[]),
+    10_000,
+    [] as string[]
+  )
+  const [primary, fallback] = await Promise.all([
+    bestEffortWithin(
+      effectiveModelMeta(modelId, providerId)
+        .then((result) => result.meta)
+        .catch(() => null),
+      5_000,
+      null
+    ),
+    bestEffortWithin(runnerCapabilityMetaFallback(providerId, modelId).catch(() => null), 5_000, null),
+  ])
+  const advertised = primary?.reasoningEfforts?.length ? primary.reasoningEfforts : (fallback?.reasoningEfforts ?? [])
+  const reasoningEfforts = [...new Set(advertised.map((effort) => effort.trim()).filter(Boolean))]
+  return {
+    available: models.includes(modelId),
+    reasoning: primary?.reasoning === true || fallback?.reasoning === true || reasoningEfforts.length > 0,
+    reasoningEfforts,
+    nativeUltraMode: (primary?.nativeUltraMode ?? fallback?.nativeUltraMode) === true,
+    fastMode: (primary?.fastModeCapability ?? fallback?.fastModeCapability) === true,
+  }
+}
+
+/**
+ * First turn of a conversation started from another one. The seed is host-generated input: it never registers a
+ * human origin, so it cannot authorize further dispatch. `visible` keeps the task statement as an attributed user
+ * bubble; plan handoffs stay internal like same-conversation plan execution.
+ */
+export async function startConversationDispatchTurn(input: {
+  conversationId: string
+  prompt: string
+  dispatchId: string
+  sourceConversationId: string
+  visible: boolean
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!savedDeps) return { ok: false, error: 'chat-unavailable' }
+  const wc = getMainWebContents()
+  if (!wc) return { ok: false, error: 'desktop-window-unavailable' }
+  try {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
+      ...(input.visible ? {} : { internal: true }),
+      dispatchSeed: { dispatchId: input.dispatchId, sourceConversationId: input.sourceConversationId },
+    })
+    return result.ok ? { ok: true } : { ok: false, error: result.error ?? 'unavailable' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

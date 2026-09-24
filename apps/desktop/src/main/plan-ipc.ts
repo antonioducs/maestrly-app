@@ -1,4 +1,6 @@
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { standardPlanHandoffSchema, type StandardPlanHandoff } from '../shared/conversation-dispatch'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isWebManagedConversation } from './chat/remote-policy'
 import { constants as fsConstants, promises as fsp } from 'node:fs'
@@ -30,6 +32,23 @@ export interface PlanIpcDeps {
     reviewId: string,
     outcome: { status: 'revise'; feedbackText: string } | { status: 'approved' } | { status: 'discarded' }
   ) => { ok: boolean; error?: string }
+  /** Journal and create (never start) the Standard destination with validated settings. */
+  prepareStandardPlanHandoff?: (input: {
+    sourceConversationId: string
+    planKey: string
+    title: string
+    plan: string
+    handoff: StandardPlanHandoff
+  }) => Promise<{ ok: true; dispatchId: string; conversationId: string } | { ok: false; error: string }>
+  /** Remove a prepared, never-started destination when the decision could not be committed. */
+  discardStandardPlanHandoff?: (dispatchId: string) => Promise<void>
+  /** Open the destination and admit its implementation turn; failures stay visible and retryable there. */
+  startStandardPlanHandoff?: (dispatchId: string) => Promise<unknown>
+}
+
+/** Stable key of one approved plan version: retries replay the same destination instead of creating another. */
+function planHandoffKey(version: number | undefined, plan: string): string {
+  return `plan:${version ?? 0}:${createHash('sha256').update(plan).digest('hex').slice(0, 32)}`
 }
 
 function errorText(error: unknown): string {
@@ -51,17 +70,32 @@ function positiveLine(value: unknown): number | undefined {
 }
 
 export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
+  /** One Standard handoff per source at a time: a concurrent retry must not discard the winner's destination. */
+  const standardHandoffsInFlight = new Set<string>()
   reg.mhandle('plan:decide', async (_e, agentId: string, decision: PlanDecision) => {
     if (isWebManagedConversation(agentId)) return { ok: false, error: 'Decide this plan in the Kanban web chat.' }
     if (
       decision.implementationTarget !== undefined &&
       decision.implementationTarget !== 'source' &&
-      decision.implementationTarget !== 'maestro'
+      decision.implementationTarget !== 'maestro' &&
+      decision.implementationTarget !== 'standard'
     ) {
       return { ok: false, error: 'plan-implementation-target-invalid' }
     }
-    if (decision.implementationTarget === 'maestro' && decision.action !== 'approve') {
+    if (
+      (decision.implementationTarget === 'maestro' || decision.implementationTarget === 'standard') &&
+      decision.action !== 'approve'
+    ) {
       return { ok: false, error: 'plan-implementation-target-invalid' }
+    }
+    // Destination settings belong only to a Standard handoff and must be complete and well-formed.
+    let standardHandoff: StandardPlanHandoff | undefined
+    if (decision.implementationTarget === 'standard') {
+      const parsed = standardPlanHandoffSchema.safeParse(decision.standardHandoff)
+      if (!parsed.success) return { ok: false, error: 'plan-standard-handoff-invalid' }
+      standardHandoff = parsed.data
+    } else if (decision.standardHandoff !== undefined) {
+      return { ok: false, error: 'plan-standard-handoff-invalid' }
     }
     if (
       decision.maestroStrategyProfileId !== undefined &&
@@ -83,7 +117,7 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       return
     }
     if (sourceConversation.botOrigin) {
-      if (decision.implementationTarget === 'maestro')
+      if (decision.implementationTarget === 'maestro' || decision.implementationTarget === 'standard')
         return { ok: false, error: 'Bot conversations must keep their exclusive worktree.' }
       // Deciding a plan takes a chat the person never released, as it always has. A released chat is
       // already theirs to write in, so it stays shared; the implementation turn holds the slot instead.
@@ -150,6 +184,47 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         void runApprovedPlan(maestroConversation.id, approvedPlan)
         return { ok: true, conversationId: maestroConversation.id }
       })()
+    }
+
+    if (result.action === 'approve' && result.approvedPlan && standardHandoff) {
+      if (sourceConversation.scope === 'standalone') return { ok: false, error: 'project-required' }
+      if (!deps.prepareStandardPlanHandoff || !deps.discardStandardPlanHandoff || !deps.startStandardPlanHandoff) {
+        return { ok: false, error: 'plan-standard-handoff-unavailable' }
+      }
+      if (standardHandoffsInFlight.has(agentId)) return { ok: false, error: 'plan-decision-in-progress' }
+      standardHandoffsInFlight.add(agentId)
+      const approvedPlan = result.approvedPlan
+      const handoff = standardHandoff
+      try {
+        // Order matters: validate and create the destination, confirm any external review, then consume the
+        // pending plan. Until the commit, a failure leaves the plan pending and removes only the new destination.
+        const prepared = await deps.prepareStandardPlanHandoff({
+          sourceConversationId: agentId,
+          planKey: planHandoffKey(result.version, approvedPlan),
+          title: result.title?.trim() || 'Plan',
+          plan: approvedPlan,
+          handoff,
+        })
+        if (!prepared.ok) return { ok: false, error: prepared.error }
+        const rollback = async (error: string) => {
+          try {
+            await deps.discardStandardPlanHandoff!(prepared.dispatchId)
+            return { ok: false, error }
+          } catch (rollbackError) {
+            return { ok: false, error: `plan-standard-rollback-failed: ${errorText(rollbackError)}` }
+          }
+        }
+        if (webRoute) {
+          const reviewResolution = resolveWeb({ status: 'approved' })
+          if (!reviewResolution.ok) return rollback(reviewResolution.error ?? 'plan-review-unavailable')
+        }
+        if (!commitPlanDecision(agentId, result.action)) return rollback('plan-decision-stale')
+        // The source keeps its own mode and settings; only the new conversation implements the plan.
+        void deps.startStandardPlanHandoff(prepared.dispatchId)
+        return { ok: true, conversationId: prepared.conversationId }
+      } finally {
+        standardHandoffsInFlight.delete(agentId)
+      }
     }
 
     let reviewResolution: { ok: boolean; error?: string } | undefined

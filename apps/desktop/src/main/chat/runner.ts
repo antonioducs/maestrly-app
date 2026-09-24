@@ -62,6 +62,7 @@ import {
   REVIEWER_READONLY_TOOL_NAMES,
   selectSubagentToolNames,
 } from './tools'
+import { enableConversationDispatchTools } from './tools/conversation-dispatch'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -610,6 +611,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const hasNotesTab = Boolean(conversation)
   const enabledNames = args.reviewerRuntime ? new Set(REVIEWER_READONLY_TOOL_NAMES) : builtinToolNamesForMode(mode)
 
+  // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
+  const conversationDispatch = args.reviewerRuntime
+    ? undefined
+    : enableConversationDispatchTools(enabledNames, conversationId, mode)
+
   if (autonomousPolicy(conversationId))
     for (const name of enabledNames) {
       if (interactiveTool(name)) enabledNames.delete(name)
@@ -741,6 +747,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           emitGeneratedImage: (image: GeneratedImageEmission) =>
             emitGeneratedImagePart(apply, assistantId, toolCallId, image),
           onGeneratedImageUsage: recordGeneratedImageUsage,
+          ...(conversationDispatch ? { conversationDispatch } : {}),
         }),
   })
   // generate_image is OPT-IN: requires global/conversation imagegen toggle and connected ChatGPT

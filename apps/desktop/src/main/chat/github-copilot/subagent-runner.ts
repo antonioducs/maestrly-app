@@ -5,6 +5,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
+import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
@@ -21,7 +22,15 @@ import { harnessSubagentPrompt } from '../harness/host-contracts'
 import { chatDiag } from '../diag-log'
 
 const SESSION_WAIT_TIMEOUT_MS = 24 * 60 * 60 * 1_000
-const FORBIDDEN_CHILD_TOOLS = new Set(['task', 'delegate', 'review_plan', 'ask_question', 'todo_write', 'executor_report'])
+const FORBIDDEN_CHILD_TOOLS = new Set<string>([
+  'task',
+  'delegate',
+  'review_plan',
+  'ask_question',
+  'todo_write',
+  'executor_report',
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+])
 type CopilotReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
 
 export interface RunGitHubCopilotSubagentArgs {

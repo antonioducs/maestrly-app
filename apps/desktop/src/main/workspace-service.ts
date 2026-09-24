@@ -109,7 +109,10 @@ export function removeWorkspace(id: string): void {
 }
 
 /** Remove the conversation and its owned resources, preserving shared worktrees and referenced images. */
-export async function deleteConversation(id: string, options: { preserveBranch?: boolean } = {}): Promise<void> {
+export async function deleteConversation(
+  id: string,
+  options: { preserveBranch?: boolean; preserveWorktree?: boolean } = {}
+): Promise<void> {
   const conv = store.getConversation(id)
   if (!conv) return
   assertConversationMigrationMutationAllowed(id, 'Delete conversation')
@@ -148,7 +151,9 @@ export async function deleteConversation(id: string, options: { preserveBranch?:
 
   const sharesWorktree = store.countOtherConversationsInCwd(conv.cwd, id) > 0
 
-  if (ws && conv.mode === 'worktree' && !sharesWorktree) {
+  // A destination that only borrowed a checkout (shared dispatch rollback) never removes it, even when it is
+  // momentarily the last conversation there.
+  if (ws && conv.mode === 'worktree' && !sharesWorktree && !options.preserveWorktree) {
     try {
       await git.removeWorktree(ws.path, conv.cwd, true)
     } catch {
@@ -194,6 +199,10 @@ export interface CreateConversationArgs {
   repos?: CreateConvRepo[]
 
   attach?: { cwd: string; branch: string; mode?: ConversationMode }
+  /** Main-only: id reserved in advance by a durable allocation journal (never accepted from IPC). */
+  id?: string
+  /** Main-only: new branches start at this exact commit instead of the freshest base ref. */
+  baseRevision?: string
 }
 
 /** Prepare a worktree or an explicitly confirmed local attachment before persisting the conversation. */
@@ -261,12 +270,15 @@ export async function createConversation(args: CreateConversationArgs): Promise<
     cwd = args.attach.cwd
     branch = args.attach.branch
   } else if (args.mode === 'worktree') {
+    if (args.baseRevision && !args.isNewBranch) throw new Error('A pinned base revision requires a new branch.')
     cwd = await git.createWorktree({
       top: ws.path,
       branch: args.branch,
       base,
       isNewBranch: args.isNewBranch,
       dest: externalWorktreeDir(ws.id, args.branch),
+      // A pinned task branch must be new: never attach to an existing branch or checkout.
+      ...(args.baseRevision ? { baseRevision: args.baseRevision, exclusive: true } : {}),
     })
     branch = args.branch
   } else {
@@ -275,7 +287,7 @@ export async function createConversation(args: CreateConversationArgs): Promise<
 
   const conversation: ProjectConversation = {
     scope: 'project',
-    id: randomUUID(),
+    id: args.id ?? randomUUID(),
     workspaceId: ws.id,
     name: args.name || branch,
     branch,
@@ -297,7 +309,7 @@ export async function createConversation(args: CreateConversationArgs): Promise<
 /** Attach a sibling to the original checkout; share its existing worktree rather than creating another. */
 export async function createSiblingConversation(
   sourceConversationId: string,
-  options: { experience?: ConversationExperience; name?: string } = {}
+  options: { experience?: ConversationExperience; name?: string; id?: string } = {}
 ): Promise<ProjectConversation> {
   const source = store.getConversation(sourceConversationId)
   if (!source) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
@@ -317,5 +329,6 @@ export async function createSiblingConversation(
     experience: options.experience ?? src.experience,
     name: options.name,
     attach: { cwd: src.cwd, branch: src.branch, mode: src.mode },
+    ...(options.id ? { id: options.id } : {}),
   })
 }

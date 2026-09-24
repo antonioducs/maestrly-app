@@ -521,3 +521,172 @@ describe('registerPlanIpc', () => {
     expect(sendToWindow).not.toHaveBeenCalled()
   })
 })
+
+describe('registerPlanIpc — implement in a new Standard conversation', () => {
+  const HANDOFF = {
+    settings: { providerId: 'claude', modelId: 'opus', reasoning: 'high', fastMode: false },
+    placement: 'worktree' as const,
+  }
+  const source = { id: 'conv-source', scope: 'project', name: 'Checkout', experience: 'standard' }
+
+  function register(overrides: Record<string, unknown> = {}) {
+    const { reg, mhandles } = createTestRegistrar()
+    const deps = {
+      sendToWindow: vi.fn(),
+      prepareStandardPlanHandoff: vi.fn(async () => ({
+        ok: true as const,
+        dispatchId: 'dispatch-1',
+        conversationId: 'conv-new',
+      })),
+      discardStandardPlanHandoff: vi.fn(async () => undefined),
+      startStandardPlanHandoff: vi.fn(async () => undefined),
+      ...overrides,
+    }
+    registerPlanIpc(reg, deps)
+    return { deps, decide: (decision: unknown) => mhandles.get('plan:decide')!({} as never, source.id, decision) }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    h.commitPlanDecision.mockReset()
+    h.commitPlanDecision.mockReturnValue(true)
+    h.getConversation.mockReturnValue(source)
+    h.decidePlan.mockReset()
+    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Edited plan', version: 2, title: 'Checkout' })
+  })
+
+  it('creates the destination before consuming the plan, then starts it without touching the source', async () => {
+    const { deps, decide } = register()
+    const result = await decide({
+      action: 'approve',
+      implementationTarget: 'standard',
+      standardHandoff: HANDOFF,
+      editedPlan: '## Edited plan',
+    })
+
+    expect(result).toEqual({ ok: true, conversationId: 'conv-new' })
+    expect(deps.prepareStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith({
+      sourceConversationId: source.id,
+      planKey: expect.stringMatching(/^plan:2:[0-9a-f]{32}$/),
+      title: 'Checkout',
+      plan: '## Edited plan',
+      handoff: HANDOFF,
+    })
+    expect(deps.prepareStandardPlanHandoff.mock.invocationCallOrder[0]).toBeLessThan(
+      h.commitPlanDecision.mock.invocationCallOrder[0]!
+    )
+    expect(h.commitPlanDecision.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.startStandardPlanHandoff.mock.invocationCallOrder[0]!
+    )
+    expect(deps.startStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
+    expect(h.setChatMode).not.toHaveBeenCalled()
+    expect(h.runApprovedPlan).not.toHaveBeenCalled()
+    expect(deps.discardStandardPlanHandoff).not.toHaveBeenCalled()
+  })
+
+  it('keys a handoff by version and final text so a retry replays the same destination', async () => {
+    const { deps, decide } = register()
+    await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    const keys = deps.prepareStandardPlanHandoff.mock.calls.map((call) => (call as unknown as [{ planKey: string }])[0].planKey)
+    expect(keys[0]).toBe(keys[1])
+    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Different plan', version: 2 })
+    await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    const third = (deps.prepareStandardPlanHandoff.mock.calls[2] as unknown as [{ planKey: string; title: string }])[0]
+    expect(third.planKey).not.toBe(keys[0])
+    expect(third.title).toBe('Plan')
+  })
+
+  it.each([
+    ['missing settings', { action: 'approve', implementationTarget: 'standard' }],
+    [
+      'unknown fields',
+      { action: 'approve', implementationTarget: 'standard', standardHandoff: { ...HANDOFF, extra: true } },
+    ],
+    [
+      'invalid placement',
+      { action: 'approve', implementationTarget: 'standard', standardHandoff: { ...HANDOFF, placement: 'local' } },
+    ],
+    ['revise with a destination', { action: 'revise', implementationTarget: 'standard', standardHandoff: HANDOFF }],
+    ['settings for another target', { action: 'approve', implementationTarget: 'maestro', standardHandoff: HANDOFF }],
+    ['settings without a target', { action: 'approve', standardHandoff: HANDOFF }],
+  ])('rejects %s before deciding anything', async (_label, decision) => {
+    const { deps, decide } = register()
+    const result = (await decide(decision)) as { ok: boolean; error: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/^plan-(standard-handoff|implementation-target)-invalid$/)
+    expect(h.decidePlan).not.toHaveBeenCalled()
+    expect(deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
+  })
+
+  it('leaves the plan pending when the destination cannot be prepared', async () => {
+    const { deps, decide } = register({
+      prepareStandardPlanHandoff: vi.fn(async () => ({ ok: false as const, error: 'Fast mode is not available for opus.' })),
+    })
+    const result = await decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    expect(result).toEqual({ ok: false, error: 'Fast mode is not available for opus.' })
+    expect(h.commitPlanDecision).not.toHaveBeenCalled()
+    expect(deps.discardStandardPlanHandoff).not.toHaveBeenCalled()
+    expect(deps.startStandardPlanHandoff).not.toHaveBeenCalled()
+  })
+
+  it('removes only the unstarted destination when the decision is stale or the companion refuses', async () => {
+    h.commitPlanDecision.mockReturnValue(false)
+    const stale = register()
+    await expect(
+      stale.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'plan-decision-stale' })
+    expect(stale.deps.discardStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
+    expect(stale.deps.startStandardPlanHandoff).not.toHaveBeenCalled()
+
+    h.commitPlanDecision.mockClear()
+    h.commitPlanDecision.mockReturnValue(true)
+    h.decidePlan.mockReturnValue({
+      action: 'approve',
+      approvedPlan: '# plan',
+      version: 1,
+      route: { kind: 'chatgpt-web', reviewId: 'review-1' },
+    })
+    const web = register({ resolveChatGptWebPlanReview: vi.fn(() => ({ ok: false, error: 'plan-review-unavailable' })) })
+    await expect(
+      web.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'plan-review-unavailable' })
+    expect(web.deps.discardStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
+    expect(h.commitPlanDecision).not.toHaveBeenCalled()
+  })
+
+  it('refuses a concurrent decision instead of racing the first handoff', async () => {
+    let release!: () => void
+    const { deps, decide } = register({
+      prepareStandardPlanHandoff: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ ok: true, dispatchId: 'dispatch-1', conversationId: 'conv-new' })
+          })
+      ),
+    })
+    const first = decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    await vi.waitFor(() => expect(deps.prepareStandardPlanHandoff).toHaveBeenCalled())
+    await expect(
+      decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'plan-decision-in-progress' })
+    release()
+    await expect(first).resolves.toEqual({ ok: true, conversationId: 'conv-new' })
+    expect(deps.discardStandardPlanHandoff).not.toHaveBeenCalled()
+  })
+
+  it('requires a project and keeps bot conversations exclusive', async () => {
+    h.getConversation.mockReturnValue({ ...source, scope: 'standalone' })
+    const standalone = register()
+    await expect(
+      standalone.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'project-required' })
+    h.getConversation.mockReturnValue({ ...source, botOrigin: { kind: 'bot' } })
+    const bot = register()
+    await expect(
+      bot.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
+    ).resolves.toEqual({ ok: false, error: 'Bot conversations must keep their exclusive worktree.' })
+    expect(standalone.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
+    expect(bot.deps.prepareStandardPlanHandoff).not.toHaveBeenCalled()
+  })
+})

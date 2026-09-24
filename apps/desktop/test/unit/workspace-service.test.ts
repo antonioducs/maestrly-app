@@ -12,6 +12,7 @@ vi.mock('../../src/main/git-service', () => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   deleteBranch: vi.fn(),
+  slugifyBranch: vi.fn((branch: string) => branch.replace(/[/\\]/g, '-')),
 }))
 
 const lifecycle = vi.hoisted(() => ({ removeDirectory: vi.fn(), deletePermission: vi.fn() }))
@@ -84,6 +85,7 @@ import * as claudeLifecycle from '../../src/main/chat/claude-agent-sdk/lifecycle
 import * as memoryIndex from '../../src/main/memory/index'
 import {
   addWorkspace,
+  createConversation,
   createSiblingConversation,
   deleteConversation,
   removeWorkspace,
@@ -246,6 +248,79 @@ describe('workspace-service createSiblingConversation', () => {
       branch: 'feat/checkout',
       cwd: '/worktrees/checkout',
     })
+  })
+})
+
+describe('workspace-service dispatch allocations', () => {
+  it('creates a pinned, exclusive task worktree under a reserved id', async () => {
+    vi.mocked(git.createWorktree).mockResolvedValue('/worktrees/task')
+    const created = await createConversation({
+      id: 'reserved-id',
+      workspaceId: 'ws-1',
+      branch: 'task/proj-1-abcdef12',
+      isNewBranch: true,
+      baseRevision: 'a'.repeat(40),
+      mode: 'worktree',
+      experience: 'standard',
+      name: 'PROJ-1',
+    })
+    expect(git.createWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({
+        top: '/repo',
+        branch: 'task/proj-1-abcdef12',
+        isNewBranch: true,
+        baseRevision: 'a'.repeat(40),
+        exclusive: true,
+      })
+    )
+    expect(created).toMatchObject({ id: 'reserved-id', cwd: '/worktrees/task', experience: 'standard' })
+  })
+
+  it('refuses a pinned revision for an existing branch', async () => {
+    await expect(
+      createConversation({
+        workspaceId: 'ws-1',
+        branch: 'feature',
+        isNewBranch: false,
+        baseRevision: 'a'.repeat(40),
+        mode: 'worktree',
+      })
+    ).rejects.toThrow(/requires a new branch/)
+    expect(git.createWorktree).not.toHaveBeenCalled()
+  })
+
+  it('attaches a Standard sibling under a reserved id', async () => {
+    vi.mocked(store.getConversation).mockReturnValue({
+      id: 'source',
+      scope: 'project',
+      workspaceId: 'ws-1',
+      name: 'Feature',
+      branch: 'feature',
+      mode: 'worktree',
+      experience: 'standard',
+      cwd: '/worktrees/feature',
+      archived: 0,
+      isMulti: 0,
+    } as never)
+    const created = await createSiblingConversation('source', { experience: 'standard', name: 'Plan', id: 'reserved' })
+    expect(created).toMatchObject({ id: 'reserved', cwd: '/worktrees/feature', name: 'Plan' })
+    expect(git.createWorktree).not.toHaveBeenCalled()
+  })
+
+  it('never removes a borrowed checkout when rolling back a shared destination', async () => {
+    vi.mocked(store.getConversation).mockReturnValue({
+      id: 'borrowed',
+      scope: 'project',
+      workspaceId: 'ws-1',
+      mode: 'worktree',
+      isMulti: 0,
+      cwd: '/worktrees/source-feature',
+      branch: 'source-feature',
+    } as never)
+    await deleteConversation('borrowed', { preserveWorktree: true })
+    expect(git.removeWorktree).not.toHaveBeenCalled()
+    expect(git.deleteBranch).not.toHaveBeenCalled()
+    expect(store.deleteConversation).toHaveBeenCalledWith('borrowed')
   })
 })
 

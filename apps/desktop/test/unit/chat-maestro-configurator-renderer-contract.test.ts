@@ -47,7 +47,8 @@ describe('Maestro configurator renderer contract', () => {
     expect(assistant).toContain('allowUltra={false}')
     expect(reasoning).toContain('allowUltra?: boolean')
     expect(reasoning).toContain('avoidOverflow?: boolean')
-    expect(reasoning).toContain("position: 'fixed'")
+    // Fixed placement goes through the helper that also corrects for transformed ancestors such as dialogs.
+    expect(reasoning).toContain('fixedPanelPlacement(root, {')
     expect(reasoning).toContain("window.addEventListener('scroll', reposition, true)")
     expect(fast).toContain('export function FastModeChip')
     // Fast and reasoning appear only when the selected model advertises the capability.

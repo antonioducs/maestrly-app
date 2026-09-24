@@ -99,6 +99,7 @@ import { contextMeterReading, sameContextModel, selectContextObservation } from 
 import { ChatMicButton } from './ChatMicButton'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
+import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { MaestroControl } from './MaestroControl'
 import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
 import type { DelegatePart } from './OrchestrationRun'
@@ -2110,6 +2111,7 @@ export function ChatView({
             )}
 
             <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
+            <ConversationDispatchBanner conversationId={conversationId} />
             {reviewLoopActive && reviewLoop?.driver === 'maestrly-pair' && (
               <ReviewLoopBanner conversationId={conversationId} loop={reviewLoop} />
             )}

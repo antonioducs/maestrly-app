@@ -43,10 +43,13 @@ describe('plan-broker', () => {
   })
 
   it('stagePlan (chat): approve returns the edited plan, revise returns feedback, discard clears it', () => {
-    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '## Original' })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '## Original', title: 'Checkout' })
     expect(decidePlan('conv-chat', { action: 'approve', editedPlan: '## Edited' })).toEqual({
       action: 'approve',
       approvedPlan: '## Edited',
+      // Version and title key and name a handoff to a new conversation.
+      version: 1,
+      title: 'Checkout',
     })
 
     stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '## v2' })

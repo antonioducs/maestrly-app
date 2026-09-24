@@ -181,6 +181,25 @@ export function isHostToolReadOnly(name: string, metadata?: unknown): boolean {
   return value.readOnly === true && value.destructive !== true
 }
 
+/** Built-in host tools that may overlap when no explicit tool metadata says otherwise. */
+export const PARALLEL_SAFE_HOST_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'glob',
+  'grep',
+  'read',
+  'use_skill',
+  'webfetch',
+])
+
+/** Explicit `metadata.parallelSafe` wins; otherwise only the built-in read tools may overlap. */
+export function isHostToolParallelSafe(name: string, metadata?: unknown): boolean {
+  if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)) {
+    const parallelSafe = (metadata as Record<string, unknown>).parallelSafe
+    if (parallelSafe === true) return true
+    if (parallelSafe === false) return false
+  }
+  return PARALLEL_SAFE_HOST_TOOL_NAMES.has(name)
+}
+
 export function appToolAllowed(mode: ChatBehavior, name: string): boolean {
   if (name === 'review_plan') return false
   if (capabilityBehaviorFor(mode) === 'agent') return true
@@ -196,3 +215,14 @@ export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 
 }
 
 export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: false } as const
+
+/**
+ * Built-in, parent-only tools that start persistent conversations. They mutate (worktrees, conversations, turns),
+ * so they never enter read-only modes, the structurally read-only Maestro parent, subagents or Maestro workers.
+ * Runners add them only for a turn admitted from text the person typed (see conversation-dispatch-authorization).
+ */
+export const CONVERSATION_DISPATCH_TOOL_NAMES = ['list_conversation_models', 'start_conversations'] as const
+
+export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
+  return mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent'
+}

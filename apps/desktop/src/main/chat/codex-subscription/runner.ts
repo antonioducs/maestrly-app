@@ -128,6 +128,7 @@ import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
+import { enableConversationDispatchTools, isConversationDispatchToolName } from '../tools/conversation-dispatch'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
 import { reviewPlanTool } from '../tools/review-plan'
 import { createDeltaCoalescer } from '../delta-coalescer'
@@ -1057,7 +1058,7 @@ function currentUserInputs(message: ChatMessage, seedTranscript: string, dropIma
   return inputs
 }
 
-/** Host MCP screenshots keep their Maestrly name so the transcript renders the ordinary tool card. */
+/** Host MCP tools keep their Maestrly name so the transcript renders the ordinary tool card. */
 function hostMcpToolName(item: Record<string, unknown>): string | null {
   return item.type === 'mcpToolCall' &&
     item.server === CODEX_HOST_MCP_SERVER_NAME &&
@@ -1944,6 +1945,10 @@ async function buildDynamicTools(
     if (!args.reviewerRuntime && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       bridgeNames.add(GENERATE_IMAGE_TOOL_NAME)
     }
+    // Starting other conversations: only in a main turn admitted from text the person typed (never a reviewer).
+    const conversationDispatch = args.reviewerRuntime
+      ? undefined
+      : enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,
@@ -1986,6 +1991,7 @@ async function buildDynamicTools(
             onGeneratedImageUsage: state.onGeneratedImageUsage,
             generateImage: (prompt, generationSignal, onUsage) =>
               state.generateImage(prompt, generationSignal, onUsage),
+            ...(conversationDispatch ? { conversationDispatch } : {}),
             ...(args.reviewerRuntime
               ? {
                   reviewer: {
@@ -2637,8 +2643,8 @@ export async function runCodexSubscriptionChat(
     }),
   }
   let dynamic: Awaited<ReturnType<typeof buildDynamicTools>>
-  // Read-only screenshots run through the host MCP server. Code mode receives their image
-  // content as MCP items; dynamic tools would flatten those items to a string inside exec.
+  // Delegation and read-only screenshots run through the host MCP server: tasks can overlap,
+  // and code-mode models receive screenshot images as MCP content items.
   let hostMcpConfig: Record<string, unknown> | null = null
   try {
     dynamic = await buildDynamicTools(args, state)
@@ -2685,7 +2691,10 @@ export async function runCodexSubscriptionChat(
       runtimes
         .filter(
           (runtime) =>
-            runtime.spec.name !== 'task' && runtime.spec.name !== 'delegate' && runtime.spec.name !== 'review_plan'
+            runtime.spec.name !== 'task' &&
+            runtime.spec.name !== 'delegate' &&
+            runtime.spec.name !== 'review_plan' &&
+            !isConversationDispatchToolName(runtime.spec.name)
         )
         .map((runtime) => [
           runtime.spec.name,
@@ -2714,7 +2723,7 @@ export async function runCodexSubscriptionChat(
   const dynamicSpecs = hostMcpConfig ? specs.filter((spec) => !CODEX_HOST_MCP_TOOL_NAMES.has(spec.name)) : specs
   const registrations = dynamicToolRegistrations(dynamicSpecs)
   const toolProfile = profileDynamicTools(dynamicSpecs)
-  // Hosted screenshots belong to the thread identity, since Codex cannot change tools on resume.
+  // Hosted tools belong to the thread identity, since Codex cannot change tools on resume.
   const signature = dynamicToolSignature([
     ...dynamicSpecs,
     ...specs
@@ -3755,6 +3764,7 @@ export async function runCodexSubscriptionChat(
                       spec.name !== 'task' &&
                       spec.name !== 'delegate' &&
                       spec.name !== 'review_plan' &&
+                      !isConversationDispatchToolName(spec.name) &&
                       childToolNames.has(spec.name)
                   )
                   const childRuntimes = allChildRuntimes.filter(
@@ -3762,6 +3772,7 @@ export async function runCodexSubscriptionChat(
                       runtime.spec.name !== 'task' &&
                       runtime.spec.name !== 'delegate' &&
                       runtime.spec.name !== 'review_plan' &&
+                      !isConversationDispatchToolName(runtime.spec.name) &&
                       childToolNames.has(runtime.spec.name)
                   )
                   const classifySubagentQuota = async (error: unknown, physicalProviderId: string) => {

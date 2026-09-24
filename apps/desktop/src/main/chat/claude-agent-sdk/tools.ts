@@ -18,6 +18,7 @@ import {
   toolOutputIsError,
   toolOutputToMcpCallResult,
 } from '../tool-output'
+import { isHostToolParallelSafe } from '../tool-policy'
 import type { ToolOutput } from '../../../shared/chat'
 import type { ClaudeToolJournal } from './tool-journal'
 
@@ -274,6 +275,11 @@ export async function buildClaudeToolBridge(
     const inputShape = zodObject instanceof z.ZodObject ? zodObject.shape : { input: zodObject }
     const description = typeof aiTool.description === 'string' ? aiTool.description : `Maestrly tool ${name}.`
     const eager = eagerToolNames.has(name)
+    // readOnlyHint is the Claude runtime's only switch for running MCP tools concurrently; without it every
+    // Maestrly tool (including independent `task` calls) is serialized. The runtime also reads it for its native
+    // plan-mode gate, which Maestrly never enables (sessions run with permissionMode 'dontAsk'); Maestrly's own
+    // permission broker still gates each call inside execute. Not part of toolSignature: it never reaches the model.
+    const parallelSafe = isHostToolParallelSafe(name, (aiTool as { metadata?: unknown }).metadata)
     definitions.push(
       claudeTool(
         name,
@@ -322,7 +328,7 @@ export async function buildClaudeToolBridge(
           }
           return journal ? journal.track(callback) : callback()
         },
-        { alwaysLoad: eager }
+        { alwaysLoad: eager, ...(parallelSafe ? { annotations: { readOnlyHint: true } } : {}) }
       )
     )
     signatureRows.push({ name, description, schema: jsonSchema, eager })

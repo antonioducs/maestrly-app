@@ -2,6 +2,7 @@ import type { JSONSchema7, JSONSchema7Definition, JSONObject } from '@ai-sdk/pro
 import { openai } from '@ai-sdk/openai'
 import { asSchema } from '@ai-sdk/provider-utils'
 import { jsonSchema, type Tool, type ToolExecutionOptions, type ToolSet } from 'ai'
+import { isHostToolParallelSafe, PARALLEL_SAFE_HOST_TOOL_NAMES } from '../tool-policy'
 
 export interface OptimizeOpenAIToolsOptions {
   deferredToolNames?: Iterable<string>
@@ -317,18 +318,14 @@ const adaptFunctionTool = async (tool: GenericTool): Promise<{ tool: GenericTool
   }
 }
 
-const PARALLEL_SAFE_NAMES = new Set(['glob', 'grep', 'read', 'use_skill', 'webfetch'])
-
 export function isOpenAIReadOnlyTool(name: string, tool?: GenericTool): boolean {
   if (tool?.metadata?.readOnly === true) return true
   if (tool?.metadata?.readOnly === false) return false
-  return PARALLEL_SAFE_NAMES.has(name)
+  return PARALLEL_SAFE_HOST_TOOL_NAMES.has(name)
 }
 
 export function isOpenAIParallelSafeTool(name: string, tool?: GenericTool): boolean {
-  if (tool?.metadata?.parallelSafe === true) return true
-  if (tool?.metadata?.parallelSafe === false) return false
-  return PARALLEL_SAFE_NAMES.has(name)
+  return isHostToolParallelSafe(name, tool?.metadata)
 }
 
 interface SchedulerLease {

@@ -54,8 +54,9 @@ export function governAutonomousTools(tools:ToolSet,conversationId:string):void 
     if(execute)tools[name]={...entry,execute:(...args)=>withAutonomousPolicy(policy,()=>execute(...args))}
   }
 }
+/** Tools that need a person present; starting conversations also needs the person's explicit request. */
 export function interactiveTool(name: string): boolean {
-  return /(?:^|__)(?:review_plan|ask_question|request_user_input|request_user_input_async|wait_plan_review|AskUserQuestion|ExitPlanMode)(?:$|_)/.test(
+  return /(?:^|__)(?:review_plan|ask_question|request_user_input|request_user_input_async|wait_plan_review|AskUserQuestion|ExitPlanMode|start_conversations|list_conversation_models)(?:$|_)/.test(
     name
   )
 }

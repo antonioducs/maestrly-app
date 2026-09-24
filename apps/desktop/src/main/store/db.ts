@@ -999,6 +999,42 @@ function initializeSchema(): void {
     WHEN OLD.bot_origin IS NOT NULL AND NEW.bot_origin IS NOT OLD.bot_origin
     BEGIN SELECT RAISE(ABORT, 'Bot conversation origin is immutable'); END;
   `)
+  // Conversations started from another conversation (plan handoff or explicit task dispatch). The destination id
+  // is reserved before allocation so a crash can be reconciled; the tombstone keeps a deleted destination from
+  // being silently recreated by a retry of the same request.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_dispatches (
+      dispatch_id TEXT PRIMARY KEY,
+      source_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      origin_key TEXT NOT NULL,
+      request_key TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('task','plan')),
+      fingerprint TEXT NOT NULL,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      placement TEXT NOT NULL CHECK(placement IN ('shared','worktree')),
+      settings_json TEXT NOT NULL,
+      inherited_json TEXT NOT NULL DEFAULT '[]',
+      source_ref_json TEXT,
+      workspace_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL UNIQUE,
+      conversation_name TEXT NOT NULL,
+      branch TEXT,
+      base_revision TEXT,
+      phase TEXT NOT NULL CHECK(phase IN
+        ('reserved','allocating','prepared','starting','started','start-failed','recovery','discarded','deleted')),
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(source_conversation_id, origin_key, request_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_conversation_dispatches_phase ON conversation_dispatches(phase);
+    CREATE TRIGGER IF NOT EXISTS conversation_dispatch_tombstone BEFORE DELETE ON conversations
+    BEGIN
+      UPDATE conversation_dispatches SET phase='deleted', updated_at=CAST(unixepoch('subsec') * 1000 AS INTEGER)
+      WHERE conversation_id=OLD.id AND phase <> 'discarded';
+    END;
+  `)
   // Workspace project memory defaults enabled.
   const wsCols = db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>
   if (!wsCols.some((c) => c.name === 'memory_enabled')) {

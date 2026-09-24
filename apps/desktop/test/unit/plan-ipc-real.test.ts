@@ -57,6 +57,7 @@ describe('plan IPC with a real broker', () => {
   afterEach(() => {
     clearPlan('conv-web-real')
     clearPlan('conv-maestro-real')
+    clearPlan('conv-standard-real')
   })
 
   it('keeps the Web plan visible after external resolution fails and clears it only after an accepted retry', async () => {
@@ -114,6 +115,50 @@ describe('plan IPC with a real broker', () => {
 
     expect(getPending('conv-maestro-real')).toMatchObject({ plan: '# Maestro plan', version: 1 })
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
+  })
+
+  it('keeps the plan pending until a Standard destination exists, then delivers the edited plan exactly once', async () => {
+    stagePlan({ agentId: 'conv-standard-real', cwd: '/tmp/project', plan: '# Original', title: 'Checkout' })
+    h.getConversation.mockReturnValue({ id: 'conv-standard-real', scope: 'project', name: 'Feature' })
+    const prepareStandardPlanHandoff = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, error: 'Model "gone" is not available.' })
+      .mockResolvedValue({ ok: true, dispatchId: 'dispatch-1', conversationId: 'conv-new' })
+    const startStandardPlanHandoff = vi.fn(async () => undefined)
+    const { reg, mhandles } = createTestRegistrar()
+    registerPlanIpc(reg, {
+      sendToWindow: vi.fn(),
+      prepareStandardPlanHandoff,
+      discardStandardPlanHandoff: vi.fn(async () => undefined),
+      startStandardPlanHandoff,
+    })
+    const decision = {
+      action: 'approve',
+      implementationTarget: 'standard',
+      editedPlan: '# Edited',
+      standardHandoff: {
+        settings: { providerId: 'claude', modelId: 'gone', reasoning: 'off', fastMode: false },
+        placement: 'shared',
+      },
+    }
+
+    await expect(mhandles.get('plan:decide')?.({} as never, 'conv-standard-real', decision)).resolves.toEqual({
+      ok: false,
+      error: 'Model "gone" is not available.',
+    })
+    expect(getPending('conv-standard-real')).toMatchObject({ plan: '# Original', version: 1 })
+
+    await expect(mhandles.get('plan:decide')?.({} as never, 'conv-standard-real', decision)).resolves.toEqual({
+      ok: true,
+      conversationId: 'conv-new',
+    })
+    expect(getPending('conv-standard-real')).toBeNull()
+    expect(prepareStandardPlanHandoff).toHaveBeenLastCalledWith(
+      expect.objectContaining({ plan: '# Edited', title: 'Checkout', planKey: expect.stringMatching(/^plan:1:/) })
+    )
+    expect(startStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
+    expect(h.runApprovedPlan).not.toHaveBeenCalled()
+    expect(h.setChatMode).not.toHaveBeenCalled()
   })
 
   it.each([

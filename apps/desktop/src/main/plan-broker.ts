@@ -3,6 +3,7 @@ import { emitChatHost } from './chat/host-events'
 import * as windowIpc from './window-ipc'
 import { getLocale } from './store'
 import { tFor } from './i18n'
+import type { StandardPlanHandoff } from '../shared/conversation-dispatch'
 
 /**
  * Chat plan-review broker. review_plan stages the plan without blocking the turn; the user's IPC
@@ -16,10 +17,15 @@ export interface PlanLineComment {
 
 export interface PlanDecision {
   action: 'approve' | 'revise' | 'discard'
-  /** Omission keeps approval in the current conversation; Maestro creates a sibling for implementation. */
-  implementationTarget?: 'source' | 'maestro'
+  /**
+   * Omission keeps approval in the current conversation; Maestro creates a sibling for implementation; Standard
+   * starts a new Standard conversation with the settings in `standardHandoff`.
+   */
+  implementationTarget?: 'source' | 'maestro' | 'standard'
   /** Opaque Maestro strategy-profile ID resolved only in main. */
   maestroStrategyProfileId?: string
+  /** Destination model/effort/Fast and placement; validated in main, only with implementationTarget 'standard'. */
+  standardHandoff?: StandardPlanHandoff
   editedPlan?: string
   feedback?: string
   lineComments?: PlanLineComment[]
@@ -30,6 +36,9 @@ export interface PlanDecisionResult {
   action: 'approve' | 'revise' | 'discard'
   /** Final approved plan, with edits taking priority; present only for approve. */
   approvedPlan?: string
+  /** Version and title of the decided plan; present only for approve (names and keys a handoff). */
+  version?: number
+  title?: string
   /** Feedback for the model to revise the plan; present only for revise. */
   feedbackText?: string
   /** Version whose next submission should release the review's source reservation. */
@@ -209,7 +218,13 @@ export function decidePlan(
   const route = entry.origin.kind === 'chatgpt-web' ? { route: entry.origin } : {}
   const result =
     decision.action === 'approve'
-      ? { action: 'approve' as const, approvedPlan: finalApprovedPlan(entry, decision), ...route }
+      ? {
+          action: 'approve' as const,
+          approvedPlan: finalApprovedPlan(entry, decision),
+          version: entry.version,
+          ...(entry.title ? { title: entry.title } : {}),
+          ...route,
+        }
       : decision.action === 'revise'
         ? {
             action: 'revise' as const,

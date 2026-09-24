@@ -19,11 +19,12 @@ import { generateImageTool } from './generate-image'
 import { gitDiffTool } from './git-diff'
 import { readExecutionContextTool, searchExecutionContextTool } from './execution-context'
 import { submitReviewTool } from './submit-review'
+import { listConversationModelsTool, startConversationsTool } from './conversation-dispatch'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
-import { isHostToolReadOnly } from '../tool-policy'
+import { CONVERSATION_DISPATCH_TOOL_NAMES, isHostToolReadOnly } from '../tool-policy'
 import { OPENAI_APPLY_PATCH_TOOL_NAME, OPENAI_LOCAL_SHELL_TOOL_NAME } from '../openai/native-tools'
 
 export const ALL_TOOLS: ToolDef<any, any>[] = [
@@ -42,6 +43,8 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   searchExecutionContextTool,
   readExecutionContextTool,
   submitReviewTool,
+  listConversationModelsTool,
+  startConversationsTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -54,12 +57,14 @@ const AGENT_ONLY_TOOL_NAMES = new Set(['todo_write'])
 const PLAN_TOOL_NAME = 'review_plan'
 /** OPT-IN tools: never enabled by mode alone. Runner adds to `enabled` when the feature is enabled
  * (generate_image requires imagegen toggle + connected ChatGPT subscription — see chat/image-gen.ts). */
-const OPT_IN_TOOL_NAMES = new Set([
+const OPT_IN_TOOL_NAMES = new Set<string>([
   'generate_image',
   'git_diff',
   'search_execution_context',
   'read_execution_context',
   'submit_review',
+  // Only for a main turn admitted from text the person typed; runners add them via conversationDispatchRuntimeFor.
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
 ])
 
 /** Exact built-in surface for a technically read-only reviewer turn. */
@@ -86,6 +91,7 @@ const PARENT_ONLY_CHILD_TOOL_NAMES = new Set([
   'list_delegations',
   'inspect_subagent',
   'cancel_delegation',
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
 ])
 
 /**
@@ -210,7 +216,15 @@ export function selectSubagentToolNames(args: {
     for (const name of readOnlyHostNames) selected.add(name)
   }
 
-  for (const forbidden of ['task', 'delegate', 'review_plan', 'ask_question', 'todo_write', 'executor_report']) {
+  for (const forbidden of [
+    'task',
+    'delegate',
+    'review_plan',
+    'ask_question',
+    'todo_write',
+    'executor_report',
+    ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ]) {
     selected.delete(forbidden)
   }
   if (!args.allowSkillLoader) selected.delete('use_skill')

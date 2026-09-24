@@ -26,6 +26,7 @@ import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownVie
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { ToolCallCard } from './ToolCallCard'
+import { ConversationDispatchCard } from './ConversationDispatchCard'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
 import { QuestionCard } from './QuestionCard'
@@ -451,6 +452,8 @@ function Part({
     if (toolPart.toolName === 'ask_question') return <QuestionCard part={toolPart} />
     if (toolPart.toolName === 'todo_write')
       return toolPart.toolCallId === latestTodoId ? <TodoCard part={toolPart} /> : null
+    if (toolPart.toolName === 'start_conversations')
+      return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')
       return (
         <SubagentCard
@@ -668,6 +671,14 @@ const Bubble = memo(function Bubble({
     }
     return (
       <div className="group flex w-full min-w-0 max-w-full flex-col gap-1">
+        {message.source === 'conversation-dispatch' && (
+          <span
+            data-testid="conversation-dispatch-origin"
+            className="w-fit rounded border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-[10px] text-violet-200"
+          >
+            {t('dispatch.startedFrom')}
+          </span>
+        )}
         {message.botName && (
           <span
             data-testid="bot-message-author"

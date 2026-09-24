@@ -9,6 +9,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
+import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { createCursorStreamMapper, resolveCursorTerminalEvidence } from '../cursor-sdk/stream-map'
@@ -19,7 +20,14 @@ import { clearCursorAgentCleanup, markCursorAgentCleanupFailed, queueCursorAgent
 import { buildCursorToolBridge } from './tool-bridge'
 import { awaitCursorOperation, closeCursorLease, cancelLateCursorRun, runCursorRunWithWatchdog } from './watchdog'
 
-const FORBIDDEN_CHILD_TOOLS = new Set(['task', 'delegate', 'review_plan', 'ask_question', 'todo_write'])
+const FORBIDDEN_CHILD_TOOLS = new Set<string>([
+  'task',
+  'delegate',
+  'review_plan',
+  'ask_question',
+  'todo_write',
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+])
 
 export interface RunCursorSubagentArgs {
   manager: CursorSubscriptionManager
