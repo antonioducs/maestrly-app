@@ -261,6 +261,7 @@ export default {
     increaseFont: 'Increase',
     appToolsLabel: 'Maestrly tools',
     appToolsDesc: 'terminal, browser, notes, memory, debug',
+    appToolsBotLocked: 'Always on for bots: their browser, screen and help tools depend on them',
     imageGenLabel: 'Image generation',
     imageGenDesc: 'lets the model draw images in this conversation',
     mcpServers: 'MCP servers',

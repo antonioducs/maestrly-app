@@ -267,6 +267,7 @@ export default {
     increaseFont: 'Aumentar',
     appToolsLabel: 'Ferramentas do Maestrly',
     appToolsDesc: 'terminal, navegador, notas, memória, debug',
+    appToolsBotLocked: 'Sempre ligadas no bot: o navegador, a tela e o pedido de ajuda dependem delas',
     imageGenLabel: 'Geração de imagem',
     imageGenDesc: 'permite ao modelo desenhar imagens nesta conversa',
     mcpServers: 'Servidores MCP',

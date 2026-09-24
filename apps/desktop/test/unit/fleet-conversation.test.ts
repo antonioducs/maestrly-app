@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { fleetConversationCallRequestSchema } from '@maestrly/bot-fleet-protocol'
-import { projectFleetChatConfig, validateFleetConversationArgs } from '../../src/main/fleet/instance/conversation'
+import {
+  botToolsPatchRefusal,
+  projectFleetChatConfig,
+  validateFleetConversationArgs,
+} from '../../src/main/fleet/instance/conversation'
 
 describe('fleet conversation boundary', () => {
+  it('refuses to turn Maestrly tools off for a bot instead of silently re-enabling them', () => {
+    expect(botToolsPatchRefusal({ app: false })).toMatch(/stay on for bots/)
+    expect(botToolsPatchRefusal({ app: true })).toBeNull()
+    expect(botToolsPatchRefusal({})).toBeNull()
+  })
+
   it('rejects caller supplied conversation identifiers and extra op arguments', () => {
     expect(
       fleetConversationCallRequestSchema.safeParse({ op: 'chatGetConvTools', args: [], conversationId: 'other' })

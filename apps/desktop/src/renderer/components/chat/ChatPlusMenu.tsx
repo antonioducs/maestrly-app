@@ -379,9 +379,17 @@ export function ChatPlusMenu({
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
             <div className="min-w-0">
               <div className="text-[13px] text-foreground">{t('plusMenu.appToolsLabel')}</div>
-              <div className="text-[11px] text-muted-foreground">{t('plusMenu.appToolsDesc')}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {source.bot ? t('plusMenu.appToolsBotLocked') : t('plusMenu.appToolsDesc')}
+              </div>
             </div>
-            <Toggle on={app} onClick={toggleApp} label={t('plusMenu.appToolsLabel')} />
+            {/* A bot always runs with them (its browser, screen and help tools); its own Maestrly re-enables them. */}
+            <Toggle
+              on={source.bot ? true : app}
+              onClick={toggleApp}
+              label={t('plusMenu.appToolsLabel')}
+              disabled={Boolean(source.bot)}
+            />
           </div>
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
             <div className="min-w-0">

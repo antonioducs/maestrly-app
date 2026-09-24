@@ -109,6 +109,13 @@ describe('chat composer data sources', () => {
     vi.unstubAllGlobals()
   })
 
+  it('shows Maestrly tools locked on for a bot, since its own profile keeps them on', () => {
+    const menu = sourceFile('chat/ChatPlusMenu.tsx')
+    expect(menu).toContain('on={source.bot ? true : app}')
+    expect(menu).toContain('disabled={Boolean(source.bot)}')
+    expect(menu).toContain("t('plusMenu.appToolsBotLocked')")
+  })
+
   it('keeps the bot source stable across status and usage updates', () => {
     const composer = sourceFile('fleet/BotComposer.tsx')
     // A source rebuilt on every `bot.updated` event would reload commands over the network several times a second.

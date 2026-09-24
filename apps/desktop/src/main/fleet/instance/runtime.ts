@@ -65,7 +65,7 @@ import { setBotIdentity } from './identity'
 import { broadcast } from '../../window-ipc'
 import type { BotInstanceConfig } from './config'
 import { FleetImageStore } from './images'
-import { validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
+import { botToolsPatchRefusal, validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
 import { inspectSubagentProfile } from '../../chat/subagent-profile-ipc'
 import {
   getConversationSubagentProfileRules,
@@ -809,9 +809,13 @@ export class BotInstanceRuntime implements InstanceControl {
       case 'chatGetConvTools':
         result = fleetChatGetConvTools(id)
         break
-      case 'chatSetConvTools':
-        result = fleetChatSetConvTools(id, args[0] as { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean })
+      case 'chatSetConvTools': {
+        const patch = args[0] as { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
+        const refusal = botToolsPatchRefusal(patch)
+        if (refusal) throw new InstanceHttpError(409, 'CONFLICT', refusal)
+        result = fleetChatSetConvTools(id, patch)
         break
+      }
       case 'chatSubagentProfilesGetConversation':
         result = await inspectSubagentProfile(getConversationSubagentProfileRules(id))
         break
