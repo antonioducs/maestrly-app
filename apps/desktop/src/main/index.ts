@@ -432,6 +432,8 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   })
+  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn.
+  if (isBotMode()) mainWindow.removeMenu()
 
   const wc = mainWindow.webContents
   wc.on('console-message', (_e, level, message, line, sourceId) => {
