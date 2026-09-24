@@ -14,6 +14,7 @@ import type { GatewayConfig } from './config.js'
 import { type ContainerInfo, DockerError, type DockerDriver, type ContainerStats } from './docker.js'
 import { GatewayError } from './errors.js'
 import { InstanceClient } from './instance.js'
+import { Logger } from './logger.js'
 import type { Store } from './store.js'
 
 const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
@@ -24,11 +25,13 @@ export type InstanceFactory = (botId: string, token: string) => InstanceClient
 export class Lifecycle {
   readonly statuses = new Map<string, FleetInstanceStatus>()
   readonly resources = new Map<string, ContainerStats & { startedAt: string | null }>()
+  readonly imageOutdated = new Map<string, boolean>()
   readonly takeovers = new Map<string, FleetTakeoverState>()
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
   private readonly reconcileTimers = new Map<string, NodeJS.Timeout>()
   private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
+  private readonly logger = new Logger()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   controlCount: (id: string) => number = () => 0
   onReady: (id: string) => void = () => {}
@@ -243,14 +246,22 @@ export class Lifecycle {
     }
   }
   private async provision(id: string) {
-    const bot = this.store.getBot(id)!,
-      secrets = this.store.botSecrets(id)!
     if (!(await this.docker.imageInspect(this.config.botImage)))
       throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
     await this.docker.ensureNetwork(this.config.network)
     const name = 'maestrly-bot-' + id,
       volume = name + '-home'
     await this.docker.volumeCreate(volume, { [managed]: 'true', [botLabel]: id })
+    const container = await this.createContainer(id)
+    this.imageOutdated.set(id, false)
+    await this.docker.start(container)
+    await this.ready(id)
+  }
+  private async createContainer(id: string): Promise<string> {
+    const bot = this.store.getBot(id)!,
+      secrets = this.store.botSecrets(id)!
+    const name = 'maestrly-bot-' + id,
+      volume = name + '-home'
     const env = {
       [FLEET_BOT_ENV.mode]: '1',
       [FLEET_BOT_ENV.id]: id,
@@ -263,7 +274,7 @@ export class Lifecycle {
       MAESTRLY_BOT_KEYRING_PASSWORD: secrets.keyringPassword,
       TZ: this.config.timezone,
     }
-    const container = await this.docker.containerCreate({
+    return this.docker.containerCreate({
       name,
       image: this.config.botImage,
       hostname: id,
@@ -275,8 +286,39 @@ export class Lifecycle {
       shmSize: this.config.botShm,
       securityOpt: this.config.botSecurityOpt,
     })
-    await this.docker.start(container)
+  }
+  private async updateImageState(id: string, container: ContainerInfo): Promise<string | null> {
+    const image = await this.docker.imageInspect(this.config.botImage)
+    if (!image) {
+      this.imageOutdated.set(id, false)
+      this.logger.warn('Configured bot image missing; keeping existing container', {
+        botId: id,
+        image: this.config.botImage,
+      })
+      return null
+    }
+    this.imageOutdated.set(id, container.imageId !== image.id)
+    return image.id
+  }
+  private async startWithCurrentImage(id: string, container: ContainerInfo, restart: boolean): Promise<boolean> {
+    const imageId = await this.updateImageState(id, container)
+    if (imageId && container.imageId !== imageId) {
+      await this.docker.stop(container.id)
+      await this.docker.remove(container.id)
+      const replacement = await this.createContainer(id)
+      await this.docker.start(replacement)
+      await this.ready(id)
+      this.imageOutdated.set(id, false)
+      const fromImage = container.imageId.replace(/^sha256:/, '').slice(0, 12)
+      const toImage = imageId.replace(/^sha256:/, '').slice(0, 12)
+      this.logger.info('Bot container updated', { botId: id, fromImage, toImage })
+      this.recordActivity(id, 'bot_restarted', null, { updated: true, fromImage, toImage })
+      return true
+    }
+    if (restart) await this.docker.restart(container.id)
+    else await this.docker.start(container.id)
     await this.ready(id)
+    return false
   }
   private async ready(id: string) {
     this.update(id, { lifecycle: 'starting', setup: { step: 'desktop', error: null, errorMessage: null } })
@@ -335,8 +377,7 @@ export class Lifecycle {
     const container = await this.container(id)
     if (!container) throw new GatewayError('NOT_FOUND', 'Bot container missing')
     try {
-      await this.docker.start(container.id)
-      await this.ready(id)
+      await this.startWithCurrentImage(id, container, false)
     } catch (error) {
       this.fail(id, error)
     }
@@ -368,9 +409,7 @@ export class Lifecycle {
     this.clearTakeover(id, 4002)
     this.removeStatus(id)
     try {
-      await this.docker.restart(container.id)
-      await this.ready(id)
-      this.activity(id, 'bot_restarted')
+      if (!(await this.startWithCurrentImage(id, container, true))) this.activity(id, 'bot_restarted')
     } catch (error) {
       this.fail(id, error)
     }
@@ -389,6 +428,7 @@ export class Lifecycle {
     }
     this.removeStatus(id)
     this.resources.delete(id)
+    this.imageOutdated.delete(id)
     const result = this.store.transaction(() => {
       const archived = this.update(id, { lifecycle: 'archived' })
       this.syncPeers(id, [])
@@ -540,12 +580,17 @@ export class Lifecycle {
   async reconcile() {
     const containers = await this.docker.list(managed + '=true')
     const byId = new Map(containers.map((container) => [container.labels[botLabel], container]))
+    const currentImage = await this.docker.imageInspect(this.config.botImage)
     for (const bot of this.store.listBots()) {
       const container = byId.get(bot.id)
       if (!container) {
+        this.imageOutdated.delete(bot.id)
         this.update(bot.id, { lifecycle: bot.lifecycle === 'creating' ? 'failed' : 'stopped' })
         continue
       }
+      this.imageOutdated.set(bot.id, Boolean(currentImage && container.imageId !== currentImage.id))
+      if (this.imageOutdated.get(bot.id))
+        this.logger.info('Bot container uses an older image; restart to update', { botId: bot.id })
       if (container.state === 'running') {
         try {
           await this.reconcileOne(bot.id)

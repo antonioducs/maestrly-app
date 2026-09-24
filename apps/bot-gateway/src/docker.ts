@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { createHash } from 'node:crypto'
 import { GatewayError } from './errors.js'
 
 export type ContainerSpec = {
@@ -15,6 +16,7 @@ export type ContainerSpec = {
 }
 export type ContainerInfo = {
   id: string
+  imageId: string
   name: string
   state: 'running' | 'exited' | 'created'
   startedAt: string | null
@@ -181,6 +183,7 @@ export class DockerEngineDriver implements DockerDriver {
     const raw = await this.request('GET', await this.route('/containers/' + encodeURIComponent(id) + '/json'))
     return {
       id: String(raw.Id),
+      imageId: String(raw.Image),
       name: String(raw.Name).replace(/^\//, ''),
       state: raw.State?.Running ? 'running' : raw.State?.Status === 'created' ? 'created' : 'exited',
       startedAt:
@@ -195,6 +198,7 @@ export class DockerEngineDriver implements DockerDriver {
     const raw = await this.request('GET', await this.route('/containers/json' + query))
     return raw.map((item: any) => ({
       id: String(item.Id),
+      imageId: String(item.ImageID),
       name: String(item.Names?.[0] ?? '').replace(/^\//, ''),
       state: item.State === 'running' ? 'running' : item.State === 'created' ? 'created' : 'exited',
       startedAt: null,
@@ -209,6 +213,7 @@ export class DockerEngineDriver implements DockerDriver {
 }
 export class FakeDockerDriver implements DockerDriver {
   readonly images = new Set<string>()
+  readonly imageIds = new Map<string, string>()
   readonly containers = new Map<string, ContainerInfo & { spec: ContainerSpec }>()
   readonly volumes = new Set<string>()
   readonly networks = new Set<string>()
@@ -223,8 +228,14 @@ export class FakeDockerDriver implements DockerDriver {
   async ensureNetwork(name: string) {
     this.networks.add(name)
   }
+  setImage(ref: string, id: string) {
+    this.images.add(ref)
+    this.imageIds.set(ref, id)
+  }
   async imageInspect(ref: string) {
-    return this.images.has(ref) ? { id: ref } : null
+    return this.images.has(ref)
+      ? { id: this.imageIds.get(ref) ?? 'sha256:' + createHash('sha256').update(ref).digest('hex') }
+      : null
   }
   async volumeCreate(name: string) {
     this.volumes.add(name)
@@ -233,13 +244,23 @@ export class FakeDockerDriver implements DockerDriver {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(spec.name)) throw new DockerError(400, 'Invalid container name')
     if ([...this.containers.values()].some((item) => item.name === spec.name))
       throw new DockerError(409, 'Container name already in use')
+    const image = await this.imageInspect(spec.image)
+    if (!image) throw new DockerError(404, 'Image not found')
     const id = 'fake-' + spec.name
-    this.containers.set(id, { id, name: spec.name, state: 'created', startedAt: null, labels: spec.labels, spec })
+    this.containers.set(id, {
+      id,
+      imageId: image.id,
+      name: spec.name,
+      state: 'created',
+      startedAt: null,
+      labels: spec.labels,
+      spec,
+    })
     return id
   }
   async start(id: string) {
     const item = await this.lookup(id)
-    if (!this.images.has(item.spec.image)) throw new DockerError(404, 'Image not found')
+    if (item.state === 'running') throw new DockerError(304, 'Container already started')
     if (this.startLatencyMs) await new Promise((r) => setTimeout(r, this.startLatencyMs))
     item.state = 'running'
     item.startedAt = new Date().toISOString()
@@ -252,8 +273,9 @@ export class FakeDockerDriver implements DockerDriver {
     await this.stop(id)
     await this.start(id)
   }
-  async remove(id: string) {
-    await this.lookup(id)
+  async remove(id: string, force = false) {
+    const item = await this.lookup(id)
+    if (item.state === 'running' && !force) throw new DockerError(409, 'Container is running')
     this.containers.delete(id)
   }
   async inspect(id: string) {

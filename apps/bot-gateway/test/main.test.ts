@@ -64,6 +64,7 @@ const status = (id = 'test') => ({
 async function instanceServer() {
   const calls: string[] = []
   let oldestEventSeq = 0
+  let appVersion = '0.1.0'
   let hold: {
     state: 'none' | 'held'
     reason: 'takeover' | 'paused' | null
@@ -98,12 +99,11 @@ async function instanceServer() {
       }
     }
     try {
-      if (req.url === '/v1/health')
-        return res.end(JSON.stringify({ ok: true, appVersion: '0.1.0', protocol: 1, ready: true }))
-      if (req.url === '/v1/status') return res.end(JSON.stringify({ ...status(), hold }))
+      if (req.url === '/v1/health') return res.end(JSON.stringify({ ok: true, appVersion, protocol: 1, ready: true }))
+      if (req.url === '/v1/status') return res.end(JSON.stringify({ ...status(), appVersion, hold }))
       if (req.url === '/v1/profile') {
         fleetInstanceProfileSchema.parse(body)
-        return res.end(JSON.stringify({ ...status(), hold }))
+        return res.end(JSON.stringify({ ...status(), appVersion, hold }))
       }
       if (req.url === '/v1/hold') {
         const request = fleetInstanceHoldRequestSchema.parse(body)
@@ -133,6 +133,9 @@ async function instanceServer() {
     origin: 'http://127.0.0.1:' + port,
     setOldestEventSeq(value: number) {
       oldestEventSeq = value
+    },
+    setVersion(value: string) {
+      appVersion = value
     },
   }
 }
@@ -254,6 +257,64 @@ describe('lifecycle', () => {
     expect(store.activity().map((item) => item.kind)).toContain('bot_archived')
     store.close()
   })
+  it('recreates outdated containers on restart and start while preserving their home and secrets', async () => {
+    const instance = await instanceServer()
+    const { store, docker, lifecycle, cfg } = fixture(temp(), instance.origin)
+    docker.setImage(cfg.botImage, 'sha256:old-image')
+    const bot = lifecycle.create(input())
+    await until(() => lifecycle.get(bot.id)?.lifecycle === 'running')
+    const name = 'maestrly-bot-' + bot.id
+    const original = docker.containers.get('fake-' + name)!
+    const secrets = store.botSecrets(bot.id)
+    const volume = name + '-home'
+    expect(original.imageId).toBe('sha256:old-image')
+
+    docker.setImage(cfg.botImage, 'sha256:new-image')
+    instance.setVersion('0.2.0')
+    await lifecycle.reconcile()
+    expect(lifecycle.imageOutdated.get(bot.id)).toBe(true)
+    expect(docker.containers.get(original.id)).toBe(original)
+    expect((await lifecycle.restart(bot.id)).lifecycle).toBe('running')
+    expect(lifecycle.get(bot.id)?.appVersion).toBe('0.2.0')
+    const updated = docker.containers.get(original.id)!
+    expect(updated).not.toBe(original)
+    expect(updated.imageId).toBe('sha256:new-image')
+    expect(updated.spec).toEqual(original.spec)
+    expect(updated.spec.volume).toBe(volume)
+    expect(docker.volumes.has(volume)).toBe(true)
+    expect(store.botSecrets(bot.id)).toEqual(secrets)
+    expect(lifecycle.imageOutdated.get(bot.id)).toBe(false)
+    expect(store.activity().findLast((entry) => entry.kind === 'bot_restarted')?.data).toEqual({
+      updated: true,
+      fromImage: 'old-image',
+      toImage: 'new-image',
+    })
+
+    await lifecycle.stop(bot.id)
+    docker.setImage(cfg.botImage, 'sha256:third-image')
+    expect((await lifecycle.start(bot.id)).lifecycle).toBe('running')
+    expect(docker.containers.get(original.id)?.imageId).toBe('sha256:third-image')
+    expect(docker.containers.get(original.id)?.spec).toEqual(original.spec)
+    expect(docker.volumes.has(volume)).toBe(true)
+    lifecycle.close()
+    store.close()
+  })
+  it('uses the existing container if the configured image is missing', async () => {
+    const instance = await instanceServer()
+    const { store, docker, lifecycle, cfg } = fixture(temp(), instance.origin)
+    docker.setImage(cfg.botImage, 'sha256:old-image')
+    const bot = lifecycle.create(input())
+    await until(() => lifecycle.get(bot.id)?.lifecycle === 'running')
+    const original = docker.containers.get('fake-maestrly-bot-' + bot.id)!
+    docker.images.delete(cfg.botImage)
+    expect((await lifecycle.restart(bot.id)).lifecycle).toBe('running')
+    expect(docker.containers.get(original.id)).toBe(original)
+    await lifecycle.stop(bot.id)
+    expect((await lifecycle.start(bot.id)).lifecycle).toBe('running')
+    expect(docker.containers.get(original.id)).toBe(original)
+    lifecycle.close()
+    store.close()
+  })
   it('marks missing image as failed', async () => {
     const { store, docker, lifecycle, cfg } = fixture()
     docker.images.delete(cfg.botImage)
@@ -280,9 +341,15 @@ describe('Docker and host parsers', () => {
     }
     await expect(docker.containerCreate(spec)).rejects.toMatchObject({ status: 400 })
     spec.name = 'valid-name'
+    await expect(docker.containerCreate(spec)).rejects.toMatchObject({ status: 404 })
+    docker.setImage(spec.image, 'sha256:original')
     const id = await docker.containerCreate(spec)
+    expect((await docker.inspect(id)).imageId).toBe('sha256:original')
     await expect(docker.containerCreate(spec)).rejects.toMatchObject({ status: 409 })
-    await expect(docker.start(id)).rejects.toMatchObject({ status: 404 })
+    docker.images.delete(spec.image)
+    await docker.start(id)
+    await expect(docker.start(id)).rejects.toMatchObject({ status: 304 })
+    await expect(docker.remove(id)).rejects.toMatchObject({ status: 409 })
     await docker.stop(id)
     await expect(docker.inspect('unknown')).rejects.toMatchObject({ status: 404 })
   })
@@ -312,7 +379,8 @@ describe('Docker and host parsers', () => {
       else if (req.url?.includes('/images/missing/json')) {
         res.writeHead(404)
         res.end(JSON.stringify({ message: 'No such image' }))
-      } else if (req.url?.endsWith('/networks/fleet'))
+      } else if (req.url?.includes('/images/image/json')) res.end(JSON.stringify({ Id: 'sha256:engine-image' }))
+      else if (req.url?.endsWith('/networks/fleet'))
         res.end(
           JSON.stringify({
             IPAM: { Config: [{ Subnet: '172.30.0.0/16', Gateway: '172.30.0.1' }, { Subnet: 'fd00::/64' }, {}] },
@@ -326,11 +394,15 @@ describe('Docker and host parsers', () => {
         created = JSON.parse(Buffer.concat(chunks).toString())
         res.end(JSON.stringify({ Id: 'abc' }))
       } else if (req.url?.includes('/stats?')) res.end('{}')
-      else if (req.url?.includes('/containers/json')) res.end('[]')
+      else if (req.url?.includes('/containers/json'))
+        res.end(
+          JSON.stringify([{ Id: 'abc', ImageID: 'sha256:engine-image', Names: ['/bot'], State: 'running', Labels: {} }])
+        )
       else if (req.url?.endsWith('/containers/abc/json'))
         res.end(
           JSON.stringify({
             Id: 'abc',
+            Image: 'sha256:engine-image',
             Name: '/bot',
             State: { Running: true, StartedAt: new Date().toISOString() },
             Config: { Labels: {} },
@@ -348,6 +420,7 @@ describe('Docker and host parsers', () => {
       { subnet: 'fd00::/64', gateway: null },
     ])
     expect(await docker.imageInspect('missing')).toBeNull()
+    expect(await docker.imageInspect('image')).toEqual({ id: 'sha256:engine-image' })
     await docker.volumeCreate('home', {})
     expect(
       await docker.containerCreate({
@@ -367,7 +440,8 @@ describe('Docker and host parsers', () => {
     await docker.stop('abc')
     await docker.restart('abc')
     expect((await docker.inspect('abc')).state).toBe('running')
-    expect(await docker.list()).toEqual([])
+    expect((await docker.inspect('abc')).imageId).toBe('sha256:engine-image')
+    expect((await docker.list())[0]?.imageId).toBe('sha256:engine-image')
     expect((await docker.statsOnce('abc')).memoryBytes).toBe(0)
     await docker.remove('abc', true)
     expect(calls.some((call) => call.includes('/v1.45/containers/create'))).toBe(true)
