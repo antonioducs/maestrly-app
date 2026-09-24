@@ -19,6 +19,17 @@ describe('PDF attachments in the chat UI', () => {
     expect(view).toContain("'invalid-attachment'")
   })
 
+  it('opens only persisted PDFs, through the ownership-checked IPC', () => {
+    const chip = read('../../src/renderer/components/chat/PdfAttachmentChip.tsx')
+    expect(read('../../src/renderer/components/chat/ChatMessageList.tsx')).toContain('<PdfAttachmentChip')
+    expect(chip).toContain('if (!part.artifactId)')
+    expect(chip).toContain('window.api.chatOpenAttachmentPdf(conversationId, messageId, part.id)')
+    // The saved message replaces the optimistic bubble right after send, so the chip becomes clickable.
+    expect(read('../../src/renderer/components/chat/ChatView.tsx')).toContain(
+      'imagesSentRef.current = hasArtifactAttachment(atts)'
+    )
+  })
+
   it('has English and Portuguese strings', async () => {
     const { default: en } = await import('../../src/shared/i18n/en/chat')
     const { default: pt } = await import('../../src/shared/i18n/pt-BR/chat')
@@ -27,6 +38,8 @@ describe('PDF attachments in the chat UI', () => {
       expect(catalog.view.errPdfUnreadable).toBeTruthy()
       expect(catalog.messages.pdfPages_one).toContain('{{count}}')
       expect(catalog.messages.pdfPages_other).toContain('{{count}}')
+      expect(catalog.messages.openPdf).toContain('{{name}}')
+      expect(catalog.messages.pdfOpenFailed).toBeTruthy()
     }
   })
 })

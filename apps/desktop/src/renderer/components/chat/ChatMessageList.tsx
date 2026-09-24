@@ -34,6 +34,7 @@ import { TodoCard } from './TodoCard'
 import { GeneratedImageCard } from './GeneratedImageCard'
 import { ChatImageLightbox } from './ChatImageLightbox'
 import { AttachmentImage } from './AttachmentImage'
+import { PdfAttachmentChip } from './PdfAttachmentChip'
 import { CUT_FINISH_REASONS, estimatedCostOfUsageWithSubagents, toolOutputText } from '../../../shared/chat'
 import { formatResponseDuration, responseDurationMs } from '../../../shared/response-duration'
 import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/chat'
@@ -578,6 +579,8 @@ function FileParts({
               </span>
             )}
           </span>
+        ) : f.kind === 'pdf' ? (
+          <PdfAttachmentChip key={f.id} part={f} conversationId={conversationId} messageId={messageId} />
         ) : (
           <span
             key={f.id}
@@ -585,13 +588,7 @@ function FileParts({
             title={f.name}
           >
             <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-            {f.kind === 'pdf' && <span className="text-[10px] font-medium uppercase text-muted-foreground">PDF</span>}
             <span className="max-w-[160px] truncate">{f.name}</span>
-            {f.kind === 'pdf' && f.pageCount != null && (
-              <span className="text-[11px] text-muted-foreground">
-                {t('messages.pdfPages', { count: f.pageCount })}
-              </span>
-            )}
           </span>
         )
       )}

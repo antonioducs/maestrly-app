@@ -75,7 +75,7 @@ import {
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
-import { draftAttachmentKind } from '@/lib/attachment-kind'
+import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
@@ -756,6 +756,7 @@ export function ChatView({
 
   const agentMentionsSentRef = useRef(false)
 
+  // Covers every artifact-backed attachment (images and PDFs), not only images: see hasArtifactAttachment.
   const imagesSentRef = useRef(false)
 
   useEffect(() => {
@@ -784,7 +785,7 @@ export function ChatView({
 
       agentMentionsSentRef.current = agentMentions.length > 0
 
-      imagesSentRef.current = atts.some((a) => a.kind === 'image')
+      imagesSentRef.current = hasArtifactAttachment(atts)
       const invokedSkill = invocation
         ? remoteCmdsRef.current.skills.find((skill) => skill.name === invocation.name)
         : undefined
@@ -1784,7 +1785,7 @@ export function ChatView({
         const files = (idx >= 0 ? prev[idx].parts : []).filter(
           (p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden
         )
-        resendHasImage = files.some((p) => p.kind === 'image')
+        resendHasImage = hasArtifactAttachment(files)
         const parts: MessagePart[] = []
 
         if (text.trim()) parts.push({ type: 'text', id: crypto.randomUUID(), text })

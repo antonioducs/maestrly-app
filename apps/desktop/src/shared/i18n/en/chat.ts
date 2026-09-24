@@ -348,6 +348,8 @@ export default {
     imageDescribedBadge: 'described',
     pdfPages_one: '{{count}} page',
     pdfPages_other: '{{count}} pages',
+    openPdf: 'Open {{name}}',
+    pdfOpenFailed: "Couldn't open the PDF. Click to try again.",
     editResend: 'Edit and resend',
     emptyState:
       'Chat with a model using your ChatGPT, GitHub Copilot or Claude subscription, or a direct API. File and shell tools ask for approval before acting.',

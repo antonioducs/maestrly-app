@@ -271,7 +271,8 @@ describe('structured draft and queue occurrence contract', () => {
     expect(chatViewSource).toContain(
       "(p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden"
     )
-    expect(chatViewSource).toContain("resendHasImage = files.some((p) => p.kind === 'image')")
+    // Artifact-backed attachments (images and PDFs) reconcile with the saved message, as on send.
+    expect(chatViewSource).toContain('resendHasImage = hasArtifactAttachment(files)')
     expect(chatViewSource).toContain(
       "parts.push({ type: 'agent-mention', id: m.id, name: m.name, start: m.start, end: m.end })"
     )
