@@ -46,8 +46,10 @@ document is sent natively. Password-protected or damaged PDFs are rejected with
 a message and nothing is sent.
 
 The document is stored in the application profile with the conversation's other
-attachments and is removed with its message. The context meter counts at least
-2,000 tokens per page, because native documents cost far more than their text.
+attachments and is removed when its message or conversation is deleted. Files a
+provider received remain subject to that provider's retention policy. The context
+meter counts at least 2,000 tokens per page, because native documents cost far
+more than their text.
 
 Click a PDF in a sent message to open it in the system's default PDF viewer. The
 viewer receives a read-only copy named after the attachment, kept in the
