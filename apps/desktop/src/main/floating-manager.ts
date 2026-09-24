@@ -27,6 +27,8 @@ import { floatingStripHtml } from './floating-strip-html'
 import { restoreFocusAfterFloatingClose } from './popup-manager'
 import { attachWindowNavigation } from './mouse-navigation'
 import { setDrawerPlacementPerformance } from './drawer/performance'
+import { isBotMode } from './fleet/instance/config'
+import { initialFloatingBounds } from './fleet/instance/window-bounds'
 
 function tabTitle(tab: FloatTab): string {
   return tMain('main')(`floating.${tab}`)
@@ -176,7 +178,14 @@ function clampBounds(saved?: FloatingBounds): FloatingBounds {
 
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   const win = new BrowserWindow({
-    ...clampBounds(getConvUiPrefs(convId).floating?.[tab]),
+    ...clampBounds(
+      initialFloatingBounds(
+        tab,
+        isBotMode(),
+        screen.getPrimaryDisplay().workArea,
+        getConvUiPrefs(convId).floating?.[tab]
+      )
+    ),
     minWidth: MIN_W,
     minHeight: MIN_H,
     show: false,

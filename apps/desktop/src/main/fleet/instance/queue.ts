@@ -25,7 +25,11 @@ const stateSchema = z.object({ items: z.array(recordSchema) })
 export class InstanceInputQueue {
   private items: QueuedInput[] = []
   private writeTail: Promise<void> = Promise.resolve()
-  constructor(private readonly file: string) {}
+  constructor(
+    private readonly file: string,
+    private readonly writer: (file: string, contents: string) => Promise<void> = (file, contents) =>
+      fs.writeFile(file, contents, { mode: 0o600 })
+  ) {}
 
   async load(): Promise<void> {
     try {
@@ -43,80 +47,98 @@ export class InstanceInputQueue {
     return [...this.items]
   }
 
-  private async save(): Promise<void> {
-    const contents = JSON.stringify({ items: this.items })
+  private async update<T>(change: (items: QueuedInput[]) => { result: T; changed: boolean }): Promise<T> {
     const write = this.writeTail.then(async () => {
+      const next = this.items.map((item) => ({ ...item }))
+      const { result, changed } = change(next)
+      if (!changed) return result
+      const contents = JSON.stringify({ items: next })
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
       const temp = this.file + '.' + randomUUID() + '.tmp'
       try {
-        await fs.writeFile(temp, contents, { mode: 0o600 })
+        await this.writer(temp, contents)
         await fs.rename(temp, this.file)
       } finally {
         await fs.rm(temp, { force: true }).catch(() => undefined)
       }
+      this.items = next
+      return result
     })
-    this.writeTail = write.catch(() => undefined)
-    await write
+    this.writeTail = write.then(
+      () => undefined,
+      () => undefined
+    )
+    return write
   }
 
   async enqueue(raw: FleetInstanceInput): Promise<FleetInputReceipt> {
     const input = fleetInstanceInputSchema.parse(raw)
     if (input.source === 'routine' && !input.routine) throw new Error('Routine source requires routine metadata.')
     if (input.source === 'peer' && !input.peer) throw new Error('Peer source requires peer metadata.')
-    const now = Date.now()
-    const existing = [...this.items]
-      .reverse()
-      .find(
-        (item) => item.input.idempotencyKey === input.idempotencyKey && now - Date.parse(item.at) < 24 * 60 * 60 * 1_000
-      )
-    if (existing) return { inputId: existing.id, itemId: existing.itemId, queued: !existing.started }
-    const id = randomUUID()
-    const item: QueuedInput = { id, at: new Date().toISOString(), input, itemId: 'input:' + id, started: false }
-    if (input.source === 'continuation') this.items.unshift(item)
-    else this.items.push(item)
-    await this.save()
-    return { inputId: id, itemId: item.itemId, queued: true }
+    return this.update((items) => {
+      const now = Date.now()
+      const existing = [...items]
+        .reverse()
+        .find(
+          (item) =>
+            item.input.idempotencyKey === input.idempotencyKey && now - Date.parse(item.at) < 24 * 60 * 60 * 1_000
+        )
+      if (existing)
+        return { result: { inputId: existing.id, itemId: existing.itemId, queued: !existing.started }, changed: false }
+      const id = randomUUID()
+      const item: QueuedInput = { id, at: new Date().toISOString(), input, itemId: 'input:' + id, started: false }
+      if (input.source === 'continuation') items.unshift(item)
+      else items.push(item)
+      return { result: { inputId: id, itemId: item.itemId, queued: true }, changed: true }
+    })
   }
 
   async delete(id: string): Promise<'deleted' | 'started' | 'missing'> {
-    const index = this.items.findIndex((item) => item.id === id)
-    if (index < 0) return 'missing'
-    if (this.items[index].started) return 'started'
-    this.items.splice(index, 1)
-    await this.save()
-    return 'deleted'
+    return this.update((items) => {
+      const index = items.findIndex((item) => item.id === id)
+      if (index < 0) return { result: 'missing' as const, changed: false }
+      if (items[index].started) return { result: 'started' as const, changed: false }
+      items.splice(index, 1)
+      return { result: 'deleted' as const, changed: true }
+    })
   }
 
   async markStarted(id: string): Promise<void> {
-    const item = this.items.find((candidate) => candidate.id === id)
-    if (!item) throw new Error('Input not found')
-    item.started = true
-    await this.save()
+    await this.update((items) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error('Input not found')
+      item.started = true
+      return { result: undefined, changed: true }
+    })
   }
 
   async mapNativeMessage(id: string, messageId: string): Promise<void> {
-    const item = this.items.find((candidate) => candidate.id === id)
-    if (!item?.started) throw new Error('Started input not found')
-    item.nativeMessageId = messageId
-    await this.save()
+    await this.update((items) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item?.started) throw new Error('Started input not found')
+      item.nativeMessageId = messageId
+      return { result: undefined, changed: true }
+    })
   }
 
   async reconcile(nativeUsers: Array<{ id: string; at: number; text: string }>): Promise<void> {
-    const claimed = new Set(this.items.map((item) => item.nativeMessageId).filter((id): id is string => !!id))
-    let changed = false
-    for (const item of this.items) {
-      if (!item.started || item.nativeMessageId) continue
-      const match = nativeUsers.find(
-        (user) =>
-          !claimed.has(user.id) && user.at >= Date.parse(item.at) - 1_000 && user.text === promptForInput(item.input)
-      )
-      if (match) {
-        item.nativeMessageId = match.id
-        claimed.add(match.id)
-      } else item.started = false
-      changed = true
-    }
-    if (changed) await this.save()
+    await this.update((items) => {
+      const claimed = new Set(items.map((item) => item.nativeMessageId).filter((id): id is string => !!id))
+      let changed = false
+      for (const item of items) {
+        if (!item.started || item.nativeMessageId) continue
+        const match = nativeUsers.find(
+          (user) =>
+            !claimed.has(user.id) && user.at >= Date.parse(item.at) - 1_000 && user.text === promptForInput(item.input)
+        )
+        if (match) {
+          item.nativeMessageId = match.id
+          claimed.add(match.id)
+        } else item.started = false
+        changed = true
+      }
+      return { result: undefined, changed }
+    })
   }
 }
 

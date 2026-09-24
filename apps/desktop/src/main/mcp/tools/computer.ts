@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { desktopCapturer, screen } from 'electron'
 import { z } from 'zod'
 import type { McpToolContext } from './context'
@@ -9,6 +9,24 @@ const coordinate = z.number().int().nonnegative()
 const description =
   'Use for desktop apps outside the Maestrly browser. Prefer browser_* for websites. Coordinates are screen pixels from the last computer_screenshot.'
 let xdotoolAvailable: boolean | null = null
+let screenActionGeneration = 0
+const runningActions = new Set<ChildProcess>()
+const interrupted = 'interrupted: the owner took over / paused.'
+
+export function abortScreenActions(): void {
+  screenActionGeneration++
+  for (const child of runningActions) {
+    child.kill('SIGTERM')
+    const timer = setTimeout(() => {
+      if (runningActions.has(child)) child.kill('SIGKILL')
+    }, 250)
+    timer.unref()
+  }
+}
+
+function checkScreenAction(generation: number): void {
+  if (generation !== screenActionGeneration) throw new Error(interrupted)
+}
 
 export function canUseComputer(platform = process.platform, display = process.env.DISPLAY): boolean {
   if (platform !== 'linux' || !display) return false
@@ -71,7 +89,13 @@ export function computerArguments(
   if (action === 'type') {
     if (typeof input.text !== 'string' || input.text.length < 1 || input.text.length > 4_000)
       throw new Error('Text must contain 1–4000 characters.')
-    return [['type', '--delay', '12', '--', input.text]]
+    return Array.from({ length: Math.ceil(input.text.length / 200) }, (_, index) => [
+      'type',
+      '--delay',
+      '12',
+      '--',
+      (input.text as string).slice(index * 200, (index + 1) * 200),
+    ])
   }
   if (typeof input.keys !== 'string' || !keyPattern.test(input.keys) || !input.keys.trim())
     throw new Error(
@@ -80,21 +104,34 @@ export function computerArguments(
   return [['key', '--clearmodifiers', '--', ...input.keys.trim().split(/ +/)]]
 }
 
-export async function runXdotool(args: string[], signal?: AbortSignal): Promise<void> {
+export async function runXdotool(
+  args: string[],
+  signal?: AbortSignal,
+  generation = screenActionGeneration
+): Promise<void> {
+  checkScreenAction(generation)
   await new Promise<void>((resolve, reject) => {
     const child = spawn('xdotool', args, { stdio: ['ignore', 'ignore', 'pipe'], signal })
+    runningActions.add(child)
     let stderr = ''
+    let processError: Error | null = null
     const timer = setTimeout(() => child.kill(), 5_000)
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString().slice(0, 300)
     })
     child.once('error', (error) => {
       clearTimeout(timer)
-      reject(error)
+      processError = error
+      if (child.pid === undefined) {
+        runningActions.delete(child)
+        reject(error)
+      }
     })
     child.once('close', (code) => {
       clearTimeout(timer)
-      if (code === 0) resolve()
+      runningActions.delete(child)
+      if (processError) reject(processError)
+      else if (code === 0) resolve()
       else
         reject(
           new Error(
@@ -105,6 +142,7 @@ export async function runXdotool(args: string[], signal?: AbortSignal): Promise<
         )
     })
   })
+  checkScreenAction(generation)
 }
 
 export function registerComputerTools(ctx: McpToolContext): void {
@@ -153,19 +191,24 @@ export function registerComputerTools(ctx: McpToolContext): void {
       },
       async (args, extra) => {
         let buttonDown = false
+        const generation = screenActionGeneration
         try {
           const commands = computerArguments(name, args as T, dimensions())
           const signal = AbortSignal.any([extra.signal, AbortSignal.timeout(5_000)])
           for (const command of commands) {
-            await runXdotool(command, signal)
+            checkScreenAction(generation)
             if (command[0] === 'mousedown') buttonDown = true
+            await runXdotool(command, signal, generation)
             if (command[0] === 'mouseup') buttonDown = false
           }
           await new Promise((resolve) => setTimeout(resolve, 150))
+          checkScreenAction(generation)
           return ok(`Desktop ${name} completed.`)
         } catch (error) {
           if (buttonDown) await runXdotool(['mouseup', '1']).catch(() => undefined)
-          return err(`Desktop ${name} failed: ${error instanceof Error ? error.message : String(error)}`)
+          return err(
+            `Desktop ${name} failed: ${generation !== screenActionGeneration ? interrupted : error instanceof Error ? error.message : String(error)}`
+          )
         }
       }
     )

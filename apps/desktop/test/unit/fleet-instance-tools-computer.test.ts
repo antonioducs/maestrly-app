@@ -2,6 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { EventEmitter } from 'node:events'
+import { spawn } from 'node:child_process'
+
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
+  spawn: vi.fn(),
+}))
 
 const capture = vi.hoisted(() => ({
   getSources: vi.fn(async () => [
@@ -15,7 +22,12 @@ vi.mock('electron', async (original) => ({
   screen: { getPrimaryDisplay: capture.getPrimaryDisplay },
 }))
 
-import { canUseComputer, computerArguments, registerComputerTools } from '../../src/main/mcp/tools/computer'
+import {
+  abortScreenActions,
+  canUseComputer,
+  computerArguments,
+  registerComputerTools,
+} from '../../src/main/mcp/tools/computer'
 import { APP_TOOL_POLICY } from '../../src/main/chat/tool-policy'
 import { toolsFromClient } from '../../src/main/chat/mcp'
 import { InstanceHoldManager, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
@@ -32,7 +44,21 @@ async function clientForComputer() {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
 })
+
+function fakeXdotool(onSpawn: (args: string[], child: EventEmitter) => void): void {
+  vi.mocked(spawn).mockImplementation(((_command: string, args: string[]) => {
+    const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: ReturnType<typeof vi.fn> }
+    child.stderr = new EventEmitter()
+    child.kill = vi.fn(() => {
+      queueMicrotask(() => child.emit('close', null))
+      return true
+    })
+    onSpawn(args, child)
+    return child
+  }) as unknown as typeof spawn)
+}
 
 describe('computer actions', () => {
   const size = { width: 1280, height: 800 }
@@ -64,6 +90,8 @@ describe('computer actions', () => {
       ])
     }
     expect(computerArguments('type', { text: 'hi; `x`' }, size)).toEqual([['type', '--delay', '12', '--', 'hi; `x`']])
+    const chunks = computerArguments('type', { text: 'x'.repeat(401) }, size)
+    expect(chunks.map((chunk) => chunk[4].length)).toEqual([200, 200, 1])
     expect(computerArguments('key', { keys: 'ctrl+s Return' }, size)).toEqual([
       ['key', '--clearmodifiers', '--', 'ctrl+s', 'Return'],
     ])
@@ -140,5 +168,74 @@ describe('computer actions', () => {
     expect(APP_TOOL_POLICY.computer_scroll).toEqual(APP_TOOL_POLICY.browser_scroll)
     expect(APP_TOOL_POLICY.computer_type).toEqual(APP_TOOL_POLICY.browser_type)
     expect(APP_TOOL_POLICY.computer_key).toEqual(APP_TOOL_POLICY.browser_press_key)
+  })
+
+  it('aborts an in-flight screen action before granting a hold', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    fakeXdotool(() => {})
+    const { client, server } = await clientForComputer()
+    const manager = new InstanceHoldManager()
+    const unregister = registerInstanceHoldGate(manager, 'primary')
+    try {
+      const tools = await toolsFromClient(
+        client,
+        (name) => name,
+        () => '',
+        async () => {},
+        undefined,
+        undefined,
+        undefined,
+        {},
+        'primary'
+      )
+      const move = tools.computer_move as unknown as {
+        execute(input: unknown, options: { toolCallId: string }): Promise<unknown>
+      }
+      const pending = move.execute({ x: 10, y: 20 }, { toolCallId: 'move' })
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+      const hold = manager.hold('takeover', true, async () => {})
+      expect(manager.state.state).toBe('holding')
+      await expect(pending).resolves.toMatchObject({ isError: true, text: expect.stringContaining('interrupted:') })
+      expect(await hold).toMatchObject({ state: 'held', interruptedTurn: true })
+    } finally {
+      unregister()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('stops typing between chunks and releases a drag after interruption', async () => {
+    fakeXdotool((args, child) => {
+      if (args[0] === 'type') {
+        abortScreenActions()
+        queueMicrotask(() => child.emit('close', 0))
+      } else if (args[0] === 'mousemove' && args[2] === '3') {
+        abortScreenActions()
+        queueMicrotask(() => child.emit('close', null))
+      } else queueMicrotask(() => child.emit('close', 0))
+    })
+    const { client, server } = await clientForComputer()
+    try {
+      const typed = await client.callTool({ name: 'computer_type', arguments: { text: 'x'.repeat(401) } })
+      expect(typed.isError).toBe(true)
+      expect(JSON.stringify(typed.content)).toContain('interrupted:')
+      expect(vi.mocked(spawn).mock.calls.filter((call) => call[1]?.[0] === 'type')).toHaveLength(1)
+      vi.mocked(spawn).mockClear()
+      const dragged = await client.callTool({
+        name: 'computer_drag',
+        arguments: { fromX: 1, fromY: 2, toX: 3, toY: 4 },
+      })
+      expect(dragged.isError).toBe(true)
+      expect(JSON.stringify(dragged.content)).toContain('interrupted:')
+      expect(vi.mocked(spawn).mock.calls.map((call) => call[1]?.[0])).toEqual([
+        'mousemove',
+        'mousedown',
+        'mousemove',
+        'mouseup',
+      ])
+    } finally {
+      await client.close()
+      await server.close()
+    }
   })
 })

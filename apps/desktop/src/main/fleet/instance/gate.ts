@@ -1,5 +1,7 @@
 import type { FleetInstanceHold } from '@maestrly/bot-fleet-protocol'
 import { isBotMode } from './config'
+import { abortScreenActions } from '../../mcp/tools/computer'
+import { InstanceHttpError } from './server'
 
 const refusal = {
   takeover: 'The owner has taken over your screen. End your turn now.',
@@ -17,6 +19,9 @@ export class InstanceHoldManager {
   }
   get activeCalls(): number {
     return this.inflight
+  }
+  get releaseKeepsPaused(): boolean {
+    return this.pausedAfterTakeover
   }
   async gate<T>(conversationId: string, primaryConversationId: string | null, call: () => Promise<T>): Promise<T> {
     if (!isBotMode() || conversationId !== primaryConversationId) return call()
@@ -51,22 +56,40 @@ export class InstanceHoldManager {
     this.current = { state: 'holding', reason, since: new Date().toISOString(), interruptedTurn: false }
     this.onChange()
     this.settling = (async () => {
-      if (this.inflight)
-        await new Promise<void>((resolve) => {
-          const wake = () => {
-            clearTimeout(timer)
-            this.waiters.delete(wake)
-            resolve()
-          }
-          const timer = setTimeout(wake, 10_000)
-          this.waiters.add(wake)
-        })
-      if (running) {
-        await cancel()
-        this.current.interruptedTurn = true
+      try {
+        abortScreenActions()
+        const cancellation = running
+          ? cancel().then(
+              () => null,
+              (error: unknown) => error
+            )
+          : Promise.resolve(null)
+        if (this.inflight) {
+          const drained = await new Promise<boolean>((resolve) => {
+            const wake = () => {
+              clearTimeout(timer)
+              this.waiters.delete(wake)
+              resolve(true)
+            }
+            const timer = setTimeout(() => {
+              this.waiters.delete(wake)
+              resolve(false)
+            }, 10_000)
+            this.waiters.add(wake)
+          })
+          if (!drained || this.inflight)
+            throw new InstanceHttpError(409, 'CONFLICT', 'The bot is finishing a step; try again in a moment.')
+        }
+        const cancelError = await cancellation
+        if (cancelError) throw cancelError
+        this.current = { ...this.current, state: 'held', interruptedTurn: running }
+        this.onChange()
+      } catch (error) {
+        this.current = { state: 'none', reason: null, since: null, interruptedTurn: false }
+        this.pausedAfterTakeover = false
+        this.onChange()
+        throw error
       }
-      this.current.state = 'held'
-      this.onChange()
     })()
     try {
       await this.settling
@@ -76,9 +99,10 @@ export class InstanceHoldManager {
     return this.state
   }
   release(): FleetInstanceHold {
+    if (this.current.state !== 'held') return this.state
     if (this.pausedAfterTakeover) {
       this.pausedAfterTakeover = false
-      this.current = { ...this.current, state: 'held', reason: 'paused', interruptedTurn: false }
+      this.current = { ...this.current, state: 'held', reason: 'paused' }
     } else this.current = { state: 'none', reason: null, since: null, interruptedTurn: false }
     this.onChange()
     return this.state

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -13,8 +13,14 @@ import {
   transcriptPage,
   toolTarget,
 } from '../../src/main/fleet/instance/transcript'
-import { canDispatch, continuationText, releaseSystemCode } from '../../src/main/fleet/instance/runtime'
+import {
+  BotInstanceRuntime,
+  canDispatch,
+  continuationText,
+  releaseSystemCode,
+} from '../../src/main/fleet/instance/runtime'
 import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance/identity'
+import { initialFloatingBounds } from '../../src/main/fleet/instance/window-bounds'
 
 const key = () => randomUUID()
 afterEach(() => {
@@ -61,6 +67,53 @@ describe('bot identity', () => {
 })
 
 describe('persistent input queue', () => {
+  it('keeps memory and disk unchanged after failed writes, then retries each mutation', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
+    try {
+      const file = path.join(dir, 'queue.json')
+      let failNext = true
+      const queue = new InstanceInputQueue(file, async (target, contents) => {
+        if (failNext) {
+          failNext = false
+          throw new Error('disk full')
+        }
+        await writeFile(target, contents)
+      })
+      const input = { idempotencyKey: key(), source: 'owner' as const, text: 'hello' }
+      await expect(queue.enqueue(input)).rejects.toThrow('disk full')
+      expect(queue.list()).toHaveLength(0)
+      const receipt = await queue.enqueue(input)
+      const checkDisk = async () => {
+        const reopened = new InstanceInputQueue(file)
+        await reopened.load()
+        expect(reopened.all()).toEqual(queue.all())
+      }
+      await checkDisk()
+      failNext = true
+      await expect(queue.markStarted(receipt.inputId)).rejects.toThrow('disk full')
+      expect(queue.list()).toHaveLength(1)
+      await checkDisk()
+      await queue.markStarted(receipt.inputId)
+      const removable = await queue.enqueue({ idempotencyKey: key(), source: 'owner', text: 'remove' })
+      failNext = true
+      await expect(queue.delete(removable.inputId)).rejects.toThrow('disk full')
+      expect(queue.list().map((item) => item.id)).toContain(removable.inputId)
+      await checkDisk()
+      expect(await queue.delete(removable.inputId)).toBe('deleted')
+      const pending = await queue.enqueue({ idempotencyKey: key(), source: 'owner', text: 'wait' })
+      failNext = true
+      const continuation = { idempotencyKey: key(), source: 'continuation' as const, text: 'resume' }
+      await expect(queue.enqueue(continuation)).rejects.toThrow('disk full')
+      expect(queue.list().map((item) => item.id)).toEqual([pending.inputId])
+      await checkDisk()
+      const next = await queue.enqueue(continuation)
+      expect(queue.all()[0].id).toBe(next.inputId)
+      expect(queue.list().map((item) => item.id)).toEqual([next.inputId, pending.inputId])
+      await checkDisk()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
   it('retains receipts, idempotency and continuation priority across restart', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
@@ -335,6 +388,36 @@ describe('dispatcher conditions and release prompt', () => {
 })
 
 describe('hold gate', () => {
+  it('defers continuation and resume effects while paused, and retries release with one key', async () => {
+    const manager = new InstanceHoldManager()
+    await manager.hold('paused', true, async () => {})
+    await manager.hold('takeover', false, async () => {})
+    const input = vi.fn(async (_value: { idempotencyKey: string }) => ({
+      inputId: 'input',
+      itemId: 'item',
+      queued: true,
+    }))
+    const system = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined)
+    const resolveAll = vi.fn(async () => {})
+    const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+    Object.assign(runtime, {
+      holdManager: manager,
+      help: { pending: () => [], resolveAll },
+      input,
+      system,
+      changed: vi.fn(),
+      tick: vi.fn(),
+    })
+    const request = { note: null, durationMs: null, continue: true }
+    expect(await runtime.release(request)).toMatchObject({ state: 'held', reason: 'paused', interruptedTurn: true })
+    expect(input).not.toHaveBeenCalled()
+    expect(resolveAll).not.toHaveBeenCalled()
+    await expect(runtime.release(request)).rejects.toThrow('disk full')
+    expect(manager.state.state).toBe('held')
+    expect(await runtime.release(request)).toMatchObject({ state: 'none' })
+    expect(input).toHaveBeenCalledTimes(2)
+    expect(input.mock.calls[0][0].idempotencyKey).toBe(input.mock.calls[1][0].idempotencyKey)
+  })
   it('records a takeover note as a takeover transcript item and a pause note as resumed', () => {
     expect(releaseSystemCode('takeover')).toBe('takeover')
     expect(releaseSystemCode('paused')).toBe('resumed')
@@ -381,9 +464,10 @@ describe('hold gate', () => {
   })
   it('keeps a pause after a takeover releases', async () => {
     const manager = new InstanceHoldManager()
-    await manager.hold('paused', false, async () => {})
+    await manager.hold('paused', true, async () => {})
     await manager.hold('takeover', false, async () => {})
-    expect(manager.release()).toMatchObject({ state: 'held', reason: 'paused' })
+    expect(manager.releaseKeepsPaused).toBe(true)
+    expect(manager.release()).toMatchObject({ state: 'held', reason: 'paused', interruptedTurn: true })
     expect(manager.release()).toMatchObject({ state: 'none', reason: null })
     await manager.hold('takeover', false, async () => {})
     await manager.hold('paused', false, async () => {})
@@ -404,10 +488,44 @@ describe('hold gate', () => {
     )
     const cancel = vi.fn(async () => {})
     const holding = manager.hold('takeover', true, cancel)
+    const rejected = expect(holding).rejects.toMatchObject({ status: 409, code: 'CONFLICT' })
     await vi.advanceTimersByTimeAsync(10_000)
-    expect((await holding).state).toBe('held')
+    await rejected
+    expect(manager.state).toMatchObject({ state: 'none', reason: null })
     expect(cancel).toHaveBeenCalledOnce()
     finish()
     await call
+  })
+  it('retains pause after a takeover and rejects a release while holding', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const manager = new InstanceHoldManager()
+    await manager.hold('takeover', false, async () => {})
+    await manager.hold('paused', false, async () => {})
+    expect(manager.release()).toMatchObject({ state: 'held', reason: 'paused' })
+    expect(manager.release()).toMatchObject({ state: 'none', reason: null })
+    let finish!: () => void
+    const call = manager.gate(
+      'primary',
+      'primary',
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const holding = manager.hold('takeover', false, async () => {})
+    expect(manager.release()).toMatchObject({ state: 'holding', reason: 'takeover' })
+    finish()
+    await call
+    await holding
+  })
+})
+
+describe('bot browser bounds', () => {
+  it('fills the bot work area while keeping normal saved browser bounds', () => {
+    const workArea = { x: 0, y: 0, width: 1280, height: 800 }
+    const saved = { x: 40, y: 50, width: 940, height: 720 }
+    expect(initialFloatingBounds('browser', true, workArea, saved)).toEqual(workArea)
+    expect(initialFloatingBounds('browser', false, workArea, saved)).toBe(saved)
+    expect(initialFloatingBounds('terminal', true, workArea, saved)).toBe(saved)
   })
 })

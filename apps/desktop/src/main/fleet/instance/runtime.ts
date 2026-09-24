@@ -102,6 +102,7 @@ export class BotInstanceRuntime implements InstanceControl {
   private ready = false
   private turning = false
   private cancelling = false
+  private releaseContinuationKey: string | null = null
   private turnStartedAt: string | null = null
   private retryAt = 0
   private activeTool: { tool: string; target: string | null } | null = null
@@ -582,16 +583,22 @@ export class BotInstanceRuntime implements InstanceControl {
   async release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold> {
     const previous = this.holdManager.state
     if (previous.state !== 'held') throw new InstanceHttpError(409, 'CONFLICT', 'Instance is not held.')
+    if (this.holdManager.releaseKeepsPaused) {
+      const result = this.holdManager.release()
+      this.changed()
+      return result
+    }
     const needsContinuation = value.continue && (previous.interruptedTurn || this.help.pending().length > 0)
-    await this.help.resolveAll(value.note)
-    await this.system(releaseSystemCode(previous.reason), value.note, value.durationMs)
-    const result = this.holdManager.release()
     if (needsContinuation)
       await this.input({
         source: 'continuation',
         text: continuationText(previous.reason ?? 'takeover', value.durationMs, value.note),
-        idempotencyKey: randomUUID(),
+        idempotencyKey: (this.releaseContinuationKey ??= randomUUID()),
       })
+    await this.help.resolveAll(value.note)
+    await this.system(releaseSystemCode(previous.reason), value.note, value.durationMs)
+    const result = this.holdManager.release()
+    this.releaseContinuationKey = null
     this.changed()
     void this.tick()
     return result
