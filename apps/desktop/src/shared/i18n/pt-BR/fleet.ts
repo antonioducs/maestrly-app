@@ -116,6 +116,7 @@ export default {
     placeholder: 'Mensagem para {{name}}…',
     manageMcp: 'Gerenciar servidores MCP na tela do bot',
     manageSkills: 'Gerenciar skills na tela do bot',
+    noSkills: 'Este bot ainda não tem skills. Elas ficam na Maestrly dele: instale-as pela tela do bot.',
     defaultModel: 'Padrão do bot',
     paused: 'Este bot está pausado. As mensagens vão esperar.',
     human: 'Você controla a tela. Devolva o controle para continuar.',

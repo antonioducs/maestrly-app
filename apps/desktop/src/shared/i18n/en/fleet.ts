@@ -116,6 +116,7 @@ export default {
     placeholder: 'Message {{name}}…',
     manageMcp: "Manage MCP servers on the bot's screen",
     manageSkills: "Manage skills on the bot's screen",
+    noSkills: "This bot has no skills yet. They live in its own Maestrly: install them on the bot's screen.",
     defaultModel: 'Bot default',
     paused: 'This bot is paused. Messages will wait.',
     human: 'You control the screen. Give control back to continue.',

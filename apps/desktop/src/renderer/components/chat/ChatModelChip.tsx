@@ -43,6 +43,16 @@ interface Row {
 
 let rowsCache: Row[] | null = null
 
+/** A bot's models, already filtered by the models its own accounts enable. */
+async function loadBotRows(bot: NonNullable<ChatComposerSource['bot']>, botId: string | undefined): Promise<Row[]> {
+  const result = await bot.listSelections(botId ?? '')
+  return result.options.map((option) => ({
+    providerId: option.providerId,
+    providerName: option.providerLabel,
+    modelId: option.modelId,
+  }))
+}
+
 async function fetchRows(): Promise<{ config: ChatConfig; rows: Row[] }> {
   const config = await window.api.chatConfig()
   const connected = config.providers.filter(isChatProviderConnected)
@@ -82,7 +92,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
-  const [rows, setRows] = useState<Row[]>(() => rowsCache ?? [])
+  // The module cache holds this Mac's models; a bot's list comes from the bot only.
+  const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (rowsCache ?? [])))
   const [loading, setLoading] = useState(false)
   const [hiddenModels, setHiddenModels] = useState<Record<string, string[]> | null>(null)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>()
@@ -141,23 +152,13 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     setQuery('')
     setActiveIndex(0)
     let alive = true
-    const hadCache = rowsCache != null
-    if (hadCache) setRows(rowsCache!)
-    setHiddenModels(null)
-    setLoading(true)
     if (source?.bot) {
       setHiddenModels({})
-      void source.bot
-        .listSelections(conversationId ?? '')
-        .then((result) => {
+      setLoading(true)
+      void loadBotRows(source.bot, conversationId)
+        .then((next) => {
           if (!alive) return
-          setRows(
-            result.options.map((option) => ({
-              providerId: option.providerId,
-              providerName: option.providerLabel,
-              modelId: option.modelId,
-            }))
-          )
+          setRows(next)
           setLoading(false)
         })
         .catch(() => alive && setLoading(false))
@@ -166,6 +167,10 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
         alive = false
       }
     }
+    const hadCache = rowsCache != null
+    if (hadCache) setRows(rowsCache!)
+    setHiddenModels(null)
+    setLoading(true)
     void window.api
       .chatHiddenModels()
       .then((hidden) => {
@@ -191,6 +196,19 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       alive = false
     }
   }, [focusSearch, open])
+
+  // A bot's closed chip needs the provider label of its selection, not only an open menu.
+  const botSource = source?.bot
+  useEffect(() => {
+    if (!botSource) return
+    let alive = true
+    void loadBotRows(botSource, conversationId)
+      .then((next) => alive && setRows(next))
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [botSource, conversationId, sel?.providerId, sel?.modelId])
 
   useEffect(() => {
     if (!open || !avoidOverflow) return

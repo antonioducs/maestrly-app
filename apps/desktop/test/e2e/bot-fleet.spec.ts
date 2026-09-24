@@ -632,6 +632,9 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       )
       .toBe(true)
     await expect(page.getByTitle(/Trocar modelo/)).toHaveClass(/rounded-md/)
+    // Closed, the chip names the provider by its label (as the desktop does), never by its internal id.
+    await expect(page.getByTitle(/Trocar modelo/)).toContainText('Fake · model-e2e')
+    await expect(page.getByTitle(/Trocar modelo/)).not.toContainText('prov_e2e')
     await page.getByTitle(/Trocar modelo/).click()
     await expect(page.getByRole('button', { name: 'model-plus' })).toBeVisible()
     await page.getByRole('button', { name: 'model-plus' }).click()

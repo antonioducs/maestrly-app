@@ -70,11 +70,14 @@ export function ChatSkillsMenu({
   onChanged,
   source: providedSource,
   manageSkillsLabel,
+  emptySkillsLabel,
 }: {
   conversationId: string
   onChanged?: () => void
   source?: ChatComposerSource
   manageSkillsLabel?: string
+  /** Shown for a bot with no skills yet, where the menu is the way to reach the bot's own skill settings. */
+  emptySkillsLabel?: string
 }) {
   const source = providedSource ?? localChatComposerSource(conversationId)
   const { t } = useTranslation('chat')
@@ -164,7 +167,9 @@ export function ChatSkillsMenu({
     return !query || skill.name.includes(query) || skill.description.toLowerCase().includes(query)
   })
 
-  if (state.skills.length === 0 && state.groups.length === 0) return null
+  const botWithoutSkills = Boolean(source.bot) && state.skills.length === 0
+  // Locally, skills are installed from Settings; a bot's menu stays visible so its settings stay reachable.
+  if (state.skills.length === 0 && state.groups.length === 0 && !source.bot) return null
 
   const toggleGroupSkill = (group: ChatSkillGroup, skillName: string): void => {
     if (groupMutations.current.has(group.id)) return
@@ -236,7 +241,18 @@ export function ChatSkillsMenu({
             </button>
           </div>
 
-          {!editGroups ? (
+          {botWithoutSkills ? (
+            <div className="border-t border-white/[0.06] px-2.5 py-2">
+              <p className="text-[11px] leading-relaxed text-muted-foreground">{emptySkillsLabel}</p>
+              <button
+                type="button"
+                onClick={() => void source.bot?.manage('skills')}
+                className="mt-1.5 text-[12px] text-foreground underline decoration-white/30 underline-offset-2 hover:decoration-white"
+              >
+                {manageSkillsLabel}
+              </button>
+            </div>
+          ) : !editGroups ? (
             <>
               <div className="px-2 pb-1.5">
                 <label className="mb-1 block text-[10px] uppercase tracking-wide text-muted-foreground">

@@ -116,6 +116,21 @@ describe('chat composer data sources', () => {
     expect(menu).toContain("t('plusMenu.appToolsBotLocked')")
   })
 
+  it('keeps the skills menu reachable for a bot without skills', () => {
+    const menu = sourceFile('chat/ChatSkillsMenu.tsx')
+    // Locally the menu hides with no skills; a bot needs it to reach its own skill settings.
+    expect(menu).toContain('state.groups.length === 0 && !source.bot) return null')
+    expect(menu).toContain("source.bot?.manage('skills')")
+    expect(sourceFile('fleet/BotComposer.tsx')).toContain("emptySkillsLabel={t('composer.noSkills')}")
+  })
+
+  it('labels a closed bot model chip with the provider label and never shows local models', () => {
+    const chip = sourceFile('chat/ChatModelChip.tsx')
+    expect(chip).toContain('source?.bot ? [] : (rowsCache ?? [])')
+    expect(chip).toMatch(/if \(!botSource\) return[\s\S]*loadBotRows\(botSource, conversationId\)/)
+    expect(chip).toContain('providerName: option.providerLabel')
+  })
+
   it('keeps the bot source stable across status and usage updates', () => {
     const composer = sourceFile('fleet/BotComposer.tsx')
     // A source rebuilt on every `bot.updated` event would reload commands over the network several times a second.

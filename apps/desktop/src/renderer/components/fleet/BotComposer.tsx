@@ -246,6 +246,7 @@ export function BotComposer({
               onChanged={reloadCommands}
               source={source}
               manageSkillsLabel={t('composer.manageSkills')}
+              emptySkillsLabel={t('composer.noSkills')}
             />
             {option && option.efforts.length > 0 && (
               <ChatReasoningPicker
