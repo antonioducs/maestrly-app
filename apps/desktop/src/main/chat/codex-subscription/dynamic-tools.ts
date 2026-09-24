@@ -16,7 +16,9 @@ export interface DynamicToolNamespaceSpec {
 export type DynamicToolRegistrationSpec = DynamicToolFunctionSpec | DynamicToolNamespaceSpec
 
 const DEFERRED_NAMESPACE_BASE = 'maestrly_deferred'
-const DEFERRED_NAMESPACE_DESCRIPTION = 'Maestrly MCP and app tools discovered on demand.'
+const DEFERRED_NAMESPACE_DESCRIPTION =
+  'Maestrly MCP and app tools discovered on demand. In exec, image results are strings: text plus ' +
+  'data:image/...;base64,... URLs. Extract each URL and call image(url); call text(...) for the remaining text.'
 
 function deferredNamespaceName(specs: readonly DynamicToolFunctionSpec[]): string {
   const functionNames = new Set(specs.map((spec) => spec.name))
@@ -30,9 +32,7 @@ function deferredNamespaceName(specs: readonly DynamicToolFunctionSpec[]): strin
  * The Codex app-server accepts deferLoading only on functions nested under a namespace. Runtime dispatch remains
  * flat because item/tool/call sends the child function name separately from its namespace.
  */
-export function dynamicToolRegistrations(
-  specs: readonly DynamicToolFunctionSpec[]
-): DynamicToolRegistrationSpec[] {
+export function dynamicToolRegistrations(specs: readonly DynamicToolFunctionSpec[]): DynamicToolRegistrationSpec[] {
   const eager = specs.filter((spec) => spec.deferLoading !== true)
   const deferred = specs.filter((spec) => spec.deferLoading === true)
   if (!deferred.length) return [...eager]

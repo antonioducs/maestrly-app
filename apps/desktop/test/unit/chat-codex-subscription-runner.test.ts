@@ -807,6 +807,7 @@ describe('Codex subscription runner', () => {
       {
         type: 'namespace',
         name: 'maestrly_deferred',
+        description: expect.stringContaining('call image(url)'),
         tools: [
           { name: 'app_collision', deferLoading: true },
           { name: 'drawer_only', deferLoading: true },
