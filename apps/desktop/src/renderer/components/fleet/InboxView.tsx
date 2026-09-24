@@ -16,14 +16,26 @@ export function InboxView({
         <p className="mt-1 text-sm text-muted-foreground">{t('inbox.description')}</p>
         <div className="mt-6 space-y-4">
           {fleet.state.snapshot.inbox.map(({ botId, interaction }) => (
-            <div key={`${botId}:${interaction.id}`}>
-              <button
-                type="button"
-                onClick={() => onOpenBot(botId)}
-                className="mb-2 text-sm font-medium text-primary hover:underline"
-              >
-                {fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId}
-              </button>
+            <div key={`${botId}:${interaction.id}`} className="rounded-xl border border-border bg-card p-4">
+              <div className="mb-3 flex items-center gap-3">
+                <span
+                  className="flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-white"
+                  style={{ background: fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.tint ?? '#777' }}
+                  aria-hidden="true"
+                >
+                  {(fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId).charAt(0)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onOpenBot(botId)}
+                  className="mb-2 text-sm font-medium text-primary hover:underline"
+                >
+                  {fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId}
+                </button>
+                <time className="ml-auto text-xs text-muted-foreground">
+                  {new Date(interaction.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                </time>
+              </div>
               <InteractionCard
                 botId={botId}
                 item={pendingToTranscript(interaction)}

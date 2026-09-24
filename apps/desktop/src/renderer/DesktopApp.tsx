@@ -34,6 +34,8 @@ import { useFleet } from '@/lib/fleet/use-fleet'
 import { BotView } from '@/components/fleet/BotView'
 import { ServerView } from '@/components/fleet/ServerView'
 import { InboxView } from '@/components/fleet/InboxView'
+import { CreateBotDialog } from '@/components/fleet/CreateBotDialog'
+import { FleetDigestBanner } from '@/components/fleet/FleetDigestBanner'
 import { useAgentStatuses } from '@/lib/use-agent-statuses'
 import { usePlans } from '@/lib/use-plans'
 import { ProjectSetupDialog } from '@/project-setup/ProjectSetupDialog'
@@ -231,6 +233,7 @@ export function DesktopApp() {
     onboardingChecked,
     mainOverride,
     fleetView,
+    createBot,
     setCreateBot,
     openSettings,
     openOnboarding,
@@ -693,6 +696,13 @@ export function DesktopApp() {
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
+              {fleetView && (
+                <FleetDigestBanner
+                  fleet={fleet}
+                  onOpenBot={openFleetBot}
+                  onOpenServer={() => openFleetView({ kind: 'server' })}
+                />
+              )}
               {fleetView?.kind === 'bot' && fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId) && (
                 <BotView
                   bot={fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId)!}
@@ -704,6 +714,15 @@ export function DesktopApp() {
               )}
               {fleetView?.kind === 'server' && <ServerView fleet={fleet} onOpenBot={openFleetBot} />}
               {fleetView?.kind === 'inbox' && <InboxView fleet={fleet} onOpenBot={openFleetBot} />}
+              <CreateBotDialog
+                open={createBot}
+                onClose={() => setCreateBot(false)}
+                fleet={fleet}
+                onCreated={(id) => {
+                  setCreateBot(false)
+                  openFleetBot(id)
+                }}
+              />
               {onboardingOpen && (
                 <OnboardingFlow
                   workspaces={workspaces}

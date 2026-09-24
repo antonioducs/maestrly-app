@@ -4,6 +4,8 @@ import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { BotConversation } from './BotConversation'
+import { BotScreen } from './BotScreen'
+import { BotSettings } from './BotSettings'
 
 const tabs = ['conversation', 'screen', 'settings'] as const
 export function BotView({
@@ -127,8 +129,10 @@ export function BotView({
             onOpenBot={onOpenBot}
             onOpenScreen={() => setTab('screen')}
           />
+        ) : tab === 'screen' ? (
+          <BotScreen key={bot.id} bot={bot} fleet={fleet} />
         ) : (
-          <div className="p-6 text-sm text-muted-foreground">{t(`view.${tab}`)}</div>
+          <BotSettings key={bot.id} bot={bot} fleet={fleet} onArchived={() => onView({ kind: 'server' })} />
         )}
       </div>
     </div>
