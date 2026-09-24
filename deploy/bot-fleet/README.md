@@ -10,7 +10,7 @@ node scripts/bot-fleet-images.mjs --platform linux/amd64
 cp deploy/bot-fleet/.env.example deploy/bot-fleet/.env
 ```
 
-The builder tags both images with the root package version and `:local`; it runs `npm ci` inside Docker. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` in `.env` to the versioned tags. Adjust `TZ`, `MAESTRLY_GATEWAY_BOT_MEMORY` (default `4g`), and `MAESTRLY_GATEWAY_BOT_SHM` (default `1g`) for the host. Then:
+The builder tags both images with the root package version and `:local`; it runs `npm ci` inside Docker. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` in `.env` to the versioned tags. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` (up to 64 characters) to the VPS name shown on the Mac's Server page; when empty, the gateway uses its container hostname. Adjust `TZ`, `MAESTRLY_GATEWAY_BOT_MEMORY` (default `4g`), and `MAESTRLY_GATEWAY_BOT_SHM` (default `1g`) for the host. Then:
 
 ```sh
 docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d

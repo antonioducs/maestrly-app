@@ -101,6 +101,28 @@ const status = {
 }
 
 describe('domain contracts', () => {
+  it('preserves structured permission tools in transcript, pending inbox, and events', () => {
+    const tool = { name: 'computer_click', target: '(10, 20)' }
+    const permission = {
+      kind: 'permission' as const,
+      id: 'perm:1',
+      at,
+      requestId: 'p1',
+      title: 'Use MCP tool',
+      detail: null,
+      state: 'pending' as const,
+      resolvedAt: null,
+    }
+    const pending = { kind: 'permission' as const, id: 'p1', at, title: 'Use MCP tool', detail: null, itemId: 'perm:1' }
+    expect(fleetTranscriptItemSchema.parse({ ...permission, tool })).toMatchObject({ tool })
+    expect(fleetPendingInteractionSchema.parse({ ...pending, tool })).toMatchObject({ tool })
+    expect(fleetInboxItemSchema.parse({ botId: 'scout', interaction: { ...pending, tool } }).interaction).toMatchObject(
+      { tool }
+    )
+    expect(fleetTranscriptItemSchema.parse(permission)).toMatchObject({ tool: null })
+    expect(fleetPendingInteractionSchema.parse(pending)).toMatchObject({ tool: null })
+    expect(fleetTranscriptItemSchema.safeParse({ ...permission, tool: { name: '', target: null } }).success).toBe(false)
+  })
   it('accepts only supported API key accounts and HTTP(S) base URLs', () => {
     const account = { kind: 'openai', name: 'Fake model', key: 'test-key', baseURL: 'http://fake-model:8080/v1' }
     expect(fleetAddApiKeyAccountRequestSchema.parse(account)).toEqual(account)

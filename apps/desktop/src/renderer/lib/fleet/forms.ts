@@ -1,4 +1,24 @@
-import type { FleetActivityEntry, FleetBot, FleetRoutineSchedule } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetActivityEntry,
+  FleetBot,
+  FleetRoutineSchedule,
+  FleetTranscriptItem,
+} from '@maestrly/bot-fleet-protocol'
+
+export function visibleTranscriptItems(items: FleetTranscriptItem[]): FleetTranscriptItem[] {
+  return items.filter((item) => item.kind !== 'user' || item.source !== 'continuation')
+}
+
+export function formatUptime(milliseconds: number): { days: number; hours: number; minutes: number; long: boolean } {
+  const totalMinutes = Math.max(0, Math.floor(milliseconds / 60000))
+  const days = Math.floor(totalMinutes / 1440)
+  return {
+    days,
+    hours: days >= 2 ? Math.floor((totalMinutes % 1440) / 60) : Math.floor(totalMinutes / 60),
+    minutes: totalMinutes % 60,
+    long: days >= 2,
+  }
+}
 
 export function digestKey(entry: FleetActivityEntry): string {
   return `digest.kind.${entry.kind}`

@@ -15,7 +15,7 @@ import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
 import { DockerEngineDriver, FakeDockerDriver, parseDockerStats } from '../src/docker.js'
 import { EventHub } from '../src/events.js'
-import { cpuPercent, parseMeminfo, parseProcStat } from '../src/host.js'
+import { HostMonitor, cpuPercent, parseMeminfo, parseProcStat } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { run } from '../src/main.js'
@@ -168,6 +168,16 @@ describe('config and storage', () => {
     expect(cfg.botMemory).toBe(512 * 1024 * 1024)
     expect(cfg.botSecurityOpt).toEqual(['no-new-privileges'])
     expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: temp(), MAESTRLY_GATEWAY_BOT_SECURITY_OPT: '{}' })).toThrow()
+  })
+  it('uses a validated display name for host info and falls back to the system hostname', async () => {
+    const custom = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: temp(), MAESTRLY_GATEWAY_DISPLAY_NAME: '  vps-east  ' })
+    const driver = { version: async () => '28' } as never
+    expect((await new HostMonitor(custom, driver).read()).hostname).toBe('vps-east')
+    const fallback = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: temp(), MAESTRLY_GATEWAY_DISPLAY_NAME: '' })
+    expect((await new HostMonitor(fallback, driver).read()).hostname).toBe(os.hostname())
+    expect(() =>
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: temp(), MAESTRLY_GATEWAY_DISPLAY_NAME: 'x'.repeat(65) })
+    ).toThrow()
   })
   it('migrates empty database and reopens it', () => {
     const dir = temp(),

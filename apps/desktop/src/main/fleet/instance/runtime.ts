@@ -21,6 +21,7 @@ import {
   type FleetAddApiKeyAccountResponse,
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatStreamEvent } from '../../../shared/chat'
+import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, setAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
 import { createStandaloneConversation } from '../../standalone-conversation-service'
 import {
@@ -42,7 +43,14 @@ import { observeChatHost } from '../../chat/host-events'
 import { InstanceHttpError, InstanceEvents, type InstanceControl } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
-import { InstanceTranscriptExtras, projectChatMessages, transcriptPage, fleetQuestions, toolTarget } from './transcript'
+import {
+  InstanceTranscriptExtras,
+  projectChatMessages,
+  transcriptPage,
+  fleetQuestions,
+  toolTarget,
+  permissionTool,
+} from './transcript'
 import { InstanceHelpStore } from './help'
 import { setBotIdentity } from './identity'
 import { broadcast } from '../../window-ipc'
@@ -333,6 +341,7 @@ export class BotInstanceRuntime implements InstanceControl {
         at: this.permissionAt.get(request.id) ?? new Date().toISOString(),
         title: request.title,
         detail: request.resources.join(', ') || null,
+        tool: permissionTool(request, listChatMessages(id)),
         itemId: 'perm:' + request.id,
       }))
     const questions: FleetPendingInteraction[] = getChatQuestionBroker()
@@ -370,7 +379,7 @@ export class BotInstanceRuntime implements InstanceControl {
           ? { kind: 'queued', count: queue.length }
           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
         : pending[0]?.kind === 'permission'
-          ? { kind: 'permission', title: pending[0].title }
+          ? { kind: 'permission', title: pending[0].tool?.name ?? pending[0].title }
           : pending[0]?.kind === 'question'
             ? { kind: 'question' }
             : pending[0]?.kind === 'help'
@@ -645,7 +654,7 @@ export class BotInstanceRuntime implements InstanceControl {
   }
   private wireBrokers(): void {
     const permission = getChatPermissionBroker()
-    permission.on('asked', (request: { id: string; conversationId: string; title: string; resources: string[] }) => {
+    permission.on('asked', (request: PermissionRequest) => {
       if (request.conversationId !== this.primaryConversationId) return
       const at = new Date().toISOString()
       this.permissionAt.set(request.id, at)
@@ -657,6 +666,7 @@ export class BotInstanceRuntime implements InstanceControl {
           requestId: request.id,
           title: request.title,
           detail: request.resources.join(', ') || null,
+          tool: permissionTool(request, listChatMessages(request.conversationId)),
           state: 'pending',
           resolvedAt: null,
         })

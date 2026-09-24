@@ -12,6 +12,7 @@ const bytes = z
 const port = z.coerce.number().int().min(1).max(65535)
 const schema = z.object({
   dataDir: z.string().min(1),
+  displayName: z.string().trim().max(64).nullable(),
   publicHost: z.string().min(1),
   publicPort: port,
   internalPort: port,
@@ -42,6 +43,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   }
   const value = schema.parse({
     dataDir: env[FLEET_GATEWAY_ENV.dataDir] ?? '/data',
+    displayName: env[FLEET_GATEWAY_ENV.displayName]?.trim() || null,
     publicHost: env[FLEET_GATEWAY_ENV.publicHost] ?? '127.0.0.1',
     publicPort: env[FLEET_GATEWAY_ENV.publicPort] ?? FLEET_PORTS.public,
     internalPort: env[FLEET_GATEWAY_ENV.internalPort] ?? FLEET_PORTS.internal,

@@ -87,6 +87,8 @@ export default {
     },
   },
   interaction: {
+    useTool: '{{name}} wants to use {{tool}}',
+    runCommand: '{{name}} wants to run a command',
     approveOnce: 'Approve once',
     deny: 'Deny',
     approved: 'Approved',
@@ -119,6 +121,7 @@ export default {
     server: 'Server',
     uptime: 'Uptime',
     uptimeValue: '{{hours}}h {{minutes}}m',
+    uptimeDays: '{{days}}d {{hours}}h',
     version: 'Maestrly on this Mac / bots',
     versionMismatch: 'Bots with a different version: {{bots}}. Update to keep features compatible.',
     gatewayVersion: 'Gateway: {{version}}',

@@ -9,7 +9,8 @@ import {
   type FleetQuestion,
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
-import type { QueuedInput } from './queue'
+import type { PermissionRequest } from '../../chat/permission'
+import { promptForInput, type QueuedInput } from './queue'
 
 const at = (time: number): string => new Date(time).toISOString()
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? ''))
@@ -47,6 +48,21 @@ export function toolTarget(input: unknown): string | null {
   if (typeof value.keys === 'string') return short(value.keys, 80)
   if (typeof value.text === 'string') return short(value.text, 40)
   return null
+}
+export function permissionTool(
+  request: Pick<PermissionRequest, 'action' | 'resources' | 'toolName' | 'toolCallId'>,
+  messages: ChatMessage[]
+): { name: string; target: string | null } | null {
+  const name = request.toolName || (request.action === 'bash' ? 'bash' : null)
+  if (!name) return null
+  const call = request.toolCallId
+    ? messages
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === 'tool' && part.toolCallId === request.toolCallId)
+    : undefined
+  const target = call?.type === 'tool' ? toolTarget(call.input) : null
+  const resource = request.resources.find((value) => value && value !== '*' && value !== name)
+  return { name, target: target ?? (resource ? toolTarget({ command: resource }) : null) }
 }
 function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
   if (typeof output === 'string') {
@@ -99,11 +115,25 @@ function toolItem(
 export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput[] = []): FleetTranscriptItem[] {
   const mappedInputs = inputs.filter((item) => item.started && !item.nativeMessageId)
   const byMessage = new Map(inputs.filter((item) => item.nativeMessageId).map((item) => [item.nativeMessageId, item]))
-  let userIndex = 0
+  const claimed = new Set<string>()
   const items: FleetTranscriptItem[] = []
   for (const message of messages) {
     if (message.internal) continue
-    const linked = message.role === 'user' ? (byMessage.get(message.id) ?? mappedInputs[userIndex++]) : undefined
+    const nativeText = message.parts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('')
+    const linked =
+      message.role === 'user'
+        ? (byMessage.get(message.id) ??
+          mappedInputs.find(
+            (item) =>
+              !claimed.has(item.id) &&
+              message.createdAt >= Date.parse(item.at) - 1_000 &&
+              nativeText === promptForInput(item.input)
+          ))
+        : undefined
+    if (linked) claimed.add(linked.id)
     for (const [index, part] of message.parts.entries()) {
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)

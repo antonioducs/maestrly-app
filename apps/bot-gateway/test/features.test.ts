@@ -256,6 +256,7 @@ describe('instance link and takeover', () => {
       at: new Date().toISOString(),
       title: 'Open browser',
       detail: null,
+      tool: { name: 'computer_click', target: '(10, 20)' },
       itemId: 'perm:p1',
     }
     fake.setState({ ...fake.state, pending: [pending], activity: { kind: 'permission', title: pending.title } })
@@ -264,6 +265,8 @@ describe('instance link and takeover', () => {
     fake.setState({ ...fake.state })
     await until(() => f.events.filter((event: any) => event.type === 'bot.updated').length >= 2)
     expect(f.store.activity().filter((entry) => entry.kind === 'needs_you')).toHaveLength(1)
+    expect(f.store.activity().find((entry) => entry.kind === 'needs_you')?.summary).toBe('computer_click')
+    expect(f.lifecycle.inbox()[0]?.interaction).toMatchObject({ tool: pending.tool })
     fake.emit({
       type: 'transcript.upsert',
       item: { kind: 'assistant', id: 'a1', at: new Date().toISOString(), text: 'Done', streaming: false },

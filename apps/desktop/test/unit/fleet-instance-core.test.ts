@@ -10,6 +10,7 @@ import { InstanceHoldManager, gateInstanceAppTool, registerInstanceHoldGate } fr
 import {
   InstanceTranscriptExtras,
   projectChatMessages,
+  permissionTool,
   transcriptPage,
   toolTarget,
 } from '../../src/main/fleet/instance/transcript'
@@ -224,6 +225,69 @@ describe('persistent input queue', () => {
 })
 
 describe('transcript projection', () => {
+  it('keeps continuation source before and after native message id mapping', () => {
+    const createdAt = Date.UTC(2026, 0, 1)
+    const input = { idempotencyKey: key(), source: 'continuation' as const, text: 'The owner handed the screen back.' }
+    const queued = { id: key(), itemId: 'input:continue', at: new Date(createdAt).toISOString(), input, started: true }
+    const messages = [
+      {
+        id: 'earlier',
+        conversationId: 'c',
+        role: 'user',
+        createdAt: createdAt - 10_000,
+        parts: [{ type: 'text', id: 't1', text: 'Earlier' }],
+      },
+      {
+        id: 'native-continue',
+        conversationId: 'c',
+        role: 'user',
+        createdAt: createdAt + 100,
+        parts: [{ type: 'text', id: 't2', text: input.text }],
+      },
+    ] as ChatMessage[]
+    expect(projectChatMessages(messages, [queued])[1]).toMatchObject({
+      id: 'input:continue',
+      kind: 'user',
+      source: 'continuation',
+    })
+    expect(projectChatMessages(messages, [{ ...queued, nativeMessageId: 'native-continue' }])[1]).toMatchObject({
+      id: 'input:continue',
+      kind: 'user',
+      source: 'continuation',
+    })
+    expect(projectChatMessages(messages, [queued])[0]).toMatchObject({ source: 'owner', text: 'Earlier' })
+  })
+  it('derives permission tools from call input and native command resources', () => {
+    const messages = [
+      {
+        id: 'assistant',
+        conversationId: 'c',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            type: 'tool',
+            id: 'call',
+            toolCallId: 'call',
+            toolName: 'computer_click',
+            input: { x: 10, y: 20 },
+            state: { status: 'running' },
+          },
+        ],
+      },
+    ] as ChatMessage[]
+    expect(
+      permissionTool(
+        { action: 'mcp', toolName: 'computer_click', toolCallId: 'call', resources: ['computer_click'] },
+        messages
+      )
+    ).toEqual({ name: 'computer_click', target: '(10, 20)' })
+    expect(permissionTool({ action: 'bash', toolName: 'bash', resources: ['ls -la'] }, [])).toEqual({
+      name: 'bash',
+      target: 'ls -la',
+    })
+    expect(permissionTool({ action: 'mcp', resources: ['computer_click'] }, [])).toBeNull()
+  })
   it('maps native parts, keeps user metadata, omits reasoning and pages by stable ids', () => {
     const createdAt = Date.UTC(2026, 0, 1)
     const messages = [
@@ -232,7 +296,7 @@ describe('transcript projection', () => {
         conversationId: 'c',
         role: 'user',
         createdAt,
-        parts: [{ type: 'text', id: 't', text: 'wrapped prompt' }],
+        parts: [{ type: 'text', id: 't', text: 'Scheduled routine "Daily". Do this now:\n\nOriginal' }],
       },
       {
         id: 'assistant-message',

@@ -35,9 +35,23 @@ export function InteractionCard({
     <div className="rounded-lg border border-border bg-card p-3 text-sm">
       {item.kind === 'permission' && (
         <>
-          <div className="font-medium">{item.title}</div>
-          {item.detail && (
-            <code className="mt-2 block overflow-x-auto rounded bg-muted p-2 text-xs">{item.detail}</code>
+          <div className="font-medium">
+            {item.tool
+              ? t(
+                  item.tool.name === 'bash' || item.tool.name === 'shell'
+                    ? 'interaction.runCommand'
+                    : 'interaction.useTool',
+                  {
+                    name: fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId,
+                    tool: item.tool.name,
+                  }
+                )
+              : item.title}
+          </div>
+          {(item.tool ? item.tool.target : item.detail) && (
+            <code className="mt-2 block overflow-x-auto rounded bg-muted p-2 text-xs">
+              {item.tool ? item.tool.target : item.detail}
+            </code>
           )}
           {item.state === 'pending' ? (
             <div className="mt-3 flex gap-2">
@@ -134,6 +148,7 @@ export function pendingToTranscript(interaction: FleetPendingInteraction): Inter
         requestId: interaction.id,
         title: interaction.title,
         detail: interaction.detail,
+        tool: interaction.tool,
         state: 'pending',
         resolvedAt: null,
       }

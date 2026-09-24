@@ -66,7 +66,7 @@ export class HostMonitor {
       dockerVersion = await this.docker.version()
     } catch {}
     return {
-      hostname: os.hostname(),
+      hostname: this.config.displayName ?? os.hostname(),
       os: release,
       kernel: os.release(),
       arch: os.arch(),

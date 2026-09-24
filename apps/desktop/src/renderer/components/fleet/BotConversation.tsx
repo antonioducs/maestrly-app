@@ -6,6 +6,7 @@ import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { visibleTranscriptItems } from '@/lib/fleet/forms'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
@@ -242,7 +243,7 @@ export function BotConversation({
               {t('transcript.loadOlder')}
             </button>
           )}
-          {transcript?.items.map((item) => (
+          {visibleTranscriptItems(transcript?.items ?? []).map((item) => (
             <TranscriptRow
               key={item.id}
               bot={bot}

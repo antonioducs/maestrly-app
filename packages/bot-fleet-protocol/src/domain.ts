@@ -185,6 +185,7 @@ export const fleetQuestionSchema = z.object({
   multiSelect: z.boolean(),
 })
 export type FleetQuestion = z.infer<typeof fleetQuestionSchema>
+export const fleetPermissionToolSchema = z.object({ name: z.string().min(1), target: z.string().nullable() })
 
 const transcriptBase = { id: fleetIdSchema, at: fleetTimestampSchema }
 const routineRef = z.object({ id: fleetIdSchema, title: z.string() })
@@ -215,6 +216,7 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     requestId: fleetIdSchema,
     title: z.string(),
     detail: z.string().nullable(),
+    tool: fleetPermissionToolSchema.nullable().default(null),
     state: z.enum(['pending', 'approved', 'denied', 'expired']),
     resolvedAt: fleetTimestampSchema.nullable(),
   }),
@@ -265,6 +267,7 @@ export const fleetPendingInteractionSchema = z.discriminatedUnion('kind', [
     at: fleetTimestampSchema,
     title: z.string(),
     detail: z.string().nullable(),
+    tool: fleetPermissionToolSchema.nullable().default(null),
     itemId: fleetIdSchema,
   }),
   z.object({

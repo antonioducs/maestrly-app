@@ -73,7 +73,7 @@ export class Lifecycle {
         this.recordActivity(
           id,
           'needs_you',
-          item.kind === 'permission' ? item.title : item.kind === 'help' ? item.reason : 'question'
+          item.kind === 'permission' ? (item.tool?.name ?? item.title) : item.kind === 'help' ? item.reason : 'question'
         )
     }
     this.pendingSeen.set(id, next)

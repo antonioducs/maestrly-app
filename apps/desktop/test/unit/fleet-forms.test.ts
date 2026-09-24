@@ -3,6 +3,8 @@ import type { FleetActivityEntry } from '@maestrly/bot-fleet-protocol'
 import {
   digestKey,
   formatDuration,
+  formatUptime,
+  visibleTranscriptItems,
   formatTimer,
   nextRadioIndex,
   routineSchedule,
@@ -30,6 +32,21 @@ describe('fleet forms', () => {
     expect(formatTimer(61_900)).toBe('01:01')
     expect(formatTimer(-100)).toBe('00:00')
     expect(formatDuration(3_700_000)).toEqual({ hours: 1, minutes: 1 })
+  })
+  it('formats uptime with days after 48 hours and hides continuation inputs', () => {
+    expect(formatUptime(3_700_000)).toEqual({ days: 0, hours: 1, minutes: 1, long: false })
+    expect(formatUptime(47 * 3_600_000)).toMatchObject({ hours: 47, long: false })
+    expect(formatUptime((15 * 24 + 3) * 3_600_000)).toMatchObject({ days: 15, hours: 3, long: true })
+    const continuation = {
+      kind: 'user' as const,
+      id: 'c',
+      at: '2026-09-23T12:34:56Z',
+      text: 'resume',
+      source: 'continuation' as const,
+      queued: false,
+    }
+    const owner = { ...continuation, id: 'o', source: 'owner' as const }
+    expect(visibleTranscriptItems([continuation, owner])).toEqual([owner])
   })
   it('wraps ceiling radio keyboard navigation', () => {
     expect(nextRadioIndex(2, 'ArrowRight', 3)).toBe(0)

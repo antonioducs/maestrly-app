@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { gb, memorySegments } from '@/lib/fleet/format'
-import { formatDuration } from '@/lib/fleet/forms'
+import { formatUptime } from '@/lib/fleet/forms'
 import { botsWithDifferentVersion } from '@/lib/fleet/selectors'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
@@ -47,7 +47,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
       .catch((cause) => setError(fleetErrorMessage(cause)))
   }, [])
   const memory = memorySegments(host, bots)
-  const uptime = formatDuration((host?.uptimeSeconds ?? 0) * 1000)
+  const uptime = formatUptime((host?.uptimeSeconds ?? 0) * 1000)
   const differentVersions = botsWithDifferentVersion(bots, version)
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-6">
@@ -73,7 +73,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
               </div>
               <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.uptime')}</div>
-                <strong>{t('server.uptimeValue', uptime)}</strong>
+                <strong>{t(uptime.long ? 'server.uptimeDays' : 'server.uptimeValue', uptime)}</strong>
                 <p className="mt-1 text-xs text-muted-foreground">{host.kernel}</p>
               </div>
               <div className="rounded-lg border border-border bg-surface-elevated p-4">
@@ -177,7 +177,10 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                     </td>
                     <td className="p-3">
                       {bot.resources.startedAt
-                        ? t('server.uptimeValue', formatDuration(Date.now() - Date.parse(bot.resources.startedAt)))
+                        ? (() => {
+                            const duration = formatUptime(Date.now() - Date.parse(bot.resources.startedAt))
+                            return t(duration.long ? 'server.uptimeDays' : 'server.uptimeValue', duration)
+                          })()
                         : '—'}
                     </td>
                     <td className="p-3">

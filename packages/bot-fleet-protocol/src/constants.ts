@@ -25,6 +25,7 @@ export const FLEET_SCREEN = { width: 1280, height: 800 } as const
 
 export const FLEET_GATEWAY_ENV = {
   dataDir: 'MAESTRLY_GATEWAY_DATA_DIR',
+  displayName: 'MAESTRLY_GATEWAY_DISPLAY_NAME',
   publicHost: 'MAESTRLY_GATEWAY_PUBLIC_HOST',
   publicPort: 'MAESTRLY_GATEWAY_PUBLIC_PORT',
   internalPort: 'MAESTRLY_GATEWAY_INTERNAL_PORT',

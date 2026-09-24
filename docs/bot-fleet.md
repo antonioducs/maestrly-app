@@ -42,11 +42,17 @@ npm run bot-fleet:dev -- seed
 
    Use `linux/arm64` on an ARM server; without `--platform` it builds for the machine running it. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`. It installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
 
-2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the bot memory limit, and shared memory if needed. Start Compose:
+2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the bot memory limit, and shared memory if needed. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` to the VPS name shown on the Mac's Server page. Start Compose:
 
    ```sh
    docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d
    ```
+
+   | `.env` setting | Purpose | Default |
+   | --- | --- | --- |
+   | `MAESTRLY_GATEWAY_DISPLAY_NAME` | Name shown on the Mac's Server page (up to 64 characters) | Gateway container hostname |
+   | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit per bot | `4g` |
+   | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per bot | `1g` |
 
 3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
 

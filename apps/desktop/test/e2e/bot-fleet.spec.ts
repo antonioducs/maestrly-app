@@ -77,6 +77,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       at: now(),
       title: 'Run ls',
       detail: '$ ls',
+      tool: { name: 'bash', target: 'ls -la' },
       itemId: 'item-1',
     }),
     fleetPendingInteractionSchema.parse({
@@ -95,6 +96,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       requestId: 'perm-1',
       title: 'Run ls',
       detail: '$ ls',
+      tool: { name: 'bash', target: 'ls -la' },
       state: 'pending',
       resolvedAt: null,
     },
@@ -403,6 +405,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
     await page.getByRole('button', { name: /Scout/ }).first().click()
     await expect(page.getByRole('heading', { name: 'Scout' })).toBeVisible()
+    await expect(page.getByText('Scout quer rodar um comando')).toBeVisible()
+    await expect(page.getByText('ls -la')).toBeVisible()
     await page.getByPlaceholder('Mensagem para Scout…').fill('Check the orders')
     await page.getByRole('button', { name: 'Enviar mensagem' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botMessageSend').length).toBe(1)
