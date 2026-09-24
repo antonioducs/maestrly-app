@@ -16,9 +16,7 @@ export interface DynamicToolNamespaceSpec {
 export type DynamicToolRegistrationSpec = DynamicToolFunctionSpec | DynamicToolNamespaceSpec
 
 const DEFERRED_NAMESPACE_BASE = 'maestrly_deferred'
-const DEFERRED_NAMESPACE_DESCRIPTION =
-  'Maestrly MCP and app tools discovered on demand. In exec, image results are strings: text plus ' +
-  'data:image/...;base64,... URLs. Extract each URL and call image(url); call text(...) for the remaining text.'
+const DEFERRED_NAMESPACE_DESCRIPTION = 'Maestrly MCP and app tools discovered on demand.'
 
 function deferredNamespaceName(specs: readonly DynamicToolFunctionSpec[]): string {
   const functionNames = new Set(specs.map((spec) => spec.name))

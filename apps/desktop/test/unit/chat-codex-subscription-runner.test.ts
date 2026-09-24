@@ -15,6 +15,12 @@ import {
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import type { CodexAppServerClient } from '../../src/main/chat/codex-subscription/client'
 import { CodexAppServerRpcError } from '../../src/main/chat/codex-subscription/client'
+import {
+  CODEX_HOST_MCP_TOKEN_ENV,
+  CODEX_HOST_MCP_TOOL_NAMES,
+  closeCodexHostMcpServer,
+  codexHostMcpProcessEnv,
+} from '../../src/main/chat/codex-subscription/host-mcp'
 import type { CodexNotification, CodexServerRequest } from '../../src/main/chat/codex-subscription/protocol'
 import {
   approvalConfig,
@@ -647,6 +653,109 @@ describe('Codex subscription runner', () => {
   })
   afterEach(closeDb)
 
+  it('routes screenshot through the host MCP server and the permission broker', async () => {
+    const { setAppFlag } = await import('../../src/main/store')
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_screenshot_gate', 'Take a screenshot', 1)
+    setAppFlag('chat.appTools', true)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_screenshot_gate', notifications: [] })
+    const emitted: ChatStreamEvent[] = []
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.mode = 'agent'
+    const denial = new Error('Screenshot denied by Maestrly')
+    vi.mocked(args.broker.assert).mockRejectedValue(denial)
+    const running = runCodexSubscriptionChat(args)
+    try {
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 20_000 })
+      const started = client.startThreadCalls[0] as {
+        dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
+        config: Record<string, unknown>
+      }
+      expect([...CODEX_HOST_MCP_TOOL_NAMES]).toContain('browser_screenshot')
+      expect(started.config['mcp_servers.maestrly']).toBeDefined()
+      const dynamicNames = started.dynamicTools.flatMap((spec) => spec.tools?.map((tool) => tool.name) ?? [spec.name])
+      expect(dynamicNames).not.toContain('browser_screenshot')
+      expect(dynamicNames).not.toContain('computer_screenshot')
+      const server = started.config['mcp_servers.maestrly'] as { url: string }
+      expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:/)
+      const token = codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]
+      const request = (method: string, params: Record<string, unknown> = {}) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        }).then((response) => response.json() as Promise<{ result: Record<string, unknown> }>)
+      const listed = await request('tools/list')
+      expect(listed.result.tools).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'browser_screenshot' })])
+      )
+      const denied = await request('tools/call', {
+        name: 'browser_screenshot',
+        arguments: {},
+        _meta: { threadId: 'thread_1', callId: 'screenshot_call' },
+      })
+      expect(denied.result).toMatchObject({ isError: true, content: [{ type: 'text', text: denial.message }] })
+      expect(args.broker.assert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'mcp',
+          resources: ['browser_screenshot'],
+          toolCallId: 'screenshot_call',
+        })
+      )
+      expect(emitted).toContainEqual(
+        expect.objectContaining({
+          kind: 'tool-state',
+          toolCallId: 'screenshot_call',
+          state: { status: 'error', error: denial.message },
+        })
+      )
+    } finally {
+      client.emit(completedNotification('thread_1', 'turn_screenshot_gate'))
+      await running
+      await closeCodexHostMcpServer()
+    }
+  }, 30_000)
+
+  it('persists a hosted screenshot as a tool image without storing its bytes', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_hosted_image', 'Take a screenshot', 1)
+    const client = new FakeCodexClient()
+    const imageData = 'aGVsbG8='
+    const item = {
+      id: 'hosted_screenshot',
+      type: 'mcpToolCall',
+      server: 'maestrly',
+      tool: 'browser_screenshot',
+      arguments: {},
+      status: 'completed',
+      result: {
+        content: [
+          { type: 'text', text: 'Captured' },
+          { type: 'image', data: imageData, mimeType: 'image/png' },
+        ],
+      },
+    }
+    client.queueTurn({
+      turnId: 'turn_hosted_image',
+      notifications: [
+        { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_hosted_image', item } },
+        { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_hosted_image', item } },
+        completedNotification('thread_1', 'turn_hosted_image'),
+      ],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    const part = assistantMessages(conversation.id)[0]?.parts.find(
+      (entry) => entry.type === 'tool' && entry.id === 'hosted_screenshot'
+    )
+    expect(part).toMatchObject({ type: 'tool', toolName: 'browser_screenshot', state: { status: 'completed' } })
+    if (part?.type !== 'tool' || part.state.status !== 'completed') throw new Error('Missing screenshot tool part')
+    expect(toolOutputImages(part.state.output)).toHaveLength(1)
+    expect(JSON.stringify(part)).not.toContain(imageData)
+  })
+
   it('runs standalone Ask with general native instructions and unchanged restricted capabilities', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
     try {
@@ -807,7 +916,7 @@ describe('Codex subscription runner', () => {
       {
         type: 'namespace',
         name: 'maestrly_deferred',
-        description: expect.stringContaining('call image(url)'),
+        description: 'Maestrly MCP and app tools discovered on demand.',
         tools: [
           { name: 'app_collision', deferLoading: true },
           { name: 'drawer_only', deferLoading: true },

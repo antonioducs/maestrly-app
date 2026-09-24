@@ -854,9 +854,16 @@ export interface CodexToolContentImage {
 }
 export type CodexToolContentItem = CodexToolContentText | CodexToolContentImage
 
-export function toolOutputToCodexContentItems(output: ToolOutput): CodexToolContentItem[] {
+export function toolOutputToCodexContentItems(
+  output: ToolOutput,
+  options: { dropImages?: boolean } = {}
+): CodexToolContentItem[] {
   const items: CodexToolContentItem[] = [{ type: 'inputText', text: toolOutputAsText(output) }]
   for (const image of toolOutputImages(output)) {
+    if (options.dropImages) {
+      items.push({ type: 'inputText', text: toolImageTextForModel(image) })
+      continue
+    }
     const resolved = resolveEphemeralToolImage(image)
     if (resolved) items.push({ type: 'inputImage', imageUrl: `data:${resolved.mediaType};base64,${resolved.data}` })
   }

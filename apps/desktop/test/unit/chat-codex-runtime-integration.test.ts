@@ -8,7 +8,15 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { CodexAppServerClient } from '../../src/main/chat/codex-subscription/client'
+import { PermissionBroker } from '../../src/main/chat/permission'
 import { dynamicToolRegistrations } from '../../src/main/chat/codex-subscription/dynamic-tools'
+import {
+  CODEX_HOST_MCP_SERVER_NAME,
+  closeCodexHostMcpServer,
+  codexHostMcpProcessEnv,
+  codexHostMcpThreadConfig,
+  setCodexHostMcpCallHandler,
+} from '../../src/main/chat/codex-subscription/host-mcp'
 import {
   CODEX_LONG_CONTEXT_WINDOW_TOKENS,
   ensureNativeSubagentCatalogOverride,
@@ -75,10 +83,207 @@ function modelFixture(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime', () => {
+  it.each(['exec', 'direct', 'denied'] as const)(
+    'delivers host MCP image through %s',
+    async (mode) => {
+      const home = mkdtempSync(path.join(os.tmpdir(), `maestrly-host-image-${mode}-`))
+      const imageData =
+        'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeUlEQVR4nO3PQQkAMAzAwEqsfxWTMBF7HINABFzm7H7dcEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFj12JwwF4B7SHEAAAAABJRU5ErkJggg=='
+      const imageUrl = `data:image/png;base64,${imageData}`
+      const requests: Array<{ input: Array<Record<string, unknown>>; tools: Array<Record<string, unknown>> }> = []
+      let executions = 0
+      let calls = 0
+      const server = createServer(async (request, response) => {
+        let body = ''
+        for await (const chunk of request) body += chunk
+        if (!request.url?.includes('/responses')) return void response.writeHead(404).end()
+        const input = JSON.parse(body) as (typeof requests)[number]
+        requests.push(input)
+        const index = requests.length
+        const item =
+          index === 1
+            ? mode === 'direct'
+              ? {
+                  type: 'function_call',
+                  call_id: 'shot_call',
+                  namespace: `mcp__${CODEX_HOST_MCP_SERVER_NAME}`,
+                  name: 'browser_screenshot',
+                  arguments: '{}',
+                }
+              : {
+                  type: 'custom_tool_call',
+                  call_id: 'exec_call',
+                  name: 'exec',
+                  input:
+                    'const r = await tools.mcp__maestrly__browser_screenshot({}); for (const c of r.content) c.type === "image" ? image(c) : text(c.text); text(JSON.stringify({shape:typeof r, content:r.content.map(c=>({type:c.type,mimeType:c.mimeType}))}));',
+                }
+            : {
+                type: 'message',
+                role: 'assistant',
+                id: `msg_${index}`,
+                phase: 'final_answer',
+                content: [{ type: 'output_text', text: 'done', annotations: [] }],
+                status: 'completed',
+              }
+        const events = [
+          {
+            type: 'response.created',
+            response: {
+              id: `resp_${index}`,
+              created_at: index,
+              model: mode === 'direct' ? 'gpt-5.6-sol' : 'gpt-6-luna',
+              service_tier: null,
+            },
+          },
+          { type: 'response.output_item.added', output_index: 0, item },
+          { type: 'response.output_item.done', output_index: 0, item },
+          {
+            type: 'response.completed',
+            response: {
+              id: `resp_${index}`,
+              output: [item],
+              incomplete_details: null,
+              usage: {
+                input_tokens: 20,
+                input_tokens_details: { cached_tokens: 0 },
+                output_tokens: 10,
+                output_tokens_details: { reasoning_tokens: 0 },
+              },
+              service_tier: 'default',
+            },
+          },
+        ]
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(`${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')}data: [DONE]\n\n`)
+      })
+      let client: CodexAppServerClient | null = null
+      try {
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+        const port = (server.address() as { port: number }).port
+        writeFileSync(
+          path.join(home, 'config.toml'),
+          `[features]\ncode_mode = true\ncode_mode_host = true\ncode_mode_only = true\n\n[model_providers.fixture]\nname = "Fixture"\nbase_url = "http://127.0.0.1:${port}/v1"\nenv_key = "OPENAI_API_KEY"\nwire_api = "responses"\n`,
+          'utf8'
+        )
+        writeFileSync(
+          path.join(home, 'models_cache.json'),
+          JSON.stringify({
+            fetched_at: new Date().toISOString(),
+            client_version: '0.155.1',
+            models: [
+              modelFixture(),
+              modelFixture({ slug: 'gpt-6-luna', display_name: 'GPT-6 Luna', tool_mode: 'code_mode_only' }),
+            ],
+          }),
+          'utf8'
+        )
+        const config = await codexHostMcpThreadConfig({
+          conversationId: `image-${mode}`,
+          tools: [
+            {
+              name: 'browser_screenshot',
+              description: 'Capture screenshot.',
+              inputSchema: { type: 'object', properties: {} },
+            },
+          ],
+        })
+        const broker = new PermissionBroker({
+          rulesetFor: () => [{ action: 'mcp', resource: 'browser_screenshot', effect: 'deny' }],
+        })
+        setCodexHostMcpCallHandler(async () => {
+          calls++
+          if (mode === 'denied') {
+            await broker.assert({
+              conversationId: `image-${mode}`,
+              projectId: null,
+              action: 'mcp',
+              resources: ['browser_screenshot'],
+              toolName: 'browser_screenshot',
+              toolCallId: 'shot_call',
+            })
+          }
+          executions++
+          return {
+            content: [
+              { type: 'text', text: 'Mouse at 0, 0' },
+              { type: 'image', data: imageData, mimeType: 'image/png' },
+            ],
+          }
+        })
+        client = await CodexAppServerClient.connect({
+          binaryPath: expectedBinary,
+          binaryArgs: ['app-server', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'],
+          clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
+          capabilities: { experimentalApi: true },
+          env: { CODEX_HOME: home, OPENAI_API_KEY: 'fixture-key', ...codexHostMcpProcessEnv() },
+          defaultRequestTimeoutMs: 10000,
+        })
+        const model = mode === 'direct' ? 'gpt-5.6-sol' : 'gpt-6-luna'
+        const started = await client.startThread({
+          cwd: home,
+          model,
+          modelProvider: 'fixture',
+          ephemeral: true,
+          config,
+        } as Parameters<CodexAppServerClient['startThread']>[0])
+        const completed = new Promise<void>((resolve) =>
+          client!.onNotification((n) => {
+            if (n.method === 'turn/completed') resolve()
+          })
+        )
+        await client.startTurn({
+          threadId: started.thread.id,
+          input: [{ type: 'text', text: 'capture', text_elements: [] }],
+          model,
+          approvalPolicy: 'never',
+          sandboxPolicy: { type: 'dangerFullAccess' },
+        })
+        await Promise.race([
+          completed,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
+        ])
+        expect(calls).toBe(1)
+        expect(executions).toBe(mode === 'denied' ? 0 : 1)
+        expect(requests.length).toBeGreaterThanOrEqual(2)
+        const nextInput = JSON.stringify(requests[1]?.input)
+        if (mode === 'denied') {
+          expect(nextInput).toContain('Operation denied by the permission policy')
+          expect(nextInput).not.toContain(imageData)
+        } else {
+          expect(nextInput).toContain(imageData)
+          if (mode === 'exec') {
+            expect(requests[1]?.input.at(-1)?.output).toEqual(
+              expect.arrayContaining([expect.objectContaining({ type: 'input_image', image_url: imageUrl })])
+            )
+            expect(requests[1]?.input.at(-1)?.output).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  type: 'input_text',
+                  text: expect.stringContaining('"content":[{"type":"text"},{"type":"image","mimeType":"image/png"}]'),
+                }),
+              ])
+            )
+          } else {
+            expect(requests[1]?.input.find((item) => item.type === 'function_call_output')?.output).toEqual(
+              expect.arrayContaining([expect.objectContaining({ type: 'input_image', image_url: imageUrl })])
+            )
+          }
+        }
+      } finally {
+        setCodexHostMcpCallHandler(null)
+        await client?.close({ gracePeriodMs: 1000 })
+        await closeCodexHostMcpServer()
+        await new Promise<void>((resolve) => server.close(() => resolve()))
+        rmSync(home, { recursive: true, force: true })
+      }
+    },
+    30000
+  )
+
   it('forwards deferred tool images from exec to the next model request', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'maestrly-codex-image-probe-'))
     const imageUrl =
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC'
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeUlEQVR4nO3PQQkAMAzAwEqsfxWTMBF7HINABFzm7H7dcEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFj12JwwF4B7SHEAAAAABJRU5ErkJggg=='
     type FixtureRequest = {
       input: Array<{
         type?: string
@@ -90,7 +295,6 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
     const toolCalls: unknown[] = []
     const discovery = `text(ALL_TOOLS.find((tool) => tool.name.endsWith('__browser_screenshot'))?.description)`
     const forwardImage = `const result = await tools.maestrly_deferred__browser_screenshot({}); const urls = result.match(/data:image\\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g) ?? []; for (const url of urls) image(url); text(JSON.stringify({type:typeof result, prefix:result.slice(0, 13)})); text(result.replace(/data:image\\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, '').trim());`
-    const naturalGuess = `const shot = await tools.maestrly_deferred__browser_screenshot({}); for (const c of (shot?.content ?? [])) c.type === 'image' ? image(c) : c.type === 'text' ? text(c.text) : null;`
     const server = createServer(async (request, response) => {
       let body = ''
       for await (const chunk of request) body += chunk
@@ -98,9 +302,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         const input = JSON.parse(body) as FixtureRequest
         requests.push(input)
         const index = requests.length
-        const priorOutput = [...input.input].reverse().find((item) => item.type === 'custom_tool_call_output')?.output
-        const toolDescription = Array.isArray(priorOutput) ? priorOutput.map((item) => item.text ?? '').join('\n') : ''
-        const code = index === 1 ? discovery : toolDescription.includes('call image(url)') ? forwardImage : naturalGuess
+        const code = index === 1 ? discovery : forwardImage
         const item =
           index < 3
             ? {

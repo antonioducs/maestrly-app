@@ -118,6 +118,19 @@ describe('host-owned multimodal tool output', () => {
     expect(JSON.stringify(roundTrip)).not.toContain(IMAGE_DATA)
   })
 
+  it('projects cached images as text for a Codex model without vision', () => {
+    const output = mcpResultToChatToolOutput({
+      content: [{ type: 'image', data: IMAGE_DATA, mimeType: 'image/png' }],
+    })
+    const items = toolOutputToCodexContentItems(output, { dropImages: true })
+    expect(items).toEqual([
+      { type: 'inputText', text: '(image output)' },
+      { type: 'inputText', text: '[image omitted: the selected model does not accept images]' },
+    ])
+    expect(JSON.stringify(items)).not.toContain(IMAGE_DATA)
+    expect(toolOutputImages(output)).toHaveLength(1)
+  })
+
   it('projects images to Copilot binaryResultsForLlm and back to refs', () => {
     const output = mcpResultToChatToolOutput({
       content: [{ type: 'image', data: IMAGE_DATA, mimeType: 'image/png' }],

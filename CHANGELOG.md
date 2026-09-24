@@ -25,7 +25,7 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
-- Show screenshots and other images from app tools to GPT-6 models on ChatGPT
+- Deliver browser and desktop screenshots to GPT-6 models on ChatGPT
   subscriptions when they call tools from code.
 
 ## [0.9.2] - 2026-09-23

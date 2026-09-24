@@ -43,6 +43,7 @@ import {
   CODEX_SUBSCRIPTION_UNSET_ENV_PREFIXES,
 } from './app-server-contract'
 import { resolveCodexRuntime, type CodexRuntimeResolution, type CodexRuntimeSource } from './runtime-resolver'
+import { codexHostMcpProcessEnv } from './host-mcp'
 import { acquireRuntimeAssetLease, readyRuntimeAsset } from '../../runtime-assets/app-service'
 import type { RuntimeAssetLease } from '../../../shared/runtime-assets'
 
@@ -930,7 +931,8 @@ export class CodexSubscriptionManager {
           version: this.dependencies.getAppVersion(),
         },
         capabilities: { experimentalApi: true },
-        env: { CODEX_HOME: codexHome },
+        // The host MCP bearer token stays in the process environment; thread config only names the variable.
+        env: { CODEX_HOME: codexHome, ...codexHostMcpProcessEnv() },
         unsetEnv: CODEX_SUBSCRIPTION_UNSET_ENV,
         // First-party provider: no inherited key, base URL, or development config may redirect the runtime.
         // The client applies app-owned CODEX_HOME above only after this cleanup.
