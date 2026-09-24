@@ -680,6 +680,8 @@ async function prepareRuntime(
               args.mode === 'maestro'
                 ? MAESTRO_DELEGATE_TOOL_DESCRIPTION
                 : 'Delegates one focused, self-contained task to an isolated Maestrly subagent. Include all required context.',
+            // Independent subagents may run in parallel but remain mutators/idempotent in the ledger.
+            metadata: { parallelSafe: true, readOnly: false },
             inputSchema: jsonSchema(
               args.mode === 'maestro'
                 ? MAESTRO_DELEGATE_TOOL_SCHEMA

@@ -1082,6 +1082,15 @@ describe('Claude official chat runner', () => {
 
     expect(allowed(design)).toEqual(allowed(agent))
     expect(allowed(design)).toEqual(expect.arrayContaining(['mcp__maestrly__bash', 'mcp__maestrly__task']))
+    // Independent task calls must reach the Claude runtime as concurrency-safe; mutators stay serial.
+    const registered = (
+      (agent.options.mcpServers as Record<string, { instance: unknown }>).maestrly.instance as {
+        _registeredTools: Record<string, { annotations?: { readOnlyHint?: boolean } }>
+      }
+    )._registeredTools
+    expect(registered.task?.annotations?.readOnlyHint).toBe(true)
+    expect(registered.read?.annotations?.readOnlyHint).toBe(true)
+    expect(registered.bash?.annotations?.readOnlyHint).toBeUndefined()
     for (const restricted of [plan, ask]) {
       for (const toolName of [
         'mcp__maestrly__bash',

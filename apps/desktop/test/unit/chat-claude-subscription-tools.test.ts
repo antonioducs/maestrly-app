@@ -126,6 +126,36 @@ describe('Claude in-process MCP bridge', () => {
     expect(eagerChanged.toolSignature).not.toBe(first.toolSignature)
   })
 
+  it('marks only parallel-safe tools read-only so the Claude runtime can run them concurrently', async () => {
+    const tools: ToolSet = {
+      read: namedTool('Core read.'),
+      bash: namedTool('Run a command.'),
+      task: { ...namedTool('Run a subagent.'), metadata: { parallelSafe: true, readOnly: false } },
+      serial_query: { ...namedTool('Read-only but serial.'), metadata: { readOnly: true, parallelSafe: false } },
+    }
+    const bridge = await buildClaudeToolBridge(tools, new AbortController().signal)
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'claude-concurrency-regression', version: '1' })
+    try {
+      await bridge.server.instance.connect(serverTransport)
+      await client.connect(clientTransport)
+      const listed = await client.listTools()
+      expect(
+        Object.fromEntries(listed.tools.map(({ name, annotations }) => [name, annotations?.readOnlyHint]))
+      ).toEqual({ bash: undefined, read: true, serial_query: undefined, task: true })
+    } finally {
+      await client.close()
+      await bridge.server.instance.close()
+    }
+
+    // The hint never reaches the model, so it must not invalidate resumable Claude sessions.
+    const serialTask = await buildClaudeToolBridge(
+      { ...tools, task: namedTool('Run a subagent.') },
+      new AbortController().signal
+    )
+    expect(serialTask.toolSignature).toBe(bridge.toolSignature)
+  })
+
   it('loads the Maestro delegate tool eagerly by default', async () => {
     const eager = await buildClaudeToolBridge(
       { delegate: namedTool('Route semantic work through Maestro.') },

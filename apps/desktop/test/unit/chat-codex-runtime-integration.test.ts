@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +16,14 @@ import {
   resetNativeSubagentCatalogOverrideCache,
 } from '../../src/main/chat/codex-subscription/model-catalog-override'
 import { codexRuntimeTarget, resolveCodexRuntime } from '../../src/main/chat/codex-subscription/runtime-resolver'
+import {
+  CODEX_HOST_MCP_SERVER_NAME,
+  CODEX_HOST_MCP_TOKEN_ENV,
+  closeCodexHostMcpServer,
+  codexHostMcpProcessEnv,
+  codexHostMcpThreadConfig,
+  setCodexHostMcpCallHandler,
+} from '../../src/main/chat/codex-subscription/host-mcp'
 
 /**
  * Smoke test for the REAL official artifact installed by the @openai/codex optionalDependency.
@@ -281,6 +290,165 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       rmSync(codexHome, { recursive: true, force: true })
     }
   }, 20_000)
+
+  /**
+   * Regression guard for runtime upgrades: Codex runs dynamic tools under a turn-wide write lock, so Maestrly
+   * serves delegation from its host MCP server. A local fake Responses provider emits two `task` calls in one
+   * response and then asks a shell command to report the token length; no credentials, network or quota are involved.
+   */
+  it('runs host MCP delegation in parallel, keeps it visible under tool search and hides its token', async () => {
+    const codexHome = mkdtempSync(path.join(os.tmpdir(), 'maestrly-codex-host-mcp-'))
+    const spans: Array<{ callId: string; start: number; end: number }> = []
+    let requests = 0
+    let firstRequestTools: unknown[] = []
+    let envOutput = ''
+    const usage = {
+      input_tokens: 0,
+      input_tokens_details: null,
+      output_tokens: 0,
+      output_tokens_details: null,
+      total_tokens: 0,
+    }
+    const sse = (events: Array<Record<string, unknown>>): string =>
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+    const taskCall = (callId: string, prompt: string) => ({
+      type: 'response.output_item.done',
+      item: {
+        type: 'function_call',
+        call_id: callId,
+        namespace: `mcp__${CODEX_HOST_MCP_SERVER_NAME}`,
+        name: 'task',
+        arguments: JSON.stringify({ agent: 'explore', prompt }),
+      },
+    })
+    const provider = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', (chunk: Buffer) => (body += chunk.toString('utf8')))
+      req.on('end', () => {
+        const parsed = JSON.parse(body) as { tools?: unknown[]; input?: Array<Record<string, unknown>> }
+        requests += 1
+        const id = `resp_${requests}`
+        const events: Array<Record<string, unknown>> = [{ type: 'response.created', response: { id } }]
+        // Decide by transcript content, not request count: the runtime may issue auxiliary requests.
+        const outputFor = (callId: string) =>
+          parsed.input?.find((item) => item.type === 'function_call_output' && item.call_id === callId)
+        const envResult = outputFor('call_env')
+        if (!outputFor('call_a') || !outputFor('call_b')) {
+          if (!firstRequestTools.length) firstRequestTools = parsed.tools ?? []
+          events.push(taskCall('call_a', 'first'), taskCall('call_b', 'second'))
+        } else if (!envResult) {
+          // Quote-free so POSIX shells and PowerShell pass it identically. Prints 0 when the token is blanked,
+          // 64 when it leaks, and fails otherwise, so a command that never ran cannot pass as "no leak".
+          const cmd = `node -p process.env.${CODEX_HOST_MCP_TOKEN_ENV}.length`
+          events.push({
+            type: 'response.output_item.done',
+            item: {
+              type: 'function_call',
+              call_id: 'call_env',
+              name: 'exec_command',
+              arguments: JSON.stringify({ cmd }),
+            },
+          })
+        } else {
+          envOutput = typeof envResult.output === 'string' ? envResult.output : JSON.stringify(envResult.output)
+          events.push({
+            type: 'response.output_item.done',
+            item: { type: 'message', role: 'assistant', id: 'msg', content: [{ type: 'output_text', text: 'done' }] },
+          })
+        }
+        events.push({ type: 'response.completed', response: { id, usage } })
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' }).end(sse(events))
+      })
+    })
+    await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve))
+    const providerPort = (provider.address() as { port: number }).port
+    const catalogPath = path.join(codexHome, 'catalog.json')
+    writeFileSync(catalogPath, JSON.stringify({ models: [modelFixture({ supports_search_tool: true })] }), 'utf8')
+    writeFileSync(
+      path.join(codexHome, 'config.toml'),
+      [
+        'model = "gpt-5.6-sol"',
+        'model_provider = "mock"',
+        '[model_providers.mock]',
+        'name = "mock"',
+        `base_url = "http://127.0.0.1:${providerPort}/v1"`,
+        'wire_api = "responses"',
+        'request_max_retries = 0',
+        'stream_max_retries = 0',
+      ].join('\n'),
+      'utf8'
+    )
+    setCodexHostMcpCallHandler(async ({ callId }) => {
+      const start = Date.now()
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+      spans.push({ callId, start, end: Date.now() })
+      return { content: [{ type: 'text', text: `result ${callId}` }] }
+    })
+    let client: CodexAppServerClient | null = null
+    try {
+      const threadConfig = await codexHostMcpThreadConfig({
+        conversationId: 'runtime-integration',
+        tools: [
+          {
+            name: 'task',
+            description: 'Delegates a subtask.',
+            inputSchema: {
+              type: 'object',
+              properties: { agent: { type: 'string' }, prompt: { type: 'string' } },
+              required: ['agent', 'prompt'],
+            },
+          },
+        ],
+      })
+      client = await CodexAppServerClient.connect({
+        binaryPath: expectedBinary,
+        binaryArgs: ['app-server', '-c', `model_catalog_json=${catalogPath}`],
+        clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
+        capabilities: { experimentalApi: true },
+        env: { CODEX_HOME: codexHome, ...codexHostMcpProcessEnv() },
+        unsetEnv: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'],
+        defaultRequestTimeoutMs: 20_000,
+      })
+      const completed = new Promise<void>((resolve) => {
+        client!.onNotification(({ method }) => {
+          if (method === 'turn/completed') resolve()
+        })
+      })
+      const started = await client.startThread({
+        cwd: codexHome,
+        ephemeral: true,
+        // Only Maestrly's environment policy is under test. OS sandboxes differ per CI host (bubblewrap cannot
+        // configure loopback on GitHub Linux runners; Windows read-only policy rejects the shell outright).
+        sandbox: 'danger-full-access',
+        approvalPolicy: 'never',
+        config: threadConfig,
+      } as Parameters<CodexAppServerClient['startThread']>[0])
+      await client.startTurn({
+        threadId: started.thread.id,
+        input: [{ type: 'text', text: 'delegate twice', text_elements: [] }],
+      } as Parameters<CodexAppServerClient['startTurn']>[0])
+      await completed
+
+      expect(firstRequestTools).toContainEqual(
+        expect.objectContaining({
+          type: 'namespace',
+          name: `mcp__${CODEX_HOST_MCP_SERVER_NAME}`,
+          tools: [expect.objectContaining({ name: 'task' })],
+        })
+      )
+      expect(spans.map((span) => span.callId).sort()).toEqual(['call_a', 'call_b'])
+      const [earlier, later] = [...spans].sort((a, b) => a.start - b.start)
+      expect(later.start).toBeLessThan(earlier.end)
+      expect(envOutput).not.toContain(codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV])
+      expect(envOutput.trim().split(/\r?\n/).at(-1)?.trim()).toBe('0')
+    } finally {
+      setCodexHostMcpCallHandler(null)
+      await client?.close({ gracePeriodMs: 1_000 })
+      await closeCodexHostMcpServer()
+      await new Promise<void>((resolve) => provider.close(() => resolve()))
+      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  }, 60_000)
 
   it('completes isolated real app-server handshakes', async () => {
     const codexHome = mkdtempSync(path.join(os.tmpdir(), 'maestrly-codex-runtime-smoke-'))

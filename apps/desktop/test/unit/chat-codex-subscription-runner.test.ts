@@ -58,6 +58,33 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { insertConversation, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
+import {
+  CODEX_HOST_MCP_SERVER_NAME,
+  CODEX_HOST_MCP_TOKEN_ENV,
+  codexHostMcpProcessEnv,
+} from '../../src/main/chat/codex-subscription/host-mcp'
+
+interface HostMcpToolSpec {
+  name: string
+  description: string
+  inputSchema: unknown
+}
+
+/** Delegation reaches Codex through Maestrly's host MCP server; read the catalog that server actually serves. */
+async function hostMcpTools(threadStart: unknown): Promise<HostMcpToolSpec[]> {
+  const config = (threadStart as { config?: Record<string, unknown> }).config ?? {}
+  const server = config[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`] as { url?: string } | undefined
+  if (!server?.url) return []
+  const response = await fetch(server.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]}`,
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+  })
+  return ((await response.json()) as { result: { tools: HostMcpToolSpec[] } }).result.tools
+}
 
 const cursorH = vi.hoisted(() => ({
   run: vi.fn(),
@@ -2048,13 +2075,23 @@ describe('Codex subscription runner', () => {
 
     expect(client.startThreadCalls[0]).toMatchObject({
       developerInstructions: expect.stringContaining('Maestrly subagents are available'),
-      dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'task' })]),
     })
     const start = client.startThreadCalls[0] as {
+      config: Record<string, unknown>
       dynamicTools: Array<{ name: string; description: string; deferLoading?: boolean; inputSchema: unknown }>
     }
-    const task = start.dynamicTools.find((spec) => spec.name === 'task')
-    expect(task?.deferLoading).toBeUndefined()
+    // Codex serializes dynamic tools; delegation must come from the parallel-safe host MCP server instead.
+    expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('task')
+    expect(start.config[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`]).toMatchObject({
+      url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/mcp\/[0-9a-f]{32}$/),
+      bearer_token_env_var: CODEX_HOST_MCP_TOKEN_ENV,
+      supports_parallel_tool_calls: true,
+      default_tools_approval_mode: 'approve',
+      // Otherwise Codex hides every MCP tool behind tool search.
+      omit_tools_from: ['deferred'],
+    })
+    expect(start.config[`shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`]).toBe('')
+    const task = (await hostMcpTools(start)).find((spec) => spec.name === 'task')
     expect(Buffer.byteLength(task?.description ?? '', 'utf8')).toBeLessThanOrEqual(TASK_TOOL_DESCRIPTION_MAX_BYTES)
     expect(task?.description).not.toContain('Available agents')
     expect(
@@ -2094,9 +2131,7 @@ describe('Codex subscription runner', () => {
 
     await runCodexSubscriptionChat(args)
 
-    expect(client.startThreadCalls[0]).toMatchObject({
-      dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'task' })]),
-    })
+    expect((await hostMcpTools(client.startThreadCalls[0])).map((spec) => spec.name)).toEqual(['task'])
     const turn = client.startTurnCalls[0] as {
       collaborationMode: { settings: { developer_instructions: string } }
     }
@@ -2323,7 +2358,8 @@ describe('Codex subscription runner', () => {
     }
 
     expect(started.developerInstructions).not.toContain('# Maestrly Design mode')
-    expect(started.dynamicTools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['bash', 'task']))
+    expect(started.dynamicTools.map((tool) => tool.name)).toContain('bash')
+    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['task'])
     expect(started.environments).toBeUndefined()
     expect(designStart.config).toEqual(started.config)
     expect(designStart.environments).toBeUndefined()
@@ -2379,7 +2415,8 @@ describe('Codex subscription runner', () => {
     }
     expect(started.developerInstructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
     expect(started.developerInstructions).toContain('Design mode has Agent-equivalent capabilities')
-    expect(started.dynamicTools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['bash', 'task']))
+    expect(started.dynamicTools.map((tool) => tool.name)).toContain('bash')
+    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['task'])
   })
 
   it('discards the created thread when teardown wins the race before the first turn', async () => {
@@ -4526,11 +4563,9 @@ describe('Codex subscription runner', () => {
     expect(client.startThreadCalls).toHaveLength(2)
     expect(client.startThreadCalls[0]).toMatchObject({
       config: { 'features.multi_agent': false, 'features.multi_agent_v2': false },
-      dynamicTools: expect.arrayContaining([
-        expect.objectContaining({ name: 'generate_image' }),
-        expect.objectContaining({ name: 'task' }),
-      ]),
+      dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
     })
+    expect((await hostMcpTools(client.startThreadCalls[0])).map((tool) => tool.name)).toEqual(['task'])
     expect(client.startThreadCalls[1]).toMatchObject({
       model: 'gpt-5.6-mini',
       serviceTier: 'priority',
@@ -4700,10 +4735,7 @@ describe('Codex subscription runner', () => {
     const running = runCodexSubscriptionChat(args)
 
     await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
-    const rootDynamicTools = (
-      client.startThreadCalls[0] as { dynamicTools: Array<{ name: string; inputSchema: unknown }> }
-    ).dynamicTools
-    const taskSpec = rootDynamicTools.find((spec) => spec.name === 'task')
+    const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
     expect(
       (taskSpec?.inputSchema as { properties?: { agent?: { enum?: string[] } } })?.properties?.agent?.enum
     ).toContain('testing')
@@ -5000,6 +5032,116 @@ describe('Codex subscription runner', () => {
         },
       ],
     })
+  })
+
+  it('runs host MCP task calls concurrently and renders them as task cards', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_host_mcp', 'Delegate two independent changes', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_host_mcp', notifications: [] })
+    const profile = {
+      version: 1 as const,
+      agentName: 'general-purpose',
+      effective: {
+        providerId: 'byok-provider',
+        modelId: 'worker-model',
+        configuredEffort: 'high',
+        sentEffort: 'high',
+        source: 'conversation-agent' as const,
+        candidateIndex: 0,
+      },
+      attempts: [],
+    }
+    const definition = {
+      name: 'general-purpose',
+      description: 'Worker',
+      prompt: 'Implement the task.',
+      source: 'built-in',
+      tools: ['read', 'edit'],
+    }
+    resolveSubagentExecutionProfileMock
+      .mockResolvedValueOnce({ definition, profile })
+      .mockResolvedValueOnce({ definition, profile })
+    const releases: Array<() => void> = []
+    const blockedRun = async ({ task }: { task: string }) => {
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return {
+        text: `done: ${task}`,
+        model: { providerId: 'byok-provider', modelId: 'worker-model' },
+        usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0, totalInput: 1 },
+      }
+    }
+    runSubagentMock
+      .mockImplementationOnce(blockedRun as unknown as typeof runSubagent)
+      .mockImplementationOnce(blockedRun as unknown as typeof runSubagent)
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.mode = 'agent'
+    const running = runCodexSubscriptionChat(args)
+
+    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+    const server = (client.startThreadCalls[0] as { config: Record<string, unknown> }).config[
+      `mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`
+    ] as { url: string }
+    const callTask = (callId: string, prompt: string, threadId = 'thread_1') =>
+      fetch(server.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: callId,
+          method: 'tools/call',
+          params: {
+            name: 'task',
+            arguments: { agent: 'general-purpose', prompt },
+            _meta: { threadId, callId },
+          },
+        }),
+      }).then(
+        async (response) =>
+          ((await response.json()) as { result: { content: Array<{ text: string }>; isError?: boolean } }).result
+      )
+
+    const unknownThread = await callTask('mcp_task_orphan', 'Nobody owns this.', 'thread_unknown')
+    expect(unknownThread).toMatchObject({ isError: true })
+    expect(runSubagentMock).not.toHaveBeenCalled()
+
+    const first = callTask('mcp_task_a', 'Change module A.')
+    const second = callTask('mcp_task_b', 'Change module B.')
+    // Both subagents are in flight before either finishes: nothing on the host side serializes them.
+    await vi.waitFor(() => expect(runSubagentMock).toHaveBeenCalledTimes(2))
+    for (const release of releases) release()
+    await expect(first).resolves.toEqual({ content: [{ type: 'text', text: 'done: Change module A.' }] })
+    await expect(second).resolves.toEqual({ content: [{ type: 'text', text: 'done: Change module B.' }] })
+
+    const mcpItem = (status: 'inProgress' | 'completed') => ({
+      id: 'mcp_task_a',
+      type: 'mcpToolCall',
+      server: CODEX_HOST_MCP_SERVER_NAME,
+      tool: 'task',
+      arguments: { agent: 'general-purpose', prompt: 'Change module A.' },
+      status,
+      ...(status === 'completed'
+        ? { result: { content: [{ type: 'text', text: 'done: Change module A.' }] } }
+        : {}),
+    })
+    client.emit({ method: 'item/started', params: { threadId: 'thread_1', item: mcpItem('inProgress') } })
+    client.emit({ method: 'item/completed', params: { threadId: 'thread_1', item: mcpItem('completed') } })
+    client.emit(completedNotification('thread_1', 'turn_host_mcp'))
+    await running
+
+    const card = assistantMessages(conversation.id)[0].parts.find(
+      (part) => part.type === 'tool' && part.toolCallId === 'mcp_task_a'
+    )
+    expect(card).toMatchObject({
+      toolName: 'task',
+      input: { agent: 'general-purpose', prompt: 'Change module A.' },
+      state: { status: 'completed', output: expect.objectContaining({ text: 'done: Change module A.' }) },
+    })
+    expect((card as { state: { sub?: unknown } }).state.sub).toMatchObject({ profile })
   })
 
   it('orchestrates a specialist plus helpers and blocks general-purpose while the specialist is pending', async () => {
