@@ -76,6 +76,8 @@ import {
   listCursorAgentCleanup,
 } from '../../src/main/chat/cursor-subscription/session-store'
 import { currentUserInput, runCursorSubscriptionChat } from '../../src/main/chat/cursor-subscription/runner'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
+import { storedPdfPart } from '../helpers/pdf-parts'
 import { supportsChatToolImages } from '../../src/main/chat/tool-capabilities'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -2711,5 +2713,25 @@ describe('Cursor input image policy', () => {
     expect(result.images).toEqual([])
     expect(result.text).toContain('image.png')
     expect(result.text).not.toContain('aW1hZ2U=')
+  })
+})
+
+describe('Cursor input PDF policy', () => {
+  it('sends PDFs as extracted text without image inputs', async () => {
+    const { conversationId, part, cleanup } = await storedPdfPart()
+    try {
+      const message = {
+        id: 'm',
+        conversationId,
+        role: 'user',
+        createdAt: 1,
+        parts: [part],
+      } as import('../../src/shared/chat').ChatMessage
+      const result = currentUserInput(message, '', false)
+      expect(result.text).toContain(pdfFallbackText(part))
+      expect(result.images).toEqual([])
+    } finally {
+      await cleanup()
+    }
   })
 })

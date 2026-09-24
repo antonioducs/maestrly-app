@@ -37,6 +37,8 @@ import {
   isOptInToolName,
 } from '../../src/main/chat/tools'
 import type { StoredChatMessage } from '../../src/main/chat/chat-store'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
+import { storedPdfPart } from '../helpers/pdf-parts'
 
 function userMsg(text: string): StoredChatMessage {
   return { id: 'u1', conversationId: 'c1', role: 'user', parts: [{ type: 'text', id: 't', text }], createdAt: 1 }
@@ -1936,6 +1938,26 @@ describe('parseParts (parse defensivo)', () => {
     expect(parsed[0].type === 'tool' && 'sub' in parsed[0].state && parsed[0].state.sub?.profile).toBeUndefined()
   })
 
+  it('parses persisted PDF file parts', () => {
+    const [part] = parseParts(
+      JSON.stringify([
+        {
+          type: 'file',
+          id: 'p',
+          name: 'spec.pdf',
+          mediaType: 'application/pdf',
+          kind: 'pdf',
+          artifactId: 'abc',
+          byteSize: 10,
+          data: 'hello',
+          pageCount: 3,
+          textTruncated: true,
+        },
+      ])
+    )
+    expect(part).toMatchObject({ kind: 'pdf', pageCount: 3, textTruncated: true, data: 'hello' })
+  })
+
   it('preserves generated-image parts with valid handles', () => {
     const valid = {
       type: 'generated-image',
@@ -2383,5 +2405,62 @@ describe('Ultra resolution to the highest real model effort', () => {
   })
   it('uses highest fallback effort for empty lists', () => {
     expect(resolveUltraEffort([])).toBe('high')
+  })
+})
+
+describe('PDF attachments in model messages and transcripts', () => {
+  const pdfMessage = (
+    conversationId: string,
+    part: Extract<import('../../src/shared/chat').MessagePart, { type: 'file' }>
+  ): StoredChatMessage => ({
+    id: 'u1',
+    conversationId,
+    role: 'user',
+    createdAt: 1,
+    parts: [{ type: 'text', id: 't', text: 'summarize' }, part],
+  })
+
+  it('sends the stored PDF as a native file part when the model reads PDFs', async () => {
+    const { conversationId, part, bytes, cleanup } = await storedPdfPart()
+    try {
+      const content = toModelMessages([pdfMessage(conversationId, part)], { nativePdf: true })[0]!.content as Array<{
+        type: string
+        data?: Uint8Array
+        mediaType?: string
+        filename?: string
+      }>
+      const file = content.find((c) => c.type === 'file')
+      expect(file).toMatchObject({ type: 'file', mediaType: 'application/pdf', filename: 'a.pdf' })
+      expect(Buffer.from(file!.data!).equals(bytes)).toBe(true)
+      expect(content.some((c) => c.type === 'text' && (c as { text?: string }).text?.includes('Attached PDF'))).toBe(
+        false
+      )
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('sends extracted text when native PDFs are unsupported or above the page ceiling', async () => {
+    const { conversationId, part, cleanup } = await storedPdfPart()
+    try {
+      const textOnly = toModelMessages([pdfMessage(conversationId, part)], { nativePdf: false })[0]!.content
+      expect(textOnly).toContainEqual({ type: 'text', text: pdfFallbackText(part) })
+
+      const tooLong = { ...part, pageCount: 101 }
+      const overCeiling = toModelMessages([pdfMessage(conversationId, tooLong)], { nativePdf: true })[0]!.content
+      expect(overCeiling).toContainEqual({ type: 'text', text: pdfFallbackText(tooLong) })
+      expect((overCeiling as Array<{ type: string }>).some((c) => c.type === 'file')).toBe(false)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('renders PDFs as extracted text in transcripts', async () => {
+    const { conversationId, part, cleanup } = await storedPdfPart()
+    try {
+      expect(renderTranscript([pdfMessage(conversationId, part)])).toContain(pdfFallbackText(part))
+    } finally {
+      await cleanup()
+    }
   })
 })

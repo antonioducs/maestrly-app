@@ -21,7 +21,8 @@ import {
 import type { StoredChatMessage } from './chat-store'
 import type { InterleavedReplayPolicy } from './reasoning-replay'
 import { chatToolOutputToAiSdkOutput } from './tool-output'
-import { resolveFileImageBytesSync } from './attachment-artifacts'
+import { resolveFileImageBytesSync, resolveFilePdfBytesSync } from './attachment-artifacts'
+import { pdfFallbackText, sendPdfNatively } from './pdf-attachments'
 
 // ---- zod: defensive part parsing on DB reads (legacy/corrupt rows become []). ----
 
@@ -195,13 +196,15 @@ const zPart = z.discriminatedUnion('type', [
     id: z.string(),
     name: z.string(),
     mediaType: z.string(),
-    kind: z.enum(['image', 'text']),
+    kind: z.enum(['image', 'text', 'pdf']),
     data: z.string().optional(),
     artifactId: z.string().optional(),
     byteSize: z.number().optional(),
     hidden: z.boolean().optional(),
     description: z.string().optional(),
     descriptionModel: z.string().optional(),
+    pageCount: z.number().int().nonnegative().optional(),
+    textTruncated: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('compaction'),
@@ -448,6 +451,8 @@ export function toModelMessages(
     reasoningReplay?: InterleavedReplayPolicy
     /** Aggregated persisted-replay provenance counters (no content) — active policy only. */
     replayStats?: PersistedReplayStats
+    /** Selected runtime/model reads PDF documents (`supportsNativePdf`); otherwise PDFs go as extracted text. */
+    nativePdf?: boolean
   } = {}
 ): ModelMessage[] {
   const out: ModelMessage[] = []
@@ -477,8 +482,12 @@ export function toModelMessages(
         if (text) out.push({ role: 'user', content: text })
         continue
       }
-      // Multimodal user: text + images (image parts) + text files (inline text).
-      const content: Array<{ type: 'text'; text: string } | { type: 'image'; image: string | Uint8Array }> = []
+      // Multimodal user: text + images (image parts) + PDFs (file parts or extracted text) + text files (inline text).
+      const content: Array<
+        | { type: 'text'; text: string }
+        | { type: 'image'; image: string | Uint8Array }
+        | { type: 'file'; data: Uint8Array; mediaType: string; filename?: string }
+      > = []
       if (text) content.push({ type: 'text', text })
       for (const f of files) {
         // dropImages: selected model rejects images (models.dev) → do not resend attachments (otherwise provider
@@ -490,6 +499,12 @@ export function toModelMessages(
             if (image) content.push({ type: 'image', image: image.bytes })
             else if (f.data) content.push({ type: 'image', image: f.data })
           }
+        } else if (f.kind === 'pdf') {
+          const bytes = sendPdfNatively(f, opts.nativePdf === true)
+            ? resolveFilePdfBytesSync(msg.conversationId, f)
+            : null
+          if (bytes) content.push({ type: 'file', data: bytes, mediaType: 'application/pdf', filename: f.name })
+          else content.push({ type: 'text', text: pdfFallbackText(f) })
         }
         // hidden = injected inline @ mention (f.name already starts with @); otherwise an actual attachment.
         else if (f.hidden) content.push({ type: 'text', text: `Content referenced by ${f.name}:\n\n${f.data}` })
@@ -664,6 +679,7 @@ export function renderTranscript(
         // Interpreter description accompanies images in transcripts: destinations always receive
         // TEXT only (portable compaction, native thread/session seed).
         if (p.kind === 'image') parts.push(droppedImageText(p))
+        else if (p.kind === 'pdf') parts.push(pdfFallbackText(p))
         else if (p.data?.trim()) {
           parts.push(
             `${p.hidden ? `[referenced content from ${p.name}]` : `[attached file: ${p.name}]`}\n${p.data.trim()}`

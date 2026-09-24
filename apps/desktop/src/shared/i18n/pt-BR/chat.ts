@@ -228,6 +228,7 @@ export default {
       'Pergunte algo ou peça uma tarefa… (@ referencia arquivos/pastas, # referencia agents, ⌘V cola imagens)',
     placeholderDisabled: 'Conecte um provedor em Configurações › Maestrly Chat…',
     placeholderQueue: 'Enfileirar mensagem (envia ao terminar)…',
+    dropFiles: 'Solte os arquivos para anexar',
     placeholderMaestroLive: 'Fale com o run Maestro em andamento…',
     maestroTargetCurrent: 'Run atual',
     maestroTargetNext: 'Próximo turno',
@@ -302,6 +303,8 @@ export default {
       'O contexto efetivo do modelo selecionado não comporta o próximo turno, mesmo após compactar. Nada foi enviado; compacte a conversa ou escolha um modelo com uma janela maior.',
     errContextCompactionFailed:
       'A compactação automática de contexto falhou, então a mensagem não foi enviada. Tente Compactar manualmente ou reenviar; se continuar falhando, verifique a conexão do provedor.',
+    errInvalidAttachment: 'Um anexo é inválido ou excede os limites de tamanho.',
+    errPdfUnreadable: 'Não foi possível ler o PDF. Ele pode estar protegido por senha ou corrompido.',
     cmdClear: 'Limpar o histórico desta conversa',
     cmdCompact: 'Compactar o histórico (resumir p/ liberar contexto)',
     compacting: 'compactando o contexto…',
@@ -350,6 +353,10 @@ export default {
     enlarge: 'Ampliar {{name}}',
     imageDescribed: 'O modelo desta conversa não enxerga imagens — ele recebeu esta descrição de {{model}}:',
     imageDescribedBadge: 'descrita',
+    pdfPages_one: '{{count}} página',
+    pdfPages_other: '{{count}} páginas',
+    openPdf: 'Abrir {{name}}',
+    pdfOpenFailed: 'Não foi possível abrir o PDF. Clique para tentar de novo.',
     editResend: 'Editar e reenviar',
     emptyState:
       'Converse com um modelo usando sua assinatura do ChatGPT, GitHub Copilot ou Claude, ou uma API direta. As ferramentas de arquivo e shell pedem aprovação antes de agir.',

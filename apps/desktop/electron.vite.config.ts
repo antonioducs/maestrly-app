@@ -16,6 +16,8 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           'ml-worker': resolve(__dirname, 'src/main/ml-worker.ts'),
           'asr-worker': resolve(__dirname, 'src/main/asr-worker.ts'),
+          // Untrusted PDF parsing for chat attachments runs in a short-lived utility process per document.
+          'pdf-worker': resolve(__dirname, 'src/main/pdf-worker.ts'),
         },
       },
     },

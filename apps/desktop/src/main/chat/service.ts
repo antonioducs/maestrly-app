@@ -204,6 +204,7 @@ import {
   clearChatMessages,
   deleteChatMessagesFrom,
   findAttachmentImagePart,
+  findAttachmentPdfPart,
   findGeneratedImagePart,
   getChatMessage,
   hasChatToolImageOwner,
@@ -224,14 +225,11 @@ import { readGeneratedImage } from './generated-images'
 import {
   decodeLegacyAttachmentData,
   deleteAttachmentImages,
-  MAX_ATTACHMENT_IMAGE_BYTES,
-  MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
-  MAX_ATTACHMENT_TEXT_BYTES,
+  materializePdfPreview,
   readAttachmentImage,
-  saveAttachmentImage,
   preserveResendAttachments,
 } from './attachment-artifacts'
+import { AttachmentAdmissionError, admitChatAttachments } from './attachment-admission'
 import { clearEphemeralToolImages, getEphemeralToolImage, getEphemeralToolImageCacheSnapshot } from './tool-output'
 import { onSubagentSessionChanged } from './subagent-session'
 import {
@@ -367,7 +365,7 @@ import {
   type MaestroToStandardResult,
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
-import type { ChatMode } from '../../shared/chat'
+import type { ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
@@ -3953,72 +3951,22 @@ async function startSend(
       : undefined
     const frozenCodexChain = useCodexSubscription ? freezeFailoverChain(selection.providerId) : null
     try {
-      let imageCount = 0
-      let imageBytes = 0
-      for (const a of atts) {
-        if (!a || (a.kind !== 'image' && a.kind !== 'text')) continue
-        if (a.kind === 'text') {
-          const data = typeof a.data === 'string' ? a.data : ''
-          if (Buffer.byteLength(data, 'utf8') > MAX_ATTACHMENT_TEXT_BYTES) continue
-          parts.push({
-            type: 'file',
-            id: randomUUID(),
-            name: a.name || 'file',
-            mediaType: a.mediaType || 'text/plain',
-            kind: 'text',
-            data,
-            ...(typeof a.description === 'string' && a.description ? { description: a.description } : {}),
-            ...(typeof a.descriptionModel === 'string' && a.descriptionModel
-              ? { descriptionModel: a.descriptionModel }
-              : {}),
-          })
-          continue
-        }
-        if (a.artifactId) {
-          parts.push({
-            type: 'file',
-            id: randomUUID(),
-            name: a.name || 'file',
-            mediaType: a.mediaType || 'image/png',
-            kind: 'image',
-            artifactId: a.artifactId,
-            byteSize: a.byteSize,
-            ...(typeof a.description === 'string' && a.description ? { description: a.description } : {}),
-            ...(typeof a.descriptionModel === 'string' && a.descriptionModel
-              ? { descriptionModel: a.descriptionModel }
-              : {}),
-          })
-          continue
-        }
-        const raw = a.bytes ?? a.data
-        if (raw == null) continue
-        imageCount += 1
-        if (imageCount > MAX_ATTACHMENT_IMAGES_PER_MESSAGE) throw new Error('too-many-images')
-        const stored = await saveAttachmentImage({
+      parts.push(
+        ...(await admitChatAttachments({
           conversationId,
-          bytes: raw,
-          label: a.name,
-        })
-        if (stored.byteSize > MAX_ATTACHMENT_IMAGE_BYTES) throw new Error('image-too-large')
-        imageBytes += stored.byteSize
-        if (imageBytes > MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE) throw new Error('images-too-large')
-        createdArtifactIds.push(stored.artifactId)
-        parts.push({
-          type: 'file',
-          id: randomUUID(),
-          name: a.name || stored.name,
-          mediaType: stored.mediaType,
-          kind: 'image',
-          artifactId: stored.artifactId,
-          byteSize: stored.byteSize,
-          ...(typeof a.description === 'string' && a.description ? { description: a.description } : {}),
-          ...(typeof a.descriptionModel === 'string' && a.descriptionModel
-            ? { descriptionModel: a.descriptionModel }
-            : {}),
-        })
+          attachments: atts,
+          signal: operation.controller.signal,
+          onArtifactCreated: (artifactId) => createdArtifactIds.push(artifactId),
+        }))
+      )
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error instanceof AttachmentAdmissionError && error.code === 'pdf-unreadable'
+            ? 'pdf-unreadable'
+            : 'invalid-attachment',
       }
-    } catch {
-      return { ok: false, error: 'invalid-attachment' }
     }
     // Mentions and extra internal parts enter the projection before any persistence (mentions in skill ARGS
     // also count: the original text is the source).
@@ -9172,6 +9120,26 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         }
       }
       return { ok: false as const, error: 'not-found' as const }
+    }
+  )
+  // Opens a PDF attachment in the operating system's default viewer, from a read-only copy (never the artifact).
+  deps.mhandle(
+    'chat:open-attachment-pdf',
+    async (
+      _e,
+      payload?: { conversationId?: string; messageId?: string; partId?: string }
+    ): Promise<ChatOpenAttachmentResult> => {
+      const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
+      const messageId = typeof payload?.messageId === 'string' ? payload.messageId : ''
+      const partId = typeof payload?.partId === 'string' ? payload.partId : ''
+      if (!conversationId || !messageId || !partId) return { ok: false, error: 'not-found' }
+      const part = findAttachmentPdfPart(conversationId, messageId, partId)
+      if (!part) return { ok: false, error: 'not-found' }
+      const preview = await materializePdfPreview(conversationId, part)
+      if (!preview.ok) return preview
+      const error = await shell.openPath(preview.path)
+      if (error) console.warn('[chat] Could not open PDF attachment:', error)
+      return error ? { ok: false, error: 'open-failed' } : { ok: true }
     }
   )
   deps.mhandle(

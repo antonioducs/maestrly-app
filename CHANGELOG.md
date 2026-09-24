@@ -5,6 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Attach PDF files to chat messages. Models that read PDFs receive the
+  document; other runtimes receive text extracted locally.
+- Click a PDF in a sent message to open it in the system's PDF viewer.
+- Drag files onto the chat composer to attach them.
+
+### Fixed
+
+- Delete a conversation's attached images and PDFs when the conversation is
+  deleted, instead of leaving them in the application profile.
+
 ## [0.9.3] - 2026-09-24
 
 ### Added

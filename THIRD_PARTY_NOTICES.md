@@ -92,6 +92,17 @@ Models are obtained separately and remain subject to their own model-card
 licenses and terms. See
 [`apps/desktop/runtime-assets/local-ml/README.md`](apps/desktop/runtime-assets/local-ml/README.md).
 
+## unpdf and PDF.js
+
+Maestrly packages [`unpdf`](https://github.com/unjs/unpdf) 1.8.1 (MIT,
+Copyright (c) 2023-PRESENT Johann Schopplich) to extract text from PDF chat
+attachments in an isolated utility process. unpdf bundles a serverless build of
+[PDF.js](https://github.com/mozilla/pdf.js) (`pdfjs-dist` 6.1.200, Copyright
+2012 Mozilla Foundation), licensed under Apache 2.0. The unpdf license ships in
+its package directory; the PDF.js attribution and the complete Apache 2.0 text
+are in
+[`apps/desktop/resources/licenses/pdfjs-apache-2.0.txt`](apps/desktop/resources/licenses/pdfjs-apache-2.0.txt).
+
 ## Cursor SDK
 
 Maestrly packages `@cursor/sdk` 1.0.31 and one matching supported native helper

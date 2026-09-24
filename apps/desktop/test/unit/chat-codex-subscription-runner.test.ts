@@ -29,8 +29,11 @@ import {
   SUBAGENT_CATALOG_DESCRIPTION_MAX_CHARS,
   TASK_TOOL_DESCRIPTION_MAX_BYTES,
   toolSetRuntimes,
+  currentUserInputs,
   type RunCodexSubscriptionChatArgs,
 } from '../../src/main/chat/codex-subscription/runner'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
+import { storedPdfPart } from '../helpers/pdf-parts'
 import { saveGeneratedImage } from '../../src/main/chat/generated-images'
 import { NATIVE_SUBAGENT_MODE_HINT } from '../../src/main/chat/codex-subscription/model-catalog-override'
 import { runCodexSubagent } from '../../src/main/chat/codex-subscription/subagent-runner'
@@ -9981,5 +9984,21 @@ describe('Codex subscription runner', () => {
         config: expect.objectContaining({ 'features.context_management.experimental_mode': false }),
       }),
     ])
+  })
+})
+
+describe('Codex input PDF policy', () => {
+  it('sends PDFs as extracted text, never as binary inputs', async () => {
+    const { conversationId, part, cleanup } = await storedPdfPart()
+    try {
+      const message = { id: 'm', conversationId, role: 'user', createdAt: 1, parts: [part] } as ChatMessage
+      const inputs = currentUserInputs(message, '')
+      expect(inputs.every((input) => input.type === 'text')).toBe(true)
+      expect(inputs.map((input) => (input.type === 'text' ? input.text : '')).join('\n')).toContain(
+        pdfFallbackText(part)
+      )
+    } finally {
+      await cleanup()
+    }
   })
 })

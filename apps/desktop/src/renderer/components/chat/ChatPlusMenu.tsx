@@ -230,7 +230,7 @@ export function ChatPlusMenu({
         ref={fileRef}
         type="file"
         multiple
-        accept="image/*,text/*,.md,.json,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.css,.html,.yml,.yaml,.toml,.sh,.sql"
+        accept="application/pdf,.pdf,image/*,text/*,.md,.json,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.css,.html,.yml,.yaml,.toml,.sh,.sql"
         className="hidden"
         onChange={(e) => {
           const files = Array.from(e.target.files ?? [])

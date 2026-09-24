@@ -8,6 +8,7 @@ import {
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ATTACHMENT_PDF_BYTES,
   MAX_ATTACHMENT_TEXT_BYTES,
 } from '../../shared/memory-policy'
 
@@ -15,6 +16,7 @@ export {
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ATTACHMENT_PDF_BYTES,
   MAX_ATTACHMENT_TEXT_BYTES,
 }
 
@@ -36,6 +38,16 @@ const MIME_BY_MAGIC: ReadonlyArray<{ mime: string; ext: string; match: (buf: Buf
   },
   { mime: 'image/gif', ext: 'gif', match: (b) => b.length >= 6 && b.subarray(0, 3).toString('latin1') === 'GIF' },
 ]
+
+// PDFs share the per-conversation directory but have their own signature check: `sniff` stays image-only, so
+// the image readers (and the preview IPC built on them) can never serve a PDF artifact.
+const PDF_EXT = 'pdf'
+const PDF_MEDIA_TYPE = 'application/pdf'
+const ARTIFACT_EXTS = [...MIME_BY_MAGIC.map((candidate) => candidate.ext), PDF_EXT]
+
+function isPdf(buffer: Buffer): boolean {
+  return buffer.length >= 5 && buffer.subarray(0, 5).toString('latin1') === '%PDF-'
+}
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -59,7 +71,7 @@ function sniff(buffer: Buffer): { mime: string; ext: string } | null {
 function artifactPath(conversationId: string, artifactId: string): string | null {
   if (!SAFE_ID.test(artifactId)) return null
   const dir = conversationDir(conversationId)
-  for (const { ext } of MIME_BY_MAGIC) {
+  for (const ext of ARTIFACT_EXTS) {
     const candidate = path.join(dir, `${artifactId}.${ext}`)
     if (fs.existsSync(candidate)) return candidate
   }
@@ -87,13 +99,9 @@ export function decodeAttachmentImage(input: Uint8Array | string): { buffer: Buf
   return { buffer, ...format }
 }
 
-export async function saveAttachmentImage(args: {
-  conversationId: string
-  bytes: Uint8Array | string
-  label?: string
-}): Promise<{ artifactId: string; mediaType: string; name: string; byteSize: number }> {
-  const { buffer, mime, ext } = decodeAttachmentImage(args.bytes)
-  const dir = conversationDir(args.conversationId)
+/** Writes `<artifactId>.<ext>` atomically (tmp + rename) in the conversation directory. */
+async function writeArtifactAtomically(conversationId: string, ext: string, buffer: Buffer): Promise<string> {
+  const dir = conversationDir(conversationId)
   await fsp.mkdir(dir, { recursive: true, mode: 0o700 })
   const artifactId = randomBytes(16).toString('hex')
   const target = path.join(dir, `${artifactId}.${ext}`)
@@ -107,11 +115,45 @@ export async function saveAttachmentImage(args: {
       ? error
       : new AttachmentArtifactError(`Failed to store the attachment: ${(error as Error).message}`)
   }
-  const base = (args.label ?? '')
+  return artifactId
+}
+
+function attachmentName(label: string | undefined, ext: string): string {
+  const base = (label ?? '')
     .trim()
     .replace(/[^\w.-]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return { artifactId, mediaType: mime, name: `${base || 'attachment'}.${ext}`, byteSize: buffer.length }
+  return `${base || 'attachment'}.${ext}`
+}
+
+export async function saveAttachmentImage(args: {
+  conversationId: string
+  bytes: Uint8Array | string
+  label?: string
+}): Promise<{ artifactId: string; mediaType: string; name: string; byteSize: number }> {
+  const { buffer, mime, ext } = decodeAttachmentImage(args.bytes)
+  const artifactId = await writeArtifactAtomically(args.conversationId, ext, buffer)
+  return { artifactId, mediaType: mime, name: attachmentName(args.label, ext), byteSize: buffer.length }
+}
+
+export function decodeAttachmentPdf(input: Uint8Array): Buffer {
+  const buffer = Buffer.from(input)
+  if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_PDF_BYTES) {
+    throw new AttachmentArtifactError(`The PDF attachment exceeds ${MAX_ATTACHMENT_PDF_BYTES} bytes.`)
+  }
+  if (!isPdf(buffer)) throw new AttachmentArtifactError('The attachment is not a PDF document.')
+  return buffer
+}
+
+export async function savePdfAttachment(args: {
+  conversationId: string
+  bytes: Uint8Array
+  label?: string
+}): Promise<{ artifactId: string; mediaType: 'application/pdf'; name: string; byteSize: number }> {
+  const buffer = decodeAttachmentPdf(args.bytes)
+  const artifactId = await writeArtifactAtomically(args.conversationId, PDF_EXT, buffer)
+  const label = (args.label ?? '').replace(/\.pdf$/i, '')
+  return { artifactId, mediaType: PDF_MEDIA_TYPE, name: attachmentName(label, PDF_EXT), byteSize: buffer.length }
 }
 
 /**
@@ -132,8 +174,12 @@ export function decodeLegacyAttachmentData(
   return { bytes, mediaType: match[1]! }
 }
 
-function validArtifactStat(stat: { size: number; isFile: () => boolean; isSymbolicLink: () => boolean }, expectedByteSize: number | null): boolean {
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > MAX_ATTACHMENT_IMAGE_BYTES) return false
+function validArtifactStat(
+  stat: { size: number; isFile: () => boolean; isSymbolicLink: () => boolean },
+  expectedByteSize: number | null,
+  maxBytes: number
+): boolean {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0 || stat.size > maxBytes) return false
   if (expectedByteSize !== null && stat.size !== expectedByteSize) return false
   return true
 }
@@ -162,7 +208,7 @@ export async function readAttachmentImage(
   // mismatch) WITHOUT loading bytes — the same bounded contract as writes.
   try {
     const stat = await fsp.lstat(file)
-    if (!validArtifactStat(stat, expected)) return { ok: false, error: 'invalid' }
+    if (!validArtifactStat(stat, expected, MAX_ATTACHMENT_IMAGE_BYTES)) return { ok: false, error: 'invalid' }
   } catch {
     return { ok: false, error: 'unreadable' }
   }
@@ -188,6 +234,11 @@ export async function deleteAttachmentImages(conversationId: string, artifactIds
     } catch {
       /* orphan is better than failing cleanup */
     }
+    try {
+      await fsp.rm(previewDir(conversationId, artifactId), { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
@@ -197,6 +248,81 @@ export async function deleteConversationAttachmentImages(conversationId: string)
   } catch {
     /* best-effort */
   }
+  try {
+    await fsp.rm(previewDir(conversationId), { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Read-only copies handed to the operating system's PDF viewer. The viewer never gets the artifact itself: a
+// saved annotation would change its bytes and invalidate the part. Copies live in the private profile (a shared
+// temp directory would expose them to other local users) and are removed with their message, their conversation
+// and on the next start.
+function previewRoot(): string {
+  return path.join(app.getPath('userData'), 'chat-attachment-previews')
+}
+
+function previewDir(conversationId: string, artifactId?: string): string {
+  if (!SAFE_ID.test(conversationId) || (artifactId !== undefined && !SAFE_ID.test(artifactId))) {
+    throw new AttachmentArtifactError('Invalid attachment preview id.')
+  }
+  return artifactId === undefined
+    ? path.join(previewRoot(), conversationId)
+    : path.join(previewRoot(), conversationId, artifactId)
+}
+
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i
+
+/** The attachment's own name (shown as the viewer's title), reduced to a safe single path segment. */
+function previewFileName(name: string): string {
+  const base = (name.split(/[\\/]/).pop() ?? '').replace(/[\p{Cc}<>:"|?*]+/gu, '-').replace(/\.pdf$/i, '')
+  const stem = Array.from(base)
+    .slice(0, 120)
+    .join('')
+    .replace(/^[\s.-]+|[\s.]+$/g, '')
+  const safe = stem || 'document'
+  return `${WINDOWS_RESERVED_NAME.test(safe) ? `_${safe}` : safe}.pdf`
+}
+
+async function isSameRegularFile(file: string, bytes: Uint8Array): Promise<boolean> {
+  try {
+    const stat = await fsp.lstat(file)
+    if (!stat.isFile() || stat.size !== bytes.byteLength) return false
+    return (await fsp.readFile(file)).equals(bytes)
+  } catch {
+    return false
+  }
+}
+
+export async function materializePdfPreview(
+  conversationId: string,
+  part: { artifactId?: string; byteSize?: number; name: string }
+): Promise<{ ok: true; path: string } | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }> {
+  if (!part.artifactId) return { ok: false, error: 'not-found' }
+  const stored = await readAttachmentPdf(conversationId, part.artifactId, part.byteSize)
+  if (!stored.ok) return stored
+  const dir = previewDir(conversationId, part.artifactId)
+  const target = path.join(dir, previewFileName(part.name))
+  const tmp = path.join(dir, `.${randomBytes(8).toString('hex')}.tmp`)
+  try {
+    await fsp.mkdir(dir, { recursive: true, mode: 0o700 })
+    await fsp.writeFile(tmp, stored.bytes, { mode: 0o400, flag: 'wx' })
+    // rename replaces whatever sits at the target (a planted symlink included) without following it.
+    await fsp.rename(tmp, target).catch(async (error: unknown) => {
+      // Windows refuses to replace a read-only copy or one a viewer holds open; an identical copy is reusable.
+      if (!(await isSameRegularFile(target, stored.bytes))) throw error
+    })
+  } catch {
+    return { ok: false, error: 'unreadable' }
+  } finally {
+    await fsp.rm(tmp, { force: true }).catch(() => {})
+  }
+  return { ok: true, path: target }
+}
+
+export async function clearAttachmentPreviews(): Promise<void> {
+  await fsp.rm(previewRoot(), { recursive: true, force: true }).catch(() => {})
 }
 
 export function resolveFileImageBytesSync(
@@ -209,7 +335,7 @@ export function resolveFileImageBytesSync(
       if (!file) return null
       const expected = expectedOf(part.byteSize)
       const stat = fs.lstatSync(file)
-      if (!validArtifactStat(stat, expected)) return null
+      if (!validArtifactStat(stat, expected, MAX_ATTACHMENT_IMAGE_BYTES)) return null
       const buffer = fs.readFileSync(file)
       if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_IMAGE_BYTES) return null
       if (expected !== null && buffer.length !== expected) return null
@@ -232,6 +358,59 @@ export async function resolveFileImageBytes(
     return stored.ok ? { bytes: stored.bytes, mediaType: stored.mediaType } : null
   }
   return decodeLegacyAttachmentData(part.data)
+}
+
+/** Same bounded contract as `readAttachmentImage`, validating the PDF signature instead of image formats. */
+export async function readAttachmentPdf(
+  conversationId: string,
+  artifactId: string,
+  expectedByteSize?: number
+): Promise<
+  { ok: true; bytes: Uint8Array; byteSize: number } | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }
+> {
+  let file: string | null
+  try {
+    file = artifactPath(conversationId, artifactId)
+  } catch {
+    return { ok: false, error: 'invalid' }
+  }
+  if (!file) return { ok: false, error: 'not-found' }
+  const expected = expectedOf(expectedByteSize)
+  try {
+    const stat = await fsp.lstat(file)
+    if (!validArtifactStat(stat, expected, MAX_ATTACHMENT_PDF_BYTES)) return { ok: false, error: 'invalid' }
+  } catch {
+    return { ok: false, error: 'unreadable' }
+  }
+  let buffer: Buffer
+  try {
+    buffer = await fsp.readFile(file)
+  } catch {
+    return { ok: false, error: 'unreadable' }
+  }
+  if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_PDF_BYTES) return { ok: false, error: 'invalid' }
+  if (expected !== null && buffer.length !== expected) return { ok: false, error: 'invalid' }
+  if (!isPdf(buffer)) return { ok: false, error: 'invalid' }
+  return { ok: true, bytes: buffer, byteSize: buffer.length }
+}
+
+export function resolveFilePdfBytesSync(
+  conversationId: string,
+  part: { artifactId?: string; byteSize?: number }
+): Uint8Array | null {
+  if (!part.artifactId) return null
+  try {
+    const file = artifactPath(conversationId, part.artifactId)
+    if (!file) return null
+    const expected = expectedOf(part.byteSize)
+    if (!validArtifactStat(fs.lstatSync(file), expected, MAX_ATTACHMENT_PDF_BYTES)) return null
+    const buffer = fs.readFileSync(file)
+    if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_PDF_BYTES) return null
+    if (expected !== null && buffer.length !== expected) return null
+    return isPdf(buffer) ? buffer : null
+  } catch {
+    return null
+  }
 }
 
 export async function reconcileOrphanAttachmentTmp(conversationId?: string): Promise<void> {
@@ -272,6 +451,12 @@ export async function preserveResendAttachments(
         ...(p.description ? { description: p.description } : {}),
         ...(p.descriptionModel ? { descriptionModel: p.descriptionModel } : {}),
       })
+      continue
+    }
+    if (p.kind === 'pdf') {
+      // Extracted text is recomputed on admission; only the original document bytes need to survive truncation.
+      const stored = p.artifactId ? await readAttachmentPdf(conversationId, p.artifactId, p.byteSize) : null
+      if (stored?.ok) out.push({ name: p.name, mediaType: PDF_MEDIA_TYPE, kind: 'pdf', bytes: stored.bytes })
       continue
     }
     if (p.artifactId) {

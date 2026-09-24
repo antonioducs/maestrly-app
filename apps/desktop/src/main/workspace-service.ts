@@ -14,6 +14,7 @@ import { createAggregator, cleanupAggregator, aggregatorDir, type RepoSpec } fro
 import { externalWorktreeDir } from './app-paths'
 import { collectChatToolImageRefs, releaseUnreferencedChatToolImages } from './chat/chat-store'
 import { deleteConversationGeneratedImages } from './chat/generated-images'
+import { deleteConversationAttachmentImages } from './chat/attachment-artifacts'
 import { deleteConversationToolImageMetadata } from './chat/tool-output'
 
 import { tMain } from './i18n'
@@ -129,6 +130,8 @@ export async function deleteConversation(
 
     deleteConversationToolImageMetadata(id)
     await deleteConversationGeneratedImages(id)
+    // Attached images and PDFs, plus any PDF copy opened in the system viewer.
+    await deleteConversationAttachmentImages(id)
   }
 
   if (conv.scope === 'standalone') {
