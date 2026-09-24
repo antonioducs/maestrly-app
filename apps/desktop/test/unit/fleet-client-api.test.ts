@@ -45,6 +45,10 @@ beforeEach(async () => {
         .end(JSON.stringify({ code: status === 426 ? 'PROTOCOL_INCOMPATIBLE' : 'CONFLICT', message: 'Rejected' }))
       return
     }
+    if (req.url === '/v1/bots/bot/conversation/call') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ result: { imageGen: true } }))
+      return
+    }
     if (req.url === '/v1/bots/bot/images/t-png') {
       const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
       res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length }).end(png)
@@ -83,6 +87,26 @@ afterEach(async () => {
 })
 
 describe('fleet API and events', () => {
+  it('calls the bot conversation endpoint with a validated request', async () => {
+    const api = new FleetApiClient(origin, 'valid')
+    await expect(
+      api.call('botConversationCall', { params: { id: 'bot' }, body: { op: 'chatGetConvTools', args: [] } })
+    ).resolves.toEqual({ result: { imageGen: true } })
+    expect(requests.at(-1)).toMatchObject({
+      url: '/v1/bots/bot/conversation/call',
+      method: 'POST',
+      auth: 'Bearer valid',
+      protocol: '1',
+      body: { op: 'chatGetConvTools', args: [] },
+    })
+    await expect(
+      api.call('botConversationCall', {
+        params: { id: 'bot' },
+        body: { op: 'chatGetConvTools', args: [], conversationId: 'other' },
+      })
+    ).rejects.toThrow()
+    expect(requests).toHaveLength(1)
+  })
   it('reads a binary bot image with a typed missing-image error', async () => {
     const api = new FleetApiClient(origin, 'valid')
     await expect(api.getImage('bot', 't-png')).resolves.toEqual({

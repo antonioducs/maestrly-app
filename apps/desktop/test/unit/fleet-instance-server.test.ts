@@ -49,6 +49,7 @@ const control: InstanceControl = {
   hold: async () => ({ state: 'held', reason: 'takeover', since: new Date().toISOString(), interruptedTurn: false }),
   release: async () => ({ state: 'none', reason: null, since: null, interruptedTurn: false }),
   open: async () => {},
+  conversationCall: async () => ({ result: { app: true, mcpDisabled: [], imageGen: true } }),
 }
 const servers: ReturnType<typeof createInstanceControlServer>[] = []
 afterEach(async () => {
@@ -72,6 +73,34 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { [FLEET_PROTOCOL_HEADER]: '1', Authorization: 'Bearer ' + token, ...extra }
 }
 describe('instance control HTTP', () => {
+  it('protects conversation calls and rejects caller-selected ids', async () => {
+    const conversationCall = vi.fn(async () => ({ result: { app: true, mcpDisabled: [], imageGen: true } }))
+    const { base } = await setup({ ...control, conversationCall })
+    const request = (body: unknown, extra: Record<string, string> = {}) =>
+      fetch(base + '/v1/conversation/call', {
+        method: 'POST',
+        headers: headers({ 'content-type': 'application/json', ...extra }),
+        body: JSON.stringify(body),
+      })
+    expect((await request({ op: 'chatGetConvTools', args: [] })).status).toBe(200)
+    expect(conversationCall).toHaveBeenCalledWith({ op: 'chatGetConvTools', args: [] })
+    expect((await request({ op: 'chatGetConvTools', args: [], conversationId: 'other' })).status).toBe(400)
+    expect((await request({ op: 'chatGetConvTools', args: [] }, { Origin: 'https://evil.test' })).status).toBe(403)
+    expect((await request({ op: 'chatGetConvTools', args: [] }, { Authorization: 'Bearer bad' })).status).toBe(401)
+    expect(conversationCall).toHaveBeenCalledTimes(1)
+    const open = vi.fn(async () => {})
+    const opened = await setup({ ...control, open })
+    for (const target of ['accounts', 'skills', 'mcp'] as const) {
+      const response = await fetch(opened.base + '/v1/ui/open', {
+        method: 'POST',
+        headers: headers({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ target }),
+      })
+      expect(response.status).toBe(204)
+    }
+    expect(open.mock.calls).toEqual([['accounts'], ['skills'], ['mcp']])
+  })
+
   it('serves binary images only with fleet credentials and keeps the larger body limit on inputs', async () => {
     const input = vi.fn(async () => ({ inputId: 'input', itemId: 'input:input', queued: true }))
     const { base } = await setup({ ...control, input })

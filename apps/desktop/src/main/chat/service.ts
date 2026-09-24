@@ -5,7 +5,11 @@ import { nameStandaloneConversationFromText } from '../standalone-conversation-t
 import { autonomousPolicy } from './autonomous'
 import { emitChatHost } from './host-events'
 import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
-import { clearHumanTurnOrigin, isHumanTurnAdmission, recordHumanTurnOrigin } from './conversation-dispatch-authorization'
+import {
+  clearHumanTurnOrigin,
+  isHumanTurnAdmission,
+  recordHumanTurnOrigin,
+} from './conversation-dispatch-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
 import {
   assertBotTurnAdmission,
@@ -2028,6 +2032,53 @@ function backgroundCompactionConfig(): BackgroundCompactionConfig | undefined {
   }
 }
 
+export async function fleetChatCommands(conversationId: string) {
+  const conv = typeof conversationId === 'string' ? getConversation(conversationId) : undefined
+  // Skills enter the palette WITHOUT bodies: choosing one only inserts `/name` into the draft; expansion happens
+  // on send (startSend). Show only ENABLED, `user-invocable` skills.
+  const skills = conv
+    ? (await effectiveSkills(conv.cwd, conversationId))
+        .filter((s) => s.userInvocable)
+        .map((s) => ({
+          name: s.name,
+          description: s.description,
+          ...(s.argumentHint ? { argumentHint: s.argumentHint } : {}),
+          source: s.source,
+        }))
+    : []
+  return {
+    prompts: listUserPrompts(),
+    project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [],
+    skills,
+  }
+}
+
+export function fleetChatGetConvTools(conversationId: string): ChatConvTools {
+  return typeof conversationId === 'string'
+    ? convToolsFor(conversationId)
+    : { app: false, mcpDisabled: [], imageGen: getAppFlag(IMAGE_GEN_FLAG, true) }
+}
+
+export function fleetChatSetConvTools(
+  conversationId: string,
+  patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
+): { ok: boolean } {
+  if (typeof conversationId === 'string') {
+    const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
+    patchConvChat(conversationId, { tools: { ...cur, ...(patch ?? {}) } })
+  }
+  return { ok: true }
+}
+
+export function fleetChatConfig(): Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> {
+  const config = buildConfig()
+  return {
+    mcpServers: config.mcpServers.map(({ id, name, transport, enabled }) => ({ id, name, transport, enabled })),
+    appToolsEnabled: config.appToolsEnabled,
+    imageGenEnabled: config.imageGenEnabled,
+  }
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -3500,7 +3551,6 @@ interface StartSendOpts {
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
   dispatchSeed?: { dispatchId: string; sourceConversationId: string }
 }
-
 
 async function startSend(
   deps: ChatIpcDeps,
@@ -9203,26 +9253,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   // '/' palette: user prompts (app_settings) + project commands (.md in cwd). Built-in ACTIONS
   // (/clear etc.) are defined in the renderer.
-  deps.mhandle('chat:commands', async (_e, conversationId: string) => {
-    const conv = typeof conversationId === 'string' ? getConversation(conversationId) : undefined
-    // Skills enter the palette WITHOUT bodies: choosing one only inserts `/name` into the draft; expansion happens
-    // on send (startSend). Show only ENABLED, `user-invocable` skills.
-    const skills = conv
-      ? (await effectiveSkills(conv.cwd, conversationId))
-          .filter((s) => s.userInvocable)
-          .map((s) => ({
-            name: s.name,
-            description: s.description,
-            ...(s.argumentHint ? { argumentHint: s.argumentHint } : {}),
-            source: s.source,
-          }))
-      : []
-    return {
-      prompts: listUserPrompts(),
-      project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [],
-      skills,
-    }
-  })
+  deps.mhandle('chat:commands', (_e, conversationId: string) => fleetChatCommands(conversationId))
   // ---- Skill management (Settings + conversation popover) ----
   // `conversationId` is optional: without it, show only GLOBAL skills (~/.agents|.claude/skills) — as in
   // Settings, which has no cwd.
@@ -10116,20 +10147,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
 
   // Tools PER CONVERSATION (app-tools + disabled MCP servers + image generation).
-  deps.mhandle('chat:get-conv-tools', (_e, conversationId: string) =>
-    typeof conversationId === 'string'
-      ? convToolsFor(conversationId)
-      : { app: false, mcpDisabled: [], imageGen: getAppFlag(IMAGE_GEN_FLAG, true) }
-  )
+  deps.mhandle('chat:get-conv-tools', (_e, conversationId: string) => fleetChatGetConvTools(conversationId))
   deps.mhandle(
     'chat:set-conv-tools',
-    (_e, conversationId: string, patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) => {
-      if (typeof conversationId === 'string') {
-        const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
-        patchConvChat(conversationId, { tools: { ...cur, ...(patch ?? {}) } })
-      }
-      return { ok: true }
-    }
+    (_e, conversationId: string, patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) =>
+      fleetChatSetConvTools(conversationId, patch)
   )
 
   // Edit last message + resend: truncate from the edited message seq and run a new turn.
@@ -10327,9 +10349,7 @@ export async function listChatProviderModels(
     if (!status.authenticated) return []
     try {
       return visible(
-        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map(
-          (model) => model.value
-        )
+        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map((model) => model.value)
       )
     } catch (error) {
       throw new Error(claudeSubscriptionErrorMessage(error))
@@ -10340,9 +10360,7 @@ export async function listChatProviderModels(
     const status = await cursorAuthStatus(force, accountId)
     if (!status.authenticated) return []
     try {
-      return visible(
-        (await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
-      )
+      return visible((await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id))
     } catch (error) {
       throw new Error(cursorSdkErrorMessage(error))
     }
@@ -10351,9 +10369,7 @@ export async function listChatProviderModels(
     const status = await grokAuthStatus(force, accountId)
     if (!status.authenticated) return []
     try {
-      return visible(
-        (await getGrokSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
-      )
+      return visible((await getGrokSubscriptionManager(accountId).listModels(force)).map((model) => model.id))
     } catch (error) {
       throw new Error(grokSubscriptionErrorMessage(error))
     }
@@ -10369,7 +10385,8 @@ export function conversationExecutionSettings(conversationId: string): Conversat
   const selection = selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return null
   const prefs = getConvUiPrefs(conversationId).chat
-  const reasoning = typeof prefs?.reasoning === 'string' && prefs.reasoning.trim() ? prefs.reasoning : defaultReasoningEffort()
+  const reasoning =
+    typeof prefs?.reasoning === 'string' && prefs.reasoning.trim() ? prefs.reasoning : defaultReasoningEffort()
   return {
     providerId: selection.providerId,
     modelId: selection.modelId,
@@ -10422,7 +10439,11 @@ export async function describeChatModelForDispatch(
       5_000,
       null
     ),
-    bestEffortWithin(runnerCapabilityMetaFallback(providerId, modelId).catch(() => null), 5_000, null),
+    bestEffortWithin(
+      runnerCapabilityMetaFallback(providerId, modelId).catch(() => null),
+      5_000,
+      null
+    ),
   ])
   const advertised = primary?.reasoningEfforts?.length ? primary.reasoningEfforts : (fallback?.reasoningEfforts ?? [])
   const reasoningEfforts = [...new Set(advertised.map((effort) => effort.trim()).filter(Boolean))]

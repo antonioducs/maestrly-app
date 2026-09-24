@@ -14,6 +14,12 @@ flowchart LR
 
 Compose publishes only the gateway's public listener on server loopback. The internal listener and each bot's control port stay on the Docker network. VNC listens only on loopback inside each bot container. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the bot control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
 
+## Bot conversation controls
+
+The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls app tools, image generation, and per-conversation MCP server availability; the Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the bot's installed skills and expand when the bot sends the turn.
+
+To install or manage skills and MCP servers, take control of the bot's **Screen** tab and open the corresponding Settings section in the bot's own Maestrly window. These changes affect the bot's environment; your Mac's local skills and MCP servers are separate.
+
 ## Requirements
 
 - A Linux server with Docker Engine, enough disk for images and one persistent home volume per bot, and outbound access to your model providers. The included desktop uses CPU rendering; no GPU is required.

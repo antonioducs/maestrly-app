@@ -110,14 +110,14 @@ async function referentialDiagnostics(rules: SubagentProfileRulesV1 | null): Pro
   return diagnostics
 }
 
-async function inspect<T extends SubagentProfileConfigPayload>(payload: T): Promise<T> {
+export async function inspectSubagentProfile<T extends SubagentProfileConfigPayload>(payload: T): Promise<T> {
   return { ...payload, diagnostics: [...payload.diagnostics, ...(await referentialDiagnostics(payload.rules))] }
 }
 
 async function validateBeforeSave(rules: unknown): Promise<SubagentProfileSaveResult | SubagentProfileConfigPayload> {
   const parsed = validateSubagentProfileRules(rules)
   if (!parsed.ok) return parsed
-  const inspected = await inspect(parsed.value)
+  const inspected = await inspectSubagentProfile(parsed.value)
   const errors = inspected.diagnostics.filter((item) => item.severity === 'error')
   return errors.length ? { ok: false, errors } : inspected
 }
@@ -159,7 +159,7 @@ async function catalogForConversation(conversationId?: string): Promise<Subagent
 
 /** Domain IPC boundary; service.ts needs only one wiring line. */
 export function registerSubagentProfileIpc(deps: SubagentProfileIpcDeps): void {
-  deps.mhandle('chat:subagent-profiles:get-global', () => inspect(getGlobalSubagentProfileRules()))
+  deps.mhandle('chat:subagent-profiles:get-global', () => inspectSubagentProfile(getGlobalSubagentProfileRules()))
   deps.mhandle('chat:subagent-profiles:set-global', async (_event, rules: unknown) => {
     const checked = await validateBeforeSave(rules)
     if ('ok' in checked) return checked
@@ -168,7 +168,7 @@ export function registerSubagentProfileIpc(deps: SubagentProfileIpcDeps): void {
   })
   deps.mhandle('chat:subagent-profiles:get-conversation', (_event, conversationId: string) =>
     typeof conversationId === 'string'
-      ? inspect(getConversationSubagentProfileRules(conversationId))
+      ? inspectSubagentProfile(getConversationSubagentProfileRules(conversationId))
       : Promise.resolve({
           rules: null,
           diagnostics: [],
@@ -193,7 +193,7 @@ export function registerSubagentProfileIpc(deps: SubagentProfileIpcDeps): void {
           errors: [{ code: 'invalid-structure', severity: 'error', message: 'Invalid conversation profile state.' }],
         }
       const result = setConversationSubagentProfilesEnabled(conversationId, enabled)
-      return result.ok ? { ...result, value: await inspect(result.value) } : result
+      return result.ok ? { ...result, value: await inspectSubagentProfile(result.value) } : result
     }
   )
   deps.mhandle(

@@ -11,6 +11,7 @@ import {
   fleetInstanceInputSchema,
   fleetInstanceHoldRequestSchema,
   fleetInstanceReleaseRequestSchema,
+  fleetConversationCallRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
@@ -41,6 +42,7 @@ async function fake() {
     interruptedTurn: boolean
   } = { state: 'none', reason: null, since: null, interruptedTurn: false }
   const inputs: unknown[] = []
+  const conversationCalls: unknown[] = []
   const server = http.createServer(async (req, res) => {
     const send = (code: number, value: unknown) => {
       res.writeHead(code, { 'content-type': 'application/json' })
@@ -107,6 +109,12 @@ async function fake() {
         hold = { state: 'none', reason: null, since: null, interruptedTurn: false }
         return send(200, hold)
       }
+      if (req.url === '/v1/conversation/call' && req.method === 'POST') {
+        const call = fleetConversationCallRequestSchema.parse(body)
+        if (call.op === 'chatGetConvTools' && call.args.length !== 0) throw new Error('Invalid arguments')
+        conversationCalls.push(call)
+        return send(200, { result: { app: true, mcpDisabled: [], imageGen: true } })
+      }
       if (req.url === '/v1/inputs') {
         inputs.push(fleetInstanceInputSchema.parse(body))
         return send(200, { inputId: randomUUID(), itemId: randomUUID(), queued: false })
@@ -118,7 +126,7 @@ async function fake() {
   })
   servers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return { origin: 'http://127.0.0.1:' + (server.address() as { port: number }).port, inputs }
+  return { origin: 'http://127.0.0.1:' + (server.address() as { port: number }).port, inputs, conversationCalls }
 }
 it('routes takeover, tickets and routine CRUD with protocol validation', async () => {
   const instance = await fake(),
@@ -168,6 +176,16 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   try {
+    const callPath = '/v1/bots/' + bot.id + '/conversation/call'
+    const conversation = await post(callPath, one.token, { op: 'chatGetConvTools', args: [] })
+    expect(conversation.status).toBe(200)
+    expect(await conversation.json()).toEqual({ result: { app: true, mcpDisabled: [], imageGen: true } })
+    expect(instance.conversationCalls).toEqual([{ op: 'chatGetConvTools', args: [] }])
+    expect((await post(callPath, 'bad', { op: 'chatGetConvTools', args: [] })).status).toBe(401)
+    expect(
+      (await post(callPath, one.token, { op: 'chatGetConvTools', args: [], conversationId: 'other' })).status
+    ).toBe(400)
+    expect((await post(callPath, one.token, { op: 'unknown', args: [] })).status).toBe(400)
     const imageRoute = origin + '/v1/bots/test/images/t-png'
     const image = await fetch(imageRoute, { headers: headers(one.token) })
     expect(image.status).toBe(200)
@@ -288,6 +306,11 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     await expect(cliReader.read()).rejects.toThrow()
     expect(lifecycle.get(bot.id)?.takeover.state).toBe('none')
     expect(store.activity().at(-1)?.data.reason).toBe('device_revoked')
+    const afterStop = auth.pair(auth.createPairing().code, 'Mac', 'after-stop')
+    await lifecycle.stop(bot.id)
+    const stoppedCall = await post(callPath, afterStop.token, { op: 'chatGetConvTools', args: [] })
+    expect(stoppedCall.status).toBe(409)
+    expect((await stoppedCall.json()).code).toBe('BOT_NOT_RUNNING')
   } finally {
     await gateway.close()
     store.close()

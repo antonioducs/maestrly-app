@@ -7,6 +7,7 @@ import {
   type FleetPatchBotRequest,
   type FleetSendMessageRequest,
   type FleetAddApiKeyAccountRequest,
+  type FleetConversationCallRequest,
 } from '@maestrly/bot-fleet-protocol'
 import type { ServerResponse } from 'node:http'
 import type { GatewayContext } from '../context.js'
@@ -144,14 +145,12 @@ export async function publicRoute(
         throw new GatewayError('CONFLICT', 'Idempotency key used with different request')
       if (pending) return { body: await pending.promise, status: 201 }
       const promise = (async () => {
-        const response = await ctx.lifecycle
-          .instanceFor(id)
-          .postInput({
-            text: input.text,
-            attachments: input.attachments,
-            idempotencyKey: input.idempotencyKey,
-            source: 'owner',
-          })
+        const response = await ctx.lifecycle.instanceFor(id).postInput({
+          text: input.text,
+          attachments: input.attachments,
+          idempotencyKey: input.idempotencyKey,
+          source: 'owner',
+        })
         ctx.store.saveIdempotency(scope, input.idempotencyKey, hash, response, 201)
         ctx.store.markOwnerMessage(id)
         return response
@@ -169,6 +168,8 @@ export async function publicRoute(
     case 'botInteractionResolve':
       await ctx.lifecycle.instanceFor(id).resolveInteraction(params.interactionId, body)
       return { status: 204 }
+    case 'botConversationCall':
+      return { body: await ctx.lifecycle.instanceFor(id).conversationCall(body as FleetConversationCallRequest) }
     case 'botUiOpen':
       await ctx.lifecycle.instanceFor(id).uiOpen(body)
       return { status: 204 }

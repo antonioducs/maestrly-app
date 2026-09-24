@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 
 const mocks = vi.hoisted(() => ({
-  call: vi.fn(async () => undefined),
+  call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn() },
 }))
@@ -84,6 +84,25 @@ describe('fleet IPC validation', () => {
         idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
       },
     })
+  })
+  it('validates conversation calls and returns only the operation result', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const invoke = (botId: unknown, op: unknown, args: unknown) =>
+      handlers.get('fleet:conversationCall')?.({ sender: {} }, botId, op, args)
+    mocks.call.mockResolvedValueOnce({ result: { imageGen: true } })
+    await expect(invoke('bot', 'chatGetConvTools', [])).resolves.toEqual({ imageGen: true })
+    expect(mocks.call).toHaveBeenCalledWith('botConversationCall', {
+      params: { id: 'bot' },
+      body: { op: 'chatGetConvTools', args: [] },
+    })
+    expect(() => invoke('../bad', 'chatGetConvTools', [])).toThrow()
+    expect(() => invoke('bot', 'unknown', [])).toThrow()
+    expect(() => invoke('bot', 'chatGetConvTools', [1, 2, 3, 4, 5])).toThrow()
   })
   it('preserves a takeover conflict marker across IPC error serialization', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'

@@ -154,9 +154,14 @@ describe('preload API — exposure', () => {
     expect(typeof p.openLabels.files).toBe('string')
   })
 
+  it('forwards fleet conversation op arguments without a caller conversation id', async () => {
+    await api.fleetConversationCall('bot', 'chatSetConvTools', { imageGen: false })
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:conversationCall', 'bot', 'chatSetConvTools', [{ imageGen: false }])
+  })
+
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(444)
+    expect(keys).toHaveLength(445)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -358,13 +363,13 @@ describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
   it('onFleetInstanceOpenAccounts subscribes to the main event and removes its listener', () => {
     const callback = vi.fn()
     const off = api.onFleetInstanceOpenAccounts(callback) as () => void
-    expect(onSpy).toHaveBeenCalledWith('fleet:instance:open-accounts', expect.any(Function))
-    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown) => void
-    listener({})
-    expect(callback).toHaveBeenCalledTimes(1)
+    expect(onSpy).toHaveBeenCalledWith('fleet:instance:open-settings', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown, section: string) => void
+    listener({}, 'mcp')
+    expect(callback).toHaveBeenCalledWith('mcp')
     off()
-    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:instance:open-accounts', listener)
-    expect(mainText).toContain("broadcast('fleet:instance:open-accounts')")
+    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:instance:open-settings', listener)
+    expect(mainText).toContain("broadcast('fleet:instance:open-settings',")
   })
   it('onToggleDrawerShortcut registers drawer:toggle-shortcut and removes the exact listener', () => {
     const callback = vi.fn()

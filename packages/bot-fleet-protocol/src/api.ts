@@ -153,7 +153,35 @@ export const fleetScreenTicketResponseSchema = z.object({
   expiresAt: fleetTimestampSchema,
 })
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
-export const fleetUiOpenRequestSchema = z.object({ target: z.enum(['accounts', 'main']) })
+export const fleetUiOpenRequestSchema = z.object({ target: z.enum(['accounts', 'main', 'skills', 'mcp']) })
+
+/**
+ * Conversation-scoped chat settings of the bot's primary conversation, mirroring the desktop's own chat API so the
+ * Mac renders the same composer menus. The instance always targets its primary conversation (a conversation id is
+ * never accepted) and validates each op's arguments with the desktop's own rules. Results are desktop types of the
+ * same app version; the instance projects them so no secret or credential ever leaves the bot.
+ */
+export const FLEET_CONVERSATION_OPS = [
+  'chatConfig',
+  'chatGetConvTools',
+  'chatSetConvTools',
+  'chatSubagentProfilesGetConversation',
+  'chatSubagentProfilesSetConversationEnabled',
+  'chatSubagentsSetConversationEnabled',
+  'chatSkillsState',
+  'chatSkillSetOverride',
+  'chatSkillResetOverrides',
+  'chatSkillSetSelection',
+  'chatCommands',
+] as const
+export const fleetConversationOpSchema = z.enum(FLEET_CONVERSATION_OPS)
+export type FleetConversationOp = z.infer<typeof fleetConversationOpSchema>
+export const fleetConversationCallRequestSchema = z
+  .object({ op: fleetConversationOpSchema, args: z.array(z.unknown()).max(4) })
+  .strict()
+export type FleetConversationCallRequest = z.infer<typeof fleetConversationCallRequestSchema>
+export const fleetConversationCallResponseSchema = z.object({ result: z.unknown() })
+export type FleetConversationCallResponse = z.infer<typeof fleetConversationCallResponseSchema>
 export type FleetUiOpenRequest = z.infer<typeof fleetUiOpenRequestSchema>
 export const fleetRoutinesResponseSchema = z.object({ routines: z.array(fleetRoutineSchema) })
 export type FleetRoutinesResponse = z.infer<typeof fleetRoutinesResponseSchema>
@@ -356,6 +384,12 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
   botUiOpen: { method: 'POST', path: '/v1/bots/:id/ui/open', body: fleetUiOpenRequestSchema, response: null },
+  botConversationCall: {
+    method: 'POST',
+    path: '/v1/bots/:id/conversation/call',
+    body: fleetConversationCallRequestSchema,
+    response: fleetConversationCallResponseSchema,
+  },
   botRoutinesList: { method: 'GET', path: '/v1/bots/:id/routines', body: null, response: fleetRoutinesResponseSchema },
   botRoutinesCreate: {
     method: 'POST',
@@ -424,6 +458,12 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetInstanceHoldSchema,
   },
   uiOpen: { method: 'POST', path: '/v1/ui/open', body: fleetUiOpenRequestSchema, response: null },
+  conversationCall: {
+    method: 'POST',
+    path: '/v1/conversation/call',
+    body: fleetConversationCallRequestSchema,
+    response: fleetConversationCallResponseSchema,
+  },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
   screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
   screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },

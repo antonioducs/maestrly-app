@@ -10,6 +10,8 @@ import {
   type FleetInstanceProfile,
   type FleetInteractionResolution,
   type FleetAddApiKeyAccountRequest,
+  type FleetConversationCallRequest,
+  type FleetUiOpenRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -135,7 +137,10 @@ export class InstanceClient {
   release(body: { note: string | null; durationMs: number | null; continue: boolean }) {
     return this.call('holdRelease', {}, undefined, body)
   }
-  uiOpen(body: { target: 'accounts' | 'main' }) {
+  conversationCall(body: FleetConversationCallRequest) {
+    return this.call('conversationCall', {}, undefined, body)
+  }
+  uiOpen(body: FleetUiOpenRequest) {
     return this.call('uiOpen', {}, undefined, body)
   }
   async *events(since = 0, signal?: AbortSignal) {

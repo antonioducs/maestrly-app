@@ -20,6 +20,8 @@ import {
   type FleetAddApiKeyAccountRequest,
   type FleetAddApiKeyAccountResponse,
   type FleetUsage,
+  type FleetConversationCallRequest,
+  type FleetUiOpenRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
@@ -36,6 +38,10 @@ import {
   startExecutorChatTurn,
   stopChatAndWait,
   effectiveModelMeta,
+  fleetChatConfig,
+  fleetChatGetConvTools,
+  fleetChatSetConvTools,
+  fleetChatCommands,
 } from '../../chat/service'
 import { listChatMessages, chatHistoryStats } from '../../chat/chat-store'
 import { addProvider, listProviders, removeProvider } from '../../chat/catalog'
@@ -59,6 +65,19 @@ import { setBotIdentity } from './identity'
 import { broadcast } from '../../window-ipc'
 import type { BotInstanceConfig } from './config'
 import { FleetImageStore } from './images'
+import { validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
+import { inspectSubagentProfile } from '../../chat/subagent-profile-ipc'
+import {
+  getConversationSubagentProfileRules,
+  setConversationSubagentProfilesEnabled,
+  setConversationSubagentsEnabled,
+} from '../../chat/subagent-profile-config'
+import {
+  listSkillsState,
+  setConversationSkillOverride,
+  resetConversationSkillOverrides,
+  setConversationSkillSelection,
+} from '../../chat/skill-state'
 
 export function canDispatch(
   ready: boolean,
@@ -772,12 +791,72 @@ export class BotInstanceRuntime implements InstanceControl {
     } else throw new InstanceHttpError(409, 'CONFLICT', 'Interaction kind mismatch.')
     this.changed()
   }
-  async open(target: 'accounts' | 'main'): Promise<void> {
+  async conversationCall(request: FleetConversationCallRequest): Promise<{ result: unknown }> {
+    const id = this.primaryConversationId
+    if (!id || !getConversation(id))
+      throw new InstanceHttpError(409, 'CONFLICT', 'Primary conversation is unavailable.')
+    let args: unknown[]
+    try {
+      args = validateFleetConversationArgs(request.op, request.args)
+    } catch {
+      throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid conversation call arguments.')
+    }
+    let result: unknown
+    switch (request.op) {
+      case 'chatConfig':
+        result = projectFleetChatConfig(fleetChatConfig())
+        break
+      case 'chatGetConvTools':
+        result = fleetChatGetConvTools(id)
+        break
+      case 'chatSetConvTools':
+        result = fleetChatSetConvTools(id, args[0] as { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean })
+        break
+      case 'chatSubagentProfilesGetConversation':
+        result = await inspectSubagentProfile(getConversationSubagentProfileRules(id))
+        break
+      case 'chatSubagentProfilesSetConversationEnabled': {
+        const saved = setConversationSubagentProfilesEnabled(id, args[0] as boolean)
+        result = saved.ok ? { ...saved, value: await inspectSubagentProfile(saved.value) } : saved
+        break
+      }
+      case 'chatSubagentsSetConversationEnabled':
+        result = setConversationSubagentsEnabled(id, args[0] as boolean)
+        break
+      case 'chatSkillsState':
+        result = await listSkillsState(id)
+        break
+      case 'chatSkillSetOverride':
+        setConversationSkillOverride(id, args[0] as string, args[1] as 'on' | 'off' | 'inherit')
+        result = { ok: true }
+        break
+      case 'chatSkillResetOverrides':
+        result = resetConversationSkillOverrides(id)
+        break
+      case 'chatSkillSetSelection':
+        result = setConversationSkillSelection(id, args[0] as Parameters<typeof setConversationSkillSelection>[1])
+        break
+      case 'chatCommands':
+        result = await fleetChatCommands(id)
+        break
+    }
+    if (
+      request.op === 'chatSetConvTools' ||
+      request.op === 'chatSubagentProfilesSetConversationEnabled' ||
+      request.op === 'chatSubagentsSetConversationEnabled' ||
+      request.op === 'chatSkillSetOverride' ||
+      request.op === 'chatSkillResetOverrides' ||
+      request.op === 'chatSkillSetSelection'
+    )
+      this.changed()
+    const json = JSON.stringify(result)
+    if (json === undefined) throw new InstanceHttpError(500, 'INTERNAL', 'Conversation result is unavailable.')
+    return { result: JSON.parse(json) as unknown }
+  }
+  async open(target: FleetUiOpenRequest['target']): Promise<void> {
     this.window.show()
     this.window.focus()
-    if (target === 'accounts') {
-      broadcast('fleet:instance:open-accounts')
-    }
+    if (target !== 'main') broadcast('fleet:instance:open-settings', target)
   }
   private async system(
     code: Extract<FleetTranscriptItem, { kind: 'system' }>['code'],

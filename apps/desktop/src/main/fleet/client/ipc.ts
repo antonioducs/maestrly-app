@@ -2,6 +2,8 @@ import { app } from 'electron'
 import { z } from 'zod'
 import {
   fleetBotIdSchema,
+  fleetConversationOpSchema,
+  fleetConversationCallRequestSchema,
   fleetCreateBotRequestSchema,
   fleetCreateRoutineRequestSchema,
   fleetInteractionResolutionSchema,
@@ -102,13 +104,11 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown, attachments: unknown = []) => {
     const input = fleetSendMessageRequestSchema.parse({
       text: z.string().max(16_000).parse(text),
-      attachments: outgoingAttachments
-        .parse(attachments)
-        .map((item) => ({
-          name: item.name,
-          mediaType: item.mediaType,
-          dataBase64: Buffer.from(item.data).toString('base64'),
-        })),
+      attachments: outgoingAttachments.parse(attachments).map((item) => ({
+        name: item.name,
+        mediaType: item.mediaType,
+        dataBase64: Buffer.from(item.data).toString('base64'),
+      })),
       idempotencyKey: fleet.idempotencyKey(),
     })
     return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
@@ -139,6 +139,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       body: fleetTakeoverReleaseRequestSchema.parse(input),
     })
   )
+  reg.mhandle('fleet:conversationCall', (_event, botId: unknown, op: unknown, args: unknown) => {
+    const body = fleetConversationCallRequestSchema.parse({ op: fleetConversationOpSchema.parse(op), args })
+    return fleet
+      .call('botConversationCall', { params: { id: id.parse(botId) }, body })
+      .then((response) => response.result)
+  })
   reg.mhandle('fleet:uiOpen', (_event, botId: unknown, input: unknown) =>
     fleet.call('botUiOpen', { params: { id: id.parse(botId) }, body: fleetUiOpenRequestSchema.parse(input) })
   )

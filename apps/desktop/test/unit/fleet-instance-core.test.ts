@@ -28,6 +28,16 @@ import { FleetImageStore, imageId, imageMediaType } from '../../src/main/fleet/i
 import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
 
 const key = () => randomUUID()
+describe('fleet conversation admission', () => {
+  it('returns a conflict before a primary conversation exists', async () => {
+    const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+    await expect(runtime.conversationCall({ op: 'chatGetConvTools', args: [] })).rejects.toMatchObject({
+      status: 409,
+      code: 'CONFLICT',
+    })
+  })
+})
+
 describe('fleet model selection', () => {
   it('filters the bot hidden models and falls back when the saved model is hidden', () => {
     const models = [

@@ -428,6 +428,20 @@ async function main() {
     selection: { providerId: selection.providerId, modelId: selection.modelId, reasoning: null, fastMode: false },
   })
   pass('model account and selection', selection.id)
+  const conversationCall = (op, args = []) =>
+    request('POST', '/v1/bots/' + scoutId + '/conversation/call', { op, args })
+  const initialTools = (await conversationCall('chatGetConvTools')).result
+  assert.equal(typeof initialTools.imageGen, 'boolean')
+  const skillsState = (await conversationCall('chatSkillsState')).result
+  assert.ok(Array.isArray(skillsState.skills))
+  const commands = (await conversationCall('chatCommands')).result
+  assert.ok(Array.isArray(commands.skills))
+  await conversationCall('chatSetConvTools', [{ imageGen: false }])
+  assert.equal((await conversationCall('chatGetConvTools')).result.imageGen, false)
+  await conversationCall('chatSetConvTools', [{ imageGen: true }])
+  assert.equal((await conversationCall('chatGetConvTools')).result.imageGen, true)
+  pass('conversation tools, skills, commands and image generation toggle')
+
   const turnStart = Date.now()
   await request('POST', '/v1/bots/' + scoutId + '/messages', { text: 'E2E-START', idempotencyKey: randomUUID() })
   await approve('computer_screenshot')

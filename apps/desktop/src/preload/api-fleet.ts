@@ -20,7 +20,49 @@ import type {
   FleetUiOpenRequest,
   FleetAddApiKeyAccountRequest,
   FleetImageMediaType,
+  FleetConversationOp,
 } from '@maestrly/bot-fleet-protocol'
+import type {
+  ChatConfig,
+  ChatConvTools,
+  ChatProjectCommand,
+  ChatSkillCommand,
+  ChatSkillOverride,
+  ChatSkillSelection,
+  ChatSkillsState,
+  ChatUserPrompt,
+} from '../shared/chat'
+import type {
+  ConversationSubagentProfileConfigPayload,
+  ConversationSubagentProfileSaveResult,
+} from '../shared/subagent-profiles'
+
+/**
+ * The desktop chat calls the bot composer menus make, run by the bot's own Maestrly on its primary conversation.
+ * Same signatures as the local `window.api.chat*` methods minus the conversation id.
+ */
+export type FleetConversationOps = {
+  chatConfig: () => Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'>
+  chatGetConvTools: () => ChatConvTools
+  chatSetConvTools: (patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) => { ok: boolean }
+  chatSubagentProfilesGetConversation: () => ConversationSubagentProfileConfigPayload
+  chatSubagentProfilesSetConversationEnabled: (enabled: boolean) => ConversationSubagentProfileSaveResult
+  chatSubagentsSetConversationEnabled: (enabled: boolean) => ConversationSubagentProfileSaveResult
+  chatSkillsState: () => ChatSkillsState
+  chatSkillSetOverride: (name: string, state: ChatSkillOverride | 'inherit') => { ok: boolean }
+  chatSkillResetOverrides: () => { ok: boolean }
+  chatSkillSetSelection: (selection: ChatSkillSelection) => { ok: boolean; error?: string }
+  chatCommands: () => { prompts: ChatUserPrompt[]; project: ChatProjectCommand[]; skills: ChatSkillCommand[] }
+}
+// Compile-time guard: the typed map and the protocol's op list stay identical.
+type _OpsMatch = [keyof FleetConversationOps] extends [FleetConversationOp]
+  ? [FleetConversationOp] extends [keyof FleetConversationOps]
+    ? true
+    : never
+  : never
+const _opsMatch: _OpsMatch = true
+void _opsMatch
+
 export type FleetConnectionView = {
   state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
   deviceId: string | null
@@ -125,6 +167,11 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:releaseTakeover', botId, input),
   fleetUiOpen: (botId: string, input: FleetUiOpenRequest): Promise<void> =>
     ipcRenderer.invoke('fleet:uiOpen', botId, input),
+  fleetConversationCall: <Op extends keyof FleetConversationOps>(
+    botId: string,
+    op: Op,
+    ...args: Parameters<FleetConversationOps[Op]>
+  ): Promise<ReturnType<FleetConversationOps[Op]>> => ipcRenderer.invoke('fleet:conversationCall', botId, op, args),
   fleetListRoutines: (botId: string): Promise<{ routines: FleetRoutine[] }> =>
     ipcRenderer.invoke('fleet:listRoutines', botId),
   fleetCreateRoutine: (
@@ -152,5 +199,6 @@ export const fleetApi = {
   onFleetDigest: (cb: (digest: FleetDigest) => void): (() => void) => subscribe('fleet:digest', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),
-  onFleetInstanceOpenAccounts: (cb: () => void): (() => void) => subscribe('fleet:instance:open-accounts', cb),
+  onFleetInstanceOpenAccounts: (cb: (target: 'accounts' | 'skills' | 'mcp') => void): (() => void) =>
+    subscribe('fleet:instance:open-settings', cb),
 }

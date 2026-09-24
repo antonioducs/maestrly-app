@@ -21,6 +21,8 @@ import {
   type FleetInputReceipt,
   type FleetAddApiKeyAccountRequest,
   type FleetAddApiKeyAccountResponse,
+  type FleetConversationCallRequest,
+  type FleetUiOpenRequest,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
 import type { BotInstanceConfig } from './config'
@@ -49,7 +51,8 @@ export interface InstanceControl {
   resolve(id: string, value: FleetInteractionResolution): Promise<void>
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
   release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold>
-  open(target: 'accounts' | 'main'): Promise<void>
+  open(target: FleetUiOpenRequest['target']): Promise<void>
+  conversationCall(value: FleetConversationCallRequest): Promise<{ result: unknown }>
 }
 type EventPayload = {
   [K in FleetInstanceEvent['type']]: Omit<Extract<FleetInstanceEvent, { type: K }>, 'seq' | 'at'>
@@ -238,8 +241,11 @@ export function createInstanceControlServer(
           if ((output as FleetInstanceHold).state !== 'held' || (output as FleetInstanceHold).reason !== 'takeover')
             for (const entry of tunnels) if (entry.mode === 'control') entry.socket.destroy()
           break
+        case 'conversationCall':
+          output = await control.conversationCall(input as FleetConversationCallRequest)
+          break
         case 'uiOpen':
-          await control.open((input as { target: 'accounts' | 'main' }).target)
+          await control.open((input as FleetUiOpenRequest).target)
           break
       }
       if (route.response) writeJson(response, 200, route.response.parse(output))
