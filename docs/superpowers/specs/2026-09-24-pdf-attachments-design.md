@@ -31,14 +31,14 @@ offer PDFs at all.
 
 ## Out of scope
 
-- In-chat PDF preview or viewer (the chip shows name and page count only).
+- In-chat PDF preview or viewer. Clicking a sent PDF opens a read-only copy in the
+  operating system's default viewer instead (see Opening).
 - OCR or interpreter descriptions for scanned PDFs on fallback runtimes.
 - A learned per-conversation `pdfsUnsupported` flag (mirroring `imagesUnsupported`).
   Revisit if catalog data proves unreliable.
 - PDFs in the Notes editor and in `apps/web`.
 - Rejecting other binary non-text files that are pasted or picked in the composer (an
   existing, separate issue).
-- Drag-and-drop into the chat composer (not supported for any attachment type today).
 
 ## Architecture
 
@@ -46,7 +46,7 @@ offer PDFs at all.
 flowchart LR
   subgraph Renderer
     PM["ChatPlusMenu\naccept += application/pdf"] --> AF["ChatView.addFiles\nkind: 'pdf' + bytes"]
-    DD["paste"] --> AF
+    DD["paste + drop on composer"] --> AF
     AF --> BG["boundDraftAttachments\nPDF + shared binary budget"]
     BG --> CC["ChatComposer chip\n(PDF icon, name)"]
   end
@@ -125,6 +125,18 @@ alongside `vision` in `model-meta.ts`.
 followed by the text, a truncation marker when `textTruncated`, or
 `[PDF "<name>" (<N> pages) has no extractable text layer; the selected model cannot read PDFs natively]`
 when the text is empty.
+
+## Opening
+
+Clicking a PDF chip in a persisted message calls `chat:open-attachment-pdf` with
+conversation, message and part ids; main resolves the part only within that
+message (`findAttachmentPdfPart`), revalidates the artifact and writes a read-only
+copy, named after the attachment and sanitized to one path segment, to
+`<userData>/chat-attachment-previews/<conversationId>/<artifactId>/`. It then
+calls `shell.openPath` on the copy. The copy lives in the private profile, not in
+a shared temp directory, and is removed with its message, its conversation and at
+startup. The optimistic bubble shown while sending has no artifact and is not
+clickable; the saved message replaces it as soon as it is persisted.
 
 ## Context accounting
 

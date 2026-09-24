@@ -9,6 +9,8 @@ User-visible changes by version. Downloads are on
 
 - Attach PDF files to chat messages. Models that read PDFs receive the
   document; other runtimes receive text extracted locally.
+- Click a PDF in a sent message to open it in the system's PDF viewer.
+- Drag files onto the chat composer to attach them.
 
 ## [0.9.2] - 2026-09-23
 

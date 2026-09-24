@@ -31,8 +31,9 @@ reopening saved conversations and does not change the stored tool input.
 
 ## PDF attachments
 
-Attach PDFs with the **+** menu or by pasting them into the composer. Each PDF
-can be up to 10 MB, a message can carry up to four, and PDFs share the 20 MB
+Attach PDFs with the **+** menu, by pasting them, or by dragging them onto the
+composer; dragged images and text files are attached the same way. Each PDF can
+be up to 10 MB, a message can carry up to four, and PDFs share the 20 MB
 per-message budget with images.
 
 Maestrly extracts each PDF's text locally when the message is sent, in a
@@ -47,6 +48,11 @@ a message and nothing is sent.
 The document is stored in the application profile with the conversation's other
 attachments and is removed with its message. The context meter counts at least
 2,000 tokens per page, because native documents cost far more than their text.
+
+Click a PDF in a sent message to open it in the system's default PDF viewer. The
+viewer receives a read-only copy named after the attachment, kept in the
+application profile until its message or conversation is deleted or Maestrly
+restarts; changes saved from the viewer never alter the attachment.
 
 ## Starting other conversations
 
