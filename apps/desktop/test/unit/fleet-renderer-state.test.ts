@@ -10,6 +10,7 @@ const user = (id: string, at: string, text = id): FleetTranscriptItem => ({
   text,
   source: 'owner',
   queued: false,
+  images: [],
 })
 const bot = (id: string): FleetBot =>
   ({

@@ -16,6 +16,17 @@ User-visible changes by version. Downloads are on
 - Add a model API key in each bot's Settings, schedule routines on the server,
   allow selected bots to exchange bounded messages, and review activity from
   while your Mac was off.
+- See the screenshots and images a bot's tools produce in its conversation, and
+  send it images from your Mac by attaching, pasting, or dropping them.
+- Choose a bot's reasoning effort, fast mode, and access from its composer,
+  dictate messages with the microphone, and follow its context use and
+  estimated cost; its model list follows the models you enabled for its
+  account.
+
+### Fixed
+
+- Show screenshots and other images from app tools to GPT-6 models on ChatGPT
+  subscriptions when they call tools from code.
 
 ## [0.9.2] - 2026-09-23
 

@@ -57,6 +57,9 @@ export default {
     resumeBlocked: 'Screen control is in progress. Give control back before resuming.',
   },
   transcript: {
+    imageUnavailable: 'Image no longer available',
+    openImage: 'Open {{name}}',
+    image: 'Image',
     peerWrote: '{{name}} wrote to {{bot}}',
     openPeer: 'Open bot',
     routine: 'Daily routine · {{title}} · {{time}}',
@@ -101,6 +104,18 @@ export default {
     resolved: 'Resolved',
   },
   composer: {
+    attach: 'Attach images',
+    removeAttachment: 'Remove {{name}}',
+    access: 'Change access',
+    usageTooltip: '{{quality}} context usage. Cost is an estimate.',
+    measured: 'Measured',
+    estimated: 'Estimated',
+    attachmentError: {
+      type: 'Choose a PNG, JPEG, WebP, or GIF image.',
+      size: 'Each image must be 5 MiB or smaller.',
+      count: 'You can attach up to 8 images.',
+      total: 'Attachments must total 20 MiB or less.',
+    },
     message: 'Message',
     placeholder: 'Message {{name}}…',
     send: 'Send message',

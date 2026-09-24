@@ -12,7 +12,9 @@ import {
   fleetHostInfoSchema,
   fleetPendingInteractionSchema,
   fleetRoutineSchema,
+  fleetSendMessageRequestSchema,
   type FleetBot,
+  type FleetSelection,
   type FleetRoutine,
 } from '@maestrly/bot-fleet-protocol'
 
@@ -43,12 +45,23 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     botImageVersion: '0.9.2',
     dockerVersion: '28',
   })
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+    'base64'
+  )
   const base = {
     role: 'Helps with orders',
     instructions: 'Check incoming orders',
     tint: '#6688aa',
     ceiling: 'auto',
     selection: null,
+    usage: {
+      contextUsedTokens: 22600,
+      contextWindowTokens: 828400,
+      contextQuality: 'estimated',
+      costUsd: 0.12,
+      updatedAt: now(),
+    },
     talksTo: [],
     paused: false,
     lifecycle: 'running',
@@ -101,7 +114,23 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       resolvedAt: null,
     },
   ]
+  transcript.push({
+    id: 'image-tool',
+    at: now(),
+    kind: 'tool',
+    name: 'browser_screenshot',
+    target: null,
+    state: 'done',
+    output: null,
+    images: [{ id: 'shot-1', mediaType: 'image/png', byteSize: png.length, name: 'Screenshot' }],
+  })
   const routines: FleetRoutine[] = []
+  let currentSelection: FleetSelection = {
+    providerId: 'prov_e2e',
+    modelId: 'model-e2e',
+    reasoning: 'medium',
+    fastMode: false,
+  }
   let takeoverConflicts = 1
   const rendererPayloads: string[] = []
   function emit(event: unknown) {
@@ -146,6 +175,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       }
     }
     requests.push({ key, body })
+    if (key === 'botMessageSend') body = fleetSendMessageRequestSchema.parse(body)
     if (key === 'events') {
       response.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -216,8 +246,40 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       }
       case 'botSelections':
-        value = { options: [], current: null }
+        value = {
+          options: [
+            {
+              id: 'prov_e2e::model-e2e',
+              providerId: 'prov_e2e',
+              providerLabel: 'Fake',
+              modelId: 'model-e2e',
+              modelLabel: 'Model',
+              efforts: ['medium', 'high'],
+              fastMode: true,
+            },
+          ],
+          current: currentSelection,
+        }
         break
+      case 'botPatch': {
+        if (bot) {
+          const patch = body as Partial<FleetBot>
+          if (patch.selection) currentSelection = patch.selection
+          const updated = fleetBotSchema.parse({ ...bot, ...patch })
+          bots[bots.indexOf(bot)] = updated
+          emit({ type: 'bot.updated', at: now(), bot: updated })
+          value = updated
+        }
+        break
+      }
+      case 'botImage':
+        response.writeHead(200, {
+          'Content-Type': 'image/png',
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Length': String(png.length),
+        })
+        response.end(png)
+        return
       case 'botApiKeyAccountAdd': {
         value = { providerId: 'prov_e2e' }
         if (bot) {
@@ -407,9 +469,49 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('heading', { name: 'Scout' })).toBeVisible()
     await expect(page.getByText('Scout quer rodar um comando')).toBeVisible()
     await expect(page.getByText('ls -la')).toBeVisible()
+    await expect(page.getByText('~22.6k/828.4k 2.7% · ~$0.120')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Abrir Screenshot' })).toBeVisible()
+    await expect.poll(() => requests.filter((item) => item.key === 'botImage').length).toBe(1)
+    await page.getByRole('button', { name: 'Abrir Screenshot' }).click()
+    await expect(page.getByRole('dialog').getByAltText('Screenshot')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'medium' }).first().click()
+    await page.getByRole('button', { name: 'high', exact: true }).click()
+    await expect
+      .poll(
+        () =>
+          (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { selection?: { reasoning?: string } })
+            ?.selection?.reasoning
+      )
+      .toBe('high')
+    await page.getByRole('button', { name: 'Fast', exact: true }).click()
+    await expect
+      .poll(
+        () =>
+          (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { selection?: { fastMode?: boolean } })
+            ?.selection?.fastMode
+      )
+      .toBe(true)
+    await page.getByRole('button', { name: 'Alterar acesso' }).click()
+    await page.getByRole('button', { name: 'Acesso completo' }).last().click()
+    await expect
+      .poll(() => (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { ceiling?: string })?.ceiling)
+      .toBe('full')
+    await page
+      .locator('input[type="file"][aria-label="Anexar imagens"]')
+      .setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png })
+    await expect(page.getByRole('button', { name: 'Remover test.png' })).toBeVisible()
     await page.getByPlaceholder('Mensagem para Scout…').fill('Check the orders')
     await page.getByRole('button', { name: 'Enviar mensagem' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botMessageSend').length).toBe(1)
+    const sent = requests.find((item) => item.key === 'botMessageSend')?.body as {
+      text: string
+      attachments: { mediaType: string; name: string; dataBase64: string }[]
+    }
+    expect(sent.text).toBe('Check the orders')
+    expect(sent.attachments).toHaveLength(1)
+    expect(sent.attachments[0]).toMatchObject({ name: 'test.png', mediaType: 'image/png' })
+    expect(Buffer.from(sent.attachments[0].dataBase64, 'base64')).toEqual(png)
     await page.getByRole('button', { name: 'Aprovar uma vez' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botInteractionResolve').length).toBe(1)
     await page.getByRole('tab', { name: 'Bots' }).click()

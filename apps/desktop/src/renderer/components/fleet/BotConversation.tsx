@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Loader2, Wrench, X } from 'lucide-react'
-import type { FleetBot, FleetSelectionOption, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { Loader2, Wrench, X } from 'lucide-react'
+import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { visibleTranscriptItems } from '@/lib/fleet/forms'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { createFleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
+import { BotComposer } from './BotComposer'
+import { BotTranscriptImages } from './BotTranscriptImages'
 
 function TranscriptRow({
   bot,
@@ -16,8 +18,10 @@ function TranscriptRow({
   fleet,
   onOpenBot,
   onOpenScreen,
+  imageCache,
 }: {
   bot: FleetBot
+  imageCache: FleetImageCache
   item: FleetTranscriptItem
   fleet: FleetController
   onOpenBot: (id: string) => void
@@ -62,6 +66,7 @@ function TranscriptRow({
           </span>
         )}
         <p className="whitespace-pre-wrap">{item.text}</p>
+        <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
         <span className="mt-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
           {at}
           {item.queued && (
@@ -96,19 +101,22 @@ function TranscriptRow({
     )
   if (item.kind === 'tool')
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
-        {item.state === 'running' ? (
-          <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
-        ) : (
-          <Wrench className="size-3" />
-        )}
-        <code className="text-foreground">{item.name}</code>
-        <span className="truncate">{item.target}</span>
-        <span className="ml-auto">
-          {t(
-            `transcript.tool.${item.state === 'running' && (bot.status === 'paused' || bot.status === 'human') ? 'paused' : item.state}`
+      <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
+          {item.state === 'running' ? (
+            <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Wrench className="size-3" />
           )}
-        </span>
+          <code className="text-foreground">{item.name}</code>
+          <span className="truncate">{item.target}</span>
+          <span className="ml-auto">
+            {t(
+              `transcript.tool.${item.state === 'running' && (bot.status === 'paused' || bot.status === 'human') ? 'paused' : item.state}`
+            )}
+          </span>
+        </div>
+        <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
       </div>
     )
   if (item.kind === 'permission' || item.kind === 'question' || item.kind === 'help')
@@ -150,9 +158,11 @@ export function BotConversation({
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
-  const [draft, setDraft] = useState('')
-  const [options, setOptions] = useState<FleetSelectionOption[]>([])
-  const [busy, setBusy] = useState(false)
+  const imageCache = useMemo(
+    () => createFleetImageCache((botId, imageId) => window.api.fleetGetImage(botId, imageId)),
+    [bot.id]
+  )
+  useEffect(() => () => imageCache.dispose(), [imageCache])
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
@@ -161,19 +171,6 @@ export function BotConversation({
     fleet.ensureTranscript(bot.id)
   }, [bot.id, fleet.ensureTranscript])
   useEffect(() => {
-    let active = true
-    if (bot.status !== 'offline' && bot.status !== 'starting')
-      void window.api
-        .fleetListSelections(bot.id)
-        .then((result) => {
-          if (active) setOptions(result.options)
-        })
-        .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [bot.id, bot.status])
-  useEffect(() => {
     const node = scrollRef.current
     if (!node) return
     if (oldHeightRef.current !== null) {
@@ -181,27 +178,6 @@ export function BotConversation({
       oldHeightRef.current = null
     } else if (atBottomRef.current) node.scrollTop = node.scrollHeight
   }, [transcript?.items])
-  const send = async () => {
-    const text = draft.trim()
-    if (!text || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      await window.api.fleetSendMessage(bot.id, text)
-      setDraft('')
-      await fleet.loadTranscript(bot.id)
-    } catch (cause) {
-      setError(fleetErrorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      void send()
-    }
-  }
   const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
   const lastItem = transcript?.items.at(-1)
   const runningToolLast = lastItem?.kind === 'tool' && lastItem.state === 'running'
@@ -251,6 +227,7 @@ export function BotConversation({
               fleet={fleet}
               onOpenBot={onOpenBot}
               onOpenScreen={onOpenScreen}
+              imageCache={imageCache}
             />
           ))}
           {bot.status === 'working' && !runningToolLast && (
@@ -294,60 +271,7 @@ export function BotConversation({
               )}
             </div>
           ) : (
-            <div className="rounded-xl border border-border bg-card p-2">
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-                maxLength={16000}
-                rows={2}
-                aria-label={t('composer.message')}
-                placeholder={t('composer.placeholder', { name: bot.name })}
-                className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <Select
-                  value={bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : '__default'}
-                  onValueChange={(value) => {
-                    const option = options.find((item) => item.id === value)
-                    void window.api
-                      .fleetUpdateBot(bot.id, {
-                        selection: option
-                          ? {
-                              providerId: option.providerId,
-                              modelId: option.modelId,
-                              reasoning: option.efforts[0] ?? null,
-                              fastMode: false,
-                            }
-                          : null,
-                      })
-                      .then(() => fleet.refresh())
-                      .catch((cause) => setError(fleetErrorMessage(cause)))
-                  }}
-                >
-                  <SelectTrigger className="h-7 max-w-52 text-xs" aria-label={t('composer.model')}>
-                    <SelectValue placeholder={t('composer.model')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__default">{t('composer.defaultModel')}</SelectItem>
-                    {options.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.providerLabel} · {option.modelLabel}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <button
-                  type="button"
-                  disabled={!draft.trim() || busy}
-                  onClick={() => void send()}
-                  aria-label={t('composer.send')}
-                  className="rounded-md bg-primary p-1.5 text-primary-foreground disabled:opacity-40"
-                >
-                  <ArrowUp className="size-4" />
-                </button>
-              </div>
-            </div>
+            <BotComposer bot={bot} fleet={fleet} />
           )}
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">

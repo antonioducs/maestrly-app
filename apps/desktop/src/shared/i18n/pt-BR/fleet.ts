@@ -57,6 +57,9 @@ export default {
     resumeBlocked: 'O controle da tela está em andamento. Devolva o controle antes de retomar.',
   },
   transcript: {
+    imageUnavailable: 'Imagem não está mais disponível',
+    openImage: 'Abrir {{name}}',
+    image: 'Imagem',
     peerWrote: '{{name}} escreveu para {{bot}}',
     openPeer: 'Abrir bot',
     routine: 'Rotina diária · {{title}} · {{time}}',
@@ -101,6 +104,18 @@ export default {
     resolved: 'Resolvido',
   },
   composer: {
+    attach: 'Anexar imagens',
+    removeAttachment: 'Remover {{name}}',
+    access: 'Alterar acesso',
+    usageTooltip: 'Uso de contexto {{quality}}. O custo é uma estimativa.',
+    measured: 'medido',
+    estimated: 'estimado',
+    attachmentError: {
+      type: 'Escolha uma imagem PNG, JPEG, WebP ou GIF.',
+      size: 'Cada imagem deve ter no máximo 5 MiB.',
+      count: 'Você pode anexar até 8 imagens.',
+      total: 'Os anexos devem somar no máximo 20 MiB.',
+    },
     message: 'Mensagem',
     placeholder: 'Mensagem para {{name}}…',
     send: 'Enviar mensagem',

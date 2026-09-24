@@ -44,6 +44,7 @@ describe('fleet forms', () => {
       text: 'resume',
       source: 'continuation' as const,
       queued: false,
+      images: [],
     }
     const owner = { ...continuation, id: 'o', source: 'owner' as const }
     expect(visibleTranscriptItems([continuation, owner])).toEqual([owner])
