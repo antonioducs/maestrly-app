@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
-import RFB from '@novnc/novnc'
+import type RFB from '@novnc/novnc'
+import { loadNoVnc } from '@/lib/fleet/load-novnc'
 import { Button } from '@/components/ui/button'
 import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
 import { fleetErrorMessage, isTakeoverConflict } from '@/lib/fleet/errors'
@@ -52,29 +53,38 @@ export function BotScreen({
     let channel: FleetScreenChannel | null = null
     let rfb: RFB | null = null
     setPhase('connecting')
-    void FleetScreenChannel.open(window.api, bot.id, mode, (state) => {
-      if (disposed) return
-      if (state.state === 'open') setPhase('live')
-      if (state.state === 'error') setPhase('error')
-      if (state.state === 'closed') {
-        if (state.code === 4001) {
-          setTakeover((value) => ({ ...value, state: 'none', since: null }))
-          setPhase('connecting')
-        } else if (state.code === 4002) setPhase('offline')
-        else if (state.code === 4003 && retryRef.current < 1) {
-          retryRef.current++
-          setAttempt((value) => value + 1)
-        } else setPhase('error')
-      }
-    })
-      .then((opened) => {
-        if (disposed) {
+    const openScreen = async () => {
+      // Load the viewer before opening the channel so a failed load never leaves a channel open.
+      const { default: NoVncClient } = await loadNoVnc()
+      if (disposed) return null
+      const opened = await FleetScreenChannel.open(window.api, bot.id, mode, (state) => {
+        if (disposed) return
+        if (state.state === 'open') setPhase('live')
+        if (state.state === 'error') setPhase('error')
+        if (state.state === 'closed') {
+          if (state.code === 4001) {
+            setTakeover((value) => ({ ...value, state: 'none', since: null }))
+            setPhase('connecting')
+          } else if (state.code === 4002) setPhase('offline')
+          else if (state.code === 4003 && retryRef.current < 1) {
+            retryRef.current++
+            setAttempt((value) => value + 1)
+          } else setPhase('error')
+        }
+      })
+      return { opened, NoVncClient }
+    }
+    void openScreen()
+      .then((result) => {
+        if (!result) return
+        const { opened, NoVncClient } = result
+        if (disposed || !target.current) {
           opened.close()
           return
         }
         channel = opened
         if (Number(opened.readyState) === WebSocket.OPEN) setPhase('live')
-        const remote = new RFB(target.current!, opened, { shared: true })
+        const remote = new NoVncClient(target.current, opened, { shared: true })
         remote.viewOnly = mode === 'view'
         remote.scaleViewport = true
         remote.resizeSession = false
