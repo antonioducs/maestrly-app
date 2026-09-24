@@ -4,6 +4,8 @@ import type { FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { gb, memorySegments } from '@/lib/fleet/format'
 import { formatDuration } from '@/lib/fleet/forms'
+import { botsWithDifferentVersion } from '@/lib/fleet/selectors'
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -41,10 +43,11 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
     void window.api
       .fleetGetPeerMessages()
       .then((result) => setMessages(result.messages))
-      .catch((cause) => setError(String(cause)))
+      .catch((cause) => setError(fleetErrorMessage(cause)))
   }, [])
   const memory = memorySegments(host, bots)
   const uptime = formatDuration((host?.uptimeSeconds ?? 0) * 1000)
+  const differentVersions = botsWithDifferentVersion(bots, version)
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl space-y-8">
@@ -74,13 +77,23 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
               </div>
               <div className="rounded-lg border border-border p-4">
                 <div className="text-xs text-muted-foreground">{t('server.version')}</div>
-                <strong>
-                  {host.gatewayVersion} / {version || '—'}
-                </strong>
-                <p
-                  className={`mt-1 text-xs ${version && version !== host.gatewayVersion ? 'text-destructive' : 'text-muted-foreground'}`}
-                >
-                  {version && version !== host.gatewayVersion ? t('server.versionMismatch') : t('server.versionMatch')}
+                <strong>{version || t('server.unknown')}</strong>
+                <ul className="mt-1 text-xs text-muted-foreground">
+                  {bots.map((bot) => (
+                    <li key={bot.id}>
+                      {bot.name}: {bot.appVersion ?? t('server.unknown')}
+                    </li>
+                  ))}
+                </ul>
+                {differentVersions.length > 0 && (
+                  <p className="mt-1 text-xs text-destructive">
+                    {t('server.versionMismatch', {
+                      bots: differentVersions.map((bot) => `${bot.name} (${bot.appVersion})`).join(', '),
+                    })}
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t('server.gatewayVersion', { version: host.gatewayVersion })}
                 </p>
               </div>
             </div>
@@ -100,7 +113,10 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                     {memory.map((segment) => (
                       <span
                         key={segment.id}
-                        style={{ width: `${segment.fraction * 100}%`, background: segment.tint }}
+                        style={{
+                          width: `${segment.fraction * 100}%`,
+                          background: segment.tint,
+                        }}
                       />
                     ))}
                   </div>
@@ -193,7 +209,10 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
               {messages.map((message) => (
                 <li key={message.id} className="rounded-lg border border-border p-3">
                   <time className="mr-2 text-xs text-muted-foreground">
-                    {new Date(message.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(message.at).toLocaleTimeString(undefined, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
                   </time>
                   <strong>{bots.find((bot) => bot.id === message.from)?.name ?? message.from}</strong> →{' '}
                   <strong>{bots.find((bot) => bot.id === message.to)?.name ?? message.to}</strong>

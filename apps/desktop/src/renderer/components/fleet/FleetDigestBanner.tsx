@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { digestKey, formatDuration } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 export function FleetDigestBanner({
   fleet,
@@ -36,7 +37,7 @@ export function FleetDigestBanner({
             void window.api
               .fleetAckDigest(lastSeq)
               .then(() => fleet.dispatch({ type: 'digest', value: null }))
-              .catch((cause) => setError(String(cause)))
+              .catch((cause) => setError(fleetErrorMessage(cause)))
           }
         >
           {t('digest.dismiss')}

@@ -6,7 +6,7 @@ import { Auth } from './auth.js'
 import { loadConfig } from './config.js'
 import { DockerEngineDriver } from './docker.js'
 import { EventHub } from './events.js'
-import { HostMonitor } from './host.js'
+import { getGatewayVersion, HostMonitor } from './host.js'
 import { Lifecycle } from './lifecycle.js'
 import { Logger } from './logger.js'
 import { createGatewayServers } from './server.js'
@@ -18,7 +18,7 @@ export async function run(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   if (argv.includes('--version')) {
-    write('0.1.0 (protocol ' + FLEET_PROTOCOL_VERSION + ')')
+    write(getGatewayVersion(env) + ' (protocol ' + FLEET_PROTOCOL_VERSION + ')')
     return 0
   }
   const command = argv[0] ?? 'serve'
@@ -30,7 +30,7 @@ export async function run(
     store = new Store(config.dataDir),
     auth = new Auth(store)
   const docker = new DockerEngineDriver(config.dockerSocket),
-    host = new HostMonitor(config, docker)
+    host = new HostMonitor(config, docker, getGatewayVersion(env))
   if (command === 'pair') {
     const pair = auth.createPairing()
     write(pair.code + ' (expires ' + pair.expiresAt + ')')

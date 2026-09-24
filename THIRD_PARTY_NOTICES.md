@@ -21,14 +21,31 @@ distributed beside it as
 
 ## noVNC
 
-The desktop app includes [noVNC](https://github.com/novnc/noVNC) 1.7.0 for
-remote bot screen viewing and control. Its core is licensed under MPL-2.0.
+The desktop app includes the npm package [`@novnc/novnc`](https://www.npmjs.com/package/@novnc/novnc)
+1.7.0 from [noVNC](https://github.com/novnc/noVNC) for remote bot screen viewing
+and control. Its core is licensed under MPL-2.0.
 The upstream notice, authors, and license are distributed in
 [`novnc-NOTICE.txt`](apps/desktop/resources/licenses/novnc-NOTICE.txt),
 [`novnc-AUTHORS.txt`](apps/desktop/resources/licenses/novnc-AUTHORS.txt), and
 [`novnc-MPL-2.0.txt`](apps/desktop/resources/licenses/novnc-MPL-2.0.txt).
-The bundled pako code's MIT license and noVNC's other upstream license texts
-are distributed in the same `resources/licenses` directory.
+The bundled pako code's MIT license is in
+[`novnc-pako-MIT.txt`](apps/desktop/resources/licenses/novnc-pako-MIT.txt).
+The other upstream texts are
+[`novnc-BSD-2-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-2-Clause.txt),
+[`novnc-BSD-3-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-3-Clause.txt),
+and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
+
+## ws
+
+The bot gateway includes [ws](https://github.com/websockets/ws) 8.21.3 for
+WebSocket communication. It is licensed under the MIT License.
+
+Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
+Copyright (c) 2013 Arnout Kazemier and contributors
+Copyright (c) 2016 Luigi Pinca and contributors
+
+The complete license and attribution are distributed with the `ws` package in
+`node_modules/ws/LICENSE` inside the gateway image.
 
 ## OpenAI Codex-derived source
 

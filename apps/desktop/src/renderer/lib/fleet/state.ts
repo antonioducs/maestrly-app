@@ -6,7 +6,11 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetConnectionView, FleetDigest, FleetSnapshot } from '../../../preload/api-fleet'
 
-export type TranscriptState = FleetTranscriptPage & { loaded: boolean; loading: boolean; error: string | null }
+export type TranscriptState = FleetTranscriptPage & {
+  loaded: boolean
+  loading: boolean
+  error: string | null
+}
 export type FleetState = {
   connection: FleetConnectionView
   snapshot: FleetSnapshot
@@ -14,9 +18,22 @@ export type FleetState = {
   activity: FleetActivityEntry[]
   transcripts: Record<string, TranscriptState>
 }
-export const emptyTranscript: TranscriptState = { items: [], before: null, loaded: false, loading: false, error: null }
+export const emptyTranscript: TranscriptState = {
+  items: [],
+  before: null,
+  loaded: false,
+  loading: false,
+  error: null,
+}
 export const initialFleetState: FleetState = {
-  connection: { state: 'unconfigured', url: null, hostname: null, error: null, tokenPersistence: 'secure' },
+  connection: {
+    state: 'unconfigured',
+    deviceId: null,
+    url: null,
+    hostname: null,
+    error: null,
+    tokenPersistence: 'secure',
+  },
   snapshot: { host: null, bots: [], inbox: [], peerMessages: [] },
   digest: null,
   activity: [],
@@ -38,7 +55,12 @@ export type FleetAction =
   | { type: 'digest'; value: FleetDigest }
   | { type: 'event'; value: FleetGatewayEvent }
   | { type: 'transcript.loading'; botId: string }
-  | { type: 'transcript.page'; botId: string; page: FleetTranscriptPage; older: boolean }
+  | {
+      type: 'transcript.page'
+      botId: string
+      page: FleetTranscriptPage
+      older: boolean
+    }
   | { type: 'transcript.error'; botId: string; error: string }
 
 export function fleetReducer(state: FleetState, action: FleetAction): FleetState {
@@ -54,7 +76,11 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
         ...state,
         transcripts: {
           ...state.transcripts,
-          [action.botId]: { ...(state.transcripts[action.botId] ?? emptyTranscript), loading: true, error: null },
+          [action.botId]: {
+            ...(state.transcripts[action.botId] ?? emptyTranscript),
+            loading: true,
+            error: null,
+          },
         },
       }
     case 'transcript.error':
@@ -81,7 +107,13 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
         ...state,
         transcripts: {
           ...state.transcripts,
-          [action.botId]: { items, before: action.page.before, loaded: true, loading: false, error: null },
+          [action.botId]: {
+            items,
+            before: action.page.before,
+            loaded: true,
+            loading: false,
+            error: null,
+          },
         },
       }
     }
@@ -111,9 +143,15 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
           }
         }
         case 'host.updated':
-          return { ...state, snapshot: { ...state.snapshot, host: event.host } }
+          return {
+            ...state,
+            snapshot: { ...state.snapshot, host: event.host },
+          }
         case 'inbox.updated':
-          return { ...state, snapshot: { ...state.snapshot, inbox: event.items } }
+          return {
+            ...state,
+            snapshot: { ...state.snapshot, inbox: event.items },
+          }
         case 'peer.message':
           return {
             ...state,
@@ -132,12 +170,21 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             ...state,
             transcripts: {
               ...state.transcripts,
-              [event.botId]: { ...previous, items: mergeTranscriptItems(previous.items, [event.item]) },
+              [event.botId]: {
+                ...previous,
+                items: mergeTranscriptItems(previous.items, [event.item]),
+              },
             },
           }
         }
         case 'transcript.reset':
-          return { ...state, transcripts: { ...state.transcripts, [event.botId]: emptyTranscript } }
+          return {
+            ...state,
+            transcripts: {
+              ...state.transcripts,
+              [event.botId]: emptyTranscript,
+            },
+          }
         case 'activity':
           return {
             ...state,

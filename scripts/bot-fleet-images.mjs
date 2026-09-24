@@ -10,7 +10,11 @@ const version = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: options.cwd ?? root, stdio: options.stdio ?? 'inherit', shell: false })
+    const child = spawn(command, args, {
+      cwd: options.cwd ?? root,
+      stdio: options.stdio ?? 'inherit',
+      shell: false,
+    })
     child.once('error', reject)
     child.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`))))
   })
@@ -63,6 +67,10 @@ async function main() {
         '--load',
         '--platform',
         options.platform,
+        '--build-arg',
+        `MAESTRLY_VERSION=${version}`,
+        '--label',
+        `org.opencontainers.image.version=${version}`,
         '-f',
         path.join(context, 'deploy/bot-fleet', `${name === 'bot-instance' ? 'bot-instance' : 'gateway'}.Dockerfile`),
         '-t',

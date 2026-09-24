@@ -31,7 +31,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     arch: 'x64',
     cpus: 4,
     cpuPercent: 23,
-    memory: { totalBytes: 8 * 1024 ** 3, usedBytes: 2 * 1024 ** 3, botsBytes: 1024 ** 3 },
+    memory: {
+      totalBytes: 8 * 1024 ** 3,
+      usedBytes: 2 * 1024 ** 3,
+      botsBytes: 1024 ** 3,
+    },
     disk: { totalBytes: 100 * 1024 ** 3, usedBytes: 20 * 1024 ** 3 },
     uptimeSeconds: 3600,
     gatewayVersion: '0.9.2',
@@ -54,7 +58,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     pendingCount: 1,
     accounts: { connected: false, providers: [] },
     takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
-    resources: { memoryBytes: 1024 ** 3, memoryLimitBytes: 2 * 1024 ** 3, cpuPercent: 9, startedAt: now() },
+    resources: {
+      memoryBytes: 1024 ** 3,
+      memoryLimitBytes: 2 * 1024 ** 3,
+      cpuPercent: 9,
+      startedAt: now(),
+    },
     screen: { width: 1280, height: 800, display: ':1' },
     appVersion: '0.9.2',
     createdAt: now(),
@@ -91,6 +100,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     },
   ]
   const routines: FleetRoutine[] = []
+  let takeoverConflicts = 1
   const rendererPayloads: string[] = []
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
@@ -150,7 +160,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     let value: unknown
     switch (key) {
       case 'meta':
-        value = { protocol: 1, gatewayVersion: '0.9.2', botImage: 'test-image', botImageVersion: '0.9.2' }
+        value = {
+          protocol: 1,
+          gatewayVersion: '0.9.2',
+          botImage: 'test-image',
+          botImageVersion: '0.9.2',
+        }
         break
       case 'pair':
         value = { deviceId: 'device-e2e', token: 'fixture-token' }
@@ -165,7 +180,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         value = bot
         break
       case 'botsCreate': {
-        const input = body as { name: string; instructions: string; ceiling: string; talksTo: string[] }
+        const input = body as {
+          name: string
+          instructions: string
+          ceiling: string
+          talksTo: string[]
+        }
         const created = fleetBotSchema.parse({
           ...base,
           id: 'new-bot',
@@ -203,7 +223,10 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
           const updated = fleetBotSchema.parse({
             ...bot,
             status: 'idle',
-            accounts: { connected: true, providers: [{ id: 'prov_e2e', label: input.name }] },
+            accounts: {
+              connected: true,
+              providers: [{ id: 'prov_e2e', label: input.name }],
+            },
           })
           bots[bots.indexOf(bot)] = updated
           emit({ type: 'bot.updated', at: now(), bot: updated })
@@ -227,7 +250,14 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       case 'botMessageSend': {
         const input = body as { text: string }
-        transcript.push({ id: randomUUID(), at: now(), kind: 'user', text: input.text, source: 'owner', queued: false })
+        transcript.push({
+          id: randomUUID(),
+          at: now(),
+          kind: 'user',
+          text: input.text,
+          source: 'owner',
+          queued: false,
+        })
         value = { inputId: randomUUID(), itemId: randomUUID(), queued: false }
         break
       }
@@ -236,11 +266,17 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         const item = transcript[0] as Record<string, unknown>
         item.state = 'approved'
         item.resolvedAt = now()
-        emit({ type: 'inbox.updated', at: now(), items: inbox.map((interaction) => ({ botId: 'scout', interaction })) })
+        emit({
+          type: 'inbox.updated',
+          at: now(),
+          items: inbox.map((interaction) => ({ botId: 'scout', interaction })),
+        })
         break
       }
       case 'inbox':
-        value = { items: inbox.map((interaction) => ({ botId: 'scout', interaction })) }
+        value = {
+          items: inbox.map((interaction) => ({ botId: 'scout', interaction })),
+        }
         break
       case 'peerMessages':
         value = { messages: [] }
@@ -249,31 +285,62 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         value = { entries: [], lastSeq: 0 }
         break
       case 'botTakeover': {
-        value = { state: 'human', deviceId: 'device-e2e', deviceName: 'Mac', since: now() }
+        if (takeoverConflicts-- > 0) {
+          send(409, { code: 'CONFLICT', message: 'Bot is finishing a step' })
+          return
+        }
+        value = {
+          state: 'human',
+          deviceId: 'device-e2e',
+          deviceName: 'Mac',
+          since: now(),
+        }
         if (bot) {
-          const updated = fleetBotSchema.parse({ ...bot, takeover: value, status: 'human' })
+          const updated = fleetBotSchema.parse({
+            ...bot,
+            takeover: value,
+            status: 'human',
+          })
           bots[bots.indexOf(bot)] = updated
           emit({ type: 'bot.updated', at: now(), bot: updated })
         }
         break
       }
       case 'botTakeoverRelease': {
-        value = { state: 'none', deviceId: null, deviceName: null, since: null }
+        value = {
+          state: 'none',
+          deviceId: null,
+          deviceName: null,
+          since: null,
+        }
         if (bot) {
-          const updated = fleetBotSchema.parse({ ...bot, takeover: value, status: 'idle' })
+          const updated = fleetBotSchema.parse({
+            ...bot,
+            takeover: value,
+            status: 'idle',
+          })
           bots[bots.indexOf(bot)] = updated
           emit({ type: 'bot.updated', at: now(), bot: updated })
         }
         break
       }
       case 'botScreenTicket':
-        value = { ticket: 'ticket-e2e', path: '/v1/screen?ticket=ticket-e2e', expiresAt: now() }
+        value = {
+          ticket: 'ticket-e2e',
+          path: '/v1/screen?ticket=ticket-e2e',
+          expiresAt: now(),
+        }
         break
       case 'botRoutinesList':
         value = { routines }
         break
       case 'botRoutinesCreate': {
-        const input = body as { title: string; prompt: string; schedule: unknown; enabled: boolean }
+        const input = body as {
+          title: string
+          prompt: string
+          schedule: unknown
+          enabled: boolean
+        }
         const created = fleetRoutineSchema.parse({
           ...input,
           id: 'routine-e2e',
@@ -357,7 +424,13 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .getByRole('dialog', { name: 'Assumir a tela do Orders?' })
       .getByRole('button', { name: 'Assumir' })
       .click()
-    await expect.poll(() => requests.filter((item) => item.key === 'botTakeover').length).toBe(1)
+    await expect(page.getByRole('alert')).toContainText('O bot está terminando um passo')
+    await page.getByRole('button', { name: 'Assumir controle' }).click()
+    await page
+      .getByRole('dialog', { name: 'Assumir a tela do Orders?' })
+      .getByRole('button', { name: 'Assumir' })
+      .click()
+    await expect.poll(() => requests.filter((item) => item.key === 'botTakeover').length).toBe(2)
     await page.getByRole('button', { name: 'Devolver ao Orders' }).click()
     await page.getByPlaceholder('Opcional').fill('Signed in')
     await page.getByRole('button', { name: 'Devolver', exact: true }).click()
@@ -366,6 +439,27 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       note: 'Signed in',
       continue: true,
     })
+    const orders = bots.find((item) => item.id === 'new-bot')!
+    const foreign = fleetBotSchema.parse({
+      ...orders,
+      status: 'human',
+      takeover: {
+        state: 'human',
+        deviceId: 'other-device',
+        deviceName: 'Office Mac',
+        since: now(),
+      },
+    })
+    bots[bots.indexOf(orders)] = foreign
+    emit({ type: 'bot.updated', at: now(), bot: foreign })
+    await expect(page.getByRole('status', { name: 'Quem controla a tela: Office Mac' })).toBeVisible()
+    await expect(page.getByText('Office Mac está controlando a tela.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Assumir controle' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Devolver ao Orders' })).toHaveCount(0)
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view' })
+    expect(requests.filter((item) => item.key === 'botTakeoverRelease')).toHaveLength(1)
     await page.getByRole('tab', { name: 'Ajustes' }).click()
     const apiKey = 'fleet-e2e-secret-key-123'
     await page.getByLabel('Nome da conta').fill('Fake model')

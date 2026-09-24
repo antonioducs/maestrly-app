@@ -16,9 +16,11 @@ COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/packag
 RUN npm ci --omit=dev --ignore-scripts --include-workspace-root=false --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
 
 FROM node:22.22.0-bookworm-slim
+ARG MAESTRLY_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends gosu curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production MAESTRLY_GATEWAY_DATA_DIR=/data
+ENV MAESTRLY_GATEWAY_VERSION=$MAESTRLY_VERSION
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/bot-gateway/package.json apps/bot-gateway/package.json
 COPY --from=dependencies /app/packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json

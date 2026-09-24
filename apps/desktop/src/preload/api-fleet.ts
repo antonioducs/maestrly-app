@@ -22,12 +22,17 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 export type FleetConnectionView = {
   state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
+  deviceId: string | null
   url: string | null
   hostname: string | null
   error: string | null
   tokenPersistence: 'secure' | 'memory'
 }
-export type FleetDigest = { entries: FleetActivityEntry[]; since: number; awayMs: number } | null
+export type FleetDigest = {
+  entries: FleetActivityEntry[]
+  since: number
+  awayMs: number
+} | null
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]
@@ -80,8 +85,12 @@ export const fleetApi = {
     botId: string,
     action: 'start' | 'stop' | 'restart' | 'archive' | 'pause' | 'resume' | 'cancel'
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
-  fleetListSelections: (botId: string): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> =>
-    ipcRenderer.invoke('fleet:listSelections', botId),
+  fleetListSelections: (
+    botId: string
+  ): Promise<{
+    options: FleetSelectionOption[]
+    current: FleetSelection | null
+  }> => ipcRenderer.invoke('fleet:listSelections', botId),
   fleetAddApiKeyAccount: (botId: string, input: FleetAddApiKeyAccountRequest): Promise<{ providerId: string }> =>
     ipcRenderer.invoke('fleet:add-api-key-account', botId, input),
   fleetRemoveAccount: (botId: string, providerId: string): Promise<void> =>

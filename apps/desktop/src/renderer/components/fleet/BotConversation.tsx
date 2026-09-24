@@ -5,7 +5,9 @@ import type { FleetBot, FleetSelectionOption, FleetTranscriptItem } from '@maest
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { InteractionCard } from './InteractionCard'
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 function TranscriptRow({
   bot,
@@ -21,13 +23,20 @@ function TranscriptRow({
   onOpenScreen: () => void
 }) {
   const { t } = useTranslation('fleet')
-  const at = new Date(item.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const at = new Date(item.at).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
   if (item.kind === 'user') {
     if (item.source === 'peer')
       return (
         <div className="rounded-lg border border-dashed border-border p-3 text-sm">
           <div className="mb-1 text-xs text-muted-foreground">
-            {t('transcript.peerWrote', { name: item.peer?.name ?? '', bot: bot.name })} · {at}
+            {t('transcript.peerWrote', {
+              name: item.peer?.name ?? '',
+              bot: bot.name,
+            })}{' '}
+            · {at}
           </div>
           {item.text}
           {item.peer && fleet.state.snapshot.bots.some((peer) => peer.id === item.peer?.botId) && (
@@ -45,7 +54,10 @@ function TranscriptRow({
       <div className="ml-auto max-w-[85%] rounded-xl bg-primary/10 px-4 py-3 text-sm">
         {item.source === 'routine' && (
           <span className="mb-2 block text-xs text-primary">
-            {t('transcript.routine', { title: item.routine?.title ?? '', time: at })}
+            {t('transcript.routine', {
+              title: item.routine?.title ?? '',
+              time: at,
+            })}
           </span>
         )}
         <p className="whitespace-pre-wrap">{item.text}</p>
@@ -114,7 +126,9 @@ function TranscriptRow({
     )
   return (
     <div className="text-center text-xs text-muted-foreground">
-      {t(`transcript.system.${item.code}`, { duration: item.durationMs ? Math.round(item.durationMs / 1000) : 0 })}
+      {t(`transcript.system.${item.code}`, {
+        duration: item.durationMs ? Math.round(item.durationMs / 1000) : 0,
+      })}
       {item.text && <span className="ml-1">{item.text}</span>}
     </div>
   )
@@ -176,7 +190,7 @@ export function BotConversation({
       setDraft('')
       await fleet.loadTranscript(bot.id)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -220,7 +234,9 @@ export function BotConversation({
               className="self-center rounded-md border border-border px-3 py-1.5 text-xs"
               onClick={() => {
                 oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
-                void fleet.loadTranscript(bot.id, transcript.before).catch((cause) => setError(String(cause)))
+                void fleet
+                  .loadTranscript(bot.id, transcript.before)
+                  .catch((cause) => setError(fleetErrorMessage(cause)))
               }}
             >
               {t('transcript.loadOlder')}
@@ -255,7 +271,13 @@ export function BotConversation({
                 </button>
               )}
               {bot.status === 'paused' && (
-                <button type="button" className="text-primary" onClick={() => void fleet.botAction(bot.id, 'resume')}>
+                <button
+                  type="button"
+                  className="text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={takeoverBlocksResume(bot.takeover)}
+                  title={takeoverBlocksResume(bot.takeover) ? t('action.resumeBlocked') : undefined}
+                  onClick={() => void fleet.botAction(bot.id, 'resume')}
+                >
                   {t('action.resume')}
                 </button>
               )}
@@ -299,7 +321,7 @@ export function BotConversation({
                           : null,
                       })
                       .then(() => fleet.refresh())
-                      .catch((cause) => setError(String(cause)))
+                      .catch((cause) => setError(fleetErrorMessage(cause)))
                   }}
                 >
                   <SelectTrigger className="h-7 max-w-52 text-xs" aria-label={t('composer.model')}>

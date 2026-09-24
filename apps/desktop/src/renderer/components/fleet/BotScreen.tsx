@@ -4,7 +4,9 @@ import type { FleetBot, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
 import RFB from '@novnc/novnc'
 import { Button } from '@/components/ui/button'
 import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
+import { fleetErrorMessage, isTakeoverConflict } from '@/lib/fleet/errors'
 import { formatTimer } from '@/lib/fleet/forms'
+import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 export function BotScreen({
@@ -28,12 +30,17 @@ export function BotScreen({
   const [now, setNow] = useState(Date.now())
   const retryRef = useRef(0)
   const [attempt, setAttempt] = useState(0)
-  const mode = takeover.state === 'human' ? 'control' : 'view'
+  const human = ownsTakeover(takeover, fleet.state.connection.deviceId)
+  const otherHuman = takeover.state === 'human' && !human
+  const mode = human ? 'control' : 'view'
   const shaded = bot.status === 'offline' || bot.status === 'starting'
   const pendingHelp = fleet.state.snapshot.inbox.some(
     (item) => item.botId === bot.id && item.interaction.kind === 'help'
   )
-  useEffect(() => setTakeover(bot.takeover), [bot.takeover])
+  useEffect(() => {
+    setTakeover(bot.takeover)
+    if (takeoverBlocksResume(bot.takeover)) setPopover(null)
+  }, [bot.takeover])
   useEffect(() => {
     if (mode !== 'control') return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -84,7 +91,7 @@ export function BotScreen({
       })
       .catch((cause) => {
         if (!disposed) {
-          setError(String(cause))
+          setError(fleetErrorMessage(cause))
           setPhase('error')
         }
       })
@@ -105,7 +112,7 @@ export function BotScreen({
       retryRef.current = 0
       if (openAccounts) await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
     } catch (cause) {
-      setError(String(cause))
+      setError(isTakeoverConflict(cause) ? t('screen.takeConflict') : fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -114,23 +121,35 @@ export function BotScreen({
     setBusy(true)
     setError('')
     try {
-      const state = await window.api.fleetReleaseTakeover(bot.id, { note: note.trim() || null, continue: true })
+      const state = await window.api.fleetReleaseTakeover(bot.id, {
+        note: note.trim() || null,
+        continue: true,
+      })
       setTakeover(state)
       setPopover(null)
       setNote('')
       retryRef.current = 0
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
   }
-  const human = mode === 'control'
   const footer = human
-    ? t('screen.footerHuman', { name: bot.name, host: fleet.state.snapshot.host?.hostname ?? '' })
-    : bot.status === 'waiting' && pendingHelp
-      ? t('screen.footerWaiting', { name: bot.name })
-      : t('screen.footerView', { name: bot.name, host: fleet.state.snapshot.host?.hostname ?? '' })
+    ? t('screen.footerHuman', {
+        name: bot.name,
+        host: fleet.state.snapshot.host?.hostname ?? '',
+      })
+    : otherHuman
+      ? t('screen.footerOther', {
+          name: takeover.deviceName ?? t('screen.unknownDevice'),
+        })
+      : bot.status === 'waiting' && pendingHelp
+        ? t('screen.footerWaiting', { name: bot.name })
+        : t('screen.footerView', {
+            name: bot.name,
+            host: fleet.state.snapshot.host?.hostname ?? '',
+          })
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
@@ -139,14 +158,18 @@ export function BotScreen({
         </span>
         <div
           role="status"
-          aria-label={t('screen.holder', { name: human ? t('screen.you') : bot.name })}
+          aria-label={t('screen.holder', {
+            name: human ? t('screen.you') : otherHuman ? (takeover.deviceName ?? t('screen.unknownDevice')) : bot.name,
+          })}
           className="relative flex items-center gap-1 rounded-full border border-border p-1 text-xs"
         >
           <span className="relative z-10 px-2 py-1">{bot.name}</span>
-          <span className="relative z-10 px-2 py-1">{t('screen.you')}</span>
+          <span className="relative z-10 px-2 py-1">
+            {otherHuman ? (takeover.deviceName ?? t('screen.unknownDevice')) : t('screen.you')}
+          </span>
           <span
             aria-hidden="true"
-            className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-accent transition-transform motion-reduce:transition-none ${human ? 'translate-x-full' : ''}`}
+            className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-accent transition-transform motion-reduce:transition-none ${takeover.state === 'human' ? 'translate-x-full' : ''}`}
           />
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -159,7 +182,7 @@ export function BotScreen({
                 {t('screen.giveBack', { name: bot.name })}
               </Button>
             </>
-          ) : (
+          ) : !takeoverBlocksResume(takeover) ? (
             <Button
               size="sm"
               disabled={shaded || busy}
@@ -168,7 +191,7 @@ export function BotScreen({
             >
               {t('screen.takeControl')}
             </Button>
-          )}
+          ) : null}
         </div>
         {popover && (
           <div
@@ -248,7 +271,7 @@ export function BotScreen({
             {t('screen.phase.offline')}
           </div>
         )}
-        {!shaded && bot.status === 'setup' && (
+        {!shaded && bot.status === 'setup' && !takeoverBlocksResume(takeover) && (
           <div className="absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
             <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
             <p className="mt-2 text-sm text-muted-foreground">{t('screen.accountDescription', { name: bot.name })}</p>

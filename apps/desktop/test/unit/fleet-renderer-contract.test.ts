@@ -22,4 +22,23 @@ describe('fleet renderer wiring', () => {
     expect(view).toContain("tab === 'conversation'")
     expect(view).toContain("['conversation', 'screen', 'settings']")
   })
+  it('keeps foreign takeovers in view mode and blocks resume actions', () => {
+    const screen = source('components/fleet/BotScreen.tsx')
+    const view = source('components/fleet/BotView.tsx')
+    const conversation = source('components/fleet/BotConversation.tsx')
+    expect(screen).toContain('ownsTakeover(takeover, fleet.state.connection.deviceId)')
+    expect(screen).toContain("const mode = human ? 'control' : 'view'")
+    expect(screen).toContain('screen.footerOther')
+    expect(screen).toContain('screen.takeConflict')
+    for (const component of [view, conversation]) {
+      expect(component).toContain('disabled={takeoverBlocksResume(bot.takeover)}')
+      expect(component).toContain("t('action.resumeBlocked')")
+    }
+  })
+  it('compares Mac and bot versions and displays the gateway independently', () => {
+    const server = source('components/fleet/ServerView.tsx')
+    expect(server).toContain('botsWithDifferentVersion(bots, version)')
+    expect(server).toContain('bot.appVersion ??')
+    expect(server).toContain('server.gatewayVersion')
+  })
 })

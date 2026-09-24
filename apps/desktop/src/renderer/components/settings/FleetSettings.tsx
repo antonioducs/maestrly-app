@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPairingCode } from '@/lib/fleet/format'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 export function FleetSettings({ fleet }: { fleet: FleetController }) {
   const { t } = useTranslation('fleet')
@@ -28,7 +29,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
       const snapshot = await window.api.fleetGetSnapshot()
       fleet.dispatch({ type: 'snapshot', value: snapshot })
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -42,7 +43,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
       fleet.dispatch({ type: 'snapshot', value: { host: null, bots: [], inbox: [], peerMessages: [] } })
       setConfirm(false)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }

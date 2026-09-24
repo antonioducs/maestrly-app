@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { FleetInteractionResolution } from '@maestrly/bot-fleet-protocol'
 import { emptyTranscript, fleetReducer, initialFleetState } from './state'
+import { fleetErrorMessage } from './errors'
 
 export function useFleet() {
   const [state, dispatch] = useReducer(fleetReducer, initialFleetState)
@@ -13,7 +14,7 @@ export function useFleet() {
       const page = await window.api.fleetGetTranscript(botId, before)
       dispatch({ type: 'transcript.page', botId, page, older: !!before })
     } catch (error) {
-      dispatch({ type: 'transcript.error', botId, error: String(error) })
+      dispatch({ type: 'transcript.error', botId, error: fleetErrorMessage(error) })
       throw error
     }
   }, [])
@@ -76,7 +77,7 @@ export function useFleet() {
       const result = await window.api.fleetBotAction(botId, action)
       if (result) dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: result } })
     } catch (error) {
-      setActionError({ botId, message: String(error) })
+      setActionError({ botId, message: fleetErrorMessage(error) })
     }
   }, [])
   const resolve = useCallback(

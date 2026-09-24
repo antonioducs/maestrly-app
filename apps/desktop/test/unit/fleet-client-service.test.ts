@@ -4,7 +4,10 @@ const state = vi.hoisted(() => ({
   settings: new Map<string, string>(),
   secure: new Map<string, string>(),
   secureAvailable: true,
-  events: [] as { onConnected: () => Promise<void>; onEvent: (event: unknown) => void }[],
+  events: [] as {
+    onConnected: () => Promise<void>
+    onEvent: (event: unknown) => void
+  }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
   activity: [] as {
     seq: number
@@ -68,7 +71,10 @@ const host = {
   dockerVersion: null,
 }
 function response(data: unknown): Response {
-  return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  return new Response(JSON.stringify(data), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 beforeEach(() => {
   state.settings.clear()
@@ -85,7 +91,12 @@ beforeEach(() => {
         expect(init.headers.get('X-Maestrly-Fleet-Protocol')).toBe('1')
       }
       if (path === '/v1/meta')
-        return response({ protocol: 1, gatewayVersion: '1', botImage: 'bot', botImageVersion: null })
+        return response({
+          protocol: 1,
+          gatewayVersion: '1',
+          botImage: 'bot',
+          botImageVersion: null,
+        })
       if (path === '/v1/pair') return response({ deviceId: 'device-1', token: 'secret' })
       if (path === '/v1/host') return response(host)
       if (path === '/v1/bots') return response({ bots: [] })
@@ -114,7 +125,15 @@ describe('fleet client service', () => {
       data: {},
     })
     const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh', deviceName: 'Mac' })
+    await service.connect({
+      url: 'http://127.0.0.1:7443',
+      code: 'abcd-efgh',
+      deviceName: 'Mac',
+    })
+    expect(service.getConnection().deviceId).toBe('device-1')
+    expect(state.broadcasts.find((event) => event.channel === 'fleet:connection')?.payload).toMatchObject({
+      deviceId: 'device-1',
+    })
     expect(readFleetSettings()).toMatchObject({
       url: 'http://127.0.0.1:7443',
       deviceId: 'device-1',
@@ -139,6 +158,7 @@ describe('fleet client service', () => {
     expect(readFleetSettings().lastActivitySeq).toBe(2)
     expect(service.getDigest()).toBeNull()
     await service.disconnect()
+    expect(service.getConnection().deviceId).toBeNull()
     expect(readFleetSettings().token).toBeNull()
   })
 
@@ -158,6 +178,7 @@ describe('fleet client service', () => {
     })
     const restarted = new FleetClientService()
     restarted.start()
+    expect(restarted.getConnection().deviceId).toBe('device-1')
     await state.events[1].onConnected()
     expect(restarted.getDigest()?.awayMs).toBeGreaterThanOrEqual(59_000)
     restarted.stop()
@@ -166,7 +187,10 @@ describe('fleet client service', () => {
   it('keeps token in memory when secure storage is unavailable', async () => {
     state.secureAvailable = false
     const service = new FleetClientService()
-    const view = await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const view = await service.connect({
+      url: 'http://127.0.0.1:7443',
+      code: 'ABCDEFGH',
+    })
     expect(view.tokenPersistence).toBe('memory')
     expect(readFleetSettings().token).toBe('secret')
     expect(state.secure.size).toBe(0)

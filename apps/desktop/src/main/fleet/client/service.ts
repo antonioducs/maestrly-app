@@ -26,6 +26,7 @@ import { FleetScreenBridge } from './screen-bridge'
 
 export type FleetConnectionView = {
   state: FleetConnectionState
+  deviceId: string | null
   url: string | null
   hostname: string | null
   error: string | null
@@ -37,7 +38,11 @@ export type FleetSnapshot = {
   inbox: FleetInboxItem[]
   peerMessages: FleetPeerMessage[]
 }
-export type FleetDigest = { entries: FleetActivityEntry[]; since: number; awayMs: number } | null
+export type FleetDigest = {
+  entries: FleetActivityEntry[]
+  since: number
+  awayMs: number
+} | null
 
 export class FleetClientService {
   private api: FleetApiClient | null = null
@@ -45,12 +50,18 @@ export class FleetClientService {
   readonly screens = new FleetScreenBridge(() => this.requireApi())
   private connection: FleetConnectionView = {
     state: 'unconfigured',
+    deviceId: null,
     url: null,
     hostname: null,
     error: null,
     tokenPersistence: 'secure',
   }
-  private snapshot: FleetSnapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
+  private snapshot: FleetSnapshot = {
+    host: null,
+    bots: [],
+    inbox: [],
+    peerMessages: [],
+  }
   private digest: FleetDigest = null
   private generation = 0
 
@@ -62,7 +73,12 @@ export class FleetClientService {
       if (allowed.ok) this.useCredentials(allowed.origin, settings.token, settings.tokenPersistence)
     } else if (settings.url) {
       const allowed = isAllowedFleetUrl(settings.url)
-      if (allowed.ok) this.setConnection({ url: allowed.origin, tokenPersistence: settings.tokenPersistence })
+      if (allowed.ok)
+        this.setConnection({
+          url: allowed.origin,
+          deviceId: settings.deviceId,
+          tokenPersistence: settings.tokenPersistence,
+        })
     }
   }
 
@@ -99,7 +115,14 @@ export class FleetClientService {
     this.api = new FleetApiClient(url, token)
     this.snapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
     this.digest = null
-    this.setConnection({ state: 'connecting', url, hostname: null, error: null, tokenPersistence })
+    this.setConnection({
+      state: 'connecting',
+      deviceId: readFleetSettings().deviceId,
+      url,
+      hostname: null,
+      error: null,
+      tokenPersistence,
+    })
     const generation = this.generation
     this.events = new FleetEvents(
       this.api,
@@ -126,7 +149,9 @@ export class FleetClientService {
     const meta = await unauthenticated.call('meta')
     if (meta.protocol !== FLEET_PROTOCOL_VERSION)
       throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Incompatible fleet protocol')
-    const paired = await unauthenticated.call('pair', { body: { code, deviceName } })
+    const paired = await unauthenticated.call('pair', {
+      body: { code, deviceName },
+    })
     const persistence = saveFleetCredentials(allowed.origin, paired.deviceId, deviceName, paired.token)
     this.useCredentials(allowed.origin, paired.token, persistence)
     return this.connection
@@ -145,7 +170,14 @@ export class FleetClientService {
     this.snapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
     this.digest = null
     broadcast('fleet:digest', null)
-    this.setConnection({ state: 'unconfigured', url: null, hostname: null, error: null, tokenPersistence: 'secure' })
+    this.setConnection({
+      state: 'unconfigured',
+      deviceId: null,
+      url: null,
+      hostname: null,
+      error: null,
+      tokenPersistence: 'secure',
+    })
   }
 
   async refresh(): Promise<FleetSnapshot> {
@@ -158,7 +190,12 @@ export class FleetClientService {
       api.call('peerMessages', { query: { limit: 200 } }),
     ])
     if (generation !== this.generation) return this.snapshot
-    this.snapshot = { host, bots: bots.bots, inbox: inbox.items, peerMessages: peers.messages }
+    this.snapshot = {
+      host,
+      bots: bots.bots,
+      inbox: inbox.items,
+      peerMessages: peers.messages,
+    }
     this.setConnection({ hostname: host.hostname })
     await this.refreshDigest(api, generation)
     return this.snapshot

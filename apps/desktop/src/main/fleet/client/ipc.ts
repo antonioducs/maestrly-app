@@ -14,6 +14,7 @@ import {
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
+import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
 
 const id = fleetBotIdSchema
@@ -94,9 +95,14 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       body: fleetInteractionResolutionSchema.parse(resolution),
     })
   )
-  reg.mhandle('fleet:takeover', (_event, botId: unknown) =>
-    fleet.call('botTakeover', { params: { id: id.parse(botId) } })
-  )
+  reg.mhandle('fleet:takeover', async (_event, botId: unknown) => {
+    try {
+      return await fleet.call('botTakeover', { params: { id: id.parse(botId) } })
+    } catch (error) {
+      if (error instanceof FleetClientError && error.status === 409) throw new Error('FLEET_TAKEOVER_CONFLICT')
+      throw error
+    }
+  })
   reg.mhandle('fleet:releaseTakeover', (_event, botId: unknown, input: unknown) =>
     fleet.call('botTakeoverRelease', {
       params: { id: id.parse(botId) },

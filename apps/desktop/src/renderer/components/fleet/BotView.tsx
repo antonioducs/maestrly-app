@@ -3,6 +3,7 @@ import type { KeyboardEvent } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
+import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
 import { BotSettings } from './BotSettings'
@@ -74,8 +75,10 @@ export function BotView({
           ) : bot.status === 'paused' ? (
             <button
               type="button"
+              disabled={takeoverBlocksResume(bot.takeover)}
+              title={takeoverBlocksResume(bot.takeover) ? t('action.resumeBlocked') : undefined}
               onClick={() => void fleet.botAction(bot.id, 'resume')}
-              className="rounded-md border border-border px-3 py-1.5 text-xs"
+              className="rounded-md border border-border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
             >
               {t('action.resume')}
             </button>

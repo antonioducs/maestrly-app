@@ -1,3 +1,4 @@
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
@@ -86,7 +87,7 @@ export function BotSettings({
         }
       })
       .catch((cause) => {
-        if (alive) setError(String(cause))
+        if (alive) setError(fleetErrorMessage(cause))
       })
     return () => {
       alive = false
@@ -134,7 +135,7 @@ export function BotSettings({
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
       setSaved(true)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -156,7 +157,7 @@ export function BotSettings({
       setRoutine(null)
       setEditingId(null)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
@@ -216,7 +217,7 @@ export function BotSettings({
       else await window.api.fleetRunRoutine(bot.id, item.id)
       setRoutines((await window.api.fleetListRoutines(bot.id)).routines)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     }
   }
   async function confirmAction() {
@@ -238,7 +239,7 @@ export function BotSettings({
       }
       setConfirm(null)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }

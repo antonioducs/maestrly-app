@@ -22,6 +22,7 @@ vi.mock('../../src/main/fleet/client/service', () => ({
   },
 }))
 import { registerFleetClientIpc } from '../../src/main/fleet/client/ipc'
+import { FleetClientError } from '../../src/main/fleet/client/api'
 
 afterEach(() => {
   delete process.env.MAESTRLY_BOT_MODE
@@ -53,5 +54,15 @@ describe('fleet IPC validation', () => {
         idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
       },
     })
+  })
+  it('preserves a takeover conflict marker across IPC error serialization', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    mocks.call.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, 'Bot is finishing a step'))
+    await expect(handlers.get('fleet:takeover')?.({ sender: {} }, 'bot')).rejects.toThrow('FLEET_TAKEOVER_CONFLICT')
   })
 })

@@ -1,3 +1,4 @@
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
@@ -54,7 +55,7 @@ export function CreateBotDialog({
       setCreated(bot)
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot } })
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }

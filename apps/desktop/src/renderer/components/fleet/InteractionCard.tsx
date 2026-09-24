@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { FleetPendingInteraction, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { QuestionComposer } from '@/components/chat/QuestionComposer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 type Interaction = Extract<FleetTranscriptItem, { kind: 'permission' | 'question' | 'help' }>
 export function InteractionCard({
@@ -25,7 +26,7 @@ export function InteractionCard({
     try {
       await fleet.resolve(botId, id, resolution)
     } catch (cause) {
-      setError(String(cause))
+      setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
     }
