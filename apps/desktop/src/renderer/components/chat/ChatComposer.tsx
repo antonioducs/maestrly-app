@@ -4,14 +4,14 @@ import { ArrowUp, Square, X, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
-import type { ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
+import type { ChatAttachmentKind, ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor'
 
 export interface UIAttachment {
   id: string
   name: string
   mediaType: string
-  kind: 'image' | 'text'
+  kind: ChatAttachmentKind
   data?: string
   bytes?: Uint8Array
   artifactId?: string

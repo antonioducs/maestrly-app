@@ -27,6 +27,10 @@ export const MAX_ATTACHMENT_IMAGE_BYTES = 5 * 1024 * 1024
 export const MAX_ATTACHMENT_IMAGES_PER_MESSAGE = 8
 export const MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE = 20 * 1024 * 1024
 export const MAX_ATTACHMENT_TEXT_BYTES = 256 * 1024
+export const MAX_ATTACHMENT_PDF_BYTES = 10 * 1024 * 1024
+export const MAX_ATTACHMENT_PDFS_PER_MESSAGE = 4
+/** Anthropic per-request document page limit; larger PDFs are sent as extracted text. */
+export const MAX_PDF_NATIVE_PAGES = 100
 
 export const TOOL_IMAGE_CACHE_BUDGET_BYTES = 64 * 1024 * 1024
 export const TOOL_IMAGE_CACHE_HARD_TRIM_BYTES = 16 * 1024 * 1024

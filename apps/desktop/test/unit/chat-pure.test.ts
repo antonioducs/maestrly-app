@@ -1936,6 +1936,26 @@ describe('parseParts (parse defensivo)', () => {
     expect(parsed[0].type === 'tool' && 'sub' in parsed[0].state && parsed[0].state.sub?.profile).toBeUndefined()
   })
 
+  it('parses persisted PDF file parts', () => {
+    const [part] = parseParts(
+      JSON.stringify([
+        {
+          type: 'file',
+          id: 'p',
+          name: 'spec.pdf',
+          mediaType: 'application/pdf',
+          kind: 'pdf',
+          artifactId: 'abc',
+          byteSize: 10,
+          data: 'hello',
+          pageCount: 3,
+          textTruncated: true,
+        },
+      ])
+    )
+    expect(part).toMatchObject({ kind: 'pdf', pageCount: 3, textTruncated: true, data: 'hello' })
+  })
+
   it('preserves generated-image parts with valid handles', () => {
     const valid = {
       type: 'generated-image',

@@ -466,8 +466,9 @@ export type MessagePart =
       id: string
       name: string
       mediaType: string
-      kind: 'image' | 'text'
+      kind: ChatAttachmentKind
 
+      /** Text files: content. PDFs: text extracted by Maestrly (may be empty for scanned documents). */
       data?: string
 
       previewUrl?: string
@@ -480,6 +481,11 @@ export type MessagePart =
       description?: string
 
       descriptionModel?: string
+
+      /** PDF only. */
+      pageCount?: number
+      /** PDF only: extracted text was cut at the attachment text cap. */
+      textTruncated?: boolean
     }
   | {
       type: 'compaction'
@@ -535,10 +541,12 @@ export type ChatToolImageResult =
 
 export type ChatAttachmentImageResult = ChatGeneratedImageResult
 
+export type ChatAttachmentKind = 'image' | 'text' | 'pdf'
+
 export interface ChatAttachmentInput {
   name: string
   mediaType: string
-  kind: 'image' | 'text'
+  kind: ChatAttachmentKind
 
   data?: string
   artifactId?: string
@@ -575,6 +583,8 @@ export interface ChatModelMeta extends UsagePricing {
 
   interleavedReasoning?: { field: string; format: 'text' }
   vision?: boolean
+  /** models.dev `modalities.input` lists `pdf`. */
+  pdf?: boolean
 
   chatCapable?: boolean
   /** The model advertises Fast/Priority support (Codex service tiers, Claude supportsFastMode, xAI Priority Processing). */

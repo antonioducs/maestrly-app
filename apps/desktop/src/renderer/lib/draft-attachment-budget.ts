@@ -4,10 +4,11 @@ import {
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
   MAX_ATTACHMENT_TEXT_BYTES,
 } from '../../shared/memory-policy'
+import type { ChatAttachmentKind } from '../../shared/chat'
 
 export interface BudgetedAttachment {
   id: string
-  kind: 'image' | 'text'
+  kind: ChatAttachmentKind
   bytes?: Uint8Array
   byteSize?: number
   previewUrl?: string
