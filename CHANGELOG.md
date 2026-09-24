@@ -5,6 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Run remote bots as separate Maestrly desktops on your own Linux server, with
+  their own screens, browser, model accounts, and files; they keep working while
+  your Mac is off.
+- Pair your Mac with a private bot gateway, manage bots from the Bots sidebar,
+  watch or take control of a bot's screen, and answer its questions and approval
+  requests from Awaiting you.
+- Add a model API key in each bot's Settings, schedule routines on the server,
+  allow selected bots to exchange bounded messages, and review activity from
+  while your Mac was off.
+
 ## [0.9.2] - 2026-09-23
 
 ### Fixed
