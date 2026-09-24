@@ -152,6 +152,13 @@ describe('preload API — exposure', () => {
     expect(typeof p.ttOffset).toBe('number')
     expect(typeof p.openLabels.terminal).toBe('string')
     expect(typeof p.openLabels.files).toBe('string')
+    // Outside a bot container the full desktop runs.
+    expect((p as unknown as { botMode: boolean }).botMode).toBe(false)
+  })
+
+  it("hides a bot's settings window through main instead of closing it", async () => {
+    await api.fleetInstanceHideWindow()
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:instance:hide')
   })
 
   it('forwards fleet conversation op arguments without a caller conversation id', async () => {
@@ -161,7 +168,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(445)
+    expect(keys).toHaveLength(446)
     expect(keys.sort()).toMatchSnapshot()
   })
 

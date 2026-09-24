@@ -325,28 +325,6 @@ export function DesktopApp() {
     chatGptVisibleConversationId,
   })
   const { statuses, attention, acknowledgeConversation } = agents
-  // Bot instance mode: the gateway asks this (headless) app to show where model accounts are connected.
-  useEffect(
-    () =>
-      window.api.onFleetInstanceOpenAccounts((target) => {
-        openSettings('chat')
-        const id = `chat-settings-tab-${target === 'mcp' ? 'tools' : target}`
-        const observer = new MutationObserver(() => {
-          const tab = document.getElementById(id)
-          if (tab) {
-            observer.disconnect()
-            tab.click()
-          }
-        })
-        observer.observe(document.body, { childList: true, subtree: true })
-        const tab = document.getElementById(id)
-        if (tab) {
-          observer.disconnect()
-          tab.click()
-        }
-      }),
-    [openSettings]
-  )
   useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
@@ -510,14 +488,6 @@ export function DesktopApp() {
       return pruneDead(next)
     })
   }, [allConversations])
-
-  useEffect(() => {
-    const root = document.documentElement
-    const os = window.api.platformInfo.os
-    root.classList.toggle('is-windows', os === 'win')
-    root.classList.toggle('is-linux', os === 'linux')
-    root.classList.toggle('is-mac', os === 'mac')
-  }, [])
 
   useEffect(
     () => window.api.onWindowFullscreen((full) => document.documentElement.classList.toggle('is-fullscreen', full)),

@@ -16,9 +16,11 @@ Compose publishes only the gateway's public listener on server loopback. The int
 
 ## Bot conversation controls
 
-The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls app tools, image generation, and per-conversation MCP server availability; the Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the bot's installed skills and expand when the bot sends the turn.
+The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the bot's installed skills and expand when the bot sends the turn.
 
 To install or manage skills and MCP servers, take control of the bot's **Screen** tab and open the corresponding Settings section in the bot's own Maestrly window. These changes affect the bot's environment; your Mac's local skills and MCP servers are separate.
+
+The bot's own Maestrly window shows only its **Maestrly Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with the bot goes through your Mac. Closing the window hides it; the bot keeps working in its browser window.
 
 ## Requirements
 

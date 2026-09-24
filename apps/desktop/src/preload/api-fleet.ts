@@ -201,4 +201,6 @@ export const fleetApi = {
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),
   onFleetInstanceOpenAccounts: (cb: (target: 'accounts' | 'skills' | 'mcp') => void): (() => void) =>
     subscribe('fleet:instance:open-settings', cb),
+  /** Hides a bot's settings window. Closing it would destroy the window and stop the bot's control server. */
+  fleetInstanceHideWindow: (): Promise<void> => ipcRenderer.invoke('fleet:instance:hide'),
 }

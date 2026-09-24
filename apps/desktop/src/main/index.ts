@@ -161,6 +161,7 @@ import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
 
@@ -664,6 +665,7 @@ function registerIpc(): void {
   registerPlatformIpc(reg)
   registerBotIpc(reg)
   registerFleetClientIpc(reg)
+  registerFleetInstanceIpc(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -719,9 +721,12 @@ app.whenReady().then(async () => {
   }
   await cleanupOrphanRuntimeAssetTemps()
   await cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
-  const toolOutputCleanupTimer = setInterval(() => {
-    void cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
-  }, 60 * 60 * 1000)
+  const toolOutputCleanupTimer = setInterval(
+    () => {
+      void cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
+    },
+    60 * 60 * 1000
+  )
   toolOutputCleanupTimer.unref()
   app.once('will-quit', () => clearInterval(toolOutputCleanupTimer))
 
@@ -817,8 +822,13 @@ app.whenReady().then(async () => {
         floatingManager.setPinned(id, 'browser', true)
       })
     } catch (error) {
-      console.error(JSON.stringify({ component: 'bot-instance', level: 'error',
-        message: error instanceof Error ? error.message : 'Startup failed' }))
+      console.error(
+        JSON.stringify({
+          component: 'bot-instance',
+          level: 'error',
+          message: error instanceof Error ? error.message : 'Startup failed',
+        })
+      )
       app.exit(1)
       return
     }
