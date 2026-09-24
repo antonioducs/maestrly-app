@@ -440,7 +440,10 @@ async function main() {
   assert.equal((await conversationCall('chatGetConvTools')).result.imageGen, false)
   await conversationCall('chatSetConvTools', [{ imageGen: true }])
   assert.equal((await conversationCall('chatGetConvTools')).result.imageGen, true)
-  pass('conversation tools, skills, commands and image generation toggle')
+  pass(
+    'conversation tools, skills, commands and image generation toggle',
+    `${skillsState.skills.length} skills, ${commands.skills.length} skill commands, imageGen off/on round trip`
+  )
 
   const turnStart = Date.now()
   await request('POST', '/v1/bots/' + scoutId + '/messages', { text: 'E2E-START', idempotencyKey: randomUUID() })
