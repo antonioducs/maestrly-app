@@ -14,11 +14,15 @@ import { cn } from '@/lib/utils'
 import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 import { isChatProviderConnected } from '../../../shared/chat'
 import type { ChatConfig, ChatModelRef } from '../../../shared/chat'
+import type { ChatComposerSource } from './chat-composer-source'
 
 interface Props {
   conversationId?: string
   value?: ChatModelRef | null
   onSelect?: (selection: ChatModelRef) => void | Promise<void>
+  onSelectDefault?: () => void | Promise<void>
+  defaultLabel?: string
+  source?: ChatComposerSource
 
   providerFilter?: (providerId: string) => boolean
 
@@ -56,13 +60,24 @@ async function fetchRows(): Promise<{ config: ChatConfig; rows: Row[] }> {
 }
 
 export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function ChatModelChip(
-  { conversationId, value, onSelect, providerFilter, avoidOverflow = false, refreshToken, onChange },
+  {
+    conversationId,
+    value,
+    onSelect,
+    onSelectDefault,
+    defaultLabel,
+    source,
+    providerFilter,
+    avoidOverflow = false,
+    refreshToken,
+    onChange,
+  },
   ref
 ) {
   const { t } = useTranslation('chat')
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const [conversationSel, setConversationSel] = useState<ChatModelRef | null>(null)
-  const controlled = conversationId === undefined
+  const controlled = conversationId === undefined || !!source?.bot
   const sel = controlled ? (value ?? null) : conversationSel
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -98,6 +113,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   }))
 
   const load = () => {
+    if (source?.bot) return
     window.api.chatConfig().then(setConfig)
     if (conversationId) window.api.chatGetSelection(conversationId).then(setConversationSel)
   }
@@ -105,16 +121,18 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
 
   useEffect(
     () =>
-      window.api.onChatModelsCatalogChanged(() => {
-        rowsCache = null
-        if (!open) return
-        void fetchRows()
-          .then(({ config: nextConfig, rows: nextRows }) => {
-            setConfig(nextConfig)
-            setRows(nextRows)
-          })
-          .catch(() => undefined)
-      }),
+      source?.bot
+        ? () => {}
+        : window.api.onChatModelsCatalogChanged(() => {
+            rowsCache = null
+            if (!open) return
+            void fetchRows()
+              .then(({ config: nextConfig, rows: nextRows }) => {
+                setConfig(nextConfig)
+                setRows(nextRows)
+              })
+              .catch(() => undefined)
+          }),
     [open]
   )
 
@@ -127,6 +145,27 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     if (hadCache) setRows(rowsCache!)
     setHiddenModels(null)
     setLoading(true)
+    if (source?.bot) {
+      setHiddenModels({})
+      void source.bot
+        .listSelections(conversationId ?? '')
+        .then((result) => {
+          if (!alive) return
+          setRows(
+            result.options.map((option) => ({
+              providerId: option.providerId,
+              providerName: option.providerLabel,
+              modelId: option.modelId,
+            }))
+          )
+          setLoading(false)
+        })
+        .catch(() => alive && setLoading(false))
+      focusSearch()
+      return () => {
+        alive = false
+      }
+    }
     void window.api
       .chatHiddenModels()
       .then((hidden) => {
@@ -182,7 +221,10 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const provider = config?.providers.find((p) => p.id === sel?.providerId)
   const connectedProviders = config?.providers.filter(isChatProviderConnected) ?? []
   const connectedProviderIds = useMemo(() => new Set(connectedProviders.map((candidate) => candidate.id)), [config])
-  const label = sel?.modelId ? `${provider?.name ?? sel.providerId} · ${sel.modelId}` : t('modelChip.choosePlaceholder')
+  const botRow = source?.bot && rows.find((row) => row.providerId === sel?.providerId && row.modelId === sel?.modelId)
+  const label = sel?.modelId
+    ? `${botRow?.providerName ?? provider?.name ?? sel.providerId} · ${sel.modelId}`
+    : (defaultLabel ?? t('modelChip.choosePlaceholder'))
   const modelShortcut = window.api.platformInfo.os === 'mac' ? '⌘⇧M' : 'Ctrl+Shift+M'
 
   const filtered = useMemo(() => {
@@ -190,12 +232,12 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     const q = query.trim().toLowerCase()
     return rows.filter(
       (r) =>
-        connectedProviderIds.has(r.providerId) &&
+        (source?.bot || connectedProviderIds.has(r.providerId)) &&
         !(hiddenModels[r.providerId] ?? []).includes(r.modelId) &&
         (!providerFilter || providerFilter(r.providerId)) &&
         (!q || `${r.providerName} ${r.modelId}`.toLowerCase().includes(q))
     )
-  }, [rows, query, connectedProviderIds, hiddenModels, providerFilter])
+  }, [rows, query, connectedProviderIds, hiddenModels, providerFilter, source?.bot])
 
   useEffect(() => {
     setActiveIndex((index) => (filtered.length > 0 ? Math.min(index, filtered.length - 1) : 0))
@@ -209,7 +251,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
 
   const choose = async (providerId: string, modelId: string) => {
     const next = { providerId, modelId }
-    if (!conversationId) {
+    if (!conversationId || source?.bot) {
       setOpen(false)
       await onSelect?.(next)
       onChange?.(next)
@@ -255,7 +297,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
         <span className="truncate">{label}</span>
         <ChevronDown className="h-3 w-3 shrink-0" />
       </button>
-      {open && config && (
+      {open && (config || source?.bot) && (
         <div
           style={avoidOverflow ? panelStyle : undefined}
           className={cn(
@@ -296,7 +338,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
             />
           </div>
           <div className="max-h-[40vh] overflow-auto py-1">
-            {connectedProviders.length === 0 && (
+            {connectedProviders.length === 0 && !source?.bot && (
               <div className="px-3 py-3 text-center text-[12px] text-muted-foreground">
                 {t('modelChip.noProviders')}
               </div>
@@ -305,6 +347,19 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
               <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-muted-foreground">
                 <Loader2 className="h-3 w-3 animate-spin" /> {t('modelChip.loading')}
               </div>
+            )}
+            {!loading && source?.bot && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  void onSelectDefault?.()
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-foreground hover:bg-white/[0.05]"
+              >
+                <Check className={cn('h-3.5 w-3.5', !value ? 'opacity-100' : 'opacity-0')} />
+                {defaultLabel ?? t('modelChip.choosePlaceholder')}
+              </button>
             )}
             {!loading &&
               filtered.map((r, index) => {
@@ -331,7 +386,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                   </button>
                 )
               })}
-            {!loading && filtered.length === 0 && connectedProviders.length > 0 && (
+            {!source?.bot && !loading && filtered.length === 0 && connectedProviders.length > 0 && (
               <button
                 type="button"
                 onClick={manual}

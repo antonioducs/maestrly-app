@@ -240,7 +240,7 @@ export function BotConversation({
       </div>
       <div className="border-t border-border px-4 py-3">
         <div className="mx-auto max-w-3xl">
-          {locked ? (
+          {locked && (
             <div className="flex items-center justify-between rounded-lg border border-border bg-surface-elevated p-3 text-sm text-muted-foreground">
               <span>{t(`composer.${bot.status}`)}</span>
               {bot.status === 'offline' && (
@@ -270,9 +270,8 @@ export function BotConversation({
                 </span>
               )}
             </div>
-          ) : (
-            <BotComposer bot={bot} fleet={fleet} />
           )}
+          <BotComposer bot={bot} fleet={fleet} onOpenScreen={onOpenScreen} />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">
               {error}

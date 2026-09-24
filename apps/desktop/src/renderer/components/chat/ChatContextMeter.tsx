@@ -174,32 +174,14 @@ export function ChatContextMeter({
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => canLimit && setOpen((o) => !o)}
+      <ChatContextMeterDisplay
+        text={`${context.quality === 'estimated' ? '~' : ''}${fmt(context.used)}${win ? `/${fmt(win)}` : ''}${pct != null ? ` ${(pct * 100).toFixed(1)}%` : ` ${t('meter.tokenUnit')}`}${hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}`}
         title={canLimit ? tip + '\n\n' + t('meter.limitButtonTitle') : tip}
-        disabled={!canLimit}
-        className={cn(
-          'inline-flex items-center gap-1 rounded px-1 text-[11px]',
-          canLimit && 'cursor-pointer hover:bg-white/[0.06]',
-          activeLimit != null && 'text-indigo-400',
-          activeLimit == null &&
-            (pct != null && pct >= 0.9
-              ? 'text-red-400'
-              : pct != null && pct >= 0.75
-                ? 'text-amber-400'
-                : 'text-muted-foreground')
-        )}
-      >
-        {activeLimit != null && <Lock className="h-2.5 w-2.5 shrink-0" />}
-        <span>
-          {context.quality === 'estimated' ? '~' : ''}
-          {fmt(context.used)}
-          {win ? `/${fmt(win)}` : ''}
-          {pct != null ? ` ${(pct * 100).toFixed(1)}%` : ` ${t('meter.tokenUnit')}`}
-          {hasPricing ? ` · ~${fmtCost(stats.cost)}` : ''}
-        </span>
-      </button>
+        pct={pct}
+        activeLimit={activeLimit != null}
+        editable={canLimit}
+        onClick={() => setOpen((o) => !o)}
+      />
 
       {open && canLimit && (
         <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-white/[0.1] bg-[#161618] p-3 shadow-2xl">
@@ -251,5 +233,45 @@ export function ChatContextMeter({
         </div>
       )}
     </div>
+  )
+}
+
+/** Shared readout for local chat context and fleet usage. */
+export function ChatContextMeterDisplay({
+  text,
+  title,
+  pct,
+  activeLimit = false,
+  editable = false,
+  onClick,
+}: {
+  text: string
+  title: string
+  pct: number | null
+  activeLimit?: boolean
+  editable?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={editable ? onClick : undefined}
+      title={title}
+      disabled={!editable}
+      className={cn(
+        'inline-flex items-center gap-1 rounded px-1 text-[11px]',
+        editable && 'cursor-pointer hover:bg-white/[0.06]',
+        activeLimit && 'text-indigo-400',
+        !activeLimit &&
+          (pct != null && pct >= 0.9
+            ? 'text-red-400'
+            : pct != null && pct >= 0.75
+              ? 'text-amber-400'
+              : 'text-muted-foreground')
+      )}
+    >
+      {activeLimit && <Lock className="h-2.5 w-2.5 shrink-0" />}
+      <span>{text}</span>
+    </button>
   )
 }

@@ -326,7 +326,27 @@ export function DesktopApp() {
   })
   const { statuses, attention, acknowledgeConversation } = agents
   // Bot instance mode: the gateway asks this (headless) app to show where model accounts are connected.
-  useEffect(() => window.api.onFleetInstanceOpenAccounts(() => openSettings('chat')), [openSettings])
+  useEffect(
+    () =>
+      window.api.onFleetInstanceOpenAccounts((target) => {
+        openSettings('chat')
+        const id = `chat-settings-tab-${target === 'mcp' ? 'tools' : target}`
+        const observer = new MutationObserver(() => {
+          const tab = document.getElementById(id)
+          if (tab) {
+            observer.disconnect()
+            tab.click()
+          }
+        })
+        observer.observe(document.body, { childList: true, subtree: true })
+        const tab = document.getElementById(id)
+        if (tab) {
+          observer.disconnect()
+          tab.click()
+        }
+      }),
+    [openSettings]
+  )
   useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))

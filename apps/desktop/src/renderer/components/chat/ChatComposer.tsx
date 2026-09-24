@@ -30,6 +30,7 @@ interface Props {
   streamingPlaceholder?: string
   disabled?: boolean
   disabledPlaceholder?: string
+  placeholder?: string
 
   onMentionsChange?: (mentions: StructuredAgentMentionDraft[]) => void
 
@@ -75,6 +76,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
     streamingPlaceholder,
     disabled,
     disabledPlaceholder,
+    placeholder,
     onSend,
     onStop,
     leftSlot,
@@ -263,7 +265,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
               ? (disabledPlaceholder ?? t('composer.placeholderDisabled'))
               : streaming
                 ? (streamingPlaceholder ?? t('composer.placeholderQueue'))
-                : t('composer.placeholder')
+                : (placeholder ?? t('composer.placeholder'))
           }
           className="chat-input max-h-[220px] overflow-y-auto"
           maxHeight={MAX_H}

@@ -76,9 +76,10 @@ describe('fleet composer helpers', () => {
       'ChatMicButton',
       'fleetSendMessage',
       'fleetListSelections',
-      'fleetUpdateBot',
     ])
       expect(source).toContain(name)
+    expect(source).toContain('source.bot?.updateSelection(next)')
+    expect(source).toContain('<ChatComposer')
     expect(source).not.toMatch(/<select\b/)
   })
 })

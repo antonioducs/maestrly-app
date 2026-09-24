@@ -7,6 +7,7 @@ import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSu
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
+import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 
 function Toggle({
   on,
@@ -47,17 +48,24 @@ export function ChatPlusMenu({
   fontScale,
   onFontScale,
   onCompanionStarting,
+  source: providedSource,
+  manageMcpLabel,
 }: {
   conversationId: string
   mode: ChatMode
   onAddFiles: (files: File[]) => void
   fontScale: number
   onFontScale: (n: number) => void
-  onCompanionStarting: (starting: boolean) => void
+  onCompanionStarting?: (starting: boolean) => void
+  source?: ChatComposerSource
+  manageMcpLabel?: string
 }) {
   const { t } = useTranslation('chat')
+  const source = providedSource ?? localChatComposerSource(conversationId)
   const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
-  const [config, setConfig] = useState<ChatConfig | null>(null)
+  const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
+    null
+  )
   const [app, setApp] = useState(false)
   const [imageGen, setImageGen] = useState(true)
   const [mcpDisabled, setMcpDisabled] = useState<string[]>([])
@@ -77,19 +85,20 @@ export function ChatPlusMenu({
 
   const loadTools = () => {
     const targetConversationId = conversationId
-    window.api.chatConfig().then(setConfig)
-    window.api.chatGetConvTools(targetConversationId).then((t) => {
+    source.chatConfig().then(setConfig)
+    source.chatGetConvTools().then((t) => {
       if (conversationIdRef.current !== targetConversationId) return
       setApp(t.app)
       setImageGen(t.imageGen)
       setMcpDisabled(t.mcpDisabled)
     })
-    window.api.chatGptWebCapabilities(targetConversationId).then((value) => {
-      if (conversationIdRef.current === targetConversationId) setCompanionCapabilities(value)
-    })
+    if (!source.bot)
+      window.api.chatGptWebCapabilities(targetConversationId).then((value) => {
+        if (conversationIdRef.current === targetConversationId) setCompanionCapabilities(value)
+      })
     const profilesRevision = subagentProfilesRevisionRef.current
     const subagentsRevision = subagentsRevisionRef.current
-    window.api.chatSubagentProfilesGetConversation(targetConversationId).then((payload) => {
+    source.chatSubagentProfilesGetConversation().then((payload) => {
       if (conversationIdRef.current !== targetConversationId) return
       if (subagentProfilesRevisionRef.current === profilesRevision) setSubagentProfilesEnabled(payload.enabled)
       if (subagentsRevisionRef.current === subagentsRevision) setSubagentsEnabled(payload.subagentsEnabled)
@@ -131,6 +140,7 @@ export function ChatPlusMenu({
       setChatGptWebEnabled(status.enabled)
       if (!status.enabled) setCompanionError(null)
     }
+    if (source.bot) return
     void window.api
       .chatGptWebStatus()
       .then(apply)
@@ -145,18 +155,18 @@ export function ChatPlusMenu({
   const toggleApp = () => {
     const next = !app
     setApp(next)
-    window.api.chatSetConvTools(conversationId, { app: next })
+    source.chatSetConvTools({ app: next })
   }
 
   const toggleImageGen = () => {
     const next = !imageGen
     setImageGen(next)
-    window.api.chatSetConvTools(conversationId, { imageGen: next })
+    source.chatSetConvTools({ imageGen: next })
   }
   const toggleMcp = (id: string) => {
     const next = mcpDisabled.includes(id) ? mcpDisabled.filter((x) => x !== id) : [...mcpDisabled, id]
     setMcpDisabled(next)
-    window.api.chatSetConvTools(conversationId, { mcpDisabled: next })
+    source.chatSetConvTools({ mcpDisabled: next })
   }
   const toggleSubagentProfiles = () => {
     const targetConversationId = conversationId
@@ -164,7 +174,7 @@ export function ChatPlusMenu({
     const previous = subagentProfilesEnabled
     const next = !previous
     setSubagentProfilesEnabled(next)
-    void window.api.chatSubagentProfilesSetConversationEnabled(targetConversationId, next).then((result) => {
+    void source.chatSubagentProfilesSetConversationEnabled(next).then((result) => {
       if (result.ok) notifySubagentProfilesChanged()
       if (
         conversationIdRef.current !== targetConversationId ||
@@ -181,7 +191,7 @@ export function ChatPlusMenu({
     const previous = subagentsEnabled
     const next = !previous
     setSubagentsEnabled(next)
-    void window.api.chatSubagentsSetConversationEnabled(targetConversationId, next).then((result) => {
+    void source.chatSubagentsSetConversationEnabled(next).then((result) => {
       if (result.ok) notifySubagentProfilesChanged()
       if (conversationIdRef.current !== targetConversationId || subagentsRevisionRef.current !== revision) return
       setSubagentsEnabled(result.ok ? result.value.subagentsEnabled : previous)
@@ -190,7 +200,7 @@ export function ChatPlusMenu({
 
   const startChatGptCompanion = async () => {
     setCompanionBusy(true)
-    onCompanionStarting(true)
+    onCompanionStarting?.(true)
     setCompanionError(null)
     try {
       if (companionCapabilities?.editable) {
@@ -203,7 +213,7 @@ export function ChatPlusMenu({
       setCompanionError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setCompanionBusy(false)
-      onCompanionStarting(false)
+      onCompanionStarting?.(false)
     }
   }
 
@@ -265,7 +275,7 @@ export function ChatPlusMenu({
             <ImageIcon className="h-4 w-4 text-muted-foreground" />
             {t('plusMenu.imageFile')}
           </button>
-          {chatGptWebEnabled && (
+          {!source.bot && chatGptWebEnabled && (
             <button
               type="button"
               disabled={companionBusy}
@@ -285,7 +295,7 @@ export function ChatPlusMenu({
               </span>
             </button>
           )}
-          {chatGptWebEnabled && companionError && (
+          {!source.bot && chatGptWebEnabled && companionError && (
             <div className="mx-2.5 mb-1 rounded border border-amber-500/25 bg-amber-500/[0.07] px-2 py-1 text-[11px] text-amber-200">
               {t('plusMenu.chatgptCompanionError', { error: companionError })}
             </div>
@@ -302,60 +312,64 @@ export function ChatPlusMenu({
             </div>
             <Toggle on={subagentsEnabled} onClick={toggleSubagents} label={t('plusMenu.subagentsToggleLabel')} />
           </div>
-          <div className="flex items-center gap-2 rounded-md hover:bg-white/[0.05]">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setActivePanel('subagents')}
-              className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-foreground"
-            >
-              <SlidersHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0">
-                <span className="block text-[13px]">{t('plusMenu.subagentProfiles')}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {subagentProfilesEnabled
-                    ? t('plusMenu.subagentProfilesEnabled')
-                    : t('plusMenu.subagentProfilesDisabled')}
+          {!source.bot && (
+            <div className="flex items-center gap-2 rounded-md hover:bg-white/[0.05]">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => setActivePanel('subagents')}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-foreground"
+              >
+                <SlidersHorizontal className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  <span className="block text-[13px]">{t('plusMenu.subagentProfiles')}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">
+                    {subagentProfilesEnabled
+                      ? t('plusMenu.subagentProfilesEnabled')
+                      : t('plusMenu.subagentProfilesDisabled')}
+                  </span>
                 </span>
-              </span>
-            </button>
-            <div className="pr-2.5">
-              <Toggle
-                on={subagentProfilesEnabled}
-                onClick={toggleSubagentProfiles}
-                label={t('subagentProfiles.toggleLabel')}
-                disabled={!subagentsEnabled}
-              />
-            </div>
-          </div>
-
-          <div className="my-1 border-t border-white/[0.06]" />
-          <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
-            <span className="text-[13px] text-foreground">{t('plusMenu.fontSize')}</span>
-            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <button
-                type="button"
-                onClick={() => onFontScale(Math.max(0.8, Math.round((fontScale - 0.1) * 10) / 10))}
-                className="flex h-6 w-6 items-center justify-center rounded text-[12px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-                title={t('plusMenu.decreaseFont')}
-              >
-                A−
               </button>
-              <span className="w-10 text-center text-[11px] tabular-nums text-muted-foreground">
-                {Math.round(fontScale * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={() => onFontScale(Math.min(1.6, Math.round((fontScale + 0.1) * 10) / 10))}
-                className="flex h-6 w-6 items-center justify-center rounded text-[14px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-                title={t('plusMenu.increaseFont')}
-              >
-                A+
-              </button>
+              <div className="pr-2.5">
+                <Toggle
+                  on={subagentProfilesEnabled}
+                  onClick={toggleSubagentProfiles}
+                  label={t('subagentProfiles.toggleLabel')}
+                  disabled={!subagentsEnabled}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="my-1 border-t border-white/[0.06]" />
+          {!source.bot && <div className="my-1 border-t border-white/[0.06]" />}
+          {!source.bot && (
+            <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5">
+              <span className="text-[13px] text-foreground">{t('plusMenu.fontSize')}</span>
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => onFontScale(Math.max(0.8, Math.round((fontScale - 0.1) * 10) / 10))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-[12px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                  title={t('plusMenu.decreaseFont')}
+                >
+                  A−
+                </button>
+                <span className="w-10 text-center text-[11px] tabular-nums text-muted-foreground">
+                  {Math.round(fontScale * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onFontScale(Math.min(1.6, Math.round((fontScale + 0.1) * 10) / 10))}
+                  className="flex h-6 w-6 items-center justify-center rounded text-[14px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                  title={t('plusMenu.increaseFont')}
+                >
+                  A+
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!source.bot && <div className="my-1 border-t border-white/[0.06]" />}
           {(mode === 'plan' || mode === 'ask') && (
             <div className="rounded-md bg-white/[0.04] px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
               {t(`plusMenu.restrictedMode.${mode}`)}
@@ -395,12 +409,22 @@ export function ChatPlusMenu({
               </div>
             )
           })}
-          <div className="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
-            {t('plusMenu.settingsHint')}
-          </div>
+          {source.bot ? (
+            <button
+              type="button"
+              onClick={() => void source.bot?.manage('mcp')}
+              className="mt-1 w-full border-t border-white/[0.06] px-2.5 pt-1.5 text-left text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              {manageMcpLabel ?? t('plusMenu.settingsHint')}
+            </button>
+          ) : (
+            <div className="mt-1 border-t border-white/[0.06] px-2.5 pt-1.5 text-[11px] text-muted-foreground">
+              {t('plusMenu.settingsHint')}
+            </div>
+          )}
         </div>
       )}
-      {activePanel === 'subagents' && (
+      {!source.bot && activePanel === 'subagents' && (
         <ConversationSubagentProfiles
           conversationId={conversationId}
           returnFocusRef={triggerRef}

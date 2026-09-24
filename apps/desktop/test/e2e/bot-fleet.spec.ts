@@ -13,6 +13,7 @@ import {
   fleetPendingInteractionSchema,
   fleetRoutineSchema,
   fleetSendMessageRequestSchema,
+  fleetConversationCallRequestSchema,
   type FleetBot,
   type FleetSelection,
   type FleetRoutine,
@@ -131,6 +132,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     reasoning: 'medium',
     fastMode: false,
   }
+  let conversationTools = { app: true, imageGen: true, mcpDisabled: [] as string[] }
+  let skillOverride: 'on' | 'off' | undefined
+  let skillSelection: { kind: 'all' | 'none' } = { kind: 'all' }
+  let subagentsEnabled = true
+  let subagentProfilesEnabled = true
   let takeoverConflicts = 1
   const rendererPayloads: string[] = []
   function emit(event: unknown) {
@@ -245,6 +251,94 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         }, 800)
         break
       }
+      case 'botConversationCall': {
+        const input = fleetConversationCallRequestSchema.parse(body)
+        const profileState = () => ({
+          rules: null,
+          diagnostics: [],
+          enabled: subagentProfilesEnabled,
+          subagentsEnabled,
+        })
+        const skillsState = () => ({
+          skills: [
+            {
+              name: 'order-check',
+              description: 'Check orders',
+              source: 'fixture',
+              dir: '/skills/order-check',
+              scope: 'global',
+              modelInvocable: true,
+              userInvocable: true,
+              resources: { scripts: 0, references: 0, assets: 0 },
+              enabled: skillOverride !== 'off',
+              baseEnabled: true,
+              enabledGlobally: true,
+              override: skillOverride,
+              groupIds: [],
+              inSelectedGroup: true,
+            },
+          ],
+          groups: [],
+          selection: skillSelection,
+          selectedGroupMissing: false,
+          hasOverrides: skillOverride !== undefined,
+        })
+        let result: unknown
+        switch (input.op) {
+          case 'chatConfig':
+            result = {
+              mcpServers: [{ id: 'fixture-mcp', name: 'Fixture MCP', transport: 'http', enabled: true }],
+              appToolsEnabled: true,
+              imageGenEnabled: true,
+            }
+            break
+          case 'chatGetConvTools':
+            result = conversationTools
+            break
+          case 'chatSetConvTools':
+            conversationTools = { ...conversationTools, ...(input.args[0] as Partial<typeof conversationTools>) }
+            result = { ok: true }
+            break
+          case 'chatSubagentProfilesGetConversation':
+            result = profileState()
+            break
+          case 'chatSubagentProfilesSetConversationEnabled':
+            subagentProfilesEnabled = input.args[0] as boolean
+            result = { ok: true, value: profileState() }
+            break
+          case 'chatSubagentsSetConversationEnabled':
+            subagentsEnabled = input.args[0] as boolean
+            result = { ok: true, value: profileState() }
+            break
+          case 'chatSkillsState':
+            result = skillsState()
+            break
+          case 'chatSkillSetOverride':
+            skillOverride = input.args[1] === 'inherit' ? undefined : (input.args[1] as 'on' | 'off')
+            result = { ok: true }
+            break
+          case 'chatSkillResetOverrides':
+            skillOverride = undefined
+            result = { ok: true }
+            break
+          case 'chatSkillSetSelection':
+            skillSelection = input.args[0] as typeof skillSelection
+            result = { ok: true }
+            break
+          case 'chatCommands':
+            result = {
+              prompts: [],
+              project: [],
+              skills:
+                skillOverride === 'off'
+                  ? []
+                  : [{ name: 'order-check', description: 'Check orders', source: 'fixture' }],
+            }
+            break
+        }
+        value = { result }
+        break
+      }
       case 'botSelections':
         value = {
           options: [
@@ -256,6 +350,15 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
               modelLabel: 'Model',
               efforts: ['medium', 'high'],
               fastMode: true,
+            },
+            {
+              id: 'prov_e2e::model-plus',
+              providerId: 'prov_e2e',
+              providerLabel: 'Fake',
+              modelId: 'model-plus',
+              modelLabel: 'Plus',
+              efforts: ['high'],
+              fastMode: false,
             },
           ],
           current: currentSelection,
@@ -475,6 +578,42 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('button', { name: 'Abrir Screenshot' }).click()
     await expect(page.getByRole('dialog').getByAltText('Screenshot')).toBeVisible()
     await page.keyboard.press('Escape')
+    await page.getByTitle('Adicionar').click()
+    await expect(page.getByText('Fixture MCP')).toBeVisible()
+    await page.getByRole('switch', { name: 'Fixture MCP' }).click()
+    await expect
+      .poll(
+        () =>
+          (
+            requests
+              .filter(
+                (item) => item.key === 'botConversationCall' && (item.body as { op: string }).op === 'chatSetConvTools'
+              )
+              .at(-1)?.body as { args: [{ mcpDisabled?: string[] }] } | undefined
+          )?.args[0].mcpDisabled
+      )
+      .toEqual(['fixture-mcp'])
+    await page.getByTitle('Adicionar').click()
+    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('/order')
+    await expect(page.getByText('/order-check')).toBeVisible()
+    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('')
+    await page.getByTitle('Skills', { exact: true }).click()
+    await expect(page.getByText('/order-check')).toBeVisible()
+    await page.getByRole('button', { name: 'Desligada' }).click()
+    await expect
+      .poll(
+        () =>
+          (
+            requests
+              .filter(
+                (item) =>
+                  item.key === 'botConversationCall' && (item.body as { op: string }).op === 'chatSkillSetOverride'
+              )
+              .at(-1)?.body as { args: string[] } | undefined
+          )?.args
+      )
+      .toEqual(['order-check', 'off'])
+    await page.getByTitle('Skills', { exact: true }).click()
     await page.getByRole('button', { name: 'medium' }).first().click()
     await page.getByRole('button', { name: 'high', exact: true }).click()
     await expect
@@ -492,17 +631,28 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
             ?.selection?.fastMode
       )
       .toBe(true)
-    await page.getByRole('button', { name: 'Alterar acesso' }).click()
+    await expect(page.getByTitle(/Trocar modelo/)).toHaveClass(/rounded-md/)
+    await page.getByTitle(/Trocar modelo/).click()
+    await expect(page.getByRole('button', { name: 'model-plus' })).toBeVisible()
+    await page.getByRole('button', { name: 'model-plus' }).click()
+    await expect
+      .poll(
+        () =>
+          (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { selection?: { modelId?: string } })
+            ?.selection?.modelId
+      )
+      .toBe('model-plus')
+    await page.getByRole('button', { name: 'Aprovar por mim' }).click()
     await page.getByRole('button', { name: 'Acesso completo' }).last().click()
     await expect
       .poll(() => (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { ceiling?: string })?.ceiling)
       .toBe('full')
     await page
-      .locator('input[type="file"][aria-label="Anexar imagens"]')
+      .locator('input[type="file"][accept^="image/*"]')
       .setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png })
-    await expect(page.getByRole('button', { name: 'Remover test.png' })).toBeVisible()
-    await page.getByPlaceholder('Mensagem para Scout…').fill('Check the orders')
-    await page.getByRole('button', { name: 'Enviar mensagem' }).click()
+    await expect(page.getByAltText('test.png')).toBeVisible()
+    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('Check the orders')
+    await page.getByRole('button', { name: 'Enviar', exact: true }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botMessageSend').length).toBe(1)
     const sent = requests.find((item) => item.key === 'botMessageSend')?.body as {
       text: string
