@@ -7,6 +7,7 @@ import { gb, memorySegments } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import { botsWithDifferentVersion } from '@/lib/fleet/selectors'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { ArchivedBots } from './ArchivedBots'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -208,6 +209,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
             </table>
           </div>
         </section>
+        <ArchivedBots fleet={fleet} />
         <section>
           <h2 className="mb-3 font-semibold">{t('server.peerMessages')}</h2>
           {messages.length ? (

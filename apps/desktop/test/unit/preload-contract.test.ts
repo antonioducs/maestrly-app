@@ -156,6 +156,15 @@ describe('preload API — exposure', () => {
     expect((p as unknown as { botMode: boolean }).botMode).toBe(false)
   })
 
+  it('forwards archived bot calls to their channels', async () => {
+    await api.fleetListArchivedBots()
+    await api.fleetRestoreArchivedBot('scout')
+    await api.fleetDeleteArchivedBot('scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:listArchivedBots')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:restoreArchivedBot', 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:deleteArchivedBot', 'scout')
+  })
+
   it("hides a bot's settings window through main instead of closing it", async () => {
     await api.fleetInstanceHideWindow()
     expect(invokeSpy).toHaveBeenCalledWith('fleet:instance:hide')
@@ -168,7 +177,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(446)
+    expect(keys).toHaveLength(449)
     expect(keys.sort()).toMatchSnapshot()
   })
 

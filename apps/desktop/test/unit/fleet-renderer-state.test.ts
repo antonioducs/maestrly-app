@@ -108,6 +108,28 @@ describe('fleet pure state', () => {
     expect(state.snapshot.bots).toHaveLength(0)
     expect(state.snapshot.inbox).toHaveLength(0)
   })
+  it('never lists an archived bot, even when its archive reply arrives after the removal event', () => {
+    let state = fleetReducer(initialFleetState, {
+      type: 'event',
+      value: { type: 'bot.updated', bot: bot('scout'), at: '2026-01-01T00:00:00Z' },
+    })
+    state = fleetReducer(state, {
+      type: 'event',
+      value: { type: 'bot.removed', botId: 'scout', at: '2026-01-01T00:01:00Z' },
+    })
+    // The archive request's reply (the bot, now archived) is dispatched once the IPC call returns.
+    state = fleetReducer(state, {
+      type: 'event',
+      value: { type: 'bot.updated', bot: { ...bot('scout'), lifecycle: 'archived' }, at: '2026-01-01T00:01:00Z' },
+    })
+    expect(state.snapshot.bots).toEqual([])
+    // Restored, it is listed again.
+    state = fleetReducer(state, {
+      type: 'event',
+      value: { type: 'bot.updated', bot: { ...bot('scout'), lifecycle: 'creating' }, at: '2026-01-01T00:02:00Z' },
+    })
+    expect(state.snapshot.bots.map((item) => item.id)).toEqual(['scout'])
+  })
   it('keeps activity entries in sequence order without duplicates', () => {
     const entry = (seq: number) => ({
       seq,

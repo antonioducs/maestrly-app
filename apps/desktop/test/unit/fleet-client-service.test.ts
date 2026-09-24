@@ -162,6 +162,21 @@ describe('fleet client service', () => {
     expect(readFleetSettings().token).toBeNull()
   })
 
+  it('drops an archived bot from the snapshot whatever the event order', async () => {
+    const service = new FleetClientService()
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    await state.events[0].onConnected()
+    const bot = { id: 'scout', name: 'Scout', lifecycle: 'running' }
+    const at = '2026-01-01T00:00:00Z'
+    state.events[0].onEvent({ type: 'bot.updated', at, bot })
+    expect(service.getSnapshot().bots.map((item) => item.id)).toEqual(['scout'])
+    state.events[0].onEvent({ type: 'bot.updated', at, bot: { ...bot, lifecycle: 'archived' } })
+    expect(service.getSnapshot().bots).toEqual([])
+    state.events[0].onEvent({ type: 'bot.updated', at, bot: { ...bot, lifecycle: 'creating' } })
+    expect(service.getSnapshot().bots.map((item) => item.id)).toEqual(['scout'])
+    service.stop()
+  })
+
   it('restores digest elapsed time after an app restart', async () => {
     const first = new FleetClientService()
     await first.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })

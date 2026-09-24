@@ -60,6 +60,29 @@ describe('fleet IPC validation', () => {
     expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid')
     expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
   })
+  it('lists archived bots, and restores or deletes one only through trusted, validated calls', async () => {
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+    expect(reads.has('fleet:listArchivedBots')).toBe(true)
+    // Restoring and deleting change the server: both go through the trusted-sender guard.
+    expect(reads.has('fleet:restoreArchivedBot') || reads.has('fleet:deleteArchivedBot')).toBe(false)
+    await reads.get('fleet:listArchivedBots')?.({ sender: {} })
+    await mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, 'scout')
+    await mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, 'scout')
+    expect(mocks.call.mock.calls).toEqual([
+      ['archivedBotsList'],
+      ['archivedBotRestore', { params: { id: 'scout' } }],
+      ['archivedBotDelete', { params: { id: 'scout' } }],
+    ])
+    expect(() => mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, '../scout')).toThrow()
+    expect(() => mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, undefined)).toThrow()
+  })
   it('marks only a missing image as not found, so the UI can offer a retry for other failures', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {

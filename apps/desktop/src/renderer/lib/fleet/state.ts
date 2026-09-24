@@ -125,9 +125,11 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             ...state,
             snapshot: {
               ...state.snapshot,
-              bots: [...state.snapshot.bots.filter((bot) => bot.id !== event.bot.id), event.bot].sort((a, b) =>
-                a.name.localeCompare(b.name)
-              ),
+              // An archive reply can arrive after `bot.removed`: an archived bot is never listed.
+              bots: [
+                ...state.snapshot.bots.filter((bot) => bot.id !== event.bot.id),
+                ...(event.bot.lifecycle === 'archived' ? [] : [event.bot]),
+              ].sort((a, b) => a.name.localeCompare(b.name)),
             },
           }
         case 'bot.removed': {

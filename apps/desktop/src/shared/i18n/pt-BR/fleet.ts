@@ -157,6 +157,26 @@ export default {
     name: 'Nome',
     status: 'Estado',
     actions: 'Ações',
+    archived: {
+      title: 'Arquivados',
+      description:
+        'Um bot arquivado não tem contêiner nem usa memória. A conversa, as contas e os arquivos dele ficam no servidor até você apagar de vez.',
+      loading: 'Carregando…',
+      empty: 'Nenhum bot arquivado.',
+      archivedAt: 'Arquivado em {{date}}',
+      filesKept: 'arquivos guardados no servidor',
+      filesMissing: 'os arquivos não estão mais no servidor: ele volta sem conversa nem contas',
+      restore: 'Restaurar',
+      restoreLabel: 'Restaurar {{name}}',
+      delete: 'Apagar de vez',
+      deleteLabel: 'Apagar {{name}} de vez',
+      deleteTitle: 'Apagar {{name}} de vez?',
+      deleteDescription:
+        'Isso apaga do servidor a conversa, as contas conectadas, os arquivos, as rotinas e o histórico do {{name}}. Não dá para desfazer.',
+      deleteConfirmLabel: 'Digite {{name}} para confirmar',
+      cancel: 'Cancelar',
+      deleteConfirm: 'Apagar de vez',
+    },
   },
   inbox: {
     title: 'Aguardando você',
@@ -262,10 +282,12 @@ export default {
     where: 'Onde roda',
     container: 'Contêiner',
     started: 'Iniciado',
-    archiveNote: 'Arquive este bot e seu contêiner. A conversa e os arquivos ficam no servidor.',
+    archiveNote:
+      'Arquive este bot e remova o contêiner dele. A conversa e os arquivos ficam no servidor; dá para restaurar em Servidor de bots.',
     archive: 'Arquivar {{name}}',
     archiveTitle: 'Arquivar bot?',
-    archiveConfirm: 'Arquivar este bot e parar seu contêiner?',
+    archiveConfirm:
+      'O contêiner é parado e removido. A conversa, as contas e os arquivos ficam no servidor, e você pode restaurar o bot em Servidor de bots.',
     archiveConfirmButton: 'Arquivar',
   },
   routine: {
@@ -327,6 +349,8 @@ export default {
       bot_restarted: 'Bot reiniciado',
       bot_failed: 'Bot falhou · {{summary}}',
       bot_archived: 'Bot arquivado',
+      bot_restored: 'Bot restaurado',
+      bot_deleted: 'Bot apagado de vez · {{summary}}',
       turn_completed: 'Concluiu · {{summary}}',
       turn_failed: 'Turno falhou · {{summary}}',
       needs_you: 'Precisa de você · {{summary}}',

@@ -83,6 +83,13 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:botAction', (_event, botId: unknown, rawAction: unknown) =>
     fleet.call(actionRoute[action.parse(rawAction)], { params: { id: id.parse(botId) } })
   )
+  reg.handle('fleet:listArchivedBots', () => fleet.call('archivedBotsList'))
+  reg.mhandle('fleet:restoreArchivedBot', (_event, botId: unknown) =>
+    fleet.call('archivedBotRestore', { params: { id: id.parse(botId) } })
+  )
+  reg.mhandle('fleet:deleteArchivedBot', (_event, botId: unknown) =>
+    fleet.call('archivedBotDelete', { params: { id: id.parse(botId) } })
+  )
   reg.handle('fleet:listSelections', (_event, botId: unknown) =>
     fleet.call('botSelections', { params: { id: id.parse(botId) } })
   )

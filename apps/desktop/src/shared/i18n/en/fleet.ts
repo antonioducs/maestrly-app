@@ -157,6 +157,26 @@ export default {
     name: 'Name',
     status: 'Status',
     actions: 'Actions',
+    archived: {
+      title: 'Archived',
+      description:
+        'An archived bot has no container and uses no memory. Its conversation, accounts, and files stay on the server until you delete it forever.',
+      loading: 'Loading…',
+      empty: 'No archived bots.',
+      archivedAt: 'Archived {{date}}',
+      filesKept: 'files kept on the server',
+      filesMissing: 'its files are no longer on the server: it comes back without its conversation or accounts',
+      restore: 'Restore',
+      restoreLabel: 'Restore {{name}}',
+      delete: 'Delete forever',
+      deleteLabel: 'Delete {{name}} forever',
+      deleteTitle: 'Delete {{name}} forever?',
+      deleteDescription:
+        "This deletes {{name}}'s conversation, connected accounts, files, routines, and history from the server. It cannot be undone.",
+      deleteConfirmLabel: 'Type {{name}} to confirm',
+      cancel: 'Cancel',
+      deleteConfirm: 'Delete forever',
+    },
   },
   inbox: {
     title: 'Awaiting you',
@@ -262,10 +282,12 @@ export default {
     where: 'Where it runs',
     container: 'Container',
     started: 'Started',
-    archiveNote: 'Archive this bot and its container. Its conversation and files remain on the server.',
+    archiveNote:
+      'Archive this bot and remove its container. Its conversation and files remain on the server; restore it from Bot server.',
     archive: 'Archive {{name}}',
     archiveTitle: 'Archive bot?',
-    archiveConfirm: 'Archive this bot and stop its container?',
+    archiveConfirm:
+      'Its container stops and is removed. The conversation, accounts, and files stay on the server, and you can restore the bot from Bot server.',
     archiveConfirmButton: 'Archive',
   },
   routine: {
@@ -327,6 +349,8 @@ export default {
       bot_restarted: 'Bot restarted',
       bot_failed: 'Bot failed · {{summary}}',
       bot_archived: 'Bot archived',
+      bot_restored: 'Bot restored',
+      bot_deleted: 'Bot deleted forever · {{summary}}',
       turn_completed: 'Finished · {{summary}}',
       turn_failed: 'Turn failed · {{summary}}',
       needs_you: 'Needs you · {{summary}}',

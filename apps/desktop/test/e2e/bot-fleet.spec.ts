@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { expect, test, _electron as electron } from '@playwright/test'
 import {
   FLEET_GATEWAY_ROUTES,
+  fleetArchivedBotSchema,
   fleetBotSchema,
   fleetGatewayEventSchema,
   fleetHostInfoSchema,
@@ -14,6 +15,7 @@ import {
   fleetRoutineSchema,
   fleetSendMessageRequestSchema,
   fleetConversationCallRequestSchema,
+  type FleetArchivedBot,
   type FleetBot,
   type FleetSelection,
   type FleetRoutine,
@@ -84,6 +86,24 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     updatedAt: now(),
   }
   const bots: FleetBot[] = [fleetBotSchema.parse({ ...base, id: 'scout', name: 'Scout' })]
+  // Archived bots: the listed summary and the record a restore brings back. Legacy's files were removed by hand.
+  const archived = new Map<string, { summary: FleetArchivedBot; record: FleetBot }>([
+    [
+      'legacy',
+      {
+        summary: fleetArchivedBotSchema.parse({
+          id: 'legacy',
+          name: 'Legacy',
+          role: '',
+          tint: '#aa6644',
+          createdAt: now(),
+          archivedAt: now(),
+          files: 'missing',
+        }),
+        record: fleetBotSchema.parse({ ...base, id: 'legacy', name: 'Legacy', lifecycle: 'archived' }),
+      },
+    ],
+  ])
   let inbox = [
     fleetPendingInteractionSchema.parse({
       kind: 'permission',
@@ -233,6 +253,66 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       case 'botGet':
         value = bot
         break
+      case 'botArchive': {
+        if (!bot) {
+          send(404, { code: 'NOT_FOUND', message: 'Bot not found' })
+          return
+        }
+        const record = fleetBotSchema.parse({ ...bot, lifecycle: 'archived', status: 'offline' })
+        bots.splice(bots.indexOf(bot), 1)
+        archived.set(bot.id, {
+          summary: fleetArchivedBotSchema.parse({
+            id: bot.id,
+            name: bot.name,
+            role: bot.role,
+            tint: bot.tint,
+            createdAt: bot.createdAt,
+            archivedAt: now(),
+            files: 'kept',
+          }),
+          record,
+        })
+        // Same order as the gateway: the archived bot, its removal, then the reply.
+        emit({ type: 'bot.updated', at: now(), bot: record })
+        emit({ type: 'bot.removed', at: now(), botId: bot.id })
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        value = record
+        break
+      }
+      case 'archivedBotsList':
+        value = { bots: [...archived.values()].map((item) => item.summary) }
+        break
+      case 'archivedBotRestore':
+      case 'archivedBotDelete': {
+        const archivedId = decodeURIComponent(url.pathname.split('/')[3] ?? '')
+        const entry = archived.get(archivedId)
+        if (!entry) {
+          send(404, { code: 'NOT_FOUND', message: 'Archived bot not found' })
+          return
+        }
+        archived.delete(archivedId)
+        if (key === 'archivedBotDelete') break
+        const restoring = fleetBotSchema.parse({
+          ...entry.record,
+          lifecycle: 'creating',
+          status: 'starting',
+          setup: { step: 'container', error: null, errorMessage: null },
+        })
+        bots.push(restoring)
+        emit({ type: 'bot.updated', at: now(), bot: restoring })
+        setTimeout(() => {
+          const ready = fleetBotSchema.parse({
+            ...restoring,
+            lifecycle: 'running',
+            status: 'idle',
+            setup: { step: 'ready', error: null, errorMessage: null },
+          })
+          bots[bots.findIndex((item) => item.id === ready.id)] = ready
+          emit({ type: 'bot.updated', at: now(), bot: ready })
+        }, 300)
+        value = restoring
+        break
+      }
       case 'botsCreate': {
         const input = body as {
           name: string
@@ -822,6 +902,36 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Instrução').fill('Check the orders')
     await page.getByRole('button', { name: 'Salvar rotina' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botRoutinesCreate').length).toBe(1)
+
+    // Archive, restore, and delete forever.
+    await page.getByRole('button', { name: 'Arquivar Orders' }).click()
+    await page.getByRole('dialog', { name: 'Arquivar bot?' }).getByRole('button', { name: 'Arquivar' }).click()
+    // The dialog closes once the archive reply is back, after the removal event it must not undo.
+    await expect(page.getByRole('dialog', { name: 'Arquivar bot?' })).toHaveCount(0)
+    await page
+      .getByRole('button', { name: /fleet-e2e-host/ })
+      .first()
+      .click()
+    const archivedSection = page.getByRole('region', { name: 'Arquivados' })
+    await expect(page.getByRole('row', { name: /Orders/ })).toHaveCount(0)
+    await expect(archivedSection.getByRole('listitem').filter({ hasText: 'Orders' })).toBeVisible()
+    await expect(archivedSection.getByText(/arquivos guardados no servidor/)).toBeVisible()
+    await expect(archivedSection.getByText(/os arquivos não estão mais no servidor/)).toBeVisible()
+    await archivedSection.getByRole('button', { name: 'Restaurar Orders' }).click()
+    await expect.poll(() => requests.filter((item) => item.key === 'archivedBotRestore').length).toBe(1)
+    await expect(archivedSection.getByRole('listitem').filter({ hasText: 'Orders' })).toHaveCount(0)
+    await expect(page.getByRole('row', { name: /Orders/ })).toBeVisible()
+    await archivedSection.getByRole('button', { name: 'Apagar Legacy de vez' }).click()
+    const deleteDialog = page.getByRole('dialog', { name: 'Apagar Legacy de vez?' })
+    const deleteForever = deleteDialog.getByRole('button', { name: 'Apagar de vez' })
+    await expect(deleteForever).toBeDisabled()
+    await deleteDialog.getByLabel('Digite Legacy para confirmar').fill('legacy')
+    await expect(deleteForever).toBeDisabled()
+    await deleteDialog.getByLabel('Digite Legacy para confirmar').fill('Legacy')
+    await deleteForever.click()
+    await expect.poll(() => requests.filter((item) => item.key === 'archivedBotDelete').length).toBe(1)
+    await expect(deleteDialog).toHaveCount(0)
+    await expect(archivedSection.getByText('Nenhum bot arquivado.')).toBeVisible()
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()

@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron'
 import type {
   FleetActivityEntry,
+  FleetArchivedBot,
   FleetBot,
   FleetCreateBotRequest,
   FleetCreateRoutineRequest,
@@ -135,6 +136,11 @@ export const fleetApi = {
     botId: string,
     action: 'start' | 'stop' | 'restart' | 'archive' | 'pause' | 'resume' | 'cancel'
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
+  fleetListArchivedBots: (): Promise<{ bots: FleetArchivedBot[] }> => ipcRenderer.invoke('fleet:listArchivedBots'),
+  /** Recreates an archived bot's container on its kept files; it comes back as `creating`. */
+  fleetRestoreArchivedBot: (botId: string): Promise<FleetBot> => ipcRenderer.invoke('fleet:restoreArchivedBot', botId),
+  /** Irreversible: deletes an archived bot's files and every server record of it. */
+  fleetDeleteArchivedBot: (botId: string): Promise<void> => ipcRenderer.invoke('fleet:deleteArchivedBot', botId),
   fleetListSelections: (
     botId: string
   ): Promise<{

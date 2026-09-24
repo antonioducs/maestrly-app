@@ -252,7 +252,11 @@ export class FleetClientService {
     saveLastSeenAt(Date.now())
     switch (event.type) {
       case 'bot.updated':
-        this.snapshot.bots = [...this.snapshot.bots.filter((bot) => bot.id !== event.bot.id), event.bot]
+        // Archiving emits the archived bot before `bot.removed`; it must not stay listed whatever the order.
+        this.snapshot.bots = [
+          ...this.snapshot.bots.filter((bot) => bot.id !== event.bot.id),
+          ...(event.bot.lifecycle === 'archived' ? [] : [event.bot]),
+        ]
         break
       case 'bot.removed':
         this.snapshot.bots = this.snapshot.bots.filter((bot) => bot.id !== event.botId)
