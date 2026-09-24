@@ -81,6 +81,7 @@ import {
 } from './image-interpreter'
 import { modelOutputToChatToolOutput, toolOutputAsText, toolOutputIsError } from './tool-output'
 import { adaptToolSetForModel, supportsChatToolImages } from './tool-capabilities'
+import { supportsNativePdf } from './pdf-attachments'
 import { buildAndRenderSubagentDispatchCatalog } from './subagent-dispatch-catalog'
 import { resolveSubagentExecutionProfile } from './subagent-execution-profile'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
@@ -633,6 +634,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // image blocks and keeps the interpreter/cache entirely outside the persisted conversation.
   const imagesFlagged = getConvUiPrefs(conversationId).chat?.imagesUnsupported === true
   const dropImages = !supportsChatToolImages({ modelVision: meta?.vision, runtimeImageUnsupported: imagesFlagged })
+  // PDF attachments go native only on adapters/endpoints known to accept documents; otherwise extracted text.
+  const nativePdf = supportsNativePdf({
+    runtime: 'ai-sdk',
+    transport: resolvedModel.transport,
+    baseURL: selectedProvider?.baseURL,
+    modelPdf: meta?.pdf,
+  })
   // Interleaved reasoning replay (DeepSeek/GLM/Kimi via chat/completions): enable for compatible
   // transport with catalog `interleaved.field = reasoning_content` (or known family ID with
   // unavailable catalog). Effort selection does NOT affect it: 'off'/Default only omits
@@ -1508,6 +1516,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // → resends each step/turn become cache_read (~10x cheaper), saving rate-limit budget.
   const msgOpts = {
     dropImages,
+    nativePdf,
     cacheControl: isAnthropicProvider(selection.providerId),
     ...(replayPolicy ? { reasoningReplay: replayPolicy, replayStats: persistedReplayStats } : {}),
   }
@@ -1575,7 +1584,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         }
         return { ...state, ledger: reconciliation.ledger }
       },
-      { dropImages, onLossyState: 'include' }
+      { dropImages, nativePdf, onLossyState: 'include' }
     )
     if (built.issues.length > 0) {
       chatDiag({

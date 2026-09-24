@@ -1,5 +1,6 @@
 import type { ChatMessage, MessagePart } from '../../shared/chat'
 import { droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from './message'
+import { pdfFallbackText } from './pdf-attachments'
 
 /** Codex rejects an oversized text input independently of the model's token window. */
 export const CODEX_TRANSFER_MAX_CHARACTERS = 1_048_576
@@ -14,6 +15,7 @@ export function codexTransferCharacters(history: readonly ChatMessage[], pending
     else if (part.type === 'skill-invocation' && part.body) text.push(part.body)
     else if (part.type === 'file') {
       if (part.kind === 'image') text.push(droppedImageText(part))
+      else if (part.kind === 'pdf') text.push(pdfFallbackText(part))
       else text.push(`${part.hidden ? 'Content referenced by' : 'Attached file'} ${part.name}:\n\n${part.data}`)
     }
   }

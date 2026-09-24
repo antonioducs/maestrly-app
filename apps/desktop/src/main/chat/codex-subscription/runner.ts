@@ -28,6 +28,7 @@ import { stagePlan } from '../../plan-broker'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../image-interpreter'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
+import { pdfFallbackText } from '../pdf-attachments'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import {
   chatToolOutputToAiSdkOutput,
@@ -1018,7 +1019,11 @@ export function dynamicToolSignature(specs: Pick<DynamicToolSpec, 'name'>[]): st
   return createHash('sha256').update(JSON.stringify(names)).digest('hex')
 }
 
-function currentUserInputs(message: ChatMessage, seedTranscript: string, dropImages = false): CodexUserInput[] {
+export function currentUserInputs(
+  message: ChatMessage,
+  seedTranscript: string,
+  dropImages = false
+): CodexUserInput[] {
   const inputs: CodexUserInput[] = []
   const text: string[] = []
   if (seedTranscript) text.push(nativeSeedContextText(seedTranscript))
@@ -1038,6 +1043,9 @@ function currentUserInputs(message: ChatMessage, seedTranscript: string, dropIma
           text.push(`[Image attachment ${part.name} could not be decoded by the host.]`)
         }
       }
+    } else if (part.kind === 'pdf') {
+      // The Codex app-server accepts only text and image inputs.
+      text.push(pdfFallbackText(part))
     } else {
       const label = part.hidden ? `Content referenced by ${part.name}` : `Attached file ${part.name}`
       text.push(`${label}:\n\n${part.data}`)

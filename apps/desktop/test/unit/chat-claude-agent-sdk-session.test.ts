@@ -8,6 +8,8 @@ import {
   resolveClaudeSession,
 } from '../../src/main/chat/claude-agent-sdk/session'
 import { CLAUDE_HARNESS_PROFILE, type ClaudeSessionBinding } from '../../src/main/chat/claude-agent-sdk/session-store'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
+import { storedPdfPart } from '../helpers/pdf-parts'
 
 const usage = {
   inputTokens: 1,
@@ -201,6 +203,37 @@ describe('Claude Agent SDK session resolution', () => {
       },
     ])
     expect(JSON.stringify(content)).not.toContain('SECRET_IMAGE_BYTES')
+  })
+
+  it('sends PDFs as native document blocks and falls back to extracted text when disabled', async () => {
+    const { conversationId, part, bytes, cleanup } = await storedPdfPart()
+    try {
+      const message = {
+        id: 'user-pdf',
+        conversationId,
+        role: 'user',
+        createdAt: 1,
+        parts: [part],
+      } as ChatMessage
+
+      const native = buildClaudeSessionPrompt(message, '')
+      native.release()
+      const nativeContent = (await native.prompt[Symbol.asyncIterator]().next()).value?.message.content
+      expect(nativeContent).toEqual([
+        {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: bytes.toString('base64') },
+          title: 'a.pdf',
+        },
+      ])
+
+      const text = buildClaudeSessionPrompt(message, '', { nativePdf: false })
+      text.release()
+      const textContent = (await text.prompt[Symbol.asyncIterator]().next()).value?.message.content
+      expect(textContent).toEqual([{ type: 'text', text: pdfFallbackText(part) }])
+    } finally {
+      await cleanup()
+    }
   })
 
   it('adds current environment context to the new user message without changing prior transcript bytes', async () => {

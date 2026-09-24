@@ -105,6 +105,7 @@ import { githubCopilotErrorMessage } from './errors'
 import { copilotResultToChatToolOutput } from '../tool-output'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../image-interpreter'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
+import { pdfFallbackText } from '../pdf-attachments'
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
@@ -336,7 +337,7 @@ function dataUrlBlob(data: string): { data: string; mimeType: string } | null {
   return { mimeType: match[1], data: match[2] }
 }
 
-function currentMessageInput(
+export function currentMessageInput(
   message: ChatMessage,
   seedTranscript: string,
   dropImages = false,
@@ -359,6 +360,10 @@ function currentMessageInput(
       if (blob) attachments.push({ type: 'blob', data: blob.data, mimeType: blob.mimeType, displayName: part.name })
       else if (dropImages) prompt.push(droppedImageText(part))
       else prompt.push(`[Image attachment ${part.name} could not be decoded by the host.]`)
+      continue
+    }
+    if (part.kind === 'pdf') {
+      prompt.push(pdfFallbackText(part))
       continue
     }
     const label = part.hidden ? `Content referenced by ${part.name}` : `Attached file ${part.name}`
