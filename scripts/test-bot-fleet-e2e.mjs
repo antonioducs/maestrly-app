@@ -613,7 +613,34 @@ async function main() {
     async () => (await docker(['inspect', botNames[0]], { allowFailure: true })).code !== 0
   )
   assert.equal((await docker(['volume', 'inspect', botNames[0] + '-home'], { allowFailure: true })).code, 0)
+  assert.deepEqual((await bot(scoutId)).talksTo, [])
   pass('restart and archive', 'peer queue persisted; container removed, home volume retained')
+
+  assert.deepEqual(
+    (await request('GET', '/v1/archived-bots')).bots.map((item) => [item.id, item.files]),
+    [[devId, 'kept']]
+  )
+  assert.equal((await request('POST', '/v1/archived-bots/' + devId + '/restore')).lifecycle, 'creating')
+  await poll('Dev restored', async () => (await bot(devId)).lifecycle === 'running', 180000)
+  // Same home volume: the conversation from before the archive is still there, and Scout is its peer again.
+  assert.ok((await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer'))
+  assert.deepEqual((await bot(devId)).talksTo, [scoutId])
+  assert.deepEqual((await bot(scoutId)).talksTo, [devId])
+  assert.deepEqual((await request('GET', '/v1/archived-bots')).bots, [])
+  await request('POST', '/v1/bots/' + devId + '/archive')
+  await poll(
+    'Dev container removed again',
+    async () => (await docker(['inspect', botNames[0]], { allowFailure: true })).code !== 0
+  )
+  await request('DELETE', '/v1/archived-bots/' + devId, undefined, { status: 204 })
+  assert.notEqual((await docker(['volume', 'inspect', botNames[0] + '-home'], { allowFailure: true })).code, 0)
+  assert.deepEqual((await request('GET', '/v1/archived-bots')).bots, [])
+  await request('GET', '/v1/bots/' + devId, undefined, { status: 404 })
+  const activity = (await request('GET', '/v1/activity?limit=500')).entries
+  assert.ok(activity.every((item) => item.botId !== devId))
+  const deletedEntry = activity.find((item) => item.kind === 'bot_deleted')
+  assert.deepEqual([deletedEntry?.botId, deletedEntry?.summary], [null, 'E2E Dev ' + suffix])
+  pass('restore and delete forever', 'conversation and peer back after restore; volume and records gone after delete')
   for (const name of botNames) {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name], { allowFailure: true })
     if (stat.code === 0) timings[name + 'Memory'] = stat.stdout.trim()

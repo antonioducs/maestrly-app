@@ -228,6 +228,28 @@ export class Store {
         .all() as Row[]
     ).map((row) => this.bot(row))
   }
+  archivedBots(): { bot: FleetBot; archivedAt: string }[] {
+    return (
+      this.db.prepare("SELECT * FROM bots WHERE lifecycle='archived' ORDER BY archived_at, created_at").all() as Row[]
+    ).map((row) => ({ bot: this.bot(row), archivedAt: String(row.archived_at ?? row.updated_at) }))
+  }
+  /** Removes a bot and everything recorded about it (secrets cascade), so a new bot may reuse its id. */
+  deleteBot(id: string) {
+    this.transaction(() => {
+      this.db
+        .prepare(
+          'DELETE FROM pending_deliveries WHERE to_bot=? OR message_id IN (SELECT id FROM peer_messages WHERE from_bot=? OR to_bot=?)'
+        )
+        .run(id, id, id)
+      this.db.prepare('DELETE FROM peer_messages WHERE from_bot=? OR to_bot=?').run(id, id)
+      this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
+      this.db.prepare('DELETE FROM idempotency WHERE scope IN (?,?)').run('botMessageSend:' + id, 'routineCreate:' + id)
+      this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
+    })
+  }
   botSecrets(id: string): BotSecrets | null {
     const row = this.db.prepare('SELECT * FROM bot_secrets WHERE bot_id=?').get(id) as Row | undefined
     return row

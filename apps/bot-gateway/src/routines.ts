@@ -137,12 +137,26 @@ export class Routines {
   async run(botId: string, id: string) {
     return this.fire(this.require(botId, id), false)
   }
+  /** A restored bot's routines resume from now: runs missed while it was archived are neither replayed nor recorded. */
+  reschedule(botId: string) {
+    const now = new Date(this.now())
+    for (const routine of this.store.routines(botId)) {
+      if (!routine.enabled) continue
+      this.store.saveRoutine({
+        ...routine,
+        nextRunAt: nextWeeklyRun(routine.schedule, now),
+        updatedAt: now.toISOString(),
+      })
+    }
+  }
   async tick() {
     if (this.ticking) return
     this.ticking = true
     try {
       for (const routine of this.store.routines()) {
         if (!routine.enabled || !routine.nextRunAt) continue
+        // An archived bot's schedule is frozen: nothing runs or is recorded until it is restored.
+        if (this.store.getBot(routine.botId)?.lifecycle === 'archived') continue
         let current = routine
         while (current.nextRunAt && Date.parse(current.nextRunAt) <= this.now()) {
           const due = current.nextRunAt

@@ -85,7 +85,16 @@ Build both images from the target release and set both image tags in `.env`. Rec
 
 Back up the Compose `gateway-data` volume and **every** Docker volume named `maestrly-bot-<bot-id>-home`. The former contains pairing records, bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains each bot's desktop profile, accounts, browser state, conversation, and files. Preserve volume contents and permissions, and restore the gateway data and matching bot homes together before starting the service. Keep backups private. Archived bots retain their home volume and server history.
 
-To remove a Mac's access, revoke its device or **Disconnect** it in Settings. To retire a bot, **Archive** it in its **Settings** tab; this stops and removes the container while preserving its files and history. To remove the installation, stop Compose and explicitly delete the gateway and bot home volumes only after exporting anything you need.
+To remove a Mac's access, revoke its device or **Disconnect** it in Settings. To retire a bot, **Archive** it in its **Settings** tab; this stops and removes the container while preserving its files and history. Archived bots use no memory and do not run their routines.
+
+**Bot server → Archived** lists archived bots:
+
+- **Restore** recreates the container on the kept home volume, with the bot's accounts, conversation, and files. It reconnects the bot to peers that are still active, and its routines resume from the next scheduled time; runs missed while it was archived are not replayed.
+- **Delete forever** asks you to type the bot's name. It then removes the home volume and every gateway record of the bot: its routines, peer messages, and activity. This cannot be undone, and a new bot with the same name can reuse its id.
+
+If a bot's home volume was removed outside Maestrly, the list says so, and a restored bot starts empty.
+
+To remove the installation, stop Compose and explicitly delete the gateway and bot home volumes only after exporting anything you need.
 
 ## Use bots on your Mac
 
@@ -155,7 +164,7 @@ The gateway mounts the Docker socket. Docker socket access is effectively root a
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
 - `npm run test:unit --workspace @maestrly/desktop` checks desktop units.
 - `npm run test:e2e --workspace @maestrly/desktop` runs the Electron E2E suite, including `apps/desktop/test/e2e/bot-fleet.spec.ts`, with its usual build and display prerequisites.
-- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real bot containers, and a deterministic local model; it checks pairing, protocol guards, SSE, accounts, model tool calls, approvals, peer delivery, RFB view and control, takeover, pause, a scheduled routine, restart, and archive. It saves a screen capture under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging.
+- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real bot containers, and a deterministic local model; it checks pairing, protocol guards, SSE, accounts, model tool calls, approvals, peer delivery, RFB view and control, takeover, pause, a scheduled routine, restart, archive, restore, and permanent deletion. It saves a screen capture under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging.
 - `node scripts/bot-fleet-vnc-probe.mjs <running-bot-container>` checks that the view-only VNC port cannot move the pointer and the control port can. It requires a running bot container and Docker access.
 
 In a local Docker 29.4 Linux/arm64 VM (10 CPUs, about 16 GiB RAM), the end-to-end run measured **763.7 MiB for inactive Dev** (no model account) and **635.7 MiB for idle Scout** (model account connected) with `docker stats --no-stream` after Scout finished a turn. Both containers had a 4 GiB memory limit. A later Scout sample was 451.3 MiB; memory varies as the desktop settles and browser tabs or apps open.

@@ -2,6 +2,7 @@ import {
   deriveBotId,
   FLEET_BOT_ENV,
   type FleetActivityEntry,
+  type FleetArchivedBot,
   type FleetBot,
   type FleetCreateBotRequest,
   type FleetGatewayEvent,
@@ -21,6 +22,9 @@ const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
 const botLabel = 'org.maestrly.fleet.bot-id'
 const now = () => new Date().toISOString()
+const containerName = (id: string) => 'maestrly-bot-' + id
+/** The bot's `/home/bot`: its accounts, logins, conversation and files. Archiving keeps it. */
+const homeVolume = (id: string) => containerName(id) + '-home'
 export type InstanceFactory = (botId: string, token: string) => InstanceClient
 export class Lifecycle {
   readonly statuses = new Map<string, FleetInstanceStatus>()
@@ -31,6 +35,8 @@ export class Lifecycle {
   private readonly pendingSeen = new Map<string, Set<string>>()
   private readonly reconcileTimers = new Map<string, NodeJS.Timeout>()
   private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
+  /** Archived bots being deleted forever: neither listed nor restorable meanwhile. */
+  private readonly deleting = new Set<string>()
   private readonly logger = new Logger()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   controlCount: (id: string) => number = () => 0
@@ -239,7 +245,7 @@ export class Lifecycle {
   }
   private async container(id: string): Promise<ContainerInfo | null> {
     try {
-      return await this.docker.inspect('maestrly-bot-' + id)
+      return await this.docker.inspect(containerName(id))
     } catch (error) {
       if (error instanceof DockerError && error.status === 404) return null
       throw error
@@ -249,9 +255,8 @@ export class Lifecycle {
     if (!(await this.docker.imageInspect(this.config.botImage)))
       throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
     await this.docker.ensureNetwork(this.config.network)
-    const name = 'maestrly-bot-' + id,
-      volume = name + '-home'
-    await this.docker.volumeCreate(volume, { [managed]: 'true', [botLabel]: id })
+    // Docker returns the existing volume for a restored bot, keeping its files.
+    await this.docker.volumeCreate(homeVolume(id), { [managed]: 'true', [botLabel]: id })
     const container = await this.createContainer(id)
     this.imageOutdated.set(id, false)
     await this.docker.start(container)
@@ -260,8 +265,8 @@ export class Lifecycle {
   private async createContainer(id: string): Promise<string> {
     const bot = this.store.getBot(id)!,
       secrets = this.store.botSecrets(id)!
-    const name = 'maestrly-bot-' + id,
-      volume = name + '-home'
+    const name = containerName(id),
+      volume = homeVolume(id)
     const env = {
       [FLEET_BOT_ENV.mode]: '1',
       [FLEET_BOT_ENV.id]: id,
@@ -438,6 +443,83 @@ export class Lifecycle {
     this.activity(id, 'bot_archived')
     this.onEvent({ type: 'bot.removed', at: now(), botId: id })
     return result
+  }
+  private requireArchived(id: string): FleetBot {
+    const bot = this.store.getBot(id)
+    if (bot?.lifecycle !== 'archived' || this.deleting.has(id))
+      throw new GatewayError('NOT_FOUND', 'Archived bot not found')
+    return bot
+  }
+  async archivedList(): Promise<FleetArchivedBot[]> {
+    const archived = this.store.archivedBots().filter(({ bot }) => !this.deleting.has(bot.id))
+    return Promise.all(
+      archived.map(async ({ bot, archivedAt }) => ({
+        id: bot.id,
+        name: bot.name,
+        role: bot.role,
+        tint: bot.tint,
+        createdAt: bot.createdAt,
+        archivedAt,
+        files: (await this.docker.volumeExists(homeVolume(bot.id))) ? ('kept' as const) : ('missing' as const),
+      }))
+    )
+  }
+  /**
+   * Brings an archived bot back in a new container on its kept home volume, with the same secrets (its keyring,
+   * and so its saved API keys, stay readable), talking again to the peers still active. The bot leaves `archived`
+   * before any await, so a second request fails instead of racing the first into a container name conflict.
+   */
+  restore(id: string): FleetBot {
+    const bot = this.requireArchived(id)
+    const talksTo = bot.talksTo.filter((peerId) => {
+      const peer = this.store.getBot(peerId)
+      return !!peer && peer.lifecycle !== 'archived'
+    })
+    const restored = this.store.transaction(() => {
+      const next = this.update(id, {
+        lifecycle: 'creating',
+        setup: { step: 'container', error: null, errorMessage: null },
+        talksTo,
+      })
+      this.syncPeers(id, talksTo)
+      return next
+    })
+    for (const peerId of talksTo) this.emitBot(peerId)
+    this.activity(id, 'bot_restored')
+    queueMicrotask(() => {
+      void (async () => {
+        // An archive interrupted after stopping the container may have left it behind.
+        const leftover = await this.container(id)
+        if (leftover) await this.docker.remove(leftover.id, true)
+        await this.provision(id)
+      })().catch((error) => this.fail(id, error))
+    })
+    return restored
+  }
+  /** Irreversible: removes an archived bot's container if any, its home volume, and every gateway record of it. */
+  async purge(id: string): Promise<void> {
+    const bot = this.requireArchived(id)
+    this.deleting.add(id)
+    try {
+      const leftover = await this.container(id)
+      if (leftover) await this.docker.remove(leftover.id, true)
+      try {
+        await this.docker.volumeRemove(homeVolume(id))
+      } catch (error) {
+        if (error instanceof DockerError)
+          throw new GatewayError(
+            error.status === 409 ? 'CONFLICT' : 'DOCKER_UNAVAILABLE',
+            error.status === 409 ? 'The bot files are still in use' : 'Docker could not remove the bot files'
+          )
+        throw error
+      }
+      // Files first: if this fails, the record remains and deleting again finishes the job.
+      this.store.deleteBot(id)
+    } finally {
+      this.deleting.delete(id)
+    }
+    this.pendingSeen.delete(id)
+    this.recordActivity(null, 'bot_deleted', bot.name)
   }
   async pause(id: string): Promise<FleetBot> {
     const bot = this.get(id)

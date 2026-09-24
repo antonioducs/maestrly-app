@@ -31,6 +31,9 @@ export interface DockerDriver {
   networkInspect(name: string): Promise<FleetNetworkSubnet[]>
   imageInspect(ref: string): Promise<{ id: string } | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
+  volumeExists(name: string): Promise<boolean>
+  /** Removes a volume; one already gone is not an error, one a container uses fails with 409. */
+  volumeRemove(name: string): Promise<void>
   containerCreate(spec: ContainerSpec): Promise<string>
   start(id: string): Promise<void>
   stop(id: string, timeoutSec?: number): Promise<void>
@@ -140,6 +143,23 @@ export class DockerEngineDriver implements DockerDriver {
   async volumeCreate(name: string, labels: Record<string, string>) {
     await this.request('POST', await this.route('/volumes/create'), { Name: name, Labels: labels })
   }
+  async volumeExists(name: string): Promise<boolean> {
+    try {
+      await this.request('GET', await this.route('/volumes/' + encodeURIComponent(name)))
+      return true
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404) return false
+      throw error
+    }
+  }
+  async volumeRemove(name: string) {
+    try {
+      await this.request('DELETE', await this.route('/volumes/' + encodeURIComponent(name)))
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404) return
+      throw error
+    }
+  }
   async containerCreate(spec: ContainerSpec): Promise<string> {
     const response = await this.request(
       'POST',
@@ -239,6 +259,14 @@ export class FakeDockerDriver implements DockerDriver {
   }
   async volumeCreate(name: string) {
     this.volumes.add(name)
+  }
+  async volumeExists(name: string) {
+    return this.volumes.has(name)
+  }
+  async volumeRemove(name: string) {
+    if ([...this.containers.values()].some((item) => item.spec.volume === name))
+      throw new DockerError(409, 'Volume is in use')
+    this.volumes.delete(name)
   }
   async containerCreate(spec: ContainerSpec) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(spec.name)) throw new DockerError(400, 'Invalid container name')

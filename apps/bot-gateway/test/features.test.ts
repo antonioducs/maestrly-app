@@ -377,7 +377,156 @@ describe('instance link and takeover', () => {
     f.store.close()
   })
 })
+describe('archived bots', () => {
+  const home = (id: string) => 'maestrly-bot-' + id + '-home'
+  it('lists, restores on the same home and secrets, and reconnects only surviving peers', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const ads = f.lifecycle.create(botInput('Ads'))
+    const scout = f.lifecycle.create(botInput('Scout'))
+    const dev = f.lifecycle.create({ ...botInput('Dev'), talksTo: [ads.id, scout.id] })
+    await until(() => [ads, scout, dev].every((bot) => f.lifecycle.get(bot.id)?.lifecycle === 'running'))
+    const secrets = f.store.botSecrets(dev.id)
+    await f.lifecycle.archive(scout.id)
+    await f.lifecycle.archive(dev.id)
+    expect([...f.docker.containers.values()].map((item) => item.name)).toEqual(['maestrly-bot-ads'])
+    expect(f.docker.volumes.has(home(dev.id))).toBe(true)
+    expect(f.lifecycle.list().map((bot) => bot.id)).toEqual([ads.id])
+    const archived = await f.lifecycle.archivedList()
+    expect(archived.map((bot) => [bot.id, bot.name, bot.files])).toEqual([
+      [scout.id, 'Scout', 'kept'],
+      [dev.id, 'Dev', 'kept'],
+    ])
+    expect(Date.parse(archived[1].archivedAt)).toBeGreaterThanOrEqual(Date.parse(archived[1].createdAt))
+
+    const restored = f.lifecycle.restore(dev.id)
+    expect(restored.lifecycle).toBe('creating')
+    // A second request while the first is provisioning must not race it into a container name conflict.
+    expect(() => f.lifecycle.restore(dev.id)).toThrow('Archived bot not found')
+    await until(() => f.lifecycle.get(dev.id)?.lifecycle === 'running')
+    const container = [...f.docker.containers.values()].find((item) => item.name === 'maestrly-bot-' + dev.id)!
+    expect(container.spec.volume).toBe(home(dev.id))
+    expect(f.store.botSecrets(dev.id)).toEqual(secrets)
+    expect(container.spec.env).toContain('MAESTRLY_BOT_KEYRING_PASSWORD=' + secrets!.keyringPassword)
+    // Scout stays archived: the restored bot talks to Ads again, and Ads to it, but not to Scout.
+    expect(f.lifecycle.get(dev.id)?.talksTo).toEqual([ads.id])
+    expect(f.lifecycle.get(ads.id)?.talksTo).toEqual([dev.id])
+    expect((await f.lifecycle.archivedList()).map((bot) => bot.id)).toEqual([scout.id])
+    expect(f.events).toContainEqual(
+      expect.objectContaining({
+        type: 'activity',
+        entry: expect.objectContaining({ botId: dev.id, kind: 'bot_restored' }),
+      })
+    )
+    expect(() => f.lifecycle.restore(ads.id)).toThrow('Archived bot not found')
+    f.lifecycle.close()
+    f.store.close()
+  })
+
+  it('reports an archived bot whose home volume is gone', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    await f.lifecycle.archive(bot.id)
+    f.docker.volumes.delete(home(bot.id))
+    expect((await f.lifecycle.archivedList()).map((item) => item.files)).toEqual(['missing'])
+    f.lifecycle.close()
+    f.store.close()
+  })
+
+  it('deletes an archived bot forever: its volume and every record, freeing its id', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput('Scout'))
+    const other = f.lifecycle.create(botInput('Other'))
+    await until(() => [bot, other].every((item) => f.lifecycle.get(item.id)?.lifecycle === 'running'))
+    const routines = new Routines(f.store, f.lifecycle)
+    routines.create(bot.id, {
+      title: 'Check',
+      prompt: 'Check now',
+      enabled: true,
+      schedule: { kind: 'weekly', time: '10:01', days: [], timezone: 'UTC' },
+      idempotencyKey: randomUUID(),
+    })
+    const at = new Date().toISOString()
+    f.store.insertPeerMessage({ id: randomUUID(), at, from: bot.id, to: other.id, text: 'hi', delivered: false })
+    f.store.insertPeerMessage({ id: randomUUID(), at, from: other.id, to: bot.id, text: 'hello', delivered: true })
+    f.store.markOwnerMessage(bot.id)
+    f.store.blockPair(bot.id, other.id, at)
+    const secrets = f.store.botSecrets(bot.id)!
+    await expect(f.lifecycle.purge(bot.id)).rejects.toThrow('Archived bot not found')
+    await f.lifecycle.archive(bot.id)
+    await f.lifecycle.purge(bot.id)
+    expect(f.docker.volumes.has(home(bot.id))).toBe(false)
+    expect(f.docker.volumes.has(home(other.id))).toBe(true)
+    expect(f.store.getBot(bot.id)).toBeNull()
+    expect(f.store.botSecrets(bot.id)).toBeNull()
+    expect(f.store.routines(bot.id)).toEqual([])
+    expect(f.store.peerMessages().filter((item) => item.from === bot.id || item.to === bot.id)).toEqual([])
+    expect(f.store.pendingPeers()).toEqual([])
+    expect(f.store.pairBlockedUntil(bot.id, other.id)).toBeNull()
+    expect(f.store.activity().filter((entry) => entry.botId === bot.id)).toEqual([])
+    expect(f.store.activity().at(-1)).toMatchObject({ botId: null, kind: 'bot_deleted', summary: 'Scout' })
+    expect(await f.lifecycle.archivedList()).toEqual([])
+    await expect(f.lifecycle.purge(bot.id)).rejects.toThrow('Archived bot not found')
+    // The id is free again, and a new bot with it shares nothing with the deleted one.
+    const again = f.lifecycle.create(botInput('Scout'))
+    expect(again.id).toBe(bot.id)
+    expect(f.store.botSecrets(again.id)?.keyringPassword).not.toBe(secrets.keyringPassword)
+    await until(() => f.lifecycle.get(again.id)?.lifecycle === 'running')
+    expect(f.store.routines(again.id)).toEqual([])
+    f.lifecycle.close()
+    f.store.close()
+  })
+
+  it('refuses to delete a home volume that a container still uses', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    await expect(f.docker.volumeRemove(home(bot.id))).rejects.toMatchObject({ status: 409 })
+    await f.lifecycle.archive(bot.id)
+    await f.docker.volumeRemove(home(bot.id))
+    // Removing a volume that is already gone is not an error.
+    await f.docker.volumeRemove(home(bot.id))
+    expect(await f.docker.volumeExists(home(bot.id))).toBe(false)
+    f.lifecycle.close()
+    f.store.close()
+  })
+})
+
 describe('routines', () => {
+  it('neither fires nor records an archived bot routine, and restarts its schedule from the restore', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    let time = Date.parse('2026-01-05T10:00:00Z')
+    const routines = new Routines(f.store, f.lifecycle, () => time)
+    const routine = routines.create(bot.id, {
+      title: 'Check',
+      prompt: 'Check now',
+      enabled: true,
+      schedule: { kind: 'weekly', time: '10:01', days: [], timezone: 'UTC' },
+      idempotencyKey: randomUUID(),
+    })
+    await f.lifecycle.archive(bot.id)
+    const activityBefore = f.store.activity().length
+    time = Date.parse('2026-01-26T12:00:00Z')
+    await routines.tick()
+    expect(f.store.routineById(routine.id)).toMatchObject({ lastRunAt: null, lastOutcome: null })
+    expect(f.store.activity()).toHaveLength(activityBefore)
+    f.lifecycle.restore(bot.id)
+    routines.reschedule(bot.id)
+    expect(f.store.routineById(routine.id)?.nextRunAt).toBe('2026-01-27T10:01:00.000Z')
+    await routines.tick()
+    expect(f.store.routineById(routine.id)?.lastOutcome).toBeNull()
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    f.lifecycle.close()
+    f.store.close()
+  })
+
   it('chooses first overlap, first instant after gap, and filtered weekdays', () => {
     const s = (timezone: string, time: string, days: number[] = []) => ({
       kind: 'weekly' as const,

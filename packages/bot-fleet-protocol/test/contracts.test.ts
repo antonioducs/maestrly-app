@@ -9,6 +9,7 @@ import {
   deriveBotId,
   fleetActivityEntrySchema,
   fleetAddApiKeyAccountRequestSchema,
+  fleetArchivedBotsResponseSchema,
   fleetBotSchema,
   fleetCreateBotRequestSchema,
   fleetCreateRoutineRequestSchema,
@@ -317,6 +318,55 @@ describe('routes and helpers', () => {
       buildPath(FLEET_GATEWAY_ROUTES.botRoutineRun.path, { id: 'bot one', rid: 'r/1' }, { limit: 20, before: null })
     ).toBe('/v1/bots/bot%20one/routines/r%2F1/run?limit=20')
     expect(() => buildPath('/v1/bots/:id')).toThrow('Missing path parameter')
+  })
+
+  it('keeps archived bots in their own collection, so no bot id can shadow them', () => {
+    expect(FLEET_GATEWAY_ROUTES.archivedBotsList).toMatchObject({ method: 'GET', path: '/v1/archived-bots' })
+    expect(FLEET_GATEWAY_ROUTES.archivedBotRestore).toMatchObject({
+      method: 'POST',
+      path: '/v1/archived-bots/:id/restore',
+    })
+    expect(FLEET_GATEWAY_ROUTES.archivedBotDelete).toMatchObject({
+      method: 'DELETE',
+      path: '/v1/archived-bots/:id',
+      response: null,
+    })
+    // Every concrete path, with any value in its parameters, reaches exactly one route of its method.
+    const routes = Object.entries(FLEET_GATEWAY_ROUTES)
+    const pattern = (path: string) => new RegExp('^' + path.replace(/:[A-Za-z][A-Za-z0-9_]*/g, '[^/]+') + '$')
+    for (const [key, route] of routes)
+      for (const value of ['archived', 'archived-bots', 'restore', 'x']) {
+        const concrete = route.path.replace(/:[A-Za-z][A-Za-z0-9_]*/g, value)
+        const matches = routes.filter(
+          ([, other]) => other.method === route.method && pattern(other.path).test(concrete)
+        )
+        expect(
+          matches.map(([name]) => name),
+          `${key} ${concrete}`
+        ).toEqual([key])
+      }
+    const archived = {
+      id: 'scout',
+      name: 'Scout',
+      role: '',
+      tint: '#4978c6',
+      createdAt: '2026-09-24T10:00:00.000Z',
+      archivedAt: '2026-09-24T11:00:00.000Z',
+      files: 'kept',
+    }
+    expect(fleetArchivedBotsResponseSchema.parse({ bots: [archived] }).bots[0].files).toBe('kept')
+    expect(fleetArchivedBotsResponseSchema.safeParse({ bots: [{ ...archived, files: 'gone' }] }).success).toBe(false)
+    for (const kind of ['bot_restored', 'bot_deleted'])
+      expect(
+        fleetActivityEntrySchema.safeParse({
+          seq: 1,
+          at: archived.archivedAt,
+          botId: null,
+          kind,
+          summary: 'Scout',
+          data: {},
+        }).success
+      ).toBe(true)
   })
 
   it('derives valid and deduplicated bot slugs', () => {

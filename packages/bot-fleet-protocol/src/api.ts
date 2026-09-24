@@ -9,6 +9,7 @@ import {
 } from './constants.js'
 import {
   fleetActivityEntrySchema,
+  fleetArchivedBotSchema,
   fleetBotIdSchema,
   fleetBotSchema,
   fleetBotStatusSchema,
@@ -94,6 +95,8 @@ export type FleetPairResponse = z.infer<typeof fleetPairResponseSchema>
 
 export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) })
 export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
+export const fleetArchivedBotsResponseSchema = z.object({ bots: z.array(fleetArchivedBotSchema) })
+export type FleetArchivedBotsResponse = z.infer<typeof fleetArchivedBotsResponseSchema>
 export const fleetCreateBotRequestSchema = z.object({
   name: fleetNameSchema,
   instructions: fleetInstructionsSchema,
@@ -337,6 +340,17 @@ export const FLEET_GATEWAY_ROUTES = {
   botStop: { method: 'POST', path: '/v1/bots/:id/stop', body: null, response: fleetBotSchema },
   botRestart: { method: 'POST', path: '/v1/bots/:id/restart', body: null, response: fleetBotSchema },
   botArchive: { method: 'POST', path: '/v1/bots/:id/archive', body: null, response: fleetBotSchema },
+  // A separate collection: `/v1/bots/archived` would collide with a bot whose id is `archived`.
+  archivedBotsList: {
+    method: 'GET',
+    path: '/v1/archived-bots',
+    body: null,
+    response: fleetArchivedBotsResponseSchema,
+  },
+  /** Recreates the container on the kept home volume; the bot comes back as `creating`. */
+  archivedBotRestore: { method: 'POST', path: '/v1/archived-bots/:id/restore', body: null, response: fleetBotSchema },
+  /** Irreversible: removes the home volume and every gateway record of the bot. */
+  archivedBotDelete: { method: 'DELETE', path: '/v1/archived-bots/:id', body: null, response: null },
   botPause: { method: 'POST', path: '/v1/bots/:id/pause', body: null, response: fleetBotSchema },
   botResume: { method: 'POST', path: '/v1/bots/:id/resume', body: null, response: fleetBotSchema },
   botCancel: { method: 'POST', path: '/v1/bots/:id/cancel', body: null, response: null },

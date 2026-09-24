@@ -202,6 +202,19 @@ export const fleetBotSchema = z.object({
 })
 export type FleetBot = z.infer<typeof fleetBotSchema>
 
+/** An archived bot: no container, its home volume (files, accounts, conversation) and its record kept on the server. */
+export const fleetArchivedBotSchema = z.object({
+  id: fleetBotIdSchema,
+  name: fleetNameSchema,
+  role: fleetRoleSchema,
+  tint: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  createdAt: fleetTimestampSchema,
+  archivedAt: fleetTimestampSchema,
+  /** `missing` when the home volume was removed outside Maestrly: a restored bot then starts with an empty home. */
+  files: z.enum(['kept', 'missing']),
+})
+export type FleetArchivedBot = z.infer<typeof fleetArchivedBotSchema>
+
 export const fleetQuestionSchema = z.object({
   question: z.string(),
   header: z.string().nullable(),
@@ -390,6 +403,9 @@ export const fleetActivityKindSchema = z.enum([
   'bot_restarted',
   'bot_failed',
   'bot_archived',
+  'bot_restored',
+  // botId is null (the bot no longer exists); the summary carries its name.
+  'bot_deleted',
   'turn_completed',
   'turn_failed',
   'needs_you',

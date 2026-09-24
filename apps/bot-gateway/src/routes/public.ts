@@ -85,6 +85,16 @@ export async function publicRoute(
       return { body: await ctx.lifecycle.restart(id) }
     case 'botArchive':
       return { body: await ctx.lifecycle.archive(id) }
+    case 'archivedBotsList':
+      return { body: { bots: await ctx.lifecycle.archivedList() } }
+    case 'archivedBotRestore': {
+      const bot = ctx.lifecycle.restore(id)
+      ctx.routines?.reschedule(id)
+      return { body: bot }
+    }
+    case 'archivedBotDelete':
+      await ctx.lifecycle.purge(id)
+      return { status: 204 }
     case 'botPause':
       return { body: await ctx.lifecycle.pause(id) }
     case 'botResume':

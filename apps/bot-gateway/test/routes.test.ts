@@ -311,6 +311,33 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     const stoppedCall = await post(callPath, afterStop.token, { op: 'chatGetConvTools', args: [] })
     expect(stoppedCall.status).toBe(409)
     expect((await stoppedCall.json()).code).toBe('BOT_NOT_RUNNING')
+
+    const archived = '/v1/archived-bots'
+    const list = async () =>
+      ((await (await fetch(origin + archived, { headers: headers(afterStop.token) })).json()) as { bots: unknown[] })
+        .bots
+    const remove = (token: string) => fetch(origin + archived + '/test', { method: 'DELETE', headers: headers(token) })
+    expect((await fetch(origin + archived, { headers: headers('bad') })).status).toBe(401)
+    expect(await list()).toEqual([])
+    // Only an archived bot can be deleted forever.
+    expect((await remove(afterStop.token)).status).toBe(404)
+    expect((await post('/v1/bots/test/archive', afterStop.token)).status).toBe(200)
+    expect(await list()).toEqual([expect.objectContaining({ id: 'test', name: 'Test', files: 'kept' })])
+    expect((await fetch(origin + '/v1/bots/test', { headers: headers(afterStop.token) })).status).toBe(404)
+    const restored = await post(archived + '/test/restore', afterStop.token)
+    expect(restored.status).toBe(200)
+    expect(((await restored.json()) as { lifecycle: string }).lifecycle).toBe('creating')
+    expect((await post(archived + '/test/restore', afterStop.token)).status).toBe(404)
+    for (let i = 0; i < 100 && lifecycle.get('test')?.lifecycle !== 'running'; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(lifecycle.get('test')?.lifecycle).toBe('running')
+    expect(await list()).toEqual([])
+    expect((await post('/v1/bots/test/archive', afterStop.token)).status).toBe(200)
+    expect((await remove('bad')).status).toBe(401)
+    expect((await remove(afterStop.token)).status).toBe(204)
+    expect(docker.volumes.has('maestrly-bot-test-home')).toBe(false)
+    expect(await list()).toEqual([])
+    expect((await remove(afterStop.token)).status).toBe(404)
   } finally {
     await gateway.close()
     store.close()
