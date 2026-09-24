@@ -134,6 +134,7 @@ export class DockerEngineDriver implements DockerDriver {
       await this.route('/containers/create?name=' + encodeURIComponent(spec.name)),
       {
         Image: spec.image,
+        User: '1000',
         Hostname: spec.hostname,
         Labels: spec.labels,
         Env: spec.env,

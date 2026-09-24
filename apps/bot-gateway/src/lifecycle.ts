@@ -7,6 +7,7 @@ import {
   type FleetGatewayEvent,
   type FleetInstanceStatus,
   type FleetPatchBotRequest,
+  type FleetTakeoverState,
 } from '@maestrly/bot-fleet-protocol'
 import { token, sha256 } from './auth.js'
 import type { GatewayConfig } from './config.js'
@@ -23,13 +24,21 @@ export type InstanceFactory = (botId: string, token: string) => InstanceClient
 export class Lifecycle {
   readonly statuses = new Map<string, FleetInstanceStatus>()
   readonly resources = new Map<string, ContainerStats & { startedAt: string | null }>()
+  readonly takeovers = new Map<string, FleetTakeoverState>()
+  private readonly links = new Map<string, AbortController>()
+  private readonly pendingSeen = new Map<string, Set<string>>()
+  private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
+  onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
+  controlCount: (id: string) => number = () => 0
+  onReady: (id: string) => void = () => {}
   onEvent: (event: FleetGatewayEvent) => void = () => {}
   constructor(
     readonly store: Store,
     readonly docker: DockerDriver,
     readonly config: GatewayConfig,
     readonly instance: InstanceFactory = (id, secret) => new InstanceClient(id, secret),
-    readonly healthTimeoutMs = 240000
+    readonly healthTimeoutMs = 240000,
+    readonly controllerLostMs = 300000
   ) {}
   private emitBot(id: string) {
     const bot = this.get(id)
@@ -38,6 +47,81 @@ export class Lifecycle {
   private activity(id: string | null, kind: FleetActivityEntry['kind']) {
     const entry = this.store.addActivity(id, kind)
     this.onEvent({ type: 'activity', at: entry.at, entry })
+  }
+  recordActivity(
+    id: string | null,
+    kind: FleetActivityEntry['kind'],
+    summary: string | null = null,
+    data: FleetActivityEntry['data'] = {}
+  ) {
+    const entry = this.store.addActivity(id, kind, summary, data)
+    this.onEvent({ type: 'activity', at: entry.at, entry })
+  }
+  inbox() {
+    return [...this.statuses].flatMap(([botId, status]) =>
+      status.pending.map((interaction) => ({ botId, interaction }))
+    )
+  }
+  private updateStatus(id: string, status: FleetInstanceStatus) {
+    const before = JSON.stringify(this.inbox())
+    const seen = this.pendingSeen.get(id) ?? new Set<string>()
+    const next = new Set(status.pending.map((item) => item.kind + ':' + item.id))
+    for (const item of status.pending) {
+      const key = item.kind + ':' + item.id
+      if (!seen.has(key))
+        this.recordActivity(
+          id,
+          'needs_you',
+          item.kind === 'permission' ? item.title : item.kind === 'help' ? item.reason : 'question'
+        )
+    }
+    this.pendingSeen.set(id, next)
+    this.statuses.set(id, status)
+    this.emitBot(id)
+    if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
+    if (status.ready && this.store.getBot(id)?.lifecycle === 'running') this.onReady(id)
+  }
+  private stopLink(id: string) {
+    this.links.get(id)?.abort()
+    this.links.delete(id)
+  }
+  private removeStatus(id: string) {
+    const before = JSON.stringify(this.inbox())
+    this.statuses.delete(id)
+    if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
+  }
+  private startLink(id: string) {
+    this.stopLink(id)
+    const controller = new AbortController()
+    this.links.set(id, controller)
+    void (async () => {
+      let since = this.statuses.get(id)?.lastEventSeq ?? 0
+      let delay = 1000
+      while (!controller.signal.aborted) {
+        try {
+          for await (const event of this.client(id).events(since, controller.signal)) {
+            if (event.type === 'reset' || event.seq <= since) {
+              const fresh = await this.client(id).status()
+              since = fresh.lastEventSeq
+              this.updateStatus(id, fresh)
+              this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
+              continue
+            }
+            since = event.seq
+            delay = 1000
+            if (event.type === 'status') this.updateStatus(id, event.status)
+            else if (event.type === 'transcript.upsert')
+              this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
+            else if (event.type === 'turn.finished' && event.outcome !== 'cancelled')
+              this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
+          }
+        } catch {}
+        if (!controller.signal.aborted) {
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          delay = Math.min(delay * 2, 30000)
+        }
+      }
+    })()
   }
   get(id: string): FleetBot | null {
     const bot = this.store.getBot(id)
@@ -50,6 +134,7 @@ export class Lifecycle {
     const status = this.statuses.get(bot.id),
       resources = this.resources.get(bot.id)
     bot.appVersion = status?.appVersion ?? null
+    bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
     bot.resources = {
@@ -62,7 +147,7 @@ export class Lifecycle {
       bot.status = 'offline'
     else if (bot.lifecycle !== 'running' || !status?.ready) bot.status = 'starting'
     else if (bot.paused || status.hold.reason === 'paused') bot.status = 'paused'
-    else if (status.hold.reason === 'takeover') bot.status = 'human'
+    else if (status.hold.reason === 'takeover' || bot.takeover.state === 'human') bot.status = 'human'
     else if (status.pending.length) bot.status = 'waiting'
     else if (!status.accounts.connected) bot.status = 'setup'
     else if (status.turn.state !== 'idle' || status.queue.length) bot.status = 'working'
@@ -107,7 +192,12 @@ export class Lifecycle {
       gatewayToken = token()
     this.store.transaction(() => {
       this.validatePeers(id, input.talksTo)
-      this.store.insertBot(bot, { controlToken, gatewayToken, gatewayTokenSha256: sha256(gatewayToken) })
+      this.store.insertBot(bot, {
+        controlToken,
+        gatewayToken,
+        gatewayTokenSha256: sha256(gatewayToken),
+        keyringPassword: token(),
+      })
       this.syncPeers(id, input.talksTo)
     })
     this.activity(id, 'bot_created')
@@ -165,6 +255,7 @@ export class Lifecycle {
       [FLEET_BOT_ENV.controlToken]: secrets.controlToken,
       [FLEET_BOT_ENV.gatewayUrl]: this.config.internalUrl,
       [FLEET_BOT_ENV.gatewayToken]: secrets.gatewayToken,
+      MAESTRLY_BOT_KEYRING_PASSWORD: secrets.keyringPassword,
       TZ: this.config.timezone,
     }
     const container = await this.docker.containerCreate({
@@ -204,12 +295,17 @@ export class Lifecycle {
       selection: bot.selection,
       gateway: { peersEnabled: bot.talksTo.length > 0 },
     })
-    this.statuses.set(id, status)
+    this.updateStatus(id, status)
     if (bot.paused) await client.hold({ reason: 'paused' })
     this.update(id, { lifecycle: 'running', setup: { step: 'ready', error: null, errorMessage: null } })
+    this.onReady(id)
+    this.startLink(id)
     this.activity(id, 'bot_started')
   }
   private fail(id: string, error: unknown) {
+    this.stopLink(id)
+    this.clearTakeover(id, 4002)
+    this.removeStatus(id)
     const code =
       error instanceof GatewayError
         ? error.code
@@ -244,9 +340,11 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     this.update(id, { lifecycle: 'stopping' })
+    this.stopLink(id)
+    this.clearTakeover(id, 4002)
     const container = await this.container(id)
     if (container) await this.docker.stop(container.id)
-    this.statuses.delete(id)
+    this.removeStatus(id)
     this.resources.delete(id)
     const result = this.update(id, { lifecycle: 'stopped' })
     this.activity(id, 'bot_stopped')
@@ -258,6 +356,9 @@ export class Lifecycle {
     const container = await this.container(id)
     if (!container) throw new GatewayError('NOT_FOUND', 'Bot container missing')
     this.update(id, { lifecycle: 'restarting' })
+    this.stopLink(id)
+    this.clearTakeover(id, 4002)
+    this.removeStatus(id)
     try {
       await this.docker.restart(container.id)
       await this.ready(id)
@@ -271,11 +372,13 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     const container = await this.container(id)
+    this.stopLink(id)
+    this.clearTakeover(id, 4002)
     if (container) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id, true)
     }
-    this.statuses.delete(id)
+    this.removeStatus(id)
     this.resources.delete(id)
     const result = this.store.transaction(() => {
       const archived = this.update(id, { lifecycle: 'archived' })
@@ -325,7 +428,7 @@ export class Lifecycle {
         selection: next.selection,
         gateway: { peersEnabled: next.talksTo.length > 0 },
       })
-      this.statuses.set(id, status)
+      this.updateStatus(id, status)
     }
     this.store.transaction(() => {
       this.update(id, input)
@@ -340,6 +443,85 @@ export class Lifecycle {
     if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
     return this.client(id)
   }
+  private clearTakeover(id: string, code: number) {
+    const timer = this.controllerTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.controllerTimers.delete(id)
+    this.takeovers.delete(id)
+    this.onCloseScreens(id, code)
+  }
+  controllerChanged(id: string) {
+    const timer = this.controllerTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.controllerTimers.delete(id)
+    if (this.takeovers.get(id)?.state === 'human' && this.controlCount(id) === 0) {
+      const next = setTimeout(() => {
+        void this.releaseTakeover(id, this.takeovers.get(id)?.deviceId ?? '', null, true, 'controller_lost').catch(
+          () => {}
+        )
+      }, this.controllerLostMs)
+      this.controllerTimers.set(id, next)
+    }
+  }
+  async takeover(id: string, deviceId: string, deviceName: string): Promise<FleetTakeoverState> {
+    this.instanceFor(id)
+    const current = this.takeovers.get(id)
+    if (current && current.state !== 'none') {
+      if (current.deviceId !== deviceId) throw new GatewayError('CONFLICT', 'Bot controlled by another device')
+      if (current.state === 'human') return current
+      throw new GatewayError('CONFLICT', 'Takeover in progress')
+    }
+    const acquiring: FleetTakeoverState = { state: 'acquiring', deviceId, deviceName, since: null }
+    this.takeovers.set(id, acquiring)
+    this.emitBot(id)
+    try {
+      const hold = await this.client(id).hold({ reason: 'takeover' })
+      const status = this.statuses.get(id)
+      if (status) this.updateStatus(id, { ...status, hold })
+      const human: FleetTakeoverState = { state: 'human', deviceId, deviceName, since: now() }
+      this.takeovers.set(id, human)
+      this.emitBot(id)
+      this.recordActivity(id, 'takeover_started')
+      this.controllerChanged(id)
+      return human
+    } catch (error) {
+      this.takeovers.delete(id)
+      this.emitBot(id)
+      throw error
+    }
+  }
+  async releaseTakeover(
+    id: string,
+    deviceId: string,
+    note: string | null,
+    continueTurn: boolean,
+    reason?: string
+  ): Promise<FleetTakeoverState> {
+    const current = this.takeovers.get(id)
+    if (current?.deviceId !== deviceId || current.state !== 'human')
+      throw new GatewayError('CONFLICT', 'Device does not hold this takeover')
+    this.takeovers.set(id, { ...current, state: 'releasing' })
+    this.emitBot(id)
+    this.onCloseScreens(id, 4001, 'control')
+    const durationMs = Math.max(0, Date.now() - Date.parse(current.since!))
+    try {
+      const hold = await this.instanceFor(id).release({ note, durationMs, continue: continueTurn })
+      const status = this.statuses.get(id)
+      if (status) this.updateStatus(id, { ...status, hold })
+      const timer = this.controllerTimers.get(id)
+      if (timer) clearTimeout(timer)
+      this.controllerTimers.delete(id)
+      this.takeovers.delete(id)
+      this.emitBot(id)
+      this.recordActivity(id, 'takeover_ended', null, { durationMs, ...(reason ? { reason } : {}) })
+      return { state: 'none', deviceId: null, deviceName: null, since: null }
+    } catch (error) {
+      this.takeovers.set(id, current)
+      this.emitBot(id)
+      this.controllerChanged(id)
+      throw error
+    }
+  }
   async reconcile() {
     const containers = await this.docker.list(managed + '=true')
     const byId = new Map(containers.map((container) => [container.labels[botLabel], container]))
@@ -351,13 +533,25 @@ export class Lifecycle {
       }
       if (container.state === 'running') {
         try {
-          this.statuses.set(bot.id, await this.client(bot.id).status())
+          let status = await this.client(bot.id).status()
+          if (status.hold.reason === 'takeover') {
+            const hold = await this.client(bot.id).release({ note: null, durationMs: null, continue: true })
+            status = { ...status, hold }
+          }
+          this.updateStatus(bot.id, status)
           this.update(bot.id, { lifecycle: 'running' })
+          if (status.ready) this.onReady(bot.id)
+          this.startLink(bot.id)
         } catch {
           this.update(bot.id, { lifecycle: 'starting' })
         }
       } else this.update(bot.id, { lifecycle: 'stopped' })
     }
+  }
+  close() {
+    for (const id of this.links.keys()) this.stopLink(id)
+    for (const timer of this.controllerTimers.values()) clearTimeout(timer)
+    this.controllerTimers.clear()
   }
   async refreshStats() {
     for (const bot of this.store.listBots()) {

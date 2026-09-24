@@ -112,6 +112,7 @@ export async function publicRoute(
           .instanceFor(id)
           .postInput({ text: input.text, idempotencyKey: input.idempotencyKey, source: 'owner' })
         ctx.store.saveIdempotency(scope, input.idempotencyKey, hash, response, 201)
+        ctx.store.markOwnerMessage(id)
         return response
       })()
       pendingMessages.set(pendingKey, { hash, promise })
@@ -130,12 +131,43 @@ export async function publicRoute(
     case 'botUiOpen':
       await ctx.lifecycle.instanceFor(id).uiOpen(body)
       return { status: 204 }
+    case 'botTakeover': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: await ctx.lifecycle.takeover(id, device.id, device.name) }
+    }
+    case 'botTakeoverRelease': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: await ctx.lifecycle.releaseTakeover(id, device.id, body.note, body.continue) }
+    }
+    case 'botScreenTicket': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.screen!.ticket(id, device.id, body.mode), status: 201 }
+    }
+    case 'screen':
+      throw new GatewayError('INVALID_REQUEST', 'WebSocket upgrade required')
+    case 'botRoutinesList':
+      requireBot(ctx, id)
+      return { body: { routines: ctx.routines!.list(id) } }
+    case 'botRoutinesCreate':
+      requireBot(ctx, id)
+      return { body: ctx.routines!.create(id, body), status: 201 }
+    case 'botRoutinePatch':
+      requireBot(ctx, id)
+      return { body: ctx.routines!.patch(id, params.rid, body) }
+    case 'botRoutineDelete':
+      requireBot(ctx, id)
+      ctx.routines!.delete(id, params.rid)
+      return { status: 204 }
+    case 'botRoutineRun':
+      requireBot(ctx, id)
+      return { body: await ctx.routines!.run(id, params.rid) }
     case 'inbox':
       return {
         body: {
-          items: [...ctx.lifecycle.statuses].flatMap(([botId, status]) =>
-            status.pending.map((interaction) => ({ botId, interaction }))
-          ),
+          items: ctx.lifecycle.inbox(),
         },
       }
     case 'peerMessages':
@@ -154,6 +186,6 @@ export async function publicRoute(
       ctx.events.add(res, ctx.store.lastActivitySeq())
       return { stream: true }
     default:
-      throw new GatewayError('INTERNAL', 'Not implemented yet')
+      throw new GatewayError('NOT_FOUND', 'Route not found')
   }
 }

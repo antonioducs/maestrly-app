@@ -1,8 +1,14 @@
-import { timingSafeEqual } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { FleetActivityEntry, FleetActivityKind, FleetBot, FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetActivityEntry,
+  FleetActivityKind,
+  FleetBot,
+  FleetPeerMessage,
+  FleetRoutine,
+} from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
 type Row = Record<string, unknown>
@@ -13,7 +19,12 @@ export type Device = {
   lastSeenAt: string | null
   revokedAt: string | null
 }
-export type BotSecrets = { controlToken: string; gatewayToken: string; gatewayTokenSha256: string }
+export type BotSecrets = {
+  controlToken: string
+  gatewayToken: string
+  gatewayTokenSha256: string
+  keyringPassword: string
+}
 export class Store {
   readonly db: DatabaseSync
   private depth = 0
@@ -49,22 +60,35 @@ export class Store {
       const version = Number(
         (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
       )
-      if (version > 1) throw new Error('Gateway database schema is newer than this binary')
+      if (version > 2) throw new Error('Gateway database schema is newer than this binary')
       if (version === 0) {
         this.db.exec(`
           CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
           CREATE TABLE pairing_codes (code_sha256 TEXT PRIMARY KEY, expires_at TEXT NOT NULL, used_at TEXT, attempts INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE bots (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, instructions TEXT NOT NULL, tint TEXT NOT NULL, ceiling TEXT NOT NULL, selection_json TEXT, talks_to_json TEXT NOT NULL, paused INTEGER NOT NULL, lifecycle TEXT NOT NULL, setup_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT);
-          CREATE TABLE bot_secrets (bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE, control_token TEXT NOT NULL, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE);
+          CREATE TABLE bot_secrets (bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE, control_token TEXT NOT NULL, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE, keyring_password TEXT NOT NULL);
           CREATE TABLE routines (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id), title TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at TEXT, last_run_at TEXT, last_outcome TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
           CREATE TABLE activity (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, bot_id TEXT REFERENCES bots(id), kind TEXT NOT NULL, summary TEXT, data_json TEXT NOT NULL);
           CREATE TABLE peer_messages (id TEXT PRIMARY KEY, at TEXT NOT NULL, from_bot TEXT NOT NULL, to_bot TEXT NOT NULL, text TEXT NOT NULL, delivered INTEGER NOT NULL);
           CREATE TABLE pending_deliveries (message_id TEXT PRIMARY KEY REFERENCES peer_messages(id), to_bot TEXT NOT NULL, created_at TEXT NOT NULL);
+          CREATE TABLE owner_messages (bot_id TEXT PRIMARY KEY, at TEXT NOT NULL);
+          CREATE TABLE pair_blocks (pair_key TEXT PRIMARY KEY, blocked_until TEXT NOT NULL);
           CREATE TABLE idempotency (scope TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL, response_json TEXT NOT NULL, status INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(scope,key));
           CREATE INDEX idx_activity_seq ON activity(seq);
           CREATE INDEX idx_idempotency_created ON idempotency(created_at);
         `)
-        this.db.prepare("INSERT INTO meta(key,value) VALUES('schema_version','1')").run()
+        this.db.prepare("INSERT INTO meta(key,value) VALUES('schema_version','2')").run()
+      }
+      if (version === 1) {
+        this.db.exec('ALTER TABLE bot_secrets ADD COLUMN keyring_password TEXT')
+        this.db.exec(
+          'CREATE TABLE owner_messages (bot_id TEXT PRIMARY KEY, at TEXT NOT NULL); CREATE TABLE pair_blocks (pair_key TEXT PRIMARY KEY, blocked_until TEXT NOT NULL)'
+        )
+        for (const row of this.db.prepare('SELECT bot_id FROM bot_secrets').all() as Row[])
+          this.db
+            .prepare('UPDATE bot_secrets SET keyring_password=? WHERE bot_id=?')
+            .run(randomBytes(32).toString('base64url'), row.bot_id as string)
+        this.db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run()
       }
     })
   }
@@ -132,8 +156,10 @@ export class Store {
     this.transaction(() => {
       this.saveBot(bot)
       this.db
-        .prepare('INSERT INTO bot_secrets(bot_id,control_token,gateway_token,gateway_token_sha256) VALUES(?,?,?,?)')
-        .run(bot.id, secrets.controlToken, secrets.gatewayToken, secrets.gatewayTokenSha256)
+        .prepare(
+          'INSERT INTO bot_secrets(bot_id,control_token,gateway_token,gateway_token_sha256,keyring_password) VALUES(?,?,?,?,?)'
+        )
+        .run(bot.id, secrets.controlToken, secrets.gatewayToken, secrets.gatewayTokenSha256, secrets.keyringPassword)
     })
   }
   saveBot(bot: FleetBot) {
@@ -204,6 +230,7 @@ export class Store {
           controlToken: String(row.control_token),
           gatewayToken: String(row.gateway_token),
           gatewayTokenSha256: String(row.gateway_token_sha256),
+          keyringPassword: String(row.keyring_password),
         }
       : null
   }
@@ -250,6 +277,134 @@ export class Store {
       text: String(row.text),
       delivered: Boolean(row.delivered),
     }))
+  }
+  insertPeerMessage(message: FleetPeerMessage) {
+    this.db
+      .prepare('INSERT INTO peer_messages(id,at,from_bot,to_bot,text,delivered) VALUES(?,?,?,?,?,?)')
+      .run(message.id, message.at, message.from, message.to, message.text, Number(message.delivered))
+    if (!message.delivered)
+      this.db
+        .prepare('INSERT INTO pending_deliveries(message_id,to_bot,created_at) VALUES(?,?,?)')
+        .run(message.id, message.to, message.at)
+  }
+  pendingPeers(toBot?: string): FleetPeerMessage[] {
+    const rows = toBot
+      ? this.db
+          .prepare(
+            'SELECT p.* FROM peer_messages p JOIN pending_deliveries d ON p.id=d.message_id WHERE d.to_bot=? ORDER BY p.at'
+          )
+          .all(toBot)
+      : this.db
+          .prepare('SELECT p.* FROM peer_messages p JOIN pending_deliveries d ON p.id=d.message_id ORDER BY p.at')
+          .all()
+    return (rows as Row[]).map((row) => ({
+      id: String(row.id),
+      at: String(row.at),
+      from: String(row.from_bot),
+      to: String(row.to_bot),
+      text: String(row.text),
+      delivered: false,
+    }))
+  }
+  markPeerDelivered(id: string) {
+    this.transaction(() => {
+      this.db.prepare('UPDATE peer_messages SET delivered=1 WHERE id=?').run(id)
+      this.db.prepare('DELETE FROM pending_deliveries WHERE message_id=?').run(id)
+    })
+  }
+  countPeerMessages(from: string, since: string) {
+    return Number(
+      (
+        this.db
+          .prepare('SELECT COUNT(*) AS count FROM peer_messages WHERE from_bot=? AND at>=?')
+          .get(from, since) as Row
+      ).count
+    )
+  }
+  countPairMessages(a: string, b: string, since: string) {
+    return Number(
+      (
+        this.db
+          .prepare(
+            'SELECT COUNT(*) AS count FROM peer_messages WHERE at>=? AND ((from_bot=? AND to_bot=?) OR (from_bot=? AND to_bot=?))'
+          )
+          .get(since, a, b, b, a) as Row
+      ).count
+    )
+  }
+  markOwnerMessage(botId: string, at = new Date().toISOString()) {
+    this.db
+      .prepare('INSERT INTO owner_messages(bot_id,at) VALUES(?,?) ON CONFLICT(bot_id) DO UPDATE SET at=excluded.at')
+      .run(botId, at)
+    this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + botId + '|%')
+  }
+  pairLastOwner(a: string, b: string): string | null {
+    const row = this.db.prepare('SELECT MAX(at) AS at FROM owner_messages WHERE bot_id IN (?,?)').get(a, b) as Row
+    return row.at as string | null
+  }
+  pairBlockedUntil(a: string, b: string): string | null {
+    const row = this.db.prepare('SELECT blocked_until FROM pair_blocks WHERE pair_key=?').get(this.pairKey(a, b)) as
+      | Row
+      | undefined
+    return row ? String(row.blocked_until) : null
+  }
+  blockPair(a: string, b: string, until: string) {
+    this.db
+      .prepare(
+        'INSERT INTO pair_blocks(pair_key,blocked_until) VALUES(?,?) ON CONFLICT(pair_key) DO UPDATE SET blocked_until=excluded.blocked_until'
+      )
+      .run(this.pairKey(a, b), until)
+  }
+  private pairKey(a: string, b: string) {
+    return '|' + [a, b].sort().join('|') + '|'
+  }
+  private routine(row: Row): FleetRoutine {
+    return {
+      id: String(row.id),
+      botId: String(row.bot_id),
+      title: String(row.title),
+      prompt: String(row.prompt),
+      schedule: JSON.parse(String(row.schedule_json)),
+      enabled: Boolean(row.enabled),
+      nextRunAt: row.next_run_at as string | null,
+      lastRunAt: row.last_run_at as string | null,
+      lastOutcome: row.last_outcome as FleetRoutine['lastOutcome'],
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  routines(botId?: string): FleetRoutine[] {
+    const rows = botId
+      ? this.db.prepare('SELECT * FROM routines WHERE bot_id=? ORDER BY created_at').all(botId)
+      : this.db.prepare('SELECT * FROM routines ORDER BY created_at').all()
+    return (rows as Row[]).map((row) => this.routine(row))
+  }
+  routineById(id: string): FleetRoutine | null {
+    const row = this.db.prepare('SELECT * FROM routines WHERE id=?').get(id) as Row | undefined
+    return row ? this.routine(row) : null
+  }
+  saveRoutine(routine: FleetRoutine) {
+    this.db
+      .prepare(`INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,next_run_at,last_run_at,last_outcome,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,prompt=excluded.prompt,
+      schedule_json=excluded.schedule_json,enabled=excluded.enabled,next_run_at=excluded.next_run_at,
+      last_run_at=excluded.last_run_at,last_outcome=excluded.last_outcome,updated_at=excluded.updated_at`)
+      .run(
+        routine.id,
+        routine.botId,
+        routine.title,
+        routine.prompt,
+        JSON.stringify(routine.schedule),
+        Number(routine.enabled),
+        routine.nextRunAt,
+        routine.lastRunAt,
+        routine.lastOutcome,
+        routine.createdAt,
+        routine.updatedAt
+      )
+  }
+  deleteRoutine(id: string) {
+    this.db.prepare('DELETE FROM routines WHERE id=?').run(id)
   }
   priorIdempotency<T>(scope: string, key: string, requestHash: string): { response: T; status: number } | null {
     this.db.prepare('DELETE FROM idempotency WHERE created_at<?').run(new Date(Date.now() - 86400000).toISOString())

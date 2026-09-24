@@ -4,6 +4,9 @@ import type { EventHub } from './events.js'
 import type { HostMonitor } from './host.js'
 import type { Lifecycle } from './lifecycle.js'
 import type { Store } from './store.js'
+import type { Peers } from './peers.js'
+import type { Routines } from './routines.js'
+import type { ScreenProxy } from './screen.js'
 export type GatewayContext = {
   auth: Auth
   config: GatewayConfig
@@ -11,4 +14,7 @@ export type GatewayContext = {
   host: HostMonitor
   lifecycle: Lifecycle
   store: Store
+  peers?: Peers
+  routines?: Routines
+  screen?: ScreenProxy
 }

@@ -4,7 +4,13 @@ import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { FLEET_PROTOCOL_HEADER } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_PROTOCOL_HEADER,
+  fleetInstanceProfileSchema,
+  fleetInstanceInputSchema,
+  fleetInstanceHoldRequestSchema,
+  fleetInstanceReleaseRequestSchema,
+} from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
 import { DockerEngineDriver, FakeDockerDriver, parseDockerStats } from '../src/docker.js'
@@ -57,27 +63,78 @@ const status = (id = 'test') => ({
 })
 async function instanceServer() {
   const calls: string[] = []
-  const server = http.createServer((req, res) => {
-    if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' || req.headers.authorization !== 'Bearer control') {
-      res.writeHead(401)
-      res.end(JSON.stringify({ code: 'UNAUTHORIZED', message: 'Unauthorized' }))
-      return
+  let oldestEventSeq = 0
+  let hold: {
+    state: 'none' | 'held'
+    reason: 'takeover' | 'paused' | null
+    since: string | null
+    interruptedTurn: boolean
+  } = { state: 'none', reason: null, since: null, interruptedTurn: false }
+  const server = http.createServer(async (req, res) => {
+    const error = (status: number, code: string) => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ code, message: code }))
     }
+    if (req.headers.origin) return error(403, 'FORBIDDEN')
+    if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1') return error(426, 'PROTOCOL_INCOMPATIBLE')
+    if (req.headers.authorization !== 'Bearer control') return error(401, 'UNAUTHORIZED')
     calls.push(req.method + ' ' + req.url)
     res.setHeader('content-type', 'application/json')
-    if (req.url === '/v1/health') res.end(JSON.stringify({ ok: true, appVersion: '0.1.0', protocol: 1, ready: true }))
-    else if (req.url === '/v1/status') res.end(JSON.stringify(status()))
-    else if (req.url === '/v1/profile') res.end(JSON.stringify(status()))
-    else if (req.url === '/v1/hold' || req.url === '/v1/hold/release')
-      res.end(JSON.stringify({ state: 'none', reason: null, since: null, interruptedTurn: false }))
-    else if (req.url === '/v1/inputs') res.end(JSON.stringify({ inputId: 'input-1', itemId: 'item-1', queued: false }))
-    else {
+    if (req.url?.startsWith('/v1/events')) {
+      res.setHeader('content-type', 'text/event-stream')
+      if (Number(new URL(req.url, 'http://instance').searchParams.get('since') ?? 0) < oldestEventSeq)
+        res.write('id: 1\ndata: ' + JSON.stringify({ seq: 1, at: new Date().toISOString(), type: 'reset' }) + '\n\n')
+      res.end()
+      return
+    }
+    let body: unknown
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const chunks: Buffer[] = []
+      for await (const chunk of req) chunks.push(Buffer.from(chunk))
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString())
+      } catch {
+        return error(400, 'INVALID_REQUEST')
+      }
+    }
+    try {
+      if (req.url === '/v1/health')
+        return res.end(JSON.stringify({ ok: true, appVersion: '0.1.0', protocol: 1, ready: true }))
+      if (req.url === '/v1/status') return res.end(JSON.stringify({ ...status(), hold }))
+      if (req.url === '/v1/profile') {
+        fleetInstanceProfileSchema.parse(body)
+        return res.end(JSON.stringify({ ...status(), hold }))
+      }
+      if (req.url === '/v1/hold') {
+        const request = fleetInstanceHoldRequestSchema.parse(body)
+        if (hold.state !== 'none') return error(409, 'CONFLICT')
+        hold = { state: 'held', reason: request.reason, since: new Date().toISOString(), interruptedTurn: false }
+        return res.end(JSON.stringify(hold))
+      }
+      if (req.url === '/v1/hold/release') {
+        fleetInstanceReleaseRequestSchema.parse(body)
+        if (hold.state === 'none') return error(409, 'CONFLICT')
+        hold = { state: 'none', reason: null, since: null, interruptedTurn: false }
+        return res.end(JSON.stringify(hold))
+      }
+      if (req.url === '/v1/inputs') {
+        fleetInstanceInputSchema.parse(body)
+        return res.end(JSON.stringify({ inputId: 'input-1', itemId: 'item-1', queued: false }))
+      }
       res.writeHead(204)
       res.end()
+    } catch {
+      error(400, 'INVALID_REQUEST')
     }
   })
   const port = await listen(server)
-  return { calls, origin: 'http://127.0.0.1:' + port }
+  return {
+    calls,
+    origin: 'http://127.0.0.1:' + port,
+    setOldestEventSeq(value: number) {
+      oldestEventSeq = value
+    },
+  }
 }
 function fixture(dir = temp(), origin?: string) {
   const cfg = config(dir),
@@ -115,7 +172,7 @@ describe('config and storage', () => {
   it('migrates empty database and reopens it', () => {
     const dir = temp(),
       store = new Store(dir)
-    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '1' })
+    expect(store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '2' })
     store.close()
     const reopened = new Store(dir)
     expect(reopened.listDevices()).toEqual([])
@@ -170,6 +227,10 @@ describe('lifecycle', () => {
     await lifecycle.patch(bot.id, { talksTo: [] })
     expect(lifecycle.get(second.id)?.talksTo).toEqual([])
     expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain('MAESTRLY_BOT_MODE=1')
+    expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain(
+      'MAESTRLY_BOT_KEYRING_PASSWORD=' + store.botSecrets(bot.id)?.keyringPassword
+    )
+    expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain('TZ=' + cfg.timezone)
     expect((await lifecycle.stop(bot.id)).lifecycle).toBe('stopped')
     expect((await lifecycle.start(bot.id)).lifecycle).toBe('running')
     expect((await lifecycle.restart(bot.id)).lifecycle).toBe('running')
@@ -233,7 +294,8 @@ describe('Docker and host parsers', () => {
     const dir = temp(),
       socket = path.join(dir, 'docker.sock'),
       calls: string[] = []
-    const server = http.createServer((req, res) => {
+    let created: any
+    const server = http.createServer(async (req, res) => {
       calls.push(req.method + ' ' + req.url)
       res.setHeader('Content-Type', 'application/json')
       if (req.url === '/version') res.end(JSON.stringify({ ApiVersion: '1.45', Version: '28.0' }))
@@ -242,8 +304,12 @@ describe('Docker and host parsers', () => {
         res.end(JSON.stringify({ message: 'No such image' }))
       } else if (req.url?.includes('/networks?')) res.end('[]')
       else if (req.url?.includes('/networks/create')) res.end('{}')
-      else if (req.url?.includes('/containers/create')) res.end(JSON.stringify({ Id: 'abc' }))
-      else if (req.url?.includes('/stats?')) res.end('{}')
+      else if (req.url?.includes('/containers/create')) {
+        const chunks: Buffer[] = []
+        for await (const chunk of req) chunks.push(Buffer.from(chunk))
+        created = JSON.parse(Buffer.concat(chunks).toString())
+        res.end(JSON.stringify({ Id: 'abc' }))
+      } else if (req.url?.includes('/stats?')) res.end('{}')
       else if (req.url?.includes('/containers/json')) res.end('[]')
       else if (req.url?.endsWith('/containers/abc/json'))
         res.end(
@@ -285,6 +351,10 @@ describe('Docker and host parsers', () => {
     expect((await docker.statsOnce('abc')).memoryBytes).toBe(0)
     await docker.remove('abc', true)
     expect(calls.some((call) => call.includes('/v1.45/containers/create'))).toBe(true)
+    expect(created).toMatchObject({
+      User: '1000',
+      HostConfig: { Init: true, ShmSize: 1, Mounts: [{ Type: 'volume', Source: 'home', Target: '/home/bot' }] },
+    })
   })
 })
 

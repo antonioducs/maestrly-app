@@ -5,11 +5,15 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   type FleetRoute,
+  type FleetInternalPeerMessageRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { ZodError } from 'zod'
 import type { GatewayContext } from './context.js'
 import { GatewayError, failure } from './errors.js'
 import { publicRoute } from './routes/public.js'
+import { Peers } from './peers.js'
+import { Routines } from './routines.js'
+import { ScreenProxy } from './screen.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -65,6 +69,13 @@ function reject(res: ServerResponse, error: unknown) {
   })
 }
 export function createGatewayServers(ctx: GatewayContext) {
+  const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
+  const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
+  const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
+  const activeCtx: GatewayContext = { ...ctx, peers, routines, screen }
+  ctx.lifecycle.onReady = (id) => {
+    void peers.retry(id)
+  }
   const handler = (internal: boolean) => async (req: IncomingMessage, res: ServerResponse) => {
     try {
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
@@ -76,11 +87,18 @@ export function createGatewayServers(ctx: GatewayContext) {
         req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION)
       )
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
-      if (internal) ctx.auth.internalBot(req.headers.authorization)
-      else if (match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
+      const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
+      if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
       const body = match.route.body ? match.route.body.parse(await readBody(req)) : undefined
-      if (internal) throw new GatewayError('INTERNAL', 'Not implemented yet')
-      const result = await publicRoute(match.key, match.params, body, url, res, ctx)
+      if (internal) {
+        const result =
+          match.key === 'peers'
+            ? peers.list(caller!)
+            : await peers.send(caller!, body as FleetInternalPeerMessageRequest)
+        send(res, match.key === 'peers' ? 200 : 201, match.route.response?.parse(result) ?? result)
+        return
+      }
+      const result = await publicRoute(match.key, match.params, body, url, res, activeCtx)
       if (result.stream) return
       const response = result.body === undefined ? undefined : (match.route.response?.parse(result.body) ?? result.body)
       send(res, result.status ?? 200, response)
@@ -90,16 +108,15 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const publicServer = http.createServer(handler(false))
   const internalServer = http.createServer(handler(true))
-  publicServer.on('upgrade', (req, socket) => {
-    let status = 501
-    let error: GatewayError = new GatewayError('INTERNAL', 'Not implemented yet')
+  publicServer.on('upgrade', (req, socket, head) => {
+    let status = 404
+    let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       if (new URL(req.url ?? '/', 'http://gateway').pathname !== FLEET_GATEWAY_ROUTES.screen.path)
         throw new GatewayError('NOT_FOUND', 'Route not found')
-      if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION))
-        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
-      ctx.auth.device(req.headers.authorization)
+      screen.upgrade(req, socket, head)
+      return
     } catch (caught) {
       error = failure(caught)
       status = error.status
@@ -117,6 +134,9 @@ export function createGatewayServers(ctx: GatewayContext) {
   return {
     publicServer,
     internalServer,
+    routines,
+    peers,
+    screen,
     async listen() {
       await Promise.all([
         new Promise<void>((resolve, reject) =>
@@ -128,6 +148,9 @@ export function createGatewayServers(ctx: GatewayContext) {
       ])
     },
     async close() {
+      routines.stop()
+      screen.close()
+      ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(
         [publicServer, internalServer].map((server) => new Promise<void>((resolve) => server.close(() => resolve())))

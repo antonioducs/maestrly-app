@@ -86,6 +86,8 @@ export async function run(
   lifecycle.onEvent = (event) => events.emit(event)
   const servers = createGatewayServers({ auth, config, events, host, lifecycle, store })
   await lifecycle.reconcile()
+  await servers.peers.retry()
+  servers.routines.start()
   await servers.listen()
   logger.info('Gateway listening', { publicPort: config.publicPort, internalPort: config.internalPort })
   const close = () => {

@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { z } from 'zod'
-import { FLEET_GATEWAY_ENV, FLEET_PORTS } from '@maestrly/bot-fleet-protocol'
+import { FLEET_GATEWAY_ENV, FLEET_PORTS, isValidTimeZone } from '@maestrly/bot-fleet-protocol'
 
 const bytes = z
   .string()
@@ -21,7 +21,7 @@ const schema = z.object({
   dockerSocket: z.string().min(1),
   botMemory: bytes,
   botShm: bytes,
-  timezone: z.string().min(1),
+  timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
 })
 export type GatewayConfig = z.infer<typeof schema>
@@ -30,9 +30,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
   const security = env.MAESTRLY_GATEWAY_BOT_SECURITY_OPT ?? '[]'
   let botSecurityOpt: unknown
   try {
-    botSecurityOpt = JSON.parse(security)
+    if (security === 'auto') {
+      const profile: unknown = JSON.parse(
+        readFileSync(env.MAESTRLY_GATEWAY_BOT_SECCOMP_PROFILE ?? '/etc/maestrly-bot/seccomp-bot.json', 'utf8')
+      )
+      if (!profile || typeof profile !== 'object' || Array.isArray(profile)) throw new Error('Invalid seccomp profile')
+      botSecurityOpt = ['seccomp=' + JSON.stringify(profile)]
+    } else botSecurityOpt = JSON.parse(security)
   } catch {
-    throw new Error('Invalid MAESTRLY_GATEWAY_BOT_SECURITY_OPT')
+    throw new Error('Invalid MAESTRLY_GATEWAY_BOT_SECURITY_OPT or seccomp profile')
   }
   const value = schema.parse({
     dataDir: env[FLEET_GATEWAY_ENV.dataDir] ?? '/data',
