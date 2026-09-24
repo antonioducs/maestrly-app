@@ -13,7 +13,7 @@ import {
   transcriptPage,
   toolTarget,
 } from '../../src/main/fleet/instance/transcript'
-import { canDispatch, continuationText } from '../../src/main/fleet/instance/runtime'
+import { canDispatch, continuationText, releaseSystemCode } from '../../src/main/fleet/instance/runtime'
 import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance/identity'
 
 const key = () => randomUUID()
@@ -335,6 +335,10 @@ describe('dispatcher conditions and release prompt', () => {
 })
 
 describe('hold gate', () => {
+  it('records a takeover note as a takeover transcript item and a pause note as resumed', () => {
+    expect(releaseSystemCode('takeover')).toBe('takeover')
+    expect(releaseSystemCode('paused')).toBe('resumed')
+  })
   it('is inert outside bot mode and for other conversations, then refuses primary tools while held', async () => {
     const manager = new InstanceHoldManager()
     const unregister = registerInstanceHoldGate(manager, 'primary')

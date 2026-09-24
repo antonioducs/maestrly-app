@@ -68,6 +68,7 @@
     "verify:packaged-cursor-sdk": "node scripts/verify-packaged-cursor-sdk.mjs",
     "test:e2e:grok-connector": "node scripts/test-grok-connector-e2e.mjs",
     "test:e2e:bot-conversations": "node scripts/test-bot-conversations-e2e.mjs",
+    "test:e2e:bot-fleet": "node scripts/test-bot-fleet-e2e.mjs",
     "smoke:grok-connector": "node scripts/smoke-grok-connector.mjs"
   },
   "devDependencies": {

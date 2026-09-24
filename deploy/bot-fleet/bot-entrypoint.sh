@@ -33,6 +33,7 @@ fi
 printf '%s\n' "$MAESTRLY_BOT_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
 unset MAESTRLY_BOT_KEYRING_PASSWORD
 
+/usr/local/bin/prepare-xvfb-display
 Xvfb :0 -screen 0 1280x800x24 -nolisten tcp -noreset & children+=("$!")
 for i in {1..50}; do
   if xdpyinfo -display :0 >/dev/null 2>&1; then break; fi

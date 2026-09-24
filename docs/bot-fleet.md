@@ -127,6 +127,7 @@ The gateway mounts the Docker socket. Docker socket access is effectively root a
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
 - `npm run test:unit --workspace @maestrly/desktop` checks desktop units.
 - `npm run test:e2e --workspace @maestrly/desktop` runs the Electron E2E suite, including `apps/desktop/test/e2e/bot-fleet.spec.ts`, with its usual build and display prerequisites.
+- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real bot containers, and a deterministic local model; it checks pairing, protocol guards, SSE, accounts, model tool calls, approvals, peer delivery, RFB view and control, takeover, pause, a scheduled routine, restart, and archive. It saves a screen capture under `.bot-fleet-work/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging.
 - `node scripts/bot-fleet-vnc-probe.mjs <running-bot-container>` checks that the view-only VNC port cannot move the pointer and the control port can. It requires a running bot container and Docker access.
 
-A dedicated Docker end-to-end script may be added later; there is no such command in the current package scripts.
+In a local Docker 29.4 Linux/arm64 VM (10 CPUs, about 16 GiB RAM), the end-to-end run measured **763.7 MiB for inactive Dev** (no model account) and **635.7 MiB for idle Scout** (model account connected) with `docker stats --no-stream` after Scout finished a turn. Both containers had a 4 GiB memory limit. A later Scout sample was 451.3 MiB; memory varies as the desktop settles and browser tabs or apps open.

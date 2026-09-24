@@ -86,6 +86,9 @@ function continuationText(reason: 'takeover' | 'paused', durationMs: number | nu
   return `The owner used your screen for ${duration} and handed it back.${note ? ` Their note: "${note}".` : ''} The screen may have changed: take a fresh screenshot before acting, then continue the task.`
 }
 export { continuationText }
+export function releaseSystemCode(reason: 'takeover' | 'paused' | null): 'takeover' | 'resumed' {
+  return reason === 'takeover' ? 'takeover' : 'resumed'
+}
 
 export class BotInstanceRuntime implements InstanceControl {
   readonly events = new InstanceEvents()
@@ -581,7 +584,7 @@ export class BotInstanceRuntime implements InstanceControl {
     if (previous.state !== 'held') throw new InstanceHttpError(409, 'CONFLICT', 'Instance is not held.')
     const needsContinuation = value.continue && (previous.interruptedTurn || this.help.pending().length > 0)
     await this.help.resolveAll(value.note)
-    await this.system('resumed', value.note, value.durationMs)
+    await this.system(releaseSystemCode(previous.reason), value.note, value.durationMs)
     const result = this.holdManager.release()
     if (needsContinuation)
       await this.input({

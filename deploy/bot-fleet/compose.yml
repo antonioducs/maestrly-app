@@ -14,14 +14,14 @@ services:
       MAESTRLY_GATEWAY_BOT_SECCOMP_PROFILE: /etc/maestrly-bot/seccomp-bot.json
       MAESTRLY_GATEWAY_BOT_MEMORY: ${MAESTRLY_GATEWAY_BOT_MEMORY:-4g}
       MAESTRLY_GATEWAY_BOT_SHM: ${MAESTRLY_GATEWAY_BOT_SHM:-1g}
-      MAESTRLY_GATEWAY_NETWORK: maestrly-bots
+      MAESTRLY_GATEWAY_NETWORK: ${MAESTRLY_GATEWAY_NETWORK:-maestrly-bots}
       MAESTRLY_GATEWAY_DOCKER_SOCKET: /var/run/docker.sock
       TZ: ${TZ:-Etc/UTC}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - gateway-data:/data
     ports:
-      - ${MAESTRLY_GATEWAY_BIND:-127.0.0.1}:7443:7443
+      - ${MAESTRLY_GATEWAY_BIND:-127.0.0.1}:${MAESTRLY_GATEWAY_PORT:-7443}:7443
     networks:
       - bots
     healthcheck:
@@ -33,7 +33,7 @@ services:
 
 networks:
   bots:
-    name: maestrly-bots
+    name: ${MAESTRLY_GATEWAY_NETWORK:-maestrly-bots}
 
 volumes:
   gateway-data:

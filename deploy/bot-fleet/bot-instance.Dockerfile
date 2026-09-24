@@ -43,7 +43,9 @@ COPY --from=build /app/config /opt/maestrly/config
 COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
+COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
 RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoint && \
+    chmod 755 /usr/local/bin/prepare-xvfb-display && \
     mkdir -p /home/bot/.config/tint2 && chown -R bot:bot /home/bot && \
     chmod 4755 /opt/maestrly/node_modules/electron/dist/chrome-sandbox
 USER bot
