@@ -19,10 +19,16 @@ COPY packages packages
 COPY config config
 COPY LICENSE THIRD_PARTY_NOTICES.md ./
 RUN npm run build:desktop
-RUN node scripts/fetch-codex-runtime.mjs --target linux-${TARGETARCH} && \
-    node scripts/fetch-github-copilot-runtime.mjs --target linux-${TARGETARCH} && \
-    node scripts/fetch-cursor-sdk-platform.mjs --target linux-${TARGETARCH} && \
-    node scripts/fetch-tunnel-client.mjs --target linux-${TARGETARCH}
+# Docker names x86_64 "amd64"; the runtime fetchers use Node's "x64".
+RUN case "${TARGETARCH}" in \
+      amd64) target=linux-x64 ;; \
+      arm64) target=linux-arm64 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    node scripts/fetch-codex-runtime.mjs --target "$target" && \
+    node scripts/fetch-github-copilot-runtime.mjs --target "$target" && \
+    node scripts/fetch-cursor-sdk-platform.mjs --target "$target" && \
+    node scripts/fetch-tunnel-client.mjs --target "$target"
 
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC HOME=/home/bot DISPLAY=:0 XDG_CURRENT_DESKTOP=Openbox
