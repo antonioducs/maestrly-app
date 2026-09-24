@@ -20,8 +20,11 @@ function run(command, args, options = {}) {
   })
 }
 
+// Build for the machine running the script unless told otherwise: a VPS is usually x86_64.
+const nativePlatform = os.arch() === 'arm64' ? 'linux/arm64' : 'linux/amd64'
+
 function parse(argv) {
-  const options = { platform: 'linux/arm64', only: null, fromHead: false }
+  const options = { platform: nativePlatform, only: null, fromHead: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === '--platform') options.platform = argv[++i]
