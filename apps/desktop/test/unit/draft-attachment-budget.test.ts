@@ -5,6 +5,8 @@ import {
   MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
   MAX_ATTACHMENT_TEXT_BYTES,
+  MAX_ATTACHMENT_PDF_BYTES,
+  MAX_ATTACHMENT_PDFS_PER_MESSAGE,
 } from '../../src/shared/memory-policy'
 
 /**
@@ -21,6 +23,7 @@ const image = (id: string, bytes: number, previewUrl?: string): BudgetedAttachme
   ...(previewUrl ? { previewUrl } : {}),
 })
 const text = (id: string, bytes: number): BudgetedAttachment => ({ id, kind: 'text', byteSize: bytes })
+const pdf = (id: string, bytes: number): BudgetedAttachment => ({ id, kind: 'pdf', byteSize: bytes })
 
 const imageBytesOf = (kept: readonly BudgetedAttachment[]): number =>
   kept.reduce((sum, a) => sum + (a.kind === 'image' ? (a.byteSize ?? 0) : 0), 0)
@@ -101,5 +104,38 @@ describe('boundDraftAttachments rejected previews', () => {
     expect(result.rejected[0]?.previewUrl).toBe('blob:x')
     // Existing drafts retain their previews without changes from the new batch.
     expect(result.kept.every((a) => a.previewUrl?.startsWith('blob:draft'))).toBe(true)
+  })
+})
+
+describe('boundDraftAttachments PDFs', () => {
+  it('keeps at most four PDFs per message', () => {
+    const result = boundDraftAttachments([], Array.from({ length: 5 }, (_, i) => pdf(`p${i}`, MiB)))
+
+    expect(result.kept).toHaveLength(MAX_ATTACHMENT_PDFS_PER_MESSAGE)
+    expect(result.rejected.map((a) => a.id)).toEqual(['p4'])
+  })
+
+  it('rejects PDFs above 10 MiB', () => {
+    const result = boundDraftAttachments([], [pdf('big', MAX_ATTACHMENT_PDF_BYTES + 1), pdf('ok', MiB)])
+
+    expect(result.rejected.map((a) => a.id)).toEqual(['big'])
+    expect(result.kept.map((a) => a.id)).toEqual(['ok'])
+  })
+
+  it('shares the aggregate byte budget with images', () => {
+    const draft = Array.from({ length: 4 }, (_, i) => image(`i${i}`, 4 * MiB)) // 16 MiB
+    const result = boundDraftAttachments(draft, [pdf('p', 5 * MiB)])
+
+    expect(result.rejected.map((a) => a.id)).toEqual(['p'])
+  })
+
+  it('does not consume the image count', () => {
+    const draft = [pdf('p0', MiB), pdf('p1', MiB)]
+    const images = Array.from({ length: MAX_ATTACHMENT_IMAGES_PER_MESSAGE }, (_, i) => image(`i${i}`, MiB))
+
+    const result = boundDraftAttachments(draft, images)
+
+    expect(result.rejected).toHaveLength(0)
+    expect(result.kept.filter((a) => a.kind === 'image')).toHaveLength(MAX_ATTACHMENT_IMAGES_PER_MESSAGE)
   })
 })

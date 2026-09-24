@@ -235,6 +235,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
                   className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 text-[12px] text-foreground"
                 >
                   <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  {a.kind === 'pdf' && (
+                    <span className="text-[10px] font-medium uppercase text-muted-foreground">PDF</span>
+                  )}
                   <span className="max-w-[180px] truncate">{a.name}</span>
                   <button
                     type="button"

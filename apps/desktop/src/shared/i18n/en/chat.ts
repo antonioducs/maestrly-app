@@ -296,6 +296,8 @@ export default {
       "The selected model's effective context cannot fit the next turn, even after compaction. Nothing was sent; compact the conversation or choose a model with a larger window.",
     errContextCompactionFailed:
       'Automatic context compaction failed, so the message was not sent. Try Compact manually or retry; if it keeps failing, check the provider connection.',
+    errInvalidAttachment: 'An attachment is invalid or exceeds the size limits.',
+    errPdfUnreadable: 'Could not read the PDF. It may be password-protected or damaged.',
     cmdClear: "Clear this conversation's history",
     cmdCompact: 'Compact the history (summarize to free up context)',
     compacting: 'compacting the context…',
@@ -344,6 +346,8 @@ export default {
     enlarge: 'Enlarge {{name}}',
     imageDescribed: "This conversation's model can't see images — it received this description from {{model}}:",
     imageDescribedBadge: 'described',
+    pdfPages_one: '{{count}} page',
+    pdfPages_other: '{{count}} pages',
     editResend: 'Edit and resend',
     emptyState:
       'Chat with a model using your ChatGPT, GitHub Copilot or Claude subscription, or a direct API. File and shell tools ask for approval before acting.',

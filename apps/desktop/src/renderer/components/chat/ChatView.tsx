@@ -75,10 +75,13 @@ import {
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
+import { draftAttachmentKind } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_ATTACHMENT_IMAGES_PER_MESSAGE,
   MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ATTACHMENT_PDF_BYTES,
+  MAX_ATTACHMENT_PDFS_PER_MESSAGE,
   MAX_ATTACHMENT_TEXT_BYTES,
 } from '../../../shared/memory-policy'
 import { ChatSearchBar } from './ChatSearchBar'
@@ -725,7 +728,11 @@ export function ChatView({
                   ? t('view.errContextOverflow')
                   : error === 'context-compaction-failed'
                     ? t('view.errContextCompactionFailed')
-                    : t('view.errSendFailed')
+                    : error === 'invalid-attachment'
+                      ? t('view.errInvalidAttachment')
+                      : error === 'pdf-unreadable'
+                        ? t('view.errPdfUnreadable')
+                        : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -1668,26 +1675,44 @@ export function ChatView({
     [conversationId]
   )
 
-  // Apply both per-file limits and aggregate image budgets to the existing draft plus the new batch.
+  // Apply both per-file limits and the aggregate binary budget (images + PDFs) to the existing draft plus the
+  // new batch, before reading bytes into memory.
 
   const addFiles = useCallback((files: File[]) => {
     void (async () => {
       const existing = attachmentsRef.current
       const candidates: UIAttachment[] = []
 
-      let imageBytes = existing.reduce(
-        (sum, a) => sum + (a.kind === 'image' ? (a.byteSize ?? a.bytes?.byteLength ?? 0) : 0),
+      let binaryBytes = existing.reduce(
+        (sum, a) =>
+          sum + (a.kind === 'image' || a.kind === 'pdf' ? (a.byteSize ?? a.bytes?.byteLength ?? 0) : 0),
         0
       )
       let imageCount = existing.filter((a) => a.kind === 'image').length
+      let pdfCount = existing.filter((a) => a.kind === 'pdf').length
       for (const file of files) {
-        const isImage = file.type.startsWith('image/')
-        if (isImage) {
+        const kind = draftAttachmentKind(file)
+        if (kind === 'pdf') {
+          if (file.size > MAX_ATTACHMENT_PDF_BYTES) continue
+          if (pdfCount >= MAX_ATTACHMENT_PDFS_PER_MESSAGE) continue
+          if (binaryBytes + file.size > MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE) continue
+          const bytes = new Uint8Array(await file.arrayBuffer())
+          binaryBytes += bytes.byteLength
+          pdfCount += 1
+          candidates.push({
+            id: crypto.randomUUID(),
+            name: file.name,
+            mediaType: 'application/pdf',
+            kind: 'pdf',
+            bytes,
+            byteSize: bytes.byteLength,
+          })
+        } else if (kind === 'image') {
           if (file.size > MAX_ATTACHMENT_IMAGE_BYTES) continue
           if (imageCount >= MAX_ATTACHMENT_IMAGES_PER_MESSAGE) continue
-          if (imageBytes + file.size > MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE) continue
+          if (binaryBytes + file.size > MAX_ATTACHMENT_IMAGE_BYTES_PER_MESSAGE) continue
           const bytes = new Uint8Array(await file.arrayBuffer())
-          imageBytes += bytes.byteLength
+          binaryBytes += bytes.byteLength
           imageCount += 1
           candidates.push({
             id: crypto.randomUUID(),
