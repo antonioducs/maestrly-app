@@ -1,6 +1,6 @@
 type Level = 'debug' | 'info' | 'warn' | 'error'
 const ranking = { debug: 0, info: 1, warn: 2, error: 3 }
-const sensitive = /token|secret|password|pairing|code|message|text|prompt|instructions|authorization/i
+const sensitive = /token|secret|password|pairing|code|message|text|prompt|instructions|authorization|key/i
 export function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact)
   if (value && typeof value === 'object')

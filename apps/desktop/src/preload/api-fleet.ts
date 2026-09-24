@@ -18,6 +18,7 @@ import type {
   FleetTakeoverState,
   FleetTranscriptPage,
   FleetUiOpenRequest,
+  FleetAddApiKeyAccountRequest,
 } from '@maestrly/bot-fleet-protocol'
 export type FleetConnectionView = {
   state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
@@ -41,6 +42,7 @@ export type FleetScreenState = {
   reason?: string
 }
 export type {
+  FleetApiKeyProviderKind,
   FleetActivityEntry,
   FleetBot,
   FleetGatewayEvent,
@@ -80,6 +82,10 @@ export const fleetApi = {
   ): Promise<FleetBot | void> => ipcRenderer.invoke('fleet:botAction', botId, action),
   fleetListSelections: (botId: string): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> =>
     ipcRenderer.invoke('fleet:listSelections', botId),
+  fleetAddApiKeyAccount: (botId: string, input: FleetAddApiKeyAccountRequest): Promise<{ providerId: string }> =>
+    ipcRenderer.invoke('fleet:add-api-key-account', botId, input),
+  fleetRemoveAccount: (botId: string, providerId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:remove-account', botId, providerId),
   fleetGetTranscript: (botId: string, before?: string | null, limit?: number): Promise<FleetTranscriptPage> =>
     ipcRenderer.invoke('fleet:getTranscript', botId, before, limit),
   fleetSendMessage: (botId: string, text: string): Promise<{ inputId: string; itemId: string; queued: boolean }> =>

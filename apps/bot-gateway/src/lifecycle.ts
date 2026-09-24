@@ -134,6 +134,7 @@ export class Lifecycle {
     const status = this.statuses.get(bot.id),
       resources = this.resources.get(bot.id)
     bot.appVersion = status?.appVersion ?? null
+    bot.accounts = status?.accounts ?? { connected: false, providers: [] }
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
@@ -181,6 +182,7 @@ export class Lifecycle {
       status: 'starting',
       activity: null,
       pendingCount: 0,
+      accounts: { connected: false, providers: [] },
       takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
       resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
       screen: { width: 1280, height: 800, display: ':0' },

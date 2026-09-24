@@ -5,6 +5,7 @@ import {
   type FleetCreateBotRequest,
   type FleetPatchBotRequest,
   type FleetSendMessageRequest,
+  type FleetAddApiKeyAccountRequest,
 } from '@maestrly/bot-fleet-protocol'
 import type { ServerResponse } from 'node:http'
 import type { GatewayContext } from '../context.js'
@@ -90,6 +91,14 @@ export async function publicRoute(
       return { status: 204 }
     case 'botSelections':
       return { body: await ctx.lifecycle.instanceFor(id).selections() }
+    case 'botApiKeyAccountAdd':
+      return {
+        body: await ctx.lifecycle.instanceFor(id).addApiKeyAccount(body as FleetAddApiKeyAccountRequest),
+        status: 201,
+      }
+    case 'botAccountRemove':
+      await ctx.lifecycle.instanceFor(id).removeAccount(params.providerId)
+      return { status: 204 }
     case 'botTranscript':
       return {
         body: await ctx.lifecycle

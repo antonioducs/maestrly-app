@@ -76,6 +76,23 @@ export const fleetSelectionsResponseSchema = z.object({
   current: fleetSelectionSchema.nullable(),
 })
 export type FleetSelectionsResponse = z.infer<typeof fleetSelectionsResponseSchema>
+export const fleetApiKeyProviderKindSchema = z.enum(['anthropic', 'openai', 'openai-responses'])
+export type FleetApiKeyProviderKind = z.infer<typeof fleetApiKeyProviderKindSchema>
+export const fleetAddApiKeyAccountRequestSchema = z
+  .object({
+    kind: fleetApiKeyProviderKindSchema,
+    name: fleetNameSchema,
+    key: z.string().min(1).max(512),
+    baseURL: z
+      .url()
+      .max(300)
+      .refine((value) => /^https?:\/\//i.test(value))
+      .nullable(),
+  })
+  .strict()
+export type FleetAddApiKeyAccountRequest = z.infer<typeof fleetAddApiKeyAccountRequestSchema>
+export const fleetAddApiKeyAccountResponseSchema = z.object({ providerId: fleetIdSchema })
+export type FleetAddApiKeyAccountResponse = z.infer<typeof fleetAddApiKeyAccountResponseSchema>
 export const fleetSendMessageRequestSchema = z.object({
   text: fleetMessageTextSchema,
   idempotencyKey: fleetIdempotencyKeySchema,
@@ -252,6 +269,13 @@ export const FLEET_GATEWAY_ROUTES = {
     body: null,
     response: fleetSelectionsResponseSchema,
   },
+  botApiKeyAccountAdd: {
+    method: 'POST',
+    path: '/v1/bots/:id/accounts/api-key',
+    body: fleetAddApiKeyAccountRequestSchema,
+    response: fleetAddApiKeyAccountResponseSchema,
+  },
+  botAccountRemove: { method: 'DELETE', path: '/v1/bots/:id/accounts/:providerId', body: null, response: null },
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
   botMessageSend: {
     method: 'POST',
@@ -322,6 +346,13 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetInstanceStatusSchema,
   },
   selections: { method: 'GET', path: '/v1/selections', body: null, response: fleetSelectionsResponseSchema },
+  apiKeyAccountAdd: {
+    method: 'POST',
+    path: '/v1/accounts/api-key',
+    body: fleetAddApiKeyAccountRequestSchema,
+    response: fleetAddApiKeyAccountResponseSchema,
+  },
+  accountRemove: { method: 'DELETE', path: '/v1/accounts/:providerId', body: null, response: null },
   transcript: { method: 'GET', path: '/v1/transcript', body: null, response: fleetTranscriptPageSchema },
   inputSend: { method: 'POST', path: '/v1/inputs', body: fleetInstanceInputSchema, response: fleetInputReceiptSchema },
   inputDelete: { method: 'DELETE', path: '/v1/inputs/:inputId', body: null, response: null },

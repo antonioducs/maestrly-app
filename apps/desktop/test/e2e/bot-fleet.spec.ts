@@ -52,6 +52,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     status: 'waiting',
     activity: { kind: 'permission', title: 'Run ls' },
     pendingCount: 1,
+    accounts: { connected: false, providers: [] },
     takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
     resources: { memoryBytes: 1024 ** 3, memoryLimitBytes: 2 * 1024 ** 3, cpuPercent: 9, startedAt: now() },
     screen: { width: 1280, height: 800, display: ':1' },
@@ -90,8 +91,10 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     },
   ]
   const routines: FleetRoutine[] = []
+  const rendererPayloads: string[] = []
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
+    rendererPayloads.push(JSON.stringify(valid))
     const frame = `event: fleet\ndata: ${JSON.stringify(valid)}\n\n`
     for (const stream of streams) stream.write(frame)
   }
@@ -102,6 +105,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         route.method === request.method && new RegExp(`^${route.path.replace(/:[^/]+/g, '[^/]+')}$`).test(url.pathname)
     )
     const send = (status: number, value: unknown) => {
+      rendererPayloads.push(JSON.stringify(value))
       response.writeHead(status, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(value))
     }
@@ -192,6 +196,32 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       case 'botSelections':
         value = { options: [], current: null }
         break
+      case 'botApiKeyAccountAdd': {
+        value = { providerId: 'prov_e2e' }
+        if (bot) {
+          const input = body as { name: string }
+          const updated = fleetBotSchema.parse({
+            ...bot,
+            status: 'idle',
+            accounts: { connected: true, providers: [{ id: 'prov_e2e', label: input.name }] },
+          })
+          bots[bots.indexOf(bot)] = updated
+          emit({ type: 'bot.updated', at: now(), bot: updated })
+        }
+        break
+      }
+      case 'botAccountRemove': {
+        if (bot) {
+          const updated = fleetBotSchema.parse({
+            ...bot,
+            status: 'setup',
+            accounts: { connected: false, providers: [] },
+          })
+          bots[bots.indexOf(bot)] = updated
+          emit({ type: 'bot.updated', at: now(), bot: updated })
+        }
+        break
+      }
       case 'botTranscript':
         value = { items: id === 'scout' ? transcript : [], before: null }
         break
@@ -337,6 +367,28 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       continue: true,
     })
     await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const apiKey = 'fleet-e2e-secret-key-123'
+    await page.getByLabel('Nome da conta').fill('Fake model')
+    await page.getByLabel('Chave de API').fill(apiKey)
+    await page.getByText('Avançado').click()
+    await page.getByLabel('URL base (opcional)').fill('http://fake-model:8080/v1')
+    await page.getByRole('button', { name: 'Adicionar conta' }).click()
+    await expect.poll(() => requests.filter((item) => item.key === 'botApiKeyAccountAdd').length).toBe(1)
+    expect(requests.find((item) => item.key === 'botApiKeyAccountAdd')?.body).toEqual({
+      kind: 'openai',
+      name: 'Fake model',
+      key: apiKey,
+      baseURL: 'http://fake-model:8080/v1',
+    })
+    await expect(page.getByText('Fake model')).toBeVisible()
+    expect(rendererPayloads.some((payload) => payload.includes(apiKey))).toBe(false)
+    await expect(page.getByLabel('Chave de API')).toHaveValue('')
+    await page.getByRole('button', { name: 'Remover', exact: true }).click()
+    await page
+      .getByRole('dialog', { name: 'Remover conta de modelo?' })
+      .getByRole('button', { name: 'Remover' })
+      .click()
+    await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(1)
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
     await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Título').fill('Daily orders')
     await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Instrução').fill('Check the orders')

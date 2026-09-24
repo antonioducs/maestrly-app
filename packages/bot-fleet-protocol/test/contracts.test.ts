@@ -7,6 +7,7 @@ import {
   buildPath,
   deriveBotId,
   fleetActivityEntrySchema,
+  fleetAddApiKeyAccountRequestSchema,
   fleetBotSchema,
   fleetCreateBotRequestSchema,
   fleetCreateRoutineRequestSchema,
@@ -57,6 +58,7 @@ const bot = {
   status: 'working',
   activity: { kind: 'tool', tool: 'browser_open', target: 'example.com' },
   pendingCount: 0,
+  accounts: { connected: true, providers: [{ id: 'prov_test', label: 'Test' }] },
   takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
   resources: { memoryBytes: 256, memoryLimitBytes: 1024, cpuPercent: 8.5, startedAt: at },
   screen: { width: 1280, height: 800, display: ':0' },
@@ -98,6 +100,17 @@ const status = {
 }
 
 describe('domain contracts', () => {
+  it('accepts only supported API key accounts and HTTP(S) base URLs', () => {
+    const account = { kind: 'openai', name: 'Fake model', key: 'test-key', baseURL: 'http://fake-model:8080/v1' }
+    expect(fleetAddApiKeyAccountRequestSchema.parse(account)).toEqual(account)
+    expect(fleetAddApiKeyAccountRequestSchema.safeParse({ ...account, kind: 'codex' }).success).toBe(false)
+    expect(fleetAddApiKeyAccountRequestSchema.safeParse({ ...account, baseURL: 'ftp://fake-model/v1' }).success).toBe(
+      false
+    )
+    expect(fleetAddApiKeyAccountRequestSchema.safeParse({ ...account, key: '' }).success).toBe(false)
+    expect(FLEET_GATEWAY_ROUTES.botApiKeyAccountAdd.path).toBe('/v1/bots/:id/accounts/api-key')
+    expect(FLEET_INSTANCE_ROUTES.accountRemove.method).toBe('DELETE')
+  })
   it('accepts model options, pending questions, peer messages and transcript pages', () => {
     const selection = { providerId: 'openai', modelId: 'gpt', reasoning: 'medium', fastMode: false }
     const option = {

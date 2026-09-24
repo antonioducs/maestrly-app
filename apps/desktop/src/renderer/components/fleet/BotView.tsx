@@ -128,11 +128,18 @@ export function BotView({
             fleet={fleet}
             onOpenBot={onOpenBot}
             onOpenScreen={() => setTab('screen')}
+            onOpenSettings={() => setTab('settings')}
           />
         ) : tab === 'screen' ? (
-          <BotScreen key={bot.id} bot={bot} fleet={fleet} />
+          <BotScreen key={bot.id} bot={bot} fleet={fleet} onOpenSettings={() => setTab('settings')} />
         ) : (
-          <BotSettings key={bot.id} bot={bot} fleet={fleet} onArchived={() => onView({ kind: 'server' })} />
+          <BotSettings
+            key={bot.id}
+            bot={bot}
+            fleet={fleet}
+            onOpenScreen={() => setTab('screen')}
+            onArchived={() => onView({ kind: 'server' })}
+          />
         )}
       </div>
     </div>

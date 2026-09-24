@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetRoutine, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetApiKeyProviderKind,
+  FleetBot,
+  FleetRoutine,
+  FleetSelectionOption,
+} from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -13,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { SearchSelect } from '@/components/ui/search-select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { gb } from '@/lib/fleet/format'
 import { routineSchedule, validateRoutine, type RoutineForm } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -33,10 +39,12 @@ export function BotSettings({
   bot,
   fleet,
   onArchived,
+  onOpenScreen,
 }: {
   bot: FleetBot
   fleet: FleetController
   onArchived: () => void
+  onOpenScreen: () => void
 }) {
   const { t } = useTranslation('fleet')
   const [fields, setFields] = useState<BotFieldsValue>({
@@ -53,7 +61,13 @@ export function BotSettings({
   const [routines, setRoutines] = useState<FleetRoutine[]>([])
   const [routine, setRoutine] = useState<RoutineForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState<{ kind: 'archive' | 'delete'; id?: string } | null>(null)
+  const [confirm, setConfirm] = useState<{ kind: 'archive' | 'delete' | 'account'; id?: string } | null>(null)
+  const [accountKind, setAccountKind] = useState<FleetApiKeyProviderKind>('openai')
+  const [accountName, setAccountName] = useState('')
+  const [baseURL, setBaseURL] = useState('')
+  const [accountBusy, setAccountBusy] = useState(false)
+  const [accountError, setAccountError] = useState('')
+  const keyRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -147,6 +161,54 @@ export function BotSettings({
       setBusy(false)
     }
   }
+  async function refreshBot() {
+    const updated = await window.api.fleetGetBot(bot.id)
+    fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
+    const models = await window.api.fleetListSelections(bot.id)
+    setOptions(models.options)
+  }
+  async function addAccount() {
+    const key = keyRef.current?.value ?? ''
+    const name = accountName.trim()
+    const url = baseURL.trim()
+    if (accountBusy) return
+    if (
+      !name ||
+      name.length > 40 ||
+      !key.trim() ||
+      key.length > 512 ||
+      (url && (url.length > 300 || !/^https?:\/\//i.test(url) || !URL.canParse(url)))
+    ) {
+      setAccountError(t('botSettings.accountInvalid'))
+      return
+    }
+    setAccountBusy(true)
+    setAccountError('')
+    try {
+      await window.api.fleetAddApiKeyAccount(bot.id, { kind: accountKind, name, key, baseURL: url || null })
+      if (keyRef.current) keyRef.current.value = ''
+      setAccountName('')
+      setBaseURL('')
+      await refreshBot()
+    } catch {
+      setAccountError(t('botSettings.accountAddFailed'))
+    } finally {
+      setAccountBusy(false)
+    }
+  }
+  async function logInOnScreen() {
+    setAccountBusy(true)
+    setAccountError('')
+    try {
+      if (bot.takeover.state !== 'human') await window.api.fleetTakeover(bot.id)
+      await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
+      onOpenScreen()
+    } catch {
+      setAccountError(t('botSettings.screenLoginFailed'))
+    } finally {
+      setAccountBusy(false)
+    }
+  }
   async function actionRoutine(action: 'toggle' | 'run', item: FleetRoutine) {
     setError('')
     try {
@@ -167,6 +229,9 @@ export function BotSettings({
         if (archived)
           fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: archived } })
         onArchived()
+      } else if (confirm.kind === 'account' && confirm.id) {
+        await window.api.fleetRemoveAccount(bot.id, confirm.id)
+        await refreshBot()
       } else if (confirm.id) {
         await window.api.fleetDeleteRoutine(bot.id, confirm.id)
         setRoutines((await window.api.fleetListRoutines(bot.id)).routines)
@@ -195,6 +260,84 @@ export function BotSettings({
             setSaved(false)
           }}
         />
+        <section className="space-y-3">
+          <h2 className="font-semibold">{t('botSettings.accounts')}</h2>
+          <p className="text-xs text-muted-foreground">{t('botSettings.accountsNote')}</p>
+          {bot.accounts.providers.map((provider) => (
+            <div
+              key={provider.id}
+              className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm"
+            >
+              <span>{provider.label}</span>
+              {provider.id.startsWith('prov_') && (
+                <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: 'account', id: provider.id })}>
+                  {t('botSettings.removeAccount')}
+                </Button>
+              )}
+            </div>
+          ))}
+          {!bot.accounts.providers.length && (
+            <p className="text-xs text-muted-foreground">{t('botSettings.noAccounts')}</p>
+          )}
+          <div className="space-y-3 rounded-lg border border-border p-4">
+            <h3 className="text-sm font-medium">{t('botSettings.addApiKey')}</h3>
+            <label className="block text-xs" htmlFor="fleet-account-kind">
+              {t('botSettings.providerKind')}
+            </label>
+            <Select value={accountKind} onValueChange={(value) => setAccountKind(value as FleetApiKeyProviderKind)}>
+              <SelectTrigger id="fleet-account-kind" aria-label={t('botSettings.providerKind')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="openai">{t('botSettings.kindOpenAI')}</SelectItem>
+                <SelectItem value="openai-responses">{t('botSettings.kindResponses')}</SelectItem>
+                <SelectItem value="anthropic">{t('botSettings.kindAnthropic')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <label className="block text-xs" htmlFor="fleet-account-name">
+              {t('botSettings.accountName')}
+            </label>
+            <Input
+              id="fleet-account-name"
+              value={accountName}
+              maxLength={40}
+              onChange={(event) => setAccountName(event.target.value)}
+            />
+            <label className="block text-xs" htmlFor="fleet-account-key">
+              {t('botSettings.apiKey')}
+            </label>
+            <Input id="fleet-account-key" ref={keyRef} type="password" autoComplete="off" maxLength={512} />
+            <details>
+              <summary className="cursor-pointer text-xs text-muted-foreground">{t('botSettings.advanced')}</summary>
+              <label className="mt-3 block text-xs" htmlFor="fleet-account-url">
+                {t('botSettings.baseURL')}
+              </label>
+              <Input
+                id="fleet-account-url"
+                value={baseURL}
+                maxLength={300}
+                placeholder="https://api.example.com/v1"
+                onChange={(event) => setBaseURL(event.target.value)}
+              />
+            </details>
+            {accountError && (
+              <p role="alert" className="text-xs text-destructive">
+                {accountError}
+              </p>
+            )}
+            <Button size="sm" disabled={accountBusy} onClick={() => void addAccount()}>
+              {t('botSettings.addAccount')}
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={accountBusy || bot.lifecycle !== 'running'}
+            onClick={() => void logInOnScreen()}
+          >
+            {t('botSettings.loginOnScreen')}
+          </Button>
+        </section>
         <div>
           <label className="mb-2 block text-sm font-medium">{t('botSettings.model')}</label>
           <SearchSelect
@@ -402,9 +545,27 @@ export function BotSettings({
       </Dialog>
       {confirm && (
         <ConfirmDialog
-          title={t(confirm.kind === 'archive' ? 'botSettings.archiveTitle' : 'routine.deleteTitle')}
-          message={t(confirm.kind === 'archive' ? 'botSettings.archiveConfirm' : 'routine.deleteConfirm')}
-          confirmLabel={t(confirm.kind === 'archive' ? 'botSettings.archiveConfirmButton' : 'routine.delete')}
+          title={t(
+            confirm.kind === 'archive'
+              ? 'botSettings.archiveTitle'
+              : confirm.kind === 'account'
+                ? 'botSettings.removeAccountTitle'
+                : 'routine.deleteTitle'
+          )}
+          message={t(
+            confirm.kind === 'archive'
+              ? 'botSettings.archiveConfirm'
+              : confirm.kind === 'account'
+                ? 'botSettings.removeAccountConfirm'
+                : 'routine.deleteConfirm'
+          )}
+          confirmLabel={t(
+            confirm.kind === 'archive'
+              ? 'botSettings.archiveConfirmButton'
+              : confirm.kind === 'account'
+                ? 'botSettings.removeAccount'
+                : 'routine.delete'
+          )}
           destructive
           busy={busy}
           onCancel={() => setConfirm(null)}

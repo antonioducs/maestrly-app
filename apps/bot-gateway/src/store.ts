@@ -202,6 +202,7 @@ export class Store {
       status: 'offline',
       activity: null,
       pendingCount: 0,
+      accounts: { connected: false, providers: [] },
       takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
       resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
       screen: { width: 1280, height: 800, display: ':0' },

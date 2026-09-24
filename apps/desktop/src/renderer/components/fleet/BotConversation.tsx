@@ -125,11 +125,13 @@ export function BotConversation({
   fleet,
   onOpenBot,
   onOpenScreen,
+  onOpenSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenBot: (id: string) => void
   onOpenScreen: () => void
+  onOpenSettings: () => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -258,9 +260,14 @@ export function BotConversation({
                 </button>
               )}
               {bot.status === 'setup' && (
-                <button type="button" className="text-primary" onClick={onOpenScreen}>
-                  {t('composer.connectAccount')}
-                </button>
+                <span className="flex flex-wrap gap-2">
+                  <button type="button" className="text-primary" onClick={onOpenScreen}>
+                    {t('composer.connectAccount')}
+                  </button>
+                  <button type="button" className="text-primary" onClick={onOpenSettings}>
+                    {t('composer.addApiKeyInSettings')}
+                  </button>
+                </span>
               )}
             </div>
           ) : (

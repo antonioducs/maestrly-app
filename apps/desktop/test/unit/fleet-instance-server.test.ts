@@ -38,6 +38,8 @@ const control: InstanceControl = {
   status: () => status,
   profile: async () => status,
   selections: async () => ({ options: [], current: null }),
+  addApiKeyAccount: async () => ({ providerId: 'prov_test' }),
+  removeAccount: async () => {},
   transcript: () => ({ items: [], before: null }),
   input: async () => ({ inputId: 'input', itemId: 'input:input', queued: true }),
   deleteInput: async () => {},
@@ -69,6 +71,30 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { [FLEET_PROTOCOL_HEADER]: '1', Authorization: 'Bearer ' + token, ...extra }
 }
 describe('instance control HTTP', () => {
+  it('adds and removes an API key account without echoing the key', async () => {
+    const addApiKeyAccount = vi.fn(async () => ({ providerId: 'prov_test' }))
+    const removeAccount = vi.fn(async () => {})
+    const { base } = await setup({ ...control, addApiKeyAccount, removeAccount })
+    const key = 'private-test-key'
+    const added = await fetch(base + '/v1/accounts/api-key', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ kind: 'openai', name: 'Fake model', key, baseURL: 'http://fake-model:8080/v1' }),
+    })
+    expect(added.status).toBe(200)
+    const response = await added.text()
+    expect(response).toBe(JSON.stringify({ providerId: 'prov_test' }))
+    expect(response).not.toContain(key)
+    expect(addApiKeyAccount).toHaveBeenCalledWith({
+      kind: 'openai',
+      name: 'Fake model',
+      key,
+      baseURL: 'http://fake-model:8080/v1',
+    })
+    const removed = await fetch(base + '/v1/accounts/prov_test', { method: 'DELETE', headers: headers() })
+    expect(removed.status).toBe(204)
+    expect(removeAccount).toHaveBeenCalledWith('prov_test')
+  })
   it('enforces protocol, bearer, Origin and response schema', async () => {
     const { base } = await setup()
     const incompatible = await fetch(base + '/v1/health', { headers: { Authorization: 'Bearer ' + token } })

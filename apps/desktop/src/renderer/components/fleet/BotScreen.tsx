@@ -7,7 +7,15 @@ import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
 import { formatTimer } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
-export function BotScreen({ bot, fleet }: { bot: FleetBot; fleet: FleetController }) {
+export function BotScreen({
+  bot,
+  fleet,
+  onOpenSettings,
+}: {
+  bot: FleetBot
+  fleet: FleetController
+  onOpenSettings: () => void
+}) {
   const { t } = useTranslation('fleet')
   const target = useRef<HTMLDivElement>(null)
   const [takeover, setTakeover] = useState<FleetTakeoverState>(bot.takeover)
@@ -247,6 +255,11 @@ export function BotScreen({ bot, fleet }: { bot: FleetBot; fleet: FleetControlle
             <Button className="mt-4" disabled={busy} onClick={() => void take(true)}>
               {t('screen.useScreen')}
             </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              <button type="button" className="text-primary underline" onClick={onOpenSettings}>
+                {t('screen.addApiKeyInSettings')}
+              </button>
+            </p>
           </div>
         )}
         {!shaded && phase !== 'live' && (

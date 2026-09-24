@@ -17,6 +17,8 @@ import {
   type FleetTranscriptItem,
   type FleetPendingInteraction,
   type FleetInputReceipt,
+  type FleetAddApiKeyAccountRequest,
+  type FleetAddApiKeyAccountResponse,
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatStreamEvent } from '../../../shared/chat'
 import { getAppSetting, setAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
@@ -32,6 +34,10 @@ import {
   stopChatAndWait,
 } from '../../chat/service'
 import { listChatMessages } from '../../chat/chat-store'
+import { addProvider, listProviders, removeProvider } from '../../chat/catalog'
+import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from '../../chat/credentials'
+import { invalidateProvider } from '../../chat/provider'
+import { invalidateModels } from '../../chat/models'
 import { observeChatHost } from '../../chat/host-events'
 import { InstanceHttpError, InstanceEvents, type InstanceControl } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
@@ -270,6 +276,48 @@ export class BotInstanceRuntime implements InstanceControl {
     await this.refreshAccounts(true)
     return { options: this.accountOptions, current: this.stored?.profile.selection ?? null }
   }
+  async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
+    if (apiKeyStorageMode() !== 'secure')
+      throw new InstanceHttpError(409, 'CONFLICT', 'Secure credential storage is unavailable.')
+    const baseURL =
+      value.baseURL ?? (value.kind === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1')
+    let provider: ReturnType<typeof addProvider>
+    try {
+      provider = addProvider({ name: value.name, baseURL, kind: value.kind })
+    } catch {
+      throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid provider configuration.')
+    }
+    if (setApiKey(provider.id, value.key) !== 'secure') {
+      clearApiKey(provider.id)
+      removeProvider(provider.id)
+      throw new InstanceHttpError(409, 'CONFLICT', 'Secure credential storage is unavailable.')
+    }
+    this.changed()
+    void this.refreshAccounts(true).then(() => {
+      this.changed()
+      void this.tick()
+    })
+    return { providerId: provider.id }
+  }
+  async removeAccount(providerId: string): Promise<void> {
+    if (!listProviders().some((provider) => provider.id === providerId))
+      throw new InstanceHttpError(404, 'NOT_FOUND', 'Account does not exist.')
+    removeProvider(providerId)
+    clearApiKey(providerId)
+    invalidateProvider(providerId)
+    invalidateModels(providerId)
+    if (getAppSetting('chat.defaultProvider') === providerId) {
+      setAppSetting('chat.defaultProvider', '')
+      setAppSetting('chat.defaultModel', '')
+      setAppSetting('chat.defaultReasoning', 'off')
+    }
+    this.accountOptions = this.accountOptions.filter((option) => option.providerId !== providerId)
+    this.changed()
+    void this.refreshAccounts(true).then(() => {
+      this.changed()
+      void this.tick()
+    })
+  }
   private pending(): FleetPendingInteraction[] {
     const id = this.primaryConversationId
     if (!id) return this.help.pending()
@@ -297,9 +345,14 @@ export class BotInstanceRuntime implements InstanceControl {
   async status(): Promise<FleetInstanceStatus> {
     await this.refreshAccounts()
     const providers = [
-      ...new Map(
-        this.accountOptions.map((option) => [option.providerId, { id: option.providerId, label: option.providerLabel }])
-      ).values(),
+      ...new Map([
+        ...this.accountOptions.map(
+          (option) => [option.providerId, { id: option.providerId, label: option.providerLabel }] as const
+        ),
+        ...listProviders()
+          .filter((provider) => hasApiKey(provider.id))
+          .map((provider) => [provider.id, { id: provider.id, label: provider.name }] as const),
+      ]).values(),
     ]
     const pending = this.pending()
     const queue = this.queue.list().map((item) => ({

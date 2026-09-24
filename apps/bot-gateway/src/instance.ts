@@ -7,6 +7,7 @@ import {
   type FleetInstanceInput,
   type FleetInstanceProfile,
   type FleetInteractionResolution,
+  type FleetAddApiKeyAccountRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -45,7 +46,13 @@ export class InstanceClient {
           if (value.code) code = value.code
         } catch {}
         throw new GatewayError(
-          code === 'CONFLICT' ? 'CONFLICT' : code === 'NOT_FOUND' ? 'NOT_FOUND' : 'INSTANCE_UNAVAILABLE',
+          code === 'CONFLICT'
+            ? 'CONFLICT'
+            : code === 'INVALID_REQUEST'
+              ? 'INVALID_REQUEST'
+              : code === 'NOT_FOUND'
+                ? 'NOT_FOUND'
+                : 'INSTANCE_UNAVAILABLE',
           'Bot instance request failed'
         )
       }
@@ -70,6 +77,12 @@ export class InstanceClient {
   }
   selections() {
     return this.call('selections')
+  }
+  addApiKeyAccount(body: FleetAddApiKeyAccountRequest) {
+    return this.call('apiKeyAccountAdd', {}, undefined, body)
+  }
+  removeAccount(providerId: string) {
+    return this.call('accountRemove', { providerId })
   }
   transcript(before?: string, limit = 200) {
     return this.call('transcript', {}, { before, limit })

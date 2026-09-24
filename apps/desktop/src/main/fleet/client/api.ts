@@ -4,6 +4,7 @@ import {
   buildPath,
   fleetErrorEnvelopeSchema,
   type FleetErrorCode,
+  type FleetAddApiKeyAccountRequest,
 } from '@maestrly/bot-fleet-protocol'
 
 export class FleetClientError extends Error {
@@ -29,6 +30,14 @@ export class FleetApiClient {
 
   withToken(token: string): FleetApiClient {
     return new FleetApiClient(this.origin, token)
+  }
+
+  addApiKeyAccount(botId: string, body: FleetAddApiKeyAccountRequest) {
+    return this.call('botApiKeyAccountAdd', { params: { id: botId }, body })
+  }
+
+  removeAccount(botId: string, providerId: string) {
+    return this.call('botAccountRemove', { params: { id: botId, providerId } })
   }
 
   headers(): Record<string, string> {

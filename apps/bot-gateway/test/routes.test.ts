@@ -1,8 +1,9 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
+import { Writable } from 'node:stream'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_PROTOCOL_HEADER,
@@ -18,6 +19,7 @@ import { EventHub } from '../src/events.js'
 import { HostMonitor } from '../src/host.js'
 import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
+import { Logger } from '../src/logger.js'
 import { createGatewayServers } from '../src/server.js'
 import { Store } from '../src/store.js'
 
@@ -31,6 +33,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 async function fake() {
+  let account: { id: string; label: string } | null = null
   let hold: {
     state: 'none' | 'held'
     reason: 'takeover' | 'paused' | null
@@ -53,7 +56,7 @@ async function fake() {
       appVersion: '1.0',
       protocol: 1,
       ready: true,
-      accounts: { connected: true, providers: [] },
+      accounts: { connected: true, providers: account ? [account] : [] },
       selection: null,
       ceiling: 'ask',
       profile: { botId: 'test', name: 'Test' },
@@ -74,6 +77,16 @@ async function fake() {
     try {
       if (req.url === '/v1/health') return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true })
       if (req.url === '/v1/status') return send(200, status)
+      if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {
+        const input = body as { name: string }
+        account = { id: 'prov_test', label: input.name }
+        return send(200, { providerId: account.id })
+      }
+      if (req.url === '/v1/accounts/prov_test' && req.method === 'DELETE') {
+        account = null
+        res.writeHead(204)
+        return res.end()
+      }
       if (req.url === '/v1/profile') {
         fleetInstanceProfileSchema.parse(body)
         return send(200, status)
@@ -150,6 +163,28 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   try {
+    const secret = 'gateway-account-secret-test'
+    const accountBody = { kind: 'openai', name: 'Fake model', key: secret, baseURL: 'http://fake-model:8080/v1' }
+    const addedAccount = await post('/v1/bots/test/accounts/api-key', one.token, accountBody)
+    expect(addedAccount.status).toBe(201)
+    const addedText = await addedAccount.text()
+    expect(addedText).toBe(JSON.stringify({ providerId: 'prov_test' }))
+    expect(addedText).not.toContain(secret)
+    expect(readFileSync(path.join(dir, 'gateway.sqlite')).includes(Buffer.from(secret))).toBe(false)
+    const lines: string[] = []
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        lines.push(String(chunk))
+        callback()
+      },
+    })
+    new Logger('debug', stream, stream).info('account added', { key: secret, nested: { apiKey: secret } })
+    expect(lines.join('')).not.toContain(secret)
+    const removedAccount = await fetch(origin + '/v1/bots/test/accounts/prov_test', {
+      method: 'DELETE',
+      headers: headers(one.token),
+    })
+    expect(removedAccount.status).toBe(204)
     expect((await post('/v1/bots/test/screen-tickets', one.token, { mode: 'control' })).status).toBe(403)
     const takeover = await post('/v1/bots/test/takeover', one.token)
     expect(takeover.status).toBe(200)

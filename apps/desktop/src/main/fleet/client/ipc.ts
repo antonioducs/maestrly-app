@@ -11,6 +11,7 @@ import {
   fleetTakeoverReleaseRequestSchema,
   fleetUiOpenRequestSchema,
   fleetMessageTextSchema,
+  fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { fleetClientService as fleet } from './service'
@@ -62,6 +63,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   reg.handle('fleet:listSelections', (_event, botId: unknown) =>
     fleet.call('botSelections', { params: { id: id.parse(botId) } })
+  )
+  reg.mhandle('fleet:add-api-key-account', (_event, botId: unknown, input: unknown) =>
+    fleet.call('botApiKeyAccountAdd', {
+      params: { id: id.parse(botId) },
+      body: fleetAddApiKeyAccountRequestSchema.parse(input),
+    })
+  )
+  reg.mhandle('fleet:remove-account', (_event, botId: unknown, providerId: unknown) =>
+    fleet.call('botAccountRemove', { params: { id: id.parse(botId), providerId: opaqueId.parse(providerId) } })
   )
   reg.handle('fleet:getTranscript', (_event, botId: unknown, before: unknown, limit: unknown) =>
     fleet.call('botTranscript', {

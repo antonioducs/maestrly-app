@@ -156,6 +156,10 @@ export const fleetBotSchema = z.object({
   status: fleetBotStatusSchema,
   activity: fleetActivitySchema.nullable(),
   pendingCount: fleetNonNegativeIntSchema,
+  accounts: z.object({
+    connected: z.boolean(),
+    providers: z.array(z.object({ id: fleetIdSchema, label: z.string() })),
+  }),
   takeover: fleetTakeoverStateSchema,
   resources: z.object({
     memoryBytes: fleetNonNegativeNumberSchema.nullable(),

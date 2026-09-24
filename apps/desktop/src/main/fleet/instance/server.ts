@@ -16,6 +16,8 @@ import {
   type FleetSelection,
   type FleetTranscriptPage,
   type FleetInputReceipt,
+  type FleetAddApiKeyAccountRequest,
+  type FleetAddApiKeyAccountResponse,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
 import type { BotInstanceConfig } from './config'
@@ -34,6 +36,8 @@ export interface InstanceControl {
   status(): FleetInstanceStatus | Promise<FleetInstanceStatus>
   profile(value: FleetInstanceProfile): Promise<FleetInstanceStatus>
   selections(): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }>
+  addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse>
+  removeAccount(providerId: string): Promise<void>
   transcript(before: string | null, limit: number): FleetTranscriptPage | Promise<FleetTranscriptPage>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
@@ -179,6 +183,12 @@ export function createInstanceControlServer(
           break
         case 'selections':
           output = await control.selections()
+          break
+        case 'apiKeyAccountAdd':
+          output = await control.addApiKeyAccount(input as FleetAddApiKeyAccountRequest)
+          break
+        case 'accountRemove':
+          await control.removeAccount(match.id ?? '')
           break
         case 'transcript': {
           const raw = url.searchParams.get('limit')
