@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { access, mkdtemp, readFile, stat } from 'node:fs/promises'
+import { access, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,7 @@ const desktop = fileURLToPath(new URL('../..', import.meta.url))
 
 // Real built application, real pdf-worker utility process and a local OpenAI-compatible provider (which receives
 // PDFs as extracted text). The operating-system viewer is replaced by a recorder in the main process.
-test('PDF attachments: drop onto the composer, send as text, open from the chip', async () => {
+test('PDF attachments: drop onto the composer, send as text, open from the chip, delete with the chat', async () => {
   test.setTimeout(120_000)
   await access(path.join(desktop, 'out/main/index.js'))
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-pdf-'))
@@ -145,6 +145,17 @@ test('PDF attachments: drop onto the composer, send as text, open from the chip'
     await app.evaluate(({ shell }) => {
       shell.openPath = (globalThis as unknown as { __openPath: typeof shell.openPath }).__openPath
     })
+
+    // Deleting the conversation removes the stored PDF and the viewer copy from the profile.
+    const userData = await app.evaluate(({ app }) => app.getPath('userData'))
+    const stored = path.join(userData, 'chat-attachment-images', conversation.id)
+    const previews = path.join(userData, 'chat-attachment-previews', conversation.id)
+    expect((await readdir(stored)).filter((name) => name.endsWith('.pdf'))).toHaveLength(1)
+    await access(previews)
+    await call('deleteConversation', conversation.id)
+    expect(await call('listStandaloneConversations', true)).toEqual([])
+    await expect(access(stored)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(access(previews)).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
     await app?.close()
     await new Promise<void>((resolve) => model.close(() => resolve()))
