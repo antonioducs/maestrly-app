@@ -285,7 +285,9 @@ export async function readAttachmentPdf(
   conversationId: string,
   artifactId: string,
   expectedByteSize?: number
-): Promise<{ ok: true; bytes: Uint8Array; byteSize: number } | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }> {
+): Promise<
+  { ok: true; bytes: Uint8Array; byteSize: number } | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }
+> {
   let file: string | null
   try {
     file = artifactPath(conversationId, artifactId)

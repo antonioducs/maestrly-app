@@ -29,6 +29,25 @@ or incomplete task data is omitted instead of interrupting the chat interface;
 valid entries appear when the agent supplies them. This also applies when
 reopening saved conversations and does not change the stored tool input.
 
+## PDF attachments
+
+Attach PDFs with the **+** menu or by pasting them into the composer. Each PDF
+can be up to 10 MB, a message can carry up to four, and PDFs share the 20 MB
+per-message budget with images.
+
+Maestrly extracts each PDF's text locally when the message is sent, in a
+separate process. The Claude subscription, and Anthropic or OpenAI API models
+that accept PDF input, receive the original document when it has at most 100
+pages. Codex, GitHub Copilot, Cursor, OpenAI-compatible providers and longer
+PDFs receive the extracted text instead: at most the first 256 KB, without
+layout or images. A scanned PDF without a text layer can only be read where the
+document is sent natively. Password-protected or damaged PDFs are rejected with
+a message and nothing is sent.
+
+The document is stored in the application profile with the conversation's other
+attachments and is removed with its message. The context meter counts at least
+2,000 tokens per page, because native documents cost far more than their text.
+
 ## Starting other conversations
 
 A project conversation can start new Standard conversations that keep working on

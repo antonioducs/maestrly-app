@@ -5,6 +5,11 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Attach PDF files to chat messages. Models that read PDFs receive the
+  document; other runtimes receive text extracted locally.
+
 ## [0.9.2] - 2026-09-23
 
 ### Fixed

@@ -109,7 +109,10 @@ describe('boundDraftAttachments rejected previews', () => {
 
 describe('boundDraftAttachments PDFs', () => {
   it('keeps at most four PDFs per message', () => {
-    const result = boundDraftAttachments([], Array.from({ length: 5 }, (_, i) => pdf(`p${i}`, MiB)))
+    const result = boundDraftAttachments(
+      [],
+      Array.from({ length: 5 }, (_, i) => pdf(`p${i}`, MiB))
+    )
 
     expect(result.kept).toHaveLength(MAX_ATTACHMENT_PDFS_PER_MESSAGE)
     expect(result.rejected.map((a) => a.id)).toEqual(['p4'])

@@ -1684,8 +1684,7 @@ export function ChatView({
       const candidates: UIAttachment[] = []
 
       let binaryBytes = existing.reduce(
-        (sum, a) =>
-          sum + (a.kind === 'image' || a.kind === 'pdf' ? (a.byteSize ?? a.bytes?.byteLength ?? 0) : 0),
+        (sum, a) => sum + (a.kind === 'image' || a.kind === 'pdf' ? (a.byteSize ?? a.bytes?.byteLength ?? 0) : 0),
         0
       )
       let imageCount = existing.filter((a) => a.kind === 'image').length

@@ -2409,7 +2409,10 @@ describe('Ultra resolution to the highest real model effort', () => {
 })
 
 describe('PDF attachments in model messages and transcripts', () => {
-  const pdfMessage = (conversationId: string, part: Extract<import('../../src/shared/chat').MessagePart, { type: 'file' }>): StoredChatMessage => ({
+  const pdfMessage = (
+    conversationId: string,
+    part: Extract<import('../../src/shared/chat').MessagePart, { type: 'file' }>
+  ): StoredChatMessage => ({
     id: 'u1',
     conversationId,
     role: 'user',

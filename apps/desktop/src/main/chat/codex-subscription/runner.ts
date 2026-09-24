@@ -1019,11 +1019,7 @@ export function dynamicToolSignature(specs: Pick<DynamicToolSpec, 'name'>[]): st
   return createHash('sha256').update(JSON.stringify(names)).digest('hex')
 }
 
-export function currentUserInputs(
-  message: ChatMessage,
-  seedTranscript: string,
-  dropImages = false
-): CodexUserInput[] {
+export function currentUserInputs(message: ChatMessage, seedTranscript: string, dropImages = false): CodexUserInput[] {
   const inputs: CodexUserInput[] = []
   const text: string[] = []
   if (seedTranscript) text.push(nativeSeedContextText(seedTranscript))

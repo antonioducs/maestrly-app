@@ -279,9 +279,9 @@ describe('PDF attachment artifacts', () => {
 
   it('rejects bytes without the PDF signature and oversized PDFs', async () => {
     const conv = chatConv()
-    await expect(savePdfAttachment({ conversationId: conv.id, bytes: Buffer.from('not a pdf') })).rejects.toBeInstanceOf(
-      AttachmentArtifactError
-    )
+    await expect(
+      savePdfAttachment({ conversationId: conv.id, bytes: Buffer.from('not a pdf') })
+    ).rejects.toBeInstanceOf(AttachmentArtifactError)
     const oversized = Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(MAX_ATTACHMENT_PDF_BYTES - 4)])
     expect(oversized.length).toBe(MAX_ATTACHMENT_PDF_BYTES + 1)
     await expect(savePdfAttachment({ conversationId: conv.id, bytes: oversized })).rejects.toBeInstanceOf(
@@ -308,7 +308,9 @@ describe('PDF attachment artifacts', () => {
       ok: false,
       error: 'invalid',
     })
-    expect(resolveFilePdfBytesSync(conv.id, { artifactId: stored.artifactId, byteSize: stored.byteSize + 1 })).toBeNull()
+    expect(
+      resolveFilePdfBytesSync(conv.id, { artifactId: stored.artifactId, byteSize: stored.byteSize + 1 })
+    ).toBeNull()
 
     const file = pdfFile(conv.id, stored.artifactId)
     rmSync(file)

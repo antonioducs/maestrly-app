@@ -1,6 +1,6 @@
 # PDF chat attachments — design
 
-Date: 2026-09-24 · Status: proposed
+Date: 2026-09-24 · Status: approved
 
 ## Goal
 
@@ -9,7 +9,7 @@ text files. Models that read PDFs natively receive the original document; every
 other runtime receives text extracted locally by Maestrly, so a PDF attachment
 works with every provider.
 
-Today a dragged PDF falls into the text branch of `ChatView.addFiles` and is read
+Today a pasted PDF falls into the text branch of `ChatView.addFiles` and is read
 with `file.text()`, so the model receives binary noise. The file picker does not
 offer PDFs at all.
 
@@ -19,7 +19,7 @@ offer PDFs at all.
 | --- | --- |
 | Delivery strategy | Hybrid. Native PDF when the runtime and model support it; locally extracted text otherwise. |
 | Where text is extracted | In the main process at message admission, inside a short-lived Electron utility process per PDF (never on the main thread). |
-| Extraction library | `unpdf` (MIT, pure JS pdf.js build, no native modules), loaded with `isEvalSupported: false`. |
+| Extraction library | `unpdf` 1.8.1 (MIT, pure JS PDF.js 6.1 build, no native modules). PDF.js 6 removed `isEvalSupported` and its eval-based font path; a unit test asserts the bundled build contains no `eval(` or `new Function(`. |
 | When text is extracted | Always, at admission. Extracted text feeds fallback runtimes, transcripts, compaction and runtime switches, so it must exist even when the current model reads PDFs natively. |
 | Per-PDF size | 10 MB (`MAX_ATTACHMENT_PDF_BYTES`). |
 | PDFs per message | 4 (`MAX_ATTACHMENT_PDFS_PER_MESSAGE`). |
@@ -36,8 +36,9 @@ offer PDFs at all.
 - A learned per-conversation `pdfsUnsupported` flag (mirroring `imagesUnsupported`).
   Revisit if catalog data proves unreliable.
 - PDFs in the Notes editor and in `apps/web`.
-- Rejecting other binary non-text files that are dropped into the composer (an
+- Rejecting other binary non-text files that are pasted or picked in the composer (an
   existing, separate issue).
+- Drag-and-drop into the chat composer (not supported for any attachment type today).
 
 ## Architecture
 
@@ -45,7 +46,7 @@ offer PDFs at all.
 flowchart LR
   subgraph Renderer
     PM["ChatPlusMenu\naccept += application/pdf"] --> AF["ChatView.addFiles\nkind: 'pdf' + bytes"]
-    DD["drag/drop + paste"] --> AF
+    DD["paste"] --> AF
     AF --> BG["boundDraftAttachments\nPDF + shared binary budget"]
     BG --> CC["ChatComposer chip\n(PDF icon, name)"]
   end
