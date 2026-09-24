@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const stateFile = path.join(root, '.bot-fleet-work/dev-fleet.json')
+const stateFile = path.join(root, '.bot-fleet-local/dev-fleet.json')
 const composeFile = path.join(root, 'deploy/bot-fleet/compose.yml')
 const fakeFile = path.join(root, 'deploy/bot-fleet/test/fake-model.mjs')
 const project = 'maestrly-fleet-dev'

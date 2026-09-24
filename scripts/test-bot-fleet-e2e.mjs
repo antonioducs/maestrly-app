@@ -270,7 +270,7 @@ async function screenTicket(id, mode) {
   return request('POST', '/v1/bots/' + id + '/screen-tickets', { mode })
 }
 async function capture(name) {
-  const target = path.join(root, '.bot-fleet-work/screens/e2e-scout.png')
+  const target = path.join(root, '.bot-fleet-local/screens/e2e-scout.png')
   mkdirSync(path.dirname(target), { recursive: true })
   await new Promise((resolve, reject) => {
     const child = spawn('docker', ['exec', name, 'import', '-window', 'root', 'png:-'], {

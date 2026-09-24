@@ -24,6 +24,7 @@ apps/desktop/resources/github-copilot/
 !.env.example
 .claude/settings.local.json
 .release-local-staging/
+.bot-fleet-local/
 *.p8
 *.p12
 *.cer

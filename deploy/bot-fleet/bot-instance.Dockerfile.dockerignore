@@ -4,5 +4,5 @@ node_modules
 **/dist
 **/out
 **/.cache
-.bot-fleet-work
+.bot-fleet-local
 prototypes
