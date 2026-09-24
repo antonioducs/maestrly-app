@@ -14,8 +14,8 @@ The builder tags both images with the root package version and `:local`; it runs
 
 ```sh
 docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d
-docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway node apps/bot-gateway/dist/main.js doctor
-docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway node apps/bot-gateway/dist/main.js pair
+docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway doctor
+docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
 ```
 
 Compose publishes only the gateway public listener on `127.0.0.1:7443` by default. Expose that listener privately with Tailscale Serve (check your installed version's syntax), then enter its HTTPS address and the one-use pairing code in **Settings → Bot server** on the Mac. Keep the gateway's internal `7444` and bot `7680`, `5900`, and `5901` ports unpublished. The passwordless VNC listeners bind only to each bot's loopback interface. The gateway reaches them through authenticated control-server screen tunnels; control tunnels require a takeover hold. Bots on the fleet network are denied access to the gateway public API, and the internal API accepts only fleet network and loopback clients.

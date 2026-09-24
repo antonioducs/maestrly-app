@@ -27,8 +27,9 @@ COPY --from=dependencies /app/packages/bot-fleet-protocol/package.json packages/
 COPY --from=build /app/apps/bot-gateway/dist apps/bot-gateway/dist
 COPY --from=build /app/packages/bot-fleet-protocol/dist packages/bot-fleet-protocol/dist
 COPY deploy/bot-fleet/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint
+COPY deploy/bot-fleet/gateway-cli.sh /usr/local/bin/maestrly-bot-gateway
 COPY deploy/bot-fleet/seccomp-bot.json /etc/maestrly-bot/seccomp-bot.json
-RUN chmod 755 /usr/local/bin/gateway-entrypoint && mkdir /data && chown node:node /data
+RUN chmod 755 /usr/local/bin/gateway-entrypoint /usr/local/bin/maestrly-bot-gateway && mkdir /data && chown node:node /data
 VOLUME /data
 EXPOSE 7443 7444
 ENTRYPOINT ["/usr/local/bin/gateway-entrypoint"]

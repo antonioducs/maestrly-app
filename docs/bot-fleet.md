@@ -65,11 +65,11 @@ npm run bot-fleet:dev -- seed
 4. Run diagnostics, then create a one-use pairing code (valid for ten minutes):
 
    ```sh
-   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway node apps/bot-gateway/dist/main.js doctor
-   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway node apps/bot-gateway/dist/main.js pair
+   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway doctor
+   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
    ```
 
-5. On the Mac, open **Settings → Bot server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway node apps/bot-gateway/dist/main.js` prefix to audit or revoke access.
+5. On the Mac, open **Settings → Bot server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
 
 ### Updates, backups, and removal
 

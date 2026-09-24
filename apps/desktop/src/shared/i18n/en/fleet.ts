@@ -348,7 +348,8 @@ export default {
     code: 'Pairing code',
     deviceName: 'Device name',
     connect: 'Connect',
-    pairInstructions: 'On your server, run this command to get a one-time pairing code:',
+    pairInstructions:
+      'On your server, in the deploy/bot-fleet folder of the Maestrly repository, run this command to get a one-time pairing code:',
     tailscale: 'For a private connection, use Tailscale between this Mac and the server.',
     memoryToken: 'Secure token storage is unavailable. This pairing will be lost when Maestrly closes.',
     disconnect: 'Disconnect',

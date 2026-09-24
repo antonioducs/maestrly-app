@@ -348,7 +348,8 @@ export default {
     code: 'Código de pareamento',
     deviceName: 'Nome do dispositivo',
     connect: 'Conectar',
-    pairInstructions: 'No servidor, execute este comando para gerar um código de uso único:',
+    pairInstructions:
+      'No servidor, na pasta deploy/bot-fleet do repositório da Maestrly, execute este comando para gerar um código de uso único:',
     tailscale: 'Para uma conexão privada, use Tailscale entre este Mac e o servidor.',
     memoryToken:
       'O armazenamento seguro de tokens não está disponível. Este pareamento será perdido ao fechar o Maestrly.',
