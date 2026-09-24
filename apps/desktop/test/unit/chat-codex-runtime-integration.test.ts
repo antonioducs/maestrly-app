@@ -294,7 +294,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
   /**
    * Regression guard for runtime upgrades: Codex runs dynamic tools under a turn-wide write lock, so Maestrly
    * serves delegation from its host MCP server. A local fake Responses provider emits two `task` calls in one
-   * response and then asks for `env`; no credentials, network or quota are involved.
+   * response and then asks a shell command to report the token length; no credentials, network or quota are involved.
    */
   it('runs host MCP delegation in parallel, keeps it visible under tool search and hides its token', async () => {
     const codexHome = mkdtempSync(path.join(os.tmpdir(), 'maestrly-codex-host-mcp-'))
@@ -337,9 +337,17 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
           if (!firstRequestTools.length) firstRequestTools = parsed.tools ?? []
           events.push(taskCall('call_a', 'first'), taskCall('call_b', 'second'))
         } else if (!envResult) {
+          // Quote-free so POSIX shells and PowerShell pass it identically. Prints 0 when the token is blanked,
+          // 64 when it leaks, and fails otherwise, so a command that never ran cannot pass as "no leak".
+          const cmd = `node -p process.env.${CODEX_HOST_MCP_TOKEN_ENV}.length`
           events.push({
             type: 'response.output_item.done',
-            item: { type: 'function_call', call_id: 'call_env', name: 'exec_command', arguments: '{"cmd":"env"}' },
+            item: {
+              type: 'function_call',
+              call_id: 'call_env',
+              name: 'exec_command',
+              arguments: JSON.stringify({ cmd }),
+            },
           })
         } else {
           envOutput = typeof envResult.output === 'string' ? envResult.output : JSON.stringify(envResult.output)
@@ -409,7 +417,9 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       const started = await client.startThread({
         cwd: codexHome,
         ephemeral: true,
-        sandbox: 'read-only',
+        // Only Maestrly's environment policy is under test. OS sandboxes differ per CI host (bubblewrap cannot
+        // configure loopback on GitHub Linux runners; Windows read-only policy rejects the shell outright).
+        sandbox: 'danger-full-access',
         approvalPolicy: 'never',
         config: threadConfig,
       } as Parameters<CodexAppServerClient['startThread']>[0])
@@ -429,8 +439,8 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       expect(spans.map((span) => span.callId).sort()).toEqual(['call_a', 'call_b'])
       const [earlier, later] = [...spans].sort((a, b) => a.start - b.start)
       expect(later.start).toBeLessThan(earlier.end)
-      expect(envOutput).toContain(`${CODEX_HOST_MCP_TOKEN_ENV}=`)
       expect(envOutput).not.toContain(codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV])
+      expect(envOutput.trim().split(/\r?\n/).at(-1)?.trim()).toBe('0')
     } finally {
       setCodexHostMcpCallHandler(null)
       await client?.close({ gracePeriodMs: 1_000 })
