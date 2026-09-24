@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { FLEET_IMAGE_LIMITS, type FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import { formatFleetUsage, selectionPatch, validateAttachments } from '../../src/renderer/lib/fleet/composer'
-import { createFleetImageCache } from '../../src/renderer/lib/fleet/image-cache'
+import { bindFleetImageCache, createFleetImageCache } from '../../src/renderer/lib/fleet/image-cache'
 
 const file = (size: number, type = 'image/png') => ({ name: 'picture.png', size, type })
 const model: FleetSelectionOption = {
@@ -67,6 +67,28 @@ describe('fleet composer helpers', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:a')
     cache.dispose()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:b')
+  })
+  it('keeps serving images after a StrictMode effect replay (setup, cleanup, setup)', async () => {
+    const load = vi.fn(async () => ({ mediaType: 'image/png' as const, data: new Uint8Array([1]) }))
+    const revokeObjectURL = vi.fn()
+    const cache = createFleetImageCache(load, { createObjectURL: () => 'blob:a', revokeObjectURL })
+    // `npm run dev` mounts every effect twice; a memoized cache must survive the simulated unmount.
+    const cleanup = bindFleetImageCache(cache)
+    cleanup()
+    const cleanupAgain = bindFleetImageCache(cache)
+    await expect(cache.get('bot', 'a')).resolves.toBe('blob:a')
+    // A real unmount still releases every object URL and refuses new ones.
+    cleanupAgain()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:a')
+    await expect(cache.get('bot', 'b')).rejects.toThrow('Image cache disposed')
+  })
+  it('binds the conversation image cache through the StrictMode-safe effect', () => {
+    const source = readFileSync(
+      new URL('../../src/renderer/components/fleet/BotConversation.tsx', import.meta.url),
+      'utf8'
+    )
+    expect(source).toContain('useEffect(() => bindFleetImageCache(imageCache), [imageCache])')
+    expect(source).not.toContain('imageCache.dispose()')
   })
   it('wires the desktop controls and never uses a native select', () => {
     const source = readFileSync(new URL('../../src/renderer/components/fleet/BotComposer.tsx', import.meta.url), 'utf8')

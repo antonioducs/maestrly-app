@@ -8,7 +8,7 @@ import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { visibleTranscriptItems } from '@/lib/fleet/forms'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { createFleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
+import { bindFleetImageCache, createFleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 
@@ -162,7 +162,7 @@ export function BotConversation({
     () => createFleetImageCache((botId, imageId) => window.api.fleetGetImage(botId, imageId)),
     [bot.id]
   )
-  useEffect(() => () => imageCache.dispose(), [imageCache])
+  useEffect(() => bindFleetImageCache(imageCache), [imageCache])
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)

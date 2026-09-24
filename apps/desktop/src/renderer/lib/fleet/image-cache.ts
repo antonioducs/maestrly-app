@@ -52,6 +52,10 @@ export function createFleetImageCache(
       if (entry) entry.users = Math.max(0, entry.users - 1)
       evict()
     },
+    /** Accept loads again after a dispose (React StrictMode remounts an effect with the same memoized cache). */
+    activate() {
+      disposed = false
+    },
     dispose() {
       disposed = true
       for (const entry of entries.values()) urls.revokeObjectURL(entry.url)
@@ -60,3 +64,9 @@ export function createFleetImageCache(
   }
 }
 export type FleetImageCache = ReturnType<typeof createFleetImageCache>
+
+/** Effect body for a component that owns a cache: `useEffect(() => bindFleetImageCache(cache), [cache])`. */
+export function bindFleetImageCache(cache: FleetImageCache): () => void {
+  cache.activate()
+  return () => cache.dispose()
+}

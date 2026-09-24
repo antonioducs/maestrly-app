@@ -60,6 +60,18 @@ describe('fleet IPC validation', () => {
     expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid')
     expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
   })
+  it('marks only a missing image as not found, so the UI can offer a retry for other failures', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
+    mocks.getImage.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Image not found'))
+    await expect(invoke('fleet:getImage', 'bot', 't-gone')).rejects.toThrow('FLEET_IMAGE_NOT_FOUND')
+    mocks.getImage.mockRejectedValueOnce(new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Gateway unavailable'))
+    await expect(invoke('fleet:getImage', 'bot', 't-later')).rejects.toThrow('Gateway unavailable')
+  })
   it('rejects invalid bot IDs, creation bodies, actions, resolutions, and screen frames before dispatch', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
     const handlers = new Map<string, (...args: unknown[]) => unknown>()

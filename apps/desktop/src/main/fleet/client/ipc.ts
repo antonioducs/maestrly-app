@@ -114,7 +114,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
   })
   reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown) =>
-    fleet.getImage(id.parse(botId), imageId.parse(rawImageId))
+    fleet.getImage(id.parse(botId), imageId.parse(rawImageId)).catch((error: unknown) => {
+      // IPC keeps only the message: mark a truly missing image so the UI can tell it from a failed load.
+      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
+        throw new Error('FLEET_IMAGE_NOT_FOUND')
+      throw error
+    })
   )
   reg.mhandle('fleet:removeQueuedMessage', (_event, botId: unknown, inputId: unknown) =>
     fleet.call('botMessageDelete', { params: { id: id.parse(botId), inputId: opaqueId.parse(inputId) } })

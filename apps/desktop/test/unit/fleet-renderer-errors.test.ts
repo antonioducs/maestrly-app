@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  IMAGE_NOT_FOUND_MARKER,
   TAKEOVER_CONFLICT_MARKER,
   fleetErrorMessage,
+  isImageNotFound,
   isTakeoverConflict,
 } from '../../src/renderer/lib/fleet/errors'
 
@@ -23,5 +25,16 @@ describe('fleet renderer errors', () => {
     expect(isTakeoverConflict(new Error("Error invoking remote method 'fleet:takeover': Error: Bot offline"))).toBe(
       false
     )
+  })
+
+  it('tells a missing image apart from a failed load, which stays retryable', () => {
+    expect(
+      isImageNotFound(new Error(`Error invoking remote method 'fleet:getImage': Error: ${IMAGE_NOT_FOUND_MARKER}`))
+    ).toBe(true)
+    expect(
+      isImageNotFound(new Error("Error invoking remote method 'fleet:getImage': Error: Gateway unavailable"))
+    ).toBe(false)
+    // A disposed cache is a renderer lifecycle bug, never a missing image.
+    expect(isImageNotFound(new Error('Image cache disposed'))).toBe(false)
   })
 })

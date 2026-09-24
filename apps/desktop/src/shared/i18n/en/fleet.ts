@@ -58,6 +58,8 @@ export default {
   },
   transcript: {
     imageUnavailable: 'Image no longer available',
+    imageLoadFailed: "Couldn't load the image",
+    imageRetry: 'Try again',
     openImage: 'Open {{name}}',
     image: 'Image',
     peerWrote: '{{name}} wrote to {{bot}}',

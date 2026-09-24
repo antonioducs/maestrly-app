@@ -10,6 +10,13 @@ export function fleetErrorMessage(cause: unknown): string {
   return message.length > 0 ? message : raw
 }
 
+/** Stable marker the main process raises when the bot answers 404 for an image (evicted or unknown). */
+export const IMAGE_NOT_FOUND_MARKER = 'FLEET_IMAGE_NOT_FOUND'
+
+export function isImageNotFound(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(IMAGE_NOT_FOUND_MARKER)
+}
+
 export function isTakeoverConflict(cause: unknown): boolean {
   if (typeof cause === 'object' && cause !== null && 'status' in cause && cause.status === 409) return true
   return fleetErrorMessage(cause).includes(TAKEOVER_CONFLICT_MARKER)
