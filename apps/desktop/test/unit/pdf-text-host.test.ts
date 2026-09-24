@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -36,12 +37,11 @@ const h = vi.hoisted(() => {
   }
 })
 
-vi.mock('electron', () => ({
-  app: { getAppPath: () => '/app' },
-  utilityProcess: { fork: h.fork },
-}))
+vi.mock('electron', () => ({ utilityProcess: { fork: h.fork } }))
 
-const { extractPdfTextIsolated, PDF_EXTRACTION_TIMEOUT_MS } = await import('../../src/main/chat/pdf-text')
+const { extractPdfTextIsolated, pdfWorkerPath, PDF_EXTRACTION_TIMEOUT_MS } = await import(
+  '../../src/main/chat/pdf-text'
+)
 
 const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])
 const latest = (): InstanceType<typeof h.FakeChild> => {
@@ -61,7 +61,7 @@ describe('extractPdfTextIsolated', () => {
     const pending = extractPdfTextIsolated(bytes, { maxTextBytes: 1234 })
     const child = latest()
 
-    expect(h.fork).toHaveBeenCalledWith(path.join('/app', 'out', 'main', 'pdf-worker.js'), [], expect.anything())
+    expect(h.fork).toHaveBeenCalledWith(pdfWorkerPath(), [], expect.anything())
     expect(child.postMessage).toHaveBeenCalledWith({ bytes, maxTextBytes: 1234 })
 
     child.emit('message', { type: 'result', pageCount: 1, text: 'x', truncated: false })
@@ -100,6 +100,13 @@ describe('extractPdfTextIsolated', () => {
 
     await expect(pending).resolves.toEqual({ ok: false, error: 'timeout' })
     expect(child.kill).toHaveBeenCalled()
+  })
+
+  it('resolves the worker next to the main bundle, not from the app path', () => {
+    // In the build this module is bundled into out/main/index.js, beside out/main/pdf-worker.js.
+    expect(pdfWorkerPath()).toBe(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/main/chat/pdf-worker.js')
+    )
   })
 
   it('uses a 20 second default timeout', () => {

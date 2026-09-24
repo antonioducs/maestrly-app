@@ -3,9 +3,18 @@
  * outcome (reply, crash, timeout, abort): untrusted PDF parsing never runs on the main thread nor outlives its job.
  */
 import path from 'node:path'
-import { app, utilityProcess } from 'electron'
+import { fileURLToPath } from 'node:url'
+import { utilityProcess } from 'electron'
 
 export const PDF_EXTRACTION_TIMEOUT_MS = 20_000
+
+// electron-vite emits the worker next to the main bundle. `app.getAppPath()` is not enough: when Electron is launched
+// with a script path (as the E2E suite does) it is the script's directory, not the package root.
+const MAIN_BUNDLE_DIR = path.dirname(fileURLToPath(import.meta.url))
+
+export function pdfWorkerPath(): string {
+  return path.join(MAIN_BUNDLE_DIR, 'pdf-worker.js')
+}
 
 export type PdfTextError = 'encrypted' | 'corrupt' | 'timeout' | 'crashed' | 'aborted'
 
@@ -30,8 +39,7 @@ export function extractPdfTextIsolated(
 ): Promise<PdfTextResult> {
   if (opts.signal?.aborted) return Promise.resolve({ ok: false, error: 'aborted' })
   return new Promise((resolve) => {
-    const workerPath = path.join(app.getAppPath(), 'out', 'main', 'pdf-worker.js')
-    const child = utilityProcess.fork(workerPath, [], { serviceName: 'pdf-text', stdio: 'pipe' })
+    const child = utilityProcess.fork(pdfWorkerPath(), [], { serviceName: 'pdf-text', stdio: 'pipe' })
     let settled = false
     const onAbort = (): void => settle({ ok: false, error: 'aborted' })
     const timer = setTimeout(() => settle({ ok: false, error: 'timeout' }), opts.timeoutMs ?? PDF_EXTRACTION_TIMEOUT_MS)
