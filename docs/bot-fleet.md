@@ -20,6 +20,18 @@ Compose publishes only the gateway's public listener on server loopback. The int
 - Budget memory for each bot and its Chromium tabs and apps. The supplied Compose default is a **4 GiB limit per bot** and **1 GiB shared memory**. Actual use varies and rises when browsers or other apps open; monitor the **Server** page before increasing the fleet.
 - Tailscale on the server and Mac is recommended. Use a private HTTPS entry point to the gateway; do not expose it directly to the public internet.
 
+## Trying it locally
+
+With Docker running and the local gateway and bot images built, start an isolated loopback fleet from the repository root:
+
+```sh
+npm run bot-fleet:dev -- up
+npm run bot-fleet:dev -- pair
+npm run bot-fleet:dev -- seed
+```
+
+`up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the ignored `.bot-fleet-work/dev-fleet.json` file. When finished, run `npm run bot-fleet:dev -- down` to remove its containers, volumes, and network, including bots created in the app during the session.
+
 ## Set up the server
 
 1. On the Linux server, obtain this repository at the same Maestrly version as the Mac app. From its root, build both images for the server architecture:
@@ -28,7 +40,7 @@ Compose publishes only the gateway's public listener on server loopback. The int
    node scripts/bot-fleet-images.mjs --platform linux/amd64
    ```
 
-   Use `linux/arm64` on an ARM server. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`. It installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
+   Use `linux/arm64` on an ARM server; without `--platform` it builds for the machine running it. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`. It installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
 
 2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the bot memory limit, and shared memory if needed. Start Compose:
 

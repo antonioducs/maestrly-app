@@ -41,7 +41,7 @@ export function BotFields({
       <label className="block text-sm font-medium">
         {t('botFields.name')}
         <Input
-          className="mt-1"
+          className="mt-1 bg-surface-elevated"
           value={value.name}
           maxLength={40}
           onChange={(event) => set({ name: event.target.value })}
@@ -51,7 +51,7 @@ export function BotFields({
         <label className="block text-sm font-medium">
           {t('botFields.role')}
           <Input
-            className="mt-1"
+            className="mt-1 bg-surface-elevated"
             value={role ?? ''}
             maxLength={80}
             onChange={(event) => onRoleChange(event.target.value)}
@@ -61,7 +61,7 @@ export function BotFields({
       <label className="block text-sm font-medium">
         {t('botFields.instructions')}
         <textarea
-          className="mt-1 min-h-24 w-full rounded-md border border-input bg-background p-2 text-sm"
+          className="mt-1 min-h-24 w-full rounded-md border border-input bg-surface-elevated p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={value.instructions}
           maxLength={8000}
           onChange={(event) => set({ instructions: event.target.value })}
@@ -82,7 +82,7 @@ export function BotFields({
               type="button"
               onClick={() => set({ ceiling })}
               onKeyDown={(event) => onRadioKey(event, index)}
-              className={`rounded-lg border p-3 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring ${value.ceiling === ceiling ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'}`}
+              className={`rounded-lg border p-3 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring ${value.ceiling === ceiling ? 'border-border-strong bg-surface-elevated' : 'border-border bg-surface hover:bg-accent'}`}
             >
               <strong className="block">{t(`ceiling.${ceiling}.title`)}</strong>
               <span className="mt-1 block text-muted-foreground">{t(`ceiling.${ceiling}.description`)}</span>

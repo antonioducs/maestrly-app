@@ -71,6 +71,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
           <label className="block space-y-1">
             <span>{t('settings.address')}</span>
             <Input
+              className="bg-surface-elevated"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               type="url"
@@ -80,6 +81,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
           <label className="block space-y-1">
             <span>{t('settings.code')}</span>
             <Input
+              className="bg-surface-elevated"
               value={code}
               onChange={(event) => setCode(formatPairingCode(event.target.value))}
               autoComplete="off"
@@ -89,7 +91,12 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
           </label>
           <label className="block space-y-1">
             <span>{t('settings.deviceName')}</span>
-            <Input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} maxLength={80} />
+            <Input
+              className="bg-surface-elevated"
+              value={deviceName}
+              onChange={(event) => setDeviceName(event.target.value)}
+              maxLength={80}
+            />
           </label>
           <Button disabled={busy || !url.trim() || code.replace('-', '').length !== 8} onClick={() => void connect()}>
             {t('settings.connect')}

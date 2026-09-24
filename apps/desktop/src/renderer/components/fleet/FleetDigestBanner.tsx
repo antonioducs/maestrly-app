@@ -16,7 +16,7 @@ export function FleetDigestBanner({
   onOpenServer: () => void
   compact?: boolean
 }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const [error, setError] = useState('')
   const digest = fleet.state.digest
   if (!digest?.entries.length) return null
@@ -26,7 +26,7 @@ export function FleetDigestBanner({
     <section
       role="region"
       aria-label={t('digest.label')}
-      className={`shrink-0 border-b border-border bg-accent/40 ${compact ? 'p-3 text-xs' : 'px-6 py-4 text-sm'}`}
+      className={`shrink-0 border-b border-border bg-surface-elevated ${compact ? 'p-3 text-xs' : 'px-6 py-4 text-sm'}`}
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="font-semibold">{t('digest.title', { duration: t('digest.duration', duration) })}</h2>
@@ -54,7 +54,7 @@ export function FleetDigestBanner({
                 onClick={() => (entry.botId ? onOpenBot(entry.botId) : onOpenServer())}
               >
                 <time className="shrink-0 text-muted-foreground">
-                  {new Date(entry.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(entry.at).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}
                 </time>
                 <span
                   className="flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] text-white"

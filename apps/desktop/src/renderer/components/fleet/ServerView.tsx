@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { version as desktopVersion } from '../../../../package.json'
 import { useTranslation } from 'react-i18next'
 import type { FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -27,15 +28,15 @@ function ResourceBar({ label, fraction, value }: { label: string; fraction: numb
 }
 
 export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const { host, bots } = fleet.state.snapshot
-  const [version, setVersion] = useState('')
+  const [version, setVersion] = useState(desktopVersion)
   const [messages, setMessages] = useState<FleetPeerMessage[]>(fleet.state.snapshot.peerMessages)
   const [error, setError] = useState('')
   useEffect(() => {
     void window.api
       .getAppInfo()
-      .then((info) => setVersion(info.version))
+      .then((info) => setVersion(info.isPackaged ? info.version : desktopVersion))
       .catch(() => {})
   }, [])
   useEffect(() => setMessages(fleet.state.snapshot.peerMessages), [fleet.state.snapshot.peerMessages])
@@ -58,24 +59,24 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
         {host && (
           <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-lg border border-border p-4">
+              <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.yourMac')}</div>
                 <strong>{t('server.canTurnOff')}</strong>
                 <p className="mt-1 text-xs text-muted-foreground">{t('server.macNote')}</p>
               </div>
-              <div className="rounded-lg border border-border p-4">
+              <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.server')}</div>
                 <strong>{host.hostname}</strong>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {host.os} · {host.arch}
                 </p>
               </div>
-              <div className="rounded-lg border border-border p-4">
+              <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.uptime')}</div>
                 <strong>{t('server.uptimeValue', uptime)}</strong>
                 <p className="mt-1 text-xs text-muted-foreground">{host.kernel}</p>
               </div>
-              <div className="rounded-lg border border-border p-4">
+              <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.version')}</div>
                 <strong>{version || t('server.unknown')}</strong>
                 <ul className="mt-1 text-xs text-muted-foreground">
@@ -99,7 +100,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
             </div>
             <section>
               <h2 className="mb-3 font-semibold">{t('server.resources')}</h2>
-              <div className="space-y-3 rounded-lg border border-border p-4">
+              <div className="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="grid grid-cols-[90px_1fr_auto] items-center gap-3 text-sm">
                   <span>{t('server.memory')}</span>
                   <div
@@ -135,7 +136,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                 <ResourceBar
                   label={t('server.cpu')}
                   fraction={(host.cpuPercent ?? 0) / 100}
-                  value={`${host.cpuPercent ?? '—'}% · ${host.cpus} vCPU`}
+                  value={`${host.cpuPercent === null ? '—' : `${Math.round(host.cpuPercent)}%`} · ${host.cpus} vCPU`}
                 />
                 <ResourceBar
                   label={t('server.disk')}
@@ -148,9 +149,9 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
         )}
         <section>
           <h2 className="mb-3 font-semibold">{t('server.bots')}</h2>
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-muted/40 text-xs text-muted-foreground">
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface-elevated">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-surface-elevated text-xs text-muted-foreground">
                 <tr>
                   {['name', 'status', 'memory', 'cpu', 'uptime', 'actions'].map((key) => (
                     <th key={key} className="p-3">
@@ -171,14 +172,16 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                     <td className="p-3">
                       {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`}
                     </td>
-                    <td className="p-3">{bot.resources.cpuPercent === null ? '—' : `${bot.resources.cpuPercent}%`}</td>
+                    <td className="p-3">
+                      {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`}
+                    </td>
                     <td className="p-3">
                       {bot.resources.startedAt
                         ? t('server.uptimeValue', formatDuration(Date.now() - Date.parse(bot.resources.startedAt)))
                         : '—'}
                     </td>
                     <td className="p-3">
-                      <div className="flex gap-2">
+                      <div className="flex flex-nowrap gap-2 whitespace-nowrap">
                         {(['restart', 'stop', 'start'] as const).map((action) => (
                           <button
                             key={action}
@@ -207,9 +210,9 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
           {messages.length ? (
             <ul className="space-y-2 text-sm">
               {messages.map((message) => (
-                <li key={message.id} className="rounded-lg border border-border p-3">
+                <li key={message.id} className="rounded-lg border border-border bg-surface-elevated p-3">
                   <time className="mr-2 text-xs text-muted-foreground">
-                    {new Date(message.at).toLocaleTimeString(undefined, {
+                    {new Date(message.at).toLocaleTimeString(i18n.language, {
                       hour: '2-digit',
                       minute: '2-digit',
                     })}
@@ -226,7 +229,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
         </section>
         <section>
           <h2 className="mb-2 font-semibold">{t('server.howTitle')}</h2>
-          <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
+          <p className="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-muted-foreground">
             {t('server.howDescription')}
           </p>
         </section>

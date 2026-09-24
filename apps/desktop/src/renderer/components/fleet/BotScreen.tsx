@@ -153,7 +153,7 @@ export function BotScreen({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
-        <span className="rounded-full bg-destructive/15 px-2 py-1 text-xs font-medium text-destructive">
+        <span className="rounded-full bg-surface-elevated px-2 py-1 text-xs font-medium text-status-ready">
           ● {t('screen.live')}
         </span>
         <div
@@ -169,7 +169,7 @@ export function BotScreen({
           </span>
           <span
             aria-hidden="true"
-            className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-accent transition-transform motion-reduce:transition-none ${takeover.state === 'human' ? 'translate-x-full' : ''}`}
+            className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-surface-elevated transition-transform motion-reduce:transition-none ${takeover.state === 'human' ? 'translate-x-full' : ''}`}
           />
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -217,7 +217,7 @@ export function BotScreen({
                   autoFocus
                   onChange={(event) => setNote(event.target.value)}
                   placeholder={t('screen.optional')}
-                  className="mt-2 min-h-20 w-full rounded-md border border-input bg-background p-2"
+                  className="mt-2 min-h-20 w-full rounded-md border border-input bg-surface-elevated p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
             )}

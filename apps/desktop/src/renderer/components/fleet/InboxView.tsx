@@ -8,7 +8,7 @@ export function InboxView({
   fleet: FleetController
   onOpenBot: (id: string, screen?: boolean) => void
 }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl">
@@ -33,7 +33,7 @@ export function InboxView({
                   {fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId}
                 </button>
                 <time className="ml-auto text-xs text-muted-foreground">
-                  {new Date(interaction.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(interaction.at).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}
                 </time>
               </div>
               <InteractionCard

@@ -47,7 +47,7 @@ export function BotSettings({
   onArchived: () => void
   onOpenScreen: () => void
 }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const [fields, setFields] = useState<BotFieldsValue>({
     name: bot.name,
     instructions: bot.instructions,
@@ -267,7 +267,7 @@ export function BotSettings({
           {bot.accounts.providers.map((provider) => (
             <div
               key={provider.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-elevated p-3 text-sm"
             >
               <span>{provider.label}</span>
               {provider.id.startsWith('prov_') && (
@@ -280,7 +280,7 @@ export function BotSettings({
           {!bot.accounts.providers.length && (
             <p className="text-xs text-muted-foreground">{t('botSettings.noAccounts')}</p>
           )}
-          <div className="space-y-3 rounded-lg border border-border p-4">
+          <div className="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
             <h3 className="text-sm font-medium">{t('botSettings.addApiKey')}</h3>
             <label className="block text-xs" htmlFor="fleet-account-kind">
               {t('botSettings.providerKind')}
@@ -299,6 +299,7 @@ export function BotSettings({
               {t('botSettings.accountName')}
             </label>
             <Input
+              className="bg-surface-elevated"
               id="fleet-account-name"
               value={accountName}
               maxLength={40}
@@ -307,13 +308,21 @@ export function BotSettings({
             <label className="block text-xs" htmlFor="fleet-account-key">
               {t('botSettings.apiKey')}
             </label>
-            <Input id="fleet-account-key" ref={keyRef} type="password" autoComplete="off" maxLength={512} />
+            <Input
+              className="bg-surface-elevated"
+              id="fleet-account-key"
+              ref={keyRef}
+              type="password"
+              autoComplete="off"
+              maxLength={512}
+            />
             <details>
               <summary className="cursor-pointer text-xs text-muted-foreground">{t('botSettings.advanced')}</summary>
               <label className="mt-3 block text-xs" htmlFor="fleet-account-url">
                 {t('botSettings.baseURL')}
               </label>
               <Input
+                className="bg-surface-elevated"
                 id="fleet-account-url"
                 value={baseURL}
                 maxLength={300}
@@ -438,8 +447,9 @@ export function BotSettings({
           <p className="mt-2 rounded-lg border border-border p-4 text-sm">
             {t('botSettings.container')} <code>maestrly-bot-{bot.id}</code> · {t('server.memory')}{' '}
             {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`} · {t('server.cpu')}{' '}
-            {bot.resources.cpuPercent ?? '—'}% · {t('botSettings.started')}{' '}
-            {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString() : '—'}
+            {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`} ·{' '}
+            {t('botSettings.started')}{' '}
+            {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString(i18n.language) : '—'}
           </p>
         </section>
         <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">

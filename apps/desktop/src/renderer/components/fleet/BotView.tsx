@@ -44,26 +44,50 @@ export function BotView({
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="border-b border-border px-5 pt-4">
-        <div className="flex flex-wrap items-center gap-3">
+      <header className="border-b border-border px-5 py-2">
+        <div className="flex min-w-0 items-center gap-3">
           <span
-            className="flex size-10 items-center justify-center rounded-xl text-lg font-semibold text-white"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white"
             style={{ background: bot.tint }}
           >
             {bot.name.charAt(0).toUpperCase()}
           </span>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold">{bot.name}</h1>
-            <p className="truncate text-xs text-muted-foreground">{bot.role}</p>
+          <div className="min-w-0 shrink-0">
+            <h1 className="truncate text-sm font-semibold">{bot.name}</h1>
+            {bot.role && <p className="max-w-32 truncate text-xs text-muted-foreground">{bot.role}</p>}
           </div>
           <button
             type="button"
             onClick={() => onView({ kind: 'server' })}
-            className="rounded-full border border-border px-2 py-1 text-xs hover:bg-accent"
+            className="max-w-36 truncate rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            title={fleet.state.snapshot.host?.hostname ?? t('view.server')}
           >
-            {t('view.server')}
+            {fleet.state.snapshot.host?.hostname ?? t('view.server')}
           </button>
-          <span className="rounded-full bg-muted px-2 py-1 text-xs">{t(`status.${bot.status}`)}</span>
+          <div
+            role="tablist"
+            aria-label={t('view.botTabs')}
+            className="flex min-w-0 items-center gap-1 rounded-lg border border-border p-0.5"
+          >
+            {tabs.map((name) => (
+              <button
+                key={name}
+                id={`fleet-tab-${name}`}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                aria-controls={`fleet-panel-${name}`}
+                onClick={() => setTab(name)}
+                onKeyDown={onKeyDown}
+                className={`rounded-md px-3 py-1.5 text-xs focus-visible:ring-2 focus-visible:ring-ring ${tab === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {t(`view.${name}`)}
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
+            {t(`status.${bot.status}`)}
+          </span>
           {bot.status === 'offline' ? (
             <button
               type="button"
@@ -93,24 +117,6 @@ export function BotView({
               </button>
             )
           )}
-        </div>
-        <div role="tablist" aria-label={t('view.botTabs')} className="mt-4 flex gap-4">
-          {tabs.map((name) => (
-            <button
-              key={name}
-              id={`fleet-tab-${name}`}
-              type="button"
-              role="tab"
-              aria-selected={tab === name}
-              aria-controls={`fleet-panel-${name}`}
-              tabIndex={tab === name ? 0 : -1}
-              onKeyDown={onKeyDown}
-              onClick={() => setTab(name)}
-              className={`border-b-2 pb-2 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring ${tab === name ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-            >
-              {t(`view.${name}`)}
-            </button>
-          ))}
         </div>
       </header>
       {fleet.actionError?.botId === bot.id && (

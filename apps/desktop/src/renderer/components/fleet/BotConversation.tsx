@@ -22,8 +22,8 @@ function TranscriptRow({
   onOpenBot: (id: string) => void
   onOpenScreen: () => void
 }) {
-  const { t } = useTranslation('fleet')
-  const at = new Date(item.at).toLocaleTimeString(undefined, {
+  const { t, i18n } = useTranslation('fleet')
+  const at = new Date(item.at).toLocaleTimeString(i18n.language, {
     hour: '2-digit',
     minute: '2-digit',
   })
@@ -51,7 +51,7 @@ function TranscriptRow({
         </div>
       )
     return (
-      <div className="ml-auto max-w-[85%] rounded-xl bg-primary/10 px-4 py-3 text-sm">
+      <div className="ml-auto max-w-[85%] rounded-xl border border-border-strong bg-surface-elevated px-4 py-3 text-sm">
         {item.source === 'routine' && (
           <span className="mb-2 block text-xs text-primary">
             {t('transcript.routine', {
@@ -263,7 +263,7 @@ export function BotConversation({
       <div className="border-t border-border px-4 py-3">
         <div className="mx-auto max-w-3xl">
           {locked ? (
-            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-surface-elevated p-3 text-sm text-muted-foreground">
               <span>{t(`composer.${bot.status}`)}</span>
               {bot.status === 'offline' && (
                 <button type="button" className="text-primary" onClick={() => void fleet.botAction(bot.id, 'start')}>
