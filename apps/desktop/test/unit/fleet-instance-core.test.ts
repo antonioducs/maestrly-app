@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { ChatMessage } from '../../src/shared/chat'
+import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
 import { InstanceHoldManager, gateInstanceAppTool, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
@@ -374,6 +374,34 @@ describe('transcript projection', () => {
     expect(projectChatMessages([message])).toMatchObject([
       { kind: 'user', text: '', images: [{ id: imageId('a', 'm', 'p'), name: 'photo.png' }] },
     ])
+  })
+  it('sends a tool output with images as its text only: the images travel as refs, never as JSON', () => {
+    const tool = (id: string, output: unknown): MessagePart => ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName: 'view_image',
+      input: { path: '/tmp/crop.png' },
+      state: { status: 'completed', output } as Extract<MessagePart, { type: 'tool' }>['state'],
+    })
+    const message: ChatMessage = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts: [
+        tool('viewed', {
+          text: 'Viewed image: /tmp/crop.png',
+          images: [{ id: 'tool-image:internal', mediaType: 'image/png', byteSize: 4, name: 'crop.png' }],
+        }),
+        tool('other', { delivered: true, text: 'kept as data' }),
+      ],
+    }
+    const [viewed, other] = projectChatMessages([message])
+    expect(viewed).toMatchObject({ kind: 'tool', output: 'Viewed image: /tmp/crop.png' })
+    expect(JSON.stringify(viewed)).not.toContain('tool-image:internal')
+    // Any other object is not a tool output envelope: it stays JSON.
+    expect(other).toMatchObject({ kind: 'tool', output: JSON.stringify({ delivered: true, text: 'kept as data' }) })
   })
   it('attaches generated image refs to the producing tool item', () => {
     const message: ChatMessage = {

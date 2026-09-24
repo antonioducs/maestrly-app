@@ -17,6 +17,15 @@ import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
 
 const at = (time: number): string => new Date(time).toISOString()
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? ''))
+const TOOL_OUTPUT_KEYS = new Set(['text', 'images', 'structuredContent', 'isError'])
+/** A chat tool output envelope sends its text only: its images travel as refs, and their ids are internal. */
+const toolOutputTextOf = (value: unknown): string =>
+  value !== null &&
+  typeof value === 'object' &&
+  typeof (value as { text?: unknown }).text === 'string' &&
+  Object.keys(value).every((key) => TOOL_OUTPUT_KEYS.has(key))
+    ? (value as { text: string }).text
+    : textOf(value)
 const short = (value: string, max: number): string => value.slice(0, max)
 export function fleetQuestions(questions: ChatQuestion[]): FleetQuestion[] {
   return questions.map((question) => ({
@@ -98,7 +107,7 @@ function toolItem(
       : status === 'denied'
         ? part.state.reason
         : status === 'completed' || status === 'running'
-          ? textOf(part.state.output ?? '')
+          ? toolOutputTextOf(part.state.output ?? '')
           : ''
   return {
     kind: 'tool',
