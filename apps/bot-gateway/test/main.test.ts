@@ -303,7 +303,11 @@ describe('Docker and host parsers', () => {
         res.writeHead(404)
         res.end(JSON.stringify({ message: 'No such image' }))
       } else if (req.url?.endsWith('/networks/fleet'))
-        res.end(JSON.stringify({ IPAM: { Config: [{ Subnet: '172.30.0.0/16' }, { Subnet: 'fd00::/64' }] } }))
+        res.end(
+          JSON.stringify({
+            IPAM: { Config: [{ Subnet: '172.30.0.0/16', Gateway: '172.30.0.1' }, { Subnet: 'fd00::/64' }, {}] },
+          })
+        )
       else if (req.url?.includes('/networks?')) res.end('[]')
       else if (req.url?.includes('/networks/create')) res.end('{}')
       else if (req.url?.includes('/containers/create')) {
@@ -329,7 +333,10 @@ describe('Docker and host parsers', () => {
     const docker = new DockerEngineDriver(socket)
     expect(await docker.version()).toBe('28.0')
     await docker.ensureNetwork('fleet')
-    expect(await docker.networkInspect('fleet')).toEqual(['172.30.0.0/16', 'fd00::/64'])
+    expect(await docker.networkInspect('fleet')).toEqual([
+      { subnet: '172.30.0.0/16', gateway: '172.30.0.1' },
+      { subnet: 'fd00::/64', gateway: null },
+    ])
     expect(await docker.imageInspect('missing')).toBeNull()
     await docker.volumeCreate('home', {})
     expect(

@@ -276,7 +276,8 @@ it('blocks fleet addresses from the public API, pairing, and screen upgrades', a
   const cfg = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir })
   const store = new Store(dir)
   const docker = new FakeDockerDriver()
-  docker.networkInspect = async () => ['127.0.0.0/8']
+  // 127.0.0.1 plays a bot address here; the bridge gateway (the host side) is elsewhere in the subnet.
+  docker.networkInspect = async () => [{ subnet: '127.0.0.0/8', gateway: '127.0.0.254' }]
   const lifecycle = new Lifecycle(store, docker, cfg)
   const gateway = createGatewayServers({
     auth: new Auth(store),
@@ -303,6 +304,41 @@ it('blocks fleet addresses from the public API, pairing, and screen upgrades', a
       ws.on('error', () => resolve(0))
     })
     expect(upgrade).toBe(403)
+  } finally {
+    await gateway.close()
+    store.close()
+  }
+})
+
+it('lets the host reach the public API through the bridge gateway address inside the fleet subnet', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-network-host-'))
+  dirs.push(dir)
+  const cfg = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir })
+  const store = new Store(dir)
+  const docker = new FakeDockerDriver()
+  // Docker's port proxy (and `tailscale serve` on the host) connects from the bridge gateway, here 127.0.0.1.
+  docker.networkInspect = async () => [{ subnet: '127.0.0.0/8', gateway: '127.0.0.1' }]
+  const lifecycle = new Lifecycle(store, docker, cfg)
+  const gateway = createGatewayServers({
+    auth: new Auth(store),
+    config: { ...cfg, publicPort: 0, internalPort: 0 },
+    events: new EventHub(async () => {}),
+    host: new HostMonitor(cfg, docker),
+    lifecycle,
+    store,
+  })
+  await gateway.listen()
+  const port = (gateway.publicServer.address() as { port: number }).port
+  try {
+    const meta = await fetch(`http://127.0.0.1:${port}/v1/meta`)
+    expect(meta.status).toBe(200)
+    // Pairing is reachable (and fails only on its own validation), not refused by the network rule.
+    const pair = await fetch(`http://127.0.0.1:${port}/v1/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    expect(pair.status).toBe(400)
   } finally {
     await gateway.close()
     store.close()

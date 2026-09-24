@@ -21,10 +21,12 @@ export type ContainerInfo = {
   labels: Record<string, string>
 }
 export type ContainerStats = { memoryBytes: number; memoryLimitBytes: number; cpuPercent: number }
+/** A fleet network subnet and its bridge gateway address (the host side of the bridge). */
+export type FleetNetworkSubnet = { subnet: string; gateway: string | null }
 export interface DockerDriver {
   version(): Promise<string>
   ensureNetwork(name: string): Promise<void>
-  networkInspect(name: string): Promise<string[]>
+  networkInspect(name: string): Promise<FleetNetworkSubnet[]>
   imageInspect(ref: string): Promise<{ id: string } | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
   containerCreate(spec: ContainerSpec): Promise<string>
@@ -117,9 +119,12 @@ export class DockerEngineDriver implements DockerDriver {
     if (!networks.some((network: any) => network.Name === name))
       await this.request('POST', await this.route('/networks/create'), { Name: name, Driver: 'bridge' })
   }
-  async networkInspect(name: string): Promise<string[]> {
+  async networkInspect(name: string): Promise<FleetNetworkSubnet[]> {
     const result = await this.request('GET', await this.route('/networks/' + encodeURIComponent(name)))
-    return (result.IPAM?.Config ?? []).map((entry: { Subnet?: string }) => entry.Subnet).filter(Boolean)
+    const entries: { Subnet?: string; Gateway?: string }[] = result.IPAM?.Config ?? []
+    return entries.flatMap((entry) =>
+      entry.Subnet ? [{ subnet: entry.Subnet, gateway: entry.Gateway ? entry.Gateway : null }] : []
+    )
   }
   async imageInspect(ref: string): Promise<{ id: string } | null> {
     try {
@@ -212,8 +217,8 @@ export class FakeDockerDriver implements DockerDriver {
   async version() {
     return '28.0.0'
   }
-  async networkInspect(_name: string): Promise<string[]> {
-    return ['172.30.0.0/16']
+  async networkInspect(_name: string): Promise<FleetNetworkSubnet[]> {
+    return [{ subnet: '172.30.0.0/16', gateway: '172.30.0.1' }]
   }
   async ensureNetwork(name: string) {
     this.networks.add(name)

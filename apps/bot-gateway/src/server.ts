@@ -74,6 +74,10 @@ export function createGatewayServers(ctx: GatewayContext) {
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
   let subnetBlock = new BlockList()
+  // Traffic reaching a published port from the host (Docker's port proxy, `tailscale serve`) arrives from the
+  // bridge gateway address, which lies inside the fleet subnet. Bots use their own addresses and cannot
+  // complete a TCP handshake while spoofing the gateway's, so that single address is not treated as a bot.
+  let hostGateways = new Set<string>()
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -81,13 +85,16 @@ export function createGatewayServers(ctx: GatewayContext) {
     const subnets = await ctx.lifecycle.docker.networkInspect(ctx.config.network)
     if (!subnets.length) throw new GatewayError('DOCKER_UNAVAILABLE', 'Fleet network has no subnet')
     const next = new BlockList()
-    for (const subnet of subnets) {
+    const gateways = new Set<string>()
+    for (const { subnet, gateway } of subnets) {
       const [address, prefix] = subnet.split('/')
       const family = isIP(address)
       if (!family || prefix === undefined) throw new GatewayError('DOCKER_UNAVAILABLE', 'Invalid fleet network subnet')
       next.addSubnet(address, Number(prefix), family === 4 ? 'ipv4' : 'ipv6')
+      if (gateway && isIP(gateway)) gateways.add(gateway)
     }
     subnetBlock = next
+    hostGateways = gateways
   }
   const remote = (address: string | undefined) => {
     const normalized = address?.startsWith('::ffff:') ? address.slice(7) : (address ?? '')
@@ -96,7 +103,11 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const insideFleet = (address: string | undefined) => {
     const value = remote(address)
-    return !!value.family && subnetBlock.check(value.address, value.family === 4 ? 'ipv4' : 'ipv6')
+    return (
+      !!value.family &&
+      !hostGateways.has(value.address) &&
+      subnetBlock.check(value.address, value.family === 4 ? 'ipv4' : 'ipv6')
+    )
   }
   const loopback = (address: string | undefined) => {
     const value = remote(address)
