@@ -662,7 +662,8 @@ export function mcpResultToChatToolOutput(result: McpToolResultLike): ChatToolOu
     const line = recordText(entry)
     if (line) text.push(line)
   }
-  const structuredContent = safeStructuredContent(result.structuredContent)
+  // MCP structured content is an object or absent; Codex serializes an absent one as null.
+  const structuredContent = safeStructuredContent(result.structuredContent ?? undefined)
   const structuredText = stringifyStructured(structuredContent)
   if (structuredText) text.push(`Structured content:\n${structuredText}`)
   if (omittedImages > 0) text.push(toolImageOmissionNote(omittedImages))

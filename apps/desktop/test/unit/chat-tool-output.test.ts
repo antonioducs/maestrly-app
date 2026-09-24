@@ -226,6 +226,14 @@ describe('host-owned multimodal tool output', () => {
     expect(JSON.stringify(output)).not.toContain(IMAGE_DATA)
   })
 
+  it('treats a null structuredContent (Codex serializes an absent one so) as absent', () => {
+    const output = mcpResultToChatToolOutput({
+      content: [{ type: 'text', text: 'Screen: 1280 × 800' }],
+      structuredContent: null,
+    })
+    expect(output).toEqual({ text: 'Screen: 1280 × 800' })
+  })
+
   it('bounds MCP image retention and records omitted image blocks in text', () => {
     const output = mcpResultToChatToolOutput({
       content: Array.from({ length: MAX_TOOL_IMAGES_PER_RESULT + 2 }, () => ({
