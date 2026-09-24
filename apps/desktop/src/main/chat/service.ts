@@ -204,6 +204,7 @@ import {
   clearChatMessages,
   deleteChatMessagesFrom,
   findAttachmentImagePart,
+  findAttachmentPdfPart,
   findGeneratedImagePart,
   getChatMessage,
   hasChatToolImageOwner,
@@ -224,6 +225,7 @@ import { readGeneratedImage } from './generated-images'
 import {
   decodeLegacyAttachmentData,
   deleteAttachmentImages,
+  materializePdfPreview,
   readAttachmentImage,
   preserveResendAttachments,
 } from './attachment-artifacts'
@@ -363,7 +365,7 @@ import {
   type MaestroToStandardResult,
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
-import type { ChatMode } from '../../shared/chat'
+import type { ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
@@ -9118,6 +9120,26 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         }
       }
       return { ok: false as const, error: 'not-found' as const }
+    }
+  )
+  // Opens a PDF attachment in the operating system's default viewer, from a read-only copy (never the artifact).
+  deps.mhandle(
+    'chat:open-attachment-pdf',
+    async (
+      _e,
+      payload?: { conversationId?: string; messageId?: string; partId?: string }
+    ): Promise<ChatOpenAttachmentResult> => {
+      const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
+      const messageId = typeof payload?.messageId === 'string' ? payload.messageId : ''
+      const partId = typeof payload?.partId === 'string' ? payload.partId : ''
+      if (!conversationId || !messageId || !partId) return { ok: false, error: 'not-found' }
+      const part = findAttachmentPdfPart(conversationId, messageId, partId)
+      if (!part) return { ok: false, error: 'not-found' }
+      const preview = await materializePdfPreview(conversationId, part)
+      if (!preview.ok) return preview
+      const error = await shell.openPath(preview.path)
+      if (error) console.warn('[chat] Could not open PDF attachment:', error)
+      return error ? { ok: false, error: 'open-failed' } : { ok: true }
     }
   )
   deps.mhandle(

@@ -234,6 +234,11 @@ export async function deleteAttachmentImages(conversationId: string, artifactIds
     } catch {
       /* orphan is better than failing cleanup */
     }
+    try {
+      await fsp.rm(previewDir(conversationId, artifactId), { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
@@ -243,6 +248,81 @@ export async function deleteConversationAttachmentImages(conversationId: string)
   } catch {
     /* best-effort */
   }
+  try {
+    await fsp.rm(previewDir(conversationId), { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
+}
+
+// Read-only copies handed to the operating system's PDF viewer. The viewer never gets the artifact itself: a
+// saved annotation would change its bytes and invalidate the part. Copies live in the private profile (a shared
+// temp directory would expose them to other local users) and are removed with their message, their conversation
+// and on the next start.
+function previewRoot(): string {
+  return path.join(app.getPath('userData'), 'chat-attachment-previews')
+}
+
+function previewDir(conversationId: string, artifactId?: string): string {
+  if (!SAFE_ID.test(conversationId) || (artifactId !== undefined && !SAFE_ID.test(artifactId))) {
+    throw new AttachmentArtifactError('Invalid attachment preview id.')
+  }
+  return artifactId === undefined
+    ? path.join(previewRoot(), conversationId)
+    : path.join(previewRoot(), conversationId, artifactId)
+}
+
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com\d|lpt\d)$/i
+
+/** The attachment's own name (shown as the viewer's title), reduced to a safe single path segment. */
+function previewFileName(name: string): string {
+  const base = (name.split(/[\\/]/).pop() ?? '').replace(/[\p{Cc}<>:"|?*]+/gu, '-').replace(/\.pdf$/i, '')
+  const stem = Array.from(base)
+    .slice(0, 120)
+    .join('')
+    .replace(/^[\s.-]+|[\s.]+$/g, '')
+  const safe = stem || 'document'
+  return `${WINDOWS_RESERVED_NAME.test(safe) ? `_${safe}` : safe}.pdf`
+}
+
+async function isSameRegularFile(file: string, bytes: Uint8Array): Promise<boolean> {
+  try {
+    const stat = await fsp.lstat(file)
+    if (!stat.isFile() || stat.size !== bytes.byteLength) return false
+    return (await fsp.readFile(file)).equals(bytes)
+  } catch {
+    return false
+  }
+}
+
+export async function materializePdfPreview(
+  conversationId: string,
+  part: { artifactId?: string; byteSize?: number; name: string }
+): Promise<{ ok: true; path: string } | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' }> {
+  if (!part.artifactId) return { ok: false, error: 'not-found' }
+  const stored = await readAttachmentPdf(conversationId, part.artifactId, part.byteSize)
+  if (!stored.ok) return stored
+  const dir = previewDir(conversationId, part.artifactId)
+  const target = path.join(dir, previewFileName(part.name))
+  const tmp = path.join(dir, `.${randomBytes(8).toString('hex')}.tmp`)
+  try {
+    await fsp.mkdir(dir, { recursive: true, mode: 0o700 })
+    await fsp.writeFile(tmp, stored.bytes, { mode: 0o400, flag: 'wx' })
+    // rename replaces whatever sits at the target (a planted symlink included) without following it.
+    await fsp.rename(tmp, target).catch(async (error: unknown) => {
+      // Windows refuses to replace a read-only copy or one a viewer holds open; an identical copy is reusable.
+      if (!(await isSameRegularFile(target, stored.bytes))) throw error
+    })
+  } catch {
+    return { ok: false, error: 'unreadable' }
+  } finally {
+    await fsp.rm(tmp, { force: true }).catch(() => {})
+  }
+  return { ok: true, path: target }
+}
+
+export async function clearAttachmentPreviews(): Promise<void> {
+  await fsp.rm(previewRoot(), { recursive: true, force: true }).catch(() => {})
 }
 
 export function resolveFileImageBytesSync(

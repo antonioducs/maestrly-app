@@ -541,6 +541,10 @@ export type ChatToolImageResult =
 
 export type ChatAttachmentImageResult = ChatGeneratedImageResult
 
+export type ChatOpenAttachmentResult =
+  | { ok: true }
+  | { ok: false; error: 'not-found' | 'unreadable' | 'invalid' | 'open-failed' }
+
 export type ChatAttachmentKind = 'image' | 'text' | 'pdf'
 
 export interface ChatAttachmentInput {

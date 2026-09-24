@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,14 +27,22 @@ vi.mock('electron', () => ({
 
 const { freshDb, closeDb } = await import('../helpers/db')
 const { makeConversation, makeWorkspace } = await import('../helpers/factories')
-const { deleteChatMessagesFrom, getChatMessage, getMessageSeq, upsertChatMessage } = await import(
-  '../../src/main/chat/chat-store'
-)
+const {
+  deleteChatMessagesFrom,
+  findAttachmentImagePart,
+  findAttachmentPdfPart,
+  getChatMessage,
+  getMessageSeq,
+  upsertChatMessage,
+} = await import('../../src/main/chat/chat-store')
 const {
   AttachmentArtifactError,
   MAX_ATTACHMENT_IMAGE_BYTES,
   MAX_ATTACHMENT_PDF_BYTES,
+  clearAttachmentPreviews,
   deleteAttachmentImages,
+  deleteConversationAttachmentImages,
+  materializePdfPreview,
   preserveResendAttachments,
   readAttachmentImage,
   readAttachmentPdf,
@@ -353,5 +361,137 @@ describe('PDF attachment artifacts', () => {
     await deleteAttachmentImages(conv.id, [stored.artifactId])
 
     expect(existsSync(pdfFile(conv.id, stored.artifactId))).toBe(false)
+  })
+})
+
+describe('PDF previews for the system viewer', () => {
+  const previews = (): string => path.join(h.userData, 'chat-attachment-previews')
+
+  it('writes a read-only copy named after the attachment, outside the artifact store', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+
+    const preview = await materializePdfPreview(conv.id, { ...stored, name: 'Relatório final.pdf' })
+
+    expect(preview.ok).toBe(true)
+    if (!preview.ok) return
+    expect(preview.path).toBe(path.join(previews(), conv.id, stored.artifactId, 'Relatório final.pdf'))
+    expect(readFileSync(preview.path).equals(PDF)).toBe(true)
+    expect(statSync(preview.path).mode & 0o222).toBe(0)
+    // The stored artifact stays untouched: the viewer can never modify it.
+    expect((await readAttachmentPdf(conv.id, stored.artifactId, stored.byteSize)).ok).toBe(true)
+  })
+
+  it('reopens by rewriting the same copy instead of accumulating files', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    const first = await materializePdfPreview(conv.id, { ...stored, name: 'a.pdf' })
+    const second = await materializePdfPreview(conv.id, { ...stored, name: 'a.pdf' })
+
+    expect(first).toEqual(second)
+    expect(second.ok && readFileSync(second.path).equals(PDF)).toBe(true)
+  })
+
+  it.each([
+    ['../../escape.pdf', 'escape.pdf'],
+    ['C:\\Users\\x\\notes.PDF', 'notes.pdf'],
+    ['bad<>:"|?*name', 'bad-name.pdf'],
+    ['.hidden.pdf', 'hidden.pdf'],
+    ['', 'document.pdf'],
+    ['CON.pdf', '_CON.pdf'],
+  ])('sanitizes the file name %j', async (name, expected) => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+
+    const preview = await materializePdfPreview(conv.id, { ...stored, name })
+
+    expect(preview.ok && path.basename(preview.path)).toBe(expected)
+    expect(preview.ok && path.dirname(preview.path)).toBe(path.join(previews(), conv.id, stored.artifactId))
+  })
+
+  it('refuses missing, tampered and non-PDF artifacts', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+
+    expect(await materializePdfPreview(conv.id, { artifactId: 'missing', name: 'a.pdf' })).toEqual({
+      ok: false,
+      error: 'not-found',
+    })
+    expect(await materializePdfPreview(conv.id, { ...stored, byteSize: stored.byteSize + 1, name: 'a.pdf' })).toEqual({
+      ok: false,
+      error: 'invalid',
+    })
+    const image = await saveAttachmentImage({ conversationId: conv.id, bytes: PNG_1X1 })
+    expect(await materializePdfPreview(conv.id, { ...image, name: 'a.pdf' })).toEqual({ ok: false, error: 'invalid' })
+    expect(existsSync(previews())).toBe(false)
+  })
+
+  it('does not write through a symlink planted at the preview path', async () => {
+    const conv = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    const dir = path.join(previews(), conv.id, stored.artifactId)
+    mkdirSync(dir, { recursive: true })
+    const outside = path.join(h.userData, 'outside.txt')
+    writeFileSync(outside, 'keep')
+    symlinkSync(outside, path.join(dir, 'a.pdf'))
+
+    const preview = await materializePdfPreview(conv.id, { ...stored, name: 'a.pdf' })
+
+    expect(preview.ok && readFileSync(preview.path).equals(PDF)).toBe(true)
+    expect(readFileSync(outside, 'utf8')).toBe('keep')
+  })
+
+  it('removes previews with their message, their conversation, and at startup', async () => {
+    const conv = chatConv()
+    const a = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    const b = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    await materializePdfPreview(conv.id, { ...a, name: 'a.pdf' })
+    await materializePdfPreview(conv.id, { ...b, name: 'b.pdf' })
+
+    await deleteAttachmentImages(conv.id, [a.artifactId])
+    expect(existsSync(path.join(previews(), conv.id, a.artifactId))).toBe(false)
+    expect(existsSync(path.join(previews(), conv.id, b.artifactId))).toBe(true)
+
+    await deleteConversationAttachmentImages(conv.id)
+    expect(existsSync(path.join(previews(), conv.id))).toBe(false)
+
+    const other = chatConv()
+    const c = await savePdfAttachment({ conversationId: other.id, bytes: PDF })
+    await materializePdfPreview(other.id, { ...c, name: 'c.pdf' })
+    await clearAttachmentPreviews()
+    expect(existsSync(previews())).toBe(false)
+  })
+})
+
+describe('attachment part ownership lookups', () => {
+  it('resolves a PDF part only within its own message and conversation', async () => {
+    const conv = chatConv()
+    const other = chatConv()
+    const stored = await savePdfAttachment({ conversationId: conv.id, bytes: PDF })
+    upsertChatMessage({
+      id: 'm-pdf',
+      conversationId: conv.id,
+      role: 'user',
+      createdAt: 1,
+      parts: [
+        {
+          type: 'file',
+          id: 'p1',
+          name: 'a.pdf',
+          mediaType: 'application/pdf',
+          kind: 'pdf',
+          artifactId: stored.artifactId,
+          byteSize: stored.byteSize,
+          pageCount: 1,
+          data: '',
+        },
+      ],
+    })
+
+    expect(findAttachmentPdfPart(conv.id, 'm-pdf', 'p1')).toMatchObject({ kind: 'pdf', artifactId: stored.artifactId })
+    expect(findAttachmentPdfPart(other.id, 'm-pdf', 'p1')).toBeNull()
+    expect(findAttachmentPdfPart(conv.id, 'm-pdf', 'missing')).toBeNull()
+    // The image lookup (thumbnail IPC) never returns a PDF part.
+    expect(findAttachmentImagePart(conv.id, 'm-pdf', 'p1')).toBeNull()
   })
 })

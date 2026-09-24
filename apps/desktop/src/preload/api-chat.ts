@@ -14,6 +14,7 @@ import type {
   ChatFileHit,
   ChatGeneratedImageResult,
   ChatAttachmentImageResult,
+  ChatOpenAttachmentResult,
   ChatAttachmentInput,
   ChatToolImageResult,
   ChatUserPrompt,
@@ -548,6 +549,12 @@ export const chatApi = {
     partId: string
   ): Promise<ChatAttachmentImageResult> =>
     ipcRenderer.invoke('chat:attachment-image', { conversationId, messageId, partId }),
+  chatOpenAttachmentPdf: (
+    conversationId: string,
+    messageId: string,
+    partId: string
+  ): Promise<ChatOpenAttachmentResult> =>
+    ipcRenderer.invoke('chat:open-attachment-pdf', { conversationId, messageId, partId }),
 
   chatRuntime: (conversationId: string): Promise<ChatRuntimeState> =>
     ipcRenderer.invoke('chat:runtime', conversationId),

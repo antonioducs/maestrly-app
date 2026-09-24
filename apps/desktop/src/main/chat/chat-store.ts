@@ -1632,19 +1632,37 @@ export function releaseUnreferencedChatToolImages(refs: ReadonlySet<string>): vo
  * bare artifactId): read only if the part ACTUALLY exists in that conversation, so leaked handles cannot
  * open artifacts from another conversation.
  */
-export function findAttachmentImagePart(
+function findAttachmentPart(
   conversationId: string,
   messageId: string,
-  partId: string
+  partId: string,
+  kind: 'image' | 'pdf'
 ): Extract<MessagePart, { type: 'file' }> | null {
   const row = getDb()
     .prepare('SELECT parts_json FROM chat_messages WHERE id = ? AND conversation_id = ?')
     .get(messageId, conversationId) as { parts_json?: string } | undefined
   if (!row) return null
   for (const part of parseParts(row.parts_json ?? '[]')) {
-    if (part.type === 'file' && part.kind === 'image' && part.id === partId) return part
+    if (part.type === 'file' && part.kind === kind && part.id === partId) return part
   }
   return null
+}
+
+export function findAttachmentImagePart(
+  conversationId: string,
+  messageId: string,
+  partId: string
+): Extract<MessagePart, { type: 'file' }> | null {
+  return findAttachmentPart(conversationId, messageId, partId, 'image')
+}
+
+/** Same ownership check as images: the PDF must belong to that message of that conversation. */
+export function findAttachmentPdfPart(
+  conversationId: string,
+  messageId: string,
+  partId: string
+): Extract<MessagePart, { type: 'file' }> | null {
+  return findAttachmentPart(conversationId, messageId, partId, 'pdf')
 }
 
 export function findGeneratedImagePart(
