@@ -87,7 +87,7 @@ Open the bot's **Settings** tab to choose an **Account and model**. Each bot nee
 
 | View or action | What happens |
 | --- | --- |
-| **Conversation** | Send a message, follow the transcript and tool activity, answer questions, and handle approval requests. Messages sent while paused wait. |
+| **Conversation** | Send text or up to eight images, follow the transcript and tool activity, view screenshots and generated images returned by tools, answer questions, and handle approval requests. Messages sent while paused wait. |
 | **Awaiting you** | Collects permission requests, questions, and help requests across bots. You decide; the bot cannot approve for you. |
 | **Screen** | Watch the bot's live desktop without sending input. **Take control** pauses the bot at the next safe step; its active turn may be interrupted. Your keyboard and mouse then operate that server desktop. **Give back** accepts an optional note; the bot is told how long you controlled it, reads the note, takes a fresh screenshot, and continues. If the controller disconnects, control releases automatically after five minutes without a control connection. |
 | **Pause / Resume** | Pause holds the bot and its queued work; resume permits it to continue. Paused routines are skipped. |
@@ -99,6 +99,8 @@ In **Settings → Routines**, give a routine a title, prompt, local time, days, 
 **Can talk to** grants a bot access to named peers. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
 
 The **Server** page shows versions, CPU, memory, disk, bot resource use, and peer messages. After your Mac reconnects, **While your Mac was off** summarizes activity recorded by the gateway; open a bot to inspect its full conversation.
+
+The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in that bot's own desktop settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
 
 ## What a bot can do
 

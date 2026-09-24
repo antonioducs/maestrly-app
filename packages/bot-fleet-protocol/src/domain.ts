@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import {
+  FLEET_IMAGE_LIMITS,
+  FLEET_IMAGE_MEDIA_TYPES,
   FLEET_INSTRUCTIONS_MAX,
   FLEET_MESSAGE_TEXT_MAX,
   FLEET_NAME_MAX,
@@ -110,6 +112,27 @@ export const fleetSelectionOptionSchema = z
   .refine((option) => option.id === option.providerId + '::' + option.modelId, 'id must match provider and model')
 export type FleetSelectionOption = z.infer<typeof fleetSelectionOptionSchema>
 
+export const fleetImageMediaTypeSchema = z.enum(FLEET_IMAGE_MEDIA_TYPES)
+export type FleetImageMediaType = z.infer<typeof fleetImageMediaTypeSchema>
+/** An image the bot's Maestrly can serve by id (tool screenshots, generated images, owner attachments). */
+export const fleetImageRefSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,120}$/),
+  mediaType: fleetImageMediaTypeSchema,
+  byteSize: fleetNonNegativeIntSchema.nullable(),
+  name: z.string().max(200).nullable(),
+})
+export type FleetImageRef = z.infer<typeof fleetImageRefSchema>
+
+/** Context and cost of the bot's primary conversation, computed by the bot's own Maestrly like its composer does. */
+export const fleetUsageSchema = z.object({
+  contextUsedTokens: fleetNonNegativeIntSchema.nullable(),
+  contextWindowTokens: fleetNonNegativeIntSchema.nullable(),
+  contextQuality: z.enum(['measured', 'estimated']).nullable(),
+  costUsd: fleetNonNegativeNumberSchema.nullable(),
+  updatedAt: fleetTimestampSchema.nullable(),
+})
+export type FleetUsage = z.infer<typeof fleetUsageSchema>
+
 export const fleetActivitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('tool'), tool: z.string(), target: z.string().nullable() }),
   z.object({ kind: z.literal('thinking') }),
@@ -173,6 +196,7 @@ export const fleetBotSchema = z.object({
     display: z.string(),
   }),
   appVersion: z.string().nullable(),
+  usage: fleetUsageSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -195,11 +219,13 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
   z.object({
     ...transcriptBase,
     kind: z.literal('user'),
-    text: fleetMessageTextSchema,
+    // Empty when the owner sent only images.
+    text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
     source: z.enum(['owner', 'routine', 'peer', 'continuation']),
     routine: routineRef.optional(),
     peer: peerRef.optional(),
     queued: z.boolean(),
+    images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
   }),
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
   z.object({
@@ -209,6 +235,8 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     target: z.string().nullable(),
     state: z.enum(['running', 'done', 'error', 'interrupted']),
     output: z.string().max(FLEET_TOOL_OUTPUT_MAX).nullable(),
+    // Screenshots and generated images the tool returned, viewable by the owner.
+    images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.imagesPerItemMax).default([]),
   }),
   z.object({
     ...transcriptBase,

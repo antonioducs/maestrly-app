@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import {
   FLEET_INSTANCE_ROUTES,
+  FLEET_MESSAGE_BODY_MAX,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_SCREEN_UPGRADE,
@@ -41,6 +42,7 @@ export interface InstanceControl {
   addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse>
   removeAccount(providerId: string): Promise<void>
   transcript(before: string | null, limit: number): FleetTranscriptPage | Promise<FleetTranscriptPage>
+  image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
   cancel(): Promise<void>
@@ -101,7 +103,7 @@ function authorized(input: string | undefined, expected: string): boolean {
   if (!input?.startsWith('Bearer ')) return false
   return timingSafeEqual(hash(input.slice(7)), hash(expected))
 }
-async function body(request: IncomingMessage, schema: z.ZodType | null): Promise<unknown> {
+async function body(request: IncomingMessage, schema: z.ZodType | null, maxBytes = 1_048_576): Promise<unknown> {
   if (schema && !request.headers['content-type']?.startsWith('application/json'))
     throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Expected a JSON request body.')
   let size = 0
@@ -109,7 +111,7 @@ async function body(request: IncomingMessage, schema: z.ZodType | null): Promise
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     size += bytes.length
-    if (size > 1_048_576) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Request body exceeds 1 MiB.')
+    if (size > maxBytes) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Request body too large.')
     chunks.push(bytes)
   }
   if (!schema) return undefined
@@ -154,7 +156,18 @@ export function createInstanceControlServer(
       if (match.key === 'screenView' || match.key === 'screenControl')
         throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       const route = FLEET_INSTANCE_ROUTES[match.key]
-      const input = await body(request, route.body)
+      const input = await body(request, route.body, match.key === 'inputSend' ? FLEET_MESSAGE_BODY_MAX : 1_048_576)
+      if (match.key === 'image') {
+        const image = await control.image(match.id ?? '')
+        response.writeHead(200, {
+          'Content-Type': image.mediaType,
+          'Content-Length': image.bytes.length,
+          'Cache-Control': 'private, max-age=86400',
+          'X-Content-Type-Options': 'nosniff',
+        })
+        response.end(Buffer.from(image.bytes))
+        return
+      }
       if (match.key === 'events') {
         const raw = url.searchParams.get('since') ?? '0'
         if (!/^\d+$/.test(raw)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')

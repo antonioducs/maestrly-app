@@ -99,6 +99,7 @@ export class Peers {
         source: 'peer',
         peer: { botId: message.from, name: this.lifecycle.get(message.from)?.name ?? message.from },
         text: message.text,
+        attachments: [],
         idempotencyKey: message.id,
       })
       this.store.markPeerDelivered(message.id)

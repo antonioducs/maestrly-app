@@ -19,6 +19,7 @@ import type {
   FleetTranscriptPage,
   FleetUiOpenRequest,
   FleetAddApiKeyAccountRequest,
+  FleetImageMediaType,
 } from '@maestrly/bot-fleet-protocol'
 export type FleetConnectionView = {
   state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
@@ -40,6 +41,10 @@ export type FleetSnapshot = {
   peerMessages: FleetPeerMessage[]
 }
 export type FleetScreenData = { channelId: string; data: ArrayBuffer }
+/** An image the owner attaches from the Mac; main base64-encodes it for the gateway. */
+export type FleetOutgoingAttachment = { name: string; mediaType: FleetImageMediaType; data: Uint8Array }
+/** Bytes of a bot image (a FleetImageRef from the transcript). */
+export type FleetImageData = { mediaType: FleetImageMediaType; data: Uint8Array }
 export type FleetScreenState = {
   channelId: string
   state: 'connecting' | 'open' | 'closed' | 'error'
@@ -59,6 +64,9 @@ export type {
   FleetSelectionOption,
   FleetTakeoverState,
   FleetTranscriptPage,
+  FleetImageMediaType,
+  FleetImageRef,
+  FleetUsage,
 } from '@maestrly/bot-fleet-protocol'
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -97,8 +105,14 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:remove-account', botId, providerId),
   fleetGetTranscript: (botId: string, before?: string | null, limit?: number): Promise<FleetTranscriptPage> =>
     ipcRenderer.invoke('fleet:getTranscript', botId, before, limit),
-  fleetSendMessage: (botId: string, text: string): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
-    ipcRenderer.invoke('fleet:sendMessage', botId, text),
+  fleetSendMessage: (
+    botId: string,
+    text: string,
+    attachments: FleetOutgoingAttachment[] = []
+  ): Promise<{ inputId: string; itemId: string; queued: boolean }> =>
+    ipcRenderer.invoke('fleet:sendMessage', botId, text, attachments),
+  fleetGetImage: (botId: string, imageId: string): Promise<FleetImageData> =>
+    ipcRenderer.invoke('fleet:getImage', botId, imageId),
   fleetRemoveQueuedMessage: (botId: string, inputId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:removeQueuedMessage', botId, inputId),
   fleetResolveInteraction: (

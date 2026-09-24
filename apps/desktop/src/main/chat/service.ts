@@ -2773,7 +2773,7 @@ async function readMentionPart(cwd: string, m: Mention): Promise<MessagePart | n
  * custom/proxy retains capabilities but has unknown pricing. No providerId → canonical metadata (compat). Also powers
  * auto-compact to keep them aligned. Returns raw sources too (so the UI can show the actual ceiling).
  */
-async function effectiveModelMeta(
+export async function effectiveModelMeta(
   modelId: string,
   providerId?: string,
   signal?: AbortSignal
@@ -10322,6 +10322,7 @@ export function disposeChat(): Promise<void> {
 export async function startExecutorChatTurn(input: {
   conversationId: string
   prompt: string
+  attachments?: ChatAttachmentInput[]
   signal: AbortSignal
   remoteAdmission?: boolean
   botAdmission?: BotTurnAdmission
@@ -10342,7 +10343,7 @@ export async function startExecutorChatTurn(input: {
   try {
     if (input.remoteAdmission && !remoteChatPolicy(input.conversationId))
       throw new Error('Remote chat policy is missing')
-    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, input.attachments, {
       remoteAdmission: input.remoteAdmission,
       botAdmission: input.botAdmission,
       ...(input.slot ? { operation: input.slot.operation } : {}),

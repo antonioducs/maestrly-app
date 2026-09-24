@@ -3,6 +3,7 @@ import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(async () => undefined),
+  getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn() },
 }))
 vi.mock('../../src/main/fleet/client/service', () => ({
@@ -17,6 +18,7 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     getDigest: vi.fn(),
     ackDigest: vi.fn(),
     call: mocks.call,
+    getImage: mocks.getImage,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
   },
@@ -30,6 +32,34 @@ afterEach(() => {
 })
 
 describe('fleet IPC validation', () => {
+  it('encodes validated image attachments in main and validates image ids', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
+    const data = new Uint8Array([137, 80, 78, 71])
+    await invoke('fleet:sendMessage', 'bot', '', [{ name: 'small.png', mediaType: 'image/png', data }])
+    expect(mocks.call).toHaveBeenCalledWith('botMessageSend', {
+      params: { id: 'bot' },
+      body: {
+        text: '',
+        idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
+        attachments: [{ name: 'small.png', mediaType: 'image/png', dataBase64: Buffer.from(data).toString('base64') }],
+      },
+    })
+    expect(() => invoke('fleet:sendMessage', 'bot', '', [])).toThrow()
+    expect(() =>
+      invoke('fleet:sendMessage', 'bot', 'hello', [
+        { name: 'bad.png', mediaType: 'image/png', data: new Uint8Array(5 * 1024 * 1024 + 1) },
+      ])
+    ).toThrow()
+    await invoke('fleet:getImage', 'bot', 't-valid')
+    expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid')
+    expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
+  })
   it('rejects invalid bot IDs, creation bodies, actions, resolutions, and screen frames before dispatch', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
     const handlers = new Map<string, (...args: unknown[]) => unknown>()

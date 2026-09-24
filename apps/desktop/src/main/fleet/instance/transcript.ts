@@ -7,10 +7,13 @@ import {
   type FleetTranscriptItem,
   type FleetTranscriptPage,
   type FleetQuestion,
+  type FleetImageRef,
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
 import { promptForInput, type QueuedInput } from './queue'
+import { imageId } from './images'
+import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
 
 const at = (time: number): string => new Date(time).toISOString()
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? ''))
@@ -82,7 +85,8 @@ function peerOutput(output: unknown): { delivered?: boolean; name?: string } {
 function toolItem(
   message: ChatMessage,
   part: Extract<MessagePart, { type: 'tool' }>,
-  index: number
+  index: number,
+  images: FleetImageRef[]
 ): FleetTranscriptItem {
   const status = part.state.status
   const interrupted =
@@ -110,9 +114,31 @@ function toolItem(
           ? 'error'
           : 'running',
     output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
+    images,
   }
 }
-export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput[] = []): FleetTranscriptItem[] {
+function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
+  return message.parts
+    .filter(
+      (entry): entry is Extract<MessagePart, { type: 'file' }> =>
+        entry.type === 'file' &&
+        entry.kind === 'image' &&
+        !!entry.artifactId &&
+        fleetImageMediaTypeSchema.safeParse(entry.mediaType).success
+    )
+    .slice(0, 8)
+    .map((entry) => ({
+      id: imageId('a', message.id, entry.id),
+      mediaType: entry.mediaType as FleetImageRef['mediaType'],
+      byteSize: entry.byteSize ?? null,
+      name: entry.name,
+    }))
+}
+export function projectChatMessages(
+  messages: ChatMessage[],
+  inputs: QueuedInput[] = [],
+  toolImages: (part: Extract<MessagePart, { type: 'tool' }>) => FleetImageRef[] = () => []
+): FleetTranscriptItem[] {
   const mappedInputs = inputs.filter((item) => item.started && !item.nativeMessageId)
   const byMessage = new Map(inputs.filter((item) => item.nativeMessageId).map((item) => [item.nativeMessageId, item]))
   const claimed = new Set<string>()
@@ -150,6 +176,7 @@ export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput
             routine: linked?.input.routine,
             peer: linked?.input.peer,
             queued: false,
+            images: ownerImageRefs(message),
           })
         } else if (message.role === 'assistant') {
           items.push({
@@ -187,8 +214,38 @@ export function projectChatMessages(messages: ChatMessage[], inputs: QueuedInput
               text: input.text,
               delivered: result.delivered === true,
             })
-        } else items.push(toolItem(message, part, index))
+        } else items.push(toolItem(message, part, index, toolImages(part)))
+      } else if (
+        part.type === 'generated-image' &&
+        message.role === 'assistant' &&
+        fleetImageMediaTypeSchema.safeParse(part.mediaType).success
+      ) {
+        const previous = [...items]
+          .reverse()
+          .find((entry) => entry.kind === 'tool' && entry.id.startsWith(message.id + ':'))
+        if (previous?.kind === 'tool' && previous.images.length < 8)
+          previous.images.push({
+            id: imageId('g', message.id, part.id),
+            mediaType: part.mediaType as FleetImageRef['mediaType'],
+            byteSize: part.byteSize ?? null,
+            name: part.name,
+          })
       }
+    }
+    if (message.role === 'user' && !message.parts.some((part) => part.type === 'text')) {
+      const images = ownerImageRefs(message)
+      if (images.length)
+        items.push({
+          kind: 'user',
+          id: linked?.itemId ?? `${message.id}:0`,
+          at: at(message.createdAt),
+          text: linked?.input.text ?? '',
+          source: linked?.input.source ?? 'owner',
+          routine: linked?.input.routine,
+          peer: linked?.input.peer,
+          queued: false,
+          images,
+        })
     }
   }
   return items.filter((item) => fleetTranscriptItemSchema.safeParse(item).success)

@@ -2,6 +2,8 @@ import {
   FLEET_INSTANCE_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
+  FLEET_IMAGE_LIMITS,
+  fleetImageMediaTypeSchema,
   buildPath,
   fleetInstanceEventSchema,
   type FleetInstanceInput,
@@ -88,6 +90,32 @@ export class InstanceClient {
   }
   transcript(before?: string, limit = 200) {
     return this.call('transcript', {}, { before, limit })
+  }
+  async image(imageId: string): Promise<Response> {
+    try {
+      const response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.image.path, { imageId }), {
+        headers: {
+          [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
+          Authorization: 'Bearer ' + this.controlToken,
+        },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      })
+      if (response.status === 404) throw new GatewayError('NOT_FOUND', 'Image not found')
+      if (!response.ok || !response.body) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot image unavailable')
+      const mediaType = response.headers.get('content-type')
+      const size = Number(response.headers.get('content-length'))
+      if (
+        !fleetImageMediaTypeSchema.safeParse(mediaType).success ||
+        !Number.isSafeInteger(size) ||
+        size < 1 ||
+        size > FLEET_IMAGE_LIMITS.imageReadMaxBytes
+      )
+        throw new GatewayError('INSTANCE_UNAVAILABLE', 'Invalid bot image response')
+      return response
+    } catch (error) {
+      if (error instanceof GatewayError) throw error
+      throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot image unavailable')
+    }
   }
   postInput(body: FleetInstanceInput) {
     return this.call('inputSend', {}, undefined, body)

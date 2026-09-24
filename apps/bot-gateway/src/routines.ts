@@ -169,6 +169,7 @@ export class Routines {
           source: 'routine',
           routine: { id: routine.id, title: routine.title },
           text: routine.prompt,
+          attachments: [],
           idempotencyKey: scheduled && routine.nextRunAt ? scheduledKey(routine.id, routine.nextRunAt) : randomUUID(),
         })
         outcome = 'sent'

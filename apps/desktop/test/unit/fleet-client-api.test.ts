@@ -45,6 +45,17 @@ beforeEach(async () => {
         .end(JSON.stringify({ code: status === 426 ? 'PROTOCOL_INCOMPATIBLE' : 'CONFLICT', message: 'Rejected' }))
       return
     }
+    if (req.url === '/v1/bots/bot/images/t-png') {
+      const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+      res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length }).end(png)
+      return
+    }
+    if (req.url === '/v1/bots/bot/images/missing') {
+      res
+        .writeHead(404, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ code: 'NOT_FOUND', message: 'Image not found' }))
+      return
+    }
     if (req.url === '/v1/meta')
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
@@ -72,6 +83,15 @@ afterEach(async () => {
 })
 
 describe('fleet API and events', () => {
+  it('reads a binary bot image with a typed missing-image error', async () => {
+    const api = new FleetApiClient(origin, 'valid')
+    await expect(api.getImage('bot', 't-png')).resolves.toEqual({
+      mediaType: 'image/png',
+      data: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    })
+    expect(requests.at(-1)).toMatchObject({ url: '/v1/bots/bot/images/t-png', auth: 'Bearer valid', protocol: '1' })
+    await expect(api.getImage('bot', 'missing')).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 })
+  })
   it('uses allowed URLs and route schemas with protocol and authorization headers', async () => {
     expect(isAllowedFleetUrl(origin).ok).toBe(true)
     expect(isAllowedFleetUrl('http://example.com').ok).toBe(false)

@@ -135,6 +135,14 @@ async function subscribe() {
 }
 const bot = (id) => request('GET', '/v1/bots/' + id)
 const transcript = async (id) => (await request('GET', '/v1/bots/' + id + '/transcript?limit=500')).items
+async function fleetImage(botId, imageId) {
+  const response = await fetch(base + '/v1/bots/' + botId + '/images/' + imageId, {
+    headers: { Authorization: 'Bearer ' + token, 'X-Maestrly-Fleet-Protocol': '1' },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), 'image/png')
+  return Buffer.from(await response.arrayBuffer())
+}
 const inbox = async () => (await request('GET', '/v1/inbox')).items
 async function approve(name) {
   const item = await poll(
@@ -432,6 +440,11 @@ async function main() {
     90000
   )
   assert.match(screenshot.output ?? '', /1280\s*[×x]\s*800/)
+  assert.ok(screenshot.images?.length, 'screenshot tool has an image ref')
+  const screenshotBytes = await fleetImage(scoutId, screenshot.images[0].id)
+  assert.equal(screenshotBytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+  assert.equal(screenshotBytes.readUInt32BE(16), 1280)
+  assert.equal(screenshotBytes.readUInt32BE(20), 800)
   timings.firstToolMs = Date.now() - turnStart
   await approve('computer_click')
   await poll(
@@ -513,6 +526,29 @@ async function main() {
       (await transcript(scoutId)).some((item) => item.kind === 'assistant' && item.text.includes('E2E-CONTINUED')),
     90000
   )
+  const usage = await poll('bot usage after a turn', async () => (await bot(scoutId)).usage)
+  assert.ok(usage.updatedAt)
+  const smallPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  await request('POST', '/v1/bots/' + scoutId + '/messages', {
+    text: 'E2E-IMAGE',
+    idempotencyKey: randomUUID(),
+    attachments: [{ name: 'e2e.png', mediaType: 'image/png', dataBase64: smallPng.toString('base64') }],
+  })
+  await poll(
+    'image received by model',
+    async () =>
+      (await transcript(scoutId)).some((item) => item.kind === 'assistant' && item.text.includes('E2E-IMAGE-SEEN')),
+    90000
+  )
+  const imageUser = (await transcript(scoutId)).find(
+    (item) => item.kind === 'user' && item.text === 'E2E-IMAGE' && !item.queued
+  )
+  assert.ok(imageUser?.images?.length, 'owner image has a transcript ref')
+  assert.deepEqual(await fleetImage(scoutId, imageUser.images[0].id), smallPng)
+  pass('conversation images and usage', 'owner PNG reached the model, image refs download, usage is present')
   assert.ok(!(await inbox()).some((item) => item.botId === scoutId && item.interaction.kind === 'help'))
   view.close()
   pass('takeover and continuation', 'control pointer (100,100), close 4001, note and E2E-CONTINUED')

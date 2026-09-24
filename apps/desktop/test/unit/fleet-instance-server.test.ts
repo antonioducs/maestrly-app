@@ -41,6 +41,7 @@ const control: InstanceControl = {
   addApiKeyAccount: async () => ({ providerId: 'prov_test' }),
   removeAccount: async () => {},
   transcript: () => ({ items: [], before: null }),
+  image: async () => ({ mediaType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) }),
   input: async () => ({ inputId: 'input', itemId: 'input:input', queued: true }),
   deleteInput: async () => {},
   cancel: async () => {},
@@ -71,6 +72,37 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return { [FLEET_PROTOCOL_HEADER]: '1', Authorization: 'Bearer ' + token, ...extra }
 }
 describe('instance control HTTP', () => {
+  it('serves binary images only with fleet credentials and keeps the larger body limit on inputs', async () => {
+    const input = vi.fn(async () => ({ inputId: 'input', itemId: 'input:input', queued: true }))
+    const { base } = await setup({ ...control, input })
+    const route = base + '/v1/images/t-valid'
+    const image = await fetch(route, { headers: headers() })
+    expect(image.status).toBe(200)
+    expect(image.headers.get('content-type')).toBe('image/png')
+    expect(image.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(Buffer.from(await image.arrayBuffer())).toEqual(Buffer.from([137, 80, 78, 71]))
+    expect((await fetch(route, { headers: headers({ Origin: 'https://example.test' }) })).status).toBe(403)
+    expect((await fetch(route, { headers: headers({ Authorization: 'Bearer bad' }) })).status).toBe(401)
+    const bytes = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(900_000)])
+    const sent = await fetch(base + '/v1/inputs', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        idempotencyKey: randomUUID(),
+        source: 'owner',
+        text: '',
+        attachments: [{ name: 'large.png', mediaType: 'image/png', dataBase64: bytes.toString('base64') }],
+      }),
+    })
+    expect(sent.status).toBe(200)
+    expect(input).toHaveBeenCalledOnce()
+    const tooLarge = await fetch(base + '/v1/profile', {
+      method: 'PUT',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ padding: 'x'.repeat(1_048_576) }),
+    })
+    expect(tooLarge.status).toBe(400)
+  })
   it('adds and removes an API key account without echoing the key', async () => {
     const addApiKeyAccount = vi.fn(async () => ({ providerId: 'prov_test' }))
     const removeAccount = vi.fn(async () => {})

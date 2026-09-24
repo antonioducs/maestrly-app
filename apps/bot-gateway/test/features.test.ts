@@ -53,6 +53,7 @@ function status(id = 'test'): FleetInstanceStatus {
     queue: [],
     activity: null,
     pending: [],
+    usage: null,
     lastEventSeq: 0,
   }
 }
@@ -250,6 +251,16 @@ describe('instance link and takeover', () => {
       connected: true,
       providers: [{ id: 'prov_test', label: 'Test' }],
     })
+    const usage = {
+      contextUsedTokens: 100,
+      contextWindowTokens: 1000,
+      contextQuality: 'measured' as const,
+      costUsd: 0.01,
+      updatedAt: new Date().toISOString(),
+    }
+    fake.setState({ ...fake.state, usage })
+    await until(() => f.lifecycle.get(bot.id)?.usage?.contextUsedTokens === 100)
+    expect(f.events.some((event: any) => event.type === 'bot.updated' && event.bot.usage?.costUsd === 0.01)).toBe(true)
     const pending = {
       kind: 'permission' as const,
       id: 'p1',

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   FLEET_PROTOCOL_VERSION,
+  FLEET_IMAGE_LIMITS,
   normalizePairingCode,
   type FleetCreateBotRequest,
   type FleetPatchBotRequest,
@@ -106,6 +107,31 @@ export async function publicRoute(
           .instanceFor(id)
           .transcript(url.searchParams.get('before') ?? undefined, number(url.searchParams.get('limit'), 500, 200)),
       }
+    case 'botImage': {
+      const response = await ctx.lifecycle.instanceFor(id).image(params.imageId)
+      const mediaType = response.headers.get('content-type')!
+      const expected = Number(response.headers.get('content-length'))
+      res.writeHead(200, {
+        'Content-Type': mediaType,
+        'Content-Length': expected,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=86400',
+      })
+      let size = 0
+      try {
+        for await (const part of response.body!) {
+          size += part.length
+          if (size > FLEET_IMAGE_LIMITS.imageReadMaxBytes || size > expected)
+            throw new Error('Oversized instance image')
+          if (!res.write(part)) await new Promise<void>((resolve) => res.once('drain', resolve))
+        }
+        if (size !== expected) throw new Error('Truncated instance image')
+        res.end()
+      } catch {
+        res.destroy()
+      }
+      return { stream: true }
+    }
     case 'botMessageSend': {
       const input = body as FleetSendMessageRequest,
         scope = 'botMessageSend:' + id
@@ -120,7 +146,12 @@ export async function publicRoute(
       const promise = (async () => {
         const response = await ctx.lifecycle
           .instanceFor(id)
-          .postInput({ text: input.text, idempotencyKey: input.idempotencyKey, source: 'owner' })
+          .postInput({
+            text: input.text,
+            attachments: input.attachments,
+            idempotencyKey: input.idempotencyKey,
+            source: 'owner',
+          })
         ctx.store.saveIdempotency(scope, input.idempotencyKey, hash, response, 201)
         ctx.store.markOwnerMessage(id)
         return response

@@ -1,13 +1,37 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { fleetInstanceInputSchema, type FleetInstanceInput, type FleetInputReceipt } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_IMAGE_LIMITS,
+  fleetInstanceInputSchema,
+  type FleetInstanceInput,
+  type FleetInputReceipt,
+  type FleetImageRef,
+} from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
+import type { ChatAttachmentInput } from '../../../shared/chat'
+import { imageMediaType } from './images'
+
+type StoredInput = Omit<FleetInstanceInput, 'attachments'>
+const storedInputSchema = z.object({
+  idempotencyKey: z.uuid(),
+  text: z.string(),
+  source: z.enum(['owner', 'routine', 'peer', 'continuation']),
+  routine: z.object({ id: z.string(), title: z.string() }).optional(),
+  peer: z.object({ botId: z.string(), name: z.string() }).optional(),
+})
+const attachmentSchema = z.object({
+  id: z.string().regex(/^q-[a-f0-9-]{36}-[0-7]$/),
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+  byteSize: z.number().int().positive().max(FLEET_IMAGE_LIMITS.attachmentMaxBytes),
+  name: z.string(),
+})
 
 export interface QueuedInput {
   id: string
   at: string
-  input: FleetInstanceInput
+  input: StoredInput
+  attachments: z.infer<typeof attachmentSchema>[]
   itemId: string
   started: boolean
   nativeMessageId?: string
@@ -15,7 +39,8 @@ export interface QueuedInput {
 const recordSchema = z.object({
   id: z.string().uuid(),
   at: z.iso.datetime(),
-  input: fleetInstanceInputSchema,
+  input: storedInputSchema,
+  attachments: z.array(attachmentSchema).default([]),
   itemId: z.string(),
   started: z.boolean(),
   nativeMessageId: z.string().optional(),
@@ -30,6 +55,76 @@ export class InstanceInputQueue {
     private readonly writer: (file: string, contents: string) => Promise<void> = (file, contents) =>
       fs.writeFile(file, contents, { mode: 0o600 })
   ) {}
+  private attachmentDir(id: string): string {
+    return path.join(path.dirname(path.dirname(this.file)), 'fleet-inputs', id)
+  }
+  private attachmentFile(id: string, index: number, mediaType: string): string {
+    const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[mediaType]
+    if (!ext || !/^[a-f0-9-]{36}$/.test(id) || index < 0 || index > 7) throw new Error('Invalid queued image reference')
+    return path.join(this.attachmentDir(id), index + '.' + ext)
+  }
+  refs(item: QueuedInput): FleetImageRef[] {
+    return item.attachments.map((entry) => ({ ...entry }))
+  }
+  private async readAttachment(
+    item: QueuedInput,
+    entry: QueuedInput['attachments'][number],
+    index: number
+  ): Promise<Buffer> {
+    const file = this.attachmentFile(item.id, index, entry.mediaType)
+    const stat = await fs.lstat(file)
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== entry.byteSize)
+      throw new Error('Queued image is invalid')
+    const bytes = await fs.readFile(file)
+    if (bytes.length !== entry.byteSize || imageMediaType(bytes) !== entry.mediaType)
+      throw new Error('Queued image is invalid')
+    return bytes
+  }
+  async readAttachments(item: QueuedInput): Promise<ChatAttachmentInput[]> {
+    return Promise.all(
+      item.attachments.map(async (entry, index) => {
+        const bytes = await this.readAttachment(item, entry, index)
+        return { name: entry.name, mediaType: entry.mediaType, kind: 'image' as const, bytes }
+      })
+    )
+  }
+  async readImage(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array } | null> {
+    for (const item of this.list()) {
+      const index = item.attachments.findIndex((entry) => entry.id === imageId)
+      if (index < 0) continue
+      try {
+        const entry = item.attachments[index]
+        const bytes = await this.readAttachment(item, entry, index)
+        return { mediaType: entry.mediaType, bytes }
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+  async cleanup(id: string): Promise<void> {
+    await fs.rm(this.attachmentDir(id), { recursive: true, force: true })
+  }
+  async sweepAttachments(): Promise<void> {
+    const root = path.join(path.dirname(path.dirname(this.file)), 'fleet-inputs')
+    let entries: string[]
+    try {
+      entries = await fs.readdir(root)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    const pending = new Set(
+      this.list()
+        .filter((item) => item.attachments.length)
+        .map((item) => item.id)
+    )
+    await Promise.all(
+      entries
+        .filter((entry) => /^[a-f0-9-]{36}$/.test(entry) && !pending.has(entry))
+        .map((entry) => this.cleanup(entry))
+    )
+  }
 
   async load(): Promise<void> {
     try {
@@ -71,26 +166,70 @@ export class InstanceInputQueue {
     return write
   }
 
-  async enqueue(raw: FleetInstanceInput): Promise<FleetInputReceipt> {
+  async enqueue(
+    raw: Omit<FleetInstanceInput, 'attachments'> & { attachments?: FleetInstanceInput['attachments'] }
+  ): Promise<FleetInputReceipt> {
     const input = fleetInstanceInputSchema.parse(raw)
     if (input.source === 'routine' && !input.routine) throw new Error('Routine source requires routine metadata.')
     if (input.source === 'peer' && !input.peer) throw new Error('Peer source requires peer metadata.')
-    return this.update((items) => {
-      const now = Date.now()
-      const existing = [...items]
-        .reverse()
-        .find(
-          (item) =>
-            item.input.idempotencyKey === input.idempotencyKey && now - Date.parse(item.at) < 24 * 60 * 60 * 1_000
-        )
-      if (existing)
-        return { result: { inputId: existing.id, itemId: existing.itemId, queued: !existing.started }, changed: false }
-      const id = randomUUID()
-      const item: QueuedInput = { id, at: new Date().toISOString(), input, itemId: 'input:' + id, started: false }
-      if (input.source === 'continuation') items.unshift(item)
-      else items.push(item)
-      return { result: { inputId: id, itemId: item.itemId, queued: true }, changed: true }
-    })
+    const existing = this.items.find(
+      (item) => item.input.idempotencyKey === input.idempotencyKey && Date.now() - Date.parse(item.at) < 86_400_000
+    )
+    if (existing) return { inputId: existing.id, itemId: existing.itemId, queued: !existing.started }
+    const id = randomUUID()
+    const attachments: QueuedInput['attachments'] = []
+    try {
+      for (const [index, attachment] of input.attachments.entries()) {
+        const bytes = Buffer.from(attachment.dataBase64, 'base64')
+        if (imageMediaType(bytes) !== attachment.mediaType) throw new Error('Attachment bytes do not match media type')
+        const destination = this.attachmentFile(id, index, attachment.mediaType)
+        await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
+        const temporary = destination + '.' + randomUUID() + '.tmp'
+        try {
+          await fs.writeFile(temporary, bytes, { mode: 0o600 })
+          await fs.rename(temporary, destination)
+        } finally {
+          await fs.rm(temporary, { force: true }).catch(() => undefined)
+        }
+        attachments.push({
+          id: `q-${id}-${index}`,
+          name: attachment.name,
+          mediaType: attachment.mediaType,
+          byteSize: bytes.length,
+        })
+      }
+      const result = await this.update((items) => {
+        const now = Date.now()
+        const existing = [...items]
+          .reverse()
+          .find(
+            (item) =>
+              item.input.idempotencyKey === input.idempotencyKey && now - Date.parse(item.at) < 24 * 60 * 60 * 1_000
+          )
+        if (existing)
+          return {
+            result: { inputId: existing.id, itemId: existing.itemId, queued: !existing.started },
+            changed: false,
+          }
+        const { attachments: _data, ...storedInput } = input
+        const item: QueuedInput = {
+          id,
+          at: new Date().toISOString(),
+          input: storedInput,
+          attachments,
+          itemId: 'input:' + id,
+          started: false,
+        }
+        if (input.source === 'continuation') items.unshift(item)
+        else items.push(item)
+        return { result: { inputId: id, itemId: item.itemId, queued: true }, changed: true }
+      })
+      if (result.inputId !== id) await this.cleanup(id)
+      return result
+    } catch (error) {
+      await this.cleanup(id)
+      throw error
+    }
   }
 
   async delete(id: string): Promise<'deleted' | 'started' | 'missing'> {
@@ -142,7 +281,7 @@ export class InstanceInputQueue {
   }
 }
 
-export function promptForInput(input: FleetInstanceInput): string {
+export function promptForInput(input: StoredInput): string {
   switch (input.source) {
     case 'owner':
       return input.text

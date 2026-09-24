@@ -52,6 +52,11 @@ async function fake() {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       return
     }
+    if (req.url === '/v1/images/t-png') {
+      const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+      res.writeHead(200, { 'content-type': 'image/png', 'content-length': png.length })
+      return res.end(png)
+    }
     const status = {
       appVersion: '1.0',
       protocol: 1,
@@ -163,6 +168,26 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   try {
+    const imageRoute = origin + '/v1/bots/test/images/t-png'
+    const image = await fetch(imageRoute, { headers: headers(one.token) })
+    expect(image.status).toBe(200)
+    expect(image.headers.get('content-type')).toBe('image/png')
+    expect(image.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(Buffer.from(await image.arrayBuffer())).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    expect((await fetch(imageRoute, { headers: headers('bad') })).status).toBe(401)
+    expect(
+      (await fetch(imageRoute, { headers: { ...headers(one.token), Origin: 'https://evil.example' } })).status
+    ).toBe(403)
+    const attachment = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(900_000)]).toString(
+      'base64'
+    )
+    const sentImage = await post('/v1/bots/test/messages', one.token, {
+      text: '',
+      idempotencyKey: randomUUID(),
+      attachments: [{ name: 'large.png', mediaType: 'image/png', dataBase64: attachment }],
+    })
+    expect(sentImage.status).toBe(201)
+    expect(instance.inputs.at(-1)).toMatchObject({ source: 'owner', attachments: [{ dataBase64: attachment }] })
     const secret = 'gateway-account-secret-test'
     const accountBody = { kind: 'openai', name: 'Fake model', key: secret, baseURL: 'http://fake-model:8080/v1' }
     const addedAccount = await post('/v1/bots/test/accounts/api-key', one.token, accountBody)

@@ -19,6 +19,11 @@ function reply(req) {
   const messages = req.messages
   const lastUser = messages.filter((entry) => entry.role === 'user').at(-1)
   const text = JSON.stringify(lastUser?.content ?? '')
+  if (text.includes('E2E-IMAGE')) {
+    const images = Array.isArray(lastUser?.content) ? lastUser.content.filter((part) => part.type === 'image_url') : []
+    const valid = images.some((part) => /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(part.image_url?.url ?? part.image_url ?? ''))
+    return { text: valid ? 'E2E-IMAGE-SEEN' : 'E2E-IMAGE-MISSING' }
+  }
   if (text.includes('E2E routine ping')) return { text: 'E2E-ROUTINE-DONE' }
   if (text.includes('handed it back')) return { text: 'E2E-CONTINUED' }
   const start = messages.findLastIndex((entry) => entry.role === 'user' && JSON.stringify(entry.content).includes('E2E-START'))

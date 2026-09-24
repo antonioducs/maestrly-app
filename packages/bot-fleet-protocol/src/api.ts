@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import {
+  FLEET_IMAGE_LIMITS,
+  FLEET_MESSAGE_TEXT_MAX,
   FLEET_PROTOCOL_VERSION,
   FLEET_QUEUE_PREVIEW_MAX,
   FLEET_ROUTINE_PROMPT_MAX,
@@ -17,7 +19,6 @@ import {
   fleetInboxItemSchema,
   fleetInstructionsSchema,
   fleetInteractionResolutionSchema,
-  fleetMessageTextSchema,
   fleetNameSchema,
   fleetNonNegativeIntSchema,
   fleetNoteSchema,
@@ -34,7 +35,46 @@ import {
   fleetTranscriptPageSchema,
   fleetActivitySchema,
   fleetPendingInteractionSchema,
+  fleetImageMediaTypeSchema,
+  fleetUsageSchema,
 } from './domain.js'
+
+/** Decoded size of a base64 string, without allocating. */
+export function base64DecodedBytes(value: string): number {
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return Math.floor((value.length * 3) / 4) - padding
+}
+
+/** An image the owner attaches to a message, base64-encoded (the desktop composer's formats and limits). */
+export const fleetAttachmentInputSchema = z.object({
+  name: z.string().min(1).max(200),
+  mediaType: fleetImageMediaTypeSchema,
+  dataBase64: z
+    .string()
+    .min(4)
+    .max(Math.ceil(FLEET_IMAGE_LIMITS.attachmentMaxBytes / 3) * 4)
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+})
+export type FleetAttachmentInput = z.infer<typeof fleetAttachmentInputSchema>
+
+const fleetAttachmentsSchema = z
+  .array(fleetAttachmentInputSchema)
+  .max(FLEET_IMAGE_LIMITS.attachmentsMax)
+  .default([])
+  .refine(
+    (items) =>
+      items.reduce((sum, item) => sum + base64DecodedBytes(item.dataBase64), 0) <=
+      FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes,
+    'attachments exceed the total size limit'
+  )
+  .refine(
+    (items) => items.every((item) => base64DecodedBytes(item.dataBase64) <= FLEET_IMAGE_LIMITS.attachmentMaxBytes),
+    'an attachment exceeds the per-image size limit'
+  )
+
+/** A message needs text or at least one image. */
+const hasContent = (value: { text: string; attachments: unknown[] }) =>
+  value.text.trim().length > 0 || value.attachments.length > 0
 
 export const fleetMetaResponseSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
@@ -93,10 +133,13 @@ export const fleetAddApiKeyAccountRequestSchema = z
 export type FleetAddApiKeyAccountRequest = z.infer<typeof fleetAddApiKeyAccountRequestSchema>
 export const fleetAddApiKeyAccountResponseSchema = z.object({ providerId: fleetIdSchema })
 export type FleetAddApiKeyAccountResponse = z.infer<typeof fleetAddApiKeyAccountResponseSchema>
-export const fleetSendMessageRequestSchema = z.object({
-  text: fleetMessageTextSchema,
-  idempotencyKey: fleetIdempotencyKeySchema,
-})
+export const fleetSendMessageRequestSchema = z
+  .object({
+    text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
+    idempotencyKey: fleetIdempotencyKeySchema,
+    attachments: fleetAttachmentsSchema,
+  })
+  .refine(hasContent, 'a message needs text or an image')
 export type FleetSendMessageRequest = z.infer<typeof fleetSendMessageRequestSchema>
 export const fleetInputReceiptSchema = z.object({ inputId: fleetIdSchema, itemId: fleetIdSchema, queued: z.boolean() })
 export type FleetInputReceipt = z.infer<typeof fleetInputReceiptSchema>
@@ -190,16 +233,22 @@ export const fleetInstanceStatusSchema = z.object({
   ),
   activity: fleetActivitySchema.nullable(),
   pending: z.array(fleetPendingInteractionSchema),
+  usage: fleetUsageSchema.nullable().default(null),
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>
-export const fleetInstanceInputSchema = z.object({
-  idempotencyKey: fleetIdempotencyKeySchema,
-  text: fleetMessageTextSchema,
-  source: fleetInputSourceSchema,
-  routine: z.object({ id: fleetIdSchema, title: z.string() }).optional(),
-  peer: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).optional(),
-})
+export const fleetInstanceInputSchema = z
+  .object({
+    idempotencyKey: fleetIdempotencyKeySchema,
+    text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
+    source: fleetInputSourceSchema,
+    routine: z.object({ id: fleetIdSchema, title: z.string() }).optional(),
+    peer: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).optional(),
+    // Only owner messages carry images.
+    attachments: fleetAttachmentsSchema,
+  })
+  .refine(hasContent, 'an input needs text or an image')
+  .refine((value) => value.source === 'owner' || value.attachments.length === 0, 'only owner inputs carry images')
 export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
 export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   z.object({
@@ -277,6 +326,8 @@ export const FLEET_GATEWAY_ROUTES = {
   },
   botAccountRemove: { method: 'DELETE', path: '/v1/bots/:id/accounts/:providerId', body: null, response: null },
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
+  // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
+  botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
   botMessageSend: {
     method: 'POST',
     path: '/v1/bots/:id/messages',
@@ -354,6 +405,8 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   accountRemove: { method: 'DELETE', path: '/v1/accounts/:providerId', body: null, response: null },
   transcript: { method: 'GET', path: '/v1/transcript', body: null, response: fleetTranscriptPageSchema },
+  // Binary: the image bytes with their Content-Type.
+  image: { method: 'GET', path: '/v1/images/:imageId', body: null, response: null },
   inputSend: { method: 'POST', path: '/v1/inputs', body: fleetInstanceInputSchema, response: fleetInputReceiptSchema },
   inputDelete: { method: 'DELETE', path: '/v1/inputs/:inputId', body: null, response: null },
   turnCancel: { method: 'POST', path: '/v1/turn/cancel', body: null, response: null },

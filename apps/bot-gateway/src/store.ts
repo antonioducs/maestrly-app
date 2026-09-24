@@ -203,6 +203,7 @@ export class Store {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       status: 'offline',
+      usage: null,
       activity: null,
       pendingCount: 0,
       accounts: { connected: false, providers: [] },

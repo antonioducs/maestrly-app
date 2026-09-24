@@ -5,6 +5,7 @@ import {
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
+  FLEET_MESSAGE_BODY_MAX,
   type FleetRoute,
   type FleetInternalPeerMessageRequest,
 } from '@maestrly/bot-fleet-protocol'
@@ -32,15 +33,15 @@ function matchRoute(routes: Record<string, FleetRoute>, method: string, path: st
   }
   return null
 }
-async function readBody(request: IncomingMessage): Promise<unknown> {
-  if (Number(request.headers['content-length'] ?? 0) > 1024 * 1024)
+async function readBody(request: IncomingMessage, maxBytes = 1024 * 1024): Promise<unknown> {
+  if (Number(request.headers['content-length'] ?? 0) > maxBytes)
     throw new GatewayError('INVALID_REQUEST', 'Request body too large')
   let bytes = 0
   const chunks: Buffer[] = []
   for await (const chunk of request) {
     const part = Buffer.from(chunk)
     bytes += part.length
-    if (bytes > 1024 * 1024) throw new GatewayError('INVALID_REQUEST', 'Request body too large')
+    if (bytes > maxBytes) throw new GatewayError('INVALID_REQUEST', 'Request body too large')
     chunks.push(part)
   }
   if (!bytes) throw new GatewayError('INVALID_REQUEST', 'JSON body required')
@@ -159,7 +160,11 @@ export function createGatewayServers(ctx: GatewayContext) {
         throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Fleet protocol version mismatch')
       const caller = internal ? ctx.auth.internalBot(req.headers.authorization) : null
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
-      const body = match.route.body ? match.route.body.parse(await readBody(req)) : undefined
+      const body = match.route.body
+        ? match.route.body.parse(
+            await readBody(req, !internal && match.key === 'botMessageSend' ? FLEET_MESSAGE_BODY_MAX : 1024 * 1024)
+          )
+        : undefined
       if (internal) {
         const result =
           match.key === 'peers'

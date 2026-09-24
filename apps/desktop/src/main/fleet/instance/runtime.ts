@@ -19,10 +19,12 @@ import {
   type FleetInputReceipt,
   type FleetAddApiKeyAccountRequest,
   type FleetAddApiKeyAccountResponse,
+  type FleetUsage,
 } from '@maestrly/bot-fleet-protocol'
-import type { ChatStreamEvent } from '../../../shared/chat'
+import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, setAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
+import { getHiddenChatModelsFor } from '../../store/settings'
 import { createStandaloneConversation } from '../../standalone-conversation-service'
 import {
   acquireChatConversationSlot,
@@ -33,8 +35,9 @@ import {
   publishConvChatSettings,
   startExecutorChatTurn,
   stopChatAndWait,
+  effectiveModelMeta,
 } from '../../chat/service'
-import { listChatMessages } from '../../chat/chat-store'
+import { listChatMessages, chatHistoryStats } from '../../chat/chat-store'
 import { addProvider, listProviders, removeProvider } from '../../chat/catalog'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from '../../chat/credentials'
 import { invalidateProvider } from '../../chat/provider'
@@ -55,6 +58,7 @@ import { InstanceHelpStore } from './help'
 import { setBotIdentity } from './identity'
 import { broadcast } from '../../window-ipc'
 import type { BotInstanceConfig } from './config'
+import { FleetImageStore } from './images'
 
 export function canDispatch(
   ready: boolean,
@@ -97,6 +101,34 @@ export { continuationText }
 export function releaseSystemCode(reason: 'takeover' | 'paused' | null): 'takeover' | 'resumed' {
   return reason === 'takeover' ? 'takeover' : 'resumed'
 }
+export function visibleFleetModels<T extends { providerId: string; modelId: string }>(
+  models: T[],
+  hiddenFor: (providerId: string) => string[]
+): T[] {
+  return models.filter((model) => !hiddenFor(model.providerId).includes(model.modelId))
+}
+export function effectiveFleetSelection(
+  options: FleetSelectionOption[],
+  saved: FleetSelection | null,
+  defaults: { providerId: string | null; modelId: string | null; reasoning: string | null; fastMode: boolean }
+): FleetSelection | null {
+  const option = saved && options.find((item) => item.providerId === saved.providerId && item.modelId === saved.modelId)
+  if (option)
+    return {
+      ...saved,
+      reasoning: option.efforts.includes(saved!.reasoning ?? '') ? saved!.reasoning : null,
+      fastMode: option.fastMode && saved!.fastMode,
+    }
+  const fallback =
+    options.find((item) => item.providerId === defaults.providerId && item.modelId === defaults.modelId) ?? options[0]
+  if (!fallback) return null
+  return {
+    providerId: fallback.providerId,
+    modelId: fallback.modelId,
+    reasoning: fallback.efforts.includes(defaults.reasoning ?? '') ? defaults.reasoning : null,
+    fastMode: fallback.fastMode && defaults.fastMode,
+  }
+}
 
 export class BotInstanceRuntime implements InstanceControl {
   readonly events = new InstanceEvents()
@@ -104,6 +136,7 @@ export class BotInstanceRuntime implements InstanceControl {
   readonly extras: InstanceTranscriptExtras
   readonly help: InstanceHelpStore
   readonly holdManager: InstanceHoldManager
+  readonly images: FleetImageStore
   private stored: StoredProfile | null
   private accountOptions: FleetSelectionOption[] = []
   private accountCheckedAt = 0
@@ -126,6 +159,8 @@ export class BotInstanceRuntime implements InstanceControl {
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
   private lastEmitted = new Map<string, string>()
+  private usage: FleetUsage | null = null
+  private usageTask: Promise<void> = Promise.resolve()
 
   constructor(
     readonly config: BotInstanceConfig,
@@ -135,6 +170,7 @@ export class BotInstanceRuntime implements InstanceControl {
     this.stored = readProfile()
     const base = app.getPath('userData')
     this.queue = new InstanceInputQueue(path.join(base, 'fleet-instance', 'inputs.json'))
+    this.images = new FleetImageStore(path.join(base, 'fleet-images'))
     this.extras = new InstanceTranscriptExtras(path.join(base, 'fleet-instance', 'transcript.json'), (item) =>
       this.events.publish({ type: 'transcript.upsert', item })
     )
@@ -155,6 +191,7 @@ export class BotInstanceRuntime implements InstanceControl {
   }
   async start(): Promise<void> {
     await this.queue.load()
+    await this.images.load()
     await this.extras.load()
     for (const item of this.extras.list()) {
       if (item.kind === 'permission' && item.state === 'pending')
@@ -180,10 +217,12 @@ export class BotInstanceRuntime implements InstanceControl {
     }
     if (this.stored) await this.ensureConversation()
     if (this.primaryConversationId) await this.queue.reconcile(this.nativeUsers())
+    await this.queue.sweepAttachments()
     if (hadConversation) await this.system('restarted', null, null)
     this.wireBrokers()
     this.ready = true
     await this.refreshAccounts()
+    void this.refreshUsage()
     this.pollTimer = setInterval(() => {
       void this.tick()
     }, 1_000)
@@ -238,13 +277,8 @@ export class BotInstanceRuntime implements InstanceControl {
     publishConvChatSettings(id)
     const conversation = getConversation(id)
     if (conversation) setBotIdentity(conversation.cwd, this.stored.profile)
-    const selection = this.stored.profile.selection
-    if (
-      selection &&
-      this.accountOptions.some(
-        (option) => option.providerId === selection.providerId && option.modelId === selection.modelId
-      )
-    ) {
+    const selection = this.currentSelection()
+    if (selection) {
       primeChatTurnSelection(id, {
         providerId: selection.providerId,
         modelId: selection.modelId,
@@ -252,6 +286,14 @@ export class BotInstanceRuntime implements InstanceControl {
         fastMode: selection.fastMode,
       })
     }
+  }
+  private currentSelection(): FleetSelection | null {
+    return effectiveFleetSelection(this.accountOptions, this.stored?.profile.selection ?? null, {
+      providerId: getAppSetting('chat.defaultProvider'),
+      modelId: getAppSetting('chat.defaultModel'),
+      reasoning: getAppSetting('chat.defaultReasoning'),
+      fastMode: getAppSetting('chat.defaultFastMode') === '1',
+    })
   }
   async profile(value: FleetInstanceProfile): Promise<FleetInstanceStatus> {
     const profile = fleetInstanceProfileSchema.parse(value)
@@ -269,7 +311,7 @@ export class BotInstanceRuntime implements InstanceControl {
     const previous = JSON.stringify(this.accountOptions.map((option) => option.id))
     try {
       const models = await listChatRunnerCapabilities(true)
-      this.accountOptions = models.map((model) => ({
+      this.accountOptions = visibleFleetModels(models, getHiddenChatModelsFor).map((model) => ({
         id: `${model.providerId}::${model.modelId}`,
         providerId: model.providerId,
         providerLabel: model.providerLabel,
@@ -286,7 +328,7 @@ export class BotInstanceRuntime implements InstanceControl {
   }
   async selections(): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> {
     await this.refreshAccounts(true)
-    return { options: this.accountOptions, current: this.stored?.profile.selection ?? null }
+    return { options: this.accountOptions, current: this.currentSelection() }
   }
   async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
     if (apiKeyStorageMode() !== 'secure')
@@ -355,6 +397,86 @@ export class BotInstanceRuntime implements InstanceControl {
       }))
     return [...permissions, ...questions, ...this.help.pending()]
   }
+  private refreshUsage(): Promise<void> {
+    const id = this.primaryConversationId
+    if (!id) return Promise.resolve()
+    const task = this.usageTask
+      .then(async () => {
+        const messages = listChatMessages(id)
+        const snapshot = [...messages]
+          .reverse()
+          .filter((message) => message.role === 'assistant' && !message.internal)
+          .map((message) => message.contextSnapshot)
+          .find(
+            (value) =>
+              value &&
+              Number.isFinite(value.usedTokens) &&
+              value.usedTokens >= 0 &&
+              Number.isFinite(value.modelContextWindow) &&
+              (value.modelContextWindow ?? 0) > 0
+          )
+        const history = chatHistoryStats(id)
+        const fallback = history.lastUsage
+        const contextUsedTokens = snapshot
+          ? Math.round(snapshot.usedTokens)
+          : fallback?.contextInput != null
+            ? Math.round(fallback.contextInput + (fallback.contextOutput ?? 0))
+            : null
+        const contextWindowTokens = snapshot?.modelContextWindow ?? fallback?.modelContextWindow ?? null
+        const current = this.currentSelection()
+        const models = await Promise.all(
+          history.perModel.map(async (item) => ({
+            key: `${item.providerId ?? ''}\0${item.modelId ?? ''}`,
+            meta: item.modelId
+              ? (await effectiveModelMeta(item.modelId, item.providerId ?? undefined).catch(() => ({ meta: null })))
+                  .meta
+              : null,
+          }))
+        )
+        const metaByModel = Object.fromEntries(models.map((item) => [item.key, item.meta]))
+        const currentMeta = current
+          ? (await effectiveModelMeta(current.modelId, current.providerId).catch(() => ({ meta: null }))).meta
+          : null
+        let cost = 0
+        let known = history.perModel.length > 0
+        for (const item of history.perModel) {
+          const meta = usageMetaForModel(metaByModel, item, {
+            providerId: current?.providerId,
+            modelId: current?.modelId,
+            meta: currentMeta,
+          })
+          const amount = estimatedCostOfUsage(
+            {
+              input: item.input + item.subInput,
+              output: item.output + item.subOutput,
+              cacheRead: item.cachedInput + item.subCachedInput,
+              cacheCreate: item.cacheCreate + item.subCacheCreate,
+            },
+            meta,
+            item.runtimeEstimatedCostUsd,
+            {
+              input: item.catalogInput ?? 0,
+              output: item.catalogOutput ?? 0,
+              cacheRead: item.catalogCacheRead ?? 0,
+              cacheCreate: item.catalogCacheCreate ?? 0,
+            }
+          )
+          if (amount == null) known = false
+          else cost += amount
+        }
+        this.usage = {
+          contextUsedTokens,
+          contextWindowTokens,
+          contextQuality: snapshot?.quality ?? (contextUsedTokens == null ? null : 'estimated'),
+          costUsd: known ? cost : null,
+          updatedAt: new Date().toISOString(),
+        }
+        this.changed()
+      })
+      .catch(() => undefined)
+    this.usageTask = task
+    return task
+  }
   async status(): Promise<FleetInstanceStatus> {
     await this.refreshAccounts()
     const providers = [
@@ -410,6 +532,7 @@ export class BotInstanceRuntime implements InstanceControl {
       queue,
       activity,
       pending,
+      usage: this.usage,
       lastEventSeq: this.events.lastSeq,
     }
   }
@@ -439,6 +562,7 @@ export class BotInstanceRuntime implements InstanceControl {
           routine: item.input.routine,
           peer: item.input.peer,
           queued: true,
+          images: this.queue.refs(item),
         },
       })
     this.changed()
@@ -449,12 +573,16 @@ export class BotInstanceRuntime implements InstanceControl {
     const result = await this.queue.delete(id)
     if (result === 'missing') throw new InstanceHttpError(404, 'NOT_FOUND', 'Input not found.')
     if (result === 'started') throw new InstanceHttpError(409, 'CONFLICT', 'Input already started.')
+    await this.queue.cleanup(id)
     this.events.publish({ type: 'reset' })
     this.changed()
   }
   async transcript(before: string | null, limit: number) {
+    if (this.primaryConversationId) await this.images.captureMessages(listChatMessages(this.primaryConversationId))
     const native = this.primaryConversationId
-      ? projectChatMessages(listChatMessages(this.primaryConversationId), this.queue.all())
+      ? projectChatMessages(listChatMessages(this.primaryConversationId), this.queue.all(), (part) =>
+          this.images.toolRefs(part)
+        )
       : []
     const queued: FleetTranscriptItem[] = this.queue.list().map((entry) => ({
       kind: 'user',
@@ -465,6 +593,7 @@ export class BotInstanceRuntime implements InstanceControl {
       routine: entry.input.routine,
       peer: entry.input.peer,
       queued: true,
+      images: this.queue.refs(entry),
     }))
     const extra = this.extras.list()
     const questions = new Set(
@@ -475,6 +604,13 @@ export class BotInstanceRuntime implements InstanceControl {
       before,
       limit
     )
+  }
+  async image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }> {
+    const id = this.primaryConversationId
+    if (!id) throw new InstanceHttpError(404, 'NOT_FOUND', 'Image not found.')
+    const result = (await this.queue.readImage(imageId)) ?? (await this.images.read(imageId, id, listChatMessages(id)))
+    if (!result) throw new InstanceHttpError(404, 'NOT_FOUND', 'Image not found.')
+    return result
   }
   private nativeUsers(): Array<{ id: string; at: number; text: string }> {
     if (!this.primaryConversationId) return []
@@ -511,22 +647,25 @@ export class BotInstanceRuntime implements InstanceControl {
       )
         return
       this.applyProfile()
+      const attachments = await this.queue.readAttachments(item)
       await this.queue.markStarted(item.id)
       const handle = await startExecutorChatTurn({
         conversationId: id,
         prompt: promptForInput(item.input),
+        attachments,
         signal: this.turnAbort.signal,
         slot,
       })
+      await this.queue.cleanup(item.id)
       release = null
       try {
         const nativeUser = [...this.nativeUsers()]
           .reverse()
           .find((user) => user.at >= Date.parse(item.at) - 1_000 && user.text === promptForInput(item.input))
         if (nativeUser) await this.queue.mapNativeMessage(item.id, nativeUser.id)
-        const visibleUser = projectChatMessages(listChatMessages(id), this.queue.all()).find(
-          (entry) => entry.id === item.itemId
-        )
+        const visibleUser = projectChatMessages(listChatMessages(id), this.queue.all(), (part) =>
+          this.images.toolRefs(part)
+        ).find((entry) => entry.id === item.itemId)
         if (visibleUser) this.events.publish({ type: 'transcript.upsert', item: visibleUser })
         this.changed()
       } catch (error) {
@@ -553,6 +692,7 @@ export class BotInstanceRuntime implements InstanceControl {
         outcome: outcome.status === 'success' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'failed',
         summary,
       })
+      void this.refreshUsage()
     } catch (error) {
       this.retryAt = Date.now() + 5_000
       await this.queue.reconcile(this.nativeUsers()).catch(() => {
@@ -602,6 +742,7 @@ export class BotInstanceRuntime implements InstanceControl {
       await this.input({
         source: 'continuation',
         text: continuationText(previous.reason ?? 'takeover', value.durationMs, value.note),
+        attachments: [],
         idempotencyKey: (this.releaseContinuationKey ??= randomUUID()),
       })
     await this.help.resolveAll(value.note)
@@ -736,13 +877,23 @@ export class BotInstanceRuntime implements InstanceControl {
         this.transcriptTimer = setTimeout(() => {
           this.transcriptTimer = null
           if (!this.primaryConversationId) return
-          const items = projectChatMessages(listChatMessages(this.primaryConversationId), this.queue.all())
-          for (const item of items) {
-            const serialized = JSON.stringify(item)
-            if (this.lastEmitted.get(item.id) === serialized) continue
-            this.lastEmitted.set(item.id, serialized)
-            this.events.publish({ type: 'transcript.upsert', item })
-          }
+          void this.images
+            .captureMessages(listChatMessages(this.primaryConversationId))
+            .then(() => {
+              if (!this.primaryConversationId) return
+              const items = projectChatMessages(
+                listChatMessages(this.primaryConversationId),
+                this.queue.all(),
+                (part) => this.images.toolRefs(part)
+              )
+              for (const item of items) {
+                const serialized = JSON.stringify(item)
+                if (this.lastEmitted.get(item.id) === serialized) continue
+                this.lastEmitted.set(item.id, serialized)
+                this.events.publish({ type: 'transcript.upsert', item })
+              }
+            })
+            .catch(() => undefined)
         }, 250)
     }
     this.changed()

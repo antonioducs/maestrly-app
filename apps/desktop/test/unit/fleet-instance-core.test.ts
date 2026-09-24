@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -19,11 +19,90 @@ import {
   canDispatch,
   continuationText,
   releaseSystemCode,
+  visibleFleetModels,
+  effectiveFleetSelection,
 } from '../../src/main/fleet/instance/runtime'
 import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance/identity'
 import { initialFloatingBounds } from '../../src/main/fleet/instance/window-bounds'
+import { FleetImageStore, imageId, imageMediaType } from '../../src/main/fleet/instance/images'
+import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
 
 const key = () => randomUUID()
+describe('fleet model selection', () => {
+  it('filters the bot hidden models and falls back when the saved model is hidden', () => {
+    const models = [
+      {
+        id: 'p::hidden',
+        providerId: 'p',
+        modelId: 'hidden',
+        providerLabel: 'P',
+        modelLabel: 'Hidden',
+        efforts: ['low'],
+        fastMode: true,
+      },
+      {
+        id: 'p::visible',
+        providerId: 'p',
+        modelId: 'visible',
+        providerLabel: 'P',
+        modelLabel: 'Visible',
+        efforts: ['low'],
+        fastMode: false,
+      },
+    ]
+    const visible = visibleFleetModels(models, (provider) => (provider === 'p' ? ['hidden'] : []))
+    expect(visible.map((item) => item.modelId)).toEqual(['visible'])
+    expect(
+      effectiveFleetSelection(
+        visible,
+        { providerId: 'p', modelId: 'hidden', reasoning: 'low', fastMode: true },
+        { providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: true }
+      )
+    ).toEqual({ providerId: 'p', modelId: 'visible', reasoning: 'low', fastMode: false })
+  })
+})
+describe('fleet image ids and signatures', () => {
+  it('uses opaque stable ids and checks image bytes', () => {
+    expect(imageId('a', '../message', 'part')).toMatch(/^a-[A-Za-z0-9_-]{32}$/)
+    expect(imageId('a', '../message', 'part')).toBe(imageId('a', '../message', 'part'))
+    expect(imageId('g', '../message', 'part')).not.toBe(imageId('a', '../message', 'part'))
+    expect(imageMediaType(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe('image/png')
+    expect(imageMediaType(Buffer.from('not a png'))).toBeNull()
+  })
+  it('keeps completed tool images readable after the process cache is cleared', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-tool-images-'))
+    try {
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+        'base64'
+      )
+      const output = mcpResultToChatToolOutput({
+        content: [{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }],
+      })
+      const image = output.images?.[0]
+      expect(image).toBeDefined()
+      const store = new FleetImageStore(dir)
+      const ref = await store.capture(image!)
+      expect(ref?.id).toMatch(/^t-[A-Za-z0-9_-]{32}$/)
+      clearEphemeralToolImages()
+      const reopened = new FleetImageStore(dir)
+      await reopened.load()
+      expect((await reopened.read(ref!.id, 'conversation', []))?.bytes).toEqual(png)
+      const part = {
+        type: 'tool' as const,
+        id: 'tool',
+        toolCallId: 'tool',
+        toolName: 'computer_screenshot',
+        input: {},
+        state: { status: 'completed' as const, output },
+      }
+      expect(reopened.toolRefs(part)).toEqual([ref])
+    } finally {
+      clearEphemeralToolImages()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
 afterEach(() => {
   vi.unstubAllEnvs()
   vi.useRealTimers()
@@ -68,6 +147,45 @@ describe('bot identity', () => {
 })
 
 describe('persistent input queue', () => {
+  it('persists owner images as files and rejects mismatched magic bytes', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-image-queue-'))
+    try {
+      const file = path.join(dir, 'fleet-instance', 'inputs.json')
+      const queue = new InstanceInputQueue(file)
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
+        'base64'
+      )
+      const input = {
+        idempotencyKey: key(),
+        source: 'owner' as const,
+        text: '',
+        attachments: [{ name: 'small.png', mediaType: 'image/png' as const, dataBase64: png.toString('base64') }],
+      }
+      const receipt = await queue.enqueue(input)
+      const index = await readFile(file, 'utf8')
+      expect(index).not.toContain(input.attachments[0].dataBase64)
+      const reopened = new InstanceInputQueue(file)
+      await reopened.load()
+      expect(reopened.refs(reopened.list()[0])).toMatchObject([
+        { id: `q-${receipt.inputId}-0`, mediaType: 'image/png' },
+      ])
+      expect((await reopened.readAttachments(reopened.list()[0]))[0].bytes).toEqual(png)
+      expect((await reopened.readImage(`q-${receipt.inputId}-0`))?.bytes).toEqual(png)
+      await expect(
+        queue.enqueue({
+          ...input,
+          idempotencyKey: key(),
+          attachments: [{ ...input.attachments[0], mediaType: 'image/jpeg' }],
+        })
+      ).rejects.toThrow('media type')
+      expect(await reopened.delete(receipt.inputId)).toBe('deleted')
+      await reopened.cleanup(receipt.inputId)
+      expect(await reopened.readImage(`q-${receipt.inputId}-0`)).toBeNull()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
   it('keeps memory and disk unchanged after failed writes, then retries each mutation', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
@@ -225,10 +343,68 @@ describe('persistent input queue', () => {
 })
 
 describe('transcript projection', () => {
+  it('projects an image-only owner message without a native text part', () => {
+    const message: ChatMessage = {
+      id: 'm',
+      conversationId: 'c',
+      role: 'user',
+      createdAt: Date.now(),
+      parts: [
+        {
+          type: 'file',
+          id: 'p',
+          name: 'photo.png',
+          mediaType: 'image/png',
+          kind: 'image',
+          artifactId: 'artifact',
+          byteSize: 42,
+        },
+      ],
+    }
+    expect(projectChatMessages([message])).toMatchObject([
+      { kind: 'user', text: '', images: [{ id: imageId('a', 'm', 'p'), name: 'photo.png' }] },
+    ])
+  })
+  it('attaches generated image refs to the producing tool item', () => {
+    const message: ChatMessage = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts: [
+        {
+          type: 'tool',
+          id: 'tool',
+          toolCallId: 'tool',
+          toolName: 'generate_image',
+          input: {},
+          state: { status: 'completed', output: 'Image saved' },
+        },
+        {
+          type: 'generated-image',
+          id: 'generated',
+          artifactId: 'artifact',
+          name: 'generated.png',
+          mediaType: 'image/png',
+          byteSize: 100,
+        },
+      ],
+    }
+    expect(projectChatMessages([message])).toMatchObject([
+      { kind: 'tool', images: [{ id: imageId('g', 'assistant', 'generated') }] },
+    ])
+  })
   it('keeps continuation source before and after native message id mapping', () => {
     const createdAt = Date.UTC(2026, 0, 1)
     const input = { idempotencyKey: key(), source: 'continuation' as const, text: 'The owner handed the screen back.' }
-    const queued = { id: key(), itemId: 'input:continue', at: new Date(createdAt).toISOString(), input, started: true }
+    const queued = {
+      id: key(),
+      itemId: 'input:continue',
+      at: new Date(createdAt).toISOString(),
+      input,
+      attachments: [],
+      started: true,
+    }
     const messages = [
       {
         id: 'earlier',
@@ -339,6 +515,7 @@ describe('transcript projection', () => {
         itemId: 'input:stable',
         at: new Date(createdAt).toISOString(),
         started: true,
+        attachments: [],
         input: {
           idempotencyKey: key(),
           source: 'routine' as const,

@@ -136,6 +136,7 @@ export class Lifecycle {
       resources = this.resources.get(bot.id)
     bot.appVersion = status?.appVersion ?? null
     bot.accounts = status?.accounts ?? { connected: false, providers: [] }
+    bot.usage = status?.usage ?? null
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
@@ -188,6 +189,7 @@ export class Lifecycle {
       resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
       screen: { width: 1280, height: 800, display: ':0' },
       appVersion: null,
+      usage: null,
       createdAt: at,
       updatedAt: at,
     }

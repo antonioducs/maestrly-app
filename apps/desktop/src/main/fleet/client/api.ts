@@ -1,8 +1,10 @@
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_PROTOCOL_VERSION,
+  FLEET_IMAGE_LIMITS,
   buildPath,
   fleetErrorEnvelopeSchema,
+  fleetImageMediaTypeSchema,
   type FleetErrorCode,
   type FleetAddApiKeyAccountRequest,
 } from '@maestrly/bot-fleet-protocol'
@@ -45,6 +47,61 @@ export class FleetApiClient {
       'X-Maestrly-Fleet-Protocol': String(FLEET_PROTOCOL_VERSION),
       ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
     }
+  }
+
+  async getImage(botId: string, imageId: string): Promise<{ mediaType: string; data: Uint8Array }> {
+    let response: Response
+    try {
+      response = await fetch(this.origin + buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }), {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(15_000),
+      })
+    } catch {
+      throw new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Gateway unavailable')
+    }
+    if (!response.ok) {
+      const parsed = fleetErrorEnvelopeSchema.safeParse(await response.json().catch(() => null))
+      throw new FleetClientError(
+        parsed.success ? parsed.data.code : response.status === 404 ? 'NOT_FOUND' : 'INSTANCE_UNAVAILABLE',
+        response.status,
+        parsed.success ? parsed.data.message : 'Image unavailable'
+      )
+    }
+    const mediaType = response.headers.get('content-type')
+    if (!fleetImageMediaTypeSchema.safeParse(mediaType).success)
+      throw new FleetClientError('INTERNAL', response.status, 'Invalid image type')
+    const declared = Number(response.headers.get('content-length'))
+    if (
+      !Number.isSafeInteger(declared) ||
+      declared < 1 ||
+      declared > FLEET_IMAGE_LIMITS.imageReadMaxBytes ||
+      !response.body
+    )
+      throw new FleetClientError('INTERNAL', response.status, 'Invalid image size')
+    const chunks: Uint8Array[] = []
+    let size = 0
+    const reader = response.body.getReader()
+    try {
+      for (;;) {
+        const next = await reader.read()
+        if (next.done) break
+        const part = next.value
+        size += part.length
+        if (size > declared || size > FLEET_IMAGE_LIMITS.imageReadMaxBytes)
+          throw new FleetClientError('INTERNAL', response.status, 'Image too large')
+        chunks.push(part)
+      }
+    } finally {
+      reader.releaseLock()
+    }
+    if (size !== declared) throw new FleetClientError('INTERNAL', response.status, 'Incomplete image')
+    const data = new Uint8Array(size)
+    let offset = 0
+    for (const part of chunks) {
+      data.set(part, offset)
+      offset += part.length
+    }
+    return { mediaType: mediaType!, data }
   }
 
   async call<K extends RouteKey>(

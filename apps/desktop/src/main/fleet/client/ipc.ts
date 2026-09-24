@@ -10,7 +10,9 @@ import {
   fleetPatchRoutineRequestSchema,
   fleetTakeoverReleaseRequestSchema,
   fleetUiOpenRequestSchema,
-  fleetMessageTextSchema,
+  fleetSendMessageRequestSchema,
+  fleetImageMediaTypeSchema,
+  FLEET_IMAGE_LIMITS,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
@@ -20,6 +22,23 @@ import { fleetClientService as fleet } from './service'
 const id = fleetBotIdSchema
 const opaqueId = z.string().min(1).max(256)
 const optionalLimit = z.number().int().min(1).max(500).optional()
+const outgoingAttachments = z
+  .array(
+    z
+      .object({
+        name: z.string().min(1).max(200),
+        mediaType: fleetImageMediaTypeSchema,
+        data: z
+          .instanceof(Uint8Array)
+          .refine((data) => data.byteLength > 0 && data.byteLength <= FLEET_IMAGE_LIMITS.attachmentMaxBytes),
+      })
+      .strict()
+  )
+  .max(FLEET_IMAGE_LIMITS.attachmentsMax)
+  .refine(
+    (items) => items.reduce((sum, item) => sum + item.data.byteLength, 0) <= FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes
+  )
+const imageId = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
 const connectInput = z
   .object({
     url: z.string().min(1).max(2048),
@@ -80,11 +99,22 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       query: { before: z.string().max(256).nullable().optional().parse(before), limit: optionalLimit.parse(limit) },
     })
   )
-  reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown) =>
-    fleet.call('botMessageSend', {
-      params: { id: id.parse(botId) },
-      body: { text: fleetMessageTextSchema.parse(text), idempotencyKey: fleet.idempotencyKey() },
+  reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown, attachments: unknown = []) => {
+    const input = fleetSendMessageRequestSchema.parse({
+      text: z.string().max(16_000).parse(text),
+      attachments: outgoingAttachments
+        .parse(attachments)
+        .map((item) => ({
+          name: item.name,
+          mediaType: item.mediaType,
+          dataBase64: Buffer.from(item.data).toString('base64'),
+        })),
+      idempotencyKey: fleet.idempotencyKey(),
     })
+    return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
+  })
+  reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown) =>
+    fleet.getImage(id.parse(botId), imageId.parse(rawImageId))
   )
   reg.mhandle('fleet:removeQueuedMessage', (_event, botId: unknown, inputId: unknown) =>
     fleet.call('botMessageDelete', { params: { id: id.parse(botId), inputId: opaqueId.parse(inputId) } })

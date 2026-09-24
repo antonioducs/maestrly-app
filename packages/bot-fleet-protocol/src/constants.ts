@@ -13,6 +13,18 @@ export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
 export const FLEET_QUEUE_PREVIEW_MAX = 80
 
+/** Image limits. Attachments match the desktop composer's own limits; reads cover tool screenshots too. */
+export const FLEET_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+export const FLEET_IMAGE_LIMITS = {
+  attachmentMaxBytes: 5 * 1024 * 1024,
+  attachmentsMax: 8,
+  attachmentsTotalMaxBytes: 20 * 1024 * 1024,
+  imageReadMaxBytes: 32 * 1024 * 1024,
+  imagesPerItemMax: 8,
+} as const
+/** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
+export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
+
 export const FLEET_PORTS = {
   public: 7443,
   internal: 7444,

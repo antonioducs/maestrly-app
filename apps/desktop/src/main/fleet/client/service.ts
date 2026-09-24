@@ -109,6 +109,9 @@ export class FleetClientService {
     if (!this.api) throw new FleetClientError('UNAUTHORIZED', 401, 'Fleet is not connected')
     return this.api
   }
+  getImage(botId: string, imageId: string) {
+    return this.requireApi().getImage(botId, imageId)
+  }
 
   private useCredentials(url: string, token: string, tokenPersistence: TokenPersistence): void {
     this.stop()
