@@ -64,6 +64,7 @@ async function fakeInstance() {
   const subscriptions: number[] = []
   const inputs: unknown[] = []
   const holds: unknown[] = []
+  let holdFailure: string | null = null
   const releases: unknown[] = []
   const send = (res: ServerResponse, event: FleetInstanceEvent) =>
     res.write('id: ' + event.seq + '\nevent: instance\ndata: ' + JSON.stringify(event) + '\n\n')
@@ -113,6 +114,10 @@ async function fakeInstance() {
       }
       if (url.pathname === '/v1/hold') {
         fleetInstanceHoldRequestSchema.parse(body)
+        if (holdFailure) {
+          res.writeHead(409)
+          return res.end(JSON.stringify({ code: 'CONFLICT', message: holdFailure }))
+        }
         if (state.hold.state !== 'none') return fail(409, 'CONFLICT')
         holds.push(body)
         state = {
@@ -166,6 +171,9 @@ async function fakeInstance() {
     subscriptions,
     inputs,
     holds,
+    setHoldFailure(value: string | null) {
+      holdFailure = value
+    },
     releases,
   }
 }
@@ -273,6 +281,61 @@ describe('instance link and takeover', () => {
     fake.disconnect()
     await until(() => fake.subscriptions.length > before)
     expect(fake.subscriptions.at(-1)).toBe(fake.state.lastEventSeq)
+    f.lifecycle.close()
+    f.store.close()
+  })
+  it('reverts a refused takeover and forwards the hold conflict message', async () => {
+    const fake = await fakeInstance()
+    const f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    fake.setHoldFailure('The bot is finishing a step')
+    const updates: string[] = []
+    f.lifecycle.onEvent = (event) => {
+      if (event.type === 'bot.updated') updates.push(event.bot.takeover.state)
+    }
+    await expect(f.lifecycle.takeover(bot.id, 'one', 'Mac')).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'The bot is finishing a step',
+    })
+    expect(f.lifecycle.get(bot.id)?.takeover.state).toBe('none')
+    expect(updates).toContain('acquiring')
+    expect(updates.at(-1)).toBe('none')
+    for (const state of ['acquiring', 'human', 'releasing'] as const) {
+      f.lifecycle.takeovers.set(bot.id, { state, deviceId: 'one', deviceName: 'Mac', since: null })
+      await expect(f.lifecycle.resume(bot.id)).rejects.toMatchObject({ code: 'CONFLICT' })
+      expect(f.lifecycle.get(bot.id)?.takeover.state).toBe(state)
+    }
+    f.lifecycle.takeovers.delete(bot.id)
+    f.lifecycle.close()
+    f.store.close()
+  })
+  it('retries a running container until its instance is ready and reapplies a paused hold', async () => {
+    const fake = await fakeInstance()
+    const f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    await f.lifecycle.pause(bot.id)
+    fake.setState({
+      ...fake.state,
+      ready: false,
+      hold: { state: 'none', reason: null, since: null, interruptedTurn: false },
+    })
+    const restarted = new Lifecycle(
+      f.store,
+      f.docker,
+      f.cfg,
+      (id) => new InstanceClient(id, 'control', fake.origin),
+      200
+    )
+    await restarted.reconcile()
+    expect(restarted.get(bot.id)?.lifecycle).toBe('starting')
+    const links = fake.subscriptions.length
+    fake.setState({ ...fake.state, ready: true })
+    await until(() => restarted.get(bot.id)?.lifecycle === 'running')
+    expect(fake.holds.at(-1)).toEqual({ reason: 'paused' })
+    await until(() => fake.subscriptions.length > links)
+    restarted.close()
     f.lifecycle.close()
     f.store.close()
   })

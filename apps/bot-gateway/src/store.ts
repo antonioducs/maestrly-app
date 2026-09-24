@@ -142,6 +142,9 @@ export class Store {
       revokedAt: row.revoked_at as string | null,
     }))
   }
+  deviceRevoked(id: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM devices WHERE id=? AND revoked_at IS NOT NULL').get(id)
+  }
   touchDevice(id: string) {
     this.db.prepare('UPDATE devices SET last_seen_at=? WHERE id=?').run(new Date().toISOString(), id)
   }

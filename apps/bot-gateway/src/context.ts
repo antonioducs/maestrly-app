@@ -17,4 +17,5 @@ export type GatewayContext = {
   peers?: Peers
   routines?: Routines
   screen?: ScreenProxy
+  revokeDevice?: (deviceId: string) => Promise<void>
 }

@@ -381,6 +381,26 @@ async function main() {
     assert.equal(value.appVersion, version)
   }
   pass('two bot containers', 'running, setup, appVersion ' + version)
+  for (const vncPort of [5900, 5901]) {
+    const attempt = await docker(
+      ['exec', botNames[0], 'bash', '-c', `timeout 3 bash -c 'echo >/dev/tcp/${botNames[1]}/${vncPort}'`],
+      { allowFailure: true }
+    )
+    assert.notEqual(attempt.code, 0, `Bot reached another bot's VNC port ${vncPort}`)
+  }
+  const gatewayFromBot = await docker([
+    'exec',
+    botNames[0],
+    'curl',
+    '-sS',
+    '-o',
+    '/dev/null',
+    '-w',
+    '%{http_code}',
+    'http://maestrly-bot-gateway:7443/v1/meta',
+  ])
+  assert.equal(gatewayFromBot.stdout.trim(), '403')
+  pass('bot network isolation', 'cross-bot VNC ports refuse connections; gateway public API returns 403')
   for (const name of botNames) {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name])
     timings[name + 'StartupMemory'] = stat.stdout.trim()

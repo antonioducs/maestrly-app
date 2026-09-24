@@ -43,8 +43,8 @@ xdpyinfo -display :0 >/dev/null
 openbox --config-file /opt/maestrly/openbox-rc.xml & children+=("$!")
 tint2 -c "$HOME/.config/tint2/tint2rc" & children+=("$!")
 # -nocursorshape draws the X cursor into framebuffer updates for passive viewers.
-x11vnc -display :0 -rfbport 5900 -forever -shared -nopw -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
-x11vnc -display :0 -rfbport 5901 -forever -shared -nopw -viewonly -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
+x11vnc -display :0 -rfbport 5900 -localhost -forever -shared -nopw -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
+x11vnc -display :0 -rfbport 5901 -localhost -forever -shared -nopw -viewonly -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
 
 export MAESTRLY_BOT_MODE=1
 export BROWSER=/usr/bin/chromium

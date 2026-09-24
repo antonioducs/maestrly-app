@@ -3,12 +3,13 @@ import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 
 export class EventHub {
   readonly subscribers = new Set<ServerResponse>()
+  readonly devices = new Map<ServerResponse, string>()
   private heartbeat: NodeJS.Timeout | null = null
   private statsTimer: NodeJS.Timeout | null = null
   private readonly lastBotSent = new Map<string, number>()
   private readonly pendingBots = new Map<string, { event: FleetGatewayEvent; timer: NodeJS.Timeout }>()
   constructor(readonly refresh: () => Promise<void>) {}
-  add(response: ServerResponse, lastActivitySeq: number) {
+  add(response: ServerResponse, lastActivitySeq: number, deviceId?: string) {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -16,9 +17,11 @@ export class EventHub {
       'X-Content-Type-Options': 'nosniff',
     })
     this.subscribers.add(response)
+    if (deviceId) this.devices.set(response, deviceId)
     this.send(response, { type: 'hello', at: new Date().toISOString(), lastActivitySeq })
     response.on('close', () => {
       this.subscribers.delete(response)
+      this.devices.delete(response)
       this.updateTimers()
     })
     this.updateTimers()
@@ -76,6 +79,9 @@ export class EventHub {
       this.heartbeat = null
       this.statsTimer = null
     }
+  }
+  closeDevice(deviceId: string) {
+    for (const [response, id] of this.devices) if (id === deviceId) response.destroy()
   }
   close() {
     for (const pending of this.pendingBots.values()) clearTimeout(pending.timer)

@@ -372,6 +372,8 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   uiOpen: { method: 'POST', path: '/v1/ui/open', body: fleetUiOpenRequestSchema, response: null },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
+  screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
+  screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },
 } as const satisfies Record<string, FleetRoute>
 
 export function buildPath(

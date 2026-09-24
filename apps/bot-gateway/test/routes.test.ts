@@ -231,6 +231,78 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
       (await fetch(origin + '/v1/bots/test/routines/' + routine.id, { method: 'DELETE', headers: headers(one.token) }))
         .status
     ).toBe(204)
+    const activeTakeover = await post('/v1/bots/test/takeover', one.token)
+    expect(activeTakeover.status).toBe(200)
+    const resume = await post('/v1/bots/test/resume', one.token)
+    expect(resume.status).toBe(409)
+    expect((await resume.json()).message).toMatch(/Give back the screen/)
+    const viewTicket = await post('/v1/bots/test/screen-tickets', one.token, { mode: 'view' })
+    const viewPath = ((await viewTicket.json()) as { path: string }).path
+    const events = await fetch(origin + '/v1/events', { headers: headers(one.token) })
+    expect(events.status).toBe(200)
+    const reader = events.body!.getReader()
+    await reader.read()
+    const revoked = await fetch(origin + '/v1/devices/self', { method: 'DELETE', headers: headers(one.token) })
+    expect(revoked.status).toBe(204)
+    expect(lifecycle.get(bot.id)?.takeover.state).toBe('none')
+    expect(store.activity().at(-1)?.data.reason).toBe('device_revoked')
+    await expect(reader.read()).rejects.toThrow()
+    const { WebSocket } = await import('ws')
+    const socket = new WebSocket(origin.replace('http:', 'ws:') + viewPath)
+    const code = await new Promise<number>((resolve) => socket.on('close', resolve))
+    expect(code).toBe(4003)
+    expect((await post('/v1/bots/test/screen-tickets', one.token, { mode: 'view' })).status).toBe(401)
+    expect((await post('/v1/bots/test/takeover', two.token)).status).toBe(200)
+    const cliEvents = await fetch(origin + '/v1/events', { headers: headers(two.token) })
+    const cliReader = cliEvents.body!.getReader()
+    await cliReader.read()
+    const cliStore = new Store(dir)
+    expect(cliStore.revokeDevice(two.deviceId)).toBe(true)
+    cliStore.close()
+    await gateway.sweepRevocations()
+    await expect(cliReader.read()).rejects.toThrow()
+    expect(lifecycle.get(bot.id)?.takeover.state).toBe('none')
+    expect(store.activity().at(-1)?.data.reason).toBe('device_revoked')
+  } finally {
+    await gateway.close()
+    store.close()
+  }
+})
+
+it('blocks fleet addresses from the public API, pairing, and screen upgrades', async () => {
+  const { WebSocket } = await import('ws')
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-network-'))
+  dirs.push(dir)
+  const cfg = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir })
+  const store = new Store(dir)
+  const docker = new FakeDockerDriver()
+  docker.networkInspect = async () => ['127.0.0.0/8']
+  const lifecycle = new Lifecycle(store, docker, cfg)
+  const gateway = createGatewayServers({
+    auth: new Auth(store),
+    config: { ...cfg, publicPort: 0, internalPort: 0 },
+    events: new EventHub(async () => {}),
+    host: new HostMonitor(cfg, docker),
+    lifecycle,
+    store,
+  })
+  await gateway.listen()
+  const port = (gateway.publicServer.address() as { port: number }).port
+  try {
+    const meta = await fetch(`http://127.0.0.1:${port}/v1/meta`)
+    expect(meta.status).toBe(403)
+    expect((await meta.json()).code).toBe('FORBIDDEN')
+    const pair = await fetch(`http://127.0.0.1:${port}/v1/pair`, { method: 'POST' })
+    expect(pair.status).toBe(403)
+    const upgrade = await new Promise<number>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/v1/screen?ticket=none`)
+      ws.on('unexpected-response', (_request, response) => {
+        response.resume()
+        resolve(response.statusCode ?? 0)
+      })
+      ws.on('error', () => resolve(0))
+    })
+    expect(upgrade).toBe(403)
   } finally {
     await gateway.close()
     store.close()

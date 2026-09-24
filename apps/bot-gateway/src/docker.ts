@@ -24,6 +24,7 @@ export type ContainerStats = { memoryBytes: number; memoryLimitBytes: number; cp
 export interface DockerDriver {
   version(): Promise<string>
   ensureNetwork(name: string): Promise<void>
+  networkInspect(name: string): Promise<string[]>
   imageInspect(ref: string): Promise<{ id: string } | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
   containerCreate(spec: ContainerSpec): Promise<string>
@@ -116,6 +117,10 @@ export class DockerEngineDriver implements DockerDriver {
     if (!networks.some((network: any) => network.Name === name))
       await this.request('POST', await this.route('/networks/create'), { Name: name, Driver: 'bridge' })
   }
+  async networkInspect(name: string): Promise<string[]> {
+    const result = await this.request('GET', await this.route('/networks/' + encodeURIComponent(name)))
+    return (result.IPAM?.Config ?? []).map((entry: { Subnet?: string }) => entry.Subnet).filter(Boolean)
+  }
   async imageInspect(ref: string): Promise<{ id: string } | null> {
     try {
       const result = await this.request('GET', await this.route('/images/' + encodeURIComponent(ref) + '/json'))
@@ -206,6 +211,9 @@ export class FakeDockerDriver implements DockerDriver {
   stats: ContainerStats = { memoryBytes: 0, memoryLimitBytes: 0, cpuPercent: 0 }
   async version() {
     return '28.0.0'
+  }
+  async networkInspect(_name: string): Promise<string[]> {
+    return ['172.30.0.0/16']
   }
   async ensureNetwork(name: string) {
     this.networks.add(name)

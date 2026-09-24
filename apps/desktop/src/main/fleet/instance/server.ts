@@ -1,9 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
+import { createConnection, type Socket } from 'node:net'
 import {
   FLEET_INSTANCE_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
+  FLEET_SCREEN_UPGRADE,
   fleetInstanceEventSchema,
   type FleetInstanceEvent,
   type FleetInstanceStatus,
@@ -134,9 +136,12 @@ function sseFrame(event: FleetInstanceEvent): string {
 export function createInstanceControlServer(
   config: BotInstanceConfig,
   control: InstanceControl,
-  events: InstanceEvents
+  events: InstanceEvents,
+  screenPorts: { view: number; control: number } = { view: 5901, control: 5900 }
 ): http.Server {
-  return http.createServer(async (request, response) => {
+  const tunnels = new Set<{ mode: 'view' | 'control'; socket: import('node:stream').Duplex; vnc: Socket }>()
+  const connecting = { view: 0, control: 0 }
+  const server = http.createServer(async (request, response) => {
     try {
       if ('origin' in request.headers) throw new InstanceHttpError(403, 'FORBIDDEN', 'Origin requests are forbidden.')
       if (request.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION))
@@ -146,6 +151,8 @@ export function createInstanceControlServer(
       const url = new URL(request.url ?? '/', 'http://localhost')
       const match = routeFor(request.method ?? '', url.pathname)
       if (!match) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+      if (match.key === 'screenView' || match.key === 'screenControl')
+        throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       const route = FLEET_INSTANCE_ROUTES[match.key]
       const input = await body(request, route.body)
       if (match.key === 'events') {
@@ -215,6 +222,8 @@ export function createInstanceControlServer(
           break
         case 'holdRelease':
           output = await control.release(input as FleetInstanceReleaseRequest)
+          if ((output as FleetInstanceHold).state !== 'held' || (output as FleetInstanceHold).reason !== 'takeover')
+            for (const entry of tunnels) if (entry.mode === 'control') entry.socket.destroy()
           break
         case 'uiOpen':
           await control.open((input as { target: 'accounts' | 'main' }).target)
@@ -231,4 +240,98 @@ export function createInstanceControlServer(
       writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })
     }
   })
+  const closeControls = events.subscribe((event) => {
+    if (event.type === 'status' && (event.status.hold.state !== 'held' || event.status.hold.reason !== 'takeover')) {
+      for (const entry of tunnels) if (entry.mode === 'control') entry.socket.destroy()
+    }
+  })
+  const originalClose = server.close.bind(server)
+  server.close = ((callback?: (error?: Error) => void) => {
+    closeControls()
+    for (const entry of tunnels) entry.socket.destroy()
+    return originalClose(callback)
+  }) as typeof server.close
+  server.on('upgrade', (request, socket, head) => {
+    const reject = (status: number, code: string, message: string) => {
+      const body = JSON.stringify({ code, message })
+      socket.write(
+        `HTTP/1.1 ${status} Error\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`
+      )
+      socket.end()
+    }
+    void (async () => {
+      if ('origin' in request.headers) return reject(403, 'FORBIDDEN', 'Origin requests are forbidden.')
+      if (request.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== String(FLEET_PROTOCOL_VERSION))
+        return reject(426, 'PROTOCOL_INCOMPATIBLE', 'Incompatible fleet protocol.')
+      if (!authorized(request.headers.authorization, config.controlToken))
+        return reject(401, 'UNAUTHORIZED', 'Invalid control credentials.')
+      const url = new URL(request.url ?? '/', 'http://localhost')
+      const mode =
+        url.pathname === FLEET_INSTANCE_ROUTES.screenView.path
+          ? 'view'
+          : url.pathname === FLEET_INSTANCE_ROUTES.screenControl.path
+            ? 'control'
+            : null
+      if (request.method !== 'GET' || !mode) return reject(404, 'NOT_FOUND', 'Route not found.')
+      if (
+        !request.headers.connection
+          ?.toLowerCase()
+          .split(',')
+          .map((value) => value.trim())
+          .includes('upgrade') ||
+        request.headers.upgrade?.toLowerCase() !== FLEET_SCREEN_UPGRADE
+      )
+        return reject(400, 'INVALID_REQUEST', 'Screen upgrade required.')
+      if (mode === 'control') {
+        const hold = (await control.status()).hold
+        if (hold.state !== 'held' || hold.reason !== 'takeover')
+          return reject(409, 'CONFLICT', 'Takeover hold required.')
+      }
+      if ([...tunnels].filter((entry) => entry.mode === mode).length + connecting[mode] >= (mode === 'view' ? 4 : 1))
+        return reject(409, 'CONFLICT', 'Screen tunnel limit reached.')
+      connecting[mode]++
+      const vnc = createConnection({ host: '127.0.0.1', port: screenPorts[mode] })
+      await new Promise<void>((resolve, rejectConnection) => {
+        vnc.once('connect', resolve)
+        vnc.once('error', rejectConnection)
+      }).catch(() => {
+        connecting[mode]--
+        throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
+      })
+      connecting[mode]--
+      if (socket.destroyed) return vnc.destroy()
+      if (mode === 'control') {
+        const hold = (await control.status()).hold
+        if (hold.state !== 'held' || hold.reason !== 'takeover') {
+          vnc.destroy()
+          return reject(409, 'CONFLICT', 'Takeover hold required.')
+        }
+      }
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: ${FLEET_SCREEN_UPGRADE}\r\n\r\n`
+      )
+      const entry: { mode: 'view' | 'control'; socket: import('node:stream').Duplex; vnc: Socket } = {
+        mode,
+        socket,
+        vnc,
+      }
+      tunnels.add(entry)
+      const cleanup = () => {
+        tunnels.delete(entry)
+        socket.destroy()
+        vnc.destroy()
+      }
+      socket.on('close', cleanup)
+      vnc.on('close', cleanup)
+      socket.on('error', cleanup)
+      vnc.on('error', cleanup)
+      if (head.length && !vnc.write(head)) socket.pause()
+      socket.pipe(vnc).pipe(socket)
+    })().catch((error) => {
+      const known =
+        error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Screen request failed.')
+      reject(known.status, known.code, known.message)
+    })
+  })
+  return server
 }

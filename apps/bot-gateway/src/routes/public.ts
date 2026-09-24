@@ -51,6 +51,7 @@ export async function publicRoute(
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
+      await ctx.revokeDevice?.(device.id)
       return { status: 204 }
     }
     case 'host':
@@ -192,7 +193,7 @@ export async function publicRoute(
         },
       }
     case 'events':
-      ctx.events.add(res, ctx.store.lastActivitySeq())
+      ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id)
       return { stream: true }
     default:
       throw new GatewayError('NOT_FOUND', 'Route not found')

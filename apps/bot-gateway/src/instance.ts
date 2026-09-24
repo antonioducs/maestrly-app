@@ -41,9 +41,11 @@ export class InstanceClient {
       })
       if (!response.ok) {
         let code = 'INSTANCE_UNAVAILABLE'
+        let message = 'Bot instance request failed'
         try {
-          const value = (await response.json()) as { code?: string }
+          const value = (await response.json()) as { code?: string; message?: string }
           if (value.code) code = value.code
+          if (typeof value.message === 'string') message = value.message
         } catch {}
         throw new GatewayError(
           code === 'CONFLICT'
@@ -53,7 +55,7 @@ export class InstanceClient {
               : code === 'NOT_FOUND'
                 ? 'NOT_FOUND'
                 : 'INSTANCE_UNAVAILABLE',
-          'Bot instance request failed'
+          message
         )
       }
       if (response.status === 204) return undefined

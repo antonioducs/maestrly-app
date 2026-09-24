@@ -9,10 +9,10 @@ flowchart LR
   Mac[Maestrly on your Mac] <-->|HTTPS over tailnet| Tailnet[Tailscale tailnet]
   Tailnet <-->|public API and screen proxy :7443| Gateway[Bot gateway]
   Gateway <-->|internal API :7444| Bots[Bot containers on private Docker network]
-  Bots <-->|control :7680 and VNC :5900/:5901| Gateway
+  Bots <-->|authenticated screen and control :7680| Gateway
 ```
 
-Compose publishes only the gateway's public listener on server loopback. The internal listener and each bot's control and VNC ports stay on the Docker network. The gateway brokers short-lived screen tickets and proxies viewing or control; it never publishes a bot's VNC port. This fleet is separate from the [Maestrly web platform](self-hosting.md).
+Compose publishes only the gateway's public listener on server loopback. The internal listener and each bot's control port stay on the Docker network. VNC listens only on loopback inside each bot container. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the bot control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
 
 ## Requirements
 
@@ -108,7 +108,7 @@ Pairing codes are one-use and expire after ten minutes. The gateway stores **has
 
 The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores bot profiles, routines and prompts, activity, peer messages, device token hashes, and **plaintext** per-bot control tokens, gateway tokens, and keyring passwords needed to restart containers. Host root can read them. Bot API keys pass through the gateway when added but are **not stored** there; the bot stores them in its own encrypted credential store inside its home volume. The per-bot keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot names or error text.
 
-The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. Each bot has its own container and home volume; this separates ordinary bot activity from other bots and your Mac, but is not a hostile-code security boundary against the Docker host. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the bot desktop runs with `sandbox: false`: a compromised page in that renderer can control that bot's container, though its normal container boundary does not give it your Mac or direct access to the server host. No bot control or VNC port should be published on the host; VNC has no password and relies on the gateway and private Docker network for access. See the broader [security model](security-model.md).
+The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. Each bot has its own container and home volume; this separates ordinary bot activity from other bots and your Mac, but is not a hostile-code security boundary against the Docker host. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the bot desktop runs with `sandbox: false`: a compromised page in that renderer can control that bot's container, though its normal container boundary does not give it your Mac or direct access to the server host. No bot control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the bot control server authenticates screen tunnels, and control tunnels require a takeover hold. Bots cannot use the gateway's public API, while the internal API accepts only fleet network and loopback clients. Device revocation closes active screen and event streams and gives back any screen held by that device. See the broader [security model](security-model.md).
 
 ## Troubleshooting
 

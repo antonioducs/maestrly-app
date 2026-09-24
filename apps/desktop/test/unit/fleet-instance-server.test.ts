@@ -166,3 +166,70 @@ describe('instance control HTTP', () => {
     expect(events.replay(events.lastSeq + 1)).toBeNull()
   })
 })
+
+describe('instance screen tunnel', () => {
+  it('authenticates, limits, relays bytes, and closes control on hold release', async () => {
+    const net = await import('node:net')
+    const http = await import('node:http')
+    const vnc = net.createServer((socket) => socket.on('data', (data) => socket.write(data)))
+    vnc.listen(0, '127.0.0.1')
+    await once(vnc, 'listening')
+    const vncPort = (vnc.address() as AddressInfo).port
+    let held = false
+    const events = new InstanceEvents()
+    const tunnelControl: InstanceControl = {
+      ...control,
+      status: () => ({
+        ...status,
+        hold: held
+          ? { state: 'held', reason: 'takeover', since: new Date().toISOString(), interruptedTurn: false }
+          : { state: 'none', reason: null, since: null, interruptedTurn: false },
+      }),
+    }
+    const server = createInstanceControlServer(config, tunnelControl, events, { view: vncPort, control: vncPort })
+    servers.push(server)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const port = (server.address() as AddressInfo).port
+    expect((await fetch(`http://127.0.0.1:${port}/v1/screen/view`, { headers: headers() })).status).toBe(400)
+    const upgrade = (mode: 'view' | 'control', extra: Record<string, string> = {}) =>
+      new Promise<{ status: number; socket?: import('node:net').Socket }>((resolve, reject) => {
+        const req = http.request({
+          host: '127.0.0.1',
+          port,
+          path: '/v1/screen/' + mode,
+          headers: { ...headers(), Connection: 'Upgrade', Upgrade: 'maestrly-rfb', ...extra },
+        })
+        req.on('upgrade', (res, socket) => resolve({ status: res.statusCode ?? 0, socket }))
+        req.on('response', (res) => {
+          res.resume()
+          resolve({ status: res.statusCode ?? 0 })
+        })
+        req.on('error', reject)
+        req.end()
+      })
+    expect((await upgrade('view', { Authorization: 'Bearer wrong' })).status).toBe(401)
+    expect((await upgrade('view', { [FLEET_PROTOCOL_HEADER]: '2' })).status).toBe(426)
+    expect((await upgrade('view', { Origin: 'https://bad.example' })).status).toBe(403)
+    expect((await upgrade('control')).status).toBe(409)
+    held = true
+    const views = await Promise.all(Array.from({ length: 4 }, () => upgrade('view')))
+    expect(views.map((item) => item.status)).toEqual([101, 101, 101, 101])
+    expect((await upgrade('view')).status).toBe(409)
+    const controlTunnel = await upgrade('control')
+    expect(controlTunnel.status).toBe(101)
+    expect((await upgrade('control')).status).toBe(409)
+    const received = once(controlTunnel.socket!, 'data')
+    controlTunnel.socket!.write(Buffer.from([4, 5, 6]))
+    expect((await received)[0]).toEqual(Buffer.from([4, 5, 6]))
+    const closed = once(controlTunnel.socket!, 'close')
+    held = false
+    events.publish({ type: 'status', status: await tunnelControl.status() })
+    await closed
+    for (const view of views) view.socket?.destroy()
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    servers.splice(servers.indexOf(server), 1)
+    await new Promise<void>((resolve) => vnc.close(() => resolve()))
+  })
+})

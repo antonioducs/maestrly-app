@@ -3,6 +3,7 @@ import {
   FLEET_ERROR_STATUS,
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_ROUTES,
+  FLEET_SCREEN_UPGRADE,
   FLEET_INTERNAL_ROUTES,
   buildPath,
   deriveBotId,
@@ -287,6 +288,9 @@ describe('routes and helpers', () => {
     expect(FLEET_GATEWAY_ROUTES.botMessageDelete.response).toBeNull()
     expect(FLEET_INTERNAL_ROUTES.peerMessageSend.path).toBe('/internal/v1/peers/messages')
     expect(FLEET_INSTANCE_ROUTES.interactionResolve.path).toBe('/v1/interactions/:id/resolve')
+    expect(FLEET_INSTANCE_ROUTES.screenView.path).toBe('/v1/screen/view')
+    expect(FLEET_INSTANCE_ROUTES.screenControl.path).toBe('/v1/screen/control')
+    expect(FLEET_SCREEN_UPGRADE).toBe('maestrly-rfb')
     expect(
       buildPath(FLEET_GATEWAY_ROUTES.botRoutineRun.path, { id: 'bot one', rid: 'r/1' }, { limit: 20, before: null })
     ).toBe('/v1/bots/bot%20one/routines/r%2F1/run?limit=20')

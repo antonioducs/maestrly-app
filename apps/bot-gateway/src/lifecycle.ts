@@ -27,6 +27,7 @@ export class Lifecycle {
   readonly takeovers = new Map<string, FleetTakeoverState>()
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
+  private readonly reconcileTimers = new Map<string, NodeJS.Timeout>()
   private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   controlCount: (id: string) => number = () => 0
@@ -305,6 +306,7 @@ export class Lifecycle {
     this.activity(id, 'bot_started')
   }
   private fail(id: string, error: unknown) {
+    this.cancelReconcile(id)
     this.stopLink(id)
     this.clearTakeover(id, 4002)
     this.removeStatus(id)
@@ -342,6 +344,7 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     this.update(id, { lifecycle: 'stopping' })
+    this.cancelReconcile(id)
     this.stopLink(id)
     this.clearTakeover(id, 4002)
     const container = await this.container(id)
@@ -358,6 +361,7 @@ export class Lifecycle {
     const container = await this.container(id)
     if (!container) throw new GatewayError('NOT_FOUND', 'Bot container missing')
     this.update(id, { lifecycle: 'restarting' })
+    this.cancelReconcile(id)
     this.stopLink(id)
     this.clearTakeover(id, 4002)
     this.removeStatus(id)
@@ -374,6 +378,7 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     const container = await this.container(id)
+    this.cancelReconcile(id)
     this.stopLink(id)
     this.clearTakeover(id, 4002)
     if (container) {
@@ -407,6 +412,8 @@ export class Lifecycle {
   async resume(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    if (this.takeovers.get(id)?.state && this.takeovers.get(id)?.state !== 'none')
+      throw new GatewayError('CONFLICT', 'Give back the screen before resuming the bot')
     if (bot.lifecycle === 'running') {
       const hold = await this.client(id).release({ note: null, durationMs: null, continue: true })
       const status = this.statuses.get(id)
@@ -478,6 +485,10 @@ export class Lifecycle {
     this.emitBot(id)
     try {
       const hold = await this.client(id).hold({ reason: 'takeover' })
+      if (this.store.deviceRevoked(deviceId)) {
+        await this.client(id).release({ note: null, durationMs: null, continue: true })
+        throw new GatewayError('CONFLICT', 'Device revoked during takeover')
+      }
       const status = this.statuses.get(id)
       if (status) this.updateStatus(id, { ...status, hold })
       const human: FleetTakeoverState = { state: 'human', deviceId, deviceName, since: now() }
@@ -489,7 +500,7 @@ export class Lifecycle {
     } catch (error) {
       this.takeovers.delete(id)
       this.emitBot(id)
-      throw error
+      throw new GatewayError('CONFLICT', error instanceof Error ? error.message : 'Bot could not be held')
     }
   }
   async releaseTakeover(
@@ -535,22 +546,67 @@ export class Lifecycle {
       }
       if (container.state === 'running') {
         try {
-          let status = await this.client(bot.id).status()
-          if (status.hold.reason === 'takeover') {
-            const hold = await this.client(bot.id).release({ note: null, durationMs: null, continue: true })
-            status = { ...status, hold }
-          }
-          this.updateStatus(bot.id, status)
-          this.update(bot.id, { lifecycle: 'running' })
-          if (status.ready) this.onReady(bot.id)
-          this.startLink(bot.id)
+          await this.reconcileOne(bot.id)
         } catch {
           this.update(bot.id, { lifecycle: 'starting' })
+          this.scheduleReconcile(bot.id, 1000)
         }
       } else this.update(bot.id, { lifecycle: 'stopped' })
     }
   }
+  private async reconcileOne(id: string) {
+    const client = this.client(id)
+    const health = await client.health()
+    if (!health.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
+    const bot = this.store.getBot(id)!
+    let status = await client.putProfile({
+      botId: id,
+      name: bot.name,
+      instructions: bot.instructions,
+      ceiling: bot.ceiling,
+      selection: bot.selection,
+      gateway: { peersEnabled: bot.talksTo.length > 0 },
+    })
+    if (!status.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
+    if (status.hold.reason === 'takeover') {
+      const hold = await client.release({ note: null, durationMs: null, continue: true })
+      status = { ...status, hold }
+    }
+    if (bot.paused && status.hold.reason !== 'paused') {
+      const hold = await client.hold({ reason: 'paused' })
+      status = { ...status, hold }
+    }
+    this.updateStatus(id, status)
+    this.update(id, { lifecycle: 'running', setup: { step: 'ready', error: null, errorMessage: null } })
+    this.onReady(id)
+    this.startLink(id)
+  }
+  private cancelReconcile(id: string) {
+    const timer = this.reconcileTimers.get(id)
+    if (timer) clearTimeout(timer)
+    this.reconcileTimers.delete(id)
+  }
+  private scheduleReconcile(id: string, delay: number) {
+    if (this.reconcileTimers.has(id)) return
+    const timer = setTimeout(async () => {
+      this.reconcileTimers.delete(id)
+      try {
+        const container = await this.container(id)
+        if (container?.state !== 'running') {
+          this.update(id, { lifecycle: 'stopped' })
+          return
+        }
+        await this.reconcileOne(id)
+      } catch {
+        this.scheduleReconcile(id, Math.min(delay * 2, 30000))
+      }
+    }, delay)
+    timer.unref()
+    this.reconcileTimers.set(id, timer)
+  }
   close() {
+    for (const timer of this.reconcileTimers.values()) clearTimeout(timer)
+    this.reconcileTimers.clear()
     for (const id of this.links.keys()) this.stopLink(id)
     for (const timer of this.controllerTimers.values()) clearTimeout(timer)
     this.controllerTimers.clear()

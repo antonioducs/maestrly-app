@@ -1,5 +1,6 @@
 export const FLEET_PROTOCOL_VERSION = 1 as const
 export const FLEET_PROTOCOL_HEADER = 'X-Maestrly-Fleet-Protocol' as const
+export const FLEET_SCREEN_UPGRADE = 'maestrly-rfb' as const
 
 export const FLEET_MESSAGE_TEXT_MAX = 16_000
 export const FLEET_INSTRUCTIONS_MAX = 8_000

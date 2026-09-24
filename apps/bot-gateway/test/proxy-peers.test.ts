@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
-import net from 'node:net'
+import type net from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import {
@@ -48,6 +48,7 @@ async function listen(server: http.Server | net.Server) {
   return (server.address() as net.AddressInfo).port
 }
 async function instance() {
+  let tunnelToken = 'control'
   const inputs: any[] = []
   const server = http.createServer(async (req, res) => {
     const send = (code: number, value: unknown) => {
@@ -115,7 +116,38 @@ async function instance() {
       return send(400, { code: 'INVALID_REQUEST', message: 'Invalid request' })
     }
   })
-  return { origin: 'http://127.0.0.1:' + (await listen(server)), inputs }
+  const upgraded = new Set<net.Socket>()
+  server.on('upgrade', (req, socket, head) => {
+    upgraded.add(socket)
+    socket.on('close', () => upgraded.delete(socket))
+    if (
+      req.headers.authorization !== 'Bearer ' + tunnelToken ||
+      req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' ||
+      req.headers.upgrade !== 'maestrly-rfb' ||
+      !['/v1/screen/view', '/v1/screen/control'].includes(req.url ?? '')
+    ) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: maestrly-rfb\r\n\r\n')
+    const echo = (bytes: Buffer) => {
+      socket.write(Buffer.from([1, 2, 3]))
+      socket.write(bytes)
+    }
+    if (head.length) echo(head)
+    socket.on('data', echo)
+  })
+  const port = await listen(server)
+  closers.push(async () => {
+    for (const socket of upgraded) socket.destroy()
+  })
+  return {
+    origin: 'http://127.0.0.1:' + port,
+    inputs,
+    setTunnelToken: (value: string) => {
+      tunnelToken = value
+    },
+  }
 }
 function fixture(origin: string) {
   const dir = temp(),
@@ -236,18 +268,12 @@ describe('screen', () => {
     const fake = await instance(),
       f = fixture(fake.origin)
     const id = await bot(f, 'Test')
-    const tcpServer = net.createServer((socket) => {
-      socket.on('data', (bytes) => {
-        socket.write(Buffer.from([1, 2, 3]))
-        socket.write(bytes)
-      })
-    })
-    const port = await listen(tcpServer)
+    fake.setTunnelToken(f.store.botSecrets(id)!.controlToken)
     let time = Date.now()
     const screen = new ScreenProxy(
       f.lifecycle,
       () => '127.0.0.1',
-      { view: port, control: port },
+      Number(new URL(fake.origin).port),
       () => time
     )
     const cfg = { ...f.cfg, publicPort: 0, internalPort: 0 }
@@ -290,6 +316,7 @@ describe('screen', () => {
     expect(await wsRejected(base + expiring.path)).toBe(4003)
     const sockets: WebSocket[] = []
     for (let i = 0; i < 4; i++) sockets.push(await wsConnect(base + screen.ticket(id, 'one', 'view').path))
+    await until(() => (screen as any).connections.size === 4)
     expect(await wsRejected(base + screen.ticket(id, 'one', 'view').path)).toBe(4003)
     expect(await wsRejected(base + expiring.path)).toBe(4003)
     await f.lifecycle.takeover(id, 'one', 'Mac')
@@ -304,8 +331,23 @@ describe('screen', () => {
     const controlClosed = wsClose(control)
     await f.lifecycle.releaseTakeover(id, 'one', null, true)
     expect(await controlClosed).toBe(4001)
+    const oversized = sockets.shift()!
+    const oversizedClosed = wsClose(oversized)
+    oversized.send(Buffer.alloc(256 * 1024 + 1))
+    expect(await oversizedClosed).toBe(1009)
+    const auth = new Auth(f.store)
+    const paired = auth.pair(auth.createPairing().code, 'Revoked Mac', 'test')
+    const liveTicket = screen.ticket(id, paired.deviceId, 'view')
+    const unusedTicket = screen.ticket(id, paired.deviceId, 'view')
+    const live = await wsConnect(base + liveTicket.path)
+    await until(() => (screen as any).connections.size === 4)
+    const revokedClose = wsClose(live)
+    f.store.revokeDevice(paired.deviceId)
+    screen.closeDevice(paired.deviceId)
+    expect(await revokedClose).toBe(4003)
+    expect(await wsRejected(base + unusedTicket.path)).toBe(4003)
     const closings = sockets.map(wsClose)
     await f.lifecycle.stop(id)
-    expect(await Promise.all(closings)).toEqual([4002, 4002, 4002, 4002])
+    expect(await Promise.all(closings)).toEqual([4002, 4002, 4002])
   })
 })
