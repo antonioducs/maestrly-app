@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Wrench, X } from 'lucide-react'
 import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
@@ -8,7 +8,7 @@ import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { visibleTranscriptItems } from '@/lib/fleet/forms'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { bindFleetImageCache, createFleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
+import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 
@@ -158,11 +158,7 @@ export function BotConversation({
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
-  const imageCache = useMemo(
-    () => createFleetImageCache((botId, imageId) => window.api.fleetGetImage(botId, imageId)),
-    [bot.id]
-  )
-  useEffect(() => bindFleetImageCache(imageCache), [imageCache])
+  const imageCache = fleetImageCache
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)

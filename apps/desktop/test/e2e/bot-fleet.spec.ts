@@ -125,6 +125,22 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     output: null,
     images: [{ id: 'shot-1', mediaType: 'image/png', byteSize: png.length, name: 'Screenshot' }],
   })
+  // One image the bot evicted (404) and one whose first read fails while the bot restarts (503).
+  transcript.push({
+    id: 'image-failures',
+    at: now(),
+    kind: 'tool',
+    name: 'computer_screenshot',
+    target: null,
+    state: 'done',
+    output: null,
+    images: [
+      { id: 'shot-gone', mediaType: 'image/png', byteSize: png.length, name: 'Evicted' },
+      { id: 'shot-flaky', mediaType: 'image/png', byteSize: png.length, name: 'Flaky' },
+    ],
+  })
+  let flakyImageFailures = 1
+  const imageReads: string[] = []
   const routines: FleetRoutine[] = []
   let currentSelection: FleetSelection = {
     providerId: 'prov_e2e',
@@ -376,6 +392,16 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       }
       case 'botImage':
+        imageReads.push(url.pathname.split('/').pop() ?? '')
+        if (url.pathname.endsWith('/shot-gone')) {
+          send(404, { code: 'NOT_FOUND', message: 'Image not found' })
+          return
+        }
+        if (url.pathname.endsWith('/shot-flaky') && flakyImageFailures > 0) {
+          flakyImageFailures--
+          send(503, { code: 'INSTANCE_UNAVAILABLE', message: 'Bot restarting' })
+          return
+        }
         response.writeHead(200, {
           'Content-Type': 'image/png',
           'X-Content-Type-Options': 'nosniff',
@@ -574,10 +600,46 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByText('ls -la')).toBeVisible()
     await expect(page.getByText('~22.6k/828.4k 2.7% · ~$0.120')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Abrir Screenshot' })).toBeVisible()
-    await expect.poll(() => requests.filter((item) => item.key === 'botImage').length).toBe(1)
+    await expect.poll(() => [...imageReads].sort()).toEqual(['shot-1', 'shot-flaky', 'shot-gone'])
+    // An evicted image says so; a failed read offers a retry. Both explanations fit their box.
+    const gone = page.getByRole('status').filter({ hasText: 'Imagem não está mais disponível' })
+    const flaky = page.getByRole('status').filter({ hasText: 'Não foi possível carregar a imagem' })
+    await expect(gone).toBeVisible()
+    await expect(gone.getByRole('button')).toHaveCount(0)
+    await expect(flaky).toBeVisible()
+    for (const tile of [gone, flaky])
+      expect(
+        await tile.evaluate((element) => {
+          const box = element.getBoundingClientRect()
+          // Text nodes included: the whole content must sit inside the border.
+          const range = document.createRange()
+          range.selectNodeContents(element)
+          const content = range.getBoundingClientRect()
+          return (
+            content.top >= box.top + 1 &&
+            content.bottom <= box.bottom - 1 &&
+            content.left >= box.left + 1 &&
+            content.right <= box.right - 1
+          )
+        })
+      ).toBe(true)
+    await flaky.getByRole('button', { name: 'Tentar de novo' }).click()
+    await expect(page.getByRole('button', { name: 'Abrir Flaky' })).toBeVisible()
     await page.getByRole('button', { name: 'Abrir Screenshot' }).click()
     await expect(page.getByRole('dialog').getByAltText('Screenshot')).toBeVisible()
     await page.keyboard.press('Escape')
+    // Leaving the bot and coming back shows the loaded images again without downloading them.
+    const readsBeforeLeaving = imageReads.length
+    await page
+      .getByRole('button', { name: /fleet-e2e-host/ })
+      .first()
+      .click()
+    await expect(page.getByRole('button', { name: 'Abrir Screenshot' })).toHaveCount(0)
+    await page.getByRole('button', { name: /Scout/ }).first().click()
+    await expect(page.getByRole('button', { name: 'Abrir Screenshot' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Abrir Flaky' })).toBeVisible()
+    await expect(gone).toBeVisible()
+    expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
     await page.getByTitle('Adicionar').click()
     await expect(page.getByText('Fixture MCP')).toBeVisible()
     await page.getByRole('switch', { name: 'Fixture MCP' }).click()
@@ -690,6 +752,19 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .getByRole('button', { name: 'Assumir' })
       .click()
     await expect.poll(() => requests.filter((item) => item.key === 'botTakeover').length).toBe(2)
+    // The holder switch highlights exactly the "Você" half, whatever the bot name's width.
+    const holder = page.getByRole('status', { name: 'Quem controla a tela: Você' })
+    await expect(holder).toBeVisible()
+    await expect
+      .poll(async () => {
+        const [indicator, you] = await Promise.all([
+          holder.locator('[aria-hidden="true"]').boundingBox(),
+          holder.getByText('Você', { exact: true }).boundingBox(),
+        ])
+        if (!indicator || !you) return null
+        return Math.max(Math.abs(indicator.x - you.x), Math.abs(indicator.width - you.width)) <= 1
+      })
+      .toBe(true)
     await page.getByRole('button', { name: 'Devolver ao Orders' }).click()
     await page.getByPlaceholder('Opcional').fill('Signed in')
     await page.getByRole('button', { name: 'Devolver', exact: true }).click()

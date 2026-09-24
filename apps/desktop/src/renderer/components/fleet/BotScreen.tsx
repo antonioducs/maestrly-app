@@ -166,15 +166,22 @@ export function BotScreen({
         <span className="rounded-full bg-surface-elevated px-2 py-1 text-xs font-medium text-status-ready">
           ● {t('screen.live')}
         </span>
+        {/* Two equal columns: the half-width indicator must cover one name exactly, whatever their lengths. */}
         <div
           role="status"
           aria-label={t('screen.holder', {
             name: human ? t('screen.you') : otherHuman ? (takeover.deviceName ?? t('screen.unknownDevice')) : bot.name,
           })}
-          className="relative flex items-center gap-1 rounded-full border border-border p-1 text-xs"
+          className="relative grid max-w-xs grid-cols-2 items-center rounded-full border border-border p-1 text-xs"
         >
-          <span className="relative z-10 px-2 py-1">{bot.name}</span>
-          <span className="relative z-10 px-2 py-1">
+          <span
+            className={`relative z-10 min-w-0 truncate px-3 py-1 text-center ${takeover.state === 'human' ? 'text-muted-foreground' : ''}`}
+          >
+            {bot.name}
+          </span>
+          <span
+            className={`relative z-10 min-w-0 truncate px-3 py-1 text-center ${takeover.state === 'human' ? '' : 'text-muted-foreground'}`}
+          >
             {otherHuman ? (takeover.deviceName ?? t('screen.unknownDevice')) : t('screen.you')}
           </span>
           <span

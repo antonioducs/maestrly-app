@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { FLEET_IMAGE_LIMITS, type FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import { formatFleetUsage, selectionPatch, validateAttachments } from '../../src/renderer/lib/fleet/composer'
-import { bindFleetImageCache, createFleetImageCache } from '../../src/renderer/lib/fleet/image-cache'
+import { createFleetImageCache, holdFleetImage } from '../../src/renderer/lib/fleet/image-cache'
+import type { FleetImageData } from '../../src/preload/api-fleet'
 
 const file = (size: number, type = 'image/png') => ({ name: 'picture.png', size, type })
 const model: FleetSelectionOption = {
@@ -56,39 +57,79 @@ describe('fleet composer helpers', () => {
       })
     ).toBe('~22.6k/828.4k 2.7%')
   })
-  it('deduplicates image reads and revokes least recently used URLs', async () => {
+  it('deduplicates concurrent reads and serves a loaded image again without reloading it', async () => {
     const load = vi.fn(async () => ({ mediaType: 'image/png' as const, data: new Uint8Array([1]) }))
-    const createObjectURL = vi.fn().mockReturnValueOnce('blob:a').mockReturnValueOnce('blob:b')
-    const revokeObjectURL = vi.fn()
-    const cache = createFleetImageCache(load, { createObjectURL, revokeObjectURL }, 1)
-    expect(await Promise.all([cache.get('bot', 'a'), cache.get('bot', 'a')])).toEqual(['blob:a', 'blob:a'])
+    const cache = createFleetImageCache(load, { createObjectURL: () => 'blob:a', revokeObjectURL: vi.fn() })
+    expect(await Promise.all([cache.acquire('bot', 'a'), cache.acquire('bot', 'a')])).toEqual(['blob:a', 'blob:a'])
+    cache.release('bot', 'a')
+    cache.release('bot', 'a')
+    // Leaving the conversation and coming back shows the image at once.
+    await expect(cache.acquire('bot', 'a')).resolves.toBe('blob:a')
     expect(load).toHaveBeenCalledTimes(1)
-    await cache.get('bot', 'b')
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:a')
-    cache.dispose()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:b')
   })
-  it('keeps serving images after a StrictMode effect replay (setup, cleanup, setup)', async () => {
-    const load = vi.fn(async () => ({ mediaType: 'image/png' as const, data: new Uint8Array([1]) }))
+  it('evicts only images nobody shows, oldest first, within the count and byte budgets', async () => {
+    const load = vi.fn(async () => ({ mediaType: 'image/png' as const, data: new Uint8Array(4) }))
+    let next = 0
     const revokeObjectURL = vi.fn()
-    const cache = createFleetImageCache(load, { createObjectURL: () => 'blob:a', revokeObjectURL })
-    // `npm run dev` mounts every effect twice; a memoized cache must survive the simulated unmount.
-    const cleanup = bindFleetImageCache(cache)
-    cleanup()
-    const cleanupAgain = bindFleetImageCache(cache)
-    await expect(cache.get('bot', 'a')).resolves.toBe('blob:a')
-    // A real unmount still releases every object URL and refuses new ones.
-    cleanupAgain()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:a')
-    await expect(cache.get('bot', 'b')).rejects.toThrow('Image cache disposed')
+    const cache = createFleetImageCache(load, { createObjectURL: () => `blob:${next++}`, revokeObjectURL }, 2, 10)
+    await cache.acquire('bot', 'a')
+    await cache.acquire('bot', 'b')
+    cache.release('bot', 'b')
+    // 12 bytes would exceed the 10-byte budget: the unused `b` goes, the displayed `a` stays.
+    await cache.acquire('bot', 'c')
+    expect(revokeObjectURL.mock.calls).toEqual([['blob:1']])
+    await cache.acquire('bot', 'd')
+    // Everything left is on screen: over budget rather than revoking a displayed image.
+    expect(revokeObjectURL.mock.calls).toEqual([['blob:1']])
+    cache.release('bot', 'a')
+    expect(revokeObjectURL.mock.calls).toEqual([['blob:1'], ['blob:0']])
   })
-  it('binds the conversation image cache through the StrictMode-safe effect', () => {
+  it('keeps images loading across StrictMode replays and remounts, releasing each hold exactly once', async () => {
+    let resolveLoad = (_value: FleetImageData) => {}
+    const load = vi.fn((_botId: string, imageId: string) =>
+      imageId === 'a'
+        ? new Promise<FleetImageData>((resolve) => {
+            resolveLoad = resolve
+          })
+        : Promise.resolve({ mediaType: 'image/png' as const, data: new Uint8Array([2, 2]) })
+    )
+    const revokeObjectURL = vi.fn()
+    const cache = createFleetImageCache(
+      load,
+      { createObjectURL: (blob) => `blob:${(blob as Blob).size}`, revokeObjectURL },
+      1
+    )
+    const ready = vi.fn()
+    const failed = vi.fn()
+    // `npm run dev`: the tile mounts, is torn down before its image arrives, and mounts again.
+    const firstMount = holdFleetImage(cache, 'bot', 'a', ready, failed)
+    firstMount()
+    const secondMount = holdFleetImage(cache, 'bot', 'a', ready, failed)
+    resolveLoad({ mediaType: 'image/png', data: new Uint8Array([1]) })
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledWith('blob:1'))
+    expect(ready).toHaveBeenCalledTimes(1)
+    expect(failed).not.toHaveBeenCalled()
+    // Still displayed by the second mount: another image cannot evict it.
+    await cache.acquire('bot', 'b')
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    // Once the tile unmounts nothing holds it: it is the one evicted, and only once.
+    secondMount()
+    secondMount()
+    expect(revokeObjectURL.mock.calls).toEqual([['blob:1']])
+  })
+  it('shares one app-lifetime cache instead of one per conversation mount', () => {
     const source = readFileSync(
       new URL('../../src/renderer/components/fleet/BotConversation.tsx', import.meta.url),
       'utf8'
     )
-    expect(source).toContain('useEffect(() => bindFleetImageCache(imageCache), [imageCache])')
-    expect(source).not.toContain('imageCache.dispose()')
+    // A cache disposed on unmount broke every image when returning to a bot in dev mode.
+    expect(source).toContain('const imageCache = fleetImageCache')
+    expect(source).not.toMatch(/createFleetImageCache|dispose\(/)
+    const tiles = readFileSync(
+      new URL('../../src/renderer/components/fleet/BotTranscriptImages.tsx', import.meta.url),
+      'utf8'
+    )
+    expect(tiles).toContain('holdFleetImage(')
   })
   it('wires the desktop controls and never uses a native select', () => {
     const source = readFileSync(new URL('../../src/renderer/components/fleet/BotComposer.tsx', import.meta.url), 'utf8')

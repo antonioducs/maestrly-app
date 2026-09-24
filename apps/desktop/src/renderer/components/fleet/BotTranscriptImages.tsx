@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ImageOff, RotateCw } from 'lucide-react'
 import type { FleetImageRef } from '@maestrly/bot-fleet-protocol'
 import { ChatImageLightbox } from '@/components/chat/ChatImageLightbox'
-import type { FleetImageCache } from '@/lib/fleet/image-cache'
+import { holdFleetImage, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { isImageNotFound } from '@/lib/fleet/errors'
 
 function ImageTile({ botId, image, cache }: { botId: string; image: FleetImageRef; cache: FleetImageCache }) {
@@ -13,48 +14,31 @@ function ImageTile({ botId, image, cache }: { botId: string; image: FleetImageRe
   const [attempt, setAttempt] = useState(0)
   const [open, setOpen] = useState(false)
   useEffect(() => {
-    let active = true
     setUrl(null)
     setFailure(null)
-    void cache
-      .get(botId, image.id)
-      .then((loaded) => {
-        if (active) {
-          cache.retain(botId, image.id)
-          setUrl(loaded)
-        }
-      })
-      .catch((cause) => {
-        if (active) setFailure(isImageNotFound(cause) ? 'missing' : 'error')
-      })
-    return () => {
-      active = false
-      cache.release(botId, image.id)
-    }
-  }, [botId, image.id, cache, attempt])
-  if (failure === 'missing')
-    return (
-      <div
-        role="status"
-        className="flex size-24 items-center justify-center rounded-md border border-border bg-surface-elevated p-2 text-center text-xs text-muted-foreground"
-      >
-        {t('transcript.imageUnavailable')}
-      </div>
+    return holdFleetImage(cache, botId, image.id, setUrl, (cause) =>
+      setFailure(isImageNotFound(cause) ? 'missing' : 'error')
     )
-  if (failure === 'error')
+  }, [botId, image.id, cache, attempt])
+  if (failure)
     return (
+      // Wider than a thumbnail so the explanation fits on two short lines.
       <div
         role="status"
-        className="flex size-24 flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-surface-elevated p-2 text-center text-xs text-muted-foreground"
+        className="flex h-24 w-44 flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-surface-elevated px-3 text-center text-[11px] leading-snug text-muted-foreground"
       >
-        {t('transcript.imageLoadFailed')}
-        <button
-          type="button"
-          onClick={() => setAttempt((value) => value + 1)}
-          className="rounded px-1.5 py-0.5 text-foreground underline decoration-white/30 underline-offset-2 hover:decoration-white focus-visible:outline-2 focus-visible:outline-primary"
-        >
-          {t('transcript.imageRetry')}
-        </button>
+        <ImageOff aria-hidden="true" className="size-4 shrink-0" />
+        {failure === 'missing' ? t('transcript.imageUnavailable') : t('transcript.imageLoadFailed')}
+        {failure === 'error' && (
+          <button
+            type="button"
+            onClick={() => setAttempt((value) => value + 1)}
+            className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 py-0.5 text-foreground hover:bg-white/[0.06] focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <RotateCw aria-hidden="true" className="size-3" />
+            {t('transcript.imageRetry')}
+          </button>
+        )}
       </div>
     )
   if (!url) return <div className="size-24 animate-pulse rounded-md bg-surface-elevated" />
