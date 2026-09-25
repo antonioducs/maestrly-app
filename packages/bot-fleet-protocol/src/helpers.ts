@@ -95,3 +95,26 @@ export function isValidTimeZone(timezone: string): boolean {
     return false
   }
 }
+
+const MEMORY_INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/u
+const MEMORY_INJECTION = [
+  /\bignore\s+(?:all\s+|any\s+)?(?:the\s+)?(?:previous|prior|above|earlier)\s+(?:instructions|rules|messages)\b/i,
+  /\bdisregard\s+(?:the\s+|all\s+)?(?:system|previous|prior)\s+(?:prompt|instructions)\b/i,
+  /\bignor[ea]\s+(?:todas\s+)?(?:as\s+)?instru[cç](?:[oõ]es|[aã]o)\s+anteriores\b/i,
+  /\b(?:curl|wget)\b[^\n|]{0,200}\|\s*(?:ba|z)?sh\b/i,
+]
+export type MemoryContentProblem = 'invisible-characters' | 'instruction-injection'
+/** Memory text is replayed into prompts: reject hidden characters and blatant attempts to plant instructions. */
+export function memoryContentProblem(text: string): MemoryContentProblem | null {
+  if (MEMORY_INVISIBLE.test(text)) return 'invisible-characters'
+  return MEMORY_INJECTION.some((pattern) => pattern.test(text)) ? 'instruction-injection' : null
+}
+/** Trim, fold tabs and runs of spaces, and keep at most one blank line between paragraphs. */
+export function normalizeMemoryText(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
