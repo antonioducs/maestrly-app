@@ -50,7 +50,8 @@ export async function maybeConsolidate(input: {
     const lines: string[] = []
     let chars = 0
     for (const memory of candidates) {
-      const line = `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content}`
+      // One line per memory keeps entry boundaries clear; collapsing whitespace loses no facts.
+      const line = `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content.replace(/\s+/g, ' ')}`
       const size = line.length + (lines.length ? 1 : 0)
       if (chars + size > CONSOLIDATION_LIMITS.inputChars) break
       memories.push(memory)
