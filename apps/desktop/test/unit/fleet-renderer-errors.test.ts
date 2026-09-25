@@ -16,6 +16,9 @@ describe('fleet renderer errors', () => {
       'Pairing code expired'
     )
     expect(fleetErrorMessage(new Error('Plain failure'))).toBe('Plain failure')
+    expect(
+      fleetErrorMessage(new Error("Error invoking remote method 'fleet:bot-action': FleetClientError: Bot not found"))
+    ).toBe('Bot not found')
   })
 
   it('recognizes a refused takeover through the IPC marker or a 409 status', () => {
@@ -46,6 +49,14 @@ it('recognizes owner memory capacity errors through IPC without masking other fa
     isOwnerMemoryFull(
       new Error(
         "Error invoking remote method 'fleet:ownerMemoryCreate': Error: Owner memory is full (4000 characters)."
+      )
+    )
+  ).toBe(true)
+  // The real shape: gateway failures are FleetClientError instances serialized by Electron IPC.
+  expect(
+    isOwnerMemoryFull(
+      new Error(
+        "Error invoking remote method 'fleet:ownerMemoryCreate': FleetClientError: Owner memory is full (4000 characters)."
       )
     )
   ).toBe(true)

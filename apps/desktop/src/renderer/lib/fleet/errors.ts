@@ -1,5 +1,6 @@
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
-const IPC_PREFIX = /^(?:Error:\s*)?Error invoking remote method '[^']*':\s*(?:Error:\s*)?/
+// Main-process errors arrive as "<Class>: message"; gateway failures are FleetClientError instances.
+const IPC_PREFIX = /^(?:Error:\s*)?Error invoking remote method '[^']*':\s*(?:[A-Za-z]*Error:\s*)?/
 
 /** Stable marker the main process raises when the gateway refuses a takeover with 409. */
 export const TAKEOVER_CONFLICT_MARKER = 'FLEET_TAKEOVER_CONFLICT'
