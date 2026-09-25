@@ -37,22 +37,30 @@ export function renderHistoryWindow(
   after: number,
   t: McpToolContext['t'] = tFor('en', 'mcp')
 ): string {
-  const blocks: string[] = []
-  let used = 0
-  for (const { seq: at, message } of listChatMessagesAround(conversationId, seq, before, after)) {
+  const blocks = listChatMessagesAround(conversationId, seq, before, after).map(({ seq: at, message }) => {
     const body = message.parts
       .map((part) => renderPart(part, t))
       .filter((line): line is string => Boolean(line))
       .join('\n')
-    const block = `#${at} · ${new Date(message.createdAt).toISOString()} · ${message.role}\n${body}`
-    if (used + block.length + (blocks.length ? 2 : 0) > HISTORY_READ.maxChars) {
-      blocks.push(t('returns.history.truncated'))
-      break
-    }
-    used += block.length + (blocks.length ? 2 : 0)
-    blocks.push(block)
+    return { seq: at, text: `#${at} · ${new Date(message.createdAt).toISOString()} · ${message.role}\n${body}` }
+  })
+  if (!blocks.length) return t('returns.history.empty')
+  const full = blocks.map((block) => block.text).join('\n\n')
+  if (full.length <= HISTORY_READ.maxChars) return full
+
+  const note = t('returns.history.truncated')
+  const budget = HISTORY_READ.maxChars - note.length - 2
+  const selected: typeof blocks = []
+  let used = 0
+  // Reserve the requested message before spending the remaining budget on its closest neighbours.
+  for (const block of blocks.sort((a, b) => Math.abs(a.seq - seq) - Math.abs(b.seq - seq) || a.seq - b.seq)) {
+    const remaining = budget - used - (selected.length ? 2 : 0)
+    if (block.text.length > remaining && block.seq !== seq) continue
+    const text = cut(block.text, remaining)
+    used += text.length + (selected.length ? 2 : 0)
+    selected.push({ ...block, text })
   }
-  return blocks.length ? cut(blocks.join('\n\n'), HISTORY_READ.maxChars) : t('returns.history.empty')
+  return [...selected.sort((a, b) => a.seq - b.seq).map((block) => block.text), note].join('\n\n')
 }
 
 export function registerHistoryTools(ctx: McpToolContext): void {
