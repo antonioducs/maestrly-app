@@ -1,6 +1,12 @@
 import { ipcRenderer } from 'electron'
 import type {
   FleetActivityEntry,
+  FleetOwnerMemory,
+  FleetOwnerMemoryEntry,
+  FleetOwnerMemoryPatchRequest,
+  FleetRoutineRun,
+  FleetBotMemory,
+  FleetBotMemoryPatchRequest,
   FleetArchivedBot,
   FleetBot,
   FleetCreateBotRequest,
@@ -100,6 +106,12 @@ export type FleetScreenState = {
 export type {
   FleetApiKeyProviderKind,
   FleetActivityEntry,
+  FleetOwnerMemory,
+  FleetOwnerMemoryEntry,
+  FleetOwnerMemoryPatchRequest,
+  FleetRoutineRun,
+  FleetBotMemory,
+  FleetBotMemoryPatchRequest,
   FleetBot,
   FleetGatewayEvent,
   FleetHostInfo,
@@ -193,6 +205,23 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:deleteRoutine', botId, routineId),
   fleetRunRoutine: (botId: string, routineId: string): Promise<FleetRoutine> =>
     ipcRenderer.invoke('fleet:runRoutine', botId, routineId),
+  fleetOwnerMemoryList: (status: 'active' | 'all' = 'all'): Promise<FleetOwnerMemory> =>
+    ipcRenderer.invoke('fleet:ownerMemoryList', status),
+  fleetOwnerMemoryCreate: (input: { content: string; replacesId?: string }): Promise<FleetOwnerMemoryEntry> =>
+    ipcRenderer.invoke('fleet:ownerMemoryCreate', input),
+  fleetOwnerMemoryUpdate: (entryId: string, patch: FleetOwnerMemoryPatchRequest): Promise<FleetOwnerMemoryEntry> =>
+    ipcRenderer.invoke('fleet:ownerMemoryUpdate', entryId, patch),
+  fleetOwnerMemoryDelete: (entryId: string): Promise<void> => ipcRenderer.invoke('fleet:ownerMemoryDelete', entryId),
+  fleetListRoutineRuns: (botId: string, routineId: string): Promise<{ runs: FleetRoutineRun[] }> =>
+    ipcRenderer.invoke('fleet:listRoutineRuns', botId, routineId),
+  fleetListBotMemories: (
+    botId: string,
+    status: 'active' | 'archived' | 'superseded' | 'all' = 'active'
+  ): Promise<{ memories: FleetBotMemory[] }> => ipcRenderer.invoke('fleet:listBotMemories', botId, status),
+  fleetPatchBotMemory: (botId: string, memoryId: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory> =>
+    ipcRenderer.invoke('fleet:patchBotMemory', botId, memoryId, patch),
+  fleetDeleteBotMemory: (botId: string, memoryId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:deleteBotMemory', botId, memoryId),
   fleetGetInbox: (): Promise<{ items: FleetInboxItem[] }> => ipcRenderer.invoke('fleet:getInbox'),
   fleetGetPeerMessages: (limit?: number): Promise<{ messages: FleetPeerMessage[] }> =>
     ipcRenderer.invoke('fleet:getPeerMessages', limit),

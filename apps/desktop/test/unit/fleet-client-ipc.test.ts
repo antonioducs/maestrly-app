@@ -32,6 +32,49 @@ afterEach(() => {
 })
 
 describe('fleet IPC validation', () => {
+  it('validates memory mutations before trusted dispatch and validates routine run ids', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+    const mutate = (channel: string, ...args: unknown[]) => mutations.get(channel)?.({}, ...args)
+    expect(() => mutate('fleet:ownerMemoryCreate', { content: 'a'.repeat(501) })).toThrow()
+    expect(() => mutate('fleet:ownerMemoryUpdate', 'm1', {})).toThrow()
+    expect(() => mutate('fleet:ownerMemoryUpdate', 'm1', { status: 'superseded' })).toThrow()
+    expect(() => mutate('fleet:patchBotMemory', 'scout', 'm1', {})).toThrow()
+    expect(() => reads.get('fleet:listRoutineRuns')?.({}, '../bad', 'r1')).toThrow()
+    expect(() => reads.get('fleet:listRoutineRuns')?.({}, 'scout', '')).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    await mutate('fleet:ownerMemoryCreate', { content: 'Prefer short answers.' })
+    await mutate('fleet:ownerMemoryUpdate', 'm1', { status: 'archived' })
+    await reads.get('fleet:listRoutineRuns')?.({}, 'scout', 'r1')
+    await mutate('fleet:patchBotMemory', 'scout', 'm1', { pinned: true })
+    expect(mocks.call.mock.calls).toEqual([
+      [
+        'ownerMemoryCreate',
+        { body: { content: 'Prefer short answers.', idempotencyKey: '550e8400-e29b-41d4-a716-446655440000' } },
+      ],
+      ['ownerMemoryPatch', { params: { mid: 'm1' }, body: { status: 'archived' } }],
+      ['botRoutineRuns', { params: { id: 'scout', rid: 'r1' } }],
+      ['botMemoryPatch', { params: { id: 'scout', mid: 'm1' }, body: { pinned: true } }],
+    ])
+    for (const channel of [
+      'fleet:ownerMemoryCreate',
+      'fleet:ownerMemoryUpdate',
+      'fleet:ownerMemoryDelete',
+      'fleet:patchBotMemory',
+      'fleet:deleteBotMemory',
+    ]) {
+      expect(mutations.has(channel)).toBe(true)
+      expect(reads.has(channel)).toBe(false)
+    }
+  })
+
   it('encodes validated image attachments in main and validates image ids', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
     const handlers = new Map<string, (...args: unknown[]) => unknown>()

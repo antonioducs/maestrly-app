@@ -25,6 +25,15 @@ const host = {
 } as FleetHostInfo
 
 describe('fleet pure state', () => {
+  it('records owner memory revisions so views can refresh', () => {
+    expect(initialFleetState.ownerMemoryRevision).toBe(0)
+    const state = fleetReducer(initialFleetState, {
+      type: 'event',
+      value: { type: 'owner_memory.updated', revision: 7, at: '2026-09-25T00:00:00Z' },
+    })
+    expect(state.ownerMemoryRevision).toBe(7)
+  })
+
   it('keeps the parts of one message in their order when they share its time', () => {
     const at = '2026-09-24T21:29:45.794Z'
     const merged = mergeTranscriptItems(

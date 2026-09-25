@@ -15,6 +15,7 @@ export type TranscriptState = FleetTranscriptPage & {
 export type FleetState = {
   connection: FleetConnectionView
   snapshot: FleetSnapshot
+  ownerMemoryRevision: number
   digest: FleetDigest
   activity: FleetActivityEntry[]
   transcripts: Record<string, TranscriptState>
@@ -36,6 +37,7 @@ export const initialFleetState: FleetState = {
     tokenPersistence: 'secure',
   },
   snapshot: { host: null, bots: [], inbox: [], peerMessages: [] },
+  ownerMemoryRevision: 0,
   digest: null,
   activity: [],
   transcripts: {},
@@ -196,6 +198,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
               .slice(-200),
           }
         case 'owner_memory.updated':
+          return { ...state, ownerMemoryRevision: event.revision }
         case 'hello':
           return state
       }

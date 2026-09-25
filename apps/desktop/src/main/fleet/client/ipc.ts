@@ -2,6 +2,9 @@ import { app } from 'electron'
 import { z } from 'zod'
 import {
   fleetBotIdSchema,
+  fleetOwnerMemoryCreateRequestSchema,
+  fleetOwnerMemoryPatchRequestSchema,
+  fleetBotMemoryPatchRequestSchema,
   fleetConversationOpSchema,
   fleetConversationCallRequestSchema,
   fleetCreateBotRequestSchema,
@@ -180,6 +183,46 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   reg.mhandle('fleet:runRoutine', (_event, botId: unknown, routineId: unknown) =>
     fleet.call('botRoutineRun', { params: { id: id.parse(botId), rid: opaqueId.parse(routineId) } })
+  )
+  reg.handle('fleet:ownerMemoryList', (_event, status: unknown) =>
+    fleet.call('ownerMemoryList', { query: { status: status === 'active' ? 'active' : 'all' } })
+  )
+  reg.mhandle('fleet:ownerMemoryCreate', (_event, input: unknown) =>
+    fleet.call('ownerMemoryCreate', {
+      body: {
+        ...fleetOwnerMemoryCreateRequestSchema.omit({ idempotencyKey: true }).parse(input),
+        idempotencyKey: fleet.idempotencyKey(),
+      },
+    })
+  )
+  reg.mhandle('fleet:ownerMemoryUpdate', (_event, entryId: unknown, patch: unknown) =>
+    fleet.call('ownerMemoryPatch', {
+      params: { mid: opaqueId.parse(entryId) },
+      body: fleetOwnerMemoryPatchRequestSchema.parse(patch),
+    })
+  )
+  reg.mhandle('fleet:ownerMemoryDelete', (_event, entryId: unknown) =>
+    fleet.call('ownerMemoryDelete', { params: { mid: opaqueId.parse(entryId) } })
+  )
+  reg.handle('fleet:listRoutineRuns', (_event, botId: unknown, routineId: unknown) =>
+    fleet.call('botRoutineRuns', { params: { id: id.parse(botId), rid: opaqueId.parse(routineId) } })
+  )
+  reg.handle('fleet:listBotMemories', (_event, botId: unknown, status: unknown) =>
+    fleet.call('botMemoriesList', {
+      params: { id: id.parse(botId) },
+      query: {
+        status: ['active', 'archived', 'superseded', 'all'].includes(String(status)) ? String(status) : 'active',
+      },
+    })
+  )
+  reg.mhandle('fleet:patchBotMemory', (_event, botId: unknown, memoryId: unknown, patch: unknown) =>
+    fleet.call('botMemoryPatch', {
+      params: { id: id.parse(botId), mid: opaqueId.parse(memoryId) },
+      body: fleetBotMemoryPatchRequestSchema.parse(patch),
+    })
+  )
+  reg.mhandle('fleet:deleteBotMemory', (_event, botId: unknown, memoryId: unknown) =>
+    fleet.call('botMemoryDelete', { params: { id: id.parse(botId), mid: opaqueId.parse(memoryId) } })
   )
   reg.handle('fleet:getInbox', () => fleet.call('inbox'))
   reg.handle('fleet:getPeerMessages', (_event, limit: unknown) =>
