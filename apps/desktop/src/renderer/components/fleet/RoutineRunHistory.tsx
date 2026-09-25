@@ -1,24 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 export function RoutineRunHistory({
-  botId,
+  bot,
   routineId,
   refreshKey,
 }: {
-  botId: string
+  bot: FleetBot
   routineId: string
   refreshKey: number
 }) {
   const { t, i18n } = useTranslation('fleet')
   const [runs, setRuns] = useState<FleetRoutineRun[] | null>(null)
   const [error, setError] = useState('')
+  // Cancellations add no activity, and status can stay unchanged while another input is queued.
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListRoutineRuns(botId, routineId)
+      .fleetListRoutineRuns(bot.id, routineId)
       .then((value) => {
         if (alive) {
           setRuns(value.runs)
@@ -31,7 +32,7 @@ export function RoutineRunHistory({
     return () => {
       alive = false
     }
-  }, [botId, routineId, refreshKey])
+  }, [bot, routineId, refreshKey])
   return (
     <div className="w-full space-y-2">
       {error && (

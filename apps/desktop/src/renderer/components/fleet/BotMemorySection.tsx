@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetBotMemory } from '@maestrly/bot-fleet-protocol'
+import { FLEET_BOT_MEMORY_LIMITS, type FleetBot, type FleetBotMemory } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 export function BotMemorySection({ bot }: { bot: FleetBot }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const [memories, setMemories] = useState<FleetBotMemory[] | null>(null)
   const [showArchived, setShowArchived] = useState(false)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
@@ -72,6 +72,11 @@ export function BotMemorySection({ bot }: { bot: FleetBot }) {
             >
               {memory.content}
             </p>
+            {memory.truncated && (
+              <p className="text-xs text-muted-foreground">
+                {t('botMemory.truncated', { max: FLEET_BOT_MEMORY_LIMITS.contentMax.toLocaleString(i18n.language) })}
+              </p>
+            )}
             <Button
               size="sm"
               variant="ghost"

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   FLEET_OWNER_MEMORY_LIMITS,
@@ -7,7 +7,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorMessage, isOwnerMemoryFull } from '@/lib/fleet/errors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
@@ -20,6 +20,21 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  const editTextarea = useRef<HTMLTextAreaElement>(null)
+  const editButtons = useRef(new Map<string, HTMLButtonElement>())
+  const returnFocus = useRef<string | null>(null)
+  const editingId = editing?.id
+  useEffect(() => {
+    if (editingId) editTextarea.current?.focus()
+    else if (!busy && returnFocus.current) {
+      editButtons.current.get(returnFocus.current)?.focus()
+      returnFocus.current = null
+    }
+  }, [editingId, busy])
+  function finishEditing(id: string) {
+    returnFocus.current = id
+    setEditing(null)
+  }
   const connected = fleet.state.connection.state === 'connected'
   useEffect(() => {
     if (!connected) return
@@ -49,7 +64,11 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
       setConfirm(null)
       setRefresh((value) => value + 1)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(
+        isOwnerMemoryFull(cause)
+          ? t('ownerMemory.full', { max: FLEET_OWNER_MEMORY_LIMITS.activeCharsMax })
+          : fleetErrorMessage(cause)
+      )
     } finally {
       setBusy(false)
     }
@@ -67,11 +86,12 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
               event.preventDefault()
               void mutate(async () => {
                 await window.api.fleetOwnerMemoryUpdate(entry.id, { content: editing.content.trim() })
-                setEditing(null)
+                finishEditing(entry.id)
               })
             }}
           >
             <textarea
+              ref={editTextarea}
               className="min-h-24 w-full rounded-md border border-input bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={t('ownerMemory.edit')}
               value={editing.content}
@@ -81,7 +101,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
             <Button size="sm" type="submit" disabled={busy || !editing.content.trim()}>
               {t('ownerMemory.save')}
             </Button>
-            <Button size="sm" type="button" variant="ghost" disabled={busy} onClick={() => setEditing(null)}>
+            <Button size="sm" type="button" variant="ghost" disabled={busy} onClick={() => finishEditing(entry.id)}>
               {t('ownerMemory.cancel')}
             </Button>
           </form>
@@ -109,6 +129,10 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
                 size="sm"
                 variant="ghost"
                 disabled={busy}
+                ref={(node) => {
+                  if (node) editButtons.current.set(entry.id, node)
+                  else editButtons.current.delete(entry.id)
+                }}
                 onClick={() => setEditing({ id: entry.id, content: entry.content })}
               >
                 {t('ownerMemory.edit')}

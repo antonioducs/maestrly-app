@@ -1,5 +1,5 @@
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Archive,
@@ -34,6 +34,7 @@ type Selected = { kind: 'local' | 'shared'; id: string } | null
 interface Props {
   workspaceId: string
   focusMemoryId?: string
+  focusMemoryRequest?: number
   workspaceName: string
   onShowSidebar?: () => void
   onClose: () => void
@@ -60,8 +61,16 @@ function downloadText(filename: string, content: string, type: string): void {
   URL.revokeObjectURL(url)
 }
 
-export function ProjectMemoryView({ workspaceId, workspaceName, focusMemoryId, onShowSidebar, onClose }: Props) {
+export function ProjectMemoryView({
+  workspaceId,
+  workspaceName,
+  focusMemoryId,
+  focusMemoryRequest = 0,
+  onShowSidebar,
+  onClose,
+}: Props) {
   const { t, i18n } = useTranslation('ui')
+  const appliedFocus = useRef<string | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [section, setSection] = useState<Section>('all')
   const [query, setQuery] = useState('')
@@ -103,11 +112,13 @@ export function ProjectMemoryView({ workspaceId, workspaceName, focusMemoryId, o
   }, [workspaceId])
 
   useEffect(() => {
-    if (focusMemoryId && local.some((memory) => memory.id === focusMemoryId)) {
+    const request = `${workspaceId}:${focusMemoryRequest}:${focusMemoryId}`
+    if (focusMemoryId && appliedFocus.current !== request && local.some((memory) => memory.id === focusMemoryId)) {
+      appliedFocus.current = request
       setCreating(false)
       setSelected({ kind: 'local', id: focusMemoryId })
     }
-  }, [focusMemoryId, local])
+  }, [focusMemoryId, focusMemoryRequest, workspaceId, local])
 
   useEffect(() => void reload(), [reload])
   useEffect(

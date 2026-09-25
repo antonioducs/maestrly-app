@@ -4,6 +4,7 @@ import {
   TAKEOVER_CONFLICT_MARKER,
   fleetErrorMessage,
   isImageNotFound,
+  isOwnerMemoryFull,
   isTakeoverConflict,
 } from '../../src/renderer/lib/fleet/errors'
 
@@ -37,4 +38,17 @@ describe('fleet renderer errors', () => {
     // A disposed cache is a renderer lifecycle bug, never a missing image.
     expect(isImageNotFound(new Error('Image cache disposed'))).toBe(false)
   })
+})
+
+it('recognizes owner memory capacity errors through IPC without masking other failures', () => {
+  expect(isOwnerMemoryFull('Owner memory is full (4000 characters).')).toBe(true)
+  expect(
+    isOwnerMemoryFull(
+      new Error(
+        "Error invoking remote method 'fleet:ownerMemoryCreate': Error: Owner memory is full (4000 characters)."
+      )
+    )
+  ).toBe(true)
+  expect(isOwnerMemoryFull(new Error('Gateway unavailable'))).toBe(false)
+  expect(isOwnerMemoryFull('Owner memory is fullish')).toBe(false)
 })

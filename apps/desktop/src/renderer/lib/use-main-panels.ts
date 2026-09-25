@@ -26,6 +26,7 @@ type UseMainPanelsParams = {
 export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
+  const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
   const [focusMemoryId, setFocusMemoryId] = useState<string | undefined>()
   useEffect(() => {
     if (!projectMemoryWs) setFocusMemoryId(undefined)
@@ -53,6 +54,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setSettingsOpen(false)
       setOnboardingOpen(false)
       setFocusMemoryId(detail.memoryId)
+      setFocusMemoryRequest((value) => value + 1)
       setProjectMemoryWs(workspace.id)
     }
     window.addEventListener('maestrly:open-memory', open)
@@ -189,6 +191,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setProjectNotesWs,
     projectMemoryWs,
     focusMemoryId,
+    focusMemoryRequest,
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,

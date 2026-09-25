@@ -226,6 +226,7 @@ export function DesktopApp() {
     setProjectNotesWs,
     projectMemoryWs,
     focusMemoryId,
+    focusMemoryRequest,
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,
@@ -676,6 +677,7 @@ export function DesktopApp() {
                 <ProjectMemoryView
                   workspaceId={projectMemoryWs}
                   focusMemoryId={focusMemoryId}
+                  focusMemoryRequest={focusMemoryRequest}
                   workspaceName={workspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onClose={() => setProjectMemoryWs(null)}

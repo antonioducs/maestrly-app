@@ -1,5 +1,6 @@
 export default {
   ownerMemory: {
+    full: 'Memory about you is full ({{max}} characters). Remove or shorten an entry first.',
     title: 'Memory about you',
     description:
       'What your bots know about you. Every bot reads it before each message; bots can add, replace or remove entries, and you can edit or undo anything here.',
@@ -47,6 +48,7 @@ export default {
     trigger: { schedule: 'Scheduled', manual: 'Run now' },
   },
   botMemory: {
+    truncated: 'Shortened — only the first {{max}} characters are shown.',
     pinned: 'Pinned',
     expand: 'Show content',
     collapse: 'Hide content',
@@ -60,7 +62,8 @@ export default {
     },
 
     heading: 'Bot memory',
-    description: 'What this bot remembers across days. Pinned memories are always in its context.',
+    description:
+      'What this bot remembers across days. Pinned memories stay in its context, up to about 3,000 characters in total.',
     empty: 'This bot has not saved memories yet.',
     showArchived: 'Show removed',
     hideArchived: 'Hide removed',

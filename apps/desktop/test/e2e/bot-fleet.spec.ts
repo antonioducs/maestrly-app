@@ -243,6 +243,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     }),
   ]
 
+  let ownerMemoryFull = false
   const ownerMemory = fleetOwnerMemorySchema.parse({
     revision: 1,
     activeChars: 22,
@@ -277,8 +278,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     fleetBotMemorySchema.parse({
       id: 'm1',
       title: 'Portal login',
-      content: 'Use the owner portal to check orders.',
-      truncated: false,
+      content: 'Use the owner portal to check orders.'.padEnd(4000, '.'),
+      truncated: true,
       type: 'procedure',
       status: 'active',
       pinned: false,
@@ -397,6 +398,10 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         }
         break
       case 'ownerMemoryCreate': {
+        if (ownerMemoryFull) {
+          send(409, { code: 'CONFLICT', message: 'Owner memory is full (4000 characters).' })
+          return
+        }
         const input = body as { content: string }
         const entry = fleetOwnerMemoryEntrySchema.parse({
           ...ownerMemory.entries[0],
@@ -910,7 +915,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       })
     const addedMemory = page.getByRole('listitem').filter({ hasText: 'Prefiro respostas curtas.' })
     await addedMemory.getByRole('button', { name: 'Editar', exact: true }).click()
-    await addedMemory.getByRole('textbox', { name: 'Editar' }).fill('Prefiro respostas curtas e diretas.')
+    await expect(page.getByRole('textbox', { name: 'Editar' })).toBeFocused()
+    await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+    await expect(addedMemory.getByRole('button', { name: 'Editar', exact: true })).toBeFocused()
+    await addedMemory.getByRole('button', { name: 'Editar', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Editar' }).fill('Prefiro respostas curtas e diretas.')
     await page
       .getByRole('listitem')
       .filter({ has: page.getByRole('textbox', { name: 'Editar' }) })
@@ -920,6 +929,14 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .poll(() => requests.filter((item) => item.key === 'ownerMemoryPatch').at(-1)?.body)
       .toEqual({ content: 'Prefiro respostas curtas e diretas.' })
     const editedMemory = page.getByRole('listitem').filter({ hasText: 'Prefiro respostas curtas e diretas.' })
+    await expect(editedMemory.getByRole('button', { name: 'Editar', exact: true })).toBeFocused()
+    ownerMemoryFull = true
+    await page.getByRole('textbox', { name: 'Adicionar' }).fill('One more preference.')
+    await page.getByRole('button', { name: 'Adicionar', exact: true }).click()
+    await expect(page.getByRole('alert')).toHaveText(
+      'A memória sobre você está cheia (4000 caracteres). Remova ou encurte um item antes.'
+    )
+    ownerMemoryFull = false
     await editedMemory.getByRole('button', { name: 'Remover', exact: true }).click()
     await expect(editedMemory).toHaveCount(0)
     await page.getByRole('button', { name: 'Mostrar removidos e substituídos (1)' }).click()
@@ -993,9 +1010,29 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByText('Notas para a próxima: Retry Magalu first', { exact: true })).toBeVisible()
     await page.getByText('Resposta final', { exact: true }).click()
     await expect(page.getByText('Found three offers.')).toBeVisible()
+    routineRuns[0].status = 'delivered'
+    const runningScout = fleetBotSchema.parse({
+      ...bots.find((bot) => bot.id === 'scout'),
+      status: 'working',
+      updatedAt: now(),
+    })
+    emit({ type: 'bot.updated', at: now(), bot: runningScout })
+    await expect(page.getByText('Em andamento', { exact: true })).toBeVisible()
+    routineRuns[0].status = 'cancelled'
+    // A queued next turn can keep status and timestamps unchanged after cancellation.
+    emit({ type: 'bot.updated', at: now(), bot: runningScout })
+    await expect(page.getByText('Cancelada', { exact: true })).toBeVisible()
+    await expect(page.getByText('Em andamento', { exact: true })).toHaveCount(0)
     const botMemory = page.getByRole('region', { name: 'Memória do bot', exact: true })
     await expect(botMemory.getByText('Portal login', { exact: true })).toBeVisible()
     await expect(botMemory.getByText('Automática', { exact: true })).toBeVisible()
+    await expect(
+      botMemory.getByText('Resumida — só os primeiros 4.000 caracteres aparecem.', { exact: true })
+    ).toBeVisible()
+    await botMemory.getByRole('button', { name: 'Mostrar conteúdo', exact: true }).click()
+    await expect(
+      botMemory.getByText('Resumida — só os primeiros 4.000 caracteres aparecem.', { exact: true })
+    ).toBeVisible()
     await botMemory.getByRole('button', { name: 'Fixar', exact: true }).click()
     await expect
       .poll(() => requests.filter((item) => item.key === 'botMemoryPatch').at(-1)?.body)

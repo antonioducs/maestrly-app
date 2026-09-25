@@ -21,3 +21,7 @@ export function isTakeoverConflict(cause: unknown): boolean {
   if (typeof cause === 'object' && cause !== null && 'status' in cause && cause.status === 409) return true
   return fleetErrorMessage(cause).includes(TAKEOVER_CONFLICT_MARKER)
 }
+
+export function isOwnerMemoryFull(cause: unknown): boolean {
+  return /^Owner memory is full\s*\(/.test(fleetErrorMessage(cause))
+}

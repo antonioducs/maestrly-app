@@ -1,5 +1,6 @@
 export default {
   ownerMemory: {
+    full: 'A memória sobre você está cheia ({{max}} caracteres). Remova ou encurte um item antes.',
     title: 'Memória sobre você',
     description:
       'O que seus bots sabem sobre você. Todo bot lê antes de cada mensagem; os bots podem adicionar, substituir ou remover itens, e você pode editar ou desfazer qualquer coisa aqui.',
@@ -47,6 +48,7 @@ export default {
     trigger: { schedule: 'Agendada', manual: 'Executada agora' },
   },
   botMemory: {
+    truncated: 'Resumida — só os primeiros {{max}} caracteres aparecem.',
     pinned: 'Fixada',
     expand: 'Mostrar conteúdo',
     collapse: 'Ocultar conteúdo',
@@ -60,7 +62,8 @@ export default {
     },
 
     heading: 'Memória do bot',
-    description: 'O que este bot lembra de um dia para o outro. Memórias fixadas ficam sempre no contexto dele.',
+    description:
+      'O que este bot lembra de um dia para o outro. Memórias fixadas ficam no contexto dele, até cerca de 3.000 caracteres no total.',
     empty: 'Este bot ainda não salvou memórias.',
     showArchived: 'Mostrar removidas',
     hideArchived: 'Ocultar removidas',

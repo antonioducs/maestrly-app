@@ -1022,7 +1022,7 @@ export default {
 
   projectMemory: {
     sourceAuto: 'Automática',
-    pinnedHint: 'Memórias fixadas ficam sempre no contexto do agente',
+    pinnedHint: 'Memórias fixadas ficam no contexto do agente, até cerca de 3.000 caracteres no total.',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Usar memória do Maestrly',
     disabled: 'Memória desativada',

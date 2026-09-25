@@ -1009,7 +1009,7 @@ export default {
 
   projectMemory: {
     sourceAuto: 'Automatic',
-    pinnedHint: 'Pinned memories are always in the agent’s context',
+    pinnedHint: 'Pinned memories stay in the agent’s context, up to about 3,000 characters in total.',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Use Maestrly memory',
     disabled: 'Memory disabled',

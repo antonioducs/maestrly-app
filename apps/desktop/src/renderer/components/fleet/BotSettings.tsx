@@ -661,7 +661,7 @@ export function BotSettings({
                   {t(historyOpen[item.id] ? 'routineRuns.hide' : 'routineRuns.history')}
                 </Button>
                 {historyOpen[item.id] && (
-                  <RoutineRunHistory botId={bot.id} routineId={item.id} refreshKey={latestBotActivitySeq} />
+                  <RoutineRunHistory bot={bot} routineId={item.id} refreshKey={latestBotActivitySeq} />
                 )}
               </div>
             ))}

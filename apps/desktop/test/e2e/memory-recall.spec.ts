@@ -9,7 +9,7 @@ import { test, expect, _electron as electron, type ElectronApplication } from '@
 import type { Api } from '../../src/preload'
 import { removeTempDirEventually } from './helpers/temp-cleanup'
 
-declare const window: { api: Api }
+declare const window: Window & { api: Api }
 
 const desktop = fileURLToPath(new URL('../..', import.meta.url))
 interface ModelRequest {
@@ -187,6 +187,28 @@ test('recalls relevant memories, opens their source, and honors automatic recall
     await page.getByRole('button', { name: 'Local Launch code', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Launch code', exact: true })).toBeVisible()
     await expect(page.getByPlaceholder('Durable content')).toHaveValue('The e2e launch code is BLUEBIRD.')
+    const linkedMemoryId = await page.evaluate(async (workspaceId) => {
+      const memories = await window.api.listMemories(workspaceId, { limit: 500 })
+      return memories.find((memory: { id: string; title: string }) => memory.title === 'Launch code')!.id
+    }, workspace.id)
+    await page.getByRole('button', { name: 'New memory', exact: true }).click()
+    await page.getByPlaceholder('Title', { exact: true }).fill('Review preference')
+    await page.getByPlaceholder('Durable content').fill('Keep the selected memory after saving.')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Review preference', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
+    await page.getByPlaceholder('Durable content').fill('Keep the edited memory selected too.')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Review preference', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
+    await page.evaluate(
+      ({ conversationId, memoryId }) => {
+        window.dispatchEvent(new CustomEvent('maestrly:open-memory', { detail: { conversationId, memoryId } }))
+      },
+      { conversationId: conversation.id, memoryId: linkedMemoryId }
+    )
+    await expect(page.getByRole('heading', { name: 'Launch code', exact: true })).toBeVisible()
+
     await openConversation()
 
     const unrelated = await send('tell me a joke about cats')
