@@ -708,7 +708,7 @@ async function prepareRuntime(
       args.harness ??
       harnessFor('github-copilot-subscription', args.selection.modelId, { flags: captureHarnessFlags() })
     const profileUltra = harnessUltraGuidance(harness, args.mode)
-    const projectContext = await buildProjectContext(args.projectId, args.cwd)
+    const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
     const skillContext = skillsCatalog(skills, args.projectId !== null)
     const agentContext =
       args.mode === 'maestro' && args.maestro

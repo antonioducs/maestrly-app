@@ -1254,8 +1254,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // Project context (cwd AGENTS.md/CLAUDE.md + workspace memory) → append to system prompt.
   const projectContext = useOpenAIHarness
-    ? await buildOpenAIProjectContext(projectId, cwd)
-    : await buildProjectContext(projectId, cwd)
+    ? await buildOpenAIProjectContext(projectId, cwd, conversationId)
+    : await buildProjectContext(projectId, cwd, conversationId)
   const skillsCatalog = skills.length
     ? `\n\n${projectId === null ? 'Available' : 'Project'} skills (specialized capabilities) — when the task matches one, call use_skill("<name>") ` +
       'to load the full instructions BEFORE acting:\n' +

@@ -142,6 +142,7 @@ export function buildAgentMentionParts(
 
 export function shouldReloadOnUserSaved(args: {
   streaming: boolean
+  memoryRecalled?: boolean
   compacted?: boolean
   imagesDescribed?: number
   localSlash: boolean
@@ -150,6 +151,7 @@ export function shouldReloadOnUserSaved(args: {
   localImages: boolean
 }): boolean {
   return (
+    args.memoryRecalled === true ||
     !args.streaming ||
     args.compacted === true ||
     (args.imagesDescribed ?? 0) > 0 ||

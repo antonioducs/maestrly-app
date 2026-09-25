@@ -177,3 +177,11 @@ export interface MemoryPromotionInput extends MemoryPromotionPreviewInput {
   repositoryRoot?: string
   overwrite?: boolean
 }
+
+export interface MemorySettings {
+  autoRecall: boolean
+  extraction: {
+    enabled: boolean
+    selection: { providerId: string; modelId: string; effort: string; fastMode: boolean } | null
+  }
+}

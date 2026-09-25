@@ -1,9 +1,10 @@
 /**
  * Canonical project conventions context for ALL chat runtimes. Maestrly discovers one file
  * per directory from workspace/repo root to cwd, with identical precedence across providers:
- * AGENTS.override.md > AGENTS.md > CLAUDE.md (fallback). Durable memories remain transient and
- * do not enter this stable/cacheable prefix.
+ * AGENTS.override.md > AGENTS.md > CLAUDE.md (fallback). The conversation memory core stays frozen within its
+ * compaction epoch.
  */
+import { memoryCoreForPrompt } from '../memory/core'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { getWorkspace } from '../store'
@@ -139,13 +140,17 @@ async function discoverProjectInstructions(workspaceId: string, cwd: string): Pr
  * Builds the stable block shared by all runtimes. Empty without conventions. Never throws:
  * swallow fs/store errors so chat works without project context.
  */
-export async function buildProjectContext(workspaceId: string | null, cwd: string): Promise<string> {
-  if (workspaceId === null) return ''
+async function projectInstructionsContext(workspaceId: string, cwd: string): Promise<string> {
   const sections: string[] = []
   try {
     const binding = platformProjectBindings.forWorkspace(workspaceId)
-    if (binding) sections.push(`## Linked Kanban project\n${JSON.stringify({ project: binding.projectName ?? binding.projectId, projectId: binding.projectId, boardId: binding.boardId })}\nUse get_linked_kanban and board_* tools to work with this project. The link is inherited by this workspace's conversations and worktrees. Ask/Plan are read-only; board mutations require account permissions. Read current versions before updates. Never mark cards done merely because your response ended.`)
-  } catch { /* Local chat remains usable without a platform link. */ }
+    if (binding)
+      sections.push(
+        `## Linked Kanban project\n${JSON.stringify({ project: binding.projectName ?? binding.projectId, projectId: binding.projectId, boardId: binding.boardId })}\nUse get_linked_kanban and board_* tools to work with this project. The link is inherited by this workspace's conversations and worktrees. Ask/Plan are read-only; board mutations require account permissions. Read current versions before updates. Never mark cards done merely because your response ended.`
+      )
+  } catch {
+    /* Local chat remains usable without a platform link. */
+  }
   try {
     const instructions = await discoverProjectInstructions(workspaceId, cwd)
     for (const instruction of instructions) {
@@ -160,7 +165,26 @@ export async function buildProjectContext(workspaceId: string | null, cwd: strin
   return `\n\n---\nProject context — sources are ordered from broad to specific; later instructions take precedence:\n\n${body}`
 }
 
-/** API compatibility: OpenAI models consume exactly the same canonical block as other runtimes. */
-export async function buildOpenAIProjectContext(workspaceId: string | null, cwd: string): Promise<string> {
-  return buildProjectContext(workspaceId, cwd)
+/** Stable context for every runtime: project instructions, then the conversation's frozen memory core. */
+export async function buildProjectContext(
+  workspaceId: string | null,
+  cwd: string,
+  conversationId?: string
+): Promise<string> {
+  const project = workspaceId === null ? '' : await projectInstructionsContext(workspaceId, cwd)
+  try {
+    const memory = conversationId ? memoryCoreForPrompt(conversationId) : ''
+    return project + (memory ? `\n\n${memory}` : '')
+  } catch (error) {
+    console.warn('[memory] prompt core unavailable:', error instanceof Error ? error.message : error)
+    return project
+  }
+}
+
+export async function buildOpenAIProjectContext(
+  workspaceId: string | null,
+  cwd: string,
+  conversationId?: string
+): Promise<string> {
+  return buildProjectContext(workspaceId, cwd, conversationId)
 }

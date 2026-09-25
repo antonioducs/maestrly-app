@@ -2732,7 +2732,7 @@ export async function runCodexSubscriptionChat(
       .filter((spec) => !dynamicSpecs.includes(spec))
       .map((spec) => ({ name: `mcp:${CODEX_HOST_MCP_SERVER_NAME}/${spec.name}` })),
   ])
-  const projectContext = await buildProjectContext(args.projectId, args.cwd)
+  const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
     if (args.projectId === null) {
       const standalone =

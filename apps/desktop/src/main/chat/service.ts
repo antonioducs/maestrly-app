@@ -1,3 +1,4 @@
+import { prepareTurnMemory } from '../memory/turn-memory'
 import { conversationPermissionScope } from '../../shared/conversation-scope'
 import { resolveConversationExecutionContext } from '../conversation-context'
 import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
@@ -3515,6 +3516,10 @@ async function currentChatHistoryStats(
 
 /** Internal send options (used by plan decision turns; not exposed to user IPC). */
 interface StartSendOpts {
+  /** Host-generated continuations skip memory admission. */
+  skipMemory?: boolean
+  /** Recall against the actual input when the host wraps it in a prompt. */
+  memoryQuery?: string
   remoteAdmission?: boolean
   botAdmission?: BotTurnAdmission
   runnerAdmission?: (run: ActiveRun) => void
@@ -4079,6 +4084,15 @@ async function startSend(
       if (p) parts.push(p)
     }
     for (const p of hiddenParts) parts.push(p)
+    const turnMemory =
+      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory
+        ? null
+        : await prepareTurnMemory({
+            conversationId,
+            text: opts?.memoryQuery ?? text,
+            signal: operation.controller.signal,
+          })
+    if (turnMemory) for (const p of turnMemory.hiddenParts) parts.push(p)
 
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
@@ -4550,8 +4564,10 @@ async function startSend(
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
       ...(reviewLoopMessageMeta ?? {}),
+      ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
     })
+    turnMemory?.commit()
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
@@ -4586,6 +4602,7 @@ async function startSend(
     }
     send(`chat:delta:${conversationId}`, {
       kind: 'user-saved',
+      ...(turnMemory?.memoryContext ? { memoryRecalled: true } : {}),
       compacted: preflight.compacted,
       // New descriptions changed ALREADY-rendered parts (optimistic bubble/history) → UI reloads the page.
       ...(imagesDescribed ? { imagesDescribed } : {}),
@@ -10564,6 +10581,8 @@ export async function startConversationDispatchTurn(input: {
 export async function startExecutorChatTurn(input: {
   conversationId: string
   prompt: string
+  skipMemory?: boolean
+  memoryQuery?: string
   attachments?: ChatAttachmentInput[]
   signal: AbortSignal
   remoteAdmission?: boolean
@@ -10586,6 +10605,8 @@ export async function startExecutorChatTurn(input: {
     if (input.remoteAdmission && !remoteChatPolicy(input.conversationId))
       throw new Error('Remote chat policy is missing')
     const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, input.attachments, {
+      skipMemory: input.skipMemory,
+      memoryQuery: input.memoryQuery,
       remoteAdmission: input.remoteAdmission,
       botAdmission: input.botAdmission,
       ...(input.slot ? { operation: input.slot.operation } : {}),

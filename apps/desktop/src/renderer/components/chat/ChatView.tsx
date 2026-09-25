@@ -1028,9 +1028,10 @@ export function ChatView({
       slashSentRef.current = false
       agentMentionsSentRef.current = false
       imagesSentRef.current = false
-      const saved = ev as { compacted?: boolean; imagesDescribed?: number }
+      const saved = ev as { compacted?: boolean; imagesDescribed?: number; memoryRecalled?: boolean }
       if (
         shouldReloadOnUserSaved({
+          memoryRecalled: saved.memoryRecalled,
           streaming: streamingRef.current,
           compacted: saved.compacted,
           imagesDescribed: saved.imagesDescribed,

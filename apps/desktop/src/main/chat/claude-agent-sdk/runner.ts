@@ -735,7 +735,7 @@ async function prepareRuntime(
       () => args.manager.assertAccountIdentity(args.accountIdentity),
       state.toolJournal
     )
-    const projectContext = await buildProjectContext(args.projectId, args.cwd)
+    const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
     const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform

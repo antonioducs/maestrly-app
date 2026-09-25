@@ -31,7 +31,7 @@ describe('developer instructions subagent catalog', () => {
     for (const mode of ['agent', 'plan', 'ask'] as const) {
       const out = maestrlyDeveloperInstructions(mode, [], [])
       expect(out).toContain('# Durable project memory')
-      expect(out).toContain('Do not search for trivial or self-contained requests')
+      expect(out).toContain('use `memory_search` only for something not shown')
       expect(out).toContain('repository AGENTS.md/CLAUDE.md files prevail')
     }
   })
