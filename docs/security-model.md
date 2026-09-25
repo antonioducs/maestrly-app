@@ -172,9 +172,10 @@ tools and host recall never prompt.
 
 The gateway checks saved owner-memory content for invisible or bidirectional
 control characters and recognized prompt-injection phrases. Extracted memories
-use the same content checks. The extraction prompt instructs the model to take
-owner facts only from owner messages and to treat tool and web content as
-untrusted. This is model guidance and heuristic filtering, not proof that a
+and memories that agents write with `memory_upsert` use the same content checks.
+The extraction prompt instructs the model to take owner facts only from owner
+messages and to treat tool and web content as untrusted; extraction ignores
+proposed owner facts for batches that contain no owner message. This is model guidance and heuristic filtering, not proof that a
 memory is correct or safe. Recalled blocks are framed as evidence to check, not
 instructions overriding system or repository rules.
 

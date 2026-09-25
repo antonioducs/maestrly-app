@@ -180,6 +180,7 @@ local source opens the Memory Center on that memory (the `memoryId` deep link is
   8, max 30, each `{ seq, role, at, snippet }` with a snippet of up to 240 characters.
 - `history_read({ seq, before?, after? })`: a window around a message (default 3 each side, max 10). The output
   shows text, tool names and status, and tool outputs cut to 600 characters, capped at 12,000 characters in total.
+  The requested message is always included (cut to fit if needed), then its neighbours nearest-first.
 - Both history tools are registered for every conversation; they read only the calling conversation.
 
 ## Extraction and consolidation
@@ -196,28 +197,33 @@ local source opens the Memory Center on that memory (the `memoryId` deep link is
 - **Input:** messages after `memory_extraction_state.last_seq`, rendered in condensed form. It keeps user text,
   assistant text, and tool names with inputs cut to 200 characters and outputs cut to 300. It drops images,
   compaction summaries, skill bodies and every `maestrly-memory-*` part, so recalled memories are never extracted
-  again. Runs need at least 1,200 new characters. Chunks are up to 48,000 characters, at most 6 per run. The prompt
-  also carries the space's active memories (id, type, title, 160 characters each, ≤12,000 characters) and, for bots,
-  the active owner entries.
+  again. Runs need at least 1,200 new characters. Chunks are up to 48,000 characters, at most 6 per run; a longer
+  message keeps its first third and last two thirds. Messages are read in pages of 200, and reading stops once a run's
+  budget is filled. A conversation's first run starts from its most recent 96,000 rendered characters (the cursor is
+  saved before any model call), so enabling extraction never mines a long backlog. The prompt also carries the space's
+  active memories (id, type, title, 160 characters each, ≤12,000 characters) and, for bots, the active owner entries
+  when the chunk contains at least one owner message.
 - **Output:** strict JSON validated with zod:
   `{ "memories": [{ "action": "create" | "supersede", "id"?, "type", "title", "content", "importance"? }],
   "owner": [{ "content", "replacesId"? }] }`. At most 8 operations per chunk; title ≤120 characters, content ≤1,500.
-  `owner` is honored only for bots, and the prompt allows owner facts only from the owner's own messages. Extraction
-  never pins.
+  `owner` is honored only for bots, and the prompt allows owner facts only from the owner's own messages; owner items
+  are ignored for chunks without an owner message. Output with no parseable JSON object is retried once; if the retry
+  is also unreadable, the chunk is skipped with a warning. Extraction never pins.
 - **Apply:**
   - `create` and `supersede` go through `createLocalMemory` with the new `source: 'auto'` and provenance to the
     conversation and the chunk's last message. Duplicates by content hash are no-ops.
-  - Owner operations go through the gateway save route with origin `auto`.
+  - Owner operations go through the gateway save route with origin `auto`; a failed save is retried once after 2 s.
   - `last_seq` advances per chunk, only after the chunk's operations are applied.
 - **Safety:** `memory/content-safety.ts` rejects invisible or bidirectional control characters and blatant
-  prompt-injection phrases in extracted content. The prompt treats tool output and fetched content as untrusted data
-  and forbids storing instructions from it.
+  prompt-injection phrases in extracted content and in memories written by agents with `memory_upsert`. The prompt
+  treats tool output and fetched content as untrusted data and forbids storing instructions from it.
 - **Accounting:** each call is recorded with `recordChatUsageAttempt`, like background compaction attempts, plus the
   diagnostic `recordModelCallUsage`.
 - **Consolidation:** after an extraction, when a space has 15 or more auto memories created since the last run, and
-  at most once per 24 hours, one call receives up to 150 active, non-pinned memories (240 characters each). It
-  returns at most 10 merges `{ ids, type, title, content }`. Each merge creates one memory that supersedes `ids[0]`;
-  the other ids are marked superseded. The owner can restore any of them.
+  at most once per 24 hours, one call receives the full content of up to 150 active, non-pinned memories within
+  48,000 characters. It returns at most 10 merges `{ ids, type, title, content }`. A merge may reference only
+  memories that were sent, and is skipped when any of them changed while the model ran. Each merge atomically
+  creates one memory that supersedes `ids[0]` and marks the other ids superseded. The owner can restore any of them.
 - **Failure:** failures are recorded in the state row and retried on a later trigger with backoff (after 3
   consecutive failures, wait 1 hour). They never affect turns or compaction.
 
@@ -234,10 +240,13 @@ name snapshot, origin (`owner` | `routine` | `peer` | `continuation` | `auto`, o
   - Limits: ≤500 characters per entry, ≤4,000 active characters.
   - When the space is full the save fails with `CONFLICT`, and the message tells the bot to replace or forget stale
     entries first (the Hermes pattern).
-  - `replacesId` must reference an active entry, which becomes `superseded`.
-  - An identical active entry is returned unchanged.
+  - `replacesId` must reference an active entry, which becomes `superseded`. Replace and forget accept the full id
+    or a unique prefix of at least 8 characters, the form bots see in their prompt.
+  - An identical active entry is returned unchanged. Replacing an entry with its own text is a no-op; replacing it
+    with the text of another active entry supersedes it in favor of that entry.
 - **Forget** (bot): archive an active entry, with a reason.
-- **Owner:** edit in place, archive, restore (subject to the budget), or delete permanently.
+- **Owner:** edit in place, archive, restore (subject to the budget), or delete permanently. A patch that changes
+  nothing is not written and emits no event.
 - Bot-authored changes add activity entries (`owner_memory_saved`, `owner_memory_forgotten`). Every change emits
   `owner_memory.updated { revision }`.
 - Entries survive bot deletion.
@@ -277,8 +286,10 @@ routine or bot.
   `/internal/v1/routines/:rid/runs/:runId/report` for the input being handled; outside a routine run it returns an
   error.
 - `turn.finished` gains `inputId` and `text` (the final assistant text, ≤4,000). The gateway marks the matching run
-  completed, failed or cancelled. A run still `delivered` whose input is no longer queued or running is shown as
-  `unknown`.
+  completed, failed or cancelled. A `failed` run can still become `completed` when the instance retries the same
+  input; `completed` and `cancelled` are final. A finish that arrives before the run row exists is buffered (at most
+  100 entries, 5 minutes) and applied when the row is inserted. A run still `delivered` whose input is no longer
+  queued or running is shown as `unknown`.
 - The Mac lists runs with `GET /v1/bots/:id/routines/:rid/runs`.
 
 ## Bot memory on the Mac

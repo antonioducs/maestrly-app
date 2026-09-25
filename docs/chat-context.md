@@ -219,8 +219,10 @@ starts enabled. Each eligible message can recall up to three relevant memories,
 with snippets of up to 400 characters and a relevance floor of 0.6. Recall uses
 the first 1,000 characters of the message and excludes entries already in the
 pinned core or recently recalled since compaction (up to 200 remembered IDs).
-Short messages and slash commands do not trigger recall. A **🧠 N memories
-recalled** chip under the user message opens the recalled sources.
+The whole recall block is capped at 1,400 characters; a hit that does not fit is
+left for a later message. Short messages and slash commands do not trigger
+recall. A **🧠 N memories recalled** chip under the user message opens the
+recalled sources.
 
 Turn-memory preparation has a 1,500 ms budget, including at most 800 ms for vector
 retrieval. Text search remains available without vectors. A slow recall or
@@ -243,7 +245,8 @@ Search returns newest matches first, eight by default and at most 30, with
 240-character snippets. It scans at most 20,000 recent messages.
 Read returns a window of three messages on either side by default, at most ten
 on either side, with tool output shortened to 600 characters and total output
-capped at 12,000 characters.
+capped at 12,000 characters. The requested message is always included (shortened
+if needed), followed by the nearest neighbours that fit.
 
 ## Automatic memory saving
 
@@ -255,16 +258,21 @@ Bots use their configured compaction model instead.
 
 Extraction waits three minutes after the latest completed turn, with a maximum
 wait of 30 minutes from the first pending trigger. It reads messages after the
-saved cursor and needs at least 1,200 new characters. Each run processes at most
-six chunks with a 48,000-character text budget per chunk and up to eight memory
-operations per chunk. Extracted titles are limited to 120 characters and content
-to 1,500. Image contents, skill bodies, compaction summaries and hidden memory
-blocks are excluded. New entries have the **Automatic** source and are not pinned.
-Failed extraction retries on later triggers, backing off for an hour after three
-failures; it does not block turns or compaction.
+saved cursor, in bounded pages, and needs at least 1,200 new characters. The first
+run in a conversation starts from its most recent 96,000 characters of condensed
+history; older history is not mined. Each run processes at most six chunks with a
+48,000-character text budget per chunk and up to eight memory operations per
+chunk; a longer message keeps its beginning and end. Extracted titles are limited
+to 120 characters and content to 1,500. Image contents, skill bodies, compaction
+summaries and hidden memory blocks are excluded. New entries have the **Automatic**
+source and are not pinned. An answer that is not readable JSON is retried once,
+then that chunk is skipped. Failed extraction retries on later triggers, backing
+off for an hour after three failures; it does not block turns or compaction.
 
 After at least 15 new automatic memories, consolidation can merge overlapping
 active, unpinned entries. It runs at most once per 24 hours after a recorded run,
-with only one consolidation running per space, up to 150 inputs and ten merges.
-Merged entries are superseded rather than deleted, so they can be restored in
-the Memory Center.
+with only one consolidation running per space and up to ten merges. It sends the
+full content of up to 150 entries within 48,000 characters, merges only entries it
+was shown, and skips a merge when one of them changed during the call. Each merge
+is applied atomically. Merged entries are superseded rather than deleted, so they
+can be restored in the Memory Center.

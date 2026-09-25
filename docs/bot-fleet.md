@@ -144,7 +144,10 @@ entry. A save or restore that exceeds the budget fails; replace or archive stale
 entries first. These entries survive deletion of the bot that wrote them.
 
 Bots can save or replace entries with `owner_memory_save`; `owner_memory_forget`
-archives an entry with a reason of up to 300 characters. Bot changes appear in
+archives an entry with a reason of up to 300 characters. Both accept the short id
+a bot sees in its memory (a unique prefix of at least eight characters). Saving
+text that is already active returns the existing entry; replacing an entry with
+another entry's text retires it in favor of that entry. Bot changes appear in
 activity. Before a turn, the bot fetches owner memory with a 1,000 ms timeout
 inside the 1,500 ms turn-memory budget, falling back to its last good copy on
 failure. Changes reach the context through memory updates or a rebuilt core.
@@ -161,7 +164,8 @@ pending work of up to 400, and notes for the next run of up to 600. It is unavai
 outside a routine run. The final answer is stored separately, up to 4,000
 characters. Status can be delivered, completed, failed, cancelled or unknown;
 unknown means a delivered input is no longer queued or running without a recorded
-completion.
+completion. A failed run can still become completed when the bot retries the same
+input; completed and cancelled are final.
 
 ## What a bot can do
 
