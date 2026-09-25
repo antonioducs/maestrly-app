@@ -3,7 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { maybeConsolidate } from '../../src/main/memory/extraction/consolidation'
-import { createLocalMemory, getLocalMemory, listLocalMemories } from '../../src/main/memory/local-memory-service'
+import {
+  createLocalMemory,
+  getLocalMemory,
+  listLocalMemories,
+  updateLocalMemory,
+} from '../../src/main/memory/local-memory-service'
 import { incrementAutoCreated, getConsolidationState } from '../../src/main/store/memory-extraction-state'
 vi.mock('../../src/main/local-ml/embedding-service', () => ({
   embedTexts: vi.fn(async () => null),
@@ -118,4 +123,47 @@ it('serializes consolidation calls for the same space', async () => {
   await first
   await second
   expect(f.oneShot).not.toHaveBeenCalled()
+})
+
+it('sends complete contents within the input budget and rejects unsent ids', async () => {
+  const f = fixture()
+  const content = `Beginning ${'x'.repeat(1000)} UNIQUE END`
+  updateLocalMemory(f.space.id, f.ids[0], { content })
+  incrementAutoCreated(f.space.id, 15)
+  const oneShot = vi.fn(async (input: { prompt: string }) => {
+    expect(input.prompt).toContain(content)
+    expect(input.prompt.length).toBeLessThanOrEqual(48_000)
+    return { text: '{"merges":[]}', usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 } }
+  })
+  await maybeConsolidate({ ...f, oneShot })
+})
+
+it('rejects ids excluded from the full-content budget', async () => {
+  const f = fixture()
+  for (const id of f.ids) updateLocalMemory(f.space.id, id, { content: `${id} ${'x'.repeat(30000)}` })
+  incrementAutoCreated(f.space.id, 15)
+  expect(await maybeConsolidate(f)).toEqual({ merges: 0 })
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+})
+
+it('skips targets edited while the model is running', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  const oneShot = async () => {
+    getDb().prepare('UPDATE local_memories SET updated_at = updated_at + 1000 WHERE id = ?').run(f.ids[0])
+    return f.oneShot()
+  }
+  expect(await maybeConsolidate({ ...f, oneShot })).toEqual({ merges: 0 })
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+})
+
+it('rolls back the whole merge when superseding a target fails', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  getDb().exec(
+    `CREATE TRIGGER fail_merge BEFORE UPDATE OF status ON local_memories WHEN OLD.id = '${f.ids[1]}' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`
+  )
+  await expect(maybeConsolidate(f)).rejects.toThrow('synthetic failure')
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+  expect(listLocalMemories(f.space.id)).toHaveLength(2)
 })

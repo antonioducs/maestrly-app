@@ -1,3 +1,4 @@
+import { transaction } from '../../store/db'
 import { randomUUID } from 'node:crypto'
 import { recordChatUsageAttempt } from '../../chat/chat-store'
 import { z } from 'zod'
@@ -12,7 +13,7 @@ export const CONSOLIDATION_LIMITS = {
   minNew: 15,
   intervalMs: 86_400_000,
   maxInput: 150,
-  excerpt: 240,
+  inputChars: 48_000,
   maxMerges: 10,
 } as const
 const merge = z.object({
@@ -38,19 +39,26 @@ export async function maybeConsolidate(input: {
     const state = getConsolidationState(input.space.id)
     if (!state || state.autoCreatedSince < CONSOLIDATION_LIMITS.minNew) return { merges: 0 }
     if (state.lastRunAt !== null && input.now - state.lastRunAt < CONSOLIDATION_LIMITS.intervalMs) return { merges: 0 }
-    const memories = listLocalMemories(input.space.id, {
+    const candidates = listLocalMemories(input.space.id, {
       status: 'active',
       pinned: false,
       limit: CONSOLIDATION_LIMITS.maxInput,
     })
     const system =
       'You merge duplicate or overlapping memories of an AI agent. Merge only memories that describe the same thing; never merge different topics. Keep every unique fact in the merged content. Return ONLY {"merges":[{"ids":["<id>","<id>"],"type":"decision|constraint|preference|procedure|lesson|reference","title":"…","content":"…"}]} with at most 10 merges, or {"merges":[]}.'
-    const prompt = memories
-      .map(
-        (memory) =>
-          `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content.replace(/\s+/g, ' ').slice(0, CONSOLIDATION_LIMITS.excerpt)}`
-      )
-      .join('\n')
+    const memories: typeof candidates = []
+    const lines: string[] = []
+    let chars = 0
+    for (const memory of candidates) {
+      const line = `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content}`
+      const size = line.length + (lines.length ? 1 : 0)
+      if (chars + size > CONSOLIDATION_LIMITS.inputChars) break
+      memories.push(memory)
+      lines.push(line)
+      chars += size
+    }
+    const snapshots = new Map(memories.map((memory) => [memory.id, memory.updatedAt]))
+    const prompt = lines.join('\n')
     const result = await input.oneShot({
       selection: input.selection,
       system,
@@ -78,23 +86,33 @@ export async function maybeConsolidate(input: {
     for (const item of list.slice(0, CONSOLIDATION_LIMITS.maxMerges)) {
       const parsed = merge.safeParse(item)
       if (!parsed.success) continue
+      if (parsed.data.ids.some((id) => !snapshots.has(id))) continue
       const targets = parsed.data.ids.map((id) => getLocalMemory(input.space.id, id))
-      if (targets.some((target) => target?.status !== 'active' || target.pinned)) continue
+      if (
+        targets.some(
+          (target) => target?.status !== 'active' || target.pinned || target.updatedAt !== snapshots.get(target.id)
+        )
+      )
+        continue
       const title = normalizeMemoryText(parsed.data.title)
       const content = normalizeMemoryText(parsed.data.content)
       if (memoryContentProblem(`${title}\n${content}`)) continue
-      const saved = createLocalMemory({
-        workspaceId: input.space.id,
-        title,
-        content,
-        type: parsed.data.type,
-        source: 'auto',
-        originConversationId: input.conversationId,
-        supersedesId: targets[0]!.id,
+      let applied = false
+      transaction(() => {
+        const saved = createLocalMemory({
+          workspaceId: input.space.id,
+          title,
+          content,
+          type: parsed.data.type,
+          source: 'auto',
+          originConversationId: input.conversationId,
+          supersedesId: targets[0]!.id,
+        })
+        if (saved.duplicate) return
+        for (const target of targets.slice(1)) updateLocalMemory(input.space.id, target!.id, { status: 'superseded' })
+        applied = true
       })
-      if (saved.duplicate) continue
-      for (const target of targets.slice(1)) updateLocalMemory(input.space.id, target!.id, { status: 'superseded' })
-      merges += 1
+      if (applied) merges += 1
     }
     saveConsolidationState({ spaceId: input.space.id, autoCreatedSince: 0, lastRunAt: input.now, updatedAt: input.now })
     return { merges }
