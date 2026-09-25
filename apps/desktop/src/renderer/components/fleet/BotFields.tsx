@@ -1,9 +1,13 @@
 import { useRef, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Check } from 'lucide-react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { choiceClass } from '@/lib/fleet/choice'
 import { ceilingValues, nextRadioIndex } from '@/lib/fleet/forms'
+import { cn } from '@/lib/utils'
+import { ChoiceMark } from './ChoiceMark'
 
 export type BotFieldsValue = {
   name: string
@@ -82,9 +86,15 @@ export function BotFields({
               type="button"
               onClick={() => set({ ceiling })}
               onKeyDown={(event) => onRadioKey(event, index)}
-              className={`rounded-lg border p-3 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring ${value.ceiling === ceiling ? 'border-border-strong bg-surface-elevated' : 'border-border bg-surface hover:bg-accent'}`}
+              className={cn(
+                'rounded-lg border p-3 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                choiceClass(value.ceiling === ceiling)
+              )}
             >
-              <strong className="block">{t(`ceiling.${ceiling}.title`)}</strong>
+              <span className="flex items-start justify-between gap-2">
+                <strong>{t(`ceiling.${ceiling}.title`)}</strong>
+                <ChoiceMark selected={value.ceiling === ceiling} />
+              </span>
               <span className="mt-1 block text-muted-foreground">{t(`ceiling.${ceiling}.description`)}</span>
             </button>
           ))}
@@ -99,7 +109,8 @@ export function BotFields({
               <Button
                 key={bot.id}
                 size="sm"
-                variant={value.talksTo.includes(bot.id) ? 'secondary' : 'outline'}
+                variant="outline"
+                className={choiceClass(value.talksTo.includes(bot.id))}
                 aria-pressed={value.talksTo.includes(bot.id)}
                 onClick={() =>
                   set({
@@ -109,6 +120,7 @@ export function BotFields({
                   })
                 }
               >
+                {value.talksTo.includes(bot.id) && <Check aria-hidden="true" />}
                 {bot.name}
               </Button>
             ))}

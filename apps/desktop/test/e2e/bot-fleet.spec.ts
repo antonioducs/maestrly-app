@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { expect, test, _electron as electron } from '@playwright/test'
+import { expect, test, _electron as electron, type Locator } from '@playwright/test'
 import {
   FLEET_GATEWAY_ROUTES,
   fleetArchivedBotSchema,
@@ -23,6 +23,40 @@ import {
 
 const desktop = fileURLToPath(new URL('../..', import.meta.url))
 const now = () => new Date().toISOString()
+
+/**
+ * WCAG contrast, against the dialog surface (#1E1E21), of the most visible cue an element paints: its border when it
+ * has one, else its background, composited as the browser paints them. A selected state needs 3:1 (WCAG 1.4.11).
+ */
+function stateContrastOnDialog(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('No canvas')
+    const paint = (...colors: string[]) => {
+      for (const color of colors) {
+        // An unparsed color leaves fillStyle unchanged; fail instead of measuring the previous layer.
+        context.fillStyle = '#010203'
+        context.fillStyle = color
+        if (context.fillStyle === '#010203' && color !== '#010203') throw new Error('Unparsed color ' + color)
+        context.fillRect(0, 0, 1, 1)
+      }
+      return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
+    }
+    const luminance = (rgb: number[]) => {
+      const [r, g, b] = rgb.map((value) => {
+        const channel = value / 255
+        return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    const style = getComputedStyle(element)
+    const surface = luminance(paint('#1E1E21'))
+    const layers = ['#1E1E21', style.backgroundColor]
+    if (Number.parseFloat(style.borderTopWidth) > 0) layers.push(style.borderTopColor)
+    const cue = luminance(paint(...layers))
+    return (Math.max(surface, cue) + 0.05) / (Math.min(surface, cue) + 0.05)
+  })
+}
 
 test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', async () => {
   test.setTimeout(180_000)
@@ -814,6 +848,25 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('heading', { name: 'Aguardando você' })).toBeVisible()
     await page.getByRole('tab', { name: 'Bots' }).click()
     await page.getByRole('button', { name: 'Criar bot' }).first().click()
+    // The selected choice stands out (3:1) and carries a check mark; the others recede.
+    const createDialog = page.getByRole('dialog', { name: 'Criar bot' })
+    const selectedCeiling = createDialog.getByRole('radio', { name: /Aprovar por mim/ })
+    const otherCeiling = createDialog.getByRole('radio', { name: /Pedir aprovação/ })
+    await expect(selectedCeiling).toHaveAttribute('aria-checked', 'true')
+    await expect.poll(() => stateContrastOnDialog(selectedCeiling)).toBeGreaterThanOrEqual(3)
+    expect(await stateContrastOnDialog(otherCeiling)).toBeLessThan(1.5)
+    await expect(selectedCeiling.locator('svg')).toHaveCount(1)
+    await expect(otherCeiling.locator('svg')).toHaveCount(0)
+    const peer = createDialog.getByRole('button', { name: 'Scout', exact: true })
+    await peer.click()
+    await expect(peer).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => stateContrastOnDialog(peer)).toBeGreaterThanOrEqual(3)
+    await expect(peer.locator('svg')).toHaveCount(1)
+    await peer.click()
+    await expect(peer).toHaveAttribute('aria-pressed', 'false')
+    // Measured at rest: under the pointer it shows the hover fill.
+    await page.mouse.move(0, 0)
+    await expect.poll(() => stateContrastOnDialog(peer)).toBeLessThan(1.5)
     await page.getByRole('dialog', { name: 'Criar bot' }).getByLabel('Nome').fill('Orders')
     await page.getByRole('dialog', { name: 'Criar bot' }).getByRole('button', { name: 'Criar bot' }).click()
     await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible()
@@ -900,6 +953,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
     await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Título').fill('Daily orders')
     await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Instrução').fill('Check the orders')
+    const monday = page.getByRole('dialog', { name: 'Adicionar rotina' }).getByRole('button', { name: 'Seg' })
+    await monday.click()
+    await expect(monday).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => stateContrastOnDialog(monday)).toBeGreaterThanOrEqual(3)
+    await monday.click()
+    await expect(monday).toHaveAttribute('aria-pressed', 'false')
     await page.getByRole('button', { name: 'Salvar rotina' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botRoutinesCreate').length).toBe(1)
 

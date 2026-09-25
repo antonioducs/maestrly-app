@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { SearchSelect } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { gb } from '@/lib/fleet/format'
+import { choiceClass } from '@/lib/fleet/choice'
 import { routineSchedule, validateRoutine, type RoutineForm } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { BotFields, type BotFieldsValue } from './BotFields'
@@ -408,7 +409,8 @@ export function BotSettings({
                   aria-checked={item.enabled}
                   aria-label={t('botSettings.toggleRoutine', { title: item.title })}
                   onClick={() => void actionRoutine('toggle', item)}
-                  className={`h-5 w-9 rounded-full p-0.5 ${item.enabled ? 'bg-primary' : 'bg-muted'}`}
+                  // Same switch as the rest of the app: a white knob on a cream track was barely visible.
+                  className={`h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${item.enabled ? 'bg-emerald-500/70' : 'bg-white/10'}`}
                 >
                   <span
                     className={`block size-4 rounded-full bg-white transition-transform motion-reduce:transition-none ${item.enabled ? 'translate-x-4' : ''}`}
@@ -511,7 +513,8 @@ export function BotSettings({
                     <Button
                       key={day}
                       size="sm"
-                      variant={routine.days.includes(day) ? 'secondary' : 'outline'}
+                      variant="outline"
+                      className={choiceClass(routine.days.includes(day))}
                       aria-pressed={routine.days.includes(day)}
                       onClick={() =>
                         setRoutine({
