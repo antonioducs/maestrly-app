@@ -310,6 +310,22 @@ function initializeSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_hash
       ON local_memories(workspace_id, content_hash);
     -- Frozen memory core per compaction epoch, the sources it was built from, and memories recalled in this epoch.
+    CREATE TABLE IF NOT EXISTS memory_extraction_state (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      space_id        TEXT NOT NULL,
+      last_seq        INTEGER NOT NULL DEFAULT -1,
+      status          TEXT NOT NULL DEFAULT 'idle',
+      error           TEXT,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_run_at     INTEGER,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS memory_consolidation_state (
+      space_id           TEXT PRIMARY KEY,
+      auto_created_since INTEGER NOT NULL DEFAULT 0,
+      last_run_at        INTEGER,
+      updated_at         INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS conversation_memory_state (
       conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
       space_id        TEXT NOT NULL,

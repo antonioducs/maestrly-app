@@ -1,3 +1,5 @@
+import { MEMORY_SETTINGS_KEY, parseMemorySettings, readMemorySettings } from '../memory/settings'
+import { scheduleMemoryExtraction } from '../memory/extraction/scheduler'
 import { prepareTurnMemory } from '../memory/turn-memory'
 import { conversationPermissionScope } from '../../shared/conversation-scope'
 import { resolveConversationExecutionContext } from '../conversation-context'
@@ -2145,6 +2147,7 @@ function buildConfig(): ChatConfig {
     defaultSelection: defaultSelection(),
     defaultReasoning: defaultReasoningEffort(),
     defaultFastMode: getAppFlag(CHAT_DEFAULT_FAST_MODE_KEY, false),
+    memory: readMemorySettings(),
     ...(backgroundCompaction ? { backgroundCompaction } : {}),
     imageInterpreter: getImageInterpreter(),
     subscriptionFailover: {
@@ -5602,6 +5605,7 @@ async function startSend(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
+        if (!isolated && !controller.signal.aborted) scheduleMemoryExtraction(conversationId)
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         const guard = maestroGuardContinuation
         if (guard) {
@@ -7594,6 +7598,30 @@ async function activateBackgroundCompactionCandidate(
   return { summary: candidate.summary, prepared }
 }
 
+export async function setMemorySettings(value: unknown): Promise<{ ok: boolean; error?: string }> {
+  const settings = parseMemorySettings(value)
+  if (!settings) return { ok: false, error: 'invalid-input' }
+  const selection = settings.extraction.selection
+  if (selection) {
+    const { meta } = await effectiveModelMeta(selection.modelId, selection.providerId)
+    const metadata = { status: meta ? ('available' as const) : ('unavailable' as const), meta }
+    const effort = validateSubagentProfileEffort(selection, metadata)
+    const fast = validateSubagentProfileFastMode(selection, metadata)
+    if (!effort.valid || !fast.valid)
+      return {
+        ok: false,
+        error:
+          (
+            effort.diagnostics.find((item) => item.severity === 'error') ??
+            fast.diagnostics.find((item) => item.severity === 'error')
+          )?.message ?? 'invalid-memory-model',
+      }
+  }
+  if (settings.extraction.enabled && !selection) return { ok: false, error: 'memory-model-required' }
+  setAppSetting(MEMORY_SETTINGS_KEY, JSON.stringify(settings))
+  return { ok: true }
+}
+
 export async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
   const config = parseBackgroundCompactionConfig(value)
   if (!config) return { ok: false, error: 'invalid-input' }
@@ -8506,6 +8534,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
 
   deps.mhandle('chat:config', () => buildConfig())
+  deps.mhandle('chat:memory:set', (_event, value: unknown) => setMemorySettings(value))
   deps.mhandle('chat:background-compaction:set', (_event, config: BackgroundCompactionConfig) =>
     isBotMode() ? Promise.resolve({ ok: false, error: 'managed-by-owner' }) : setBackgroundCompactionConfig(config)
   )

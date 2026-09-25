@@ -1,3 +1,4 @@
+import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
@@ -855,6 +856,7 @@ app.on('window-all-closed', () => {
   popupManager.disposeAll()
   disposeNotes()
   disposeMemory()
+  disposeMemoryExtraction()
   disposeMemoryIndexService()
   killAllPtys()
   disposeDrawer()
@@ -992,6 +994,7 @@ app.on('before-quit', (e) => {
     stopVSCodeServer()
     disposeDrawer()
     disposeMemoryReclaimer()
+    disposeMemoryExtraction()
     disposeMemoryIndexService()
     disposeOwnedProcesses()
   }

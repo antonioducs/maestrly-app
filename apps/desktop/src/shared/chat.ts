@@ -1,3 +1,4 @@
+import type { MemorySettings } from './memory'
 import { unwrapCursorMcpToolCall } from './cursor-mcp-tool'
 import type { HarnessProfileIdentity } from './harness'
 import type { JSONObject, JSONValue, SharedV3ProviderOptions } from '@ai-sdk/provider'
@@ -1659,6 +1660,7 @@ export interface McpServerInfo {
 }
 
 export interface ChatConfig {
+  memory?: MemorySettings
   providers: ChatProviderInfo[]
 
   presets: ChatProviderPreset[]

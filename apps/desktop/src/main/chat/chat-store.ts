@@ -1842,3 +1842,26 @@ export function listChatMessagesAround(
     .all(conversationId, seq, after + 1) as any[]
   return [...earlier, ...later].map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
 }
+
+export function maxChatSeq(conversationId: string): number {
+  return Number(
+    (
+      getDb()
+        .prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM chat_messages WHERE conversation_id = ?')
+        .get(conversationId) as { seq: number }
+    ).seq
+  )
+}
+export function listChatMessagesRange(
+  conversationId: string,
+  afterSeq: number,
+  upToSeq: number
+): Array<{ seq: number; message: StoredChatMessage }> {
+  return (
+    getDb()
+      .prepare(
+        `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ASC`
+      )
+      .all(conversationId, afterSeq, upToSeq) as any[]
+  ).map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
+}

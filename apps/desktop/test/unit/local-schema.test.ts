@@ -51,6 +51,8 @@ const LOCAL_TABLES = [
   'conversations',
   'local_memories',
   'local_memory_migrations',
+  'memory_consolidation_state',
+  'memory_extraction_state',
   'permission_saved',
   'platform_chat_outbox',
   'platform_chat_sessions',
@@ -98,6 +100,22 @@ describe('local-only SQLite schema', () => {
     expect(readSchema()).toEqual(schema)
     expect(store.getDb().prepare('SELECT * FROM schema_migrations ORDER BY id').all()).toEqual(migrations)
     expect(store.getAppSetting('local-schema-test')).toBe('preserved')
+  })
+
+  it('adds extraction tables to the previous schema without losing existing data', () => {
+    store.setAppSetting('before-extraction', 'preserved')
+    store.getDb().exec('DROP TABLE memory_extraction_state; DROP TABLE memory_consolidation_state;')
+    restartDb()
+    expect(
+      readSchema()
+        .filter((entry) => entry.type === 'table')
+        .map((entry) => entry.name)
+    ).toEqual(LOCAL_TABLES)
+    expect(store.getAppSetting('before-extraction')).toBe('preserved')
+    expect(store.getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(store.getDb().prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+    restartDb()
+    expect(store.getAppSetting('before-extraction')).toBe('preserved')
   })
 
   it('isolates nested transaction rollback while preserving the outer transaction', () => {
