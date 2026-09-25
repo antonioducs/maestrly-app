@@ -59,10 +59,19 @@ export class OwnerMemory {
     const result = this.store.transaction(() => {
       const active = this.store.ownerMemories('active')
       const duplicate = active.find((entry) => entry.content.toLocaleLowerCase() === content.toLocaleLowerCase())
-      if (duplicate && !input.replacesId) return { entry: duplicate, changed: false }
-      const replaced = input.replacesId ? active.find((entry) => entry.id === input.replacesId) : undefined
-      if (input.replacesId && !replaced)
-        throw new GatewayError('NOT_FOUND', 'The entry to replace is not active. List the owner memory and try again.')
+      const replaced = input.replacesId ? this.resolveActive(active, input.replacesId) : undefined
+      if (replaced?.content.toLocaleLowerCase() === content.toLocaleLowerCase())
+        return { entry: replaced, changed: false }
+      if (duplicate) {
+        if (!replaced) return { entry: duplicate, changed: false }
+        this.store.saveOwnerMemory({
+          ...replaced,
+          status: 'superseded',
+          replacedById: duplicate.id,
+          updatedAt: this.now().toISOString(),
+        })
+        return { entry: duplicate, changed: true }
+      }
       const used = activeChars(active)
       if (used - (replaced?.content.length ?? 0) + content.length > FLEET_OWNER_MEMORY_LIMITS.activeCharsMax)
         throw new GatewayError(
@@ -94,9 +103,7 @@ export class OwnerMemory {
   }
 
   forget(botId: string, id: string, reason: string): FleetOwnerMemoryEntry {
-    const entry = this.store.ownerMemoryById(id)
-    if (!entry || entry.status !== 'active')
-      throw new GatewayError('NOT_FOUND', 'That owner memory entry is not active.')
+    const entry = this.resolveActive(this.store.ownerMemories('active'), id)
     const archived = { ...entry, status: 'archived' as const, updatedAt: this.now().toISOString() }
     this.store.saveOwnerMemory(archived)
     this.changed({ kind: 'bot', botId }, 'owner_memory_forgotten', archived, reason)
@@ -104,12 +111,13 @@ export class OwnerMemory {
   }
 
   patch(id: string, patch: { content?: string; status?: 'active' | 'archived' }): FleetOwnerMemoryEntry {
-    const updated = this.store.transaction(() => {
+    const result = this.store.transaction(() => {
       const entry = this.store.ownerMemoryById(id)
       if (!entry) throw new GatewayError('NOT_FOUND', 'Owner memory entry not found')
       const content = patch.content === undefined ? entry.content : validContent(patch.content)
       const status =
         patch.status ?? (entry.status === 'superseded' && patch.content !== undefined ? 'active' : entry.status)
+      if (content === entry.content && status === entry.status) return { entry, changed: false }
       if (status === 'active') {
         const others = this.store.ownerMemories('active').filter((item) => item.id !== id)
         if (activeChars(others) + content.length > FLEET_OWNER_MEMORY_LIMITS.activeCharsMax)
@@ -120,16 +128,27 @@ export class OwnerMemory {
       }
       const next = { ...entry, content, status, updatedAt: this.now().toISOString() }
       this.store.saveOwnerMemory(next)
-      return next
+      return { entry: next, changed: true }
     })
-    this.changed({ kind: 'owner' }, null, updated)
-    return updated
+    if (result.changed) this.changed({ kind: 'owner' }, null, result.entry)
+    return result.entry
   }
 
   delete(id: string) {
     if (!this.store.ownerMemoryById(id)) throw new GatewayError('NOT_FOUND', 'Owner memory entry not found')
     this.store.deleteOwnerMemory(id)
     this.changed({ kind: 'owner' }, null, null)
+  }
+
+  private resolveActive(active: FleetOwnerMemoryEntry[], id: string): FleetOwnerMemoryEntry {
+    const exact = active.find((entry) => entry.id === id)
+    if (exact) return exact
+    const matches = id.length >= 8 ? active.filter((entry) => entry.id.startsWith(id)) : []
+    if (matches.length === 1) return matches[0]
+    throw new GatewayError(
+      'NOT_FOUND',
+      'No unique active owner memory entry matches. Use the id shown in your memory (or its full id) and try again.'
+    )
   }
 
   private changed(

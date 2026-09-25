@@ -124,3 +124,124 @@ it('rolls back an invalid v4 migration without advancing the version', () => {
   expect(db.prepare("SELECT name FROM sqlite_master WHERE name='routine_runs'").all()).toEqual([])
   db.close()
 })
+
+it('resolves displayed active prefixes for replacement and forgetting', async () => {
+  const h = await harness()
+  const save = (content: string, replacesId?: string) =>
+    h.request(
+      'POST',
+      '/internal/v1/owner-memory',
+      { content, replacesId, origin: 'owner', idempotencyKey: randomUUID() },
+      true
+    )
+  const entry = await (await save('Prefer short answers.')).json()
+  const response = await save('Prefer detailed answers.', entry.id.slice(0, 8))
+  expect(response.status).toBe(201)
+  const replacement = await response.json()
+  expect(replacement.replacesId).toBe(entry.id)
+  const forgotten = await h.request(
+    'POST',
+    `/internal/v1/owner-memory/${replacement.id.slice(0, 8)}/forget`,
+    { reason: 'Outdated' },
+    true
+  )
+  expect(forgotten.status).toBe(200)
+  expect((await forgotten.json()).id).toBe(replacement.id)
+})
+it('rejects ambiguous, short, inactive and unknown prefixes with actionable errors', async () => {
+  const h = await harness()
+  const entry = await (
+    await h.request('POST', '/v1/owner-memory', { content: 'First fact', idempotencyKey: randomUUID() })
+  ).json()
+  h.store.deleteOwnerMemory(entry.id)
+  for (const [id, status] of [
+    ['abcdefgh-one', 'active'],
+    ['abcdefgh-two', 'active'],
+    ['archived-one', 'archived'],
+  ] as const)
+    h.store.saveOwnerMemory({ ...entry, id, status })
+  for (const id of ['abcdefgh', 'abcdefg', 'archived', 'unknown1']) {
+    for (const response of [
+      await h.request(
+        'POST',
+        '/internal/v1/owner-memory',
+        { content: 'New fact', replacesId: id, origin: 'owner', idempotencyKey: randomUUID() },
+        true
+      ),
+      await h.request('POST', `/internal/v1/owner-memory/${id}/forget`, { reason: 'Outdated' }, true),
+    ]) {
+      expect(response.status).toBe(404)
+      expect(await response.json()).toMatchObject({
+        code: 'NOT_FOUND',
+        message: expect.stringContaining('id shown in your memory'),
+      })
+    }
+  }
+  const exact = await h.request('POST', '/internal/v1/owner-memory/abcdefgh-one/forget', { reason: 'Outdated' }, true)
+  expect(exact.status).toBe(200)
+  const unique = await h.request('POST', '/internal/v1/owner-memory/abcdefgh/forget', { reason: 'Outdated' }, true)
+  expect(unique.status).toBe(200)
+  expect((await unique.json()).id).toBe('abcdefgh-two')
+})
+it('treats replacing an entry with its normalized text as a no-op', async () => {
+  const h = await harness()
+  const save = (content: string, replacesId?: string) =>
+    h.request(
+      'POST',
+      '/internal/v1/owner-memory',
+      { content, replacesId, origin: 'owner', idempotencyKey: randomUUID() },
+      true
+    )
+  const entry = await (await save('Prefer short answers.')).json()
+  const revision = h.store.ownerMemoryRevision(),
+    events = h.events.length,
+    activity = h.store.activity().length
+  expect(await (await save('  Prefer   short answers. ', entry.id)).json()).toEqual(entry)
+  expect(h.store.ownerMemories()).toEqual([entry])
+  expect(h.store.ownerMemoryRevision()).toBe(revision)
+  expect(h.events).toHaveLength(events)
+  expect(h.store.activity()).toHaveLength(activity)
+})
+it('supersedes a replacement in favor of an existing duplicate without inserting a row', async () => {
+  const h = await harness()
+  const save = (content: string, replacesId?: string) =>
+    h.request(
+      'POST',
+      '/internal/v1/owner-memory',
+      { content, replacesId, origin: 'owner', idempotencyKey: randomUUID() },
+      true
+    )
+  const a = await (await save('Prefer short answers.')).json()
+  const b = await (await save('Prefer detailed answers.')).json()
+  const revision = h.store.ownerMemoryRevision(),
+    events = h.events.filter((e) => e.type === 'owner_memory.updated').length,
+    activity = h.store.activity().length
+  expect(await (await save('Prefer detailed answers.', a.id)).json()).toEqual(b)
+  expect(h.store.ownerMemories()).toHaveLength(2)
+  expect(h.store.ownerMemoryById(a.id)).toMatchObject({ status: 'superseded', replacedById: b.id })
+  expect(h.store.ownerMemoryById(b.id)).toEqual(b)
+  expect(h.store.ownerMemoryRevision()).toBe(revision + 1)
+  expect(h.events.filter((e) => e.type === 'owner_memory.updated')).toHaveLength(events + 1)
+  expect(h.store.activity()).toHaveLength(activity + 1)
+})
+it('does not write or notify for normalized no-op owner patches', async () => {
+  const h = await harness()
+  const entry = await (
+    await h.request('POST', '/v1/owner-memory', { content: 'Prefer short answers.', idempotencyKey: randomUUID() })
+  ).json()
+  const revision = h.store.ownerMemoryRevision(),
+    events = h.events.length,
+    activity = h.store.activity().length
+  const changes = () => h.store.db.prepare('SELECT total_changes() AS count').get()
+  const before = changes()
+  const response = await h.request('PATCH', `/v1/owner-memory/${entry.id}`, {
+    content: ' Prefer   short answers. ',
+    status: 'active',
+  })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual(entry)
+  expect(changes()).toEqual(before)
+  expect(h.store.ownerMemoryRevision()).toBe(revision)
+  expect(h.events).toHaveLength(events)
+  expect(h.store.activity()).toHaveLength(activity)
+})
