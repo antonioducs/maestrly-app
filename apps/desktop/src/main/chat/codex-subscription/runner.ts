@@ -2746,9 +2746,11 @@ export async function runCodexSubscriptionChat(
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +
         subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
-      return buildHarnessDeveloperInstructions(standalone, profile.harness, {
-        asyncTools: profile.asyncQuestionGuidance,
-      })
+      return (
+        buildHarnessDeveloperInstructions(standalone, profile.harness, {
+          asyncTools: profile.asyncQuestionGuidance,
+        }) + projectContext
+      )
     }
     const base = profile.usesNativeOperatingPrompt
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
