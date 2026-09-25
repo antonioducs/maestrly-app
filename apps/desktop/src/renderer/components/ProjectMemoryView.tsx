@@ -33,6 +33,7 @@ type Selected = { kind: 'local' | 'shared'; id: string } | null
 
 interface Props {
   workspaceId: string
+  focusMemoryId?: string
   workspaceName: string
   onShowSidebar?: () => void
   onClose: () => void
@@ -59,7 +60,7 @@ function downloadText(filename: string, content: string, type: string): void {
   URL.revokeObjectURL(url)
 }
 
-export function ProjectMemoryView({ workspaceId, workspaceName, onShowSidebar, onClose }: Props) {
+export function ProjectMemoryView({ workspaceId, workspaceName, focusMemoryId, onShowSidebar, onClose }: Props) {
   const { t, i18n } = useTranslation('ui')
   const [enabled, setEnabled] = useState(true)
   const [section, setSection] = useState<Section>('all')
@@ -100,6 +101,13 @@ export function ProjectMemoryView({ workspaceId, workspaceName, onShowSidebar, o
       setLoading(false)
     }
   }, [workspaceId])
+
+  useEffect(() => {
+    if (focusMemoryId && local.some((memory) => memory.id === focusMemoryId)) {
+      setCreating(false)
+      setSelected({ kind: 'local', id: focusMemoryId })
+    }
+  }, [focusMemoryId, local])
 
   useEffect(() => void reload(), [reload])
   useEffect(
@@ -359,7 +367,7 @@ export function ProjectMemoryView({ workspaceId, workspaceName, onShowSidebar, o
                       active={selected?.kind === 'local' && selected.id === memory.id}
                       title={memory.title}
                       snippet={memory.content}
-                      badge={t('projectMemory.local')}
+                      badge={t(memory.source === 'auto' ? 'projectMemory.sourceAuto' : 'projectMemory.local')}
                       metadata={`${t(`projectMemory.types.${memory.type}`)} · ${t(`projectMemory.statuses.${memory.status}`)} · ${relativeTime(memory.updatedAt, i18n.language)}`}
                       pinned={memory.pinned}
                       warning={Boolean(memory.promotedPath)}
@@ -437,6 +445,7 @@ function MemoryRow(props: {
   warning?: boolean
   onClick: () => void
 }) {
+  const { t } = useTranslation('ui')
   return (
     <button
       onClick={props.onClick}
@@ -448,7 +457,9 @@ function MemoryRow(props: {
       )}
     >
       <div className="flex items-center gap-1.5">
-        {props.pinned && <Pin className="size-3 fill-current text-primary" />}
+        {props.pinned && (
+          <Pin aria-label={t('projectMemory.pinnedHint')} className="size-3 fill-current text-primary" />
+        )}
         <span className="min-w-0 flex-1 truncate text-xs font-medium">{props.title}</span>
         <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] text-muted-foreground">{props.badge}</span>
         {props.warning && <span className="size-1.5 rounded-full bg-amber-400" />}
@@ -520,13 +531,20 @@ function LocalMemoryEditor({
     <div className="mx-auto max-w-3xl space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">{memory ? memory.title : t('projectMemory.newMemory')}</h2>
+        {memory?.source === 'auto' && (
+          <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+            {t('projectMemory.sourceAuto')}
+          </span>
+        )}
         {memory?.originConversationId && (
           <span className="text-[10px] text-muted-foreground">{t('projectMemory.fromConversation')}</span>
         )}
         <button
           onClick={() => setPinned((value) => !value)}
           className={cn('ml-auto rounded p-1.5', pinned ? 'bg-primary/10 text-primary' : 'text-muted-foreground')}
-          title={t('projectMemory.pinned')}
+          title={t('projectMemory.pinnedHint')}
+          aria-label={t('projectMemory.pinned')}
+          aria-pressed={pinned}
         >
           <Pin className="size-4" />
         </button>

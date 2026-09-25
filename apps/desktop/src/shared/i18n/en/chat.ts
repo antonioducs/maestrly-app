@@ -1,4 +1,18 @@
 export default {
+  memorySettings: {
+    title: 'Memory',
+    description: 'How agents use durable project memory.',
+    autoRecall: 'Recall relevant memories automatically',
+    autoRecallHint: 'Adds up to 3 short memories to a message when they clearly match it. No model calls.',
+    extraction: 'Save memories from conversations',
+    extractionHint:
+      'A model reads finished turns in the background and saves decisions, preferences and lessons. Each run uses this model’s quota.',
+    model: 'Memory model',
+    save: 'Save memory settings',
+    saved: 'Saved',
+    modelRequired: 'Choose a model to save memories from conversations.',
+    saveFailed: 'Could not save memory settings.',
+  },
   kanban: {
     board: 'Board',
     project: 'Kanban project',
@@ -353,6 +367,9 @@ export default {
     generating: 'generating…',
     goToBottom: 'Go to bottom',
     interrupted: 'Response interrupted (the stream was cut off) — ask it to continue.',
+    memoriesRecalled_one: '🧠 {{count}} memory recalled',
+    memoriesRecalled_other: '🧠 {{count}} memories recalled',
+    memoryRecalledHint: 'Memories recalled automatically for this message',
     memoriesUsed_one: '🧠 {{count}} memory used',
     memoriesUsed_other: '🧠 {{count}} memories used',
     memorySourcesHint: 'Show the memory sources used in this response',

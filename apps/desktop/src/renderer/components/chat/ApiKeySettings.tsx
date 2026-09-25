@@ -61,6 +61,7 @@ import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
 import { CHAT_SETTINGS_TABS, type ChatSettingsOptions, type ChatSettingsTab } from './chat-settings-tabs'
 import { supportsSubscriptionUsage } from './subscription-usage-presentation'
 import { MaestroSettings } from './MaestroSettings'
+import { MemorySettings } from './MemorySettings'
 import { BackgroundCompactionSettings } from './BackgroundCompactionSettings'
 import { RuntimeComponentsSettings } from './RuntimeComponentsSettings'
 import { assetProgress, formatBytes } from './runtime-asset-presentation'
@@ -1478,6 +1479,12 @@ export function ApiKeySettings({
             <ImageInterpreterPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
           )}
           <BackgroundCompactionSettings
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
+          <MemorySettings
             config={config}
             catalogRevision={modelFilterRevision}
             onChanged={refresh}

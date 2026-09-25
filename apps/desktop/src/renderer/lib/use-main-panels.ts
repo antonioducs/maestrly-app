@@ -26,6 +26,10 @@ type UseMainPanelsParams = {
 export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
+  const [focusMemoryId, setFocusMemoryId] = useState<string | undefined>()
+  useEffect(() => {
+    if (!projectMemoryWs) setFocusMemoryId(undefined)
+  }, [projectMemoryWs])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fleetView, setFleetView] = useState<FleetView | null>(null)
   const [createBot, setCreateBot] = useState(false)
@@ -37,7 +41,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ conversationId?: string }>).detail
+      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string }>).detail
       if (!detail?.conversationId) return
       const workspace = workspaces.find((item) =>
         item.conversations.some((conversation) => conversation.id === detail.conversationId)
@@ -48,6 +52,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setCreateBot(false)
       setSettingsOpen(false)
       setOnboardingOpen(false)
+      setFocusMemoryId(detail.memoryId)
       setProjectMemoryWs(workspace.id)
     }
     window.addEventListener('maestrly:open-memory', open)
@@ -183,6 +188,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,
+    focusMemoryId,
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,

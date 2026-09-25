@@ -1021,6 +1021,8 @@ export default {
   },
 
   projectMemory: {
+    sourceAuto: 'Automática',
+    pinnedHint: 'Memórias fixadas ficam sempre no contexto do agente',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Usar memória do Maestrly',
     disabled: 'Memória desativada',

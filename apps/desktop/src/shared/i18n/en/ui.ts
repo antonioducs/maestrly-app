@@ -1008,6 +1008,8 @@ export default {
   },
 
   projectMemory: {
+    sourceAuto: 'Automatic',
+    pinnedHint: 'Pinned memories are always in the agent’s context',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Use Maestrly memory',
     disabled: 'Memory disabled',
