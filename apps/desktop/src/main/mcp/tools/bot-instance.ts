@@ -263,7 +263,9 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
       }
     }
   )
-  const ownerMemory = new OwnerMemoryClient(gateway)
+  let fallbackOwnerMemory: OwnerMemoryClient | undefined
+  const ownerMemory = () =>
+    getBotInstanceRuntime()?.ownerMemory ?? (fallbackOwnerMemory ??= new OwnerMemoryClient(gateway))
   ctx.server.registerTool(
     'owner_memory_save',
     {
@@ -277,7 +279,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async ({ content, replaces_id }, extra) => {
       try {
-        const entry = await ownerMemory.save({
+        const entry = await ownerMemory().save({
           content,
           ...(replaces_id ? { replacesId: replaces_id } : {}),
           origin: getBotInstanceRuntime()?.currentInput()?.source ?? 'owner',
@@ -299,7 +301,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async ({ id, reason }) => {
       try {
-        const entry = await ownerMemory.forget(id, reason)
+        const entry = await ownerMemory().forget(id, reason)
         return ok(JSON.stringify({ forgotten: true, id: entry.id }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))

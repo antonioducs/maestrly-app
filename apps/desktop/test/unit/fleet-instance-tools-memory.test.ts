@@ -2,9 +2,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { OwnerMemoryClient } from '../../src/main/fleet/instance/owner-memory'
 import { registerBotInstanceTools } from '../../src/main/mcp/tools/bot-instance'
 
 const state = vi.hoisted(() => ({
+  ownerMemory: undefined as OwnerMemoryClient | undefined,
   input: null as null | {
     source: 'owner' | 'routine' | 'peer'
     routine?: { id: string; title: string; runId: string }
@@ -12,7 +14,7 @@ const state = vi.hoisted(() => ({
 }))
 vi.mock('../../src/main/fleet/instance', () => ({
   requestOwnerHelp: vi.fn(),
-  getBotInstanceRuntime: () => ({ currentInput: () => state.input }),
+  getBotInstanceRuntime: () => ({ currentInput: () => state.input, ownerMemory: state.ownerMemory }),
 }))
 const at = '2026-09-20T10:00:00.000Z'
 const entry = {
@@ -34,6 +36,7 @@ afterEach(async () => {
     await server.close()
   }
   state.input = null
+  state.ownerMemory = undefined
   vi.unstubAllGlobals()
 })
 async function fixture() {
@@ -132,3 +135,30 @@ it('reports for the active routine run', async () => {
   expect(String(fetch.mock.calls[0][0])).toBe('http://gateway.test/internal/v1/routines/r1/runs/run-1/report')
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ summary: 'Done', pending: null, notes: 'Retry tomorrow' })
 })
+
+it.each(['owner_memory_save', 'owner_memory_forget'])(
+  'invalidates the runtime prompt cache through %s resolved at call time',
+  async (name) => {
+    const client = await fixture()
+    state.ownerMemory = new OwnerMemoryClient({ url: 'http://gateway.test', token: 'synthetic-token' })
+    const memory = { revision: 1, activeChars: entry.content.length, entries: [entry] }
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json(memory))
+        .mockResolvedValueOnce(Response.json(entry))
+        .mockRejectedValueOnce(new Error('offline'))
+    )
+    expect(await state.ownerMemory.get()).toEqual(memory)
+    const result = await client.callTool({
+      name,
+      arguments:
+        name === 'owner_memory_save'
+          ? { content: 'Prefer detailed answers.', replaces_id: entry.id }
+          : { id: entry.id, reason: 'Outdated' },
+    })
+    expect(result.isError).not.toBe(true)
+    expect(await state.ownerMemory.coreSections(new AbortController().signal)).toBeNull()
+  }
+)
