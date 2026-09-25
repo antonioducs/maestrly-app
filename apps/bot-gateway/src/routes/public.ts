@@ -1,3 +1,4 @@
+import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
   FLEET_PROTOCOL_VERSION,
@@ -36,6 +37,23 @@ export async function publicRoute(
 ): Promise<Result> {
   const id = params.id
   switch (key) {
+    case 'ownerMemoryList':
+      return { body: ctx.ownerMemory!.list(url.searchParams.get('status') === 'active' ? 'active' : 'all') }
+    case 'ownerMemoryCreate': {
+      const { response, status } = ctx.store.idempotent(
+        'ownerMemoryCreate',
+        body.idempotencyKey,
+        ownerMemoryRequestHash(body),
+        () => ({ response: ctx.ownerMemory!.save({ kind: 'owner' }, body), status: 201 })
+      )
+      return { body: response, status }
+    }
+    case 'ownerMemoryPatch':
+      return { body: ctx.ownerMemory!.patch(params.mid, body) }
+    case 'ownerMemoryDelete':
+      ctx.ownerMemory!.delete(params.mid)
+      return { status: 204 }
+
     case 'meta':
       return {
         body: {

@@ -259,7 +259,7 @@ describe('secrets and configuration', () => {
     store.close()
     const migrated = new Store(dir)
     expect(migrated.routineById('old')?.createdBy).toBe('owner')
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
     migrated.close()
   })
   it('migrates version 3 bots and persists their compaction model', () => {
@@ -269,7 +269,7 @@ describe('secrets and configuration', () => {
     store.db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
     store.close()
     const migrated = new Store(dir)
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
     expect(migrated.db.prepare('PRAGMA table_info(bots)').all()).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'compaction_json' })])
     )

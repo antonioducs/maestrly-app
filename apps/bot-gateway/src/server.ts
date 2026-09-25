@@ -1,3 +1,4 @@
+import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { BlockList, isIP } from 'node:net'
 import {
@@ -6,6 +7,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_MESSAGE_BODY_MAX,
+  type FleetInternalOwnerMemorySaveRequest,
   type FleetRoute,
   type FleetInternalPeerMessageRequest,
   type FleetCreateRoutineRequest,
@@ -73,6 +75,7 @@ function reject(res: ServerResponse, error: unknown) {
   })
 }
 export function createGatewayServers(ctx: GatewayContext) {
+  const ownerMemory = ctx.ownerMemory ?? new OwnerMemory(ctx.store, ctx.lifecycle)
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
@@ -139,7 +142,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, peers, routines, screen, revokeDevice }
+  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, revokeDevice }
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
   }
@@ -189,6 +192,23 @@ export function createGatewayServers(ctx: GatewayContext) {
               status = 204
           }
           send(res, status, match.route.response?.parse(result) ?? result)
+        } else if (match.key.startsWith('ownerMemory')) {
+          const bot = ctx.store.getBot(caller!)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          if (match.key === 'ownerMemoryGet')
+            return send(res, 200, match.route.response!.parse(ownerMemory.list('active')))
+          if (match.key === 'ownerMemoryForget') {
+            const { reason } = body as { reason: string }
+            return send(res, 200, match.route.response!.parse(ownerMemory.forget(caller!, match.params.mid, reason)))
+          }
+          const request = body as FleetInternalOwnerMemorySaveRequest
+          const { response, status } = ctx.store.idempotent(
+            'botOwnerMemorySave:' + caller,
+            request.idempotencyKey,
+            ownerMemoryRequestHash(request),
+            () => ({ response: ownerMemory.save({ kind: 'bot', botId: caller! }, request), status: 201 })
+          )
+          return send(res, status, match.route.response!.parse(response))
         } else {
           const result =
             match.key === 'peers'

@@ -3,6 +3,7 @@ import { chmodSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  FleetOwnerMemoryEntry,
   FleetActivityEntry,
   FleetActivityKind,
   FleetBot,
@@ -60,7 +61,7 @@ export class Store {
       const version = Number(
         (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
       )
-      if (version > 4) throw new Error('Gateway database schema is newer than this binary')
+      if (version > 5) throw new Error('Gateway database schema is newer than this binary')
       if (version === 0) {
         this.db.exec(`
           CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -102,8 +103,92 @@ export class Store {
           this.db.exec('ALTER TABLE bots ADD COLUMN compaction_json TEXT')
         this.db.prepare("UPDATE meta SET value='4' WHERE key='schema_version'").run()
       }
+      if (version <= 4) {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS owner_memories (id TEXT PRIMARY KEY, content TEXT NOT NULL, status TEXT NOT NULL, author_kind TEXT NOT NULL, author_bot_id TEXT, author_name TEXT, origin TEXT, replaces_id TEXT, replaced_by_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS idx_owner_memories_status ON owner_memories(status, created_at);
+          CREATE TABLE IF NOT EXISTS routine_runs (id TEXT PRIMARY KEY, routine_id TEXT NOT NULL, bot_id TEXT NOT NULL, input_id TEXT NOT NULL, trigger TEXT NOT NULL, status TEXT NOT NULL, delivered_at TEXT NOT NULL, finished_at TEXT, report_json TEXT, final_text TEXT);
+          CREATE INDEX IF NOT EXISTS idx_routine_runs_routine ON routine_runs(routine_id, delivered_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_routine_runs_input ON routine_runs(bot_id, input_id);
+        `)
+        this.db
+          .prepare("INSERT INTO meta(key,value) VALUES('owner_memory_revision','0') ON CONFLICT(key) DO NOTHING")
+          .run()
+        this.db.prepare("UPDATE meta SET value='5' WHERE key='schema_version'").run()
+      }
+
+      if (this.db.prepare('PRAGMA foreign_key_check').all().length)
+        throw new Error('Gateway migration foreign key check failed')
+      const integrity = this.db.prepare('PRAGMA integrity_check').get() as Row
+      if (integrity.integrity_check !== 'ok') throw new Error('Gateway migration integrity check failed')
     })
   }
+  private ownerMemory(row: Row): FleetOwnerMemoryEntry {
+    return {
+      id: String(row.id),
+      content: String(row.content),
+      status: row.status as FleetOwnerMemoryEntry['status'],
+      author:
+        row.author_kind === 'bot'
+          ? { kind: 'bot', botId: String(row.author_bot_id), name: String(row.author_name ?? row.author_bot_id) }
+          : { kind: 'owner' },
+      origin: (row.origin as FleetOwnerMemoryEntry['origin']) ?? null,
+      replacesId: (row.replaces_id as string | null) ?? null,
+      replacedById: (row.replaced_by_id as string | null) ?? null,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  ownerMemories(status?: 'active'): FleetOwnerMemoryEntry[] {
+    const rows = status
+      ? this.db.prepare("SELECT * FROM owner_memories WHERE status='active' ORDER BY created_at").all()
+      : this.db.prepare('SELECT * FROM owner_memories ORDER BY created_at').all()
+    return (rows as Row[]).map((row) => this.ownerMemory(row))
+  }
+  ownerMemoryById(id: string): FleetOwnerMemoryEntry | null {
+    const row = this.db.prepare('SELECT * FROM owner_memories WHERE id=?').get(id) as Row | undefined
+    return row ? this.ownerMemory(row) : null
+  }
+  saveOwnerMemory(entry: FleetOwnerMemoryEntry) {
+    this.db
+      .prepare(`INSERT INTO owner_memories(id,content,status,author_kind,author_bot_id,author_name,origin,replaces_id,replaced_by_id,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content,status=excluded.status,replaces_id=excluded.replaces_id,replaced_by_id=excluded.replaced_by_id,updated_at=excluded.updated_at`)
+      .run(
+        entry.id,
+        entry.content,
+        entry.status,
+        entry.author.kind,
+        entry.author.kind === 'bot' ? entry.author.botId : null,
+        entry.author.kind === 'bot' ? entry.author.name : null,
+        entry.origin,
+        entry.replacesId,
+        entry.replacedById,
+        entry.createdAt,
+        entry.updatedAt
+      )
+  }
+  deleteOwnerMemory(id: string) {
+    this.transaction(() => {
+      this.db.prepare('UPDATE owner_memories SET replaces_id=NULL WHERE replaces_id=?').run(id)
+      this.db.prepare('UPDATE owner_memories SET replaced_by_id=NULL WHERE replaced_by_id=?').run(id)
+      this.db.prepare('DELETE FROM owner_memories WHERE id=?').run(id)
+    })
+  }
+  ownerMemoryRevision(): number {
+    return Number(
+      (this.db.prepare("SELECT value FROM meta WHERE key='owner_memory_revision'").get() as Row | undefined)?.value ?? 0
+    )
+  }
+  bumpOwnerMemoryRevision(): number {
+    const next = this.ownerMemoryRevision() + 1
+    this.db
+      .prepare(
+        "INSERT INTO meta(key,value) VALUES('owner_memory_revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+      )
+      .run(String(next))
+    return next
+  }
+
   addPairing(hash: string, expiresAt: string) {
     this.db.prepare('INSERT INTO pairing_codes(code_sha256,expires_at) VALUES(?,?)').run(hash, expiresAt)
   }
@@ -257,13 +342,14 @@ export class Store {
         )
         .run(id, id, id)
       this.db.prepare('DELETE FROM peer_messages WHERE from_bot=? OR to_bot=?').run(id, id)
+      this.db.prepare('DELETE FROM routine_runs WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
       this.db
-        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?)')
-        .run('botMessageSend:' + id, 'routineCreate:' + id, 'botRoutineCreate:' + id)
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?,?)')
+        .run('botMessageSend:' + id, 'routineCreate:' + id, 'botRoutineCreate:' + id, 'botOwnerMemorySave:' + id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
     })
   }
@@ -457,7 +543,10 @@ export class Store {
       )
   }
   deleteRoutine(id: string) {
-    this.db.prepare('DELETE FROM routines WHERE id=?').run(id)
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM routine_runs WHERE routine_id=?').run(id)
+      this.db.prepare('DELETE FROM routines WHERE id=?').run(id)
+    })
   }
   priorIdempotency<T>(scope: string, key: string, requestHash: string): { response: T; status: number } | null {
     this.db.prepare('DELETE FROM idempotency WHERE created_at<?').run(new Date(Date.now() - 86400000).toISOString())

@@ -1,3 +1,4 @@
+import type { OwnerMemory } from './owner-memory.js'
 import type { Auth } from './auth.js'
 import type { GatewayConfig } from './config.js'
 import type { EventHub } from './events.js'
@@ -14,6 +15,7 @@ export type GatewayContext = {
   host: HostMonitor
   lifecycle: Lifecycle
   store: Store
+  ownerMemory?: OwnerMemory
   peers?: Peers
   routines?: Routines
   screen?: ScreenProxy
