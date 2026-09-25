@@ -254,8 +254,9 @@ Routes, all validated with zod in `@maestrly/bot-fleet-protocol`:
 | Bot | `POST /internal/v1/owner-memory` | Save or replace (idempotent) |
 | Bot | `POST /internal/v1/owner-memory/:mid/forget` | Archive with a reason |
 
-In the bot, `OwnerMemoryClient` fetches active entries before each admission with a 1,500 ms timeout and falls back
-to the last good copy. It feeds the core's owner section through `setMemoryCoreExtras(conversationId, provider)`,
+In the bot, `OwnerMemoryClient` fetches active entries before each admission with a 1,000 ms timeout and falls back
+to the last good copy. The timeout stays under the 1,500 ms admission budget, so the fallback answers in time and
+recall still runs. It feeds the core's owner section through `setMemoryCoreExtras(conversationId, provider)`,
 and the delta mechanism picks up changes on the next turn. Tools: `owner_memory_save({ content, replaces_id? })` and
 `owner_memory_forget({ id, reason })`; origin comes from the input being handled.
 
