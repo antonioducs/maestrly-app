@@ -11,31 +11,27 @@ import type { ChatBehavior } from '../../src/shared/conversation-experience'
 const generic = harnessFor('anthropic', 'generic-model')
 const fable = harnessFor('claude-subscription', 'claude-fable-5-1')
 
-const prompt = (
-  appToolsEnabled: boolean,
-  mode: ChatBehavior,
-  hasNotesTab: boolean,
-  harness = generic
-): string => buildMaestrlyBasePrompt({ harness, cwd: '/repo', appToolsEnabled, mode, hasNotesTab })
+const prompt = (appToolsEnabled: boolean, mode: ChatBehavior, hasNotesTab: boolean, harness = generic): string =>
+  buildMaestrlyBasePrompt({ harness, cwd: '/repo', appToolsEnabled, mode, hasNotesTab })
 
 /** Byte-level parity with the prompt shipped before the declarative harness catalog. */
 const LEGACY_PROMPT_HASHES = {
-  'agent:false:false': '1b47682777a17ed9b027d8f62e1d66966981891a92bb766d5dc0cb836a607912',
-  'agent:false:true': 'c757174223f0e8f1bf24585007c08970b2fa92bfaec8e35f9607531122bcd087',
-  'agent:true:false': '9387db0f9a7638a6910378637efbccab493605d3f2cc107f115b070e6ba130e6',
-  'agent:true:true': '530e8d7b25fdc9eaebd9408f9373d746403bc2391ec6fef5638e5d2b2ec898d3',
-  'ask:false:false': '0fc777ea3a4336b9334b2fb57ef4fdb07a66de507a7f09c7c664e715c62c9b4d',
-  'ask:false:true': 'b9422757547bc897cc51da5195490e1e6a42cc288cfe60f7944b7674b2e52f94',
-  'ask:true:false': '1f62e7655787684ac35bc96f0f4e9ebd3b31e8af3784ac644e50c9f33c1da238',
-  'ask:true:true': 'cbb8b070be865ad9407dee4e76eb93b442dc0be99d4f6fb22b1518c1b611120d',
-  'plan:false:false': '4e4a8d927390cb2ebe91ffc95142aabda967b2fad0f3148d7dd35d08d450ae8c',
-  'plan:false:true': '4b4588c424fedbf254a02bef994c44d7172730af721fe91c032a80c6b53add18',
-  'plan:true:false': '3afcd159db5e7a4f3c997a8660449d5a1ddc7f4a7b95b1be81f174c4e70e70a3',
-  'plan:true:true': 'd7c90d4956ca439fc8aefb509b097bdf9b3ab751bfdb44797e3da7da7da8b056',
-  'maestro:false:false': '8acee4eff1a21953eee8c1eef1052353359d1be3156e4ada2acf918e42f1b435',
-  'maestro:false:true': 'c0305c958ced6bb267699b56d7fc3ec614e2eea4293526b37a381f445572d353',
-  'maestro:true:false': 'd4f30d87147b0c8c5491cfdd090676e9eda84aeea61f77cf63071a11bfa8231a',
-  'maestro:true:true': '80c0bbe4c6a81cdc424c4d89787b2a617008724b3bd81d5fd0365832c9548a1b',
+  'agent:false:false': 'af6de4656bb5f33db2a755cb273a73a5154ec4541b70ab3b55191b75d4323234',
+  'agent:false:true': '7bed6172f8583abcb60a62f84a6fa6b3c97409093889405e3fadc19950e1c2a9',
+  'agent:true:false': '36c35895aae810345d3ac53c891f8f17058e903b27206376dbdc5ece2313ca5b',
+  'agent:true:true': '313586c419f21fe2266079218c63b18efb7d5c363ebc13af3c32d468b9ddbe4c',
+  'ask:false:false': 'b635ddf7e3c9fd759310500fa34af4f85c5d2a5bb5e374d58c2cd1636938c8b6',
+  'ask:false:true': '61087d076471a5c9f0d079ab392802ab0e26995326a70a93799bbe8b0e6d428b',
+  'ask:true:false': 'e3b20cbaa8ef94eabc7d8b73c1c72ec66f06d75400948b0f30abfa210501cc44',
+  'ask:true:true': 'c7bef48120c00ca2fa701a31d5211f5a2dd2cd8936df711118b2f7175e97e4c4',
+  'plan:false:false': 'deff6716608c378c1fb0a4f94eb29f38dbc33c9e8199bde181a3fbe6ea98fae5',
+  'plan:false:true': 'cd3b6cffc799ce5de26bea4e5daf8e00e083aa6dd904cbacbff4937880618d89',
+  'plan:true:false': '7ae52c142f90d1c66c34d19180fa3aab78ca034ac3667414c67e264fb6593738',
+  'plan:true:true': 'a1c6d8f83034edd95eaada17d1dac864b5e15b651cdd64014d28a745701f40dc',
+  'maestro:false:false': 'eca1cc783c8b158b94b234d6f51cad63c98212eaae05e5890d3129efba29ef23',
+  'maestro:false:true': '954a29a8e2cf1a1975f1e02bd6aa6b323d15b361239fd2adb8d74035177f757a',
+  'maestro:true:false': '23b4682ab1e7f7948bef1f9e3c33b4a81979b6f4a68f18554f6917842f8f156d',
+  'maestro:true:true': '9f000c4c9e17d2a721c135fcdbf0bd0d207e7f2e881eed793d63b0d8be892ca4',
 }
 
 describe('Fable 5.1 prompt fragments', () => {

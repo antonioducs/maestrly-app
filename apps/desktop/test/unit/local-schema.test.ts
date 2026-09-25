@@ -45,6 +45,7 @@ const LOCAL_TABLES = [
   'chat_tool_executions',
   'chat_usage_ledger',
   'conversation_dispatches',
+  'conversation_memory_state',
   'conversation_migrations',
   'conversation_repos',
   'conversations',
