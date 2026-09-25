@@ -15,6 +15,8 @@ import { GatewayError } from './errors.js'
 import type { Lifecycle } from './lifecycle.js'
 import type { Store } from './store.js'
 
+type RunFinish = { outcome: 'completed' | 'failed' | 'cancelled'; text: string | null; at: number }
+
 type Parts = { year: number; month: number; day: number; hour: number; minute: number }
 function parts(formatter: Intl.DateTimeFormat, value: number): Parts {
   const entries = Object.fromEntries(
@@ -93,6 +95,7 @@ export function nextRun(schedule: FleetRoutineSchedule, after: Date): string {
 export class Routines {
   private timer: NodeJS.Timeout | null = null
   private ticking = false
+  private readonly pendingFinishes = new Map<string, RunFinish>()
   constructor(
     readonly store: Store,
     readonly lifecycle: Lifecycle,
@@ -191,14 +194,33 @@ export class Routines {
     return visible
   }
   finishRun(botId: string, inputId: string, outcome: 'completed' | 'failed' | 'cancelled', text: string | null) {
+    this.prunePendingFinishes()
+    const key = JSON.stringify([botId, inputId])
+    const finish = { outcome, text: text ? text.slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax) : null, at: this.now() }
+    if (this.applyFinish(botId, inputId, finish)) return
+    const prior = this.pendingFinishes.get(key)
+    if (prior && prior.outcome !== 'failed') return
+    this.pendingFinishes.delete(key)
+    this.pendingFinishes.set(key, finish)
+    if (this.pendingFinishes.size > 100) this.pendingFinishes.delete(this.pendingFinishes.keys().next().value!)
+  }
+
+  private prunePendingFinishes() {
+    for (const [key, finish] of this.pendingFinishes)
+      if (this.now() - finish.at >= 5 * 60_000) this.pendingFinishes.delete(key)
+  }
+
+  private applyFinish(botId: string, inputId: string, finish: RunFinish): boolean {
     const run = this.store.routineRunByInput(botId, inputId)
-    if (!run || (run.status !== 'delivered' && run.status !== 'unknown')) return
-    this.store.updateRoutineRun({
-      ...run,
-      status: outcome,
-      finishedAt: new Date(this.now()).toISOString(),
-      finalText: text ? text.slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax) : null,
-    })
+    if (!run) return false
+    if (run.status !== 'completed' && run.status !== 'cancelled')
+      this.store.updateRoutineRun({
+        ...run,
+        status: finish.outcome,
+        finishedAt: new Date(finish.at).toISOString(),
+        finalText: finish.text,
+      })
+    return true
   }
 
   private require(botId: string, id: string) {
@@ -224,6 +246,7 @@ export class Routines {
   async tick() {
     if (this.ticking) return
     this.ticking = true
+    this.prunePendingFinishes()
     try {
       for (const routine of this.store.routines()) {
         if (!routine.enabled || !routine.nextRunAt) continue
@@ -257,6 +280,7 @@ export class Routines {
           scheduled && routine.nextRunAt ? scheduledKey(routine.id, routine.nextRunAt) : randomUUID()
         const runId = runIdFor(idempotencyKey)
         const previousRuns = this.runs(routine.botId, routine.id)
+          .filter((run) => run.id !== runId)
           .slice(0, FLEET_ROUTINE_RUN_LIMITS.previousRuns)
           .map((run) => ({
             at: run.deliveredAt,
@@ -267,15 +291,13 @@ export class Routines {
             pending: run.report?.pending ?? null,
             notes: run.report?.notes ?? null,
           }))
-        const receipt = await this.lifecycle
-          .instanceFor(routine.botId)
-          .postInput({
-            source: 'routine',
-            routine: { id: routine.id, title: routine.title, runId, previousRuns },
-            text: routine.prompt,
-            attachments: [],
-            idempotencyKey,
-          })
+        const receipt = await this.lifecycle.instanceFor(routine.botId).postInput({
+          source: 'routine',
+          routine: { id: routine.id, title: routine.title, runId, previousRuns },
+          text: routine.prompt,
+          attachments: [],
+          idempotencyKey,
+        })
         this.store.setRoutineLastInputId(routine.id, receipt.inputId)
         this.store.insertRoutineRun({
           id: runId,
@@ -289,6 +311,13 @@ export class Routines {
           report: null,
           finalText: null,
         })
+        this.prunePendingFinishes()
+        const finishKey = JSON.stringify([routine.botId, receipt.inputId])
+        const finish = this.pendingFinishes.get(finishKey)
+        if (finish) {
+          this.pendingFinishes.delete(finishKey)
+          this.applyFinish(routine.botId, receipt.inputId, finish)
+        }
         this.store.pruneRoutineRuns(routine.id, FLEET_ROUTINE_RUN_LIMITS.keepPerRoutine)
         sentRunId = runId
         outcome = 'sent'

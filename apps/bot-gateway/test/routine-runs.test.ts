@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { harness } from './harness.js'
 
@@ -76,6 +76,7 @@ it('deduplicates scheduled replay and prunes runs with their routine or bot', as
   h.store.saveRoutine(routine)
   await h.gateway.routines.tick()
   expect(h.instance.inputs.at(-1)!.routine!.runId).toBe(first.routine!.runId)
+  expect(h.instance.inputs.at(-1)!.routine!.previousRuns).toEqual([])
   expect(h.store.routineRuns(routine.id, 100)).toHaveLength(1)
   for (let i = 0; i < 54; i++) {
     now += 1000
@@ -91,7 +92,7 @@ it('deduplicates scheduled replay and prunes runs with their routine or bot', as
   h.store.deleteBot(h.bot.id)
   expect(h.store.routineRuns(another.id, 100)).toEqual([])
 })
-it('stores failed and cancelled finishes, truncates final text and ignores duplicate finishes', async () => {
+it('keeps completed and cancelled finishes final and truncates final text', async () => {
   const h = await harness()
   const routine = h.gateway.routines.create(h.bot.id, {
     title: 'Check',
@@ -100,7 +101,7 @@ it('stores failed and cancelled finishes, truncates final text and ignores dupli
     enabled: false,
     idempotencyKey: randomUUID(),
   })
-  for (const outcome of ['failed', 'cancelled'] as const) {
+  for (const outcome of ['completed', 'cancelled'] as const) {
     await h.gateway.routines.run(h.bot.id, routine.id)
     const input = h.instance.inputs.at(-1)!
     const inputId = h.instance.receipts.get(input.idempotencyKey)!.inputId
@@ -112,3 +113,74 @@ it('stores failed and cancelled finishes, truncates final text and ignores dupli
     })
   }
 })
+
+it('allows a failed admission to finish successfully after retry', async () => {
+  let now = Date.parse('2026-09-25T10:00:00.000Z')
+  const h = await harness(() => now)
+  const routine = h.gateway.routines.create(h.bot.id, {
+    title: 'Check',
+    prompt: 'Check',
+    schedule: { kind: 'interval', everyMinutes: 15 },
+    enabled: false,
+    idempotencyKey: randomUUID(),
+  })
+  await h.gateway.routines.run(h.bot.id, routine.id)
+  const input = h.instance.inputs.at(-1)!
+  const inputId = h.instance.receipts.get(input.idempotencyKey)!.inputId
+  h.lifecycle.onTurnFinished!(h.bot.id, { outcome: 'failed', inputId, text: null })
+  expect(h.store.routineRunById(input.routine!.runId!)?.status).toBe('failed')
+  now += 5000
+  h.lifecycle.onTurnFinished!(h.bot.id, { outcome: 'completed', inputId, text: 'Retried successfully' })
+  expect(h.store.routineRunById(input.routine!.runId!)).toMatchObject({
+    status: 'completed',
+    finalText: 'Retried successfully',
+    finishedAt: new Date(now).toISOString(),
+  })
+})
+it.each(['fresh', 'expired', 'evicted', 'other-bot', 'retry', 'terminal'] as const)(
+  'handles a finish before insertion: %s',
+  async (scenario) => {
+    let now = Date.parse('2026-09-25T10:00:00.000Z')
+    const h = await harness(() => now)
+    const routine = h.gateway.routines.create(h.bot.id, {
+      title: 'Check',
+      prompt: 'Check',
+      schedule: { kind: 'interval', everyMinutes: 15 },
+      enabled: false,
+      idempotencyKey: randomUUID(),
+    })
+    const instance = h.lifecycle.instanceFor(h.bot.id)
+    const instanceFor = vi.spyOn(h.lifecycle, 'instanceFor').mockReturnValue(instance)
+    const inputId = randomUUID()
+    const finishedAt = new Date(now).toISOString()
+    const post = vi.spyOn(instance, 'postInput').mockImplementation(async () => {
+      h.lifecycle.onTurnFinished!(scenario === 'other-bot' ? 'other' : h.bot.id, {
+        outcome: scenario === 'terminal' ? 'completed' : 'failed',
+        inputId,
+        text: 'Early finish',
+      })
+      if (scenario === 'retry' || scenario === 'terminal')
+        h.lifecycle.onTurnFinished!(h.bot.id, { outcome: 'completed', inputId, text: 'Retry finish' })
+      if (scenario === 'evicted')
+        for (let i = 0; i < 100; i++)
+          h.lifecycle.onTurnFinished!(h.bot.id, { outcome: 'failed', inputId: randomUUID(), text: null })
+      now += scenario === 'expired' ? 5 * 60_000 : 1000
+      return { inputId, itemId: randomUUID(), queued: false }
+    })
+    try {
+      await h.gateway.routines.run(h.bot.id, routine.id)
+      expect(h.store.routineRuns(routine.id, 1)[0]).toMatchObject(
+        ['expired', 'evicted', 'other-bot'].includes(scenario)
+          ? { status: 'delivered', finalText: null, finishedAt: null }
+          : {
+              status: scenario === 'fresh' ? 'failed' : 'completed',
+              finalText: scenario === 'retry' ? 'Retry finish' : 'Early finish',
+              finishedAt,
+            }
+      )
+    } finally {
+      post.mockRestore()
+      instanceFor.mockRestore()
+    }
+  }
+)
