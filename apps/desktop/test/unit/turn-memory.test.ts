@@ -1,3 +1,4 @@
+import * as memorySearch from '../../src/main/memory/search'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -50,7 +51,7 @@ import { disposeMemoryIndexService } from '../../src/main/memory/index'
 import { randomUUID } from 'node:crypto'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { memoryCoreForPrompt, setMemoryCoreExtras, clearMemoryCoreExtras } from '../../src/main/memory/core'
-import { archiveLocalMemory, createLocalMemory } from '../../src/main/memory/local-memory-service'
+import { archiveLocalMemory, createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
 import { setWorkspaceMemoryEnabled } from '../../src/main/memory/access'
 import {
   BOT_MEMORY_SPACE_ID,
@@ -270,3 +271,67 @@ it('keeps building the memory core when a host extras provider misses the budget
     clearMemoryCoreExtras(conversation.id)
   }
 }, 5_000)
+
+it('caps the complete recall block and accounts only for rendered hits', async () => {
+  const workspace = makeWorkspace()
+  const conversation = makeConversation(workspace.id)
+  const hits = Array.from({ length: 3 }, (_, i) => {
+    const memory = createLocalMemory({
+      workspaceId: workspace.id,
+      title: `Staging SSH ${i} ${'long title '.repeat(20)}`,
+      content: `Staging SSH ${i} ${'details '.repeat(70)}`,
+      type: 'reference',
+      source: 'user',
+    }).memory
+    return {
+      kind: 'local' as const,
+      id: memory.id,
+      type: memory.type,
+      title: memory.title,
+      snippet: memory.content.slice(0, 400),
+      relevance: 1,
+      pinned: false,
+    }
+  })
+  vi.spyOn(memorySearch, 'searchMemorySpace').mockResolvedValue(hits)
+  const turn = await prepareTurnMemory({ conversationId: conversation.id, text: 'staging ssh port?' })
+  const part = turn.hiddenParts.find((part) => part.type === 'file' && part.name === MEMORY_RECALL_PART)
+  if (part?.type !== 'file' || part.kind !== 'text') throw new Error('Missing recall')
+  expect(part.data.length).toBeLessThanOrEqual(1_400)
+  expect(part.data).toMatch(/<\/maestrly-memory>$/)
+  const rendered = hits.filter((hit) => part.data.includes(hit.id.slice(0, 8))).map((hit) => hit.id)
+  expect(rendered).toHaveLength(2)
+  expect(turn.memoryContext?.sources.map((source) => source.id)).toEqual(rendered)
+  turn.commit()
+  expect(getConversationMemoryState(conversation.id)?.recalledIds).toEqual(rendered)
+  for (const hit of hits) expect(getLocalMemory(workspace.id, hit.id)?.useCount).toBe(rendered.includes(hit.id) ? 1 : 0)
+})
+
+it('does not account for recall hits dropped at the hit limit', async () => {
+  const workspace = makeWorkspace()
+  const conversation = makeConversation(workspace.id)
+  const hits = Array.from({ length: 4 }, (_, i) => {
+    const memory = createLocalMemory({
+      workspaceId: workspace.id,
+      title: `Staging SSH ${i}`,
+      content: `Port ${2222 + i}.`,
+      type: 'reference',
+      source: 'user',
+    }).memory
+    return {
+      kind: 'local' as const,
+      id: memory.id,
+      type: memory.type,
+      title: memory.title,
+      snippet: memory.content,
+      relevance: 1,
+      pinned: false,
+    }
+  })
+  vi.spyOn(memorySearch, 'searchMemorySpace').mockResolvedValue(hits)
+  const turn = await prepareTurnMemory({ conversationId: conversation.id, text: 'staging ssh port?' })
+  expect(turn.memoryContext?.sources.map((source) => source.id)).toEqual(hits.slice(0, 3).map((hit) => hit.id))
+  turn.commit()
+  expect(getConversationMemoryState(conversation.id)?.recalledIds).not.toContain(hits[3].id)
+  expect(getLocalMemory(workspace.id, hits[3].id)?.useCount).toBe(0)
+})
