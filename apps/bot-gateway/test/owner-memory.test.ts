@@ -10,25 +10,62 @@ const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
-it('migrates fresh and v4 stores transactionally and reopens v5', () => {
+it('preserves every populated v4 table when migrating and reopens v5 without changes', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'owner-migration-'))
   dirs.push(dir)
   let store = new Store(dir)
   const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
   expect(version()).toEqual({ value: '5' })
-  store.db.exec(
-    "DROP TABLE owner_memories; DROP TABLE routine_runs; UPDATE meta SET value='4' WHERE key='schema_version'"
-  )
+  store.db.exec(`
+    INSERT INTO devices VALUES('device-1','Synthetic device','synthetic-device-hash','2026-09-20T10:00:00Z','2026-09-21T10:00:00Z',NULL);
+    INSERT INTO pairing_codes VALUES('synthetic-pairing-hash','2026-09-26T10:00:00Z',NULL,2);
+    INSERT INTO bots VALUES('bot-1','Synthetic bot','Assistant','Check prices','blue','ask','null','[]',0,'stopped','{}','2026-09-20T10:00:00Z','2026-09-21T10:00:00Z',NULL,'{"enabled":true}');
+    INSERT INTO bot_secrets VALUES('bot-1','synthetic-control','synthetic-gateway','synthetic-gateway-hash','synthetic-keyring');
+    INSERT INTO routines VALUES('routine-1','bot-1','Prices','Check prices','{"kind":"interval","everyMinutes":15}',1,'2026-09-26T10:00:00Z','2026-09-25T10:00:00Z','sent','2026-09-20T10:00:00Z','2026-09-21T10:00:00Z','bot','input-1');
+    INSERT INTO activity VALUES(17,'2026-09-25T10:00:00Z','bot-1','routine_ran','Checked prices','{"routineId":"routine-1"}');
+    INSERT INTO peer_messages VALUES('message-1','2026-09-25T10:00:00Z','bot-1','bot-2','Synthetic pending message',0);
+    INSERT INTO pending_deliveries VALUES('message-1','bot-2','2026-09-25T10:00:00Z');
+    INSERT INTO owner_messages VALUES('bot-1','2026-09-25T10:00:00Z');
+    INSERT INTO pair_blocks VALUES('|bot-1|bot-2|','2026-09-26T10:00:00Z');
+    INSERT INTO idempotency VALUES('routineCreate:bot-1','synthetic-key','synthetic-request-hash','{"id":"routine-1"}',201,'2026-09-25T10:00:00Z');
+    INSERT INTO meta VALUES('synthetic-setting','preserve-me');
+    DROP TABLE owner_memories;
+    DROP TABLE routine_runs;
+    DELETE FROM meta WHERE key='owner_memory_revision';
+    UPDATE meta SET value='4' WHERE key='schema_version';
+  `)
+  const tables = store.db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name!='meta' ORDER BY name")
+    .all()
+    .map((row) => String(row.name))
+  const snapshot = () =>
+    Object.fromEntries(tables.map((table) => [table, store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+  const before = snapshot()
+  for (const rows of Object.values(before)) expect(rows.length).toBeGreaterThan(0)
+  const meta = store.db.prepare("SELECT * FROM meta WHERE key!='schema_version' ORDER BY key").all()
   store.close()
   store = new Store(dir)
   expect(version()).toEqual({ value: '5' })
+  expect(snapshot()).toEqual(before)
+  expect(
+    store.db
+      .prepare("SELECT * FROM meta WHERE key NOT IN ('schema_version','owner_memory_revision') ORDER BY key")
+      .all()
+  ).toEqual(meta)
+  expect(store.db.prepare("SELECT value FROM meta WHERE key='owner_memory_revision'").get()).toEqual({ value: '0' })
   for (const table of ['owner_memories', 'routine_runs'])
     expect(store.db.prepare(`SELECT * FROM ${table}`).all()).toEqual([])
   expect(store.db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   expect(store.db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  const schema = store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()
+  const migratedMeta = store.db.prepare('SELECT * FROM meta ORDER BY key').all()
   store.close()
   store = new Store(dir)
   expect(version()).toEqual({ value: '5' })
+  expect(snapshot()).toEqual(before)
+  expect(store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(schema)
+  expect(store.db.prepare('SELECT * FROM meta ORDER BY key').all()).toEqual(migratedMeta)
+  expect(store.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
   store.close()
 })
 it('saves, replays, deduplicates, replaces, forgets, edits, restores and deletes shared memory', async () => {
