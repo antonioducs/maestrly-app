@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { memoryContentProblem } from '../../memory/content-safety'
 import { LOCAL_MEMORY_SOURCES, LOCAL_MEMORY_STATUSES, MEMORY_TYPES, SHARED_MEMORY_TYPES } from '../../../shared/memory'
 import { appendMemory, readMemory, writeMemory } from '../../memory-service'
 import {
@@ -152,6 +153,17 @@ export function registerMemoryTools(ctx: McpToolContext): void {
         supersedes_id = resolved.id
       }
       const existing = resolvedId ? getLocalMemory(g.space.id, resolvedId) : undefined
+      if (!existing || existing.title !== input.title || existing.content !== input.content) {
+        const problem = memoryContentProblem(`${input.title}\n${input.content}`)
+        if (problem)
+          return err(
+            t(
+              problem === 'invisible-characters'
+                ? 'errors.memoryInvisibleCharacters'
+                : 'errors.memoryInstructionInjection'
+            )
+          )
+      }
       const result = existing
         ? updateLocalMemory(g.space.id, existing.id, {
             ...input,

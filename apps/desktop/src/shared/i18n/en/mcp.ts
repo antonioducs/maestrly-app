@@ -543,6 +543,9 @@ export default {
 
   // Agent-facing errors.
   errors: {
+    memoryInvisibleCharacters: 'memory-content-rejected: remove invisible or bidirectional control characters',
+    memoryInstructionInjection:
+      'memory-content-rejected: memories cannot store instructions to ignore rules or run downloaded scripts',
     tabNotExist: 'Tab {{index}} does not exist (there are {{total}}).',
     termSpawnFailed: 'The terminal process exited before it was ready.',
     notTermOfConv: 'id "{{id}}" is not a terminal of this conversation.',

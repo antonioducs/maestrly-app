@@ -544,6 +544,9 @@ export default {
   },
 
   errors: {
+    memoryInvisibleCharacters: 'memory-content-rejected: remova caracteres invisíveis ou de controle bidirecional',
+    memoryInstructionInjection:
+      'memory-content-rejected: memórias não podem guardar instruções para ignorar regras ou executar scripts baixados',
     tabNotExist: 'Aba {{index}} não existe (há {{total}}).',
     termSpawnFailed: 'O processo do terminal encerrou antes de ficar pronto.',
     notTermOfConv: 'id "{{id}}" não é um terminal desta conversa.',
