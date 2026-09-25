@@ -20,6 +20,28 @@ deleting the chat removes it. Back up the complete profile before reset.
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
+## Memory storage
+
+Desktop durable entries remain in `local_memories`. Its `workspace_id` now names
+a memory space: a workspace or the bot's `bot-self` space. The migration removes
+the workspace foreign key and preserves workspace deletion cleanup through a
+trigger. Entries can have source `auto` for automatic extraction. Conversation
+provenance does not make saved entries disappear when a transcript is deleted.
+
+`conversation_memory_state` stores the frozen core, source baseline and recalled
+IDs; `memory_extraction_state` stores the extraction cursor and failure state.
+Both are deleted with their conversation. `memory_consolidation_state` tracks
+new automatic entries and the last consolidation per space. Search indexes and
+embeddings remain rebuildable caches; back up the profile for authoritative data.
+
+The [bot gateway](bot-fleet.md#security-and-data) moves to schema v5, adding
+`owner_memories`, `routine_runs` and `meta.owner_memory_revision`. Owner memory
+is shared across bots and survives bot deletion. Routine runs are deleted with
+their routine or bot. The bot's own memory lives in its desktop profile inside
+its persistent home volume. Back up both gateway data and bot homes. A gateway
+binary refuses a database newer than its supported schema; an older gateway
+cannot open v5 unless it supports v5. Downgrade by restoring a matching backup.
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

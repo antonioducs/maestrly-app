@@ -153,10 +153,39 @@ permission model to host-mediated calls. It cannot constrain independent side
 effects performed internally by an MCP executable or remote service after the
 connection is authorized.
 
-Memory and notes stay local. Search indexes and embeddings are reproducible
-caches, not authoritative copies. Promoting local memory into a repository is an
+Desktop project memory and notes stay in the local profile. Search indexes and
+embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an
 explicit write and then follows that repository's own review and disclosure
 rules.
+
+## Agent and bot memory
+
+Fleet owner memory lives in the gateway and is included in every bot's context;
+it is not private to the authoring bot. Under the owner's direct-write policy,
+`memory_upsert`, `memory_archive`, `memory_restore`, `owner_memory_save`,
+`owner_memory_forget` and `routine_report` run without approval prompts in bot
+conversations. The owner reviews changes on the Mac. Owner-memory writes carry
+author and origin information; replacement and archival preserve history.
+`owner_memory_forget` archives, while permanent local deletion with
+`memory_forget` retains the normal approval gate. Read-only memory and history
+tools and host recall never prompt.
+
+The gateway checks saved owner-memory content for invisible or bidirectional
+control characters and recognized prompt-injection phrases. Extracted memories
+use the same content checks. The extraction prompt instructs the model to take
+owner facts only from owner messages and to treat tool and web content as
+untrusted. This is model guidance and heuristic filtering, not proof that a
+memory is correct or safe. Recalled blocks are framed as evidence to check, not
+instructions overriding system or repository rules.
+
+History tools read only their calling conversation; the bot-memory proxy exposes
+only that bot's own space. Hidden memory blocks are excluded from history tool
+output and extraction. Automatic extraction and consolidation send condensed
+history or stored memories to the selected memory model (the compaction model
+for bots), consume its quota and record usage. Review shared owner memory in
+**Bots → Memory about you**, and each bot's memory in **Settings → Bot memory**.
+See [chat memory](chat-context.md#automatic-memory-saving) and
+[storage and retention](local-data.md#memory-storage).
 
 ## AI providers and data egress
 

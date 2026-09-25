@@ -194,3 +194,77 @@ current preparation but preserves the latest ready candidate. Edits invalidate
 summaries covering changed content. Restarting preserves valid completed work;
 preparation resumes only when a conversation is used, rather than scanning and
 processing every old chat.
+
+## Memory core and catalog
+
+Project conversations with memory enabled share their workspace's durable memory;
+standalone chats have no memory space. Fleet bots have their own space (see
+[bot memory](bot-fleet.md#bot-memory)). The host includes a memory core in the
+model's context: pinned content and a catalog of other active memories by title.
+The project **Memory Center** shows an **Automatic** source for extracted entries
+and a hint explaining pinned context.
+
+The pinned section has a 3,000-character budget, with content excerpts of up to
+700 characters per entry; entries that do not fit are omitted. Catalog entries
+have a 1,600-character budget, at most 40 entries and 90-character titles, ordered
+by importance, use count and last update. The agent can use `memory_read` to read
+an entry in full. The core stays stable until portable compaction; changes to
+included pinned content arrive as an update on the next turn. Updates over
+1,500 characters rebuild the core. Native compaction alone does not rebuild it.
+
+## Automatic recall
+
+On the Mac, **Settings → Chat → Memory → Recall relevant memories automatically**
+starts enabled. Each eligible message can recall up to three relevant memories,
+with snippets of up to 400 characters and a relevance floor of 0.6. Recall uses
+the first 1,000 characters of the message and excludes entries already in the
+pinned core or recently recalled since compaction (up to 200 remembered IDs).
+Short messages and slash commands do not trigger recall. A **🧠 N memories
+recalled** chip under the user message opens the recalled sources.
+
+Turn-memory preparation has a 1,500 ms budget, including at most 800 ms for vector
+retrieval. Text search remains available without vectors. A slow recall or
+unavailable host memory provider skips that piece while preserving the memory
+core. Unreadable memory settings fall back to the defaults: recall on, automatic
+saving off. Memory failures do not prevent sending a message.
+
+Recall and the read-only `memory_search`, `memory_list`, `memory_read`,
+`history_search` and `history_read` tools never prompt for approval. Disabling
+automatic recall leaves the core and manual tools available. `memory_search`
+returns five hits by default, at most ten, with 300-character snippets and a
+relevance floor of 0.34. Memory is presented as evidence to check before use.
+
+## Conversation history tools
+
+The agent can use `history_search` and `history_read` in any conversation,
+including standalone chats, to revisit persisted messages before compaction.
+They read only the calling conversation and omit hidden memory blocks.
+Search returns newest matches first, eight by default and at most 30, with
+240-character snippets. It scans at most 20,000 recent messages.
+Read returns a window of three messages on either side by default, at most ten
+on either side, with tool output shortened to 600 characters and total output
+capped at 12,000 characters.
+
+## Automatic memory saving
+
+In **Settings → Chat → Memory**, enable **Save memories from conversations** and
+choose a **Memory model**. Saving starts disabled and needs a selected model.
+Background extraction sends condensed conversation content and existing memory
+to that model; extraction and consolidation consume its quota and record usage.
+Bots use their configured compaction model instead.
+
+Extraction waits three minutes after the latest completed turn, with a maximum
+wait of 30 minutes from the first pending trigger. It reads messages after the
+saved cursor and needs at least 1,200 new characters. Each run processes at most
+six chunks with a 48,000-character text budget per chunk and up to eight memory
+operations per chunk. Extracted titles are limited to 120 characters and content
+to 1,500. Image contents, skill bodies, compaction summaries and hidden memory
+blocks are excluded. New entries have the **Automatic** source and are not pinned.
+Failed extraction retries on later triggers, backing off for an hour after three
+failures; it does not block turns or compaction.
+
+After at least 15 new automatic memories, consolidation can merge overlapping
+active, unpinned entries. It runs at most once per 24 hours after a recorded run,
+with only one consolidation running per space, up to 150 inputs and ten merges.
+Merged entries are superseded rather than deleted, so they can be restored in
+the Memory Center.

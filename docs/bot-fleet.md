@@ -90,7 +90,7 @@ To remove a Mac's access, revoke its device or **Disconnect** it in Settings. To
 **Bot server → Archived** lists archived bots:
 
 - **Restore** recreates the container on the kept home volume, with the bot's accounts, conversation, and files. It reconnects the bot to peers that are still active, and its routines resume from the next scheduled time; runs missed while it was archived are not replayed.
-- **Delete forever** asks you to type the bot's name. It then removes the home volume and every gateway record of the bot: its routines, peer messages, and activity. This cannot be undone, and a new bot with the same name can reuse its id.
+- **Delete forever** asks you to type the bot's name. It then removes the home volume and its gateway routines, routine runs, peer messages, and activity. Shared owner memory survives bot deletion. This cannot be undone, and a new bot with the same name can reuse its id.
 
 If a bot's home volume was removed outside Maestrly, the list says so, and a restored bot starts empty.
 
@@ -123,6 +123,46 @@ The **Server** page shows versions, CPU, memory, disk, bot resource use, and pee
 
 The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in that bot's own desktop settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
 
+## Bot memory
+
+Each bot has its own durable memory, separate from project memory on your Mac
+and from other bots. Its context includes pinned entries, a title catalog and
+relevant recall, using the [chat memory budgets](chat-context.md#memory-core-and-catalog).
+Background extraction uses the bot's compaction model and records its usage.
+In the bot's **Settings → Bot memory**, inspect entries, pin, archive, restore or
+delete them, and include archived entries in the list. The view returns at most
+200 entries and shows up to 4,000 characters per entry, marking shortened content.
+User messages in the bot conversation show **Recalled: …** when memory was recalled.
+
+## Memory about you
+
+Open **Bots → Memory about you** on the Mac to review facts and preferences shared
+by every bot on that gateway. Entries show their author, origin and date. Add or
+edit an entry, archive it, or restore or permanently delete an entry from history.
+The meter tracks a maximum of 4,000 active characters, with 500 characters per
+entry. A save or restore that exceeds the budget fails; replace or archive stale
+entries first. These entries survive deletion of the bot that wrote them.
+
+Bots can save or replace entries with `owner_memory_save`; `owner_memory_forget`
+archives an entry with a reason of up to 300 characters. Bot changes appear in
+activity. Before a turn, the bot fetches owner memory with a 1,000 ms timeout
+inside the 1,500 ms turn-memory budget, falling back to its last good copy on
+failure. Changes reach the context through memory updates or a rebuilt core.
+
+## Routine history
+
+In a bot's **Settings → Routines**, expand a routine's **History** toggle to see
+run status, time, summary, pending work, notes and the final answer. The gateway
+keeps the last 50 runs per routine; deleting the routine or bot deletes its runs.
+Each new run receives up to three previous runs to help avoid repeating work.
+
+During a routine, `routine_report` records a summary of up to 600 characters,
+pending work of up to 400, and notes for the next run of up to 600. It is unavailable
+outside a routine run. The final answer is stored separately, up to 4,000
+characters. Status can be delivered, completed, failed, cancelled or unknown;
+unknown means a delivered input is no longer queued or running without a recorded
+completion.
+
 ## What a bot can do
 
 | Tool | Scope |
@@ -130,6 +170,10 @@ The conversation composer offers the bot's available models, reasoning effort an
 | `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own Linux screen. |
 | `browser_*` | Use the browser in its own container. |
 | Terminal, files, and Maestrly chat tools | Work inside its own container and home, subject to permissions and the selected model's capabilities. |
+| `memory_search`, `memory_list`, `memory_read`, `history_search`, `history_read` | Read its memory and its own conversation history without approval prompts. |
+| `memory_upsert`, `memory_archive`, `memory_restore` | Save, archive and restore its own memory without approval prompts. |
+| `owner_memory_save`, `owner_memory_forget`, `routine_report` | Update shared owner memory and report a routine run without approval prompts. |
+| `memory_forget` | Permanently delete its own memory, subject to the normal approval gate. |
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
 | `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Can talk to**, within gateway budgets. |
 
@@ -137,9 +181,12 @@ A bot cannot use your Mac's screen, browser, terminal, accounts, or local files.
 
 | Ceiling | Automatic work | Waits for you |
 | --- | --- | --- |
-| **Ask for approval** | Unprotected reading. | Every edit, command, and new site. |
+| **Ask for approval** | Unprotected reading. | Other edits, commands, and new sites. |
 | **Approve for me** | Reads and edits its own folder. | Commands and work outside that folder. |
 | **Full access** | Commands and edits in its container. | Plan approval still remains yours. |
+
+The memory writes listed above are explicit bot exemptions. Permanent deletion with
+`memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
 The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**.
 
@@ -147,9 +194,15 @@ The ceiling is a maximum, not a request for broader permission. The bot cannot r
 
 Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the Mac stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. Tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
 
-The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores bot profiles, routines and prompts, activity, peer messages, device token hashes, and **plaintext** per-bot control tokens, gateway tokens, and keyring passwords needed to restart containers. Host root can read them. Bot API keys pass through the gateway when added but are **not stored** there; the bot stores them in its own encrypted credential store inside its home volume. The per-bot keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot names or error text.
+The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores bot profiles, routines and prompts, routine runs, shared owner memory, activity, peer messages, device token hashes, and **plaintext** per-bot control tokens, gateway tokens, and keyring passwords needed to restart containers. Host root can read them. Bot API keys pass through the gateway when added but are **not stored** there; the bot stores them in its own encrypted credential store inside its home volume. The per-bot keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot names or error text.
 
 The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. Each bot has its own container and home volume; this separates ordinary bot activity from other bots and your Mac, but is not a hostile-code security boundary against the Docker host. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the bot desktop runs with `sandbox: false`: a compromised page in that renderer can control that bot's container, though its normal container boundary does not give it your Mac or direct access to the server host. No bot control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the bot control server authenticates screen tunnels, and control tunnels require a takeover hold. Bots cannot use the gateway's public API, while the internal API accepts only fleet network and loopback clients. Device revocation closes active screen and event streams and gives back any screen held by that device. See the broader [security model](security-model.md).
+
+Memory upgrades move the gateway database to schema v5. Older gateways that do
+not support v5 refuse to open it; back up the gateway volume before upgrading and
+restore a matching backup to downgrade. Keep the Mac, gateway and bot images
+compatible. See [memory storage](local-data.md#memory-storage) and the
+[memory security model](security-model.md#agent-and-bot-memory).
 
 ## Troubleshooting
 
@@ -164,6 +217,12 @@ The gateway mounts the Docker socket. Docker socket access is effectively root a
 | Bot image missing or Docker unavailable | Run `doctor`. Confirm the configured bot image is loaded, the Docker socket works, and the fleet network exists. |
 
 ## Verify the installation
+
+To check memory on the Mac, save a synthetic preference in **Memory about you**
+and ask a bot about it on a later turn. Inspect **Bot memory**, pin an entry and
+check a related question for **Recalled: …** using an unpinned entry. Run a routine
+that calls `routine_report`, inspect **History**, then run it again and check that
+it can refer to the earlier report. Archive the sample owner entry afterward.
 
 - `npm run test --workspace @maestrly/bot-fleet-protocol` checks protocol contracts.
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
