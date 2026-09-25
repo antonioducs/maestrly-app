@@ -8,6 +8,7 @@ import {
   FLEET_PROTOCOL_VERSION,
   FLEET_MESSAGE_BODY_MAX,
   type FleetInternalOwnerMemorySaveRequest,
+  type FleetRoutineRunReport,
   type FleetRoute,
   type FleetInternalPeerMessageRequest,
   type FleetCreateRoutineRequest,
@@ -143,6 +144,9 @@ export function createGatewayServers(ctx: GatewayContext) {
     )
   }
   const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, revokeDevice }
+  ctx.lifecycle.onTurnFinished = (id, event) => {
+    if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
+  }
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
   }
@@ -177,6 +181,9 @@ export function createGatewayServers(ctx: GatewayContext) {
           let result: unknown
           let status = 200
           switch (match.key) {
+            case 'routineRunReport':
+              result = routines.report(caller!, match.params.rid, match.params.runId, body as FleetRoutineRunReport)
+              break
             case 'routinesList':
               result = { routines: routines.list(caller!) }
               break

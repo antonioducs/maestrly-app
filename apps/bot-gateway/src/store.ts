@@ -3,6 +3,7 @@ import { chmodSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type {
+  FleetRoutineRun,
   FleetOwnerMemoryEntry,
   FleetActivityEntry,
   FleetActivityKind,
@@ -11,6 +12,8 @@ import type {
   FleetRoutine,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
+
+export type StoredRoutineRun = FleetRoutineRun & { inputId: string }
 
 type Row = Record<string, unknown>
 export type Device = {
@@ -123,6 +126,68 @@ export class Store {
       if (integrity.integrity_check !== 'ok') throw new Error('Gateway migration integrity check failed')
     })
   }
+  private routineRun(row: Row): StoredRoutineRun {
+    return {
+      id: String(row.id),
+      routineId: String(row.routine_id),
+      botId: String(row.bot_id),
+      inputId: String(row.input_id),
+      trigger: row.trigger as FleetRoutineRun['trigger'],
+      status: row.status as FleetRoutineRun['status'],
+      deliveredAt: String(row.delivered_at),
+      finishedAt: (row.finished_at as string | null) ?? null,
+      report: row.report_json ? (JSON.parse(String(row.report_json)) as FleetRoutineRun['report']) : null,
+      finalText: (row.final_text as string | null) ?? null,
+    }
+  }
+  insertRoutineRun(run: StoredRoutineRun) {
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO routine_runs(id,routine_id,bot_id,input_id,trigger,status,delivered_at,finished_at,report_json,final_text) VALUES(?,?,?,?,?,?,?,?,?,?)'
+      )
+      .run(
+        run.id,
+        run.routineId,
+        run.botId,
+        run.inputId,
+        run.trigger,
+        run.status,
+        run.deliveredAt,
+        run.finishedAt,
+        run.report ? JSON.stringify(run.report) : null,
+        run.finalText
+      )
+  }
+  updateRoutineRun(run: StoredRoutineRun) {
+    this.db
+      .prepare('UPDATE routine_runs SET status=?, finished_at=?, report_json=?, final_text=? WHERE id=?')
+      .run(run.status, run.finishedAt, run.report ? JSON.stringify(run.report) : null, run.finalText, run.id)
+  }
+  routineRuns(routineId: string, limit: number): StoredRoutineRun[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM routine_runs WHERE routine_id=? ORDER BY delivered_at DESC LIMIT ?')
+        .all(routineId, limit) as Row[]
+    ).map((row) => this.routineRun(row))
+  }
+  routineRunById(id: string): StoredRoutineRun | null {
+    const row = this.db.prepare('SELECT * FROM routine_runs WHERE id=?').get(id) as Row | undefined
+    return row ? this.routineRun(row) : null
+  }
+  routineRunByInput(botId: string, inputId: string): StoredRoutineRun | null {
+    const row = this.db.prepare('SELECT * FROM routine_runs WHERE bot_id=? AND input_id=?').get(botId, inputId) as
+      | Row
+      | undefined
+    return row ? this.routineRun(row) : null
+  }
+  pruneRoutineRuns(routineId: string, keep: number) {
+    this.db
+      .prepare(
+        'DELETE FROM routine_runs WHERE routine_id=? AND id NOT IN (SELECT id FROM routine_runs WHERE routine_id=? ORDER BY delivered_at DESC LIMIT ?)'
+      )
+      .run(routineId, routineId, keep)
+  }
+
   private ownerMemory(row: Row): FleetOwnerMemoryEntry {
     return {
       id: String(row.id),

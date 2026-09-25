@@ -37,6 +37,9 @@ export async function publicRoute(
 ): Promise<Result> {
   const id = params.id
   switch (key) {
+    case 'botRoutineRuns':
+      requireBot(ctx, id)
+      return { body: { runs: ctx.routines!.runs(id, params.rid) } }
     case 'ownerMemoryList':
       return { body: ctx.ownerMemory!.list(url.searchParams.get('status') === 'active' ? 'active' : 'all') }
     case 'ownerMemoryCreate': {

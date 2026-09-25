@@ -21,6 +21,7 @@ import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { createGatewayServers } from '../src/server.js'
 import { Store } from '../src/store.js'
+import { Routines } from '../src/routines.js'
 
 const cleanups: Array<() => Promise<void>> = []
 const dirs: string[] = []
@@ -41,7 +42,8 @@ async function fake() {
     since: string | null
     interruptedTurn: boolean
   } = { state: 'none', reason: null, since: null, interruptedTurn: false }
-  const inputs: unknown[] = []
+  const inputs: import('@maestrly/bot-fleet-protocol').FleetInstanceInput[] = []
+  const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
   const server = http.createServer(async (req, res) => {
     const send = (code: number, value: unknown) => {
@@ -116,8 +118,15 @@ async function fake() {
         return send(200, { result: { app: true, mcpDisabled: [], imageGen: true } })
       }
       if (req.url === '/v1/inputs') {
-        inputs.push(fleetInstanceInputSchema.parse(body))
-        return send(200, { inputId: randomUUID(), itemId: randomUUID(), queued: false })
+        const input = fleetInstanceInputSchema.parse(body)
+        inputs.push(input)
+        const receipt = receipts.get(input.idempotencyKey) ?? {
+          inputId: randomUUID(),
+          itemId: randomUUID(),
+          queued: false,
+        }
+        receipts.set(input.idempotencyKey, receipt)
+        return send(200, receipt)
       }
       return send(404, { code: 'NOT_FOUND', message: 'Not found' })
     } catch {
@@ -126,10 +135,15 @@ async function fake() {
   })
   servers.push(server)
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return { origin: 'http://127.0.0.1:' + (server.address() as { port: number }).port, inputs, conversationCalls }
+  return {
+    origin: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
+    inputs,
+    conversationCalls,
+    receipts,
+  }
 }
 
-export async function harness() {
+export async function harness(now: () => number = Date.now) {
   const instance = await fake(),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
@@ -162,6 +176,7 @@ export async function harness() {
     events: new EventHub(async () => {}),
     host: new HostMonitor(cfg, docker),
     lifecycle,
+    routines: new Routines(store, lifecycle, now),
     store,
   })
   await gateway.listen()

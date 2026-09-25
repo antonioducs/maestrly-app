@@ -1,5 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto'
 import {
+  FLEET_ROUTINE_RUN_LIMITS,
+  type FleetRoutineRun,
+  type FleetRoutineRunReport,
   FLEET_ROUTINE_LIMITS,
   isValidTimeZone,
   type FleetRoutine,
@@ -39,6 +42,13 @@ function scheduledKey(id: string, due: string): string {
     .digest('hex')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
+export const runIdFor = (key: string) => {
+  const hex = createHash('sha256')
+    .update('routine-run:' + key)
+    .digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+
 export function nextWeeklyRun(schedule: FleetWeeklySchedule, after: Date): string {
   if (!isValidTimeZone(schedule.timezone)) throw new GatewayError('INVALID_REQUEST', 'Invalid time zone')
   const fmt = formatter(schedule.timezone)
@@ -157,6 +167,40 @@ export class Routines {
     this.store.deleteRoutine(id)
     if (caller === 'bot') this.lifecycle.recordActivity(botId, 'routine_deleted', routine.title, { routineId: id })
   }
+  runs(botId: string, routineId: string): FleetRoutineRun[] {
+    this.require(botId, routineId)
+    const status = this.lifecycle.statuses.get(botId)
+    const live = new Set([
+      ...(status?.queue.map((item) => item.inputId) ?? []),
+      ...(status?.turn.inputId ? [status.turn.inputId] : []),
+    ])
+    return this.store
+      .routineRuns(routineId, FLEET_ROUTINE_RUN_LIMITS.keepPerRoutine)
+      .map(({ inputId, ...run }) =>
+        run.status === 'delivered' && !live.has(inputId) ? { ...run, status: 'unknown' as const } : run
+      )
+  }
+  report(botId: string, routineId: string, runId: string, report: FleetRoutineRunReport): FleetRoutineRun {
+    this.require(botId, routineId)
+    const run = this.store.routineRunById(runId)
+    if (!run || run.routineId !== routineId || run.botId !== botId)
+      throw new GatewayError('NOT_FOUND', 'Routine run not found')
+    const next = { ...run, report }
+    this.store.updateRoutineRun(next)
+    const { inputId: _inputId, ...visible } = next
+    return visible
+  }
+  finishRun(botId: string, inputId: string, outcome: 'completed' | 'failed' | 'cancelled', text: string | null) {
+    const run = this.store.routineRunByInput(botId, inputId)
+    if (!run || (run.status !== 'delivered' && run.status !== 'unknown')) return
+    this.store.updateRoutineRun({
+      ...run,
+      status: outcome,
+      finishedAt: new Date(this.now()).toISOString(),
+      finalText: text ? text.slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax) : null,
+    })
+  }
+
   private require(botId: string, id: string) {
     const routine = this.store.routineById(id)
     if (!routine || routine.botId !== botId) throw new GatewayError('NOT_FOUND', 'Routine not found')
@@ -199,6 +243,7 @@ export class Routines {
   private async fire(routine: FleetRoutine, scheduled: boolean): Promise<FleetRoutine> {
     const at = new Date(this.now()).toISOString()
     const bot = this.lifecycle.get(routine.botId)
+    let sentRunId: string | null = null
     let outcome: FleetRoutine['lastOutcome']
     if (bot?.paused) outcome = 'skipped_paused'
     else if (bot?.lifecycle !== 'running' || !this.lifecycle.statuses.get(routine.botId)?.ready)
@@ -208,14 +253,44 @@ export class Routines {
     else if (scheduled && this.busy(routine)) outcome = 'skipped_busy'
     else {
       try {
-        const receipt = await this.lifecycle.instanceFor(routine.botId).postInput({
-          source: 'routine',
-          routine: { id: routine.id, title: routine.title },
-          text: routine.prompt,
-          attachments: [],
-          idempotencyKey: scheduled && routine.nextRunAt ? scheduledKey(routine.id, routine.nextRunAt) : randomUUID(),
-        })
+        const idempotencyKey =
+          scheduled && routine.nextRunAt ? scheduledKey(routine.id, routine.nextRunAt) : randomUUID()
+        const runId = runIdFor(idempotencyKey)
+        const previousRuns = this.runs(routine.botId, routine.id)
+          .slice(0, FLEET_ROUTINE_RUN_LIMITS.previousRuns)
+          .map((run) => ({
+            at: run.deliveredAt,
+            status: run.status,
+            summary:
+              run.report?.summary ??
+              (run.finalText ? run.finalText.slice(0, FLEET_ROUTINE_RUN_LIMITS.summaryMax) : null),
+            pending: run.report?.pending ?? null,
+            notes: run.report?.notes ?? null,
+          }))
+        const receipt = await this.lifecycle
+          .instanceFor(routine.botId)
+          .postInput({
+            source: 'routine',
+            routine: { id: routine.id, title: routine.title, runId, previousRuns },
+            text: routine.prompt,
+            attachments: [],
+            idempotencyKey,
+          })
         this.store.setRoutineLastInputId(routine.id, receipt.inputId)
+        this.store.insertRoutineRun({
+          id: runId,
+          routineId: routine.id,
+          botId: routine.botId,
+          inputId: receipt.inputId,
+          trigger: scheduled ? 'schedule' : 'manual',
+          status: 'delivered',
+          deliveredAt: at,
+          finishedAt: null,
+          report: null,
+          finalText: null,
+        })
+        this.store.pruneRoutineRuns(routine.id, FLEET_ROUTINE_RUN_LIMITS.keepPerRoutine)
+        sentRunId = runId
         outcome = 'sent'
       } catch {
         outcome = 'failed'
@@ -239,6 +314,8 @@ export class Routines {
     if (outcome === 'sent' || outcome !== routine.lastOutcome)
       this.lifecycle.recordActivity(routine.botId, outcome === 'sent' ? 'routine_ran' : 'routine_skipped', null, {
         outcome,
+        routineId: routine.id,
+        ...(sentRunId ? { runId: sentRunId } : {}),
       })
     return next
   }

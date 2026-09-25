@@ -41,6 +41,10 @@ export class Lifecycle {
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   controlCount: (id: string) => number = () => 0
   onReady: (id: string) => void = () => {}
+  onTurnFinished?: (
+    botId: string,
+    event: { outcome: 'completed' | 'cancelled' | 'failed'; inputId: string | null; text: string | null }
+  ) => void
   onEvent: (event: FleetGatewayEvent) => void = () => {}
   constructor(
     readonly store: Store,
@@ -122,8 +126,11 @@ export class Lifecycle {
             if (event.type === 'status') this.updateStatus(id, event.status)
             else if (event.type === 'transcript.upsert')
               this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
-            else if (event.type === 'turn.finished' && event.outcome !== 'cancelled')
-              this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
+            else if (event.type === 'turn.finished') {
+              this.onTurnFinished?.(id, { outcome: event.outcome, inputId: event.inputId, text: event.text })
+              if (event.outcome !== 'cancelled')
+                this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
+            }
           }
         } catch {}
         if (!controller.signal.aborted) {
