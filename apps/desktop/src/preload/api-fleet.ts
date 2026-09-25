@@ -54,6 +54,9 @@ export type FleetConversationOps = {
   chatSkillResetOverrides: () => { ok: boolean }
   chatSkillSetSelection: (selection: ChatSkillSelection) => { ok: boolean; error?: string }
   chatCommands: () => { prompts: ChatUserPrompt[]; project: ChatProjectCommand[]; skills: ChatSkillCommand[] }
+  /** Starts compacting with the bot's compaction model; `ok: false` with `busy`, `not-configured` or `too-short`. */
+  chatCompact: () => { ok: boolean; error?: string }
+  chatBackgroundCompactionRetry: () => { ok: boolean; error?: string }
 }
 // Compile-time guard: the typed map and the protocol's op list stay identical.
 type _OpsMatch = [keyof FleetConversationOps] extends [FleetConversationOp]

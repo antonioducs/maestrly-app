@@ -102,6 +102,8 @@ The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the
 
 Open the bot's **Settings** tab to choose an **Account and model**. Each bot needs its own model account. Use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint. Or choose **Log in on the bot’s screen** and authenticate inside that bot's desktop. The Mac's accounts are not copied to the bot. Adding an API key requires secure credential storage inside the bot; otherwise the request is refused.
 
+Choose a **Compaction model** in the bot's Settings too. The bot remains in setup and queues messages until this model and its account are available. The chosen model prepares conversation summaries in the background at the configured token interval. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Background compaction settings inside the bot's own Maestrly window are locked and managed from the Mac. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
+
 | View or action | What happens |
 | --- | --- |
 | **Conversation** | Send text or up to eight images, follow the transcript and tool activity, view screenshots and generated images returned by tools, answer questions, and handle approval requests. Messages sent while paused wait. |
@@ -154,6 +156,7 @@ The gateway mounts the Docker socket. Docker socket access is effectively root a
 | Symptom | Check |
 | --- | --- |
 | **setup needed** / **Needs a model account** | Add an API key in the bot's **Settings** tab, or use **Screen** to log in. Choose an account and model. |
+| **Needs a compaction model** | Choose an available compaction model in the bot's **Settings** tab; reconnect its account if it became unavailable. Queued messages resume when setup is complete. |
 | **offline** or **starting** | Check the bot container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart**. |
 | **Pairing expired or access was revoked** | Run `pair` again for a fresh code, verify the server address, and check `devices list`. A code can be used only once. |
 | **The server uses an incompatible protocol** | Update the Mac app and both server images to compatible versions. |

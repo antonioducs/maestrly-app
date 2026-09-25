@@ -485,6 +485,7 @@ export type MessagePart =
       type: 'compaction'
       id: string
       text: string
+      origin?: 'prepared' | 'manual'
       strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
     }
   | {
@@ -1082,6 +1083,7 @@ export type ChatStreamEvent =
       kind: 'compaction'
       messageId: string
       partId: string
+      origin?: 'prepared' | 'manual'
       /** Insert after this durable part; absent preserves the legacy append behavior. */
       afterPartId?: string
       text: string
@@ -1947,6 +1949,7 @@ export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): Ch
                 type: 'compaction',
                 id: ev.partId,
                 text: ev.text,
+                ...(ev.origin ? { origin: ev.origin } : {}),
                 ...(ev.strategy ? { strategy: ev.strategy } : {}),
               }
               if (!ev.afterPartId) return [...m.parts, marker]

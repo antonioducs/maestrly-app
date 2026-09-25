@@ -14,6 +14,17 @@ export const FLEET_ROUTINE_PROMPT_MAX = 4_000
  * approves each one unless its ceiling allows it), up to `botCreatedMax`; the owner's own routines do not count.
  */
 export const FLEET_ROUTINE_LIMITS = { intervalMinMinutes: 15, intervalMaxMinutes: 1440, botCreatedMax: 10 } as const
+/**
+ * A bot compacts its conversation with a model the owner chooses: summaries are prepared in the background every
+ * `intervalTokens` of new conversation, and the same model compacts on the spot when no prepared summary fits.
+ */
+export const FLEET_COMPACTION_LIMITS = {
+  intervalTokensMin: 10_000,
+  intervalTokensMax: 1_000_000,
+  intervalTokensDefault: 100_000,
+} as const
+/** A compaction summary shown in the transcript is cut here (the bot keeps the whole summary). */
+export const FLEET_COMPACTION_SUMMARY_MAX = 16_000
 export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
 export const FLEET_QUEUE_PREVIEW_MAX = 80

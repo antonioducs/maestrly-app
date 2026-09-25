@@ -3,6 +3,7 @@ import http from 'node:http'
 const key = process.env.E2E_MODEL_KEY ?? 'e2e-model-key'
 const devId = process.env.E2E_DEV_ID
 const model = 'e2e-model'
+let summaries = 0
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
@@ -32,6 +33,8 @@ function validatedTool(req, suffix, args) {
 
 function reply(req) {
   const messages = req.messages
+  if (messages.some((entry) => entry.role === 'system' && typeof entry.content === 'string' && entry.content.startsWith('You summarize programming conversations')))
+    return { text: `E2E-SUMMARY ${++summaries}` }
   const lastUser = messages.filter((entry) => entry.role === 'user').at(-1)
   const text = JSON.stringify(lastUser?.content ?? '')
   if (text.includes('E2E-IMAGE')) {
@@ -77,9 +80,21 @@ http.createServer(async (req, res) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
     body = JSON.parse(Buffer.concat(chunks).toString())
-    if (body.stream !== true || body.model !== model || !Array.isArray(body.messages))
-      return json(res, 400, { error: { message: 'Invalid streaming chat request' } })
+    if (body.model !== model || !Array.isArray(body.messages))
+      return json(res, 400, { error: { message: 'Invalid chat request' } })
     const result = reply(body)
+    if (body.stream !== true) {
+      if (!result.text?.startsWith('E2E-SUMMARY'))
+        return json(res, 400, { error: { message: 'Expected streaming chat request' } })
+      return json(res, 200, {
+        id: 'chatcmpl-e2e-summary',
+        object: 'chat.completion',
+        created: 0,
+        model,
+        choices: [{ index: 0, message: { role: 'assistant', content: result.text }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 80, completion_tokens: 16, total_tokens: 96 },
+      })
+    }
     const id = 'chatcmpl-e2e'
     const base = { id, object: 'chat.completion.chunk', created: 0, model }
     const emit = (delta, finish_reason = null) => res.write('data: ' + JSON.stringify({

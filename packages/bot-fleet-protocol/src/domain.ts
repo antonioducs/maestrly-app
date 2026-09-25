@@ -8,6 +8,8 @@ import {
   FLEET_NOTE_MAX,
   FLEET_PEER_MESSAGE_MAX,
   FLEET_ROLE_MAX,
+  FLEET_COMPACTION_LIMITS,
+  FLEET_COMPACTION_SUMMARY_MAX,
   FLEET_ROUTINE_LIMITS,
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
@@ -134,6 +136,48 @@ export const fleetUsageSchema = z.object({
 })
 export type FleetUsage = z.infer<typeof fleetUsageSchema>
 
+/**
+ * The model a bot compacts its conversation with, chosen by the owner: it prepares summaries in the background and,
+ * when none fits at 90%, compacts on the spot. A bot without one (or whose model is no longer available) stays in
+ * setup and starts no turn; its conversation model never compacts.
+ */
+export const fleetCompactionConfigSchema = fleetSelectionSchema.extend({
+  intervalTokens: z
+    .number()
+    .int()
+    .min(FLEET_COMPACTION_LIMITS.intervalTokensMin)
+    .max(FLEET_COMPACTION_LIMITS.intervalTokensMax),
+})
+export type FleetCompactionConfig = z.infer<typeof fleetCompactionConfigSchema>
+/** A compaction in progress or just finished, as the desktop composer shows it next to the context meter. */
+export const fleetCompactionProgressSchema = z.object({
+  id: fleetIdSchema,
+  status: z.enum(['running', 'retrying', 'completed', 'failed', 'cancelled']),
+  phase: z.enum(['chunk', 'consolidate', 'native']).nullable(),
+  completed: fleetNonNegativeIntSchema.nullable(),
+  total: fleetNonNegativeIntSchema.nullable(),
+  attempt: fleetNonNegativeIntSchema.nullable(),
+  beforeTokens: fleetNonNegativeIntSchema.nullable(),
+  afterTokens: fleetNonNegativeIntSchema.nullable(),
+  afterQuality: z.enum(['measured', 'estimated']).nullable(),
+  error: z.string().max(500).nullable(),
+  updatedAt: fleetTimestampSchema,
+})
+export type FleetCompactionProgress = z.infer<typeof fleetCompactionProgressSchema>
+export const fleetCompactionStateSchema = z.object({
+  /** A valid compaction model is set and its account is connected: the bot may start turns. */
+  configured: z.boolean(),
+  /** Why not: no model chosen, its model/account is gone, or the bot's Maestrly refused its parameters. */
+  problem: z.enum(['missing', 'unavailable', 'invalid']).nullable(),
+  /** Background preparation, as the desktop's own status (`BackgroundCompactionStatus`); error is a desktop code. */
+  background: z.object({
+    status: z.enum(['idle', 'queued', 'running', 'ready', 'failed', 'paused']),
+    error: z.string().max(200).nullable(),
+  }),
+  progress: fleetCompactionProgressSchema.nullable(),
+})
+export type FleetCompactionState = z.infer<typeof fleetCompactionStateSchema>
+
 export const fleetActivitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('tool'), tool: z.string(), target: z.string().nullable() }),
   z.object({ kind: z.literal('thinking') }),
@@ -141,7 +185,9 @@ export const fleetActivitySchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('question') }),
   z.object({ kind: z.literal('help'), reason: z.string() }),
   z.object({ kind: z.literal('queued'), count: fleetNonNegativeIntSchema }),
-  z.object({ kind: z.literal('setup') }),
+  /** The bot needs a model account, or (once it has one) a compaction model, before it starts any turn. */
+  z.object({ kind: z.literal('setup'), need: z.enum(['account', 'compaction']).default('account') }),
+  z.object({ kind: z.literal('compacting') }),
   z.object({
     kind: z.literal('idle'),
     lastTurnSummary: z.string().nullable(),
@@ -198,6 +244,10 @@ export const fleetBotSchema = z.object({
   }),
   appVersion: z.string().nullable(),
   usage: fleetUsageSchema.nullable().default(null),
+  /** The owner's compaction model (stored by the gateway, like `selection`). */
+  compaction: fleetCompactionConfigSchema.nullable().default(null),
+  /** Reported by the running bot; null when it is not running or predates bot compaction. */
+  compactionState: fleetCompactionStateSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -292,6 +342,18 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     code: z.enum(['created', 'takeover', 'paused', 'resumed', 'restarted', 'turn_failed', 'turn_cancelled']),
     text: z.string().nullable(),
     durationMs: fleetNonNegativeNumberSchema.nullable(),
+  }),
+  /**
+   * The conversation was compacted here. `prepared`: a summary prepared in the background; `immediate`: none was
+   * ready or fit, so the compaction model summarized on the spot; `manual`: the owner asked (/compact); `runtime`:
+   * the model's own runtime compacted inside a turn (no readable summary).
+   */
+  z.object({
+    ...transcriptBase,
+    kind: z.literal('compaction'),
+    origin: z.enum(['prepared', 'immediate', 'manual', 'runtime']),
+    summary: z.string().max(FLEET_COMPACTION_SUMMARY_MAX).nullable(),
+    truncated: z.boolean(),
   }),
 ])
 export type FleetTranscriptItem = z.infer<typeof fleetTranscriptItemSchema>

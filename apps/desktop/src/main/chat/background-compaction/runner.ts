@@ -143,6 +143,7 @@ export function activatePreparedCompaction(args: {
       afterPartId: args.prepared.afterPartId,
       text: marker.text,
       strategy: 'summary',
+      origin: 'prepared',
     },
     contextTokens: estimatePortableContextTokens(loaded),
   }

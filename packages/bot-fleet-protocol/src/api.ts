@@ -38,6 +38,8 @@ import {
   fleetPendingInteractionSchema,
   fleetImageMediaTypeSchema,
   fleetUsageSchema,
+  fleetCompactionConfigSchema,
+  fleetCompactionStateSchema,
 } from './domain.js'
 
 /** Decoded size of a base64 string, without allocating. */
@@ -112,6 +114,7 @@ export const fleetPatchBotRequestSchema = z.object({
   ceiling: fleetCeilingSchema.optional(),
   talksTo: z.array(fleetBotIdSchema).optional(),
   selection: fleetSelectionSchema.nullable().optional(),
+  compaction: fleetCompactionConfigSchema.nullable().optional(),
 })
 export type FleetPatchBotRequest = z.infer<typeof fleetPatchBotRequestSchema>
 export const fleetSelectionsResponseSchema = z.object({
@@ -176,6 +179,10 @@ export const FLEET_CONVERSATION_OPS = [
   'chatSkillResetOverrides',
   'chatSkillSetSelection',
   'chatCommands',
+  // Compaction with the bot's compaction model. Both start the work and answer at once (the gateway gives an
+  // instance call 15 s); progress arrives in `FleetBot.compactionState` and the result in the transcript.
+  'chatCompact',
+  'chatBackgroundCompactionRetry',
 ] as const
 export const fleetConversationOpSchema = z.enum(FLEET_CONVERSATION_OPS)
 export type FleetConversationOp = z.infer<typeof fleetConversationOpSchema>
@@ -240,6 +247,7 @@ export const fleetInstanceProfileSchema = z.object({
   instructions: fleetInstructionsSchema,
   ceiling: fleetCeilingSchema,
   selection: fleetSelectionSchema.nullable(),
+  compaction: fleetCompactionConfigSchema.nullable().default(null),
   gateway: z.object({ peersEnabled: z.boolean() }),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
@@ -279,6 +287,8 @@ export const fleetInstanceStatusSchema = z.object({
   activity: fleetActivitySchema.nullable(),
   pending: z.array(fleetPendingInteractionSchema),
   usage: fleetUsageSchema.nullable().default(null),
+  /** Null from a bot that predates bot compaction: the gateway does not hold it in setup. */
+  compaction: fleetCompactionStateSchema.nullable().default(null),
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>

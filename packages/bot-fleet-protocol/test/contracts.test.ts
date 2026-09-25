@@ -6,6 +6,13 @@ import {
   FLEET_SCREEN_UPGRADE,
   FLEET_INTERNAL_ROUTES,
   FLEET_ROUTINE_LIMITS,
+  FLEET_COMPACTION_LIMITS,
+  FLEET_COMPACTION_SUMMARY_MAX,
+  FLEET_CONVERSATION_OPS,
+  fleetActivitySchema,
+  fleetCompactionConfigSchema,
+  fleetCompactionStateSchema,
+  fleetPatchBotRequestSchema,
   buildPath,
   compareFleetTranscriptItems,
   fleetRoutineScheduleSchema,
@@ -370,6 +377,66 @@ describe('routes and helpers', () => {
           data: {},
         }).success
       ).toBe(true)
+  })
+
+  it('carries the bot compaction model, its state, the compaction transcript item and the setup need', () => {
+    const config = {
+      providerId: 'prov_a',
+      modelId: 'small',
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: FLEET_COMPACTION_LIMITS.intervalTokensDefault,
+    }
+    expect(fleetCompactionConfigSchema.parse(config)).toEqual(config)
+    for (const intervalTokens of [9_999, 1_000_001, 50_000.5])
+      expect(fleetCompactionConfigSchema.safeParse({ ...config, intervalTokens }).success).toBe(false)
+    expect(fleetPatchBotRequestSchema.parse({ compaction: null })).toEqual({ compaction: null })
+    expect(fleetPatchBotRequestSchema.parse({ compaction: config }).compaction).toEqual(config)
+    const at = '2026-09-25T10:00:00.000Z'
+    const state = {
+      configured: false,
+      problem: 'unavailable',
+      background: { status: 'failed', error: 'summarizer-context-window-unknown' },
+      progress: {
+        id: 'p1',
+        status: 'running',
+        phase: 'chunk',
+        completed: 1,
+        total: 3,
+        attempt: null,
+        beforeTokens: 180_000,
+        afterTokens: null,
+        afterQuality: null,
+        error: null,
+        updatedAt: at,
+      },
+    }
+    expect(fleetCompactionStateSchema.parse(state)).toEqual(state)
+    expect(fleetCompactionStateSchema.safeParse({ ...state, problem: 'other' }).success).toBe(false)
+    // Older bots and older gateways leave these out.
+    expect(
+      fleetInstanceProfileSchema.parse({
+        botId: 'b',
+        name: 'B',
+        instructions: '',
+        ceiling: 'ask',
+        selection: null,
+        gateway: { peersEnabled: false },
+      }).compaction
+    ).toBeNull()
+    expect(fleetActivitySchema.parse({ kind: 'setup' })).toEqual({ kind: 'setup', need: 'account' })
+    expect(fleetActivitySchema.parse({ kind: 'setup', need: 'compaction' })).toEqual({
+      kind: 'setup',
+      need: 'compaction',
+    })
+    expect(fleetActivitySchema.parse({ kind: 'compacting' })).toEqual({ kind: 'compacting' })
+    const item = { id: 'm:3', at, kind: 'compaction', origin: 'immediate', summary: 'Goal: ship it', truncated: false }
+    expect(fleetTranscriptItemSchema.parse(item)).toEqual(item)
+    expect(
+      fleetTranscriptItemSchema.safeParse({ ...item, summary: 'x'.repeat(FLEET_COMPACTION_SUMMARY_MAX + 1) }).success
+    ).toBe(false)
+    expect(fleetTranscriptItemSchema.safeParse({ ...item, origin: 'other' }).success).toBe(false)
+    expect(FLEET_CONVERSATION_OPS).toEqual(expect.arrayContaining(['chatCompact', 'chatBackgroundCompactionRetry']))
   })
 
   it('schedules routines weekly or every N minutes within the limits, and says who created them', () => {

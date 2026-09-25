@@ -60,7 +60,7 @@ export class Store {
       const version = Number(
         (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
       )
-      if (version > 3) throw new Error('Gateway database schema is newer than this binary')
+      if (version > 4) throw new Error('Gateway database schema is newer than this binary')
       if (version === 0) {
         this.db.exec(`
           CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -95,6 +95,12 @@ export class Store {
           "ALTER TABLE routines ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'; ALTER TABLE routines ADD COLUMN last_input_id TEXT"
         )
         this.db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
+      }
+      if (version <= 3) {
+        const columns = this.db.prepare('PRAGMA table_info(bots)').all() as Row[]
+        if (columns.length && !columns.some((column) => column.name === 'compaction_json'))
+          this.db.exec('ALTER TABLE bots ADD COLUMN compaction_json TEXT')
+        this.db.prepare("UPDATE meta SET value='4' WHERE key='schema_version'").run()
       }
     })
   }
@@ -173,9 +179,9 @@ export class Store {
   }
   saveBot(bot: FleetBot) {
     this.db
-      .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at,archived_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role,instructions=excluded.instructions,tint=excluded.tint,ceiling=excluded.ceiling,selection_json=excluded.selection_json,talks_to_json=excluded.talks_to_json,paused=excluded.paused,lifecycle=excluded.lifecycle,setup_json=excluded.setup_json,updated_at=excluded.updated_at,archived_at=excluded.archived_at`)
+      .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at,archived_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role,instructions=excluded.instructions,tint=excluded.tint,ceiling=excluded.ceiling,selection_json=excluded.selection_json,compaction_json=excluded.compaction_json,talks_to_json=excluded.talks_to_json,paused=excluded.paused,lifecycle=excluded.lifecycle,setup_json=excluded.setup_json,updated_at=excluded.updated_at,archived_at=excluded.archived_at`)
       .run(
         bot.id,
         bot.name,
@@ -184,6 +190,7 @@ export class Store {
         bot.tint,
         bot.ceiling,
         JSON.stringify(bot.selection),
+        bot.compaction ? JSON.stringify(bot.compaction) : null,
         JSON.stringify(bot.talksTo),
         Number(bot.paused),
         bot.lifecycle,
@@ -202,6 +209,8 @@ export class Store {
       tint: String(row.tint),
       ceiling: row.ceiling as FleetBot['ceiling'],
       selection: JSON.parse(String(row.selection_json)),
+      compaction: row.compaction_json ? JSON.parse(String(row.compaction_json)) : null,
+      compactionState: null,
       talksTo: JSON.parse(String(row.talks_to_json)),
       paused: Boolean(row.paused),
       lifecycle: row.lifecycle as FleetBot['lifecycle'],

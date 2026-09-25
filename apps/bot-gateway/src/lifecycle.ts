@@ -146,6 +146,7 @@ export class Lifecycle {
     bot.appVersion = status?.appVersion ?? null
     bot.accounts = status?.accounts ?? { connected: false, providers: [] }
     bot.usage = status?.usage ?? null
+    bot.compactionState = status?.compaction ?? null
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
@@ -161,8 +162,14 @@ export class Lifecycle {
     else if (bot.paused || status.hold.reason === 'paused') bot.status = 'paused'
     else if (status.hold.reason === 'takeover' || bot.takeover.state === 'human') bot.status = 'human'
     else if (status.pending.length) bot.status = 'waiting'
-    else if (!status.accounts.connected) bot.status = 'setup'
-    else if (status.turn.state !== 'idle' || status.queue.length) bot.status = 'working'
+    else if (!status.accounts.connected || bot.compactionState?.configured === false) bot.status = 'setup'
+    else if (
+      status.turn.state !== 'idle' ||
+      status.queue.length ||
+      bot.compactionState?.progress?.status === 'running' ||
+      bot.compactionState?.progress?.status === 'retrying'
+    )
+      bot.status = 'working'
     else bot.status = 'idle'
     return bot
   }
@@ -186,6 +193,8 @@ export class Lifecycle {
       tint: tints[ids.length % tints.length],
       ceiling: input.ceiling,
       selection: null,
+      compaction: null,
+      compactionState: null,
       talksTo: input.talksTo,
       paused: false,
       lifecycle: 'creating',
@@ -345,6 +354,7 @@ export class Lifecycle {
       instructions: bot.instructions,
       ceiling: bot.ceiling,
       selection: bot.selection,
+      compaction: bot.compaction,
       gateway: { peersEnabled: bot.talksTo.length > 0 },
     })
     this.updateStatus(id, status)
@@ -559,6 +569,7 @@ export class Lifecycle {
         instructions: next.instructions,
         ceiling: next.ceiling,
         selection: next.selection,
+        compaction: next.compaction,
         gateway: { peersEnabled: next.talksTo.length > 0 },
       })
       this.updateStatus(id, status)
@@ -694,6 +705,7 @@ export class Lifecycle {
       instructions: bot.instructions,
       ceiling: bot.ceiling,
       selection: bot.selection,
+      compaction: bot.compaction,
       gateway: { peersEnabled: bot.talksTo.length > 0 },
     })
     if (!status.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')

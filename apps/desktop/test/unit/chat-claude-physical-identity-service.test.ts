@@ -204,7 +204,8 @@ import {
   stopChatAndWait,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
-import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import { chatHistoryStats, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import { setCompactionSummarizer, clearCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { reserveReviewLoop, releaseReviewLoop } from '../../src/main/chat/review-loop/registry'
 import { closeDb, freshDb } from '../helpers/db'
@@ -348,95 +349,93 @@ describe('Claude physical account service ownership', () => {
     closeDb()
   })
 
-  it.each([
-    'complete',
-    'cancel',
-    'close',
-    'identity-change',
-  ])('accepts an ephemeral review-loop session without persistence and guards %s', async (ending) => {
-    const conv = conversation()
-    register()
-    const frozen = await resolveReviewLoopSelection(conv.id)
-    if (!frozen.ok) throw new Error(frozen.error)
-    const loopId = `claude-loop-${conv.id}`
-    expect(
-      reserveReviewLoop({
+  it.each(['complete', 'cancel', 'close', 'identity-change'])(
+    'accepts an ephemeral review-loop session without persistence and guards %s',
+    async (ending) => {
+      const conv = conversation()
+      register()
+      const frozen = await resolveReviewLoopSelection(conv.id)
+      if (!frozen.ok) throw new Error(frozen.error)
+      const loopId = `claude-loop-${conv.id}`
+      expect(
+        reserveReviewLoop({
+          loopId,
+          driver: 'chatgpt-web',
+          cwd: conv.cwd!,
+          participants: { executor: conv.id },
+        }).ok
+      ).toBe(true)
+      const finished = deferred<any>()
+      h.runClaude.mockImplementationOnce(() => finished.promise)
+      const controller = new AbortController()
+      const result = await startInternalChatTurn({
+        conversationId: conv.id,
+        prompt: 'Apply review findings.',
+        selection: frozen.selection,
+        source: 'chatgpt-web-review-loop',
         loopId,
-        driver: 'chatgpt-web',
-        cwd: conv.cwd!,
-        participants: { executor: conv.id },
-      }).ok
-    ).toBe(true)
-    const finished = deferred<any>()
-    h.runClaude.mockImplementationOnce(() => finished.promise)
-    const controller = new AbortController()
-    const result = await startInternalChatTurn({
-      conversationId: conv.id,
-      prompt: 'Apply review findings.',
-      selection: frozen.selection,
-      source: 'chatgpt-web-review-loop',
-      loopId,
-      iteration: 1,
-      maxIterations: 3,
-      signal: controller.signal,
-    })
-    let closing: Promise<void> | undefined
-    try {
-      if (!result.ok) throw new Error(result.error)
+        iteration: 1,
+        maxIterations: 3,
+        signal: controller.signal,
+      })
+      let closing: Promise<void> | undefined
+      try {
+        if (!result.ok) throw new Error(result.error)
+        await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+        const args = (h.runClaude.mock.calls as any)[0][0]
+        expect(args.ephemeralSession).toBe(true)
+        expect(args.executionScope).toMatchObject({ kind: 'review-loop', loopId })
+        expect(args.canPersistSession()).toBe(false)
+        expect(args.onSessionReady('ephemeral-session')).toBe(true)
+        if (ending === 'cancel') controller.abort()
+        if (ending === 'close') {
+          closing = stopChat(conv.id)
+          await vi.waitFor(() => expect(args.signal.aborted).toBe(true))
+        }
+        if (ending === 'identity-change') {
+          h.manager.assertAccountIdentity.mockImplementation(() => {
+            throw new Error('account changed')
+          })
+        }
+        expect(args.onSessionReady('late-session')).toBe(ending === 'complete')
+        expect(args.canPersistSession()).toBe(false)
+      } finally {
+        finished.resolve({ planSubmitted: false, sessionId: 'ephemeral-session' })
+        if (result.ok) await result.handle.done
+        await closing
+        releaseReviewLoop(loopId)
+      }
+    }
+  )
+
+  it.each(['quota', 'signed-out'])(
+    'admits physical B when logical A is %s without changing selection',
+    async (reason) => {
+      const fallback = slot()
+      const conv = conversation()
+      const { handlers } = register()
+      if (reason === 'quota') exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+      else {
+        h.state.status.authenticated = false
+        h.state.status.accountFingerprint = null
+      }
+      fallback.manager.getObservedModelContextWindow.mockReturnValue(32000)
+      await expect(send(handlers, conv.id)).resolves.toEqual({ ok: true })
       await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
       const args = (h.runClaude.mock.calls as any)[0][0]
-      expect(args.ephemeralSession).toBe(true)
-      expect(args.executionScope).toMatchObject({ kind: 'review-loop', loopId })
-      expect(args.canPersistSession()).toBe(false)
-      expect(args.onSessionReady('ephemeral-session')).toBe(true)
-      if (ending === 'cancel') controller.abort()
-      if (ending === 'close') {
-        closing = stopChat(conv.id)
-        await vi.waitFor(() => expect(args.signal.aborted).toBe(true))
-      }
-      if (ending === 'identity-change') {
-        h.manager.assertAccountIdentity.mockImplementation(() => {
-          throw new Error('account changed')
-        })
-      }
-      expect(args.onSessionReady('late-session')).toBe(ending === 'complete')
-      expect(args.canPersistSession()).toBe(false)
-    } finally {
-      finished.resolve({ planSubmitted: false, sessionId: 'ephemeral-session' })
-      if (result.ok) await result.handle.done
-      await closing
-      releaseReviewLoop(loopId)
+      expect(args.initialTarget).toMatchObject({
+        providerId: fallback.providerId,
+        accountId: fallback.account.id,
+        contextWindow: 32000,
+      })
+      expect(args.manager).toBe(fallback.manager)
+      expect(args.contextWindow).toBe(32000)
+      expect(args).toMatchObject({ reasoningEffort: 'high', fastMode: true })
+      expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+      expect(listChatMessages(conv.id).filter((message) => message.role === 'user')).toHaveLength(1)
+      await stopChatAndWait(conv.id)
     }
-  })
-
-  it.each([
-    'quota',
-    'signed-out',
-  ])('admits physical B when logical A is %s without changing selection', async (reason) => {
-    const fallback = slot()
-    const conv = conversation()
-    const { handlers } = register()
-    if (reason === 'quota') exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
-    else {
-      h.state.status.authenticated = false
-      h.state.status.accountFingerprint = null
-    }
-    fallback.manager.getObservedModelContextWindow.mockReturnValue(32000)
-    await expect(send(handlers, conv.id)).resolves.toEqual({ ok: true })
-    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
-    const args = (h.runClaude.mock.calls as any)[0][0]
-    expect(args.initialTarget).toMatchObject({
-      providerId: fallback.providerId,
-      accountId: fallback.account.id,
-      contextWindow: 32000,
-    })
-    expect(args.manager).toBe(fallback.manager)
-    expect(args.contextWindow).toBe(32000)
-    expect(args).toMatchObject({ reasoningEffort: 'high', fastMode: true })
-    expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
-    expect(listChatMessages(conv.id).filter((message) => message.role === 'user')).toHaveLength(1)
-    await stopChatAndWait(conv.id)
-  })
+  )
 
   it('distinguishes proven all-account exhaustion from mixed unavailability before persistence', async () => {
     const fallback = slot()
@@ -518,6 +517,59 @@ describe('Claude physical account service ownership', () => {
     expect(h.summarizePortable).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', fastMode: true }))
     finished.resolve({ planSubmitted: false })
     await stopChatAndWait(conv.id)
+  })
+
+  it('uses the registered summarizer profile during an active turn', async () => {
+    slot()
+    const conv = conversation()
+    history(conv.id)
+    setCompactionSummarizer(conv.id, () => ({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'sonnet',
+      effort: 'off',
+      fastMode: false,
+    }))
+    try {
+      const { handlers } = register()
+      const finished = deferred<{ planSubmitted: boolean; sessionId: string }>()
+      h.runClaude.mockImplementationOnce(() => finished.promise)
+      await send(handlers, conv.id)
+      const args = (
+        h.runClaude.mock.calls as unknown as Array<[{ compactHistory: () => Promise<{ summary?: string }> }]>
+      )[0][0]
+      await expect(args.compactHistory()).resolves.toMatchObject({ summary: 'portable Claude summary' })
+      expect(h.summarizePortable).toHaveBeenCalledWith(expect.objectContaining({ fastMode: false }))
+      finished.resolve({ planSubmitted: false, sessionId: 'session' })
+      await stopChatAndWait(conv.id)
+    } finally {
+      clearCompactionSummarizer(conv.id)
+    }
+  })
+
+  it('retires the conversation binding after a summary billed to another account', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    history(conv.id)
+    setCompactionSummarizer(conv.id, () => ({
+      providerId: fallback.providerId,
+      modelId: 'sonnet',
+      effort: 'off',
+      fastMode: false,
+    }))
+    try {
+      expect(await compactReserved(conv.id)).toMatchObject({ ok: true })
+      expect(h.summarizePortable).toHaveBeenCalledWith(expect.objectContaining({ manager: fallback.manager }))
+      expect(h.deleteOne).toHaveBeenCalledWith(conv.id)
+      expect(
+        chatHistoryStats(conv.id).perModel.find((item) => item.providerId === fallback.providerId)?.subInput
+      ).toBeGreaterThan(0)
+      expect(listChatMessages(conv.id).at(-1)?.model).toEqual({
+        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        modelId: 'sonnet',
+      })
+    } finally {
+      clearCompactionSummarizer(conv.id)
+    }
   })
 
   it('uses a smaller next-account window for compaction before that account owns the root', async () => {

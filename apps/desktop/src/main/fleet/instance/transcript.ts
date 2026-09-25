@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_TOOL_OUTPUT_MAX,
+  FLEET_COMPACTION_SUMMARY_MAX,
   compareFleetTranscriptItems,
   fleetTranscriptItemSchema,
   type FleetTranscriptItem,
@@ -190,7 +191,17 @@ export function projectChatMessages(
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)
       if (part.type === 'reasoning') continue
-      if (part.type === 'text') {
+      if (part.type === 'compaction') {
+        const runtime = part.strategy?.endsWith('-native') === true
+        items.push({
+          kind: 'compaction',
+          id: `${message.id}:${index}`,
+          at: time,
+          origin: runtime ? 'runtime' : (part.origin ?? 'immediate'),
+          summary: runtime ? null : part.text.slice(0, FLEET_COMPACTION_SUMMARY_MAX),
+          truncated: !runtime && part.text.length > FLEET_COMPACTION_SUMMARY_MAX,
+        })
+      } else if (part.type === 'text') {
         if (message.role === 'user') {
           if (!part.text && !linked) continue
           items.push({

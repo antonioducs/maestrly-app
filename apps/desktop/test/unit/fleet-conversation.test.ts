@@ -21,6 +21,9 @@ describe('fleet conversation boundary', () => {
     expect(() => validateFleetConversationArgs('chatGetConvTools', ['other'])).toThrow()
     expect(() => validateFleetConversationArgs('chatSetConvTools', [{ imageGen: false }, 'other'])).toThrow()
     expect(() => validateFleetConversationArgs('chatSetConvTools', [{ imageGen: false }])).not.toThrow()
+    expect(validateFleetConversationArgs('chatCompact', [])).toEqual([])
+    expect(validateFleetConversationArgs('chatBackgroundCompactionRetry', [])).toEqual([])
+    expect(() => validateFleetConversationArgs('chatCompact', ['other'])).toThrow()
   })
 
   it('projects chat config to only safe menu fields', () => {

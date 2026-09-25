@@ -31,6 +31,60 @@ import { freshDb, closeDb } from '../helpers/db'
 
 const key = () => randomUUID()
 describe('fleet conversation admission', () => {
+  it('holds queued work in compaction setup and reports the required model', async () => {
+    freshDb()
+    try {
+      const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+      Object.assign(runtime, {
+        refreshAccounts: vi.fn(async () => {}),
+        pending: () => [],
+        queue: { list: () => [{ id: 'input', input: { source: 'owner', text: 'Waiting' } }] },
+        holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        events: { lastSeq: 0 },
+        accountOptions: [
+          {
+            id: 'p::m',
+            providerId: 'p',
+            providerLabel: 'P',
+            modelId: 'm',
+            modelLabel: 'M',
+            efforts: [],
+            fastMode: false,
+          },
+        ],
+        stored: null,
+        compactionProblem: 'missing',
+        turning: false,
+        cancelling: false,
+        ready: true,
+        usage: null,
+      })
+      expect((await runtime.status()).activity).toEqual({ kind: 'setup', need: 'compaction' })
+      expect((await runtime.status()).compaction).toBeNull()
+    } finally {
+      closeDb()
+    }
+  })
+  it('projects prepared, immediate, manual and runtime compactions with bounded summaries', () => {
+    const message: ChatMessage = {
+      id: 'assistant',
+      conversationId: 'conversation',
+      role: 'assistant',
+      createdAt: Date.parse('2026-09-25T10:00:00.000Z'),
+      parts: [
+        { type: 'compaction', id: 'a', text: 'prepared', strategy: 'summary', origin: 'prepared' },
+        { type: 'compaction', id: 'b', text: 'immediate', strategy: 'summary' },
+        { type: 'compaction', id: 'c', text: 'x'.repeat(16_001), strategy: 'summary', origin: 'manual' },
+        { type: 'compaction', id: 'd', text: 'private', strategy: 'codex-native' },
+      ],
+    }
+    expect(projectChatMessages([message])).toMatchObject([
+      { kind: 'compaction', origin: 'prepared', summary: 'prepared', truncated: false },
+      { kind: 'compaction', origin: 'immediate', summary: 'immediate', truncated: false },
+      { kind: 'compaction', origin: 'manual', truncated: true },
+      { kind: 'compaction', origin: 'runtime', summary: null, truncated: false },
+    ])
+  })
   it('reports the input that started the current turn and clears it when idle', async () => {
     freshDb()
     try {
@@ -171,6 +225,7 @@ describe('bot identity', () => {
       instructions: 'Track updates.',
       ceiling: 'ask',
       selection: null,
+      compaction: null,
       gateway: { peersEnabled: false },
     })
     expect(botIdentityPrompt('/bot/chat')).toBe('')
@@ -723,6 +778,8 @@ describe('dispatcher conditions and release prompt', () => {
     expect(canDispatch(true, true, true, 'none')).toBe(false)
     expect(canDispatch(true, true, false, 'held')).toBe(false)
     expect(canDispatch(true, true, false, 'holding')).toBe(false)
+    expect(canDispatch(true, true, false, 'none', false)).toBe(false)
+    expect(canDispatch(true, true, false, 'none', true)).toBe(true)
   })
   it('renders exact continuation text', () => {
     expect(continuationText('takeover', 75_000, 'Fixed login')).toBe(

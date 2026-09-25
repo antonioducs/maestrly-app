@@ -28,6 +28,8 @@ const schemas: Record<FleetConversationOp, z.ZodType<unknown[]>> = {
   chatSkillResetOverrides: noArgs,
   chatSkillSetSelection: z.tuple([selection]),
   chatCommands: noArgs,
+  chatCompact: noArgs,
+  chatBackgroundCompactionRetry: noArgs,
 }
 /**
  * The bot's own profile turns Maestrly tools back on before every turn (its browser, screen, peer and help tools),

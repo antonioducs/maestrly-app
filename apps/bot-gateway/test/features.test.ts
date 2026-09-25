@@ -68,6 +68,7 @@ async function fakeInstance() {
   const holds: unknown[] = []
   let holdFailure: string | null = null
   const releases: unknown[] = []
+  const profiles: unknown[] = []
   const send = (res: ServerResponse, event: FleetInstanceEvent) =>
     res.write('id: ' + event.seq + '\nevent: instance\ndata: ' + JSON.stringify(event) + '\n\n')
   const emit = (event: Omit<FleetInstanceEvent, 'seq' | 'at'>) => {
@@ -111,7 +112,7 @@ async function fakeInstance() {
         return res.end(JSON.stringify({ ok: true, ready: state.ready, appVersion: state.appVersion, protocol: 1 }))
       if (url.pathname === '/v1/status') return res.end(JSON.stringify(state))
       if (url.pathname === '/v1/profile') {
-        fleetInstanceProfileSchema.parse(body)
+        profiles.push(fleetInstanceProfileSchema.parse(body))
         return res.end(JSON.stringify(state))
       }
       if (url.pathname === '/v1/hold') {
@@ -173,6 +174,7 @@ async function fakeInstance() {
       for (const stream of streams) stream.end()
     },
     subscriptions,
+    profiles,
     inputs,
     inputReceipts,
     holds,
@@ -257,7 +259,20 @@ describe('secrets and configuration', () => {
     store.close()
     const migrated = new Store(dir)
     expect(migrated.routineById('old')?.createdBy).toBe('owner')
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+    migrated.close()
+  })
+  it('migrates version 3 bots and persists their compaction model', () => {
+    const dir = temp()
+    const store = new Store(dir)
+    store.db.exec('ALTER TABLE bots DROP COLUMN compaction_json')
+    store.db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
+    store.close()
+    const migrated = new Store(dir)
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '4' })
+    expect(migrated.db.prepare('PRAGMA table_info(bots)').all()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'compaction_json' })])
+    )
     migrated.close()
   })
   it('resolves auto seccomp in gateway and validates JSON arrays', () => {
@@ -274,6 +289,35 @@ describe('secrets and configuration', () => {
   })
 })
 describe('instance link and takeover', () => {
+  it('saves and forwards compaction settings and reports setup until configured', async () => {
+    const fake = await fakeInstance()
+    const f = fixture(fake.origin)
+    const created = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(created.id)?.lifecycle === 'running')
+    const compaction = {
+      providerId: 'prov_test',
+      modelId: 'model',
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: 100_000,
+    }
+    await f.lifecycle.patch(created.id, { compaction })
+    expect(f.store.getBot(created.id)?.compaction).toEqual(compaction)
+    expect(fake.profiles.at(-1)).toMatchObject({ compaction })
+    fake.setState({
+      ...fake.state,
+      compaction: {
+        configured: false,
+        problem: 'missing',
+        background: { status: 'idle', error: null },
+        progress: null,
+      },
+    })
+    await until(() => f.lifecycle.get(created.id)?.compactionState?.problem === 'missing')
+    expect(f.lifecycle.get(created.id)?.status).toBe('setup')
+    f.lifecycle.close()
+    f.store.close()
+  })
   it('derives status, inbox, activity, forwards transcript, and handles regression', async () => {
     const fake = await fakeInstance(),
       f = fixture(fake.origin)

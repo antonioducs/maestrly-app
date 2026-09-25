@@ -208,6 +208,7 @@ const zPart = z.discriminatedUnion('type', [
     id: z.string(),
     text: z.string(),
     strategy: z.enum(['summary', 'openai-native', 'claude-native', 'codex-native']).optional(),
+    origin: z.enum(['prepared', 'manual']).optional(),
   }),
   z.object({ type: z.literal('context'), id: z.string(), text: z.string(), source: z.string().optional() }),
   // OPTIONAL start/end parsing: legacy parts without ranges still load — semantic validation

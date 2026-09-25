@@ -211,6 +211,13 @@ async function main() {
   )
   await request(state, 'PATCH', `/v1/bots/${scoutId}`, {
     selection: { providerId: option.providerId, modelId: option.modelId, reasoning: null, fastMode: false },
+    compaction: {
+      providerId: option.providerId,
+      modelId: option.modelId,
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: 100000,
+    },
   })
   const routines = (await request(state, 'GET', `/v1/bots/${scoutId}/routines`)).routines
   let routine = routines.find((item) => item.title === 'Morning research')

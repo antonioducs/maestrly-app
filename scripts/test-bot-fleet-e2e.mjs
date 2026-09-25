@@ -428,6 +428,28 @@ async function main() {
     selection: { providerId: selection.providerId, modelId: selection.modelId, reasoning: null, fastMode: false },
   })
   pass('model account and selection', selection.id)
+  await poll('Scout needs compaction model', async () => {
+    const state = await bot(scoutId)
+    return (
+      state.status === 'setup' &&
+      state.activity?.kind === 'setup' &&
+      state.activity.need === 'compaction' &&
+      state.compactionState?.problem === 'missing'
+    )
+  })
+  await request('PATCH', '/v1/bots/' + scoutId, {
+    compaction: {
+      providerId: selection.providerId,
+      modelId: selection.modelId,
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: 100000,
+    },
+  })
+  await poll('Scout compaction ready', async () => {
+    const state = await bot(scoutId)
+    return state.compactionState?.configured === true && state.status !== 'setup'
+  })
   const conversationCall = (op, args = []) =>
     request('POST', '/v1/bots/' + scoutId + '/conversation/call', { op, args })
   const initialTools = (await conversationCall('chatGetConvTools')).result
@@ -566,6 +588,16 @@ async function main() {
   assert.ok(imageUser?.images?.length, 'owner image has a transcript ref')
   assert.deepEqual(await fleetImage(scoutId, imageUser.images[0].id), smallPng)
   pass('conversation images and usage', 'owner PNG reached the model, image refs download, usage is present')
+  assert.deepEqual((await conversationCall('chatCompact')).result, { ok: true })
+  await poll(
+    'manual compaction transcript',
+    async () =>
+      (await transcript(scoutId)).some(
+        (item) => item.kind === 'compaction' && item.origin === 'manual' && item.summary?.includes('E2E-SUMMARY')
+      ),
+    90000
+  )
+  pass('manual compaction', 'summary used the configured compaction model')
   assert.ok(!(await inbox()).some((item) => item.botId === scoutId && item.interaction.kind === 'help'))
   view.close()
   pass('takeover and continuation', 'control pointer (100,100), close 4001, note and E2E-CONTINUED')

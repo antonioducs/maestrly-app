@@ -408,6 +408,8 @@ import {
   type PortableSummaryCheckpoint,
 } from './portable-context'
 import { chatDiag } from './diag-log'
+import { getCompactionSummarizer } from './compaction-summarizer'
+import { isBotMode } from '../fleet/instance/config'
 import { invalidateUnifiedUsageCache } from '../usage/usage-service'
 import { registerSubscriptionUsageIpc } from './subscription-usage-ipc'
 import {
@@ -4720,19 +4722,28 @@ async function startSend(
             }
           : {}),
       }).then((result) => {
+        if (result.billedModel && (result.usage || result.runtimeEstimatedCostUsd != null)) {
+          recordChatUsageAttempt({
+            id: randomUUID(),
+            conversationId,
+            model: result.billedModel,
+            usage: result.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+          })
+        }
         if (!result.ok) {
           throw Object.assign(new Error(result.error ?? 'Portable compaction failed.'), {
-            partialUsage: result.usage,
-            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+            partialUsage: result.billedModel ? undefined : result.usage,
+            runtimeEstimatedCostUsd: result.billedModel ? undefined : result.runtimeEstimatedCostUsd,
           })
         }
         if (result.ok && result.summary && !isolated) backgroundCoordinator?.manualCompaction(conversationId)
         return result.ok && result.summary
           ? {
               summary: result.summary,
-              usage: result.usage,
+              usage: result.billedModel ? undefined : result.usage,
               // Native helper-call cost estimate → runner adds it to turn cost.
-              ...(result.runtimeEstimatedCostUsd != null
+              ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
                 ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
                 : {}),
             }
@@ -6486,6 +6497,9 @@ interface CompactOpts {
   executionId?: string
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
+  /** Frozen billing and summary model; the conversation selection still owns progress and native cleanup. */
+  summarizerOverride?: FrozenChatSelection
+  origin?: 'manual'
   /** Behavior and canonical identity already frozen by an active turn admission. */
   harness?: ResolvedHarness
   resolvedModelId?: string
@@ -6516,6 +6530,7 @@ interface CompactResult {
   summary?: string
   usage?: NormalizedAiUsage
   runtimeEstimatedCostUsd?: number
+  billedModel?: ChatModelRef
 }
 
 function compactionDiagnostic(error: unknown): string {
@@ -6543,16 +6558,7 @@ async function retireNativeBindingAfterPortableCompaction(
   }
 }
 
-async function compact(
-  conversationId: string,
-  opts: CompactOpts = {}
-): Promise<{
-  ok: boolean
-  error?: string
-  summary?: string
-  usage?: NormalizedAiUsage
-  runtimeEstimatedCostUsd?: number
-}> {
+async function compact(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   if (opts.allowActive) return compactReserved(conversationId, opts)
   const providerId = selectionFor(conversationId)?.providerId ?? null
   const operation = reserveConversationOperation(conversationId, providerId, opts.operation)
@@ -6579,6 +6585,21 @@ async function compact(
   }
 }
 
+export function startManualCompaction(
+  conversationId: string,
+  onFinished: (result: CompactResult) => void
+): { ok: boolean; error?: string } {
+  if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
+  if (active.has(conversationId) || pendingConversationOperations.has(conversationId))
+    return { ok: false, error: 'busy' }
+  if (activeChatContext(listConversationContextMessages(conversationId)).messages.length < 2)
+    return { ok: false, error: 'too-short' }
+  void compact(conversationId, { origin: 'manual' }).then(onFinished, (error) =>
+    onFinished({ ok: false, error: compactionDiagnostic(error) })
+  )
+  return { ok: true }
+}
+
 /** Exported for isolated compaction frozen-profile tests (review-loop). */
 export async function compactReserved(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   const previousStatus = opts.operation ? getConversation(conversationId)?.status : undefined
@@ -6587,6 +6608,23 @@ export async function compactReserved(conversationId: string, opts: CompactOpts 
     savedDeps?.emitStatus(conversationId, 'working', { silent: true })
   }
   try {
+    const resolver = !opts.executionId && !opts.historyOverride ? getCompactionSummarizer(conversationId) : undefined
+    if (resolver) {
+      try {
+        const profile = resolver()
+        if (!profile) return { ok: false, error: 'compaction-model-unavailable' }
+        const resolved = await resolveReviewLoopSelection(conversationId, {
+          providerId: profile.providerId,
+          modelId: profile.modelId,
+          effort: profile.effort,
+          fastMode: profile.fastMode,
+        })
+        if (!resolved.ok) return { ok: false, error: 'compaction-model-unavailable' }
+        opts = { ...opts, summarizerOverride: resolved.selection, harness: undefined, resolvedModelId: undefined }
+      } catch {
+        return { ok: false, error: 'compaction-model-unavailable' }
+      }
+    }
     return await compactReservedWithProgress(conversationId, opts)
   } finally {
     if (opts.operation) {
@@ -6603,6 +6641,12 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   // attach observations to an existing assistant, always rereading it before a metadata write.
   const ownsProgress = opts.persist !== false && !opts.executionId && !opts.onProgress && !active.has(conversationId)
   const selection = opts.selectionOverride ?? selectionFor(conversationId)
+  const billedSelection = opts.summarizerOverride
+    ? {
+        providerId: opts.summarizerOverride.providerId,
+        modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+      }
+    : selection
   const history = ownsProgress ? listConversationContextMessages(conversationId) : []
   const anchor = [...history].reverse().find((message) => message.role === 'assistant' && message.model)
   const stillOwnsOperation = () =>
@@ -6698,6 +6742,11 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
     publisher?.dispose()
   }
   result ??= { ok: false, error: 'Portable compaction failed.' }
+  if (opts.summarizerOverride)
+    result.billedModel = {
+      providerId: opts.summarizerOverride.providerId,
+      modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+    }
   if (result.error) result.error = compactionDiagnostic(result.error)
   // The successful boundary is the newest visible message on reload; carry the finished
   // operation there so the renderer does not need to cross an older context boundary.
@@ -6723,7 +6772,7 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
     !result.ok &&
     opts.persist !== false &&
     !opts.executionId &&
-    selection &&
+    billedSelection &&
     stillOwnsOperation() &&
     (!progressId || getChatMessage(conversationId, anchor!.id)?.compactionProgress?.id === progressId) &&
     getConversation(conversationId)
@@ -6736,7 +6785,7 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
         role: 'assistant',
         parts: [],
         createdAt: Date.now(),
-        model: { providerId: selection.providerId, modelId: selection.modelId },
+        model: { providerId: billedSelection.providerId, modelId: billedSelection.modelId },
         error: result.error,
         usage: {
           usageVersion: 2,
@@ -6774,7 +6823,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   if (!opts.allowActive && active.has(conversationId)) return { ok: false, error: 'busy' }
   // Mid-turn round compaction carries the full FROZEN profile (reasoning/fastMode/identity);
   // the normal path rereads the live selection.
-  const frozen = opts.selectionOverride ?? null
+  const frozen = opts.summarizerOverride ?? opts.selectionOverride ?? null
   const selection = frozen
     ? {
         providerId: frozen.providerId,
@@ -7167,18 +7216,47 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         id: randomUUID(),
         conversationId,
         role: 'assistant',
-        parts: [{ type: 'compaction', id: randomUUID(), text: summary, strategy: 'summary' }],
-        model: selection,
+        parts: [
+          {
+            type: 'compaction',
+            id: randomUUID(),
+            text: summary,
+            strategy: 'summary',
+            ...(opts.origin ? { origin: opts.origin } : {}),
+          },
+        ],
+        model: opts.summarizerOverride ? (selectionFor(conversationId) ?? selection) : selection,
         usage: {
           usageVersion: 2,
-          input: usage?.input ?? 0,
-          output: usage?.output ?? 0,
-          ...(usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
-          ...(usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          input: opts.summarizerOverride ? 0 : (usage?.input ?? 0),
+          output: opts.summarizerOverride ? 0 : (usage?.output ?? 0),
+          ...(!opts.summarizerOverride && usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+          ...(!opts.summarizerOverride && usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          ...(opts.summarizerOverride
+            ? {
+                subInput: usage?.input ?? 0,
+                subOutput: usage?.output ?? 0,
+                subCachedInput: usage?.cacheRead ?? 0,
+                subCacheCreate: usage?.cacheCreate ?? 0,
+                subagentUsage: [
+                  {
+                    providerId: opts.summarizerOverride.providerId,
+                    modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+                    input: usage?.input ?? 0,
+                    output: usage?.output ?? 0,
+                    cachedInput: usage?.cacheRead ?? 0,
+                    cacheCreate: usage?.cacheCreate ?? 0,
+                    ...(compacted.runtimeEstimatedCostUsd != null
+                      ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
+                      : {}),
+                  },
+                ],
+              }
+            : {}),
           contextInput: estimateTextTokens(summary),
           contextOutput: 0,
           ...(contextWindow ? { modelContextWindow: contextWindow } : {}),
-          ...(compacted.runtimeEstimatedCostUsd != null
+          ...(!opts.summarizerOverride && compacted.runtimeEstimatedCostUsd != null
             ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
             : {}),
           billingOnly: true,
@@ -7389,7 +7467,7 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
   }))
 }
 
-function backgroundCompactionStatus(conversationId: string): BackgroundCompactionStatus {
+export function backgroundCompactionStatus(conversationId: string): BackgroundCompactionStatus {
   try {
     return getBackgroundCoordinator().status(conversationId)
   } catch {
@@ -7499,7 +7577,7 @@ async function activateBackgroundCompactionCandidate(
   return { summary: candidate.summary, prepared }
 }
 
-async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
+export async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
   const config = parseBackgroundCompactionConfig(value)
   if (!config) return { ok: false, error: 'invalid-input' }
   if (config.selection) {
@@ -7523,7 +7601,7 @@ async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: bool
   return { ok: true }
 }
 
-async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
+export async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
   if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
   if (!backgroundCompactionConfig()?.enabled) return { ok: false, error: 'not-configured' }
   const selection = selectionFor(conversationId)
@@ -8412,7 +8490,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
 
   deps.mhandle('chat:config', () => buildConfig())
   deps.mhandle('chat:background-compaction:set', (_event, config: BackgroundCompactionConfig) =>
-    setBackgroundCompactionConfig(config)
+    isBotMode() ? Promise.resolve({ ok: false, error: 'managed-by-owner' }) : setBackgroundCompactionConfig(config)
   )
   deps.mhandle('chat:background-compaction:retry', (_event, conversationId: string) =>
     typeof conversationId === 'string' && conversationId
@@ -9497,7 +9575,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Compact history (summarize through the model and replace with a recap) — /compact.
   deps.mhandle('chat:compact', (_e, conversationId: string) =>
     typeof conversationId === 'string'
-      ? compact(conversationId)
+      ? compact(conversationId, { origin: 'manual' })
       : Promise.resolve({ ok: false, error: 'invalid-input' })
   )
 

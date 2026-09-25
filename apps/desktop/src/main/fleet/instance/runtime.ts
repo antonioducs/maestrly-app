@@ -22,8 +22,10 @@ import {
   type FleetUsage,
   type FleetConversationCallRequest,
   type FleetUiOpenRequest,
+  type FleetCompactionState,
 } from '@maestrly/bot-fleet-protocol'
 import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
+import { selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, setAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
 import { getHiddenChatModelsFor } from '../../store/settings'
@@ -42,8 +44,13 @@ import {
   fleetChatGetConvTools,
   fleetChatSetConvTools,
   fleetChatCommands,
+  backgroundCompactionStatus,
+  setBackgroundCompactionConfig,
+  retryBackgroundCompaction,
+  startManualCompaction,
 } from '../../chat/service'
-import { listChatMessages, chatHistoryStats } from '../../chat/chat-store'
+import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
+import { listChatMessages, listChatMessagesPage, chatHistoryStats } from '../../chat/chat-store'
 import { addProvider, listProviders, removeProvider } from '../../chat/catalog'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from '../../chat/credentials'
 import { invalidateProvider } from '../../chat/provider'
@@ -83,9 +90,10 @@ export function canDispatch(
   ready: boolean,
   connected: boolean,
   running: boolean,
-  hold: FleetInstanceHold['state']
+  hold: FleetInstanceHold['state'],
+  compactionReady = true
 ): boolean {
-  return ready && connected && !running && hold === 'none'
+  return ready && connected && compactionReady && !running && hold === 'none'
 }
 
 const PROFILE_KEY = 'fleet.instance.profile'
@@ -181,6 +189,8 @@ export class BotInstanceRuntime implements InstanceControl {
   private lastEmitted = new Map<string, string>()
   private usage: FleetUsage | null = null
   private usageTask: Promise<void> = Promise.resolve()
+  private compactionProblem: FleetCompactionState['problem'] = 'missing'
+  private manualCompacting = false
 
   constructor(
     readonly config: BotInstanceConfig,
@@ -229,6 +239,7 @@ export class BotInstanceRuntime implements InstanceControl {
           instructions: '',
           ceiling: 'ask',
           selection: null,
+          compaction: null,
           gateway: { peersEnabled: !!this.config.gatewayUrl },
         },
         primaryConversationId: null,
@@ -255,6 +266,7 @@ export class BotInstanceRuntime implements InstanceControl {
     if (this.transcriptTimer) clearTimeout(this.transcriptTimer)
     this.stopObserving?.()
     this.stopGate?.()
+    if (this.primaryConversationId) clearCompactionSummarizer(this.primaryConversationId)
   }
   health(): { ok: true; appVersion: string; protocol: 1; ready: boolean } {
     return { ok: true, appVersion: app.getVersion(), protocol: FLEET_PROTOCOL_VERSION, ready: this.ready }
@@ -270,6 +282,7 @@ export class BotInstanceRuntime implements InstanceControl {
       await this.system('created', null, null)
     }
     this.applyProfile()
+    await this.syncCompaction()
     const id = this.stored.primaryConversationId
     if (!this.floatAttempted) {
       this.floatAttempted = true
@@ -341,10 +354,54 @@ export class BotInstanceRuntime implements InstanceControl {
         fastMode: model.fastMode,
       }))
       this.applyProfile()
+      await this.syncCompaction()
     } catch {
       this.accountOptions = []
+      await this.syncCompaction()
     }
     if (JSON.stringify(this.accountOptions.map((option) => option.id)) !== previous) this.changed()
+  }
+  private async syncCompaction(): Promise<void> {
+    const id = this.primaryConversationId
+    if (!id) return
+    const config = this.stored?.profile.compaction
+    const option =
+      config &&
+      this.accountOptions.find((item) => item.providerId === config.providerId && item.modelId === config.modelId)
+    let problem: FleetCompactionState['problem'] = !config ? 'missing' : !option ? 'unavailable' : null
+    const desired = problem
+      ? { enabled: false, intervalTokens: 100_000, selection: null }
+      : {
+          enabled: true,
+          intervalTokens: config!.intervalTokens,
+          selection: {
+            providerId: config!.providerId,
+            modelId: config!.modelId,
+            effort: config!.reasoning ?? 'off',
+            fastMode: config!.fastMode,
+          },
+        }
+    if (getAppSetting('chat.backgroundCompaction') !== JSON.stringify(desired)) {
+      const result = await setBackgroundCompactionConfig(desired)
+      if (!result.ok && !problem) {
+        problem = 'invalid'
+        await setBackgroundCompactionConfig({ enabled: false, intervalTokens: 100_000, selection: null })
+      }
+    }
+    const previous = this.compactionProblem
+    this.compactionProblem = problem
+    if (previous !== problem) this.changed()
+    setCompactionSummarizer(id, () => {
+      const current = this.stored?.profile.compaction
+      return this.compactionProblem === null && current
+        ? {
+            providerId: current.providerId,
+            modelId: current.modelId,
+            effort: current.reasoning ?? 'off',
+            fastMode: current.fastMode,
+          }
+        : null
+    })
   }
   async selections(): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> {
     await this.refreshAccounts(true)
@@ -386,6 +443,7 @@ export class BotInstanceRuntime implements InstanceControl {
       setAppSetting('chat.defaultReasoning', 'off')
     }
     this.accountOptions = this.accountOptions.filter((option) => option.providerId !== providerId)
+    await this.syncCompaction()
     this.changed()
     void this.refreshAccounts(true).then(() => {
       this.changed()
@@ -499,6 +557,42 @@ export class BotInstanceRuntime implements InstanceControl {
   }
   async status(): Promise<FleetInstanceStatus> {
     await this.refreshAccounts()
+    const conversationId = this.primaryConversationId
+    // Status is rebuilt several times a second while a turn streams: the progress sits on the latest assistant or
+    // compaction marker, so the newest page is enough and a long conversation is never parsed whole here.
+    const progress = conversationId
+      ? selectContextObservation(listChatMessagesPage(conversationId, { limit: 20 }).messages, {
+          conversationId,
+          model: this.currentSelection(),
+          streaming: this.turning,
+          compacting: this.manualCompacting,
+        }).progress
+      : undefined
+    const background = conversationId
+      ? backgroundCompactionStatus(conversationId)
+      : { status: 'idle' as const, error: undefined }
+    const compaction: FleetCompactionState | null = conversationId
+      ? {
+          configured: this.compactionProblem === null,
+          problem: this.compactionProblem,
+          background: { status: background.status, error: background.error?.slice(0, 200) ?? null },
+          progress: progress
+            ? {
+                id: progress.id,
+                status: progress.status,
+                phase: progress.phase ?? null,
+                completed: progress.completed ?? null,
+                total: progress.total ?? null,
+                attempt: progress.attempt ?? null,
+                beforeTokens: progress.beforeTokens ?? null,
+                afterTokens: progress.afterTokens ?? null,
+                afterQuality: progress.afterQuality ?? null,
+                error: progress.error?.slice(0, 500) ?? null,
+                updatedAt: new Date(progress.updatedAt).toISOString(),
+              }
+            : null,
+        }
+      : null
     const providers = [
       ...new Map([
         ...this.accountOptions.map(
@@ -527,14 +621,18 @@ export class BotInstanceRuntime implements InstanceControl {
             : pending[0]?.kind === 'help'
               ? { kind: 'help', reason: pending[0].reason }
               : !providers.length
-                ? { kind: 'setup' }
-                : this.activeTool
-                  ? { kind: 'tool', ...this.activeTool }
-                  : this.turning
-                    ? { kind: 'thinking' }
-                    : queue.length
-                      ? { kind: 'queued', count: queue.length }
-                      : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
+                ? { kind: 'setup', need: 'account' }
+                : this.compactionProblem !== null
+                  ? { kind: 'setup', need: 'compaction' }
+                  : compaction?.progress?.status === 'running' || compaction?.progress?.status === 'retrying'
+                    ? { kind: 'compacting' }
+                    : this.activeTool
+                      ? { kind: 'tool', ...this.activeTool }
+                      : this.turning
+                        ? { kind: 'thinking' }
+                        : queue.length
+                          ? { kind: 'queued', count: queue.length }
+                          : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
@@ -554,6 +652,7 @@ export class BotInstanceRuntime implements InstanceControl {
       activity,
       pending,
       usage: this.usage,
+      compaction,
       lastEventSeq: this.events.lastSeq,
     }
   }
@@ -649,7 +748,16 @@ export class BotInstanceRuntime implements InstanceControl {
   private async tick(): Promise<void> {
     if (!this.primaryConversationId || Date.now() < this.retryAt) return
     await this.refreshAccounts()
-    if (!canDispatch(this.ready, this.accountOptions.length > 0, this.turning, this.holdManager.state.state)) return
+    if (
+      !canDispatch(
+        this.ready,
+        this.accountOptions.length > 0,
+        this.turning || this.manualCompacting,
+        this.holdManager.state.state,
+        this.compactionProblem === null
+      )
+    )
+      return
     const item = this.queue.list()[0]
     if (!item) return
     this.turning = true
@@ -665,6 +773,8 @@ export class BotInstanceRuntime implements InstanceControl {
       if (
         this.turnAbort.signal.aborted ||
         this.holdManager.state.state !== 'none' ||
+        this.compactionProblem !== null ||
+        this.manualCompacting ||
         !this.queue.list().some((candidate) => candidate.id === item.id)
       )
         return
@@ -847,6 +957,29 @@ export class BotInstanceRuntime implements InstanceControl {
       case 'chatCommands':
         result = await fleetChatCommands(id)
         break
+      case 'chatCompact':
+        if (this.compactionProblem !== null) result = { ok: false, error: 'not-configured' }
+        else if (this.turning || this.manualCompacting) result = { ok: false, error: 'busy' }
+        else {
+          const started = startManualCompaction(id, () => {
+            this.manualCompacting = false
+            this.onChatEvent({ kind: 'compaction-finished', status: 'completed' })
+            void this.tick()
+          })
+          if (started.ok) this.manualCompacting = true
+          result = started
+        }
+        break
+      case 'chatBackgroundCompactionRetry':
+        if (this.compactionProblem !== null) result = { ok: false, error: 'not-configured' }
+        else {
+          void retryBackgroundCompaction(id).then(
+            () => this.changed(),
+            () => this.changed()
+          )
+          result = { ok: true }
+        }
+        break
     }
     if (
       request.op === 'chatSetConvTools' ||
@@ -958,7 +1091,9 @@ export class BotInstanceRuntime implements InstanceControl {
       event.kind === 'tool-state' ||
       event.kind === 'tool-call' ||
       event.kind === 'finish' ||
-      event.kind === 'aborted'
+      event.kind === 'aborted' ||
+      event.kind === 'compaction' ||
+      event.kind === 'compaction-finished'
     ) {
       if (!this.transcriptTimer)
         this.transcriptTimer = setTimeout(() => {
