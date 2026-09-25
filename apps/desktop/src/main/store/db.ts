@@ -1,3 +1,4 @@
+import { localMemoriesTableSql, migrateLocalMemorySpaces } from './local-memory-spaces'
 import { DatabaseSync } from 'node:sqlite'
 import { conversationScopeConstraint, migrateStandaloneConversations } from './standalone-conversation-migration'
 import { app } from 'electron'
@@ -170,6 +171,7 @@ export function initStore(file?: string): void {
     // Legacy normalization needs its existing cascades. Only the standalone table rebuild
     // uses a second transaction, after normalization commits and before any runtime starts.
     migrateStandaloneConversations(db)
+    migrateLocalMemorySpaces(db)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_standalone
       ON conversations(scope, archived, position, created_at) WHERE scope = 'standalone'`)
   } catch (error) {
@@ -298,28 +300,7 @@ function initializeSchema(): void {
 
     -- Private durable Memory Center records use opaque conversation provenance without FK so transcript
     -- deletion cannot erase explicitly saved decisions.
-    CREATE TABLE IF NOT EXISTS local_memories (
-      id                     TEXT PRIMARY KEY,
-      workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-      title                  TEXT NOT NULL,
-      content                TEXT NOT NULL,
-      type                   TEXT NOT NULL,
-      status                 TEXT NOT NULL DEFAULT 'active',
-      scope                  TEXT NOT NULL DEFAULT '',
-      tags_json              TEXT NOT NULL DEFAULT '[]',
-      importance             INTEGER NOT NULL DEFAULT 0,
-      pinned                 INTEGER NOT NULL DEFAULT 0,
-      source                 TEXT NOT NULL,
-      origin_conversation_id TEXT,
-      origin_message_id      TEXT,
-      supersedes_id          TEXT REFERENCES local_memories(id) ON DELETE SET NULL,
-      promoted_path          TEXT,
-      content_hash           TEXT NOT NULL,
-      created_at             INTEGER NOT NULL,
-      updated_at             INTEGER NOT NULL,
-      last_used_at           INTEGER,
-      use_count              INTEGER NOT NULL DEFAULT 0
-    );
+    ${localMemoriesTableSql('local_memories')};
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_status
       ON local_memories(workspace_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_type

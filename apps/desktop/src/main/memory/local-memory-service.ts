@@ -11,12 +11,7 @@ import {
   type LocalMemoryUpdateInput,
   type MemoryChangeEvent,
 } from '../../shared/memory'
-import {
-  getLocalMemoryByHash,
-  getLocalMemoryRow,
-  listLocalMemoryRows,
-  rowToLocalMemory,
-} from '../store/local-memories'
+import { getLocalMemoryByHash, getLocalMemoryRow, listLocalMemoryRows, rowToLocalMemory } from '../store/local-memories'
 import { getDb, transaction } from '../store/db'
 
 const events = new EventEmitter()
@@ -119,7 +114,7 @@ export function createLocalMemory(input: LocalMemoryCreateInput): LocalMemoryMut
          (id, workspace_id, title, content, type, status, scope, tags_json, importance, pinned, source,
           origin_conversation_id, origin_message_id, supersedes_id, promoted_path, content_hash,
           created_at, updated_at, last_used_at, use_count)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 0)`,
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL, 0)`
       )
       .run(
         id,
@@ -137,13 +132,12 @@ export function createLocalMemory(input: LocalMemoryCreateInput): LocalMemoryMut
         input.supersedesId ?? null,
         contentHash,
         now,
-        now,
+        now
       )
     if (input.supersedesId) {
-      getDb().prepare("UPDATE local_memories SET status = 'superseded', updated_at = ? WHERE id = ?").run(
-        now,
-        input.supersedesId,
-      )
+      getDb()
+        .prepare("UPDATE local_memories SET status = 'superseded', updated_at = ? WHERE id = ?")
+        .run(now, input.supersedesId)
     }
   })
   const memory = getLocalMemory(input.workspaceId, id)!
@@ -154,7 +148,7 @@ export function createLocalMemory(input: LocalMemoryCreateInput): LocalMemoryMut
 export function updateLocalMemory(
   workspaceId: string,
   id: string,
-  patch: LocalMemoryUpdateInput,
+  patch: LocalMemoryUpdateInput
 ): LocalMemoryMutationResult {
   const current = getLocalMemory(workspaceId, id)
   if (!current) throw new Error('memory not found')
@@ -171,9 +165,7 @@ export function updateLocalMemory(
   const pinned = patch.pinned ?? current.pinned
   const supersedesId = patch.supersedesId === undefined ? current.supersedesId : (patch.supersedesId ?? undefined)
   const promotedPath =
-    patch.promotedPath === undefined
-      ? current.promotedPath
-      : optionalText(patch.promotedPath, 'promotedPath', 2_000)
+    patch.promotedPath === undefined ? current.promotedPath : optionalText(patch.promotedPath, 'promotedPath', 2_000)
   assertSupersedes(workspaceId, id, supersedesId)
   const contentHash = localMemoryContentHash(content)
   const duplicate = getLocalMemoryByHash(workspaceId, contentHash)
@@ -196,7 +188,7 @@ export function updateLocalMemory(
       .prepare(
         `UPDATE local_memories SET title = ?, content = ?, type = ?, status = ?, scope = ?, tags_json = ?,
          importance = ?, pinned = ?, supersedes_id = ?, promoted_path = ?, content_hash = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?`,
+         WHERE id = ? AND workspace_id = ?`
       )
       .run(
         title,
@@ -212,13 +204,12 @@ export function updateLocalMemory(
         contentHash,
         now,
         id,
-        workspaceId,
+        workspaceId
       )
     if (supersedesId && supersedesId !== current.supersedesId) {
-      getDb().prepare("UPDATE local_memories SET status = 'superseded', updated_at = ? WHERE id = ?").run(
-        now,
-        supersedesId,
-      )
+      getDb()
+        .prepare("UPDATE local_memories SET status = 'superseded', updated_at = ? WHERE id = ?")
+        .run(now, supersedesId)
     }
   })
   emit({ workspaceId, kind: 'updated', memoryId: id })
@@ -249,8 +240,20 @@ export function markLocalMemoriesUsed(workspaceId: string, ids: string[], at = D
   if (unique.length === 0) return
   transaction(() => {
     const statement = getDb().prepare(
-      'UPDATE local_memories SET last_used_at = ?, use_count = use_count + 1 WHERE workspace_id = ? AND id = ?',
+      'UPDATE local_memories SET last_used_at = ?, use_count = use_count + 1 WHERE workspace_id = ? AND id = ?'
     )
     for (const id of unique) statement.run(at, workspaceId, id)
   })
+}
+
+/** Exact id, or a unique prefix (≥6 characters) as shown in the memory core. */
+export function resolveLocalMemoryId(spaceId: string, idOrPrefix: string): string | 'ambiguous' | undefined {
+  const value = idOrPrefix.trim()
+  if (getLocalMemory(spaceId, value)) return value
+  if (value.length < 6 || !/^[A-Za-z0-9-]+$/.test(value)) return undefined
+  const rows = getDb()
+    .prepare("SELECT id FROM local_memories WHERE workspace_id = ? AND id LIKE ? ESCAPE '\\' LIMIT 2")
+    .all(spaceId, `${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`) as Array<{ id: string }>
+  if (rows.length === 1) return rows[0].id
+  return rows.length > 1 ? 'ambiguous' : undefined
 }
