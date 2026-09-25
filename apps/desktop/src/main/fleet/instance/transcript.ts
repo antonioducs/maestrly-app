@@ -213,6 +213,7 @@ export function projectChatMessages(
             routine: linked?.input.routine,
             peer: linked?.input.peer,
             queued: false,
+            memories: [],
             images: ownerImageRefs(message),
           })
         } else if (message.role === 'assistant') {
@@ -281,6 +282,7 @@ export function projectChatMessages(
           routine: linked?.input.routine,
           peer: linked?.input.peer,
           queued: false,
+          memories: [],
           images,
         })
     }

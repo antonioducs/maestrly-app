@@ -89,3 +89,17 @@ export const FLEET_PEER_BUDGETS = {
   pairWindowMinutes: 30,
   pairBlockedMinutes: 30,
 } as const
+
+// constants.ts
+/** Facts and preferences about the owner, shared by every bot; every active entry is in each bot's prompt. */
+export const FLEET_OWNER_MEMORY_LIMITS = { entryMax: 500, activeCharsMax: 4_000, reasonMax: 300 } as const
+/** A routine run's report, and the previous reports a new run receives. */
+export const FLEET_ROUTINE_RUN_LIMITS = {
+  summaryMax: 600,
+  pendingMax: 400,
+  notesMax: 600,
+  finalTextMax: 4_000,
+  previousRuns: 3,
+  keepPerRoutine: 50,
+} as const
+export const FLEET_BOT_MEMORY_LIMITS = { contentMax: 4_000, listMax: 200 } as const

@@ -1,3 +1,12 @@
+import { randomUUID } from 'node:crypto'
+import {
+  fleetOwnerMemorySchema,
+  fleetOwnerMemoryEntrySchema,
+  fleetOwnerMemoryPatchRequestSchema,
+  fleetInternalOwnerMemorySaveRequestSchema,
+  fleetRoutineRunReportSchema,
+  fleetActivityKindSchema,
+} from '../src/index.js'
 import { describe, expect, it } from 'vitest'
 import {
   FLEET_ERROR_STATUS,
@@ -534,5 +543,80 @@ describe('routes and helpers', () => {
     expect(normalizePairingCode('U123-ABCD')).toBeNull()
     expect(summarizeText(' one\n two   three ', 9)).toBe('one two…')
     expect(summarizeText('hello', 1)).toBe('…')
+  })
+})
+
+describe('memory and routine history contracts', () => {
+  it('accepts owner memory entries and rejects oversized content', () => {
+    const entry = {
+      id: 'om-1',
+      content: 'Prefer short answers.',
+      status: 'active',
+      author: { kind: 'bot', botId: 'scout', name: 'Scout' },
+      origin: 'owner',
+      replacesId: null,
+      replacedById: null,
+      createdAt: '2026-09-25T10:00:00.000Z',
+      updatedAt: '2026-09-25T10:00:00.000Z',
+    }
+    expect(fleetOwnerMemorySchema.parse({ revision: 3, activeChars: 21, entries: [entry] }).entries[0].author).toEqual({
+      kind: 'bot',
+      botId: 'scout',
+      name: 'Scout',
+    })
+    expect(fleetOwnerMemoryEntrySchema.safeParse({ ...entry, content: 'x'.repeat(501) }).success).toBe(false)
+    expect(fleetOwnerMemoryPatchRequestSchema.safeParse({}).success).toBe(false)
+    expect(
+      fleetInternalOwnerMemorySaveRequestSchema.parse({
+        content: 'Lives in São Paulo.',
+        origin: 'auto',
+        idempotencyKey: randomUUID(),
+      }).origin
+    ).toBe('auto')
+  })
+  it('carries routine runs and keeps older instance events valid', () => {
+    const input = fleetInstanceInputSchema.parse({
+      idempotencyKey: randomUUID(),
+      text: 'Check prices',
+      source: 'routine',
+      attachments: [],
+      routine: {
+        id: 'r1',
+        title: 'Prices',
+        runId: 'run-1',
+        previousRuns: [
+          {
+            at: '2026-09-24T09:00:00.000Z',
+            status: 'completed',
+            summary: 'Checked 3 stores',
+            pending: null,
+            notes: 'Amazon was down',
+          },
+        ],
+      },
+    })
+    expect(input.routine?.previousRuns?.[0].notes).toBe('Amazon was down')
+    const old = fleetInstanceEventSchema.parse({
+      seq: 1,
+      at: '2026-09-25T10:00:00.000Z',
+      type: 'turn.finished',
+      outcome: 'completed',
+      summary: 'ok',
+    })
+    expect(old).toMatchObject({ inputId: null, text: null })
+    expect(fleetRoutineRunReportSchema.safeParse({ summary: '', pending: null, notes: null }).success).toBe(false)
+  })
+  it('declares the new routes and events', () => {
+    expect(FLEET_GATEWAY_ROUTES.ownerMemoryList.path).toBe('/v1/owner-memory')
+    expect(FLEET_GATEWAY_ROUTES.botRoutineRuns.path).toBe('/v1/bots/:id/routines/:rid/runs')
+    expect(FLEET_GATEWAY_ROUTES.botMemoryPatch.method).toBe('PATCH')
+    expect(FLEET_INTERNAL_ROUTES.routineRunReport.path).toBe('/internal/v1/routines/:rid/runs/:runId/report')
+    expect(FLEET_INSTANCE_ROUTES.memoriesList.path).toBe('/v1/memories')
+    expect(
+      fleetGatewayEventSchema.parse({ type: 'owner_memory.updated', at: '2026-09-25T10:00:00.000Z', revision: 4 }).type
+    ).toBe('owner_memory.updated')
+    expect(fleetActivityKindSchema.options).toEqual(
+      expect.arrayContaining(['owner_memory_saved', 'owner_memory_forgotten'])
+    )
   })
 })

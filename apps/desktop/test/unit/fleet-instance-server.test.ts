@@ -211,7 +211,7 @@ describe('instance control HTTP', () => {
   it('replays SSE events and resets old cursors', async () => {
     const { base, events } = await setup()
     events.publish({ type: 'status', status })
-    events.publish({ type: 'turn.finished', outcome: 'completed', summary: 'Hello' })
+    events.publish({ type: 'turn.finished', inputId: null, text: null, outcome: 'completed', summary: 'Hello' })
     const controller = new AbortController()
     const replay = await fetch(base + '/v1/events?since=1', { headers: headers(), signal: controller.signal })
     expect(replay.status).toBe(200)

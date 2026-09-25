@@ -104,6 +104,7 @@ describe('fleet forms', () => {
       text: 'resume',
       source: 'continuation' as const,
       queued: false,
+      memories: [],
       images: [],
     }
     const owner = { ...continuation, id: 'o', source: 'owner' as const }

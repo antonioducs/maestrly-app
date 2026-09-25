@@ -1,5 +1,8 @@
 import { z } from 'zod'
 import {
+  FLEET_OWNER_MEMORY_LIMITS,
+  FLEET_ROUTINE_RUN_LIMITS,
+  FLEET_BOT_MEMORY_LIMITS,
   FLEET_IMAGE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
   FLEET_INSTRUCTIONS_MAX,
@@ -275,6 +278,72 @@ export const fleetQuestionSchema = z.object({
 export type FleetQuestion = z.infer<typeof fleetQuestionSchema>
 export const fleetPermissionToolSchema = z.object({ name: z.string().min(1), target: z.string().nullable() })
 
+// domain.ts (import the three limits)
+export const fleetOwnerMemoryOriginSchema = z.enum(['owner', 'routine', 'peer', 'continuation', 'auto'])
+export type FleetOwnerMemoryOrigin = z.infer<typeof fleetOwnerMemoryOriginSchema>
+export const fleetOwnerMemoryEntrySchema = z.object({
+  id: fleetIdSchema,
+  content: z.string().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax),
+  status: z.enum(['active', 'superseded', 'archived']),
+  author: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('owner') }),
+    z.object({ kind: z.literal('bot'), botId: fleetBotIdSchema, name: z.string() }),
+  ]),
+  origin: fleetOwnerMemoryOriginSchema.nullable(),
+  replacesId: fleetIdSchema.nullable(),
+  replacedById: fleetIdSchema.nullable(),
+  createdAt: fleetTimestampSchema,
+  updatedAt: fleetTimestampSchema,
+})
+export type FleetOwnerMemoryEntry = z.infer<typeof fleetOwnerMemoryEntrySchema>
+export const fleetOwnerMemorySchema = z.object({
+  revision: fleetNonNegativeIntSchema,
+  activeChars: fleetNonNegativeIntSchema,
+  entries: z.array(fleetOwnerMemoryEntrySchema),
+})
+export type FleetOwnerMemory = z.infer<typeof fleetOwnerMemorySchema>
+export const fleetRoutineRunStatusSchema = z.enum(['delivered', 'completed', 'failed', 'cancelled', 'unknown'])
+export const fleetRoutineRunReportSchema = z.object({
+  summary: z.string().trim().min(1).max(FLEET_ROUTINE_RUN_LIMITS.summaryMax),
+  pending: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.pendingMax).nullable(),
+  notes: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.notesMax).nullable(),
+})
+export type FleetRoutineRunReport = z.infer<typeof fleetRoutineRunReportSchema>
+export const fleetRoutineRunSchema = z.object({
+  id: fleetIdSchema,
+  routineId: fleetIdSchema,
+  botId: fleetBotIdSchema,
+  trigger: z.enum(['schedule', 'manual']),
+  status: fleetRoutineRunStatusSchema,
+  deliveredAt: fleetTimestampSchema,
+  finishedAt: fleetTimestampSchema.nullable(),
+  report: fleetRoutineRunReportSchema.nullable(),
+  finalText: z.string().max(FLEET_ROUTINE_RUN_LIMITS.finalTextMax).nullable(),
+})
+export type FleetRoutineRun = z.infer<typeof fleetRoutineRunSchema>
+export const fleetRoutinePreviousRunSchema = z.object({
+  at: fleetTimestampSchema,
+  status: fleetRoutineRunStatusSchema,
+  summary: z.string().max(FLEET_ROUTINE_RUN_LIMITS.summaryMax).nullable(),
+  pending: z.string().max(FLEET_ROUTINE_RUN_LIMITS.pendingMax).nullable(),
+  notes: z.string().max(FLEET_ROUTINE_RUN_LIMITS.notesMax).nullable(),
+})
+export type FleetRoutinePreviousRun = z.infer<typeof fleetRoutinePreviousRunSchema>
+export const fleetBotMemorySchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string(),
+  content: z.string().max(FLEET_BOT_MEMORY_LIMITS.contentMax),
+  truncated: z.boolean(),
+  type: z.enum(['decision', 'constraint', 'preference', 'procedure', 'lesson', 'reference']),
+  status: z.enum(['active', 'superseded', 'archived']),
+  pinned: z.boolean(),
+  source: z.enum(['user', 'agent', 'auto', 'legacy-import']),
+  useCount: fleetNonNegativeIntSchema,
+  createdAt: fleetTimestampSchema,
+  updatedAt: fleetTimestampSchema,
+})
+export type FleetBotMemory = z.infer<typeof fleetBotMemorySchema>
+
 const transcriptBase = { id: fleetIdSchema, at: fleetTimestampSchema }
 const routineRef = z.object({ id: fleetIdSchema, title: z.string() })
 const peerRef = z.object({ botId: fleetBotIdSchema, name: z.string() })
@@ -289,6 +358,10 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     routine: routineRef.optional(),
     peer: peerRef.optional(),
     queued: z.boolean(),
+    memories: z
+      .array(z.object({ id: z.string(), title: z.string() }))
+      .max(10)
+      .default([]),
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
   }),
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
@@ -480,6 +553,9 @@ export const fleetPeerMessageSchema = z.object({
 export type FleetPeerMessage = z.infer<typeof fleetPeerMessageSchema>
 
 export const fleetActivityKindSchema = z.enum([
+  // A bot changed the owner memory (summary: the entry; data: entryId).
+  'owner_memory_saved',
+  'owner_memory_forgotten',
   'bot_created',
   'bot_started',
   'bot_stopped',
@@ -516,6 +592,7 @@ export const fleetActivityEntrySchema = z.object({
 export type FleetActivityEntry = z.infer<typeof fleetActivityEntrySchema>
 
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('owner_memory.updated'), at: fleetTimestampSchema, revision: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('hello'), at: fleetTimestampSchema, lastActivitySeq: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('bot.updated'), at: fleetTimestampSchema, bot: fleetBotSchema }),
   z.object({ type: z.literal('bot.removed'), at: fleetTimestampSchema, botId: fleetBotIdSchema }),

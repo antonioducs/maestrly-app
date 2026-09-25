@@ -195,6 +195,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
               .sort((a, b) => a.seq - b.seq)
               .slice(-200),
           }
+        case 'owner_memory.updated':
         case 'hello':
           return state
       }

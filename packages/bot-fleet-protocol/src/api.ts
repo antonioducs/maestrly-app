@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import {
+  FLEET_OWNER_MEMORY_LIMITS,
+  FLEET_ROUTINE_RUN_LIMITS,
   FLEET_IMAGE_LIMITS,
   FLEET_MESSAGE_TEXT_MAX,
   FLEET_PROTOCOL_VERSION,
@@ -8,6 +10,13 @@ import {
   FLEET_ROUTINE_TITLE_MAX,
 } from './constants.js'
 import {
+  fleetOwnerMemoryOriginSchema,
+  fleetOwnerMemorySchema,
+  fleetOwnerMemoryEntrySchema,
+  fleetRoutineRunSchema,
+  fleetRoutineRunReportSchema,
+  fleetRoutinePreviousRunSchema,
+  fleetBotMemorySchema,
   fleetActivityEntrySchema,
   fleetArchivedBotSchema,
   fleetBotIdSchema,
@@ -41,6 +50,34 @@ import {
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
 } from './domain.js'
+
+export const fleetOwnerMemoryCreateRequestSchema = z.object({
+  content: z.string().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax),
+  replacesId: fleetIdSchema.optional(),
+  idempotencyKey: fleetIdempotencyKeySchema,
+})
+export type FleetOwnerMemoryCreateRequest = z.infer<typeof fleetOwnerMemoryCreateRequestSchema>
+export const fleetOwnerMemoryPatchRequestSchema = z
+  .object({
+    content: z.string().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax).optional(),
+    status: z.enum(['active', 'archived']).optional(),
+  })
+  .refine((value) => value.content !== undefined || value.status !== undefined, 'nothing to change')
+export type FleetOwnerMemoryPatchRequest = z.infer<typeof fleetOwnerMemoryPatchRequestSchema>
+export const fleetInternalOwnerMemorySaveRequestSchema = fleetOwnerMemoryCreateRequestSchema.extend({
+  origin: fleetOwnerMemoryOriginSchema,
+})
+export type FleetInternalOwnerMemorySaveRequest = z.infer<typeof fleetInternalOwnerMemorySaveRequestSchema>
+export const fleetInternalOwnerMemoryForgetRequestSchema = z.object({
+  reason: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.reasonMax),
+})
+export const fleetRoutineRunsResponseSchema = z.object({ runs: z.array(fleetRoutineRunSchema) })
+export const fleetRoutineRunReportRequestSchema = fleetRoutineRunReportSchema
+export const fleetBotMemoriesResponseSchema = z.object({ memories: z.array(fleetBotMemorySchema) })
+export const fleetBotMemoryPatchRequestSchema = z
+  .object({ pinned: z.boolean().optional(), status: z.enum(['active', 'archived']).optional() })
+  .refine((value) => value.pinned !== undefined || value.status !== undefined, 'nothing to change')
+export type FleetBotMemoryPatchRequest = z.infer<typeof fleetBotMemoryPatchRequestSchema>
 
 /** Decoded size of a base64 string, without allocating. */
 export function base64DecodedBytes(value: string): number {
@@ -297,7 +334,14 @@ export const fleetInstanceInputSchema = z
     idempotencyKey: fleetIdempotencyKeySchema,
     text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
     source: fleetInputSourceSchema,
-    routine: z.object({ id: fleetIdSchema, title: z.string() }).optional(),
+    routine: z
+      .object({
+        id: fleetIdSchema,
+        title: z.string(),
+        runId: fleetIdSchema.optional(),
+        previousRuns: z.array(fleetRoutinePreviousRunSchema).max(FLEET_ROUTINE_RUN_LIMITS.previousRuns).optional(),
+      })
+      .optional(),
     peer: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).optional(),
     // Only owner messages carry images.
     attachments: fleetAttachmentsSchema,
@@ -322,6 +366,8 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     seq: fleetNonNegativeIntSchema,
     at: fleetTimestampSchema,
     type: z.literal('turn.finished'),
+    inputId: z.string().nullable().default(null),
+    text: z.string().max(FLEET_ROUTINE_RUN_LIMITS.finalTextMax).nullable().default(null),
     outcome: z.enum(['completed', 'cancelled', 'failed']),
     summary: z.string().nullable(),
   }),
@@ -352,6 +398,40 @@ export type FleetRoute = {
 }
 
 export const FLEET_GATEWAY_ROUTES = {
+  ownerMemoryList: { method: 'GET', path: '/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
+  ownerMemoryCreate: {
+    method: 'POST',
+    path: '/v1/owner-memory',
+    body: fleetOwnerMemoryCreateRequestSchema,
+    response: fleetOwnerMemoryEntrySchema,
+  },
+  ownerMemoryPatch: {
+    method: 'PATCH',
+    path: '/v1/owner-memory/:mid',
+    body: fleetOwnerMemoryPatchRequestSchema,
+    response: fleetOwnerMemoryEntrySchema,
+  },
+  ownerMemoryDelete: { method: 'DELETE', path: '/v1/owner-memory/:mid', body: null, response: null },
+  botRoutineRuns: {
+    method: 'GET',
+    path: '/v1/bots/:id/routines/:rid/runs',
+    body: null,
+    response: fleetRoutineRunsResponseSchema,
+  },
+  botMemoriesList: {
+    method: 'GET',
+    path: '/v1/bots/:id/memories',
+    body: null,
+    response: fleetBotMemoriesResponseSchema,
+  },
+  botMemoryPatch: {
+    method: 'PATCH',
+    path: '/v1/bots/:id/memories/:mid',
+    body: fleetBotMemoryPatchRequestSchema,
+    response: fleetBotMemorySchema,
+  },
+  botMemoryDelete: { method: 'DELETE', path: '/v1/bots/:id/memories/:mid', body: null, response: null },
+
   meta: { method: 'GET', path: '/v1/meta', body: null, response: fleetMetaResponseSchema },
   pair: { method: 'POST', path: '/v1/pair', body: fleetPairRequestSchema, response: fleetPairResponseSchema },
   devicesSelfDelete: { method: 'DELETE', path: '/v1/devices/self', body: null, response: null },
@@ -450,6 +530,26 @@ export const FLEET_GATEWAY_ROUTES = {
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INTERNAL_ROUTES = {
+  ownerMemoryGet: { method: 'GET', path: '/internal/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
+  ownerMemorySave: {
+    method: 'POST',
+    path: '/internal/v1/owner-memory',
+    body: fleetInternalOwnerMemorySaveRequestSchema,
+    response: fleetOwnerMemoryEntrySchema,
+  },
+  ownerMemoryForget: {
+    method: 'POST',
+    path: '/internal/v1/owner-memory/:mid/forget',
+    body: fleetInternalOwnerMemoryForgetRequestSchema,
+    response: fleetOwnerMemoryEntrySchema,
+  },
+  routineRunReport: {
+    method: 'POST',
+    path: '/internal/v1/routines/:rid/runs/:runId/report',
+    body: fleetRoutineRunReportRequestSchema,
+    response: fleetRoutineRunSchema,
+  },
+
   peers: { method: 'GET', path: '/internal/v1/peers', body: null, response: fleetInternalPeersResponseSchema },
   peerMessageSend: {
     method: 'POST',
@@ -474,6 +574,15 @@ export const FLEET_INTERNAL_ROUTES = {
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INSTANCE_ROUTES = {
+  memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
+  memoryPatch: {
+    method: 'PATCH',
+    path: '/v1/memories/:id',
+    body: fleetBotMemoryPatchRequestSchema,
+    response: fleetBotMemorySchema,
+  },
+  memoryDelete: { method: 'DELETE', path: '/v1/memories/:id', body: null, response: null },
+
   health: { method: 'GET', path: '/v1/health', body: null, response: fleetInstanceHealthSchema },
   status: { method: 'GET', path: '/v1/status', body: null, response: fleetInstanceStatusSchema },
   profile: {

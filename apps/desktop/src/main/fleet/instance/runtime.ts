@@ -682,6 +682,7 @@ export class BotInstanceRuntime implements InstanceControl {
           routine: item.input.routine,
           peer: item.input.peer,
           queued: true,
+          memories: [],
           images: this.queue.refs(item),
         },
       })
@@ -713,6 +714,7 @@ export class BotInstanceRuntime implements InstanceControl {
       routine: entry.input.routine,
       peer: entry.input.peer,
       queued: true,
+      memories: [],
       images: this.queue.refs(entry),
     }))
     const extra = this.extras.list()
@@ -821,6 +823,8 @@ export class BotInstanceRuntime implements InstanceControl {
         )
       this.events.publish({
         type: 'turn.finished',
+        inputId: null,
+        text: null,
         outcome: outcome.status === 'success' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'failed',
         summary,
       })
@@ -836,7 +840,13 @@ export class BotInstanceRuntime implements InstanceControl {
         cancelled ? null : error instanceof Error ? error.message.slice(0, 400) : 'Turn failed.',
         null
       )
-      this.events.publish({ type: 'turn.finished', outcome: cancelled ? 'cancelled' : 'failed', summary: null })
+      this.events.publish({
+        type: 'turn.finished',
+        inputId: null,
+        text: null,
+        outcome: cancelled ? 'cancelled' : 'failed',
+        summary: null,
+      })
     } finally {
       release?.()
       this.turning = false
