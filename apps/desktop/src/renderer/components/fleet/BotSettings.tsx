@@ -19,8 +19,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { SearchSelect } from '@/components/ui/search-select'
+import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { gb } from '@/lib/fleet/format'
+import { compactionFormFrom, compactionPatch } from '@/lib/fleet/compaction'
 import { choiceClass } from '@/lib/fleet/choice'
 import {
   nextRadioIndex,
@@ -72,6 +74,10 @@ export function BotSettings({
     bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : ''
   )
   const [options, setOptions] = useState<FleetSelectionOption[]>([])
+  const [compaction, setCompaction] = useState(() => compactionFormFrom(bot.compaction))
+  const [compactionBusy, setCompactionBusy] = useState(false)
+  const [compactionSaved, setCompactionSaved] = useState(false)
+  const [compactionError, setCompactionError] = useState('')
   const [routines, setRoutines] = useState<FleetRoutine[]>([])
   const [routine, setRoutine] = useState<RoutineForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -97,6 +103,16 @@ export function BotSettings({
     setRole(bot.role)
     setSelectionId(bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : '')
   }, [bot.id, bot.name, bot.instructions, bot.ceiling, bot.talksTo, bot.role, bot.selection])
+  useEffect(() => {
+    setCompaction(compactionFormFrom(bot.compaction))
+  }, [
+    bot.id,
+    bot.compaction?.providerId,
+    bot.compaction?.modelId,
+    bot.compaction?.reasoning,
+    bot.compaction?.fastMode,
+    bot.compaction?.intervalTokens,
+  ])
   useEffect(() => {
     let alive = true
     void Promise.all([window.api.fleetListSelections(bot.id), window.api.fleetListRoutines(bot.id)])
@@ -154,6 +170,9 @@ export function BotSettings({
   })
   const dirty = original !== edited
   const invalid = !fields.name.trim() || fields.name.length > 40 || role.length > 80
+  const compactionChoice = options.find((option) => option.id === compaction.modelId)
+  const compactionValue = compactionPatch(compaction)
+  const compactionDirty = JSON.stringify(compactionValue) !== JSON.stringify(bot.compaction)
   const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))
   async function save() {
     if (!dirty || invalid || busy) return
@@ -182,6 +201,21 @@ export function BotSettings({
       setError(fleetErrorMessage(cause))
     } finally {
       setBusy(false)
+    }
+  }
+  async function saveCompaction() {
+    if (!compactionValue || !compactionDirty || compactionBusy) return
+    setCompactionBusy(true)
+    setCompactionError('')
+    setCompactionSaved(false)
+    try {
+      const updated = await window.api.fleetUpdateBot(bot.id, { compaction: compactionValue })
+      fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
+      setCompactionSaved(true)
+    } catch (cause) {
+      setCompactionError(fleetErrorMessage(cause))
+    } finally {
+      setCompactionBusy(false)
     }
   }
   async function saveRoutine() {
@@ -410,6 +444,116 @@ export function BotSettings({
           />
           {!options.length && <p className="mt-1 text-xs text-muted-foreground">{t('botSettings.noAccount')}</p>}
         </div>
+        <section className="space-y-3" aria-labelledby="fleet-compaction-heading">
+          <h2 id="fleet-compaction-heading" className="font-semibold">
+            {t('botSettings.compaction.heading')}
+          </h2>
+          <p className="text-xs text-muted-foreground">{t('botSettings.compaction.description')}</p>
+          {bot.compactionState?.problem && (
+            <p role="status" className="text-xs text-amber-300">
+              {t(`botSettings.compaction.problem.${bot.compactionState.problem}`, {
+                // A gone model has no option left: name its account by label, never by its internal id.
+                model: bot.compaction
+                  ? `${
+                      options.find((option) => option.providerId === bot.compaction?.providerId)?.providerLabel ??
+                      bot.accounts.providers.find((provider) => provider.id === bot.compaction?.providerId)?.label ??
+                      t('botSettings.compaction.removedAccount')
+                    } · ${bot.compaction.modelId}`
+                  : '',
+              })}
+            </p>
+          )}
+          <div>
+            <label className="mb-2 block text-sm font-medium">{t('botSettings.compaction.model')}</label>
+            <SearchSelect
+              value={compaction.modelId || undefined}
+              options={options.map((option) => ({
+                id: option.id,
+                label: `${option.providerLabel} · ${option.modelLabel}`,
+              }))}
+              onChange={(id) => {
+                setCompaction((current) => ({ ...current, modelId: id ?? '', reasoning: null, fastMode: false }))
+                setCompactionSaved(false)
+              }}
+              disabled={!options.length}
+              placeholder={t('botSettings.chooseModel')}
+              ariaLabel={t('botSettings.compaction.model')}
+            />
+          </div>
+          {compactionChoice && compactionChoice.efforts.length > 0 && (
+            <div>
+              <label className="mb-2 block text-sm font-medium" htmlFor="fleet-compaction-reasoning">
+                {t('botSettings.compaction.reasoning')}
+              </label>
+              <Select
+                value={compaction.reasoning ?? 'default'}
+                onValueChange={(value) =>
+                  setCompaction((current) => ({ ...current, reasoning: value === 'default' ? null : value }))
+                }
+              >
+                <SelectTrigger id="fleet-compaction-reasoning">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">{t('botSettings.compaction.default')}</SelectItem>
+                  {compactionChoice.efforts.map((effort) => (
+                    <SelectItem key={effort} value={effort}>
+                      {effort}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {compactionChoice?.fastMode && (
+            <label className="flex items-center gap-3 text-sm">
+              <span>{t('botSettings.compaction.fast')}</span>
+              <FastModeChip
+                enabled={compaction.fastMode}
+                onToggle={() => setCompaction((current) => ({ ...current, fastMode: !current.fastMode }))}
+              />
+            </label>
+          )}
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="fleet-compaction-interval">
+              {t('botSettings.compaction.interval')}
+            </label>
+            <Input
+              id="fleet-compaction-interval"
+              type="number"
+              min={10}
+              max={1000}
+              step={1}
+              className="w-32 bg-surface-elevated"
+              value={compaction.intervalThousands}
+              aria-invalid={!compactionValue && Boolean(compaction.modelId)}
+              onChange={(event) => setCompaction((current) => ({ ...current, intervalThousands: event.target.value }))}
+            />
+            {!compactionValue && compaction.modelId && (
+              <p role="alert" className="mt-1 text-xs text-destructive">
+                {t('botSettings.compaction.intervalInvalid')}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              disabled={!compactionValue || !compactionDirty || compactionBusy}
+              onClick={() => void saveCompaction()}
+            >
+              {t('botSettings.compaction.save')}
+            </Button>
+            {compactionSaved && (
+              <span role="status" className="text-xs text-primary">
+                {t('botSettings.saved')}
+              </span>
+            )}
+          </div>
+          {compactionError && (
+            <p role="alert" className="text-xs text-destructive">
+              {compactionError}
+            </p>
+          )}
+        </section>
         <div className="flex items-center gap-3">
           <Button disabled={!dirty || invalid || busy} onClick={() => void save()}>
             {t('botSettings.save')}

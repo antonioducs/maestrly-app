@@ -635,6 +635,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Preparar contexto em segundo plano',
+    backgroundCompactionManagedByMac: 'Definido pelo Mac, em Ajustes do bot.',
     backgroundCompactionDescription:
       'Prepara periodicamente um checkpoint compactado com outro modelo. A conversa atual continua funcionando durante a preparação.',
     backgroundCompactionToggle: 'Usar preparação de contexto em segundo plano',

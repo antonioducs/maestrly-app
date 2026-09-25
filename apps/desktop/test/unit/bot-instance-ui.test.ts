@@ -67,7 +67,10 @@ describe("a bot's own Maestrly window", () => {
     expect(settings).toMatch(/\{showNav && \(\s*<nav/)
     expect(settings).toContain('<MaestrlyChatSection t={t} chat={chat} />')
     const chat = source('renderer/components/chat/ApiKeySettings.tsx')
-    expect(chat).toContain('export function ApiKeySettings({ tabs, requestedTab, appToolsLocked = false }')
+    expect(chat).toMatch(
+      /export function ApiKeySettings\(\{[\s\S]*appToolsLocked = false,[\s\S]*backgroundCompactionLocked = false/
+    )
+    expect(source('renderer/BotInstanceApp.tsx')).toContain('backgroundCompactionLocked: true')
     expect(chat).toContain('visibleTabs.map((tab, index)')
     expect(chat).toMatch(/shown\('maestro'\) && \(/)
     expect(chat).toContain("lockedDescriptionKey={appToolsLocked ? 'plusMenu.appToolsBotLocked' : undefined}")

@@ -628,6 +628,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Prepare context in the background',
+    backgroundCompactionManagedByMac: 'Set by the Mac in the bot’s Settings.',
     backgroundCompactionDescription:
       'Periodically prepare a compacted checkpoint with a separate model. The current conversation keeps working while preparation runs.',
     backgroundCompactionToggle: 'Use background context preparation',

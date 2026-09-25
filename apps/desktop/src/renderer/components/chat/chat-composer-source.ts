@@ -34,6 +34,8 @@ export function localChatComposerSource(conversationId: string): ChatComposerSou
     chatSkillResetOverrides: () => window.api.chatSkillResetOverrides(conversationId),
     chatSkillSetSelection: (selection) => window.api.chatSkillSetSelection(conversationId, selection),
     chatCommands: () => window.api.chatCommands(conversationId),
+    chatCompact: () => window.api.chatCompact(conversationId),
+    chatBackgroundCompactionRetry: () => window.api.chatRetryBackgroundCompaction(conversationId),
   }
 }
 
@@ -61,6 +63,8 @@ export function botChatComposerSource(
     chatSkillResetOverrides: () => call(botId, 'chatSkillResetOverrides'),
     chatSkillSetSelection: (selection) => call(botId, 'chatSkillSetSelection', selection),
     chatCommands: () => call(botId, 'chatCommands'),
+    chatCompact: () => call(botId, 'chatCompact'),
+    chatBackgroundCompactionRetry: () => call(botId, 'chatBackgroundCompactionRetry'),
     bot: {
       listSelections: window.api.fleetListSelections,
       updateSelection: (selection) => window.api.fleetUpdateBot(botId, { selection }),

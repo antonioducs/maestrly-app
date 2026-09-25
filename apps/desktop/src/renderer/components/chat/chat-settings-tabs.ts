@@ -18,4 +18,6 @@ export interface ChatSettingsOptions {
   requestedTab?: { tab: ChatSettingsTab; seq: number } | null
   /** A bot always runs its conversation with Maestrly tools, so their global default is shown locked on. */
   appToolsLocked?: boolean
+  /** The bot's own window displays the owner's saved preparation values without edit controls. */
+  backgroundCompactionLocked?: boolean
 }

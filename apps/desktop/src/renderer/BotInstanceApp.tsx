@@ -24,7 +24,7 @@ export function BotInstanceApp() {
         <SettingsView
           initialSection="chat"
           sections={BOT_INSTANCE_SETTINGS_SECTIONS}
-          chat={{ tabs: BOT_INSTANCE_CHAT_TABS, requestedTab, appToolsLocked: true }}
+          chat={{ tabs: BOT_INSTANCE_CHAT_TABS, requestedTab, appToolsLocked: true, backgroundCompactionLocked: true }}
           onClose={() => void window.api.fleetInstanceHideWindow()}
         />
       </main>

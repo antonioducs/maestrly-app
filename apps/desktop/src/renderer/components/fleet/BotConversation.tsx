@@ -99,6 +99,34 @@ function TranscriptRow({
         <span className="mt-1 block text-xs text-muted-foreground">{at}</span>
       </div>
     )
+  if (item.kind === 'compaction')
+    return (
+      <div className="my-1 flex min-w-0 max-w-full flex-col gap-2">
+        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+          <span className="h-px flex-1 bg-white/[0.1]" />
+          {t('transcript.compaction.heading')}
+          <span className="h-px flex-1 bg-white/[0.1]" />
+        </div>
+        <p className="text-center text-xs text-muted-foreground">{t(`transcript.compaction.${item.origin}`)}</p>
+        {item.origin === 'runtime' ? (
+          <p className="rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 text-xs text-muted-foreground">
+            {t('chat:messages.nativeContextCheckpoint')}
+          </p>
+        ) : item.summary ? (
+          <details className="rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
+              {t('chat:messages.previousContextSummary')}
+            </summary>
+            <div className="mt-2 text-sm text-muted-foreground">
+              <MarkdownViewer markdown={item.summary} />
+            </div>
+            {item.truncated && (
+              <p className="mt-2 text-xs text-muted-foreground">{t('transcript.compaction.truncated')}</p>
+            )}
+          </details>
+        ) : null}
+      </div>
+    )
   if (item.kind === 'tool')
     return (
       <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
@@ -238,7 +266,11 @@ export function BotConversation({
         <div className="mx-auto max-w-3xl">
           {locked && (
             <div className="flex items-center justify-between rounded-lg border border-border bg-surface-elevated p-3 text-sm text-muted-foreground">
-              <span>{t(`composer.${bot.status}`)}</span>
+              <span>
+                {bot.status === 'setup' && bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
+                  ? t('composer.setupCompaction')
+                  : t(`composer.${bot.status}`)}
+              </span>
               {bot.status === 'offline' && (
                 <button type="button" className="text-primary" onClick={() => void fleet.botAction(bot.id, 'start')}>
                   {t('action.start')}
@@ -255,19 +287,26 @@ export function BotConversation({
                   {t('action.resume')}
                 </button>
               )}
-              {bot.status === 'setup' && (
-                <span className="flex flex-wrap gap-2">
-                  <button type="button" className="text-primary" onClick={onOpenScreen}>
-                    {t('composer.connectAccount')}
-                  </button>
-                  <button type="button" className="text-primary" onClick={onOpenSettings}>
-                    {t('composer.addApiKeyInSettings')}
-                  </button>
-                </span>
-              )}
+              {bot.status === 'setup' &&
+                (bot.activity?.kind === 'setup' && bot.activity.need === 'compaction' ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    <button type="button" className="text-primary" onClick={onOpenSettings}>
+                      {t('composer.chooseCompactionModel')}
+                    </button>
+                  </span>
+                ) : (
+                  <span className="flex flex-wrap gap-2">
+                    <button type="button" className="text-primary" onClick={onOpenScreen}>
+                      {t('composer.connectAccount')}
+                    </button>
+                    <button type="button" className="text-primary" onClick={onOpenSettings}>
+                      {t('composer.addApiKeyInSettings')}
+                    </button>
+                  </span>
+                ))}
             </div>
           )}
-          <BotComposer bot={bot} fleet={fleet} onOpenScreen={onOpenScreen} />
+          <BotComposer bot={bot} fleet={fleet} onOpenScreen={onOpenScreen} onOpenSettings={onOpenSettings} />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">
               {error}

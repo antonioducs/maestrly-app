@@ -28,6 +28,8 @@ export default {
     help: 'Precisa de você · {{reason}}',
     queued: '{{count}} mensagens na fila',
     setup: 'Precisa de uma conta',
+    setupCompaction: 'Precisa de um modelo de compactação',
+    compacting: 'Compactando o contexto…',
     idle: 'Livre',
     lastTurn: '{{summary}}',
   },
@@ -57,6 +59,14 @@ export default {
     resumeBlocked: 'O controle da tela está em andamento. Devolva o controle antes de retomar.',
   },
   transcript: {
+    compaction: {
+      heading: 'Contexto compactado',
+      prepared: 'Resumo preparado em segundo plano',
+      immediate: 'Compactado na hora: o resumo preparado não estava pronto',
+      manual: 'Compactado a seu pedido',
+      runtime: 'Checkpoint nativo do modelo',
+      truncated: 'Resumo cortado para exibição.',
+    },
     imageUnavailable: 'Imagem não está mais disponível',
     imageLoadFailed: 'Não foi possível carregar a imagem',
     imageRetry: 'Tentar de novo',
@@ -106,6 +116,15 @@ export default {
     resolved: 'Resolvido',
   },
   composer: {
+    setupCompaction: 'Este bot precisa de um modelo de compactação. As mensagens vão esperar.',
+    chooseCompactionModel: 'Escolher modelo de compactação',
+    compactError: {
+      busy: 'Aguarde o turno ou a compactação atual terminar.',
+      'not-configured': 'Escolha um modelo de compactação em Ajustes.',
+      'too-short': 'A conversa ainda é curta demais para compactar.',
+      failed: 'Não foi possível compactar o contexto.',
+    },
+
     usageTooltip: 'Uso de contexto {{quality}}. O custo é uma estimativa.',
     measured: 'medido',
     estimated: 'estimado',
@@ -246,6 +265,24 @@ export default {
     },
   },
   botSettings: {
+    compaction: {
+      heading: 'Compactação',
+      description:
+        'Este modelo prepara resumos em segundo plano e também compacta na hora quando necessário. O modelo principal do bot nunca compacta. Cada resumo usa a cota do modelo escolhido.',
+      model: 'Modelo de compactação',
+      reasoning: 'Raciocínio',
+      default: 'Padrão',
+      fast: 'Fast',
+      interval: 'Preparar um resumo a cada (mil tokens)',
+      intervalInvalid: 'Informe um número inteiro de 10 a 1000.',
+      removedAccount: 'conta removida',
+      save: 'Salvar compactação',
+      problem: {
+        missing: 'Escolha um modelo para o bot começar.',
+        unavailable: 'O modelo salvo ({{model}}) não está disponível. Escolha outro.',
+        invalid: 'A configuração de compactação foi recusada pelo bot. Revise o modelo e as opções.',
+      },
+    },
     accounts: 'Contas de modelo',
     accountsNote: 'Cada bot tem suas próprias contas de modelo.',
     noAccounts: 'Nenhuma conta de modelo conectada ainda.',

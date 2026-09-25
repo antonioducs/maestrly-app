@@ -1379,7 +1379,12 @@ function AccountsSettingsPanel({
   )
 }
 
-export function ApiKeySettings({ tabs, requestedTab, appToolsLocked = false }: ChatSettingsOptions = {}) {
+export function ApiKeySettings({
+  tabs,
+  requestedTab,
+  appToolsLocked = false,
+  backgroundCompactionLocked = false,
+}: ChatSettingsOptions = {}) {
   const { t } = useTranslation('chat')
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const visibleTabs = tabs ? CHAT_SETTINGS_TABS.filter((tab) => tabs.includes(tab.id)) : CHAT_SETTINGS_TABS
@@ -1472,7 +1477,12 @@ export function ApiKeySettings({ tabs, requestedTab, appToolsLocked = false }: C
           {config.providers.some(isChatProviderConnected) && (
             <ImageInterpreterPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
           )}
-          <BackgroundCompactionSettings config={config} catalogRevision={modelFilterRevision} onChanged={refresh} />
+          <BackgroundCompactionSettings
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
           <SubagentProfilesSettings config={config} />
         </div>
       )}

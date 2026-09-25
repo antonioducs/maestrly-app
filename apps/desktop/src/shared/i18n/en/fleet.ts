@@ -28,6 +28,8 @@ export default {
     help: 'Needs you · {{reason}}',
     queued: '{{count}} messages queued',
     setup: 'Needs a model account',
+    setupCompaction: 'Needs a compaction model',
+    compacting: 'Compacting context…',
     idle: 'Available',
     lastTurn: '{{summary}}',
   },
@@ -57,6 +59,14 @@ export default {
     resumeBlocked: 'Screen control is in progress. Give control back before resuming.',
   },
   transcript: {
+    compaction: {
+      heading: 'Context compacted',
+      prepared: 'Summary prepared in the background',
+      immediate: 'Compacted on the spot: the prepared summary was not ready',
+      manual: 'Compacted at your request',
+      runtime: 'Model-native checkpoint',
+      truncated: 'Summary shortened for display.',
+    },
     imageUnavailable: 'Image no longer available',
     imageLoadFailed: "Couldn't load the image",
     imageRetry: 'Try again',
@@ -106,6 +116,15 @@ export default {
     resolved: 'Resolved',
   },
   composer: {
+    setupCompaction: 'This bot needs a compaction model. Messages will wait.',
+    chooseCompactionModel: 'Choose a compaction model',
+    compactError: {
+      busy: 'Wait for the current turn or compaction to finish.',
+      'not-configured': 'Choose a compaction model in Settings.',
+      'too-short': 'The conversation is too short to compact.',
+      failed: 'Could not compact context.',
+    },
+
     usageTooltip: '{{quality}} context usage. Cost is an estimate.',
     measured: 'Measured',
     estimated: 'Estimated',
@@ -246,6 +265,24 @@ export default {
     },
   },
   botSettings: {
+    compaction: {
+      heading: 'Compaction',
+      description:
+        'This model prepares summaries in the background and also compacts on the spot when needed. The bot’s main model never compacts. Each summary uses the chosen model’s quota.',
+      model: 'Compaction model',
+      reasoning: 'Reasoning',
+      default: 'Default',
+      fast: 'Fast',
+      interval: 'Prepare a summary every (thousand tokens)',
+      intervalInvalid: 'Enter a whole number from 10 to 1000.',
+      removedAccount: 'removed account',
+      save: 'Save compaction',
+      problem: {
+        missing: 'Choose a model before this bot can start.',
+        unavailable: 'The saved model ({{model}}) is unavailable. Choose another.',
+        invalid: 'The bot rejected this compaction setup. Review the model and options.',
+      },
+    },
     accounts: 'Model accounts',
     accountsNote: 'Each bot has its own model accounts.',
     noAccounts: 'No model accounts connected yet.',

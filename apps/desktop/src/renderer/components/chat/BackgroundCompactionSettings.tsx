@@ -33,10 +33,12 @@ export function BackgroundCompactionSettings({
   config,
   catalogRevision,
   onChanged,
+  locked = false,
 }: {
   config: ChatConfig
   catalogRevision: number
   onChanged: () => void
+  locked?: boolean
 }) {
   const { t } = useTranslation('chat')
   const persisted = savedConfig(config)
@@ -108,6 +110,32 @@ export function BackgroundCompactionSettings({
       setSaving(false)
     }
   }
+
+  if (locked)
+    return (
+      <section
+        data-background-compaction-settings
+        className="mt-1 flex flex-col gap-2 border-t border-border pt-3"
+        aria-labelledby="background-compaction-heading"
+      >
+        <h3 id="background-compaction-heading" className="text-[12px] font-medium text-foreground">
+          {t('settings.backgroundCompactionHeading')}
+        </h3>
+        <p className="text-[11px] text-muted-foreground">{t('settings.backgroundCompactionManagedByMac')}</p>
+        <p className="text-[11px] text-muted-foreground">
+          {t('settings.backgroundCompactionToggle')}:{' '}
+          {t(persisted.enabled ? 'settings.toggleOn' : 'settings.toggleOff')}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          {t('settings.backgroundCompactionModel')}:{' '}
+          {persisted.selection ? `${persisted.selection.providerId} · ${persisted.selection.modelId}` : '—'}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          {t('settings.backgroundCompactionInterval')}: {persisted.intervalTokens.toLocaleString()}{' '}
+          {t('settings.backgroundCompactionTokens')}
+        </p>
+      </section>
+    )
 
   return (
     <section

@@ -12,7 +12,10 @@ import { ChatContextMeterDisplay } from '@/components/chat/ChatContextMeter'
 import { ChatReasoningPicker } from '@/components/chat/ChatReasoningPicker'
 import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { ChatMicButton } from '@/components/chat/ChatMicButton'
+import { ContextCompactionStatus } from '@/components/chat/ContextCompactionStatus'
+import { BackgroundCompactionStatus } from '@/components/chat/BackgroundCompactionStatus'
 import { botChatComposerSource } from '@/components/chat/chat-composer-source'
+import { backgroundCompactionState, compactionProgress } from '@/lib/fleet/compaction'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { formatFleetUsage, selectionPatch, validateAttachments } from '@/lib/fleet/composer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -23,10 +26,12 @@ export function BotComposer({
   bot,
   fleet,
   onOpenScreen,
+  onOpenSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenScreen: () => void
+  onOpenSettings: () => void
 }) {
   const { t } = useTranslation('fleet')
   const [draft, setDraft] = useState('')
@@ -59,6 +64,7 @@ export function BotComposer({
       .chatCommands()
       .then((result) =>
         setCommands([
+          { name: 'compact', description: t('chat:view.cmdCompact'), kind: 'action', action: 'compact' },
           ...result.skills.map((skill) => ({
             name: skill.name,
             description: skill.description,
@@ -80,7 +86,7 @@ export function BotComposer({
         ])
       )
       .catch((cause) => setError(fleetErrorMessage(cause)))
-  }, [source])
+  }, [source, t])
   useEffect(() => {
     if (locked) return
     reloadCommands()
@@ -195,6 +201,18 @@ export function BotComposer({
       setBusy(false)
     }
   }
+  const compact = async () => {
+    setError(null)
+    try {
+      const result = await source.chatCompact()
+      if (!result.ok)
+        setError(
+          t(`composer.compactError.${result.error ?? 'failed'}`, { defaultValue: t('composer.compactError.failed') })
+        )
+    } catch (cause) {
+      setError(fleetErrorMessage(cause))
+    }
+  }
   const option = options.find((item) => item.providerId === current?.providerId && item.modelId === current.modelId)
   const usage = bot.usage && formatFleetUsage(bot.usage)
   const usagePct =
@@ -209,7 +227,13 @@ export function BotComposer({
         streaming={bot.status === 'working'}
         sendWhileStreaming
         disabled={locked || busy}
-        disabledPlaceholder={locked ? t(`composer.${bot.status}`) : undefined}
+        disabledPlaceholder={
+          locked
+            ? bot.status === 'setup' && bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
+              ? t('composer.setupCompaction')
+              : t(`composer.${bot.status}`)
+            : undefined
+        }
         placeholder={t('composer.placeholder', { name: bot.name })}
         onSend={({ text }) => void send(text)}
         onStop={() =>
@@ -219,11 +243,17 @@ export function BotComposer({
         onAddFiles={addFiles}
         onRemoveAttachment={removeAttachment}
         commands={commands}
-        onPickCommand={(command) =>
-          setDraft(
-            command.kind === 'skill' ? `/${command.name} ` : (command.content ?? '').replace(/\$ARGUMENTS/g, '').trim()
-          )
-        }
+        onPickCommand={(command) => {
+          if (command.kind === 'action' && command.action === 'compact') {
+            setDraft('')
+            void compact()
+          } else
+            setDraft(
+              command.kind === 'skill'
+                ? `/${command.name} `
+                : (command.content ?? '').replace(/\$ARGUMENTS/g, '').trim()
+            )
+        }}
         micSlot={
           <ChatMicButton
             onTranscribed={(text) => setDraft((previous) => (previous.trim() ? `${previous.trimEnd()} ${text}` : text))}
@@ -282,6 +312,13 @@ export function BotComposer({
           <>
             <ChatPermModePicker conversationId={bot.id} source={source} />
             <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
+              <ContextCompactionStatus progress={compactionProgress(bot.compactionState?.progress)} />
+              <BackgroundCompactionStatus
+                conversationId={bot.id}
+                state={backgroundCompactionState(bot.compactionState?.background)}
+                onRetry={() => source.chatBackgroundCompactionRetry()}
+                onOpenSettings={onOpenSettings}
+              />
               {usage && (
                 <ChatContextMeterDisplay
                   text={usage}

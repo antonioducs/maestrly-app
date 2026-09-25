@@ -14,6 +14,8 @@ export function activityLabel(
 ): { key: string; values?: Record<string, string | number> } {
   if (activity) {
     switch (activity.kind) {
+      case 'setup':
+        return { key: activity.need === 'compaction' ? 'activity.setupCompaction' : 'activity.setup' }
       case 'tool':
         return { key: 'activity.tool', values: { tool: activity.tool, target: activity.target ?? '' } }
       case 'permission':

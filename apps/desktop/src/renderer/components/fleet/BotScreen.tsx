@@ -288,20 +288,24 @@ export function BotScreen({
             {t('screen.phase.offline')}
           </div>
         )}
-        {!shaded && bot.status === 'setup' && !takeoverBlocksResume(takeover) && (
-          <div className="absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
-            <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
-            <p className="mt-2 text-sm text-muted-foreground">{t('screen.accountDescription', { name: bot.name })}</p>
-            <Button className="mt-4" disabled={busy} onClick={() => void take(true)}>
-              {t('screen.useScreen')}
-            </Button>
-            <p className="mt-2 text-xs text-muted-foreground">
-              <button type="button" className="text-primary underline" onClick={onOpenSettings}>
-                {t('screen.addApiKeyInSettings')}
-              </button>
-            </p>
-          </div>
-        )}
+        {!shaded &&
+          bot.status === 'setup' &&
+          bot.activity?.kind === 'setup' &&
+          bot.activity.need === 'account' &&
+          !takeoverBlocksResume(takeover) && (
+            <div className="absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
+              <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
+              <p className="mt-2 text-sm text-muted-foreground">{t('screen.accountDescription', { name: bot.name })}</p>
+              <Button className="mt-4" disabled={busy} onClick={() => void take(true)}>
+                {t('screen.useScreen')}
+              </Button>
+              <p className="mt-2 text-xs text-muted-foreground">
+                <button type="button" className="text-primary underline" onClick={onOpenSettings}>
+                  {t('screen.addApiKeyInSettings')}
+                </button>
+              </p>
+            </div>
+          )}
         {!shaded && phase !== 'live' && (
           <div
             role="status"

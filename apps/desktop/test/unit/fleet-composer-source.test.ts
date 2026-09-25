@@ -19,6 +19,8 @@ describe('chat composer data sources', () => {
       chatSkillResetOverrides: vi.fn().mockResolvedValue({ ok: true }),
       chatSkillSetSelection: vi.fn().mockResolvedValue({ ok: true }),
       chatCommands: vi.fn().mockResolvedValue({}),
+      chatCompact: vi.fn().mockResolvedValue({ ok: true }),
+      chatRetryBackgroundCompaction: vi.fn().mockResolvedValue({ ok: true }),
     }
     vi.stubGlobal('window', { api })
     const source = localChatComposerSource('conversation-1')
@@ -33,6 +35,8 @@ describe('chat composer data sources', () => {
     await source.chatSkillResetOverrides()
     await source.chatSkillSetSelection({ kind: 'none' })
     await source.chatCommands()
+    await source.chatCompact()
+    await source.chatBackgroundCompactionRetry()
     expect(api.chatConfig).toHaveBeenCalledWith()
     expect(api.chatGetConvTools).toHaveBeenCalledWith('conversation-1')
     expect(api.chatSetConvTools).toHaveBeenCalledWith('conversation-1', { mcpDisabled: ['mcp'] })
@@ -44,6 +48,8 @@ describe('chat composer data sources', () => {
     expect(api.chatSkillResetOverrides).toHaveBeenCalledWith('conversation-1')
     expect(api.chatSkillSetSelection).toHaveBeenCalledWith('conversation-1', { kind: 'none' })
     expect(api.chatCommands).toHaveBeenCalledWith('conversation-1')
+    expect(api.chatCompact).toHaveBeenCalledWith('conversation-1')
+    expect(api.chatRetryBackgroundCompaction).toHaveBeenCalledWith('conversation-1')
     vi.unstubAllGlobals()
   })
 
@@ -68,6 +74,8 @@ describe('chat composer data sources', () => {
     await source.chatSkillResetOverrides()
     await source.chatSkillSetSelection({ kind: 'all' })
     await source.chatCommands()
+    await source.chatCompact()
+    await source.chatBackgroundCompactionRetry()
     expect(api.fleetConversationCall.mock.calls).toEqual([
       ['bot-1', 'chatConfig'],
       ['bot-1', 'chatGetConvTools'],
@@ -80,6 +88,8 @@ describe('chat composer data sources', () => {
       ['bot-1', 'chatSkillResetOverrides'],
       ['bot-1', 'chatSkillSetSelection', { kind: 'all' }],
       ['bot-1', 'chatCommands'],
+      ['bot-1', 'chatCompact'],
+      ['bot-1', 'chatBackgroundCompactionRetry'],
     ])
     vi.unstubAllGlobals()
   })

@@ -119,7 +119,26 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     createdAt: now(),
     updatedAt: now(),
   }
-  const bots: FleetBot[] = [fleetBotSchema.parse({ ...base, id: 'scout', name: 'Scout' })]
+  const bots: FleetBot[] = [
+    fleetBotSchema.parse({
+      ...base,
+      id: 'scout',
+      name: 'Scout',
+      compaction: {
+        providerId: 'prov_e2e',
+        modelId: 'model-e2e',
+        reasoning: null,
+        fastMode: false,
+        intervalTokens: 100_000,
+      },
+      compactionState: {
+        configured: true,
+        problem: null,
+        background: { status: 'ready', error: null },
+        progress: null,
+      },
+    }),
+  ]
   // Archived bots: the listed summary and the record a restore brings back. Legacy's files were removed by hand.
   const archived = new Map<string, { summary: FleetArchivedBot; record: FleetBot }>([
     [
@@ -192,6 +211,14 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       { id: 'shot-gone', mediaType: 'image/png', byteSize: png.length, name: 'Evicted' },
       { id: 'shot-flaky', mediaType: 'image/png', byteSize: png.length, name: 'Flaky' },
     ],
+  })
+  transcript.push({
+    id: 'compaction-1',
+    at: now(),
+    kind: 'compaction',
+    origin: 'prepared',
+    summary: 'E2E-SUMMARY **saved context**',
+    truncated: false,
   })
   let flakyImageFailures = 1
   const imageReads: string[] = []
@@ -480,6 +507,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
                   : [{ name: 'order-check', description: 'Check orders', source: 'fixture' }],
             }
             break
+          case 'chatCompact':
+            result = { ok: true }
+            break
+          case 'chatBackgroundCompactionRetry':
+            result = { ok: true }
+            break
         }
         value = { result }
         break
@@ -728,6 +761,10 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('heading', { name: 'Scout' })).toBeVisible()
     await expect(page.getByText('Scout quer rodar um comando')).toBeVisible()
     await expect(page.getByText('ls -la')).toBeVisible()
+    await expect(page.getByText('Resumo preparado em segundo plano')).toBeVisible()
+    await page.getByText('Resumo do contexto anterior').click()
+    await expect(page.getByText('E2E-SUMMARY')).toBeVisible()
+    await expect(page.locator('[data-background-compaction-status="ready"]')).toBeVisible()
     await expect(page.getByText('~22.6k/828.4k 2.7% · ~$0.120')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Abrir Screenshot' })).toBeVisible()
     await expect.poll(() => [...imageReads].sort()).toEqual(['shot-1', 'shot-flaky', 'shot-gone'])
@@ -770,6 +807,61 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('button', { name: 'Abrir Flaky' })).toBeVisible()
     await expect(gone).toBeVisible()
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
+    const setupScout = fleetBotSchema.parse({
+      ...bots[0],
+      compaction: null,
+      status: 'setup',
+      activity: { kind: 'setup', need: 'compaction' },
+      compactionState: {
+        configured: false,
+        problem: 'missing',
+        background: { status: 'idle', error: null },
+        progress: null,
+      },
+    })
+    bots[0] = setupScout
+    emit({ type: 'bot.updated', at: now(), bot: setupScout })
+    await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toBeVisible()
+    await page.getByRole('tab', { name: 'Tela' }).click()
+    await expect(page.getByRole('heading', { name: 'Conectar uma conta' })).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Conversa' }).click()
+    await page.getByRole('button', { name: 'Escolher modelo de compactação' }).click()
+    await expect(page.getByRole('heading', { name: 'Compactação' })).toBeVisible()
+    await page.getByRole('button', { name: 'Modelo de compactação', exact: true }).click()
+    await page.getByRole('option', { name: 'Fake · Model' }).click()
+    await page.getByLabel('Preparar um resumo a cada (mil tokens)').fill('100')
+    await page.getByRole('button', { name: 'Salvar compactação' }).click()
+    await expect
+      .poll(
+        () =>
+          (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { compaction?: { modelId?: string } })
+            ?.compaction?.modelId
+      )
+      .toBe('model-e2e')
+    const configuredScout = fleetBotSchema.parse({
+      ...bots[0],
+      status: 'waiting',
+      activity: { kind: 'permission', title: 'Run ls' },
+      compactionState: {
+        configured: true,
+        problem: null,
+        background: { status: 'ready', error: null },
+        progress: null,
+      },
+    })
+    bots[0] = configuredScout
+    emit({ type: 'bot.updated', at: now(), bot: configuredScout })
+    await page.getByRole('tab', { name: 'Conversa' }).click()
+    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('/compact')
+    await page.getByRole('button', { name: /^\/compact / }).click()
+    await expect
+      .poll(
+        () =>
+          requests.filter(
+            (item) => item.key === 'botConversationCall' && (item.body as { op: string }).op === 'chatCompact'
+          ).length
+      )
+      .toBe(1)
     await page.getByTitle('Adicionar').click()
     await expect(page.getByText('Fixture MCP')).toBeVisible()
     await page.getByRole('switch', { name: 'Fixture MCP' }).click()
