@@ -34,6 +34,8 @@ import { useFleet } from '@/lib/fleet/use-fleet'
 import { BotView } from '@/components/fleet/BotView'
 import { ServerView } from '@/components/fleet/ServerView'
 import { InboxView } from '@/components/fleet/InboxView'
+import { OwnerMemoryView } from '@/components/fleet/OwnerMemoryView'
+import { FleetOwnerMemoryNavigation } from '@/components/fleet/FleetSidebarPanel'
 import { CreateBotDialog } from '@/components/fleet/CreateBotDialog'
 import { FleetDigestBanner } from '@/components/fleet/FleetDigestBanner'
 import { useAgentStatuses } from '@/lib/use-agent-statuses'
@@ -578,82 +580,84 @@ export function DesktopApp() {
         <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
           <div className="relative flex h-full bg-background text-foreground">
             {sidebarOpen && (
-              <Sidebar
-                workspaces={workspaces}
-                standaloneConversations={standaloneConversations}
-                standaloneArchivedCount={standaloneArchivedCount}
-                onNewChat={handleNewChat}
-                creatingChat={creatingChat}
-                onReorderStandaloneConversations={handleReorderStandaloneConversations}
-                statuses={statuses}
-                attention={attention}
-                activeId={active?.id ?? null}
-                selectedConversation={active}
-                requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
-                fleet={fleet}
-                selectedFleet={fleetView?.kind === 'bot' ? fleetView.botId : (fleetView?.kind ?? null)}
-                onOpenFleetBot={openFleetBot}
-                onOpenFleetServer={() => openFleetView({ kind: 'server' })}
-                onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
-                botServerConnected={fleet.state.connection.state === 'connected'}
-                botPendingCount={fleet.state.snapshot.inbox.length}
-                onCreateBot={() => {
-                  setCreateBot(true)
-                  setFleetTabRequest((value) => value + 1)
-                }}
-                onOpenBotSettings={() => openSettings('fleet')}
-                focusedWorkspaceId={focusedWorkspaceId}
-                pendingPlanIds={pendingPlanIds}
-                showArchived={showArchived}
-                onToggleArchived={() => setShowArchived((v) => !v)}
-                onSelect={handleSidebarConversationSelect}
-                onAddWorkspace={() => void requestProject()}
-                onRemoveWorkspace={handleRemoveWorkspace}
-                onNewConversation={(wsId) => setDialogWs(wsId)}
-                onOpenProjectNotes={(wsId) => {
-                  setProjectNotesWs(wsId)
-                  nav.setFleetView(null)
-                  setCreateBot(false)
-                  setProjectMemoryWs(null)
-                  setSettingsOpen(false)
-                  setOnboardingOpen(false)
-                }}
-                onOpenProjectMemory={(wsId) => {
-                  setProjectMemoryWs(wsId)
-                  nav.setFleetView(null)
-                  setCreateBot(false)
-                  setProjectNotesWs(null)
-                  setSettingsOpen(false)
-                  setOnboardingOpen(false)
-                }}
-                onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
-                onOpenAbout={() => setAboutOpen(true)}
-                onRenameConversation={handleRename}
-                onArchiveConversation={handleArchive}
-                onPinConversation={handlePinConversation}
-                onDeleteConversation={handleDelete}
-                onMigrateConversation={migration.openMigration}
-                onNewSiblingConversation={handleNewSiblingConversation}
-                onArchiveSiblings={handleArchiveSiblings}
-                onDeleteSiblings={handleDeleteSiblings}
-                onReorderWorkspaces={handleReorderWorkspaces}
-                onReorderConversations={handleReorderConversations}
-                groups={groups}
-                onCreateGroup={handleCreateGroup}
-                onRenameGroup={handleRenameGroup}
-                onDeleteGroup={handleDeleteGroup}
-                onReorderGroups={handleReorderGroups}
-                onToggleGroupCollapsed={handleToggleGroupCollapsed}
-                onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
-                onToggleWorkspaceCollapsed={handleToggleWorkspaceCollapsed}
-                onCollapseSidebar={() => setSidebarOpen(false)}
-                openTargets={openTargets}
-                onOpenExternal={(scope, id, target) =>
-                  void window.api.openExternal(scope, id, target).then((r) => {
-                    if (!r.ok) console.error('[open-external]', target, r.error)
-                  })
-                }
-              />
+              <FleetOwnerMemoryNavigation.Provider value={() => openFleetView({ kind: 'memory' })}>
+                <Sidebar
+                  workspaces={workspaces}
+                  standaloneConversations={standaloneConversations}
+                  standaloneArchivedCount={standaloneArchivedCount}
+                  onNewChat={handleNewChat}
+                  creatingChat={creatingChat}
+                  onReorderStandaloneConversations={handleReorderStandaloneConversations}
+                  statuses={statuses}
+                  attention={attention}
+                  activeId={active?.id ?? null}
+                  selectedConversation={active}
+                  requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
+                  fleet={fleet}
+                  selectedFleet={fleetView?.kind === 'bot' ? fleetView.botId : (fleetView?.kind ?? null)}
+                  onOpenFleetBot={openFleetBot}
+                  onOpenFleetServer={() => openFleetView({ kind: 'server' })}
+                  onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
+                  botServerConnected={fleet.state.connection.state === 'connected'}
+                  botPendingCount={fleet.state.snapshot.inbox.length}
+                  onCreateBot={() => {
+                    setCreateBot(true)
+                    setFleetTabRequest((value) => value + 1)
+                  }}
+                  onOpenBotSettings={() => openSettings('fleet')}
+                  focusedWorkspaceId={focusedWorkspaceId}
+                  pendingPlanIds={pendingPlanIds}
+                  showArchived={showArchived}
+                  onToggleArchived={() => setShowArchived((v) => !v)}
+                  onSelect={handleSidebarConversationSelect}
+                  onAddWorkspace={() => void requestProject()}
+                  onRemoveWorkspace={handleRemoveWorkspace}
+                  onNewConversation={(wsId) => setDialogWs(wsId)}
+                  onOpenProjectNotes={(wsId) => {
+                    setProjectNotesWs(wsId)
+                    nav.setFleetView(null)
+                    setCreateBot(false)
+                    setProjectMemoryWs(null)
+                    setSettingsOpen(false)
+                    setOnboardingOpen(false)
+                  }}
+                  onOpenProjectMemory={(wsId) => {
+                    setProjectMemoryWs(wsId)
+                    nav.setFleetView(null)
+                    setCreateBot(false)
+                    setProjectNotesWs(null)
+                    setSettingsOpen(false)
+                    setOnboardingOpen(false)
+                  }}
+                  onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
+                  onOpenAbout={() => setAboutOpen(true)}
+                  onRenameConversation={handleRename}
+                  onArchiveConversation={handleArchive}
+                  onPinConversation={handlePinConversation}
+                  onDeleteConversation={handleDelete}
+                  onMigrateConversation={migration.openMigration}
+                  onNewSiblingConversation={handleNewSiblingConversation}
+                  onArchiveSiblings={handleArchiveSiblings}
+                  onDeleteSiblings={handleDeleteSiblings}
+                  onReorderWorkspaces={handleReorderWorkspaces}
+                  onReorderConversations={handleReorderConversations}
+                  groups={groups}
+                  onCreateGroup={handleCreateGroup}
+                  onRenameGroup={handleRenameGroup}
+                  onDeleteGroup={handleDeleteGroup}
+                  onReorderGroups={handleReorderGroups}
+                  onToggleGroupCollapsed={handleToggleGroupCollapsed}
+                  onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
+                  onToggleWorkspaceCollapsed={handleToggleWorkspaceCollapsed}
+                  onCollapseSidebar={() => setSidebarOpen(false)}
+                  openTargets={openTargets}
+                  onOpenExternal={(scope, id, target) =>
+                    void window.api.openExternal(scope, id, target).then((r) => {
+                      if (!r.ok) console.error('[open-external]', target, r.error)
+                    })
+                  }
+                />
+              </FleetOwnerMemoryNavigation.Provider>
             )}
 
             <main
@@ -704,6 +708,7 @@ export function DesktopApp() {
               )}
               {fleetView?.kind === 'server' && <ServerView fleet={fleet} onOpenBot={openFleetBot} />}
               {fleetView?.kind === 'inbox' && <InboxView fleet={fleet} onOpenBot={openFleetBot} />}
+              {fleetView?.kind === 'memory' && <OwnerMemoryView fleet={fleet} onOpenBot={openFleetBot} />}
               <CreateBotDialog
                 open={createBot}
                 onClose={() => setCreateBot(false)}

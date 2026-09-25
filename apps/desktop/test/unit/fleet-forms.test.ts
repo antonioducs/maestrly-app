@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { FleetActivityEntry, FleetRoutine } from '@maestrly/bot-fleet-protocol'
+import en from '../../src/shared/i18n/en/fleet'
+import pt from '../../src/shared/i18n/pt-BR/fleet'
+import { fleetActivityKindSchema, type FleetActivityEntry, type FleetRoutine } from '@maestrly/bot-fleet-protocol'
 import {
   digestKey,
   formatDuration,
@@ -118,24 +120,11 @@ describe('fleet forms', () => {
     expect(nextRadioIndex(1, 'Escape', 3)).toBeNull()
   })
   it('maps all activity kinds to localized digest keys', () => {
-    const kinds: FleetActivityEntry['kind'][] = [
-      'bot_created',
-      'bot_started',
-      'bot_stopped',
-      'bot_restarted',
-      'bot_failed',
-      'bot_archived',
-      'turn_completed',
-      'turn_failed',
-      'needs_you',
-      'routine_ran',
-      'routine_skipped',
-      'peer_message',
-      'takeover_started',
-      'takeover_ended',
-      'paused',
-      'resumed',
-    ]
+    const kinds = fleetActivityKindSchema.options
+    for (const kind of kinds) {
+      expect(en.digest.kind).toHaveProperty(kind)
+      expect(pt.digest.kind).toHaveProperty(kind)
+    }
     expect(kinds.map((kind) => digestKey({ kind } as FleetActivityEntry))).toEqual(
       kinds.map((kind) => `digest.kind.${kind}`)
     )

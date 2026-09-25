@@ -36,6 +36,8 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotFields, type BotFieldsValue } from './BotFields'
 import { ChoiceMark } from './ChoiceMark'
+import { RoutineRunHistory } from './RoutineRunHistory'
+import { BotMemorySection } from './BotMemorySection'
 
 const timezones = Intl.supportedValuesOf('timeZone').map((id) => ({ id, label: id.replaceAll('_', ' ') }))
 const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -78,6 +80,8 @@ export function BotSettings({
   const [compactionBusy, setCompactionBusy] = useState(false)
   const [compactionSaved, setCompactionSaved] = useState(false)
   const [compactionError, setCompactionError] = useState('')
+  const [historyOpen, setHistoryOpen] = useState<Record<string, boolean>>({})
+  const latestBotActivitySeq = fleet.state.activity.findLast((entry) => entry.botId === bot.id)?.seq ?? 0
   const [routines, setRoutines] = useState<FleetRoutine[]>([])
   const [routine, setRoutine] = useState<RoutineForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -648,11 +652,23 @@ export function BotSettings({
                 <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: 'delete', id: item.id })}>
                   {t('botSettings.delete')}
                 </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-expanded={!!historyOpen[item.id]}
+                  onClick={() => setHistoryOpen((value) => ({ ...value, [item.id]: !value[item.id] }))}
+                >
+                  {t(historyOpen[item.id] ? 'routineRuns.hide' : 'routineRuns.history')}
+                </Button>
+                {historyOpen[item.id] && (
+                  <RoutineRunHistory botId={bot.id} routineId={item.id} refreshKey={latestBotActivitySeq} />
+                )}
               </div>
             ))}
             {!routines.length && <p className="text-xs text-muted-foreground">{t('botSettings.noRoutines')}</p>}
           </div>
         </section>
+        <BotMemorySection key={bot.id} bot={bot} />
         <section>
           <h2 className="font-semibold">{t('botSettings.where')}</h2>
           <p className="mt-2 rounded-lg border border-border p-4 text-sm">

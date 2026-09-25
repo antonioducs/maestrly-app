@@ -4,6 +4,16 @@ import { describe, expect, it } from 'vitest'
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
 
 describe('fleet renderer wiring', () => {
+  it('routes owner memory from the fleet sidebar to the main view', () => {
+    expect(source('lib/use-main-panels.ts')).toContain("{ kind: 'memory' }")
+    expect(source('DesktopApp.tsx')).toContain("fleetView?.kind === 'memory'")
+    expect(source('DesktopApp.tsx')).toContain('<OwnerMemoryView')
+    const sidebar = source('components/fleet/FleetSidebarPanel.tsx')
+    expect(sidebar).toContain('onOpenOwnerMemory')
+    expect(sidebar).toContain("selected === 'memory'")
+    expect(sidebar).toContain("t('sidebar.ownerMemory')")
+  })
+
   it('routes fleet views through the main override and clears them for local conversations', () => {
     const panels = source('lib/use-main-panels.ts')
     expect(panels).toContain("(fleetView ? 'fleet' : null)")

@@ -15,6 +15,7 @@ export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
   | { kind: 'server' }
   | { kind: 'inbox' }
+  | { kind: 'memory' }
 
 type UseMainPanelsParams = {
   workspaces: WorkspaceWithConversations[]

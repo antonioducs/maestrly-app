@@ -13,6 +13,10 @@ import {
   fleetHostInfoSchema,
   fleetPendingInteractionSchema,
   fleetRoutineSchema,
+  fleetOwnerMemorySchema,
+  fleetOwnerMemoryEntrySchema,
+  fleetBotMemorySchema,
+  fleetRoutineRunSchema,
   fleetSendMessageRequestSchema,
   fleetConversationCallRequestSchema,
   type FleetArchivedBot,
@@ -238,6 +242,69 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       updatedAt: now(),
     }),
   ]
+
+  const ownerMemory = fleetOwnerMemorySchema.parse({
+    revision: 1,
+    activeChars: 22,
+    entries: [
+      {
+        id: 'owner-seed',
+        content: 'Prefers morning updates.',
+        status: 'active',
+        author: { kind: 'bot', botId: 'scout', name: 'Scout' },
+        origin: 'owner',
+        replacesId: null,
+        replacedById: null,
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    ],
+  })
+  const routineRuns = [
+    fleetRoutineRunSchema.parse({
+      id: 'run-1',
+      routineId: 'scout-routine',
+      botId: 'scout',
+      trigger: 'schedule',
+      status: 'completed',
+      deliveredAt: now(),
+      finishedAt: now(),
+      report: { summary: 'Checked 3 stores', pending: 'One store unavailable', notes: 'Retry Magalu first' },
+      finalText: 'Found three offers.',
+    }),
+  ]
+  const botMemories = [
+    fleetBotMemorySchema.parse({
+      id: 'm1',
+      title: 'Portal login',
+      content: 'Use the owner portal to check orders.',
+      truncated: false,
+      type: 'procedure',
+      status: 'active',
+      pinned: false,
+      source: 'auto',
+      useCount: 2,
+      createdAt: now(),
+      updatedAt: now(),
+    }),
+  ]
+  routines.push(
+    fleetRoutineSchema.parse({
+      ...routines[0],
+      id: 'scout-routine',
+      botId: 'scout',
+      title: 'Scout check',
+    })
+  )
+  transcript.push({
+    id: 'recalled-user',
+    at: now(),
+    kind: 'user',
+    text: 'Check the portal',
+    source: 'owner',
+    queued: false,
+    memories: [{ id: 'm1', title: 'Portal login' }],
+  })
   let currentSelection: FleetSelection = {
     providerId: 'prov_e2e',
     modelId: 'model-e2e',
@@ -250,6 +317,15 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   let subagentsEnabled = true
   let subagentProfilesEnabled = true
   let takeoverConflicts = 1
+  const memoryActivity = {
+    seq: 2,
+    at: now(),
+    botId: 'scout',
+    kind: 'owner_memory_saved',
+    summary: 'Prefers weekly summaries.',
+    data: {},
+  }
+  let memoryActivityReady = false
   const rendererPayloads: string[] = []
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
@@ -309,6 +385,70 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     const bot = bots.find((item) => item.id === id)
     let value: unknown
     switch (key) {
+      case 'ownerMemoryList':
+        ownerMemory.activeChars = ownerMemory.entries
+          .filter((entry) => entry.status === 'active')
+          .reduce((sum, entry) => sum + entry.content.length, 0)
+        value = {
+          ...ownerMemory,
+          entries: ownerMemory.entries.filter(
+            (entry) => url.searchParams.get('status') !== 'active' || entry.status === 'active'
+          ),
+        }
+        break
+      case 'ownerMemoryCreate': {
+        const input = body as { content: string }
+        const entry = fleetOwnerMemoryEntrySchema.parse({
+          ...ownerMemory.entries[0],
+          id: randomUUID(),
+          content: input.content,
+          author: { kind: 'owner' },
+          origin: null,
+          replacesId: null,
+          replacedById: null,
+          createdAt: now(),
+          updatedAt: now(),
+        })
+        ownerMemory.entries.push(entry)
+        value = entry
+        break
+      }
+      case 'ownerMemoryPatch': {
+        const index = ownerMemory.entries.findIndex((entry) => entry.id === url.pathname.split('/').at(-1))
+        ownerMemory.entries[index] = fleetOwnerMemoryEntrySchema.parse({
+          ...ownerMemory.entries[index],
+          ...(body as object),
+        })
+        value = ownerMemory.entries[index]
+        break
+      }
+      case 'ownerMemoryDelete':
+        ownerMemory.entries = ownerMemory.entries.filter((entry) => entry.id !== url.pathname.split('/').at(-1))
+        break
+      case 'botRoutineRuns':
+        value = {
+          runs: routineRuns.filter((run) => run.botId === id && run.routineId === url.pathname.split('/').at(-2)),
+        }
+        break
+      case 'botMemoriesList':
+        value = {
+          memories:
+            id === 'scout'
+              ? botMemories.filter((memory) => url.searchParams.get('status') === 'all' || memory.status === 'active')
+              : [],
+        }
+        break
+      case 'botMemoryPatch': {
+        const index = botMemories.findIndex((memory) => memory.id === url.pathname.split('/').at(-1))
+        botMemories[index] = fleetBotMemorySchema.parse({ ...botMemories[index], ...(body as object) })
+        value = botMemories[index]
+        break
+      }
+      case 'botMemoryDelete': {
+        const index = botMemories.findIndex((memory) => memory.id === url.pathname.split('/').at(-1))
+        botMemories.splice(index, 1)
+        break
+      }
       case 'meta':
         value = {
           protocol: 1,
@@ -637,7 +777,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         value = { messages: [] }
         break
       case 'activity':
-        value = { entries: [], lastSeq: 0 }
+        value = { entries: memoryActivityReady ? [memoryActivity] : [], lastSeq: memoryActivityReady ? 2 : 0 }
         break
       case 'botTakeover': {
         if (takeoverConflicts-- > 0) {
@@ -757,6 +897,43 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
     await page.getByRole('tab', { name: 'Bots' }).click()
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Memória sobre você' })).toBeVisible()
+    await expect(page.getByText('Prefers morning updates.')).toBeVisible()
+    await page.getByRole('textbox', { name: 'Adicionar' }).fill('Prefiro respostas curtas.')
+    await page.getByRole('button', { name: 'Adicionar', exact: true }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'ownerMemoryCreate').at(-1)?.body)
+      .toMatchObject({
+        content: 'Prefiro respostas curtas.',
+        idempotencyKey: expect.any(String),
+      })
+    const addedMemory = page.getByRole('listitem').filter({ hasText: 'Prefiro respostas curtas.' })
+    await addedMemory.getByRole('button', { name: 'Editar', exact: true }).click()
+    await addedMemory.getByRole('textbox', { name: 'Editar' }).fill('Prefiro respostas curtas e diretas.')
+    await page
+      .getByRole('listitem')
+      .filter({ has: page.getByRole('textbox', { name: 'Editar' }) })
+      .getByRole('button', { name: 'Salvar', exact: true })
+      .click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'ownerMemoryPatch').at(-1)?.body)
+      .toEqual({ content: 'Prefiro respostas curtas e diretas.' })
+    const editedMemory = page.getByRole('listitem').filter({ hasText: 'Prefiro respostas curtas e diretas.' })
+    await editedMemory.getByRole('button', { name: 'Remover', exact: true }).click()
+    await expect(editedMemory).toHaveCount(0)
+    await page.getByRole('button', { name: 'Mostrar removidos e substituídos (1)' }).click()
+    await expect(editedMemory.getByRole('button', { name: 'Restaurar' })).toBeVisible()
+    ownerMemory.entries.push(
+      fleetOwnerMemoryEntrySchema.parse({
+        ...ownerMemory.entries[0],
+        id: 'live-memory',
+        content: 'Prefers weekly summaries.',
+      })
+    )
+    ownerMemory.revision = 7
+    emit({ type: 'owner_memory.updated', revision: 7, at: now() })
+    await expect(page.getByText('Prefers weekly summaries.')).toBeVisible()
     await page.getByRole('button', { name: /Scout/ }).first().click()
     await expect(page.getByRole('heading', { name: 'Scout' })).toBeVisible()
     await expect(page.getByText('Scout quer rodar um comando')).toBeVisible()
@@ -807,6 +984,29 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('button', { name: 'Abrir Flaky' })).toBeVisible()
     await expect(gone).toBeVisible()
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
+    await expect(page.getByText('Lembrou: Portal login')).toBeVisible()
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const scoutRoutine = page.getByText('Scout check', { exact: true }).locator('../../..')
+    await scoutRoutine.getByRole('button', { name: 'Histórico', exact: true }).click()
+    await expect(page.getByText('Concluída', { exact: true })).toBeVisible()
+    await expect(page.getByText('Fez: Checked 3 stores', { exact: true })).toBeVisible()
+    await expect(page.getByText('Notas para a próxima: Retry Magalu first', { exact: true })).toBeVisible()
+    await page.getByText('Resposta final', { exact: true }).click()
+    await expect(page.getByText('Found three offers.')).toBeVisible()
+    const botMemory = page.getByRole('region', { name: 'Memória do bot', exact: true })
+    await expect(botMemory.getByText('Portal login', { exact: true })).toBeVisible()
+    await expect(botMemory.getByText('Automática', { exact: true })).toBeVisible()
+    await botMemory.getByRole('button', { name: 'Fixar', exact: true }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botMemoryPatch').at(-1)?.body)
+      .toEqual({ pinned: true })
+    await expect(botMemory.getByRole('button', { name: 'Desafixar', exact: true })).toBeVisible()
+    memoryActivityReady = true
+    emit({ type: 'activity', at: now(), entry: memoryActivity })
+    await page.evaluate(() => window.api.fleetRefresh())
+    await expect(page.getByText('Aprendeu sobre você · Prefers weekly summaries.', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Dispensar', exact: true }).click()
+    await page.getByRole('tab', { name: 'Conversa' }).click()
     const setupScout = fleetBotSchema.parse({
       ...bots[0],
       compaction: null,

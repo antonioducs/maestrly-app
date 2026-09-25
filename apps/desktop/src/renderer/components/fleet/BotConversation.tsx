@@ -44,6 +44,11 @@ function TranscriptRow({
             · {at}
           </div>
           {item.text}
+          {item.memories.length > 0 && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })}
+            </p>
+          )}
           {item.peer && fleet.state.snapshot.bots.some((peer) => peer.id === item.peer?.botId) && (
             <button
               type="button"
@@ -66,6 +71,11 @@ function TranscriptRow({
           </span>
         )}
         <p className="whitespace-pre-wrap">{item.text}</p>
+        {item.memories.length > 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })}
+          </p>
+        )}
         <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
         <span className="mt-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
           {at}
