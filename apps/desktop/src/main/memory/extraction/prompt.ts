@@ -5,6 +5,9 @@ export const EXTRACTION_LIMITS = {
   debounceMs: 180_000,
   maxWaitMs: 1_800_000,
   minChars: 1_200,
+  pageSize: 200,
+  initialLookbackChars: 96_000,
+  ownerRetryMs: 2_000,
   chunkChars: 48_000,
   maxChunks: 6,
   maxOps: 8,
@@ -44,16 +47,16 @@ export interface ExtractionOutput {
   owner: ExtractionOwnerItem[]
 }
 
-export function parseExtractionOutput(text: string): ExtractionOutput {
+export function parseExtractionOutput(text: string): ExtractionOutput | null {
   const unfenced = text.replace(/```(?:json)?/gi, '')
   const start = unfenced.indexOf('{')
   const end = unfenced.lastIndexOf('}')
-  if (start < 0 || end <= start) return { memories: [], owner: [] }
+  if (start < 0 || end <= start) return null
   let raw: unknown
   try {
     raw = JSON.parse(unfenced.slice(start, end + 1))
   } catch {
-    return { memories: [], owner: [] }
+    return null
   }
   const value = raw as { memories?: unknown; owner?: unknown }
   const memories = (Array.isArray(value.memories) ? value.memories : []).flatMap((item) => {

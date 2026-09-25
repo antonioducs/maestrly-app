@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { OneShotSelection } from '../../chat/one-shot-text'
 import { runOneShotText } from '../../chat/one-shot-text'
 import { listChatMessagesRange, maxChatSeq, recordChatUsageAttempt } from '../../chat/chat-store'
@@ -11,7 +12,7 @@ import { applyExtraction } from './apply'
 import { maybeConsolidate } from './consolidation'
 import { getOwnerMemoryWriter } from './owner-writer'
 import { EXTRACTION_LIMITS, extractionSystemPrompt, extractionUserPrompt, parseExtractionOutput } from './prompt'
-import { chunkExtractionBlocks, renderExtractionTranscript } from './transcript'
+import { chunkExtractionBlocks, renderExtractionTranscript, type ExtractionBlock } from './transcript'
 
 export type ExtractionOutcome = 'done' | 'busy' | 'idle' | 'too-little' | 'backoff' | 'failed'
 export interface ExtractionDeps {
@@ -81,7 +82,8 @@ export async function runMemoryExtraction(
     const selection = deps.selection === undefined ? resolveExtractionSelection(conversationId) : deps.selection
     const conversation = getConversation(conversationId)
     if (!space || !selection || !conversation) return 'idle'
-    const state = getExtractionState(conversationId) ?? {
+    const existing = getExtractionState(conversationId)
+    const state = existing ?? {
       conversationId,
       spaceId: space.id,
       lastSeq: -1,
@@ -97,13 +99,49 @@ export async function runMemoryExtraction(
       now - state.lastRunAt < EXTRACTION_LIMITS.failureBackoffMs
     )
       return 'backoff'
-    const blocks = renderExtractionTranscript(
-      listChatMessagesRange(conversationId, state.lastSeq, upToSeq ?? maxChatSeq(conversationId)),
-      { bot: space.kind === 'bot' }
-    )
+    const targetSeq = upToSeq ?? maxChatSeq(conversationId)
+    if (!existing) {
+      let before = targetSeq
+      let chars = 0
+      let oldest = -1
+      lookback: while (before >= 0) {
+        const page = listChatMessagesRange(conversationId, -1, before, {
+          limit: EXTRACTION_LIMITS.pageSize,
+          newestFirst: true,
+        })
+        if (!page.length) break
+        for (const row of page) {
+          const block = renderExtractionTranscript([row], { bot: space.kind === 'bot' })[0]
+          if (!block) continue
+          if (chars && chars + block.text.length > EXTRACTION_LIMITS.initialLookbackChars) break lookback
+          oldest = row.seq
+          chars += block.text.length
+          if (chars >= EXTRACTION_LIMITS.initialLookbackChars) break lookback
+        }
+        before = page[page.length - 1].seq - 1
+      }
+      state.lastSeq = oldest < 0 ? -1 : oldest - 1
+      saveExtractionState(state)
+    }
+    const blocks: ExtractionBlock[] = []
+    let cursor = state.lastSeq
+    let chars = 0
+    read: while (cursor < targetSeq) {
+      const page = listChatMessagesRange(conversationId, cursor, targetSeq, { limit: EXTRACTION_LIMITS.pageSize })
+      if (!page.length) break
+      for (const row of page) {
+        cursor = row.seq
+        const block = renderExtractionTranscript([row], { bot: space.kind === 'bot' })[0]
+        if (!block) continue
+        blocks.push(block)
+        chars += block.text.length
+        if (chars >= EXTRACTION_LIMITS.chunkChars * EXTRACTION_LIMITS.maxChunks) break read
+      }
+    }
     if (blocks.reduce((sum, block) => sum + block.text.length, 0) < EXTRACTION_LIMITS.minChars) return 'too-little'
     const owner = space.kind === 'bot' ? getOwnerMemoryWriter(conversationId) : undefined
     let lastSeq = state.lastSeq
+    let attempts = state.attempts
     try {
       for (const chunk of chunkExtractionBlocks(blocks, EXTRACTION_LIMITS.chunkChars, EXTRACTION_LIMITS.maxChunks)) {
         const catalog = listLocalMemories(space.id, { status: 'active', limit: 300 })
@@ -113,36 +151,45 @@ export async function runMemoryExtraction(
           )
           .join('\n')
           .slice(0, EXTRACTION_LIMITS.catalogChars)
-        const ownerEntries = owner
-          ? (await owner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
+        const chunkOwner = chunk.some((block) => block.text.startsWith('Owner:')) ? owner : undefined
+        const ownerEntries = chunkOwner
+          ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
           : null
         const last = chunk[chunk.length - 1]
-        const result = await deps.oneShot({
-          selection,
-          system: extractionSystemPrompt(space.kind),
-          prompt: extractionUserPrompt({
-            memories: catalog,
-            owner: ownerEntries,
-            transcript: chunk.map((block) => block.text).join('\n\n'),
-          }),
-          signal: AbortSignal.timeout(600_000),
-          conversationId,
-          cwd: conversation.cwd,
-          agent: 'memory-extraction',
-        })
-        recordChatUsageAttempt({
-          id: `memory-extraction:${conversationId}:${lastSeq}-${last.seq}:${state.attempts}`,
-          conversationId,
-          model: { providerId: selection.providerId, modelId: selection.modelId },
-          usage: result.usage,
-        })
-        await applyExtraction({
-          space,
-          output: parseExtractionOutput(result.text),
-          conversationId,
-          originMessageId: last.messageId,
-          ...(owner ? { owner } : {}),
-        })
+        let output = null
+        for (let retry = 0; retry < 2; retry++) {
+          const result = await deps.oneShot({
+            selection,
+            system: extractionSystemPrompt(space.kind),
+            prompt: extractionUserPrompt({
+              memories: catalog,
+              owner: ownerEntries,
+              transcript: chunk.map((block) => block.text).join('\n\n'),
+            }),
+            signal: AbortSignal.timeout(600_000),
+            conversationId,
+            cwd: conversation.cwd,
+            agent: 'memory-extraction',
+          })
+          recordChatUsageAttempt({
+            id: `memory-extraction:${randomUUID()}`,
+            conversationId,
+            model: { providerId: selection.providerId, modelId: selection.modelId },
+            usage: result.usage,
+          })
+          output = parseExtractionOutput(result.text)
+          if (output !== null) break
+        }
+        if (output === null) console.warn('[memory-extraction] Unreadable output; skipping chunk')
+        else
+          await applyExtraction({
+            space,
+            output,
+            conversationId,
+            originMessageId: last.messageId,
+            ...(chunkOwner ? { owner: chunkOwner } : {}),
+          })
+        attempts = 0
         lastSeq = last.seq
         saveExtractionState({
           ...state,
@@ -162,7 +209,7 @@ export async function runMemoryExtraction(
         lastSeq,
         status: 'failed',
         error: error instanceof Error ? error.message.slice(0, 500) : 'extraction failed',
-        attempts: state.attempts + 1,
+        attempts: attempts + 1,
         lastRunAt: now,
         updatedAt: deps.now(),
       })

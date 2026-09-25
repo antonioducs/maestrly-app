@@ -1,21 +1,27 @@
+import * as chatStore from '../../src/main/chat/chat-store'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getDb } from '../../src/main/store/db'
-import { listChatMessagesRange, maxChatSeq, upsertChatMessage } from '../../src/main/chat/chat-store'
+import {
+  latestCompactionMarkers,
+  listChatMessagesRange,
+  maxChatSeq,
+  upsertChatMessage,
+} from '../../src/main/chat/chat-store'
 import {
   runMemoryExtraction,
   scheduleMemoryExtraction,
   disposeMemoryExtraction,
 } from '../../src/main/memory/extraction/scheduler'
-import { renderExtractionTranscript } from '../../src/main/memory/extraction/transcript'
+import { chunkExtractionBlocks, renderExtractionTranscript } from '../../src/main/memory/extraction/transcript'
 import { parseExtractionOutput } from '../../src/main/memory/extraction/prompt'
 import { applyExtraction } from '../../src/main/memory/extraction/apply'
 import { clearOwnerMemoryWriter, setOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { clearConversationMemorySpace, registerConversationMemorySpace } from '../../src/main/memory/spaces'
 import { createLocalMemory, listLocalMemories } from '../../src/main/memory/local-memory-service'
-import { getExtractionState } from '../../src/main/store/memory-extraction-state'
+import { getExtractionState, saveExtractionState } from '../../src/main/store/memory-extraction-state'
 import { setAppSetting } from '../../src/main/store/app-settings'
 vi.mock('../../src/main/chat/one-shot-text', () => ({ runOneShotText: vi.fn() }))
 vi.mock('../../src/main/local-ml/embedding-service', () => ({
@@ -102,6 +108,7 @@ afterEach(() => {
   disposeMemoryExtraction()
   clearOwnerMemoryWriter(conversationId)
   clearConversationMemorySpace(conversationId)
+  vi.restoreAllMocks()
   vi.useRealTimers()
   closeDb()
 })
@@ -130,9 +137,9 @@ it('parses fences, rejects invalid items and limits operations', () => {
           ],
         }) +
         '\n```'
-    ).memories
+    )!.memories
   ).toHaveLength(8)
-  expect(parseExtractionOutput('not JSON')).toEqual({ memories: [], owner: [] })
+  expect(parseExtractionOutput('not JSON')).toBeNull()
 })
 it('extracts provenance and accounting then skips unchanged history', async () => {
   const save = vi.fn()
@@ -218,7 +225,17 @@ it('does not throw from scheduling when the store is unavailable', () => {
   expect(() => scheduleMemoryExtraction(conversationId)).not.toThrow()
 })
 
-it('keeps a completed chunk checkpoint when the next chunk fails', async () => {
+it('resets stale failures after a completed chunk before the next chunk fails', async () => {
+  saveExtractionState({
+    conversationId,
+    spaceId,
+    lastSeq: -1,
+    status: 'failed',
+    error: null,
+    attempts: 2,
+    lastRunAt: 0,
+    updatedAt: 0,
+  })
   for (let i = 0; i < 2; i++)
     upsertChatMessage({
       id: randomUUID(),
@@ -274,4 +291,161 @@ it('does not overlap extraction runs and cancels pending schedules on disposal',
   disposeMemoryExtraction()
   await vi.advanceTimersByTimeAsync(180_000)
   expect(run).not.toHaveBeenCalled()
+})
+
+it('keeps both ends of oversized blocks', () => {
+  const chunks = chunkExtractionBlocks(
+    [{ seq: 1, messageId: 'm', text: `Owner: START${'x'.repeat(1000)}CONCLUSION` }],
+    90,
+    1
+  )
+  expect(chunks[0][0].text).toHaveLength(90)
+  expect(chunks[0][0].text).toContain('START')
+  expect(chunks[0][0].text).toContain('…')
+  expect(chunks[0][0].text).toContain('CONCLUSION')
+})
+
+it('retries unreadable output and accounts for both calls before skipping', async () => {
+  const call = vi.fn(async () => ({ text: 'unreadable', usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 } }))
+  expect(await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })).toBe('done')
+  expect(call).toHaveBeenCalledTimes(2)
+  expect(getExtractionState(conversationId)?.lastSeq).toBe(maxChatSeq(conversationId))
+  expect(
+    getDb().prepare("SELECT * FROM chat_usage_ledger WHERE message_id LIKE 'memory-extraction:%'").all()
+  ).toHaveLength(2)
+})
+
+it('ignores owner output for routine-only chunks', async () => {
+  registerConversationMemorySpace(conversationId, { id: 'bot-self', kind: 'bot' })
+  getDb().prepare('DELETE FROM chat_messages WHERE conversation_id = ?').run(conversationId)
+  upsertChatMessage({
+    id: randomUUID(),
+    conversationId,
+    role: 'user',
+    createdAt: 4,
+    parts: [{ type: 'text', id: randomUUID(), text: 'Scheduled routine "test" '.repeat(100) }],
+  })
+  const save = vi.fn(async () => {})
+  setOwnerMemoryWriter(conversationId, { list: async () => [], save })
+  await runMemoryExtraction(conversationId, undefined, { oneShot, selection })
+  expect(save).not.toHaveBeenCalled()
+  expect(oneShot).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: expect.not.stringContaining('Current owner memory') })
+  )
+})
+
+it('retries transient owner saves once', async () => {
+  const save = vi.fn().mockRejectedValueOnce(Error('temporary')).mockResolvedValueOnce(undefined)
+  const delay = vi.fn(async () => {})
+  const result = await applyExtraction({
+    space: { id: 'bot-self', kind: 'bot', roots: [] },
+    conversationId,
+    originMessageId: lastId,
+    output: { memories: [], owner: output.owner },
+    owner: { list: async () => [], save },
+    delay,
+  })
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(delay).toHaveBeenCalledWith(2000)
+  expect(result).toMatchObject({ owner: 1, rejected: 0 })
+})
+
+it('pages range reads in both directions', () => {
+  expect(listChatMessagesRange(conversationId, -1, 2, { limit: 1 }).map((row) => row.seq)).toEqual([0])
+  expect(listChatMessagesRange(conversationId, -1, 2, { limit: 1, newestFirst: true }).map((row) => row.seq)).toEqual([
+    2,
+  ])
+})
+
+it('persists a recent initial cursor before a failing model call', async () => {
+  for (let i = 0; i < 10; i++)
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId,
+      role: 'user',
+      createdAt: 4 + i,
+      parts: [{ type: 'text', id: randomUUID(), text: `History ${i} ${'x'.repeat(30000)}` }],
+    })
+  let initial = -1
+  const call = vi.fn(async () => {
+    initial = getExtractionState(conversationId)!.lastSeq
+    expect(getExtractionState(conversationId)).toMatchObject({ status: 'idle', attempts: 0 })
+    throw Error('temporary')
+  })
+  await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })
+  expect(initial).toBeGreaterThan(2)
+  expect(getExtractionState(conversationId)?.lastSeq).toBe(initial)
+})
+
+it('finds portable compaction past twenty-five native markers', () => {
+  const portable = randomUUID()
+  let any = portable
+  for (let i = 0; i < 26; i++) {
+    any = i === 0 ? portable : randomUUID()
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId,
+      role: 'assistant',
+      createdAt: 10 + i,
+      parts: [{ type: 'compaction', id: any, text: 'summary', ...(i ? { strategy: 'codex-native' as const } : {}) }],
+    })
+  }
+  expect(latestCompactionMarkers(conversationId)).toEqual({ portable, any })
+})
+
+it('stops paged extraction at the rendered run budget', async () => {
+  saveExtractionState({
+    conversationId,
+    spaceId,
+    lastSeq: -1,
+    status: 'idle',
+    error: null,
+    attempts: 0,
+    lastRunAt: null,
+    updatedAt: 0,
+  })
+  for (let i = 0; i < 450; i++)
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId,
+      role: 'user',
+      createdAt: 4 + i,
+      parts: [{ type: 'text', id: randomUUID(), text: 'Context '.repeat(250) }],
+    })
+  const read = vi.spyOn(chatStore, 'listChatMessagesRange')
+  await runMemoryExtraction(conversationId, undefined, { oneShot, selection })
+  expect(read).toHaveBeenCalledTimes(1)
+  expect(read).toHaveBeenCalledWith(conversationId, -1, maxChatSeq(conversationId), { limit: 200 })
+  expect(getExtractionState(conversationId)!.lastSeq).toBeLessThan(200)
+})
+
+it('rejects owner save only after a second failure and warns once', async () => {
+  const save = vi.fn(async () => {
+    throw Error('offline')
+  })
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const result = await applyExtraction({
+    space: { id: 'bot-self', kind: 'bot', roots: [] },
+    conversationId,
+    originMessageId: lastId,
+    output: { memories: [], owner: output.owner },
+    owner: { list: async () => [], save },
+    delay: async () => {},
+  })
+  expect(save).toHaveBeenCalledTimes(2)
+  expect(result).toMatchObject({ owner: 0, rejected: 1 })
+  expect(warn).toHaveBeenCalledTimes(1)
+})
+
+it('applies the immediate retry when it returns readable output', async () => {
+  const call = vi
+    .fn()
+    .mockResolvedValueOnce({ text: 'bad', usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 } })
+    .mockResolvedValueOnce({
+      text: JSON.stringify(output),
+      usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 },
+    })
+  await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })
+  expect(call).toHaveBeenCalledTimes(2)
+  expect(listLocalMemories(spaceId)[0]?.title).toBe('Blue-green deploy')
 })

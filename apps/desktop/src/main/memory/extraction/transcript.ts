@@ -67,7 +67,13 @@ export function chunkExtractionBlocks(
   let current: ExtractionBlock[] = []
   let size = 0
   for (const block of blocks) {
-    const text = block.text.length > maxChars ? { ...block, text: cut(block.text, maxChars) } : block
+    const text =
+      block.text.length > maxChars
+        ? {
+            ...block,
+            text: `${block.text.slice(0, Math.floor((maxChars - 1) / 3))}…${block.text.slice(-(maxChars - 1 - Math.floor((maxChars - 1) / 3)))}`,
+          }
+        : block
     if (current.length && size + text.text.length > maxChars) {
       chunks.push(current)
       if (chunks.length >= maxChunks) return chunks

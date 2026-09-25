@@ -1730,27 +1730,32 @@ export function textPart(id: string, text: string): MessagePart {
 
 /** Ids of the latest portable compaction marker and of the latest marker of any strategy ('' when none). */
 export function latestCompactionMarkers(conversationId: string): { portable: string; any: string } {
-  const rows = getDb()
-    .prepare(
-      `SELECT parts_json FROM chat_messages WHERE conversation_id = ?
-       AND (parts_json LIKE '%"type":"compaction"%' OR parts_json LIKE '%"checkpoint":"openai-native"%')
-       ORDER BY seq DESC LIMIT 20`
-    )
-    .all(conversationId) as Array<{ parts_json: string | null }>
   let portable = ''
   let any = ''
-  for (const row of rows) {
-    const parts = parseParts(row.parts_json ?? '[]')
-    for (let index = parts.length - 1; index >= 0; index--) {
-      const part = parts[index]
-      const native =
-        (part.type === 'text' && part.checkpoint === 'openai-native') ||
-        (part.type === 'compaction' && part.strategy !== undefined && part.strategy !== 'summary')
-      if (part.type !== 'compaction' && !native) continue
-      if (!any) any = part.id
-      if (!portable && part.type === 'compaction' && !native) portable = part.id
+  let before = Number.MAX_SAFE_INTEGER
+  while (!portable) {
+    const rows = getDb()
+      .prepare(
+        `SELECT seq, parts_json FROM chat_messages WHERE conversation_id = ? AND seq < ?
+         AND (parts_json LIKE '%"type":"compaction"%' ${any ? '' : `OR parts_json LIKE '%"checkpoint":"openai-native"%'`})
+         ORDER BY seq DESC LIMIT 20`
+      )
+      .all(conversationId, before) as Array<{ seq: number; parts_json: string | null }>
+    if (!rows.length) break
+    for (const row of rows) {
+      const parts = parseParts(row.parts_json ?? '[]')
+      for (let index = parts.length - 1; index >= 0; index--) {
+        const part = parts[index]
+        const native =
+          (part.type === 'text' && part.checkpoint === 'openai-native') ||
+          (part.type === 'compaction' && part.strategy !== undefined && part.strategy !== 'summary')
+        if (part.type !== 'compaction' && !native) continue
+        if (!any) any = part.id
+        if (!portable && part.type === 'compaction' && !native) portable = part.id
+      }
+      if (portable) break
     }
-    if (portable && any) break
+    before = rows[rows.length - 1].seq
   }
   return { portable, any }
 }
@@ -1855,13 +1860,14 @@ export function maxChatSeq(conversationId: string): number {
 export function listChatMessagesRange(
   conversationId: string,
   afterSeq: number,
-  upToSeq: number
+  upToSeq: number,
+  options: { limit?: number; newestFirst?: boolean } = {}
 ): Array<{ seq: number; message: StoredChatMessage }> {
   return (
     getDb()
       .prepare(
-        `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ASC`
+        `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ${options.newestFirst ? 'DESC' : 'ASC'} LIMIT ?`
       )
-      .all(conversationId, afterSeq, upToSeq) as any[]
+      .all(conversationId, afterSeq, upToSeq, options.limit ?? -1) as any[]
   ).map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
 }

@@ -3,13 +3,14 @@ import { createLocalMemory, getLocalMemory, resolveLocalMemoryId } from '../loca
 import type { MemorySpace } from '../spaces'
 import { incrementAutoCreated } from '../../store/memory-extraction-state'
 import type { OwnerMemoryWriter } from './owner-writer'
-import type { ExtractionOutput } from './prompt'
+import { EXTRACTION_LIMITS, type ExtractionOutput } from './prompt'
 
 export async function applyExtraction(input: {
   space: MemorySpace
   output: ExtractionOutput
   conversationId: string
   originMessageId: string
+  delay?: (ms: number) => Promise<void>
   owner?: OwnerMemoryWriter
 }): Promise<{ created: number; superseded: number; owner: number; rejected: number }> {
   const result = { created: 0, superseded: 0, owner: 0, rejected: 0 }
@@ -53,11 +54,25 @@ export async function applyExtraction(input: {
         result.rejected += 1
         continue
       }
-      try {
-        await input.owner.save({ content, ...(item.replacesId ? { replacesId: item.replacesId } : {}), origin: 'auto' })
-        result.owner += 1
-      } catch {
-        result.rejected += 1
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await input.owner.save({
+            content,
+            ...(item.replacesId ? { replacesId: item.replacesId } : {}),
+            origin: 'auto',
+          })
+          result.owner += 1
+          break
+        } catch {
+          if (attempt === 0)
+            await (input.delay ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(
+              EXTRACTION_LIMITS.ownerRetryMs
+            )
+          else {
+            result.rejected += 1
+            console.warn('[memory-extraction] Owner save failed')
+          }
+        }
       }
     }
   return result
