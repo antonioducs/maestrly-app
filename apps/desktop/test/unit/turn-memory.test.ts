@@ -297,9 +297,10 @@ it('caps the complete recall block and accounts only for rendered hits', async (
   const turn = await prepareTurnMemory({ conversationId: conversation.id, text: 'staging ssh port?' })
   const part = turn.hiddenParts.find((part) => part.type === 'file' && part.name === MEMORY_RECALL_PART)
   if (part?.type !== 'file' || part.kind !== 'text') throw new Error('Missing recall')
-  expect(part.data.length).toBeLessThanOrEqual(1_400)
-  expect(part.data).toMatch(/<\/maestrly-memory>$/)
-  const rendered = hits.filter((hit) => part.data.includes(hit.id.slice(0, 8))).map((hit) => hit.id)
+  const data = part.data ?? ''
+  expect(data.length).toBeLessThanOrEqual(1_400)
+  expect(data).toMatch(/<\/maestrly-memory>$/)
+  const rendered = hits.filter((hit) => data.includes(hit.id.slice(0, 8))).map((hit) => hit.id)
   expect(rendered).toHaveLength(2)
   expect(turn.memoryContext?.sources.map((source) => source.id)).toEqual(rendered)
   turn.commit()

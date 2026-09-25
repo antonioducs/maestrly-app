@@ -878,7 +878,7 @@ describe('Codex subscription runner', () => {
   it.each(['', '\n\n# Memory\n## About your owner\nPrefer short replies.\n## Pinned memories\nUse signed releases.'])(
     'runs standalone Ask with general native instructions and memory context %j',
     async (memoryCore) => {
-      vi.spyOn(projectContext, 'buildProjectContext').mockResolvedValue(memoryCore)
+      const context = vi.spyOn(projectContext, 'buildProjectContext').mockResolvedValue(memoryCore)
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
       try {
         writeFileSync(path.join(cwd, 'AGENTS.md'), 'PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
@@ -928,6 +928,7 @@ describe('Codex subscription runner', () => {
         expect(request.config['skills.include_instructions']).toBe(false)
         expect(request.environments).toEqual([])
       } finally {
+        context.mockRestore()
         rmSync(cwd, { recursive: true, force: true })
       }
     }
