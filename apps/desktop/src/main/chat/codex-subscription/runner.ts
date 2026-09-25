@@ -3235,6 +3235,9 @@ export async function runCodexSubscriptionChat(
     }
 
     const progress = new Map<string, string>()
+    // Root commands started and not completed. exec_command answers the model after its yield time and Codex keeps
+    // the process (a GUI app, a server); `item/completed` only comes when it exits, possibly never.
+    const openCommands = new Set<string>()
     const startedText = new Set<string>()
     const startedReasoning = new Set<string>()
     let latestUsage: TokenUsageNotification | null = null
@@ -5032,6 +5035,7 @@ export async function runCodexSubscriptionChat(
           input: tool.input,
         })
         apply({ kind: 'tool-state', messageId: assistantId, toolCallId: item.id, state: { status: 'running' } })
+        if (item.type === 'commandExecution') openCommands.add(item.id)
         return
       }
       if (method === 'item/completed') {
@@ -5039,6 +5043,7 @@ export async function runCodexSubscriptionChat(
         if (!item || typeof item.id !== 'string') return
         if (!rootEvent && (item.type === 'agentMessage' || item.type === 'plan' || item.type === 'reasoning')) return
         inspectItem(item)
+        openCommands.delete(item.id)
         if (item.type === 'agentMessage' || item.type === 'plan') {
           if (typeof item.text === 'string' && !startedText.has(item.id)) {
             startedText.add(item.id)
@@ -5872,6 +5877,25 @@ export async function runCodexSubscriptionChat(
         }
       }
 
+      // Nothing reports these commands once the turn is over: the model already had their output and moved on, so
+      // close them with what they printed. A stop instead ends them as aborted (the `aborted` event).
+      if (!args.signal.aborted)
+        for (const id of openCommands) {
+          const output = clipPersistedToolOutput(progress.get(id) || '(no output yet)')
+          apply(
+            {
+              kind: 'tool-state',
+              messageId: assistantId,
+              toolCallId: id,
+              state: {
+                status: 'completed',
+                output: `${output}\n\n(Still running in the background when the turn ended; later output is not shown.)`,
+              },
+            },
+            true
+          )
+        }
+      openCommands.clear()
       const finalUsage = latestUsage as TokenUsageNotification | null
       const usage = withSubagentUsage(
         mainUsage(finalUsage),

@@ -779,6 +779,58 @@ describe('Codex subscription runner', () => {
     expect(JSON.stringify(part)).not.toContain(imageData)
   })
 
+  it('closes a command left running in the background when the turn ends, keeping finished ones as they are', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_background', 'Open the calculator', 1)
+    const client = new FakeCodexClient()
+    const command = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      type: 'commandExecution',
+      command: '/bin/bash -lc ' + id,
+      cwd: conversation.cwd,
+      status: 'inProgress',
+      ...extra,
+    })
+    const event = (method: string, item: Record<string, unknown>) => ({
+      method,
+      params: { threadId: 'thread_1', turnId: 'turn_background', item },
+    })
+    client.queueTurn({
+      turnId: 'turn_background',
+      notifications: [
+        // A GUI app: exec_command yields after a second and Codex keeps the process; its end never arrives.
+        event('item/started', command('galculator')),
+        {
+          method: 'item/commandExecution/outputDelta',
+          params: { threadId: 'thread_1', turnId: 'turn_background', itemId: 'galculator', delta: 'window opened' },
+        },
+        event('item/started', command('quiet_gui')),
+        event('item/started', command('pwd')),
+        event('item/completed', command('pwd', { status: 'completed', aggregatedOutput: '/home/bot', exitCode: 0 })),
+        completedNotification('thread_1', 'turn_background'),
+      ],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    const message = assistantMessages(conversation.id)[0]
+    expect(message?.finishReason).toBe('stop')
+    const state = (id: string) => {
+      const part = message?.parts.find((entry) => entry.type === 'tool' && entry.id === id)
+      if (part?.type !== 'tool') throw new Error('Missing tool part ' + id)
+      return part.state
+    }
+    // The model got its answer and moved on; the card must not spin forever.
+    expect(state('galculator')).toEqual({
+      status: 'completed',
+      output: expect.stringMatching(/^window opened\n\n\(Still running in the background when the turn ended/),
+    })
+    expect(state('quiet_gui')).toEqual({
+      status: 'completed',
+      output: expect.stringMatching(/^\(no output yet\)\n\n\(Still running in the background/),
+    })
+    expect(state('pwd')).toEqual({ status: 'completed', output: '/home/bot\n\n(exit code 0)' })
+  })
+
   it('shows the image a native view_image looked at, instead of only its path', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'codex-view-image-'))
     try {
