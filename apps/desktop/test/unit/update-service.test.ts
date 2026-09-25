@@ -118,6 +118,7 @@ function quitHarness() {
     stopVSCodeServer: vi.fn(),
     disposeDrawer: vi.fn(),
     disposeMemoryReclaimer: vi.fn(),
+    disposeMemoryExtraction: vi.fn(),
     disposeMemoryIndexService: vi.fn(),
     disposeOwnedProcesses: vi.fn(),
     hasPendingMemoryWrites: () => pendingMemory,
