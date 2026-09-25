@@ -81,8 +81,12 @@
   --status-error: #ff7a85;
 }
 
-* {
-  border-color: var(--border);
+/* Default border color. In the base layer: unlayered, it outranked every `border-<color>` utility (Tailwind v4 puts
+   utilities in `@layer utilities`), so all colored borders rendered as this one. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 }
 
 html,
