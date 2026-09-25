@@ -34,6 +34,7 @@ in desktop (non-bot) chats, external memory providers.
 | Routine history | Gateway records every delivered run; the bot reports what it did with `routine_report`; the next run's prompt includes the last 3 reports. |
 | Bot history | `history_search` / `history_read` over the conversation's full persisted history (also available in desktop chats). |
 | Bot memory on the Mac | Read, pin, archive, restore and delete through a gateway → instance proxy. |
+| Permission prompts | Memory and history reads (`memory_search`, `memory_list`, `memory_read`, `history_*`) never prompt: the host already recalls memory without asking. In bot containers, memory writes (`memory_upsert`, `memory_archive`, `memory_restore`, `owner_memory_*`) and `routine_report` do not prompt either; the owner reviews them on the Mac. `memory_forget` keeps the normal gate. |
 
 ## Architecture
 
@@ -324,6 +325,9 @@ characters, with a `truncated` flag), type, status, pinned, source, use count an
 - Recalled blocks are framed as evidence, not instructions.
 - Memory ids are opaque. The bot proxy only exposes the bot's own space. History tools only read their own
   conversation.
+- Permissions: `permission.ts` gains explicit `mcp` allow rules for the memory and history read tools in every mode.
+  In bot mode, `rulesetFor` adds allow rules for the memory write tools listed in the decisions table. Saved owner
+  rules still apply after them.
 
 ## Evaluation and tests
 
