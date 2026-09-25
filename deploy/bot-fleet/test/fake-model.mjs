@@ -15,6 +15,21 @@ function toolName(tools, suffix) {
   return tool.function.name
 }
 
+function validatedTool(req, suffix, args) {
+  const name = toolName(req.tools ?? [], suffix)
+  const schema = req.tools.find((entry) => entry.function?.name === name)?.function?.parameters
+  for (const required of schema?.required ?? []) {
+    if (!(required in args)) throw new Error('Missing required tool argument: ' + required)
+  }
+  for (const [field, value] of Object.entries(args)) {
+    const property = schema?.properties?.[field]
+    const validType = property?.type === 'integer' ? Number.isInteger(value) : property?.type === typeof value
+    if (!property || !validType || (property.enum && !property.enum.includes(value)))
+      throw new Error('Invalid tool argument: ' + field)
+  }
+  return { name, args }
+}
+
 function reply(req) {
   const messages = req.messages
   const lastUser = messages.filter((entry) => entry.role === 'user').at(-1)
@@ -25,6 +40,13 @@ function reply(req) {
     return { text: valid ? 'E2E-IMAGE-SEEN' : 'E2E-IMAGE-MISSING' }
   }
   if (text.includes('E2E routine ping')) return { text: 'E2E-ROUTINE-DONE' }
+  if (text.includes('E2E-ROUTINE-CREATE')) {
+    const userIndex = messages.lastIndexOf(lastUser)
+    if (messages.slice(userIndex + 1).some((entry) => entry.role === 'tool')) return { text: 'E2E-ROUTINE-CREATED' }
+    return validatedTool(req, 'bot_routines_create', {
+      title: 'E2E bot routine', prompt: 'E2E routine ping', everyMinutes: 15,
+    })
+  }
   if (text.includes('handed it back')) return { text: 'E2E-CONTINUED' }
   const start = messages.findLastIndex((entry) => entry.role === 'user' && JSON.stringify(entry.content).includes('E2E-START'))
   if (start < 0) return { text: 'E2E-IDLE' }
@@ -32,25 +54,13 @@ function reply(req) {
   const steps = ['computer_screenshot', 'computer_click', 'bot_peers_send', 'request_owner_help']
   if (completed >= steps.length) return { text: 'E2E-START-DONE' }
   const suffix = steps[completed]
-  const name = toolName(req.tools ?? [], suffix)
   const args = [
     {},
     { x: 640, y: 400 },
     { to: devId, text: 'hello from scout' },
     { reason: 'E2E needs the owner' },
   ][completed]
-  const schema = req.tools.find((entry) => entry.function?.name === name)?.function?.parameters
-  for (const required of schema?.required ?? []) {
-    if (!(required in args)) throw new Error('Missing required tool argument: ' + required)
-  }
-  for (const [field, value] of Object.entries(args)) {
-    const property = schema?.properties?.[field]
-    const validType = property?.type === 'integer' ? Number.isInteger(value) : property?.type === typeof value
-    if (!property || !validType ||
-      (property.enum && !property.enum.includes(value)))
-      throw new Error('Invalid tool argument: ' + field)
-  }
-  return { name, args }
+  return validatedTool(req, suffix, args)
 }
 
 http.createServer(async (req, res) => {

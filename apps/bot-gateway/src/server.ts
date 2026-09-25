@@ -8,6 +8,8 @@ import {
   FLEET_MESSAGE_BODY_MAX,
   type FleetRoute,
   type FleetInternalPeerMessageRequest,
+  type FleetCreateRoutineRequest,
+  type FleetPatchRoutineRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { ZodError } from 'zod'
 import type { GatewayContext } from './context.js'
@@ -166,11 +168,34 @@ export function createGatewayServers(ctx: GatewayContext) {
           )
         : undefined
       if (internal) {
-        const result =
-          match.key === 'peers'
-            ? peers.list(caller!)
-            : await peers.send(caller!, body as FleetInternalPeerMessageRequest)
-        send(res, match.key === 'peers' ? 200 : 201, match.route.response?.parse(result) ?? result)
+        if (match.key.startsWith('routine')) {
+          const bot = ctx.store.getBot(caller!)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          let result: unknown
+          let status = 200
+          switch (match.key) {
+            case 'routinesList':
+              result = { routines: routines.list(caller!) }
+              break
+            case 'routineCreate':
+              result = routines.create(caller!, body as FleetCreateRoutineRequest, 'bot')
+              status = 201
+              break
+            case 'routinePatch':
+              result = routines.patch(caller!, match.params.rid, body as FleetPatchRoutineRequest, 'bot')
+              break
+            case 'routineDelete':
+              routines.delete(caller!, match.params.rid, 'bot')
+              status = 204
+          }
+          send(res, status, match.route.response?.parse(result) ?? result)
+        } else {
+          const result =
+            match.key === 'peers'
+              ? peers.list(caller!)
+              : await peers.send(caller!, body as FleetInternalPeerMessageRequest)
+          send(res, match.key === 'peers' ? 200 : 201, match.route.response?.parse(result) ?? result)
+        }
         return
       }
       const result = await publicRoute(match.key, match.params, body, url, res, activeCtx)

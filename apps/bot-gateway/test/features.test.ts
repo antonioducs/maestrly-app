@@ -19,7 +19,7 @@ import { loadConfig } from '../src/config.js'
 import { FakeDockerDriver } from '../src/docker.js'
 import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
-import { Routines, nextWeeklyRun } from '../src/routines.js'
+import { Routines, nextRun, nextWeeklyRun } from '../src/routines.js'
 import { Store } from '../src/store.js'
 
 const dirs: string[] = []
@@ -64,6 +64,7 @@ async function fakeInstance() {
   const streams = new Set<ServerResponse>()
   const subscriptions: number[] = []
   const inputs: unknown[] = []
+  const inputReceipts: string[] = []
   const holds: unknown[] = []
   let holdFailure: string | null = null
   const releases: unknown[] = []
@@ -142,7 +143,9 @@ async function fakeInstance() {
       if (url.pathname === '/v1/inputs') {
         fleetInstanceInputSchema.parse(body)
         inputs.push(body)
-        return res.end(JSON.stringify({ inputId: randomUUID(), itemId: randomUUID(), queued: false }))
+        const inputId = randomUUID()
+        inputReceipts.push(inputId)
+        return res.end(JSON.stringify({ inputId, itemId: randomUUID(), queued: false }))
       }
       return fail(404, 'NOT_FOUND')
     } catch {
@@ -171,6 +174,7 @@ async function fakeInstance() {
     },
     subscriptions,
     inputs,
+    inputReceipts,
     holds,
     setHoldFailure(value: string | null) {
       holdFailure = value
@@ -213,7 +217,7 @@ describe('secrets and configuration', () => {
     const dir = temp(),
       db = new DatabaseSync(path.join(dir, 'gateway.sqlite'))
     db.exec(
-      "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO meta VALUES('schema_version','1'); CREATE TABLE bot_secrets(bot_id TEXT PRIMARY KEY,control_token TEXT NOT NULL,gateway_token TEXT NOT NULL,gateway_token_sha256 TEXT NOT NULL UNIQUE); INSERT INTO bot_secrets VALUES('test','control','gateway','hash')"
+      "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO meta VALUES('schema_version','1'); CREATE TABLE bot_secrets(bot_id TEXT PRIMARY KEY,control_token TEXT NOT NULL,gateway_token TEXT NOT NULL,gateway_token_sha256 TEXT NOT NULL UNIQUE); INSERT INTO bot_secrets VALUES('test','control','gateway','hash'); CREATE TABLE routines(id TEXT PRIMARY KEY)"
     )
     db.close()
     const store = new Store(dir),
@@ -223,6 +227,38 @@ describe('secrets and configuration', () => {
     const reopened = new Store(dir)
     expect(reopened.botSecrets('test')?.keyringPassword).toBe(password)
     reopened.close()
+  })
+  it('migrates version 2 routines to owner-created records', () => {
+    const dir = temp()
+    const store = new Store(dir)
+    store.db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run()
+    const botId = 'test'
+    const at = '2026-01-05T10:00:00.000Z'
+    store.db
+      .prepare(
+        'INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      )
+      .run(botId, 'Test', '', '', '#ffffff', 'ask', 'null', '[]', 0, 'running', '{}', at, at)
+    store.db
+      .prepare(
+        'INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)'
+      )
+      .run(
+        'old',
+        botId,
+        'Old',
+        'Check',
+        JSON.stringify({ kind: 'weekly', time: '09:00', days: [], timezone: 'UTC' }),
+        1,
+        at,
+        at
+      )
+    store.db.exec('ALTER TABLE routines DROP COLUMN created_by; ALTER TABLE routines DROP COLUMN last_input_id')
+    store.close()
+    const migrated = new Store(dir)
+    expect(migrated.routineById('old')?.createdBy).toBe('owner')
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '3' })
+    migrated.close()
   })
   it('resolves auto seccomp in gateway and validates JSON arrays', () => {
     const dir = temp(),
@@ -497,6 +533,82 @@ describe('archived bots', () => {
 })
 
 describe('routines', () => {
+  it('calculates intervals and skips missed slots after an outage', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    let time = Date.parse('2026-01-05T10:00:00Z')
+    const routines = new Routines(f.store, f.lifecycle, () => time)
+    const schedule = { kind: 'interval' as const, everyMinutes: 30 }
+    expect(nextRun(schedule, new Date(time))).toBe('2026-01-05T10:30:00.000Z')
+    const routine = routines.create(bot.id, {
+      title: 'Check',
+      prompt: 'Check',
+      schedule,
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    })
+    expect(routine.nextRunAt).toBe('2026-01-05T10:30:00.000Z')
+    time += 4 * 60 * 60 * 1000
+    await routines.tick()
+    expect(f.store.routineById(routine.id)).toMatchObject({
+      lastOutcome: 'skipped_missed',
+      nextRunAt: '2026-01-05T14:30:00.000Z',
+    })
+    expect(f.store.activity().filter((entry) => entry.kind === 'routine_skipped')).toHaveLength(1)
+    f.lifecycle.close()
+    f.store.close()
+  })
+  it('skips a queued or running previous input and logs only the first skip in a streak', async () => {
+    const fake = await fakeInstance(),
+      f = fixture(fake.origin)
+    const bot = f.lifecycle.create(botInput())
+    await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
+    let time = Date.parse('2026-01-05T10:00:00Z')
+    const routines = new Routines(f.store, f.lifecycle, () => time)
+    const routine = routines.create(bot.id, {
+      title: 'Check',
+      prompt: 'Check',
+      schedule: { kind: 'interval', everyMinutes: 15 },
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    })
+    time += 15 * 60000
+    await routines.tick()
+    const inputId = fake.inputReceipts.at(-1)!
+    expect(f.store.routineLastInputId(routine.id)).toBe(inputId)
+    fake.setState({ ...fake.state, queue: [{ inputId, source: 'routine', preview: 'Check' }] })
+    await until(() => f.lifecycle.statuses.get(bot.id)?.queue.some((item) => item.inputId === inputId) === true)
+    for (let count = 0; count < 2; count++) {
+      time += 15 * 60000
+      await routines.tick()
+      expect(f.store.routineById(routine.id)?.lastOutcome).toBe('skipped_busy')
+    }
+    expect(fake.inputs).toHaveLength(1)
+    expect(f.store.activity().filter((entry) => entry.kind === 'routine_skipped')).toHaveLength(1)
+    fake.setState({
+      ...fake.state,
+      queue: [],
+      turn: { state: 'running', startedAt: new Date(time).toISOString(), inputId },
+    })
+    await until(() => f.lifecycle.statuses.get(bot.id)?.turn.inputId === inputId)
+    time += 15 * 60000
+    await routines.tick()
+    expect(fake.inputs).toHaveLength(1)
+    fake.setState({ ...fake.state, turn: { state: 'idle', startedAt: null, inputId: null } })
+    await until(() => f.lifecycle.statuses.get(bot.id)?.turn.inputId === null)
+    time += 15 * 60000
+    await routines.tick()
+    expect(fake.inputs).toHaveLength(2)
+    const secondInputId = fake.inputReceipts.at(-1)!
+    fake.setState({ ...fake.state, queue: [{ inputId: secondInputId, source: 'routine', preview: 'Check' }] })
+    await until(() => f.lifecycle.statuses.get(bot.id)?.queue.some((item) => item.inputId === secondInputId) === true)
+    await routines.run(bot.id, routine.id)
+    expect(fake.inputs).toHaveLength(3)
+    f.lifecycle.close()
+    f.store.close()
+  })
   it('neither fires nor records an archived bot routine, and restarts its schedule from the restore', async () => {
     const fake = await fakeInstance(),
       f = fixture(fake.origin)

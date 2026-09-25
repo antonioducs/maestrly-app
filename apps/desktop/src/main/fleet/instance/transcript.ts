@@ -59,6 +59,8 @@ export function toolTarget(input: unknown): string | null {
   )
     return `(${value.fromX}, ${value.fromY}) → (${value.toX}, ${value.toY})`
   if (typeof value.keys === 'string') return short(value.keys, 80)
+  // Routine tools: after the concrete targets above, so tools that also take a title keep showing those.
+  if (typeof value.title === 'string') return short(value.title, 80)
   if (typeof value.text === 'string') return short(value.text, 40)
   return null
 }
@@ -116,12 +118,20 @@ function toolItem(
         : status === 'completed' || status === 'running'
           ? toolOutputTextOf(part.state.output ?? '')
           : ''
+  let routineTitle: string | null = null
+  if (part.toolName.startsWith('bot_routines_') && output) {
+    try {
+      const result: unknown = JSON.parse(output)
+      if (result && typeof result === 'object' && 'title' in result && typeof result.title === 'string')
+        routineTitle = short(result.title, 80)
+    } catch {}
+  }
   return {
     kind: 'tool',
     id: `${message.id}:${index}`,
     at: at(message.createdAt),
     name: part.toolName,
-    target: toolTarget(part.input),
+    target: toolTarget(part.input) ?? routineTitle,
     state: interrupted
       ? 'interrupted'
       : status === 'completed'

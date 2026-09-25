@@ -604,6 +604,35 @@ async function main() {
     (await request('GET', '/v1/activity')).entries.some((item) => item.kind === 'routine_ran' && item.botId === scoutId)
   )
   pass('scheduled routine', routine.id + ' at ' + hhmm + ' UTC, routine_ran and answer')
+  const creationStarted = Date.now()
+  await request('POST', '/v1/bots/' + scoutId + '/messages', {
+    text: 'E2E-ROUTINE-CREATE',
+    idempotencyKey: randomUUID(),
+  })
+  await approve('bot_routines_create')
+  await poll(
+    'bot routine creation answer',
+    async () =>
+      (await transcript(scoutId)).some(
+        (item) => item.kind === 'assistant' && item.text.includes('E2E-ROUTINE-CREATED')
+      ),
+    90000
+  )
+  const botRoutine = (await request('GET', '/v1/bots/' + scoutId + '/routines')).routines.find(
+    (item) => item.title === 'E2E bot routine'
+  )
+  assert.ok(botRoutine)
+  assert.equal(botRoutine.createdBy, 'bot')
+  assert.deepEqual(botRoutine.schedule, { kind: 'interval', everyMinutes: 15 })
+  assert.ok(Date.parse(botRoutine.nextRunAt) >= creationStarted + 14 * 60000)
+  assert.ok(Date.parse(botRoutine.nextRunAt) <= Date.now() + 16 * 60000)
+  assert.ok(
+    (await request('GET', '/v1/activity?limit=500')).entries.some(
+      (item) => item.kind === 'routine_created' && item.botId === scoutId && item.data.routineId === botRoutine.id
+    )
+  )
+  await request('DELETE', '/v1/bots/' + scoutId + '/routines/' + botRoutine.id, undefined, { status: 204 })
+  pass('bot-created routine', botRoutine.id + ' interval and activity; owner deleted it')
   await request('POST', '/v1/bots/' + devId + '/restart')
   await poll('Dev restarted', async () => (await bot(devId)).lifecycle === 'running', 120000)
   assert.ok((await transcript(devId)).some((item) => item.kind === 'user' && item.source === 'peer' && item.queued))

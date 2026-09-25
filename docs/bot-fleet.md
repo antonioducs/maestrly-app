@@ -111,7 +111,9 @@ Open the bot's **Settings** tab to choose an **Account and model**. Each bot nee
 | **Stop / Start / Restart** | Manage the bot's container from its card or the **Server** page. Its home volume remains. |
 | **Archive** | Removes the container and the bot from the active list while retaining its server record and home volume. |
 
-In **Settings → Routines**, give a routine a title, prompt, local time, days, and **Time zone**; no selected days means every day. Runs are scheduled on the server even while your Mac is off. A run is skipped if the bot is paused or offline, or if the scheduled time was missed by more than 15 minutes. Skipped runs are recorded; they are not replayed later. You can disable, edit, delete, or **Run now**.
+In **Settings → Routines**, give a routine a title and self-contained prompt. Choose a fixed local time, days, and **Time zone** (no selected days means every day), or an interval of 15 minutes to 24 hours. Runs are scheduled on the server even while your Mac is off. A run is skipped if the bot is paused or offline, if the scheduled time was missed by more than 15 minutes, or while the previous run of that routine is still queued or running. Only the first skip of a streak is logged; skipped runs are not replayed later. You can disable, edit, delete, or **Run now**.
+
+Bots can create up to 10 of their own routines through tools, subject to their access ceiling and owner approval. Settings marks routines created by a bot. The owner can edit or delete any routine; a bot can change or delete only routines it created. Each run uses a full model turn and the owner's model quota, so choose the longest useful interval.
 
 **Can talk to** grants a bot access to named peers. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
 

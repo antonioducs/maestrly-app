@@ -120,6 +120,10 @@ describe('bot instance tool registration and gateway', () => {
       'request_owner_help',
       'bot_peers_list',
       'bot_peers_send',
+      'bot_routines_list',
+      'bot_routines_create',
+      'bot_routines_update',
+      'bot_routines_delete',
     ])
     await gateway.client.close()
     await gateway.server.close()
@@ -251,5 +255,25 @@ describe('help and transcript items', () => {
       { kind: 'tool', target: '(1, 2) → (3, 4)' },
     ])
     expect(toolTarget({ text: 'x'.repeat(50) })).toHaveLength(40)
+    expect(toolTarget({ title: 'Morning check', prompt: 'Check now' })).toBe('Morning check')
+  })
+  it('shows a completed routine title as the tool target', () => {
+    const message = {
+      id: 'assistant',
+      conversationId: 'primary',
+      role: 'assistant',
+      createdAt: Date.now(),
+      parts: [
+        {
+          type: 'tool',
+          id: 'routine',
+          toolCallId: 'routine',
+          toolName: 'bot_routines_update',
+          input: { routineId: 'r1', time: '10:30' },
+          state: { status: 'completed', output: JSON.stringify({ id: 'r1', title: 'Morning check' }) },
+        },
+      ],
+    } as ChatMessage
+    expect(projectChatMessages([message])).toMatchObject([{ kind: 'tool', target: 'Morning check' }])
   })
 })

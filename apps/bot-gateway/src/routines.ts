@@ -1,10 +1,12 @@
 import { randomUUID, createHash } from 'node:crypto'
 import {
+  FLEET_ROUTINE_LIMITS,
   isValidTimeZone,
   type FleetRoutine,
   type FleetRoutineSchedule,
   type FleetCreateRoutineRequest,
   type FleetPatchRoutineRequest,
+  type FleetWeeklySchedule,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 import type { Lifecycle } from './lifecycle.js'
@@ -37,7 +39,7 @@ function scheduledKey(id: string, due: string): string {
     .digest('hex')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
-export function nextWeeklyRun(schedule: FleetRoutineSchedule, after: Date): string {
+export function nextWeeklyRun(schedule: FleetWeeklySchedule, after: Date): string {
   if (!isValidTimeZone(schedule.timezone)) throw new GatewayError('INVALID_REQUEST', 'Invalid time zone')
   const fmt = formatter(schedule.timezone)
   const start = parts(fmt, after.getTime())
@@ -72,6 +74,12 @@ export function nextWeeklyRun(schedule: FleetRoutineSchedule, after: Date): stri
   throw new GatewayError('INVALID_REQUEST', 'Could not calculate next routine run')
 }
 
+export function nextRun(schedule: FleetRoutineSchedule, after: Date): string {
+  return schedule.kind === 'weekly'
+    ? nextWeeklyRun(schedule, after)
+    : new Date(after.getTime() + schedule.everyMinutes * 60_000).toISOString()
+}
+
 export class Routines {
   private timer: NodeJS.Timeout | null = null
   private ticking = false
@@ -92,10 +100,21 @@ export class Routines {
   list(botId: string) {
     return this.store.routines(botId)
   }
-  create(botId: string, request: FleetCreateRoutineRequest) {
-    if (!isValidTimeZone(request.schedule.timezone)) throw new GatewayError('INVALID_REQUEST', 'Invalid time zone')
+  create(botId: string, request: FleetCreateRoutineRequest, createdBy: FleetRoutine['createdBy'] = 'owner') {
+    if (request.schedule.kind === 'weekly' && !isValidTimeZone(request.schedule.timezone))
+      throw new GatewayError('INVALID_REQUEST', 'Invalid time zone')
     const hash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
-    const result = this.store.idempotent('routineCreate:' + botId, request.idempotencyKey, hash, () => {
+    const scope = (createdBy === 'bot' ? 'botRoutineCreate:' : 'routineCreate:') + botId
+    const result = this.store.idempotent(scope, request.idempotencyKey, hash, () => {
+      if (
+        createdBy === 'bot' &&
+        this.store.routines(botId).filter((item) => item.createdBy === 'bot').length >=
+          FLEET_ROUTINE_LIMITS.botCreatedMax
+      )
+        throw new GatewayError(
+          'CONFLICT',
+          `Routine limit reached: this bot already created ${FLEET_ROUTINE_LIMITS.botCreatedMax} routines. Delete one first or ask your owner.`
+        )
       const at = new Date(this.now()).toISOString()
       const routine: FleetRoutine = {
         id: randomUUID(),
@@ -104,30 +123,39 @@ export class Routines {
         prompt: request.prompt,
         schedule: request.schedule,
         enabled: request.enabled,
-        nextRunAt: request.enabled ? nextWeeklyRun(request.schedule, new Date(this.now())) : null,
+        nextRunAt: request.enabled ? nextRun(request.schedule, new Date(this.now())) : null,
         lastRunAt: null,
         lastOutcome: null,
+        createdBy,
         createdAt: at,
         updatedAt: at,
       }
       this.store.saveRoutine(routine)
+      if (createdBy === 'bot')
+        this.lifecycle.recordActivity(botId, 'routine_created', routine.title, { routineId: routine.id })
       return { response: routine, status: 201 }
     })
     return result.response
   }
-  patch(botId: string, id: string, request: FleetPatchRoutineRequest) {
+  patch(botId: string, id: string, request: FleetPatchRoutineRequest, caller: 'owner' | 'bot' = 'owner') {
     const current = this.require(botId, id)
-    if (request.schedule && !isValidTimeZone(request.schedule.timezone))
+    if (caller === 'bot' && current.createdBy !== 'bot')
+      throw new GatewayError('FORBIDDEN', 'Only your owner can change this routine.')
+    if (request.schedule?.kind === 'weekly' && !isValidTimeZone(request.schedule.timezone))
       throw new GatewayError('INVALID_REQUEST', 'Invalid time zone')
     const routine = { ...current, ...request, updatedAt: new Date(this.now()).toISOString() }
     if (request.schedule || request.enabled !== undefined)
-      routine.nextRunAt = routine.enabled ? nextWeeklyRun(routine.schedule, new Date(this.now())) : null
+      routine.nextRunAt = routine.enabled ? nextRun(routine.schedule, new Date(this.now())) : null
     this.store.saveRoutine(routine)
+    if (caller === 'bot') this.lifecycle.recordActivity(botId, 'routine_updated', routine.title, { routineId: id })
     return routine
   }
-  delete(botId: string, id: string) {
-    this.require(botId, id)
+  delete(botId: string, id: string, caller: 'owner' | 'bot' = 'owner') {
+    const routine = this.require(botId, id)
+    if (caller === 'bot' && routine.createdBy !== 'bot')
+      throw new GatewayError('FORBIDDEN', 'Only your owner can change this routine.')
     this.store.deleteRoutine(id)
+    if (caller === 'bot') this.lifecycle.recordActivity(botId, 'routine_deleted', routine.title, { routineId: id })
   }
   private require(botId: string, id: string) {
     const routine = this.store.routineById(id)
@@ -144,7 +172,7 @@ export class Routines {
       if (!routine.enabled) continue
       this.store.saveRoutine({
         ...routine,
-        nextRunAt: nextWeeklyRun(routine.schedule, now),
+        nextRunAt: nextRun(routine.schedule, now),
         updatedAt: now.toISOString(),
       })
     }
@@ -177,33 +205,47 @@ export class Routines {
       outcome = 'skipped_offline'
     else if (scheduled && routine.nextRunAt && this.now() - Date.parse(routine.nextRunAt) > 15 * 60000)
       outcome = 'skipped_missed'
+    else if (scheduled && this.busy(routine)) outcome = 'skipped_busy'
     else {
       try {
-        await this.lifecycle.instanceFor(routine.botId).postInput({
+        const receipt = await this.lifecycle.instanceFor(routine.botId).postInput({
           source: 'routine',
           routine: { id: routine.id, title: routine.title },
           text: routine.prompt,
           attachments: [],
           idempotencyKey: scheduled && routine.nextRunAt ? scheduledKey(routine.id, routine.nextRunAt) : randomUUID(),
         })
+        this.store.setRoutineLastInputId(routine.id, receipt.inputId)
         outcome = 'sent'
       } catch {
         outcome = 'failed'
       }
+    }
+    const nextAt = scheduled && routine.nextRunAt ? routine.nextRunAt : at
+    let nextRunAt = routine.enabled ? nextRun(routine.schedule, new Date(nextAt)) : null
+    if (scheduled && routine.schedule.kind === 'interval' && nextRunAt && Date.parse(nextRunAt) <= this.now()) {
+      const everyMs = routine.schedule.everyMinutes * 60_000
+      const intervals = Math.floor((this.now() - Date.parse(nextAt)) / everyMs) + 1
+      nextRunAt = new Date(Date.parse(nextAt) + intervals * everyMs).toISOString()
     }
     const next = {
       ...routine,
       lastRunAt: at,
       lastOutcome: outcome,
       updatedAt: at,
-      nextRunAt: routine.enabled
-        ? nextWeeklyRun(routine.schedule, new Date(scheduled && routine.nextRunAt ? routine.nextRunAt : at))
-        : null,
+      nextRunAt,
     }
     this.store.saveRoutine(next)
-    this.lifecycle.recordActivity(routine.botId, outcome === 'sent' ? 'routine_ran' : 'routine_skipped', null, {
-      outcome,
-    })
+    if (outcome === 'sent' || outcome !== routine.lastOutcome)
+      this.lifecycle.recordActivity(routine.botId, outcome === 'sent' ? 'routine_ran' : 'routine_skipped', null, {
+        outcome,
+      })
     return next
+  }
+  private busy(routine: FleetRoutine): boolean {
+    const inputId = this.store.routineLastInputId(routine.id)
+    if (!inputId) return false
+    const status = this.lifecycle.statuses.get(routine.botId)
+    return status?.queue.some((item) => item.inputId === inputId) === true || status?.turn.inputId === inputId
   }
 }

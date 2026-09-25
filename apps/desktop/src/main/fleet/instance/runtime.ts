@@ -164,6 +164,7 @@ export class BotInstanceRuntime implements InstanceControl {
   private cancelling = false
   private releaseContinuationKey: string | null = null
   private turnStartedAt: string | null = null
+  private turnInputId: string | null = null
   private retryAt = 0
   private activeTool: { tool: string; target: string | null } | null = null
   private lastSummary: string | null = null
@@ -546,6 +547,7 @@ export class BotInstanceRuntime implements InstanceControl {
       turn: {
         state: this.cancelling ? 'cancelling' : this.turning ? 'running' : 'idle',
         startedAt: this.turnStartedAt,
+        inputId: this.turnInputId,
       },
       hold: this.holdManager.state,
       queue,
@@ -652,6 +654,7 @@ export class BotInstanceRuntime implements InstanceControl {
     if (!item) return
     this.turning = true
     this.turnStartedAt = new Date().toISOString()
+    this.turnInputId = item.id
     this.turnAbort = new AbortController()
     this.changed()
     let release: (() => void) | null = null
@@ -729,6 +732,7 @@ export class BotInstanceRuntime implements InstanceControl {
       this.turning = false
       this.cancelling = false
       this.turnStartedAt = null
+      this.turnInputId = null
       this.turnAbort = null
       this.activeTool = null
       this.changed()

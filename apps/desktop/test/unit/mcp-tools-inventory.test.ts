@@ -31,6 +31,10 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'computer_key',
   'bot_peers_list',
   'bot_peers_send',
+  'bot_routines_list',
+  'bot_routines_create',
+  'bot_routines_update',
+  'bot_routines_delete',
   'request_owner_help',
 ]
 
@@ -394,5 +398,9 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('ask', 'browser_evaluate')).toBe(false)
     expect(appToolAllowed('plan', 'terminal_run')).toBe(false)
     expect(appToolAllowed('ask', 'debug_status')).toBe(false)
+    expect(appToolAllowed('ask', 'bot_routines_list')).toBe(true)
+    expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
+    expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
+    expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)
   })
 })

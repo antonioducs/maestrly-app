@@ -9,6 +9,11 @@ export const FLEET_ROLE_MAX = 80
 export const FLEET_NOTE_MAX = 1_000
 export const FLEET_ROUTINE_TITLE_MAX = 80
 export const FLEET_ROUTINE_PROMPT_MAX = 4_000
+/**
+ * Every routine run is a full model turn, so intervals have a floor. A bot may create routines for itself (the owner
+ * approves each one unless its ceiling allows it), up to `botCreatedMax`; the owner's own routines do not count.
+ */
+export const FLEET_ROUTINE_LIMITS = { intervalMinMinutes: 15, intervalMaxMinutes: 1440, botCreatedMax: 10 } as const
 export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
 export const FLEET_QUEUE_PREVIEW_MAX = 80

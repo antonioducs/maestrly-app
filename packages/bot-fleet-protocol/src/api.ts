@@ -222,6 +222,15 @@ export const fleetInternalPeerMessageRequestSchema = z.object({
 export type FleetInternalPeerMessageRequest = z.infer<typeof fleetInternalPeerMessageRequestSchema>
 export const fleetInternalPeerMessageResponseSchema = z.object({ messageId: fleetIdSchema, delivered: z.boolean() })
 export type FleetInternalPeerMessageResponse = z.infer<typeof fleetInternalPeerMessageResponseSchema>
+/**
+ * A bot's own routines, through the internal API. The caller is the bot the gateway token identifies: it lists all of
+ * its routines, creates routines marked `createdBy: 'bot'` (up to `FLEET_ROUTINE_LIMITS.botCreatedMax`), and changes
+ * or deletes only those; routines the owner created are refused with FORBIDDEN.
+ */
+export const fleetInternalRoutineCreateRequestSchema = fleetCreateRoutineRequestSchema
+export type FleetInternalRoutineCreateRequest = FleetCreateRoutineRequest
+export const fleetInternalRoutinePatchRequestSchema = fleetPatchRoutineRequestSchema
+export type FleetInternalRoutinePatchRequest = FleetPatchRoutineRequest
 
 export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
 export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
@@ -253,7 +262,12 @@ export const fleetInstanceStatusSchema = z.object({
   ceiling: fleetCeilingSchema,
   profile: z.object({ botId: fleetBotIdSchema, name: fleetNameSchema }).nullable(),
   conversationId: fleetIdSchema.nullable(),
-  turn: z.object({ state: z.enum(['idle', 'running', 'cancelling']), startedAt: fleetTimestampSchema.nullable() }),
+  turn: z.object({
+    state: z.enum(['idle', 'running', 'cancelling']),
+    startedAt: fleetTimestampSchema.nullable(),
+    /** The queued input the running turn was started from, so the gateway can tell a routine run is still going. */
+    inputId: fleetIdSchema.nullable().default(null),
+  }),
   hold: fleetInstanceHoldSchema,
   queue: z.array(
     z.object({
@@ -433,6 +447,20 @@ export const FLEET_INTERNAL_ROUTES = {
     body: fleetInternalPeerMessageRequestSchema,
     response: fleetInternalPeerMessageResponseSchema,
   },
+  routinesList: { method: 'GET', path: '/internal/v1/routines', body: null, response: fleetRoutinesResponseSchema },
+  routineCreate: {
+    method: 'POST',
+    path: '/internal/v1/routines',
+    body: fleetInternalRoutineCreateRequestSchema,
+    response: fleetRoutineSchema,
+  },
+  routinePatch: {
+    method: 'PATCH',
+    path: '/internal/v1/routines/:rid',
+    body: fleetInternalRoutinePatchRequestSchema,
+    response: fleetRoutineSchema,
+  },
+  routineDelete: { method: 'DELETE', path: '/internal/v1/routines/:rid', body: null, response: null },
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INSTANCE_ROUTES = {

@@ -27,9 +27,33 @@ import { botIdentityPrompt, setBotIdentity } from '../../src/main/fleet/instance
 import { initialFloatingBounds } from '../../src/main/fleet/instance/window-bounds'
 import { FleetImageStore, imageId, imageMediaType } from '../../src/main/fleet/instance/images'
 import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
+import { freshDb, closeDb } from '../helpers/db'
 
 const key = () => randomUUID()
 describe('fleet conversation admission', () => {
+  it('reports the input that started the current turn and clears it when idle', async () => {
+    freshDb()
+    try {
+      const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+      Object.assign(runtime, {
+        refreshAccounts: vi.fn(async () => {}),
+        pending: () => [],
+        queue: { list: () => [] },
+        holdManager: { state: { state: 'none', reason: null, since: null, interruptedTurn: false } },
+        events: { lastSeq: 0 },
+        accountOptions: [],
+        stored: null,
+        turning: true,
+        turnStartedAt: '2026-09-25T10:00:00.000Z',
+        turnInputId: 'queued-input',
+      })
+      expect((await runtime.status()).turn.inputId).toBe('queued-input')
+      Object.assign(runtime, { turning: false, turnStartedAt: null, turnInputId: null })
+      expect((await runtime.status()).turn.inputId).toBeNull()
+    } finally {
+      closeDb()
+    }
+  })
   it('returns a conflict before a primary conversation exists', async () => {
     const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
     await expect(runtime.conversationCall({ op: 'chatGetConvTools', args: [] })).rejects.toMatchObject({

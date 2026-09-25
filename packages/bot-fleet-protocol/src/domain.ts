@@ -8,6 +8,7 @@ import {
   FLEET_NOTE_MAX,
   FLEET_PEER_MESSAGE_MAX,
   FLEET_ROLE_MAX,
+  FLEET_ROUTINE_LIMITS,
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
   FLEET_SCREEN,
@@ -339,7 +340,7 @@ export type FleetInteractionResolution = z.infer<typeof fleetInteractionResoluti
 export const fleetInboxItemSchema = z.object({ botId: fleetBotIdSchema, interaction: fleetPendingInteractionSchema })
 export type FleetInboxItem = z.infer<typeof fleetInboxItemSchema>
 
-export const fleetRoutineScheduleSchema = z.object({
+export const fleetWeeklyScheduleSchema = z.object({
   kind: z.literal('weekly'),
   time: z.string().regex(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/),
   days: z
@@ -348,6 +349,21 @@ export const fleetRoutineScheduleSchema = z.object({
     .refine((days) => new Set(days).size === days.length, 'days must be unique'),
   timezone: z.string().min(1).max(64),
 })
+export type FleetWeeklySchedule = z.infer<typeof fleetWeeklyScheduleSchema>
+/** Runs every `everyMinutes` from when it is created, enabled or rescheduled. */
+export const fleetIntervalScheduleSchema = z.object({
+  kind: z.literal('interval'),
+  everyMinutes: z
+    .number()
+    .int()
+    .min(FLEET_ROUTINE_LIMITS.intervalMinMinutes)
+    .max(FLEET_ROUTINE_LIMITS.intervalMaxMinutes),
+})
+export type FleetIntervalSchedule = z.infer<typeof fleetIntervalScheduleSchema>
+export const fleetRoutineScheduleSchema = z.discriminatedUnion('kind', [
+  fleetWeeklyScheduleSchema,
+  fleetIntervalScheduleSchema,
+])
 export type FleetRoutineSchedule = z.infer<typeof fleetRoutineScheduleSchema>
 
 export const fleetRoutineSchema = z.object({
@@ -359,7 +375,12 @@ export const fleetRoutineSchema = z.object({
   enabled: z.boolean(),
   nextRunAt: fleetTimestampSchema.nullable(),
   lastRunAt: fleetTimestampSchema.nullable(),
-  lastOutcome: z.enum(['sent', 'skipped_paused', 'skipped_offline', 'skipped_missed', 'failed']).nullable(),
+  /** `skipped_busy`: the routine's previous run was still queued or running, so this one was not sent. */
+  lastOutcome: z
+    .enum(['sent', 'skipped_paused', 'skipped_offline', 'skipped_missed', 'skipped_busy', 'failed'])
+    .nullable(),
+  /** Who created it. A bot may change or delete only the routines it created; the owner may change any. */
+  createdBy: z.enum(['owner', 'bot']).default('owner'),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -411,6 +432,10 @@ export const fleetActivityKindSchema = z.enum([
   'needs_you',
   'routine_ran',
   'routine_skipped',
+  // A bot changed its own routines (summary: the routine title; data: routineId).
+  'routine_created',
+  'routine_updated',
+  'routine_deleted',
   'peer_message',
   'takeover_started',
   'takeover_ended',

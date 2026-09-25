@@ -60,14 +60,14 @@ export class Store {
       const version = Number(
         (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
       )
-      if (version > 2) throw new Error('Gateway database schema is newer than this binary')
+      if (version > 3) throw new Error('Gateway database schema is newer than this binary')
       if (version === 0) {
         this.db.exec(`
           CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
           CREATE TABLE pairing_codes (code_sha256 TEXT PRIMARY KEY, expires_at TEXT NOT NULL, used_at TEXT, attempts INTEGER NOT NULL DEFAULT 0);
           CREATE TABLE bots (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, instructions TEXT NOT NULL, tint TEXT NOT NULL, ceiling TEXT NOT NULL, selection_json TEXT, talks_to_json TEXT NOT NULL, paused INTEGER NOT NULL, lifecycle TEXT NOT NULL, setup_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT);
           CREATE TABLE bot_secrets (bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE, control_token TEXT NOT NULL, gateway_token TEXT NOT NULL, gateway_token_sha256 TEXT NOT NULL UNIQUE, keyring_password TEXT NOT NULL);
-          CREATE TABLE routines (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id), title TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at TEXT, last_run_at TEXT, last_outcome TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+          CREATE TABLE routines (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id), title TEXT NOT NULL, prompt TEXT NOT NULL, schedule_json TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at TEXT, last_run_at TEXT, last_outcome TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT NOT NULL DEFAULT 'owner', last_input_id TEXT);
           CREATE TABLE activity (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, bot_id TEXT REFERENCES bots(id), kind TEXT NOT NULL, summary TEXT, data_json TEXT NOT NULL);
           CREATE TABLE peer_messages (id TEXT PRIMARY KEY, at TEXT NOT NULL, from_bot TEXT NOT NULL, to_bot TEXT NOT NULL, text TEXT NOT NULL, delivered INTEGER NOT NULL);
           CREATE TABLE pending_deliveries (message_id TEXT PRIMARY KEY REFERENCES peer_messages(id), to_bot TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -77,7 +77,7 @@ export class Store {
           CREATE INDEX idx_activity_seq ON activity(seq);
           CREATE INDEX idx_idempotency_created ON idempotency(created_at);
         `)
-        this.db.prepare("INSERT INTO meta(key,value) VALUES('schema_version','2')").run()
+        this.db.prepare("INSERT INTO meta(key,value) VALUES('schema_version','3')").run()
       }
       if (version === 1) {
         this.db.exec('ALTER TABLE bot_secrets ADD COLUMN keyring_password TEXT')
@@ -89,6 +89,12 @@ export class Store {
             .prepare('UPDATE bot_secrets SET keyring_password=? WHERE bot_id=?')
             .run(randomBytes(32).toString('base64url'), row.bot_id as string)
         this.db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run()
+      }
+      if (version === 1 || version === 2) {
+        this.db.exec(
+          "ALTER TABLE routines ADD COLUMN created_by TEXT NOT NULL DEFAULT 'owner'; ALTER TABLE routines ADD COLUMN last_input_id TEXT"
+        )
+        this.db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
       }
     })
   }
@@ -246,7 +252,9 @@ export class Store {
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM pair_blocks WHERE pair_key LIKE ?').run('%|' + id + '|%')
-      this.db.prepare('DELETE FROM idempotency WHERE scope IN (?,?)').run('botMessageSend:' + id, 'routineCreate:' + id)
+      this.db
+        .prepare('DELETE FROM idempotency WHERE scope IN (?,?,?)')
+        .run('botMessageSend:' + id, 'routineCreate:' + id, 'botRoutineCreate:' + id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
     })
   }
@@ -396,6 +404,7 @@ export class Store {
       nextRunAt: row.next_run_at as string | null,
       lastRunAt: row.last_run_at as string | null,
       lastOutcome: row.last_outcome as FleetRoutine['lastOutcome'],
+      createdBy: row.created_by as FleetRoutine['createdBy'],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }
@@ -410,10 +419,17 @@ export class Store {
     const row = this.db.prepare('SELECT * FROM routines WHERE id=?').get(id) as Row | undefined
     return row ? this.routine(row) : null
   }
+  routineLastInputId(id: string): string | null {
+    const row = this.db.prepare('SELECT last_input_id FROM routines WHERE id=?').get(id) as Row | undefined
+    return (row?.last_input_id as string | null) ?? null
+  }
+  setRoutineLastInputId(id: string, inputId: string) {
+    this.db.prepare('UPDATE routines SET last_input_id=? WHERE id=?').run(inputId, id)
+  }
   saveRoutine(routine: FleetRoutine) {
     this.db
-      .prepare(`INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,next_run_at,last_run_at,last_outcome,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,prompt=excluded.prompt,
+      .prepare(`INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,next_run_at,last_run_at,last_outcome,created_at,updated_at,created_by)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,prompt=excluded.prompt,
       schedule_json=excluded.schedule_json,enabled=excluded.enabled,next_run_at=excluded.next_run_at,
       last_run_at=excluded.last_run_at,last_outcome=excluded.last_outcome,updated_at=excluded.updated_at`)
       .run(
@@ -427,7 +443,8 @@ export class Store {
         routine.lastRunAt,
         routine.lastOutcome,
         routine.createdAt,
-        routine.updatedAt
+        routine.updatedAt,
+        routine.createdBy
       )
   }
   deleteRoutine(id: string) {

@@ -5,8 +5,10 @@ import {
   FLEET_INSTANCE_ROUTES,
   FLEET_SCREEN_UPGRADE,
   FLEET_INTERNAL_ROUTES,
+  FLEET_ROUTINE_LIMITS,
   buildPath,
   compareFleetTranscriptItems,
+  fleetRoutineScheduleSchema,
   deriveBotId,
   fleetActivityEntrySchema,
   fleetAddApiKeyAccountRequestSchema,
@@ -367,6 +369,43 @@ describe('routes and helpers', () => {
           summary: 'Scout',
           data: {},
         }).success
+      ).toBe(true)
+  })
+
+  it('schedules routines weekly or every N minutes within the limits, and says who created them', () => {
+    const weekly = { kind: 'weekly', time: '09:00', days: [1], timezone: 'UTC' }
+    expect(fleetRoutineScheduleSchema.parse(weekly)).toEqual(weekly)
+    expect(fleetRoutineScheduleSchema.parse({ kind: 'interval', everyMinutes: 15 })).toEqual({
+      kind: 'interval',
+      everyMinutes: 15,
+    })
+    for (const everyMinutes of [1, 14, 1441, 30.5])
+      expect(fleetRoutineScheduleSchema.safeParse({ kind: 'interval', everyMinutes }).success).toBe(false)
+    expect(FLEET_ROUTINE_LIMITS).toEqual({ intervalMinMinutes: 15, intervalMaxMinutes: 1440, botCreatedMax: 10 })
+    const at = '2026-09-25T10:00:00.000Z'
+    const routine = {
+      id: 'r1',
+      botId: 'scout',
+      title: 'Check',
+      prompt: 'Check now',
+      schedule: { kind: 'interval', everyMinutes: 30 },
+      enabled: true,
+      nextRunAt: at,
+      lastRunAt: at,
+      lastOutcome: 'skipped_busy',
+      createdAt: at,
+      updatedAt: at,
+    }
+    // Routines saved before authorship existed were all the owner's.
+    expect(fleetRoutineSchema.parse(routine).createdBy).toBe('owner')
+    expect(fleetRoutineSchema.parse({ ...routine, createdBy: 'bot' }).createdBy).toBe('bot')
+    expect(fleetRoutineSchema.safeParse({ ...routine, createdBy: 'peer' }).success).toBe(false)
+    expect(FLEET_INTERNAL_ROUTES.routinesList).toMatchObject({ method: 'GET', path: '/internal/v1/routines' })
+    expect(FLEET_INTERNAL_ROUTES.routinePatch).toMatchObject({ method: 'PATCH', path: '/internal/v1/routines/:rid' })
+    expect(FLEET_INTERNAL_ROUTES.routineDelete).toMatchObject({ method: 'DELETE', response: null })
+    for (const kind of ['routine_created', 'routine_updated', 'routine_deleted'])
+      expect(
+        fleetActivityEntrySchema.safeParse({ seq: 1, at, botId: 'scout', kind, summary: 'Check', data: {} }).success
       ).toBe(true)
   })
 

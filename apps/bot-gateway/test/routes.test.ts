@@ -164,6 +164,7 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
   })
   await gateway.listen()
   const origin = 'http://127.0.0.1:' + (gateway.publicServer.address() as { port: number }).port
+  const internalOrigin = 'http://127.0.0.1:' + (gateway.internalServer.address() as { port: number }).port
   const headers = (token: string) => ({
     [FLEET_PROTOCOL_HEADER]: '1',
     Authorization: 'Bearer ' + token,
@@ -241,10 +242,65 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     expect(release.status).toBe(200)
     expect(((await release.json()) as { state: string }).state).toBe('none')
     const schedule = { kind: 'weekly', time: '09:00', days: [1], timezone: 'America/New_York' }
+    const internal = (method: string, path: string, body?: unknown) =>
+      fetch(internalOrigin + path, {
+        method,
+        headers: headers(store.botSecrets(bot.id)!.gatewayToken),
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    const ownRequest = {
+      title: 'Bot interval',
+      prompt: 'Check later',
+      schedule: { kind: 'interval', everyMinutes: 15 },
+      enabled: true,
+      idempotencyKey: randomUUID(),
+    }
+    const ownCreated = await internal('POST', '/internal/v1/routines', ownRequest)
+    expect(ownCreated.status).toBe(201)
+    const own = (await ownCreated.json()) as { id: string; createdBy: string }
+    expect(own.createdBy).toBe('bot')
+    expect((await (await internal('POST', '/internal/v1/routines', ownRequest)).json()).id).toBe(own.id)
+    expect(
+      ((await (await internal('GET', '/internal/v1/routines')).json()) as { routines: Array<{ id: string }> }).routines
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ id: own.id })]))
+    expect(
+      (
+        await fetch(origin + '/v1/bots/test/routines/' + own.id, {
+          method: 'PATCH',
+          headers: headers(one.token),
+          body: JSON.stringify({ prompt: 'Owner edit' }),
+        })
+      ).status
+    ).toBe(200)
+    expect((await internal('PATCH', '/internal/v1/routines/' + own.id, { title: 'Changed' })).status).toBe(200)
+    expect((await internal('DELETE', '/internal/v1/routines/' + own.id)).status).toBe(204)
+    expect(
+      store
+        .activity()
+        .filter((entry) => entry.kind.startsWith('routine_') && entry.data.routineId === own.id)
+        .map((entry) => entry.kind)
+    ).toEqual(['routine_created', 'routine_updated', 'routine_deleted'])
+    for (let i = 0; i < 10; i++) {
+      const response = await internal('POST', '/internal/v1/routines', {
+        ...ownRequest,
+        title: 'Bot ' + i,
+        idempotencyKey: randomUUID(),
+      })
+      expect(response.status).toBe(201)
+    }
+    const limited = await internal('POST', '/internal/v1/routines', { ...ownRequest, idempotencyKey: randomUUID() })
+    expect(limited.status).toBe(409)
+    expect((await limited.json()).message).toBe(
+      'Routine limit reached: this bot already created 10 routines. Delete one first or ask your owner.'
+    )
     const request = { title: 'Weekly', prompt: 'Check', schedule, enabled: true, idempotencyKey: randomUUID() }
     const created = await post('/v1/bots/test/routines', one.token, request)
     expect(created.status).toBe(201)
     const routine = (await created.json()) as { id: string }
+    const forbidden = await internal('PATCH', '/internal/v1/routines/' + routine.id, { title: 'No' })
+    expect(forbidden.status).toBe(403)
+    expect((await forbidden.json()).message).toBe('Only your owner can change this routine.')
+    expect((await internal('DELETE', '/internal/v1/routines/' + routine.id)).status).toBe(403)
     expect(((await (await post('/v1/bots/test/routines', one.token, request)).json()) as { id: string }).id).toBe(
       routine.id
     )
@@ -322,6 +378,7 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     // Only an archived bot can be deleted forever.
     expect((await remove(afterStop.token)).status).toBe(404)
     expect((await post('/v1/bots/test/archive', afterStop.token)).status).toBe(200)
+    expect((await internal('GET', '/internal/v1/routines')).status).toBe(404)
     expect(await list()).toEqual([expect.objectContaining({ id: 'test', name: 'Test', files: 'kept' })])
     expect((await fetch(origin + '/v1/bots/test', { headers: headers(afterStop.token) })).status).toBe(404)
     const restored = await post(archived + '/test/restore', afterStop.token)
