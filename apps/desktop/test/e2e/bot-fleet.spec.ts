@@ -826,7 +826,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('heading', { name: 'Conectar uma conta' })).toHaveCount(0)
     await page.getByRole('tab', { name: 'Conversa' }).click()
     await page.getByRole('button', { name: 'Escolher modelo de compactação' }).click()
-    await expect(page.getByRole('heading', { name: 'Compactação' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Compactação' })).toBeInViewport()
     await page.getByRole('button', { name: 'Modelo de compactação', exact: true }).click()
     await page.getByRole('option', { name: 'Fake · Model' }).click()
     await page.getByLabel('Preparar um resumo a cada (mil tokens)').fill('100')

@@ -272,7 +272,6 @@ export default {
       model: 'Modelo de compactação',
       reasoning: 'Raciocínio',
       default: 'Padrão',
-      fast: 'Fast',
       interval: 'Preparar um resumo a cada (mil tokens)',
       intervalInvalid: 'Informe um número inteiro de 10 a 1000.',
       removedAccount: 'conta removida',

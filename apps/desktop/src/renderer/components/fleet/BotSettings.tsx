@@ -88,6 +88,8 @@ export function BotSettings({
   const [accountBusy, setAccountBusy] = useState(false)
   const [accountError, setAccountError] = useState('')
   const keyRef = useRef<HTMLInputElement>(null)
+  const compactionRef = useRef<HTMLElement>(null)
+  const needsCompaction = bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -113,6 +115,11 @@ export function BotSettings({
     bot.compaction?.fastMode,
     bot.compaction?.intervalTokens,
   ])
+  // The section sits below the main form; a bot blocked on it opens scrolled straight to the fix, once per bot so a
+  // status update never yanks the owner's scroll.
+  useEffect(() => {
+    if (needsCompaction) compactionRef.current?.scrollIntoView({ block: 'start' })
+  }, [bot.id])
   useEffect(() => {
     let alive = true
     void Promise.all([window.api.fleetListSelections(bot.id), window.api.fleetListRoutines(bot.id)])
@@ -444,7 +451,17 @@ export function BotSettings({
           />
           {!options.length && <p className="mt-1 text-xs text-muted-foreground">{t('botSettings.noAccount')}</p>}
         </div>
-        <section className="space-y-3" aria-labelledby="fleet-compaction-heading">
+        <div className="flex items-center gap-3">
+          <Button disabled={!dirty || invalid || busy} onClick={() => void save()}>
+            {t('botSettings.save')}
+          </Button>
+          {saved && (
+            <span role="status" className="text-xs text-primary">
+              {t('botSettings.saved')}
+            </span>
+          )}
+        </div>
+        <section ref={compactionRef} className="space-y-3" aria-labelledby="fleet-compaction-heading">
           <h2 id="fleet-compaction-heading" className="font-semibold">
             {t('botSettings.compaction.heading')}
           </h2>
@@ -506,13 +523,12 @@ export function BotSettings({
             </div>
           )}
           {compactionChoice?.fastMode && (
-            <label className="flex items-center gap-3 text-sm">
-              <span>{t('botSettings.compaction.fast')}</span>
+            <div className="flex">
               <FastModeChip
                 enabled={compaction.fastMode}
                 onToggle={() => setCompaction((current) => ({ ...current, fastMode: !current.fastMode }))}
               />
-            </label>
+            </div>
           )}
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="fleet-compaction-interval">
@@ -554,16 +570,6 @@ export function BotSettings({
             </p>
           )}
         </section>
-        <div className="flex items-center gap-3">
-          <Button disabled={!dirty || invalid || busy} onClick={() => void save()}>
-            {t('botSettings.save')}
-          </Button>
-          {saved && (
-            <span role="status" className="text-xs text-primary">
-              {t('botSettings.saved')}
-            </span>
-          )}
-        </div>
         <section>
           <div className="flex items-center justify-between">
             <h2 className="font-semibold">{t('botSettings.routines')}</h2>

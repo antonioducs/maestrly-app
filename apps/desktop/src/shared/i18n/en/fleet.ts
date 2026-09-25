@@ -272,7 +272,6 @@ export default {
       model: 'Compaction model',
       reasoning: 'Reasoning',
       default: 'Default',
-      fast: 'Fast',
       interval: 'Prepare a summary every (thousand tokens)',
       intervalInvalid: 'Enter a whole number from 10 to 1000.',
       removedAccount: 'removed account',
