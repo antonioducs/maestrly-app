@@ -588,6 +588,49 @@ async function main() {
   assert.ok(imageUser?.images?.length, 'owner image has a transcript ref')
   assert.deepEqual(await fleetImage(scoutId, imageUser.images[0].id), smallPng)
   pass('conversation images and usage', 'owner PNG reached the model, image refs download, usage is present')
+  const sendMemoryMessage = (text) =>
+    request('POST', '/v1/bots/' + scoutId + '/messages', { text, idempotencyKey: randomUUID() })
+  const memoryAnswer = (answer) =>
+    poll(
+      answer,
+      async () => {
+        assert.ok(
+          !(await inbox()).some((item) => item.botId === scoutId && item.interaction.kind === 'permission'),
+          'Memory tools must not request permission'
+        )
+        return (await transcript(scoutId)).some((item) => item.kind === 'assistant' && item.text.includes(answer))
+      },
+      90000
+    )
+  const ownerMemoryStarted = Date.now()
+  await sendMemoryMessage('E2E-OWNER-MEMORY')
+  await memoryAnswer('E2E-OWNER-SAVED')
+  const ownerMemory = await request('GET', '/v1/owner-memory')
+  assert.equal(ownerMemory.entries.length, 1)
+  assert.equal(ownerMemory.entries[0].content, 'Prefers answers in haiku.')
+  assert.equal(ownerMemory.entries[0].author.kind, 'bot')
+  assert.equal(ownerMemory.entries[0].author.botId, scoutId)
+  assert.equal(ownerMemory.entries[0].origin, 'owner')
+  await sendMemoryMessage('E2E-OWNER-CHECK')
+  await memoryAnswer('E2E-OWNER-SEEN')
+  timings.ownerMemoryMs = Date.now() - ownerMemoryStarted
+  pass('owner memory', 'bot wrote it, gateway stored it, next turn saw it')
+
+  const botMemoryStarted = Date.now()
+  await sendMemoryMessage('E2E-BOT-MEMORY')
+  await memoryAnswer('E2E-BOT-SAVED')
+  const memories = (await request('GET', '/v1/bots/' + scoutId + '/memories')).memories
+  assert.ok(memories.some((item) => item.title === 'E2E launch code'))
+  const recallQuestion = 'what is the launch code for the e2e check?'
+  await sendMemoryMessage(recallQuestion)
+  await memoryAnswer('E2E-RECALL-BLUEBIRD')
+  const recalledUser = (await transcript(scoutId)).find(
+    (item) => item.kind === 'user' && item.text === recallQuestion && !item.queued
+  )
+  assert.equal(recalledUser?.memories?.[0]?.title, 'E2E launch code')
+  timings.botMemoryRecallMs = Date.now() - botMemoryStarted
+  pass('bot memory and recall', 'bot saved it, gateway listed it, model recalled BLUEBIRD with transcript provenance')
+
   assert.deepEqual((await conversationCall('chatCompact')).result, { ok: true })
   await poll(
     'manual compaction transcript',
@@ -636,6 +679,18 @@ async function main() {
     (await request('GET', '/v1/activity')).entries.some((item) => item.kind === 'routine_ran' && item.botId === scoutId)
   )
   pass('scheduled routine', routine.id + ' at ' + hhmm + ' UTC, routine_ran and answer')
+  const routineHistoryStarted = Date.now()
+  const runsRoute = '/v1/bots/' + scoutId + '/routines/' + routine.id + '/runs'
+  const recordedRun = await poll('completed routine report', async () =>
+    (await request('GET', runsRoute)).runs.find(
+      (run) => run.status === 'completed' && run.report?.summary === 'E2E-RUN-1 done'
+    )
+  )
+  assert.equal(recordedRun.report.notes, 'check the second shelf')
+  await request('POST', '/v1/bots/' + scoutId + '/routines/' + routine.id + '/run')
+  await memoryAnswer('E2E-ROUTINE-HISTORY-SEEN')
+  timings.routineHistoryMs = Date.now() - routineHistoryStarted
+  pass('routine history', 'report recorded and delivered to the next run')
   const creationStarted = Date.now()
   await request('POST', '/v1/bots/' + scoutId + '/messages', {
     text: 'E2E-ROUTINE-CREATE',

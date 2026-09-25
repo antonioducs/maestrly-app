@@ -36,13 +36,23 @@ function reply(req) {
   if (messages.some((entry) => entry.role === 'system' && typeof entry.content === 'string' && entry.content.startsWith('You summarize programming conversations')))
     return { text: `E2E-SUMMARY ${++summaries}` }
   const lastUser = messages.filter((entry) => entry.role === 'user').at(-1)
-  const text = JSON.stringify(lastUser?.content ?? '')
+  const contentText = (content) => typeof content === 'string' ? content
+    : (content ?? []).filter((part) => part.type === 'text').map((part) => part.text).join('\n')
+  const text = contentText(lastUser?.content)
+  const toolReturned = messages.slice(messages.lastIndexOf(lastUser) + 1).some((entry) => entry.role === 'tool')
   if (text.includes('E2E-IMAGE')) {
     const images = Array.isArray(lastUser?.content) ? lastUser.content.filter((part) => part.type === 'image_url') : []
     const valid = images.some((part) => /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(part.image_url?.url ?? part.image_url ?? ''))
     return { text: valid ? 'E2E-IMAGE-SEEN' : 'E2E-IMAGE-MISSING' }
   }
-  if (text.includes('E2E routine ping')) return { text: 'E2E-ROUTINE-DONE' }
+  if (text.includes('Scheduled routine') && text.includes('E2E routine ping')) {
+    if (text.includes('E2E-RUN-1 done')) return { text: 'E2E-ROUTINE-HISTORY-SEEN' }
+    if (text.includes('This is the first recorded run') && !toolReturned)
+      return validatedTool(req, 'routine_report', {
+        summary: 'E2E-RUN-1 done', notes_for_next_run: 'check the second shelf',
+      })
+    return { text: 'E2E-ROUTINE-DONE' }
+  }
   if (text.includes('E2E-ROUTINE-CREATE')) {
     const userIndex = messages.lastIndexOf(lastUser)
     if (messages.slice(userIndex + 1).some((entry) => entry.role === 'tool')) return { text: 'E2E-ROUTINE-CREATED' }
@@ -51,6 +61,22 @@ function reply(req) {
     })
   }
   if (text.includes('handed it back')) return { text: 'E2E-CONTINUED' }
+  if (text.includes('E2E-OWNER-MEMORY')) {
+    if (toolReturned) return { text: 'E2E-OWNER-SAVED' }
+    return validatedTool(req, 'owner_memory_save', { content: 'Prefers answers in haiku.' })
+  }
+  if (text.includes('E2E-OWNER-CHECK')) {
+    const context = messages.filter((entry) => entry.role === 'system').map((entry) => contentText(entry.content)).join('\n')
+    return { text: (context + '\n' + text).includes('Prefers answers in haiku.') ? 'E2E-OWNER-SEEN' : 'E2E-OWNER-MISSING' }
+  }
+  if (text.includes('E2E-BOT-MEMORY')) {
+    if (toolReturned) return { text: 'E2E-BOT-SAVED' }
+    return validatedTool(req, 'memory_upsert', {
+      title: 'E2E launch code', content: 'The e2e launch code is BLUEBIRD.', type: 'reference',
+    })
+  }
+  if (text.includes('launch code') && text.includes('<maestrly-memory kind="recall">') && text.includes('BLUEBIRD'))
+    return { text: 'E2E-RECALL-BLUEBIRD' }
   const start = messages.findLastIndex((entry) => entry.role === 'user' && JSON.stringify(entry.content).includes('E2E-START'))
   if (start < 0) return { text: 'E2E-IDLE' }
   const completed = messages.slice(start + 1).filter((entry) => entry.role === 'tool').length
