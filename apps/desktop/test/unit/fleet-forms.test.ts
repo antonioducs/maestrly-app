@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FleetActivityEntry } from '@maestrly/bot-fleet-protocol'
+import type { FleetActivityEntry, FleetRoutine } from '@maestrly/bot-fleet-protocol'
 import {
   digestKey,
   formatDuration,
@@ -8,10 +8,15 @@ import {
   formatTimer,
   nextRadioIndex,
   routineSchedule,
+  routineFormFrom,
+  routineScheduleSummary,
   validateRoutine,
 } from '../../src/renderer/lib/fleet/forms'
 
 const valid = {
+  mode: 'weekly' as const,
+  every: '30',
+  everyUnit: 'minutes' as const,
   title: 'Daily report',
   prompt: 'Check orders',
   time: '09:30',
@@ -27,6 +32,61 @@ describe('fleet forms', () => {
     expect(validateRoutine({ ...valid, time: '24:01' })).toBe('time')
     expect(validateRoutine({ ...valid, timezone: '' })).toBe('timezone')
     expect(routineSchedule(valid)).toEqual({ kind: 'weekly', time: '09:30', days: [], timezone: 'America/Sao_Paulo' })
+  })
+  it('validates interval bounds and builds schedules in minutes', () => {
+    const interval = { ...valid, mode: 'interval' as const, every: '30' }
+    expect(validateRoutine(interval)).toBeNull()
+    expect(routineSchedule(interval)).toEqual({ kind: 'interval', everyMinutes: 30 })
+    for (const every of ['', '10', '14', '30.5', 'oops', '1441'])
+      expect(validateRoutine({ ...interval, every })).toBe('interval')
+    expect(validateRoutine({ ...interval, every: '1', everyUnit: 'hours' })).toBeNull()
+    expect(routineSchedule({ ...interval, every: '2', everyUnit: 'hours' })).toEqual({
+      kind: 'interval',
+      everyMinutes: 120,
+    })
+    expect(validateRoutine({ ...interval, every: '25', everyUnit: 'hours' })).toBe('interval')
+    expect(validateRoutine({ ...interval, every: '1', everyUnit: 'hours', timezone: '' })).toBeNull()
+  })
+  it('restores interval and weekly forms and summarizes schedules', () => {
+    const routine = {
+      id: 'r1',
+      botId: 'scout',
+      title: 'Check',
+      prompt: 'Check orders',
+      enabled: true,
+      nextRunAt: null,
+      lastRunAt: null,
+      lastOutcome: null,
+      createdBy: 'bot',
+      createdAt: '2026-09-25T10:00:00Z',
+      updatedAt: '2026-09-25T10:00:00Z',
+    } as const
+    const interval = { ...routine, schedule: { kind: 'interval' as const, everyMinutes: 120 } } as FleetRoutine
+    expect(routineFormFrom(interval)).toMatchObject({ mode: 'interval', every: '2', everyUnit: 'hours' })
+    expect(routineFormFrom({ ...interval, schedule: { kind: 'interval', everyMinutes: 90 } })).toMatchObject({
+      mode: 'interval',
+      every: '90',
+      everyUnit: 'minutes',
+    })
+    const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    expect(routineScheduleSummary(interval.schedule, labels, 'every day')).toEqual({
+      key: 'routine.schedule.hours',
+      values: { hours: 2 },
+    })
+    expect(routineScheduleSummary({ kind: 'interval', everyMinutes: 90 }, labels, 'every day')).toEqual({
+      key: 'routine.schedule.hoursMinutes',
+      values: { hours: 1, minutes: 30 },
+    })
+    expect(routineScheduleSummary({ kind: 'interval', everyMinutes: 30 }, labels, 'every day')).toEqual({
+      key: 'routine.schedule.minutes',
+      values: { minutes: 30 },
+    })
+    const weekly = { ...interval, schedule: { kind: 'weekly' as const, time: '09:00', days: [1, 3], timezone: 'UTC' } }
+    expect(routineFormFrom(weekly)).toMatchObject({ mode: 'weekly', time: '09:00', days: [1, 3], timezone: 'UTC' })
+    expect(routineScheduleSummary(weekly.schedule, labels, 'every day')).toEqual({
+      key: 'routine.schedule.weekly',
+      values: { time: '09:00', days: 'Mon, Wed', timezone: 'UTC' },
+    })
   })
   it('formats control time and away duration', () => {
     expect(formatTimer(61_900)).toBe('01:01')

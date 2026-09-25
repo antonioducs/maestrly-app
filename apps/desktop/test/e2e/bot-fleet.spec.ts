@@ -195,7 +195,22 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   })
   let flakyImageFailures = 1
   const imageReads: string[] = []
-  const routines: FleetRoutine[] = []
+  const routines: FleetRoutine[] = [
+    fleetRoutineSchema.parse({
+      id: 'bot-routine',
+      botId: 'new-bot',
+      title: 'Bot check',
+      prompt: 'Check',
+      schedule: { kind: 'interval', everyMinutes: 90 },
+      enabled: true,
+      nextRunAt: now(),
+      lastRunAt: now(),
+      lastOutcome: 'skipped_busy',
+      createdBy: 'bot',
+      createdAt: now(),
+      updatedAt: now(),
+    }),
+  ]
   let currentSelection: FleetSelection = {
     providerId: 'prov_e2e',
     modelId: 'model-e2e',
@@ -639,7 +654,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         }
         break
       case 'botRoutinesList':
-        value = { routines }
+        value = { routines: routines.filter((routine) => routine.botId === id) }
         break
       case 'botRoutinesCreate': {
         const input = body as {
@@ -655,6 +670,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
           nextRunAt: null,
           lastRunAt: null,
           lastOutcome: null,
+          createdBy: 'owner',
           createdAt: now(),
           updatedAt: now(),
         })
@@ -951,16 +967,68 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .click()
     await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(1)
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
-    await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Título').fill('Daily orders')
-    await page.getByRole('dialog', { name: 'Adicionar rotina' }).getByLabel('Instrução').fill('Check the orders')
-    const monday = page.getByRole('dialog', { name: 'Adicionar rotina' }).getByRole('button', { name: 'Seg' })
+    await expect(page.getByText('A cada 1 h 30 min')).toBeVisible()
+    await expect(page.getByText('Criada pelo bot')).toBeVisible()
+    await expect(page.getByText('Pulada: execução anterior em andamento')).toBeVisible()
+    const routineDialog = page.getByRole('dialog', { name: 'Adicionar rotina' })
+    await routineDialog.getByLabel('Título').fill('Daily orders')
+    await routineDialog.getByLabel('Instrução').fill('Check the orders')
+    const monday = routineDialog.getByRole('button', { name: 'Seg' })
     await monday.click()
     await expect(monday).toHaveAttribute('aria-pressed', 'true')
     await expect.poll(() => stateContrastOnDialog(monday)).toBeGreaterThanOrEqual(3)
     await monday.click()
-    await expect(monday).toHaveAttribute('aria-pressed', 'false')
-    await page.getByRole('button', { name: 'Salvar rotina' }).click()
+    const intervalMode = routineDialog.getByRole('radio', { name: 'Intervalo' })
+    await intervalMode.click()
+    await expect(intervalMode).toHaveAttribute('aria-checked', 'true')
+    await expect.poll(() => stateContrastOnDialog(intervalMode)).toBeGreaterThanOrEqual(3)
+    await expect(intervalMode.locator('svg')).toHaveCount(1)
+    await routineDialog.getByLabel('A cada').fill('10')
+    await expect(routineDialog.getByRole('alert')).toContainText('15 minutos')
+    await expect(routineDialog.getByRole('button', { name: 'Salvar rotina' })).toBeDisabled()
+    await routineDialog.getByLabel('A cada').fill('30')
+    await expect(routineDialog.getByRole('alert')).toHaveCount(0)
+    await routineDialog.getByRole('button', { name: 'Salvar rotina' }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botRoutinesCreate').length).toBe(1)
+    expect(requests.find((item) => item.key === 'botRoutinesCreate')?.body).toMatchObject({
+      schedule: { kind: 'interval', everyMinutes: 30 },
+    })
+    routines.push(
+      fleetRoutineSchema.parse({
+        id: 'refreshed-routine',
+        botId: 'new-bot',
+        title: 'Fresh from bot',
+        prompt: 'Check',
+        schedule: { kind: 'interval', everyMinutes: 30 },
+        enabled: true,
+        nextRunAt: null,
+        lastRunAt: null,
+        lastOutcome: null,
+        createdBy: 'bot',
+        createdAt: now(),
+        updatedAt: now(),
+      })
+    )
+    const listsBeforeActivity = requests.filter((item) => item.key === 'botRoutinesList').length
+    emit({
+      type: 'activity',
+      at: now(),
+      entry: {
+        seq: 1,
+        at: now(),
+        botId: 'new-bot',
+        kind: 'routine_created',
+        summary: 'Fresh from bot',
+        data: { routineId: 'refreshed-routine' },
+      },
+    })
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botRoutinesList').length)
+      .toBeGreaterThan(listsBeforeActivity)
+    await expect(
+      page.getByText('Fresh from bot', { exact: true }).locator('..').getByText('Criada pelo bot')
+    ).toBeVisible()
+    await expect(page.getByText('A cada 30 min').first()).toBeVisible()
 
     // Archive, restore, and delete forever.
     await page.getByRole('button', { name: 'Arquivar Orders' }).click()

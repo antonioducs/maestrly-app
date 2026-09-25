@@ -1,5 +1,5 @@
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type {
   FleetApiKeyProviderKind,
@@ -22,13 +22,25 @@ import { SearchSelect } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { gb } from '@/lib/fleet/format'
 import { choiceClass } from '@/lib/fleet/choice'
-import { routineSchedule, validateRoutine, type RoutineForm } from '@/lib/fleet/forms'
+import {
+  nextRadioIndex,
+  routineFormFrom,
+  routineSchedule,
+  routineScheduleSummary,
+  validateRoutine,
+  type RoutineForm,
+} from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { cn } from '@/lib/utils'
 import { BotFields, type BotFieldsValue } from './BotFields'
+import { ChoiceMark } from './ChoiceMark'
 
 const timezones = Intl.supportedValuesOf('timeZone').map((id) => ({ id, label: id.replaceAll('_', ' ') }))
 const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone
 const emptyRoutine = (): RoutineForm => ({
+  mode: 'weekly',
+  every: '30',
+  everyUnit: 'minutes',
   title: '',
   prompt: '',
   time: '09:00',
@@ -73,6 +85,13 @@ export function BotSettings({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  const routineRadios = useRef<Array<HTMLButtonElement | null>>([])
+  const latestRoutineActivity = fleet.state.activity.findLast(
+    (entry) =>
+      entry.botId === bot.id &&
+      ['routine_created', 'routine_updated', 'routine_deleted', 'routine_ran', 'routine_skipped'].includes(entry.kind)
+  )
+  const lastRoutineActivitySeq = useRef(fleet.state.activity.at(-1)?.seq ?? 0)
   useEffect(() => {
     setFields({ name: bot.name, instructions: bot.instructions, ceiling: bot.ceiling, talksTo: bot.talksTo })
     setRole(bot.role)
@@ -94,6 +113,29 @@ export function BotSettings({
       alive = false
     }
   }, [bot.id])
+  useEffect(() => {
+    if (!latestRoutineActivity || latestRoutineActivity.seq <= lastRoutineActivitySeq.current) return
+    lastRoutineActivitySeq.current = latestRoutineActivity.seq
+    let alive = true
+    void window.api
+      .fleetListRoutines(bot.id)
+      .then((list) => {
+        if (alive) setRoutines(list.routines)
+      })
+      .catch((cause) => {
+        if (alive) setError(fleetErrorMessage(cause))
+      })
+    return () => {
+      alive = false
+    }
+  }, [bot.id, latestRoutineActivity?.seq])
+  function onRoutineModeKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const next = nextRadioIndex(index, event.key, 2)
+    if (next === null || !routine) return
+    event.preventDefault()
+    setRoutine({ ...routine, mode: next === 0 ? 'weekly' : 'interval' })
+    routineRadios.current[next]?.focus()
+  }
   const original = JSON.stringify({
     name: bot.name,
     role: bot.role,
@@ -112,6 +154,7 @@ export function BotSettings({
   })
   const dirty = original !== edited
   const invalid = !fields.name.trim() || fields.name.length > 40 || role.length > 80
+  const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))
   async function save() {
     if (!dirty || invalid || busy) return
     setBusy(true)
@@ -398,10 +441,33 @@ export function BotSettings({
                 className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3 text-sm"
               >
                 <div className="min-w-32 flex-1">
-                  <strong>{item.title}</strong>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong>{item.title}</strong>
+                    {item.createdBy === 'bot' && (
+                      <span className="rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        {t('routine.createdByBot')}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">
-                    {item.schedule.time} · {item.schedule.timezone}
+                    {t(
+                      routineScheduleSummary(item.schedule, dayLabels, t('routine.schedule.everyDay')).key,
+                      routineScheduleSummary(item.schedule, dayLabels, t('routine.schedule.everyDay')).values
+                    )}
                   </p>
+                  {(item.nextRunAt || item.lastOutcome) && (
+                    <p className="text-xs text-muted-foreground">
+                      {item.nextRunAt &&
+                        t('routine.nextRun', {
+                          time: new Date(item.nextRunAt).toLocaleString(i18n.language, {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          }),
+                        })}
+                      {item.nextRunAt && item.lastOutcome && ' · '}
+                      {item.lastOutcome && t(`routine.outcome.${item.lastOutcome}`)}
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -421,14 +487,7 @@ export function BotSettings({
                   variant="ghost"
                   onClick={() => {
                     setEditingId(item.id)
-                    setRoutine({
-                      title: item.title,
-                      prompt: item.prompt,
-                      time: item.schedule.time,
-                      days: item.schedule.days,
-                      timezone: item.schedule.timezone,
-                      enabled: item.enabled,
-                    })
+                    setRoutine(routineFormFrom(item))
                   }}
                 >
                   {t('botSettings.edit')}
@@ -497,49 +556,108 @@ export function BotSettings({
                   onChange={(event) => setRoutine({ ...routine, prompt: event.target.value })}
                 />
               </label>
-              <label className="block text-sm">
-                {t('routine.time')}
-                <Input
-                  className="mt-1"
-                  type="time"
-                  value={routine.time}
-                  onChange={(event) => setRoutine({ ...routine, time: event.target.value })}
-                />
-              </label>
               <fieldset>
-                <legend className="text-sm">{t('routine.days')}</legend>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                    <Button
-                      key={day}
-                      size="sm"
-                      variant="outline"
-                      className={choiceClass(routine.days.includes(day))}
-                      aria-pressed={routine.days.includes(day)}
-                      onClick={() =>
-                        setRoutine({
-                          ...routine,
-                          days: routine.days.includes(day)
-                            ? routine.days.filter((value) => value !== day)
-                            : [...routine.days, day],
-                        })
-                      }
+                <legend className="mb-2 text-sm font-medium">{t('routine.scheduleMode')}</legend>
+                <div role="radiogroup" aria-label={t('routine.scheduleMode')} className="grid grid-cols-2 gap-2">
+                  {(['weekly', 'interval'] as const).map((mode, index) => (
+                    <button
+                      key={mode}
+                      ref={(node) => {
+                        routineRadios.current[index] = node
+                      }}
+                      type="button"
+                      role="radio"
+                      aria-checked={routine.mode === mode}
+                      tabIndex={routine.mode === mode ? 0 : -1}
+                      onClick={() => setRoutine({ ...routine, mode })}
+                      onKeyDown={(event) => onRoutineModeKey(event, index)}
+                      className={cn(
+                        'flex items-center justify-between rounded-lg border p-3 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        choiceClass(routine.mode === mode)
+                      )}
                     >
-                      {t(`routine.day.${day}`)}
-                    </Button>
+                      {t(`routine.mode.${mode}`)}
+                      <ChoiceMark selected={routine.mode === mode} />
+                    </button>
                   ))}
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">{t('routine.everyDay')}</p>
               </fieldset>
-              <div>
-                <label className="mb-1 block text-sm">{t('routine.timezone')}</label>
-                <SearchSelect
-                  value={routine.timezone}
-                  options={timezones}
-                  onChange={(id) => setRoutine({ ...routine, timezone: id ?? localZone })}
-                  ariaLabel={t('routine.timezone')}
-                />
-              </div>
+              {routine.mode === 'weekly' ? (
+                <>
+                  <label className="block text-sm">
+                    {t('routine.time')}
+                    <Input
+                      className="mt-1"
+                      type="time"
+                      value={routine.time}
+                      onChange={(event) => setRoutine({ ...routine, time: event.target.value })}
+                    />
+                  </label>
+                  <fieldset>
+                    <legend className="text-sm">{t('routine.days')}</legend>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                        <Button
+                          key={day}
+                          size="sm"
+                          variant="outline"
+                          className={choiceClass(routine.days.includes(day))}
+                          aria-pressed={routine.days.includes(day)}
+                          onClick={() =>
+                            setRoutine({
+                              ...routine,
+                              days: routine.days.includes(day)
+                                ? routine.days.filter((value) => value !== day)
+                                : [...routine.days, day],
+                            })
+                          }
+                        >
+                          {t(`routine.day.${day}`)}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{t('routine.everyDay')}</p>
+                  </fieldset>
+                  <div>
+                    <label className="mb-1 block text-sm">{t('routine.timezone')}</label>
+                    <SearchSelect
+                      value={routine.timezone}
+                      options={timezones}
+                      onChange={(id) => setRoutine({ ...routine, timezone: id ?? localZone })}
+                      ariaLabel={t('routine.timezone')}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[1fr_10rem] items-end gap-2">
+                    <label className="block text-sm">
+                      {t('routine.every')}
+                      <Input
+                        className="mt-1"
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={routine.every}
+                        onChange={(event) => setRoutine({ ...routine, every: event.target.value })}
+                      />
+                    </label>
+                    <Select
+                      value={routine.everyUnit}
+                      onValueChange={(value: 'minutes' | 'hours') => setRoutine({ ...routine, everyUnit: value })}
+                    >
+                      <SelectTrigger aria-label={t('routine.unit')}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="minutes">{t('routine.unitMinutes')}</SelectItem>
+                        <SelectItem value="hours">{t('routine.unitHours')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t('routine.intervalHint')}</p>
+                </div>
+              )}
               {validateRoutine(routine) && (
                 <p role="alert" className="text-xs text-destructive">
                   {t(`routine.validation.${validateRoutine(routine)}`)}
