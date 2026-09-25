@@ -338,18 +338,18 @@ export default {
 
     // ---------------- MEMORY ----------------
     memory_search: {
-      title: 'Search project memory',
+      title: 'Search memory',
       description:
-        'Narrow hybrid search over durable local memories and versioned .agents/knowledge. Use when prior decisions, constraints, preferences, procedures, or lessons may affect substantive work; skip trivial or self-contained requests. Read-only.',
+        'Fallback search over durable memory when the always-on memory and the automatically recalled memories do not cover what you need. Returns short snippets with ids and a relevance score; read one in full with memory_read. Read-only.',
     },
     memory_list: {
       title: 'List local memories',
       description: 'Lists structured local memories with lifecycle and metadata filters. Read-only.',
     },
     memory_read: {
-      title: 'Read project memory',
+      title: 'Read memory',
       description:
-        'Reads one specific structured local memory by id after search/list identifies it. Without id, returns a bounded deprecated projection.',
+        'Reads one memory in full by id or by the 8-character id prefix shown in the memory catalog and recall blocks.',
     },
     memory_upsert: {
       title: 'Remember durable information',
@@ -450,7 +450,6 @@ export default {
       description: 'Evaluates an expression in the context of the stopped frame (debugger REPL).',
       params: { expression: 'expression to evaluate' },
     },
-
   },
 
   returns: {
@@ -518,6 +517,7 @@ export default {
       quickPageTitle: 'Notes',
     },
     memory: {
+      nothingRelevant: 'Nothing relevant enough. Try different words, or memory_list to browse.',
       empty: '(empty memory)',
       updated: 'Project memory updated.',
       appended: 'Appended to the project memory.',

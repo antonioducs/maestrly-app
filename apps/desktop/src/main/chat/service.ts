@@ -102,6 +102,7 @@ import {
   PermissionBroker,
   AUTO_RULESET,
   BYOK_DEFAULT_RULESET,
+  BOT_MEMORY_WRITE_RULES,
   YOLO_RULESET,
   type PermissionRequest,
   type Ruleset,
@@ -2527,14 +2528,13 @@ function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
 
 /** Base conversation ruleset for the mode. */
 function rulesetFor(conversationId: string): Ruleset {
-  switch (permModeFor(conversationId)) {
-    case 'full':
-      return YOLO_RULESET
-    case 'auto':
-      return AUTO_RULESET
-    default:
-      return BYOK_DEFAULT_RULESET
-  }
+  const base =
+    permModeFor(conversationId) === 'full'
+      ? YOLO_RULESET
+      : permModeFor(conversationId) === 'auto'
+        ? AUTO_RULESET
+        : BYOK_DEFAULT_RULESET
+  return isBotMode() ? [...base, ...BOT_MEMORY_WRITE_RULES] : base
 }
 
 /** Effective conversation behavior mode (default agent). */

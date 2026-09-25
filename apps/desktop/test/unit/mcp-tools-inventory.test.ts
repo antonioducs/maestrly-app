@@ -341,8 +341,8 @@ describe('MCP app tools inventory', () => {
 
   it('advertises deliberate narrow memory lookup and tracks an explicit read', async () => {
     const search = (await listToolInventory(convId, true)).find((tool) => tool.name === 'memory_search')
-    expect(search?.description).toContain('Narrow hybrid search')
-    expect(search?.description).toContain('skip trivial or self-contained requests')
+    expect(search?.description).toContain('Fallback search over durable memory')
+    expect(search?.description).toContain('automatically recalled memories')
 
     const memory = createLocalMemory({
       workspaceId,

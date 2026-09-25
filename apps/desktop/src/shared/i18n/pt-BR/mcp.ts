@@ -336,18 +336,18 @@ export default {
     },
 
     memory_search: {
-      title: 'Buscar memória do projeto',
+      title: 'Buscar na memória',
       description:
-        'Busca híbrida e estreita em memórias locais duráveis e .agents/knowledge versionado. Use quando decisões, restrições, preferências, procedimentos ou lições anteriores puderem afetar um trabalho substancial; evite pedidos triviais ou autocontidos. Somente leitura.',
+        'Busca de reserva na memória durável quando a memória sempre visível e as lembradas automaticamente não bastam. Retorna trechos curtos com ids e uma relevância; leia uma inteira com memory_read. Somente leitura.',
     },
     memory_list: {
       title: 'Listar memórias locais',
       description: 'Lista memórias locais estruturadas com filtros de lifecycle e metadata. Somente leitura.',
     },
     memory_read: {
-      title: 'Ler memória do projeto',
+      title: 'Ler memória',
       description:
-        'Lê uma memória local estruturada específica por id após search/list identificá-la. Sem id, retorna uma projeção legada limitada.',
+        'Lê uma memória inteira pelo id ou pelo prefixo de 8 caracteres mostrado no catálogo e nos blocos de lembrança.',
     },
     memory_upsert: {
       title: 'Memorizar informação durável',
@@ -452,7 +452,6 @@ export default {
       description: 'Avalia uma expressão no contexto do frame parado (REPL do debugger).',
       params: { expression: 'expressão a avaliar' },
     },
-
   },
 
   returns: {
@@ -520,6 +519,7 @@ export default {
       quickPageTitle: 'Notas',
     },
     memory: {
+      nothingRelevant: 'Nada relevante o suficiente. Tente outras palavras ou use memory_list para explorar.',
       empty: '(memória vazia)',
       updated: 'Memória do projeto atualizada.',
       appended: 'Acrescentado à memória do projeto.',

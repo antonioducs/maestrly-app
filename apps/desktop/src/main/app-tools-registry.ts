@@ -35,8 +35,8 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   if (conversation) registerConversationNotesTools(ctx)
   if (conversation?.scope !== 'standalone') {
     registerProjectNotesTools(ctx)
-    registerMemoryTools(ctx)
   }
+  registerMemoryTools(ctx)
   registerDebugTools(ctx)
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   registerBotModeTools(ctx)
