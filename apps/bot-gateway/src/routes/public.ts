@@ -37,6 +37,24 @@ export async function publicRoute(
 ): Promise<Result> {
   const id = params.id
   switch (key) {
+    // public.ts
+    case 'botMemoriesList': {
+      requireBot(ctx, id)
+      const status = url.searchParams.get('status')
+      return {
+        body: await ctx.lifecycle
+          .instanceFor(id)
+          .memoriesList(status === 'archived' || status === 'superseded' || status === 'all' ? status : 'active'),
+      }
+    }
+    case 'botMemoryPatch':
+      requireBot(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).memoryPatch(params.mid, body) }
+    case 'botMemoryDelete':
+      requireBot(ctx, id)
+      await ctx.lifecycle.instanceFor(id).memoryDelete(params.mid)
+      return { status: 204 }
+
     case 'botRoutineRuns':
       requireBot(ctx, id)
       return { body: { runs: ctx.routines!.runs(id, params.rid) } }

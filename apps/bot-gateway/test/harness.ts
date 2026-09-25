@@ -45,6 +45,22 @@ async function fake() {
   const inputs: import('@maestrly/bot-fleet-protocol').FleetInstanceInput[] = []
   const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
+  const memoryRequests: unknown[] = []
+  const memories: import('@maestrly/bot-fleet-protocol').FleetBotMemory[] = [
+    {
+      id: 'm1',
+      title: 'Preference',
+      content: 'Keep answers short.',
+      truncated: false,
+      type: 'preference',
+      status: 'active',
+      pinned: false,
+      source: 'auto',
+      useCount: 1,
+      createdAt: '2026-09-25T10:00:00.000Z',
+      updatedAt: '2026-09-25T10:00:00.000Z',
+    },
+  ]
   const server = http.createServer(async (req, res) => {
     const send = (code: number, value: unknown) => {
       res.writeHead(code, { 'content-type': 'application/json' })
@@ -78,12 +94,34 @@ async function fake() {
       lastEventSeq: 0,
     }
     let body: unknown
-    if (['POST', 'PUT'].includes(req.method ?? '')) {
+    if (['POST', 'PUT', 'PATCH'].includes(req.method ?? '')) {
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(Buffer.from(chunk))
       body = JSON.parse(Buffer.concat(chunks).toString())
     }
     try {
+      const url = new URL(req.url!, 'http://instance')
+      if (url.pathname === '/v1/memories' && req.method === 'GET') {
+        const status = url.searchParams.get('status') ?? 'active'
+        memoryRequests.push({ method: 'GET', status })
+        return send(200, { memories: memories.filter((memory) => status === 'all' || memory.status === status) })
+      }
+      if (url.pathname.startsWith('/v1/memories/')) {
+        const id = decodeURIComponent(url.pathname.slice('/v1/memories/'.length))
+        const index = memories.findIndex((memory) => memory.id === id)
+        if (index < 0) return send(404, { code: 'NOT_FOUND', message: 'Memory not found' })
+        if (req.method === 'PATCH') {
+          memoryRequests.push({ method: 'PATCH', id, body })
+          Object.assign(memories[index], body)
+          return send(200, memories[index])
+        }
+        if (req.method === 'DELETE') {
+          memoryRequests.push({ method: 'DELETE', id })
+          memories.splice(index, 1)
+          res.writeHead(204)
+          return res.end()
+        }
+      }
       if (req.url === '/v1/health') return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true })
       if (req.url === '/v1/status') return send(200, status)
       if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {
@@ -140,6 +178,8 @@ async function fake() {
     inputs,
     conversationCalls,
     receipts,
+    memories,
+    memoryRequests,
   }
 }
 

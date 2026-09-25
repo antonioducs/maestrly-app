@@ -324,7 +324,7 @@ describe('instance link and takeover', () => {
     const bot = f.lifecycle.create(botInput())
     expect(bot.accounts).toEqual({ connected: false, providers: [] })
     await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
-    await until(() => fake.state.lastEventSeq === 0)
+    await until(() => fake.subscriptions.length > 0)
     fake.setState({ ...fake.state, accounts: { connected: true, providers: [{ id: 'prov_test', label: 'Test' }] } })
     await until(() => f.lifecycle.get(bot.id)?.accounts.providers[0]?.id === 'prov_test')
     expect(f.lifecycle.get(bot.id)?.accounts).toEqual({

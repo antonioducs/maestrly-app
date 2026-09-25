@@ -6,6 +6,7 @@ import {
   fleetImageMediaTypeSchema,
   buildPath,
   fleetInstanceEventSchema,
+  type FleetBotMemoryPatchRequest,
   type FleetInstanceInput,
   type FleetInstanceProfile,
   type FleetInteractionResolution,
@@ -72,6 +73,17 @@ export class InstanceClient {
       clearTimeout(timer)
     }
   }
+  // instance.ts
+  memoriesList(status: 'active' | 'archived' | 'superseded' | 'all' = 'active') {
+    return this.call('memoriesList', {}, { status })
+  }
+  memoryPatch(id: string, body: FleetBotMemoryPatchRequest) {
+    return this.call('memoryPatch', { id }, undefined, body)
+  }
+  memoryDelete(id: string) {
+    return this.call('memoryDelete', { id })
+  }
+
   health() {
     return this.call('health')
   }
