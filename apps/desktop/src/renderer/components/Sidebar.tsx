@@ -68,6 +68,7 @@ interface Props {
   onOpenFleetBot: (id: string) => void
   onOpenFleetServer: () => void
   onOpenFleetInbox: () => void
+  onOpenFleetOwnerMemory: () => void
   botServerConnected?: boolean
   botPendingCount?: number
   onCreateBot?: () => void
@@ -141,6 +142,7 @@ export function Sidebar({
   onOpenFleetBot,
   onOpenFleetServer,
   onOpenFleetInbox,
+  onOpenFleetOwnerMemory,
   botServerConnected = false,
   botPendingCount = 0,
   onCreateBot,
@@ -758,6 +760,7 @@ export function Sidebar({
           onOpenBot={onOpenFleetBot}
           onOpenServer={onOpenFleetServer}
           onOpenInbox={onOpenFleetInbox}
+          onOpenOwnerMemory={onOpenFleetOwnerMemory}
         />
         {tab === 'bots' &&
           crossMatches.map(({ tab: matchTab, count }) => (

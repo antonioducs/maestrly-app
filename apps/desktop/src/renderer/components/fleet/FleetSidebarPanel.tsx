@@ -1,15 +1,10 @@
-import { createContext, useContext } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
-import { Server } from 'lucide-react'
+import { BrainCircuit, Server } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { activityLabel, gb, memorySegments } from '@/lib/fleet/format'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { FleetDigestBanner } from './FleetDigestBanner'
-import { choiceClass } from '@/lib/fleet/choice'
-import { ChoiceMark } from './ChoiceMark'
-
-export const FleetOwnerMemoryNavigation = createContext<(() => void) | undefined>(undefined)
 
 export function FleetSidebarPanel({
   fleet,
@@ -28,11 +23,9 @@ export function FleetSidebarPanel({
   onOpenBot: (id: string) => void
   onOpenServer: () => void
   onOpenInbox: () => void
-  onOpenOwnerMemory?: () => void
+  onOpenOwnerMemory: () => void
 }) {
   const { t } = useTranslation('fleet')
-  const inheritedOpenOwnerMemory = useContext(FleetOwnerMemoryNavigation)
-  const openOwnerMemory = onOpenOwnerMemory ?? inheritedOpenOwnerMemory
   const { connection, snapshot } = fleet.state
   if (
     connection.state === 'unconfigured' ||
@@ -117,12 +110,12 @@ export function FleetSidebarPanel({
       {!query && (
         <button
           type="button"
-          onClick={openOwnerMemory}
+          onClick={onOpenOwnerMemory}
           aria-current={selected === 'memory' ? 'page' : undefined}
-          className={`mt-2 flex w-full items-center justify-between rounded-md border px-2 py-2 text-left focus-visible:ring-2 focus-visible:ring-ring ${choiceClass(selected === 'memory')}`}
+          className={`mt-2 flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected === 'memory' ? 'bg-accent' : ''}`}
         >
+          <BrainCircuit className="size-4 text-muted-foreground" />
           <span>{t('sidebar.ownerMemory')}</span>
-          <ChoiceMark selected={selected === 'memory'} />
         </button>
       )}
       <div className="mt-2 space-y-0.5">
