@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_TOOL_OUTPUT_MAX,
+  compareFleetTranscriptItems,
   fleetTranscriptItemSchema,
   type FleetTranscriptItem,
   type FleetTranscriptPage,
@@ -98,7 +99,13 @@ function toolItem(
   images: FleetImageRef[]
 ): FleetTranscriptItem {
   const status = part.state.status
+  // Only a streaming message updates its tools: one still open after the message ended will never finish here
+  // (an app restart, a background process whose end never arrived).
+  const leftOpen =
+    (!!message.finishReason || !!message.error) &&
+    (status === 'running' || status === 'pending' || status === 'awaiting-permission')
   const interrupted =
+    leftOpen ||
     (message.finishReason === 'aborted' && status !== 'completed') ||
     (status === 'error' && part.state.error === 'Aborted')
   const output =
@@ -260,7 +267,7 @@ export function projectChatMessages(
   return items.filter((item) => fleetTranscriptItemSchema.safeParse(item).success)
 }
 export function transcriptPage(items: FleetTranscriptItem[], before?: string | null, limit = 200): FleetTranscriptPage {
-  const sorted = [...items].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+  const sorted = [...items].sort(compareFleetTranscriptItems)
   const boundary = before ? sorted.findIndex((item) => item.id === before) : sorted.length
   const end = boundary < 0 ? sorted.length : boundary
   const start = Math.max(0, end - Math.max(1, Math.min(500, limit)))

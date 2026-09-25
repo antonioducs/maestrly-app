@@ -1,8 +1,9 @@
-import type {
-  FleetActivityEntry,
-  FleetGatewayEvent,
-  FleetTranscriptItem,
-  FleetTranscriptPage,
+import {
+  compareFleetTranscriptItems,
+  type FleetActivityEntry,
+  type FleetGatewayEvent,
+  type FleetTranscriptItem,
+  type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetConnectionView, FleetDigest, FleetSnapshot } from '../../../preload/api-fleet'
 
@@ -46,7 +47,7 @@ export function mergeTranscriptItems(
 ): FleetTranscriptItem[] {
   const items = new Map(existing.map((item) => [item.id, item]))
   for (const item of incoming) items.set(item.id, item)
-  return [...items.values()].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+  return [...items.values()].sort(compareFleetTranscriptItems)
 }
 
 export type FleetAction =

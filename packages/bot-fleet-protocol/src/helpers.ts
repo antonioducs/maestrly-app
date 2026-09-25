@@ -72,6 +72,21 @@ export function summarizeText(input: string, max: number): string {
   return singleLine.slice(0, max - 1).trimEnd() + '…'
 }
 
+const MESSAGE_PART_ID = /^(.*):(\d+)$/
+
+/**
+ * Transcript order, shared by the bot (pages) and the Mac (merges): by time, then by position. The items a chat
+ * message produces share its time and have ids `<message>:<part index>`, so the index is compared as a number;
+ * compared as text, `:10` sorted before `:2` and scrambled every turn with more than ten parts.
+ */
+export function compareFleetTranscriptItems(a: { id: string; at: string }, b: { id: string; at: string }): number {
+  if (a.at !== b.at) return a.at < b.at ? -1 : 1
+  const left = MESSAGE_PART_ID.exec(a.id)
+  const right = MESSAGE_PART_ID.exec(b.id)
+  if (left && right && left[1] === right[1]) return Number(left[2]) - Number(right[2])
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 export function isValidTimeZone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat('en', { timeZone: timezone })

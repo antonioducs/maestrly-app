@@ -6,6 +6,7 @@ import {
   FLEET_SCREEN_UPGRADE,
   FLEET_INTERNAL_ROUTES,
   buildPath,
+  compareFleetTranscriptItems,
   deriveBotId,
   fleetActivityEntrySchema,
   fleetAddApiKeyAccountRequestSchema,
@@ -367,6 +368,24 @@ describe('routes and helpers', () => {
           data: {},
         }).success
       ).toBe(true)
+  })
+
+  it('orders transcript items by time, then by their position in the message they share', () => {
+    const at = '2026-09-24T21:29:45.794Z'
+    const item = (id: string, time = at) => ({ id, at: time })
+    // One assistant message's parts share its time; `:10` must not come before `:2`.
+    const ids = ['m:1', 'm:10', 'm:18', 'm:4', 'm:6', 'm:7', 'm:8', 'm:2']
+    expect(
+      ids
+        .map((id) => item(id))
+        .sort(compareFleetTranscriptItems)
+        .map((entry) => entry.id)
+    ).toEqual(['m:1', 'm:2', 'm:4', 'm:6', 'm:7', 'm:8', 'm:10', 'm:18'])
+    expect(compareFleetTranscriptItems(item('m:9', '2026-09-24T21:29:46.000Z'), item('m:10'))).toBeGreaterThan(0)
+    // Different messages (or other ids) with the same time still get one stable order.
+    expect(compareFleetTranscriptItems(item('input:b'), item('input:a'))).toBeGreaterThan(0)
+    expect(compareFleetTranscriptItems(item('a:2'), item('b:10'))).toBeLessThan(0)
+    expect(compareFleetTranscriptItems(item('m:3'), item('m:3'))).toBe(0)
   })
 
   it('derives valid and deduplicated bot slugs', () => {

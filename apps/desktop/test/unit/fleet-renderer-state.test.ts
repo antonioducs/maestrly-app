@@ -24,6 +24,14 @@ const host = {
 } as FleetHostInfo
 
 describe('fleet pure state', () => {
+  it('keeps the parts of one message in their order when they share its time', () => {
+    const at = '2026-09-24T21:29:45.794Z'
+    const merged = mergeTranscriptItems(
+      [user('m:1', at), user('m:10', at), user('m:4', at)],
+      [user('m:2', at), user('m:11', at)]
+    )
+    expect(merged.map((item) => item.id)).toEqual(['m:1', 'm:2', 'm:4', 'm:10', 'm:11'])
+  })
   it('merges transcript updates by id in ascending time order', () => {
     expect(
       mergeTranscriptItems(

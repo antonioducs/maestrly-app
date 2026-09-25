@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
+import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
@@ -402,6 +403,47 @@ describe('transcript projection', () => {
     expect(JSON.stringify(viewed)).not.toContain('tool-image:internal')
     // Any other object is not a tool output envelope: it stays JSON.
     expect(other).toMatchObject({ kind: 'tool', output: JSON.stringify({ delivered: true, text: 'kept as data' }) })
+  })
+  it('keeps a long turn in the order it happened, across pages, and never shows a leftover tool as running', () => {
+    const tool = (index: number, status: 'completed' | 'running'): MessagePart => ({
+      type: 'tool',
+      id: 'tool-' + index,
+      toolCallId: 'tool-' + index,
+      toolName: 'bash',
+      input: { command: 'step ' + index },
+      state: status === 'completed' ? { status, output: 'ok' } : { status },
+    })
+    const parts: MessagePart[] = [{ type: 'text', id: 'intro', text: 'Starting' }]
+    for (let index = 1; index <= 11; index++) parts.push(tool(index, index === 3 ? 'running' : 'completed'))
+    parts.push({ type: 'text', id: 'outro', text: 'Done' })
+    const message = (id: string, finishReason?: string): ChatMessage => ({
+      id,
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.parse('2026-09-24T21:29:45.794Z'),
+      parts,
+      ...(finishReason ? { finishReason } : {}),
+    })
+    const items = projectChatMessages([message('turn', 'stop')])
+    const order = ['Starting', ...Array.from({ length: 11 }, (_, index) => 'step ' + (index + 1)), 'Done']
+    const label = (item: FleetTranscriptItem) =>
+      item.kind === 'tool' ? item.target : item.kind === 'assistant' ? item.text : item.kind
+    const pages: FleetTranscriptItem[][] = []
+    let before: string | null = null
+    do {
+      const page = transcriptPage(items, before, 5)
+      pages.unshift(page.items)
+      before = page.before
+    } while (before)
+    expect(pages.flat().map(label)).toEqual(order)
+    // Its turn is over: nothing will ever update the third command (Codex kept a process nobody reported on).
+    expect(items.find((item) => item.kind === 'tool' && item.target === 'step 3')).toMatchObject({
+      state: 'interrupted',
+    })
+    // While the turn streams, it is still running.
+    expect(
+      projectChatMessages([message('live')]).find((item) => item.kind === 'tool' && item.target === 'step 3')
+    ).toMatchObject({ state: 'running' })
   })
   it('attaches generated image refs to the producing tool item', () => {
     const message: ChatMessage = {
