@@ -335,6 +335,16 @@ export default {
       params: { text: 'markdown a acrescentar' },
     },
 
+    history_search: {
+      title: 'Buscar no histórico da conversa',
+      description:
+        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados. Todas as palavras precisam aparecer; os resultados mais recentes vêm primeiro. Retorna posições (seq) e trechos; leia ao redor de um com history_read. Somente leitura.',
+    },
+    history_read: {
+      title: 'Ler histórico da conversa',
+      description:
+        'Lê as mensagens ao redor de uma posição do histórico (seq) encontrada com history_search, com saídas de ferramentas encurtadas. Somente leitura.',
+    },
     memory_search: {
       title: 'Buscar na memória',
       description:
@@ -517,6 +527,13 @@ export default {
       pageDeleted: 'Página (e sub-páginas) excluída.',
       quickAppended: 'Acrescentado à página "{{title}}".',
       quickPageTitle: 'Notas',
+    },
+    history: {
+      truncated: '(trecho truncado)',
+      empty: 'Nenhuma mensagem nessa posição.',
+      compactionSummary: '[resumo da compactação] {{text}}',
+      compaction: '[compactação]',
+      generatedImage: '[imagem gerada {{name}}]',
     },
     memory: {
       nothingRelevant: 'Nada relevante o suficiente. Tente outras palavras ou use memory_list para explorar.',

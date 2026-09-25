@@ -1,3 +1,4 @@
+import { normalizeForSearch } from '../memory/relevance'
 /**
  * BYOK chat message persistence (`chat_messages`, created by store.ts initStore).
  *
@@ -1752,4 +1753,92 @@ export function latestCompactionMarkers(conversationId: string): { portable: str
     if (portable && any) break
   }
   return { portable, any }
+}
+
+export interface ConversationHistoryHit {
+  messageId: string
+  seq: number
+  role: 'user' | 'assistant'
+  createdAt: number
+  snippet: string
+}
+const HISTORY_SCAN = { pageSize: 400, maxMessages: 20_000, snippetChars: 240 } as const
+
+/** Every query term must appear in the visible text; newest matches first; hidden memory blocks are not searched. */
+export function searchConversationHistory(conversationId: string, query: string, limit = 8): ConversationHistoryHit[] {
+  const terms = [
+    ...new Set(
+      normalizeForSearch(query)
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((term) => term.length >= 2)
+    ),
+  ].slice(0, 8)
+  if (!terms.length) return []
+  const bounded = Math.max(1, Math.min(limit, 30))
+  const page = getDb().prepare(
+    `SELECT id, role, parts_json, meta_json, seq, created_at FROM chat_messages
+     WHERE conversation_id = ? AND seq < ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq DESC LIMIT ?`
+  )
+  const hits: ConversationHistoryHit[] = []
+  let cursor = Number.MAX_SAFE_INTEGER
+  let scanned = 0
+  while (hits.length < bounded && scanned < HISTORY_SCAN.maxMessages) {
+    const rows = page.all(conversationId, cursor, HISTORY_SCAN.pageSize) as Array<{
+      id: string
+      role: string
+      parts_json: string | null
+      meta_json: string | null
+      seq: number
+      created_at: number
+    }>
+    if (!rows.length) break
+    for (const row of rows) {
+      scanned += 1
+      cursor = row.seq
+      try {
+        if (row.meta_json && JSON.parse(row.meta_json).internal) continue
+      } catch {
+        // Invalid legacy metadata stays searchable.
+      }
+      const text = textOfParts(row.parts_json ?? '[]')
+      const normalized = normalizeForSearch(text)
+      if (!terms.every((term) => normalized.includes(term))) continue
+      const at = Math.max(0, normalized.indexOf(terms[0]) - 60)
+      const flat = text
+        .slice(at, at + HISTORY_SCAN.snippetChars + 60)
+        .replace(/\s+/g, ' ')
+        .trim()
+      hits.push({
+        messageId: row.id,
+        seq: row.seq,
+        role: row.role === 'assistant' ? 'assistant' : 'user',
+        createdAt: row.created_at,
+        snippet: `${at > 0 ? '…' : ''}${flat}`.slice(0, HISTORY_SCAN.snippetChars),
+      })
+      if (hits.length >= bounded) break
+    }
+  }
+  return hits
+}
+
+export function listChatMessagesAround(
+  conversationId: string,
+  seq: number,
+  before: number,
+  after: number
+): Array<{ seq: number; message: StoredChatMessage }> {
+  const db = getDb()
+  const earlier = (
+    db
+      .prepare(
+        `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq < ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq DESC LIMIT ?`
+      )
+      .all(conversationId, seq, before) as any[]
+  ).reverse()
+  const later = db
+    .prepare(
+      `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq >= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ASC LIMIT ?`
+    )
+    .all(conversationId, seq, after + 1) as any[]
+  return [...earlier, ...later].map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
 }

@@ -337,6 +337,16 @@ export default {
     },
 
     // ---------------- MEMORY ----------------
+    history_search: {
+      title: 'Search conversation history',
+      description:
+        'Searches this conversation’s full saved history, including turns already compacted away. Every word must appear; newest matches first. Returns message positions (seq) and snippets; read around one with history_read. Read-only.',
+    },
+    history_read: {
+      title: 'Read conversation history',
+      description:
+        'Reads the messages around a history position (seq) found by history_search, with tool outputs shortened. Read-only.',
+    },
     memory_search: {
       title: 'Search memory',
       description:
@@ -515,6 +525,13 @@ export default {
       pageDeleted: 'Page (and sub-pages) deleted.',
       quickAppended: 'Appended to page "{{title}}".',
       quickPageTitle: 'Notes',
+    },
+    history: {
+      truncated: '(window truncated)',
+      empty: 'No messages at that position.',
+      compactionSummary: '[compaction summary] {{text}}',
+      compaction: '[compaction]',
+      generatedImage: '[generated image {{name}}]',
     },
     memory: {
       nothingRelevant: 'Nothing relevant enough. Try different words, or memory_list to browse.',

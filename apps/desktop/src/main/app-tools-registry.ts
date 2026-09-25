@@ -1,3 +1,4 @@
+import { registerHistoryTools } from './mcp/tools/history'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { getConversation, getLocale } from './store'
 import { tFor } from './i18n'
@@ -36,6 +37,7 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   if (conversation?.scope !== 'standalone') {
     registerProjectNotesTools(ctx)
   }
+  if (conversation) registerHistoryTools(ctx)
   registerMemoryTools(ctx)
   registerDebugTools(ctx)
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)

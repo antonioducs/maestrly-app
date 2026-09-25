@@ -89,6 +89,8 @@ const EXPECTED_TOOL_NAMES = [
   'project_notes_append_page',
   'project_notes_delete_page',
   'project_notes_quick_append',
+  'history_search',
+  'history_read',
   'memory_search',
   'memory_list',
   'memory_read',
@@ -204,6 +206,8 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('project_notes_append_page', ['pageId', 'text'], ['pageId', 'text']),
   shape('project_notes_delete_page', ['pageId'], ['pageId']),
   shape('project_notes_quick_append', ['text'], ['text']),
+  shape('history_search', ['limit', 'query'], ['query']),
+  shape('history_read', ['after', 'before', 'seq'], ['seq']),
   shape('memory_search', ['limit', 'query'], ['query']),
   shape('memory_list', ['limit', 'pinned', 'scope', 'source', 'status', 'tag', 'type']),
   shape('memory_read', ['id']),
@@ -317,6 +321,8 @@ describe('MCP app tools inventory', () => {
       lastActivityAt: 1,
     })
     const names = (await listToolInventory('standalone')).map((tool) => tool.name)
+    expect(names).toContain('history_search')
+    expect(names).toContain('history_read')
     expect(names).toContain('notes_write_page')
     expect(names).toContain('terminal_create')
     expect(names).toContain('browser_navigate')
@@ -362,7 +368,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(75)
+    expect(registered).toHaveLength(77)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
