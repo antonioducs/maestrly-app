@@ -102,7 +102,8 @@ export async function prepareTurnMemory(input: {
     if (!space) return NOTHING
     const now = input.now ?? Date.now()
     const markers = latestCompactionMarkers(input.conversationId)
-    const extras = await withinBudget(loadMemoryCoreExtras(input.conversationId, signal), signal)
+    // A provider that misses the budget counts as unavailable: the core and its baseline stay usable without it.
+    const extras = await withinBudget(loadMemoryCoreExtras(input.conversationId, signal), signal).catch(() => null)
     const previous = getConversationMemoryState(input.conversationId)
     const sameSpace = previous?.spaceId === space.id ? previous : undefined
     const parts: MessagePart[] = []
@@ -146,6 +147,7 @@ export async function prepareTurnMemory(input: {
         ...state.recalledIds,
         ...state.baseline.filter((source) => source.key.startsWith('pinned:')).map((source) => source.key.slice(7)),
       ])
+      // A slow index costs this turn its recall, never its memory core.
       recalled = await withinBudget(
         searchMemorySpace(space, input.text.slice(0, TURN_MEMORY_LIMITS.queryChars), {
           mode: 'recall',
@@ -154,7 +156,10 @@ export async function prepareTurnMemory(input: {
           signal,
         }),
         signal
-      )
+      ).catch((error) => {
+        console.warn('[memory] recall skipped:', error instanceof Error ? error.message : error)
+        return []
+      })
       if (recalled.length) {
         parts.push(memoryPart(MEMORY_RECALL_PART, renderRecall(recalled)))
         state.recalledIds = [...state.recalledIds, ...recalled.map((hit) => hit.id)].slice(

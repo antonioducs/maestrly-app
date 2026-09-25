@@ -246,3 +246,27 @@ it('admits a turn when a host extras provider ignores cancellation', async () =>
     clearMemoryCoreExtras(conversation.id)
   }
 }, 200)
+
+it('keeps building the memory core when a host extras provider misses the budget', async () => {
+  const workspace = makeWorkspace()
+  const conversation = makeConversation(workspace.id)
+  createLocalMemory({
+    workspaceId: workspace.id,
+    title: 'Commit style',
+    content: 'Conventional commits.',
+    type: 'constraint',
+    source: 'user',
+    pinned: true,
+  })
+  setMemoryCoreExtras(conversation.id, () => new Promise(() => {}))
+  try {
+    const started = Date.now()
+    const turn = await prepareTurnMemory({ conversationId: conversation.id, text: 'hello there friend' })
+    expect(Date.now() - started).toBeLessThan(3_000)
+    turn.commit()
+    expect(memoryCoreForPrompt(conversation.id)).toContain('## Pinned memories')
+    expect(memoryCoreForPrompt(conversation.id)).not.toContain('## About your owner')
+  } finally {
+    clearMemoryCoreExtras(conversation.id)
+  }
+}, 5_000)
