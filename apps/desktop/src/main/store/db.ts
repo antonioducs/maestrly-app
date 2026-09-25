@@ -309,6 +309,17 @@ function initializeSchema(): void {
       ON local_memories(workspace_id, pinned DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_hash
       ON local_memories(workspace_id, content_hash);
+    -- Frozen memory core per compaction epoch, the sources it was built from, and memories recalled in this epoch.
+    CREATE TABLE IF NOT EXISTS conversation_memory_state (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      space_id        TEXT NOT NULL,
+      core_epoch      TEXT NOT NULL,
+      core_text       TEXT NOT NULL,
+      baseline_json   TEXT NOT NULL DEFAULT '[]',
+      recall_epoch    TEXT NOT NULL DEFAULT '',
+      recalled_json   TEXT NOT NULL DEFAULT '[]',
+      updated_at      INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS local_memory_migrations (
       workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       source_hash  TEXT NOT NULL,
