@@ -124,6 +124,9 @@ describe('bot instance tool registration and gateway', () => {
       'bot_routines_create',
       'bot_routines_update',
       'bot_routines_delete',
+      'owner_memory_save',
+      'owner_memory_forget',
+      'routine_report',
     ])
     await gateway.client.close()
     await gateway.server.close()

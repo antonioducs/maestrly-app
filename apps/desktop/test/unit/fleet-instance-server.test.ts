@@ -33,7 +33,23 @@ const config = parseBotInstanceConfig({
   MAESTRLY_BOT_CONTROL_HOST: '127.0.0.1',
   MAESTRLY_BOT_CONTROL_PORT: '0',
 })!
+const botMemory = {
+  id: 'm1',
+  title: 'Portal',
+  content: 'Open the portal',
+  truncated: false,
+  type: 'procedure' as const,
+  status: 'active' as const,
+  pinned: false,
+  source: 'auto' as const,
+  useCount: 0,
+  createdAt: '2026-09-20T10:00:00.000Z',
+  updatedAt: '2026-09-20T10:00:00.000Z',
+}
 const control: InstanceControl = {
+  memories: async () => ({ memories: [botMemory] }),
+  patchMemory: async () => botMemory,
+  deleteMemory: async () => {},
   health: () => ({ ok: true, appVersion: '1.0.0', protocol: 1, ready: true }),
   status: () => status,
   profile: async () => status,
@@ -293,4 +309,30 @@ describe('instance screen tunnel', () => {
     servers.splice(servers.indexOf(server), 1)
     await new Promise<void>((resolve) => vnc.close(() => resolve()))
   })
+})
+
+it('dispatches memory routes and rejects invalid patches and statuses', async () => {
+  const memories = vi.fn(async () => ({ memories: [botMemory] }))
+  const patchMemory = vi.fn(async () => ({ ...botMemory, pinned: true }))
+  const deleteMemory = vi.fn(async () => {})
+  const { base } = await setup({ ...control, memories, patchMemory, deleteMemory })
+  const listed = await fetch(base + '/v1/memories?status=all', { headers: headers() })
+  expect(listed.status).toBe(200)
+  expect(await listed.json()).toEqual({ memories: [botMemory] })
+  expect(memories).toHaveBeenCalledWith('all')
+  expect((await fetch(base + '/v1/memories', { headers: headers() })).status).toBe(200)
+  expect(memories).toHaveBeenLastCalledWith('active')
+  expect((await fetch(base + '/v1/memories?status=invalid', { headers: headers() })).status).toBe(400)
+  const patch = (body: unknown) =>
+    fetch(base + '/v1/memories/m1', {
+      method: 'PATCH',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    })
+  expect((await patch({ pinned: true })).status).toBe(200)
+  expect(patchMemory).toHaveBeenCalledWith('m1', { pinned: true })
+  expect((await patch({ pinned: 'yes' })).status).toBe(400)
+  expect(patchMemory).toHaveBeenCalledTimes(1)
+  expect((await fetch(base + '/v1/memories/m1', { method: 'DELETE', headers: headers() })).status).toBe(204)
+  expect(deleteMemory).toHaveBeenCalledWith('m1')
 })

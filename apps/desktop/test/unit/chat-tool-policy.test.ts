@@ -47,8 +47,8 @@ describe('external MCP tool policy', () => {
 })
 
 describe('Maestrly app-tool policy', () => {
-  it('classifies the complete 124-tool product-policy universe', () => {
-    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(124)
+  it('classifies the complete 127-tool product-policy universe', () => {
+    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(127)
     for (const entry of Object.values(APP_TOOL_POLICY)) {
       expect(entry).toEqual({
         allowedInPlanAsk: expect.any(Boolean),

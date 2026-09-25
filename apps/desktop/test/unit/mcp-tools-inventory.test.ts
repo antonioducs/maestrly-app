@@ -36,6 +36,9 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'bot_routines_update',
   'bot_routines_delete',
   'request_owner_help',
+  'owner_memory_save',
+  'owner_memory_forget',
+  'routine_report',
 ]
 
 const EXPECTED_TOOL_NAMES = [

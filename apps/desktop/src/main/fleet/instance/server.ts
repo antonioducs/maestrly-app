@@ -9,6 +9,8 @@ import {
   FLEET_SCREEN_UPGRADE,
   fleetInstanceEventSchema,
   type FleetInstanceEvent,
+  type FleetBotMemory,
+  type FleetBotMemoryPatchRequest,
   type FleetInstanceStatus,
   type FleetInstanceProfile,
   type FleetInstanceInput,
@@ -37,6 +39,9 @@ export class InstanceHttpError extends Error {
   }
 }
 export interface InstanceControl {
+  memories(status: 'active' | 'archived' | 'superseded' | 'all'): Promise<{ memories: FleetBotMemory[] }>
+  patchMemory(id: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory>
+  deleteMemory(id: string): Promise<void>
   health(): { ok: true; appVersion: string; protocol: 1; ready: boolean }
   status(): FleetInstanceStatus | Promise<FleetInstanceStatus>
   profile(value: FleetInstanceProfile): Promise<FleetInstanceStatus>
@@ -195,6 +200,19 @@ export function createInstanceControlServer(
       }
       let output: unknown
       switch (match.key) {
+        case 'memoriesList': {
+          const raw = url.searchParams.get('status') ?? 'active'
+          if (!['active', 'archived', 'superseded', 'all'].includes(raw))
+            throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid memory status.')
+          output = await control.memories(raw as 'active' | 'archived' | 'superseded' | 'all')
+          break
+        }
+        case 'memoryPatch':
+          output = await control.patchMemory(match.id ?? '', input as FleetBotMemoryPatchRequest)
+          break
+        case 'memoryDelete':
+          await control.deleteMemory(match.id ?? '')
+          break
         case 'health':
           output = control.health()
           break

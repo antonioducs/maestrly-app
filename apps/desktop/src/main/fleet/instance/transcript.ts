@@ -213,7 +213,10 @@ export function projectChatMessages(
             routine: linked?.input.routine,
             peer: linked?.input.peer,
             queued: false,
-            memories: [],
+            memories: (message.memoryContext?.sources ?? [])
+              .filter((source) => source.kind === 'local')
+              .slice(0, 10)
+              .map((source) => ({ id: source.id, title: source.title })),
             images: ownerImageRefs(message),
           })
         } else if (message.role === 'assistant') {
@@ -282,7 +285,10 @@ export function projectChatMessages(
           routine: linked?.input.routine,
           peer: linked?.input.peer,
           queued: false,
-          memories: [],
+          memories: (message.memoryContext?.sources ?? [])
+            .filter((source) => source.kind === 'local')
+            .slice(0, 10)
+            .map((source) => ({ id: source.id, title: source.title })),
           images,
         })
     }

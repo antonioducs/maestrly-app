@@ -3,6 +3,11 @@ import path from 'node:path'
 import { app, type BrowserWindow } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
+  FLEET_BOT_MEMORY_LIMITS,
+  FLEET_ROUTINE_RUN_LIMITS,
+  type FleetBotMemory,
+  type FleetBotMemoryPatchRequest,
+  type FleetInputSource,
   FLEET_QUEUE_PREVIEW_MAX,
   summarizeText,
   fleetInstanceProfileSchema,
@@ -24,6 +29,17 @@ import {
   type FleetUiOpenRequest,
   type FleetCompactionState,
 } from '@maestrly/bot-fleet-protocol'
+import type { LocalMemory } from '../../../shared/memory'
+import { BOT_MEMORY_SPACE_ID, registerConversationMemorySpace, clearConversationMemorySpace } from '../../memory/spaces'
+import { setMemoryCoreExtras, clearMemoryCoreExtras } from '../../memory/core'
+import { setOwnerMemoryWriter, clearOwnerMemoryWriter } from '../../memory/extraction/owner-writer'
+import {
+  listLocalMemories,
+  getLocalMemory,
+  updateLocalMemory,
+  forgetLocalMemory,
+} from '../../memory/local-memory-service'
+import { OwnerMemoryClient } from './owner-memory'
 import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
 import { selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
@@ -157,7 +173,35 @@ export function effectiveFleetSelection(
   }
 }
 
+function assistantText(conversationId: string, messageId: string | null): string | null {
+  if (!messageId) return null
+  const message = listChatMessages(conversationId).find((message) => message.id === messageId)
+  if (message?.role !== 'assistant') return null
+  return message.parts
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .slice(0, FLEET_ROUTINE_RUN_LIMITS.finalTextMax)
+}
+
+function toFleetBotMemory(memory: LocalMemory): FleetBotMemory {
+  return {
+    id: memory.id,
+    title: memory.title,
+    content: memory.content.slice(0, FLEET_BOT_MEMORY_LIMITS.contentMax),
+    truncated: memory.content.length > FLEET_BOT_MEMORY_LIMITS.contentMax,
+    type: memory.type,
+    status: memory.status,
+    pinned: memory.pinned,
+    source: memory.source,
+    useCount: memory.useCount,
+    createdAt: new Date(memory.createdAt).toISOString(),
+    updatedAt: new Date(memory.updatedAt).toISOString(),
+  }
+}
+
 export class BotInstanceRuntime implements InstanceControl {
+  readonly ownerMemory: OwnerMemoryClient
   readonly events = new InstanceEvents()
   readonly queue: InstanceInputQueue
   readonly extras: InstanceTranscriptExtras
@@ -197,6 +241,7 @@ export class BotInstanceRuntime implements InstanceControl {
     private readonly window: BrowserWindow,
     private readonly floatBrowser?: (conversationId: string) => void
   ) {
+    this.ownerMemory = new OwnerMemoryClient(this.gatewayConfig)
     this.stored = readProfile()
     const base = app.getPath('userData')
     this.queue = new InstanceInputQueue(path.join(base, 'fleet-instance', 'inputs.json'))
@@ -218,6 +263,38 @@ export class BotInstanceRuntime implements InstanceControl {
     return this.config.gatewayUrl && this.config.gatewayToken
       ? { url: this.config.gatewayUrl, token: this.config.gatewayToken }
       : null
+  }
+  currentInput(): { source: FleetInputSource; routine?: { id: string; title: string; runId?: string } } | null {
+    const item = this.queue.all().find((item) => item.id === this.turnInputId)
+    if (!item) return null
+    const routine = item.input.routine
+    return {
+      source: item.input.source,
+      ...(routine
+        ? { routine: { id: routine.id, title: routine.title, ...(routine.runId ? { runId: routine.runId } : {}) } }
+        : {}),
+    }
+  }
+  async memories(
+    status: 'active' | 'archived' | 'superseded' | 'all' = 'active'
+  ): Promise<{ memories: FleetBotMemory[] }> {
+    const list = listLocalMemories(BOT_MEMORY_SPACE_ID, {
+      ...(status === 'all' ? {} : { status }),
+      limit: FLEET_BOT_MEMORY_LIMITS.listMax,
+    })
+    return { memories: list.map(toFleetBotMemory) }
+  }
+  async patchMemory(id: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory> {
+    if (!getLocalMemory(BOT_MEMORY_SPACE_ID, id)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Memory not found.')
+    return toFleetBotMemory(
+      updateLocalMemory(BOT_MEMORY_SPACE_ID, id, {
+        ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+        ...(patch.status ? { status: patch.status } : {}),
+      }).memory
+    )
+  }
+  async deleteMemory(id: string): Promise<void> {
+    if (!forgetLocalMemory(BOT_MEMORY_SPACE_ID, id)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Memory not found.')
   }
   async start(): Promise<void> {
     await this.queue.load()
@@ -266,7 +343,12 @@ export class BotInstanceRuntime implements InstanceControl {
     if (this.transcriptTimer) clearTimeout(this.transcriptTimer)
     this.stopObserving?.()
     this.stopGate?.()
-    if (this.primaryConversationId) clearCompactionSummarizer(this.primaryConversationId)
+    if (this.primaryConversationId) {
+      clearCompactionSummarizer(this.primaryConversationId)
+      clearConversationMemorySpace(this.primaryConversationId)
+      clearMemoryCoreExtras(this.primaryConversationId)
+      clearOwnerMemoryWriter(this.primaryConversationId)
+    }
   }
   health(): { ok: true; appVersion: string; protocol: 1; ready: boolean } {
     return { ok: true, appVersion: app.getVersion(), protocol: FLEET_PROTOCOL_VERSION, ready: this.ready }
@@ -282,6 +364,10 @@ export class BotInstanceRuntime implements InstanceControl {
       await this.system('created', null, null)
     }
     this.applyProfile()
+    const conversationId = this.stored.primaryConversationId
+    registerConversationMemorySpace(conversationId, { id: BOT_MEMORY_SPACE_ID, kind: 'bot' })
+    setMemoryCoreExtras(conversationId, (signal) => this.ownerMemory.coreSections(signal))
+    if (this.gatewayConfig) setOwnerMemoryWriter(conversationId, this.ownerMemory.writer())
     await this.syncCompaction()
     const id = this.stored.primaryConversationId
     if (!this.floatAttempted) {
@@ -786,6 +872,8 @@ export class BotInstanceRuntime implements InstanceControl {
       const handle = await startExecutorChatTurn({
         conversationId: id,
         prompt: promptForInput(item.input),
+        skipMemory: item.input.source === 'continuation',
+        memoryQuery: item.input.text,
         attachments,
         signal: this.turnAbort.signal,
         slot,
@@ -807,6 +895,7 @@ export class BotInstanceRuntime implements InstanceControl {
         throw error
       }
       const outcome = await handle.done
+      const finalText = assistantText(id, outcome.assistantMessageId)
       const page = await this.transcript(null, 500)
       const last = [...page.items]
         .reverse()
@@ -823,8 +912,8 @@ export class BotInstanceRuntime implements InstanceControl {
         )
       this.events.publish({
         type: 'turn.finished',
-        inputId: null,
-        text: null,
+        inputId: item.id,
+        text: finalText,
         outcome: outcome.status === 'success' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'failed',
         summary,
       })
@@ -842,7 +931,7 @@ export class BotInstanceRuntime implements InstanceControl {
       )
       this.events.publish({
         type: 'turn.finished',
-        inputId: null,
+        inputId: item.id,
         text: null,
         outcome: cancelled ? 'cancelled' : 'failed',
         summary: null,

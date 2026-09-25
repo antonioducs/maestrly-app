@@ -13,11 +13,25 @@ import type { ChatAttachmentInput } from '../../../shared/chat'
 import { imageMediaType } from './images'
 
 type StoredInput = Omit<FleetInstanceInput, 'attachments'>
+const previousRunSchema = z.object({
+  at: z.string(),
+  status: z.enum(['delivered', 'completed', 'failed', 'cancelled', 'unknown']),
+  summary: z.string().nullable(),
+  pending: z.string().nullable(),
+  notes: z.string().nullable(),
+})
 const storedInputSchema = z.object({
   idempotencyKey: z.uuid(),
   text: z.string(),
   source: z.enum(['owner', 'routine', 'peer', 'continuation']),
-  routine: z.object({ id: z.string(), title: z.string() }).optional(),
+  routine: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      runId: z.string().optional(),
+      previousRuns: z.array(previousRunSchema).max(3).optional(),
+    })
+    .optional(),
   peer: z.object({ botId: z.string(), name: z.string() }).optional(),
 })
 const attachmentSchema = z.object({
@@ -281,12 +295,22 @@ export class InstanceInputQueue {
   }
 }
 
+function routinePrompt(input: StoredInput): string {
+  const base = `Scheduled routine "${input.routine?.title ?? ''}". Do this now:\n\n${input.text}`
+  if (!input.routine?.runId) return base
+  const runs = input.routine.previousRuns ?? []
+  const history = runs.length
+    ? `Previous runs of this routine, newest first:\n${runs.map((run) => `- ${run.at.slice(0, 16).replace('T', ' ')} UTC · ${run.status}${run.summary ? ` · Did: ${run.summary}` : ''}${run.pending ? ` · Pending: ${run.pending}` : ''}${run.notes ? ` · Notes for this run: ${run.notes}` : ''}`).join('\n')}`
+    : 'This is the first recorded run of this routine.'
+  return `${base}\n\n${history}\n\nWhen you finish, call routine_report with a short summary of what you did, anything still pending, and notes for the next run.`
+}
+
 export function promptForInput(input: StoredInput): string {
   switch (input.source) {
     case 'owner':
       return input.text
     case 'routine':
-      return `Scheduled routine "${input.routine?.title ?? ''}". Do this now:\n\n${input.text}`
+      return routinePrompt(input)
     case 'peer':
       return `Message from bot "${input.peer?.name ?? ''}" (id ${input.peer?.botId ?? ''}), delivered by the Maestrly gateway:\n\n${input.text}\n\nIf a reply is useful, send it with bot_peers_send.`
     case 'continuation':

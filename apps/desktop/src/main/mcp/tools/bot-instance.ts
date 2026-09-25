@@ -1,15 +1,10 @@
-import { createHash, randomUUID } from 'node:crypto'
 import {
-  FLEET_BOT_ENV,
-  FLEET_INTERNAL_ROUTES,
-  FLEET_PROTOCOL_HEADER,
-  FLEET_PROTOCOL_VERSION,
   FLEET_ROUTINE_LIMITS,
+  FLEET_OWNER_MEMORY_LIMITS,
+  FLEET_ROUTINE_RUN_LIMITS,
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
-  buildPath,
   fleetBotIdSchema,
-  fleetErrorEnvelopeSchema,
   fleetIdSchema,
   fleetPeerTextSchema,
   isValidTimeZone,
@@ -17,13 +12,14 @@ import {
   type FleetRoutineSchedule,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
-import { requestOwnerHelp } from '../../fleet/instance'
+import { requestOwnerHelp, getBotInstanceRuntime } from '../../fleet/instance'
+import { configuredGateway, gatewayRequest, keyForToolCall } from '../../fleet/instance/gateway-client'
+import { OwnerMemoryClient } from '../../fleet/instance/owner-memory'
 import { isBotMode } from '../../fleet/instance/config'
 import { canUseComputer, registerComputerTools } from './computer'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 
-type GatewayConfig = { url: string; token: string }
 const reasonSchema = z.string().trim().min(1).max(500)
 const routineTitle = z.string().trim().min(1).max(FLEET_ROUTINE_TITLE_MAX).describe('Short name the owner sees.')
 const routinePrompt = z
@@ -89,86 +85,6 @@ function weekly(
   return { kind: 'weekly', time, days, timezone }
 }
 const peerNames = new Map<string, string>()
-function keyForToolCall(extra: unknown): string {
-  const meta = (extra as { _meta?: { toolCallId?: unknown } })._meta
-  if (typeof meta?.toolCallId !== 'string' || !meta.toolCallId) return randomUUID()
-  const hex = createHash('sha256').update(meta.toolCallId).digest('hex')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
-}
-
-export function configuredGateway(env: NodeJS.ProcessEnv = process.env): GatewayConfig | null {
-  const url = env[FLEET_BOT_ENV.gatewayUrl]
-  const token = env[FLEET_BOT_ENV.gatewayToken]
-  if (!url || !token) return null
-  try {
-    const parsed = new URL(url)
-    if (!['http:', 'https:'].includes(parsed.protocol)) return null
-    return { url: parsed.toString(), token }
-  } catch {
-    return null
-  }
-}
-
-async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTES>(
-  config: GatewayConfig,
-  routeKey: K,
-  body?: unknown,
-  params: Record<string, string> = {}
-): Promise<z.infer<Extract<(typeof FLEET_INTERNAL_ROUTES)[K]['response'], z.ZodType>>> {
-  const route = FLEET_INTERNAL_ROUTES[routeKey]
-  const routineRequest = routeKey.startsWith('routine')
-  let response: Response
-  try {
-    response = await fetch(new URL(buildPath(route.path, params), config.url), {
-      method: route.method,
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
-        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10_000),
-    })
-  } catch (error) {
-    throw new Error(
-      `Gateway unavailable. Check its connection and try later: ${error instanceof Error ? error.message : String(error)}`
-    )
-  }
-  if (!response.ok) {
-    const envelope = fleetErrorEnvelopeSchema.safeParse(await response.json().catch(() => null))
-    const code = envelope.success ? envelope.data.code : null
-    if (routineRequest && ['FORBIDDEN', 'CONFLICT', 'NOT_FOUND', 'INVALID_REQUEST'].includes(code ?? ''))
-      throw new Error((envelope.success ? envelope.data.message : 'Routine request failed.') + routineHint)
-    if (response.status === 403)
-      throw new Error('Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.')
-    if (response.status === 429)
-      throw new Error(
-        'Peer messaging is rate-limited. Stop messaging peers and summarize the situation for your owner.'
-      )
-    if (code === 'BOT_NOT_RUNNING' || code === 'INSTANCE_UNAVAILABLE')
-      throw new Error('Target bot is offline or unavailable. Check later or ask your owner.')
-    if (code === 'PROTOCOL_INCOMPATIBLE')
-      throw new Error('Gateway protocol is incompatible. Ask your owner to update the bot or gateway.')
-    throw new Error(
-      `Gateway rejected the peer request (HTTP ${response.status}). Check gateway configuration or ask your owner.`
-    )
-  }
-  if (response.status === 204)
-    return undefined as z.infer<Extract<(typeof FLEET_INTERNAL_ROUTES)[K]['response'], z.ZodType>>
-  let value: unknown
-  try {
-    value = await response.json()
-  } catch {
-    throw new Error('Gateway returned invalid JSON.')
-  }
-  const parsed = route.response?.safeParse(value)
-  if (!parsed?.success)
-    throw new Error(
-      `Gateway returned an invalid ${routineRequest ? 'routine' : 'peer'} response. Check protocol versions.`
-    )
-  return parsed.data as z.infer<Extract<(typeof FLEET_INTERNAL_ROUTES)[K]['response'], z.ZodType>>
-}
-
 export function registerBotInstanceTools(ctx: McpToolContext, gateway = configuredGateway()): void {
   ctx.server.registerTool(
     'request_owner_help',
@@ -342,6 +258,77 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
         )?.title
         await gatewayRequest(gateway, 'routineDelete', undefined, { rid: routineId })
         return ok(JSON.stringify({ deleted: true, routineId, title }))
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  const ownerMemory = new OwnerMemoryClient(gateway)
+  ctx.server.registerTool(
+    'owner_memory_save',
+    {
+      description:
+        'Save a stable preference or fact about your owner, shared with all of the owner’s bots and shown to the owner on their Mac. One idea per entry, written as a short directive ("Prefer…", "Never…") or a plain fact, up to 500 characters, in the owner’s language. Replace an outdated entry by passing its id as replaces_id instead of adding a contradicting one. Never store secrets.',
+      inputSchema: {
+        content: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax),
+        replaces_id: fleetIdSchema.optional(),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ content, replaces_id }, extra) => {
+      try {
+        const entry = await ownerMemory.save({
+          content,
+          ...(replaces_id ? { replacesId: replaces_id } : {}),
+          origin: getBotInstanceRuntime()?.currentInput()?.source ?? 'owner',
+          idempotencyKey: keyForToolCall(extra),
+        })
+        return ok(JSON.stringify({ saved: true, id: entry.id, content: entry.content }))
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  ctx.server.registerTool(
+    'owner_memory_forget',
+    {
+      description:
+        'Remove an owner memory entry that is wrong or no longer true. The owner can restore it on their Mac.',
+      inputSchema: { id: fleetIdSchema, reason: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.reasonMax) },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ id, reason }) => {
+      try {
+        const entry = await ownerMemory.forget(id, reason)
+        return ok(JSON.stringify({ forgotten: true, id: entry.id }))
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  ctx.server.registerTool(
+    'routine_report',
+    {
+      description:
+        'Record what this scheduled routine run did, what is still pending and notes for the next run. The next run receives this report. Call it once, before you finish a routine run.',
+      inputSchema: {
+        summary: z.string().trim().min(1).max(FLEET_ROUTINE_RUN_LIMITS.summaryMax),
+        pending: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.pendingMax).optional(),
+        notes_for_next_run: z.string().trim().max(FLEET_ROUTINE_RUN_LIMITS.notesMax).optional(),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ summary, pending, notes_for_next_run }) => {
+      const routine = getBotInstanceRuntime()?.currentInput()?.routine
+      if (!routine?.runId) return err('routine_report works only while running a scheduled routine.')
+      try {
+        await gatewayRequest(
+          gateway,
+          'routineRunReport',
+          { summary, pending: pending || null, notes: notes_for_next_run || null },
+          { rid: routine.id, runId: routine.runId }
+        )
+        return ok(JSON.stringify({ reported: true, routineId: routine.id }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
       }

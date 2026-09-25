@@ -931,3 +931,82 @@ describe('bot browser bounds', () => {
     expect(initialFloatingBounds('terminal', true, workArea, saved)).toBe(saved)
   })
 })
+
+describe('routine memory prompts', () => {
+  const base = {
+    idempotencyKey: key(),
+    source: 'routine' as const,
+    text: 'Check the stores',
+    routine: { id: 'r1', title: 'Daily check' },
+  }
+  it('preserves the legacy prompt byte for byte without a run id', () => {
+    expect(promptForInput(base)).toBe('Scheduled routine "Daily check". Do this now:\n\nCheck the stores')
+  })
+  it('renders previous reports and persists them across queue reloads', async () => {
+    const input = {
+      ...base,
+      routine: {
+        ...base.routine,
+        runId: 'run-3',
+        previousRuns: [
+          {
+            at: '2026-09-24T10:00:00.000Z',
+            status: 'completed' as const,
+            summary: 'Checked three stores',
+            pending: 'One unavailable',
+            notes: 'Retry that store first',
+          },
+          {
+            at: '2026-09-23T10:00:00.000Z',
+            status: 'failed' as const,
+            summary: 'Checked two stores',
+            pending: null,
+            notes: null,
+          },
+        ],
+      },
+    }
+    const prompt = promptForInput(input)
+    expect(prompt).toContain('Previous runs of this routine, newest first:')
+    expect(prompt).toContain('Checked three stores')
+    expect(prompt).toContain('Checked two stores')
+    expect(prompt).toContain('Pending: One unavailable')
+    expect(prompt).toContain('Notes for this run: Retry that store first')
+    expect(prompt).toMatch(/When you finish, call routine_report .*next run\.$/)
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-routine-memory-'))
+    try {
+      const file = path.join(dir, 'queue.json')
+      const queue = new InstanceInputQueue(file)
+      await queue.enqueue(input)
+      const reopened = new InstanceInputQueue(file)
+      await reopened.load()
+      expect(reopened.list()[0].input.routine).toEqual(input.routine)
+      expect(promptForInput(reopened.list()[0].input)).toBe(prompt)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+  it('identifies the first recorded run', () => {
+    expect(promptForInput({ ...base, routine: { ...base.routine, runId: 'run-1' } })).toContain(
+      'This is the first recorded run of this routine.'
+    )
+  })
+})
+
+it('projects at most ten local recall sources on native user messages', () => {
+  const sources = [
+    { kind: 'shared' as const, id: 'shared', title: 'Shared' },
+    ...Array.from({ length: 11 }, (_, i) => ({ kind: 'local' as const, id: `m${i}`, title: `Memory ${i}` })),
+  ]
+  const message: ChatMessage = {
+    id: 'user',
+    conversationId: 'conversation',
+    role: 'user',
+    createdAt: Date.now(),
+    parts: [{ type: 'text', id: 'text', text: 'Hello' }],
+    memoryContext: { revision: 'test', sources },
+  }
+  expect(projectChatMessages([message])).toMatchObject([
+    { kind: 'user', memories: sources.slice(1, 11).map(({ id, title }) => ({ id, title })) },
+  ])
+})
