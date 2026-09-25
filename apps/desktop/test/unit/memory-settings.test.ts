@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { parseMemorySettings, readMemorySettings } from '../../src/main/memory/settings'
 import { setMemorySettings } from '../../src/main/chat/service'
 import { closeDb, freshDb } from '../helpers/db'
@@ -24,4 +24,14 @@ it('persists disabled settings', async () => {
   const value = { autoRecall: false, extraction: { enabled: false, selection: null } }
   expect(await setMemorySettings(value)).toEqual({ ok: true })
   expect(readMemorySettings()).toEqual(value)
+})
+it('falls back to the defaults when the settings store is unavailable', () => {
+  closeDb()
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  try {
+    expect(readMemorySettings()).toEqual({ autoRecall: true, extraction: { enabled: false, selection: null } })
+    expect(warn).toHaveBeenCalledWith('[memory] settings unreadable, using defaults:', expect.any(String))
+  } finally {
+    warn.mockRestore()
+  }
 })

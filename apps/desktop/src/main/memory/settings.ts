@@ -1,5 +1,5 @@
 import type { MemorySettings } from '../../shared/memory'
-import { getAppSetting } from '../store/app-settings'
+import { getAppSetting } from '../store'
 
 export const MEMORY_SETTINGS_KEY = 'chat.memory'
 export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
@@ -33,12 +33,13 @@ export function parseMemorySettings(value: unknown): MemorySettings | null {
   }
 }
 
+/** Unreadable settings fall back to the defaults: the chat config and turns never fail over memory. */
 export function readMemorySettings(): MemorySettings {
-  const stored = getAppSetting(MEMORY_SETTINGS_KEY)
-  if (!stored) return DEFAULT_MEMORY_SETTINGS
   try {
-    return parseMemorySettings(JSON.parse(stored)) ?? DEFAULT_MEMORY_SETTINGS
-  } catch {
+    const stored = getAppSetting(MEMORY_SETTINGS_KEY)
+    return (stored && parseMemorySettings(JSON.parse(stored))) || DEFAULT_MEMORY_SETTINGS
+  } catch (error) {
+    console.warn('[memory] settings unreadable, using defaults:', error instanceof Error ? error.message : error)
     return DEFAULT_MEMORY_SETTINGS
   }
 }
