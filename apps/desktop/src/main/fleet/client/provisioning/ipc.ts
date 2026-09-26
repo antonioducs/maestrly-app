@@ -1,3 +1,4 @@
+import { provisioningAccountBaseURL } from '../../../../shared/fleet-provisioning'
 import { fleetLoginStartRequestSchema, fleetLoginCodeRequestSchema } from '@maestrly/bot-fleet-protocol'
 import { startBotLogin, botLoginStatus, submitBotLoginCode, cancelBotLogin, reopenBotLogin } from './logins'
 import { z } from 'zod'
@@ -47,9 +48,16 @@ export function registerFleetProvisioningIpc(reg: IpcRegistrar, fleet: FleetClie
   reg.mhandle('fleet:provisioning:import', (_event, botId: unknown, input: unknown) =>
     importFromMac(fleet, id.parse(botId), selection.parse(input))
   )
-  reg.handle('fleet:bot:accounts', (_event, botId: unknown) =>
-    fleet.call('botAccountsList', { params: { id: id.parse(botId) } })
-  )
+  reg.handle('fleet:bot:accounts', async (_event, botId: unknown) => {
+    const accounts = await fleet.call('botAccountsList', { params: { id: id.parse(botId) } })
+    return {
+      ...accounts,
+      apiKeys: accounts.apiKeys.map((account) => ({
+        ...account,
+        baseURL: provisioningAccountBaseURL(account.baseURL),
+      })),
+    }
+  })
   reg.mhandle('fleet:bot:subscription-remove', (_event, botId: unknown, kind: unknown, account: unknown) =>
     fleet.call('botSubscriptionRemove', {
       params: { id: id.parse(botId), kind: fleetSubscriptionKindSchema.parse(kind), slot: slot.parse(account) },

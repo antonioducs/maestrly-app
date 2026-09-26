@@ -1,3 +1,4 @@
+import { provisioningAccountBaseURL } from '../../../../shared/fleet-provisioning'
 import type {
   FleetAccountImportItem,
   FleetBotAccounts,
@@ -70,7 +71,7 @@ export function listBotAccounts(input: {
         providerId: provider.id,
         name: provider.name,
         kind,
-        baseURL: provider.baseURL ?? null,
+        baseURL: provisioningAccountBaseURL(provider.baseURL),
         keyHint: key.length < 12 ? null : key.slice(-4),
       })
   }

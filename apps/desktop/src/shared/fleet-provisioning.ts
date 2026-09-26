@@ -43,3 +43,15 @@ export interface MacImportReport {
   skills: MacImportItemResult[]
   mcpServers: MacImportItemResult[]
 }
+
+/** Project an endpoint without credentials into account lists. */
+export function provisioningAccountBaseURL(value: string | null | undefined): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    return url.origin + url.pathname
+  } catch {
+    return null
+  }
+}

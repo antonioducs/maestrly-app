@@ -296,3 +296,13 @@ it.each(['github-copilot', 'cursor'] as const)('cleans the new %s slot when secu
   expect(state.cleanup).toHaveBeenCalledOnce()
   expect(listSubscriptionAccounts()).toHaveLength(0)
 })
+
+it.each([
+  'https://example.test/v1?token=synthetic-url-secret#private',
+  'https://synthetic-user:synthetic-password@example.test/v1',
+])('projects only origin and pathname for account URL %s', async (baseURL) => {
+  await outcome({ ...api, baseURL })
+  const accounts = listBotAccounts({ connectedProviderIds: new Set(), signingIn: [] })
+  expect(accounts.apiKeys[0].baseURL).toBe('https://example.test/v1')
+  expect(listProviders().find((provider) => provider.id === accounts.apiKeys[0].providerId)?.baseURL).toBe(baseURL)
+})

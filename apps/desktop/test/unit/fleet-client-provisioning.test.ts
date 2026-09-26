@@ -332,3 +332,27 @@ describe('large Mac imports', () => {
     }
   )
 })
+
+it.each([
+  ['https://example.test/v1?token=synthetic-url-secret#private', 'https://example.test/v1'],
+  ['https://synthetic-user:synthetic-password@example.test/v1', 'https://example.test/v1'],
+  ['invalid synthetic-secret', null],
+  [null, null],
+])('sanitizes account URLs at the renderer IPC boundary: %s', async (baseURL, expected) => {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>()
+  const account = { providerId: 'p1', name: 'Synthetic', kind: 'openai', baseURL, keyHint: null }
+  const response = { apiKeys: [account], subscriptions: [] }
+  const call = vi.fn(async () => response)
+  registerFleetProvisioningIpc(
+    {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn),
+      mhandle: vi.fn(),
+    } as unknown as IpcRegistrar,
+    { call } as unknown as FleetClientService
+  )
+  expect(await handlers.get('fleet:bot:accounts')!({}, 'bot')).toEqual({
+    apiKeys: [{ ...account, baseURL: expected }],
+    subscriptions: [],
+  })
+  expect(response.apiKeys[0].baseURL).toBe(baseURL)
+})
