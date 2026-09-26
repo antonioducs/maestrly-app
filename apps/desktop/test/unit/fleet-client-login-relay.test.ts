@@ -161,6 +161,38 @@ describe('Mac login relay', () => {
     await Promise.all([first, second])
     expect(forward).toHaveBeenCalledOnce()
   })
+  it.each([
+    ['/favicon.ico', 'GET'],
+    ['/callback', 'GET'],
+    ['/callback?code=x', 'POST'],
+  ])('keeps callback forwarding pending after %s %s', async (strayPath, method) => {
+    const port = await freePort()
+    let finish!: (value: { status: number; location: null; contentType: null; body: string }) => void
+    const pending = new Promise<{ status: number; location: null; contentType: null; body: string }>((resolve) => {
+      finish = resolve
+    })
+    const forward = vi.fn(() => pending)
+    const relay = await LoginRelay.start({
+      port,
+      path: '/callback',
+      ttlMs: 10_000,
+      forward,
+      page: (kind) => kind,
+      redirectAllowed: () => false,
+    })
+    relays.push(relay)
+    const first = request(port, '/callback?code=a')
+    await vi.waitFor(() => expect(forward).toHaveBeenCalledOnce())
+    expect((await request(port, strayPath, method)).status).toBe(404)
+    const server = (relay as unknown as { servers: http.Server[] }).servers[0]
+    const received = new Promise<void>((resolve) => server.once('request', () => resolve()))
+    const second = request(port, '/callback?code=a')
+    await received
+    const calls = forward.mock.calls.length
+    finish({ status: 200, location: null, contentType: null, body: '' })
+    await Promise.all([first, second])
+    expect(calls).toBe(1)
+  })
   it('closes on expiry', async () => {
     const port = await freePort()
     relays.push(

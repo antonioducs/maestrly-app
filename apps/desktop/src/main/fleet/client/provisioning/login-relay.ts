@@ -64,6 +64,7 @@ export class LoginRelay {
       response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
       response.end(this.options.page(kind))
     }
+    let url: URL
     try {
       if (request.method !== 'GET') {
         response.writeHead(404).end()
@@ -73,7 +74,7 @@ export class LoginRelay {
         page(200, 'done')
         return
       }
-      const url = new URL(request.url ?? '/', 'http://localhost')
+      url = new URL(request.url ?? '/', 'http://localhost')
       if (
         request.url?.split('?')[0] !== this.options.path ||
         url.pathname !== this.options.path ||
@@ -82,6 +83,12 @@ export class LoginRelay {
         response.writeHead(404).end()
         return
       }
+    } catch {
+      page(502, 'failed')
+      return
+    }
+    const ownsForwarding = !this.forwarding
+    try {
       // A browser can retry before forwarding finishes; consume its authorization code only once.
       if (!this.forwarding) this.forwarding = this.options.forward(url.search.slice(1))
       const reply = await this.forwarding
@@ -100,7 +107,7 @@ export class LoginRelay {
       if (!response.headersSent) page(502, 'failed')
       else response.end()
     } finally {
-      this.forwarding = null
+      if (ownsForwarding) this.forwarding = null
     }
   }
   close(): Promise<void> {
