@@ -1,3 +1,6 @@
+import { BotAccountsSection } from './BotAccountsSection'
+import { BotSkillsMcpSection } from './BotSkillsMcpSection'
+import { provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -65,6 +68,11 @@ export function BotSettings({
   onOpenScreen: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
+  const availability = provisioningAvailability(fleet, bot)
+  const provisioning = useBotProvisioning(bot.id, availability === 'ready' && bot.lifecycle === 'running')
+  useEffect(() => {
+    provisioning.refresh()
+  }, [bot.accounts, bot.status, provisioning.refresh])
   const [fields, setFields] = useState<BotFieldsValue>({
     name: bot.name,
     instructions: bot.instructions,
@@ -350,25 +358,13 @@ export function BotSettings({
             setSaved(false)
           }}
         />
-        <section className="space-y-3">
-          <h2 className="font-semibold">{t('botSettings.accounts')}</h2>
-          <p className="text-xs text-muted-foreground">{t('botSettings.accountsNote')}</p>
-          {bot.accounts.providers.map((provider) => (
-            <div
-              key={provider.id}
-              className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface-elevated p-3 text-sm"
-            >
-              <span>{provider.label}</span>
-              {provider.id.startsWith('prov_') && (
-                <Button size="sm" variant="ghost" onClick={() => setConfirm({ kind: 'account', id: provider.id })}>
-                  {t('botSettings.removeAccount')}
-                </Button>
-              )}
-            </div>
-          ))}
-          {!bot.accounts.providers.length && (
-            <p className="text-xs text-muted-foreground">{t('botSettings.noAccounts')}</p>
-          )}
+        <BotAccountsSection
+          key={bot.id}
+          bot={bot}
+          lists={provisioning}
+          availability={availability}
+          onChanged={refreshBot}
+        >
           <div className="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
             <h3 className="text-sm font-medium">{t('botSettings.addApiKey')}</h3>
             <label className="block text-xs" htmlFor="fleet-account-kind">
@@ -436,7 +432,8 @@ export function BotSettings({
           >
             {t('botSettings.loginOnScreen')}
           </Button>
-        </section>
+        </BotAccountsSection>
+        <BotSkillsMcpSection key={bot.id} bot={bot} lists={provisioning} availability={availability} />
         <div>
           <label className="mb-2 block text-sm font-medium">{t('botSettings.model')}</label>
           <SearchSelect

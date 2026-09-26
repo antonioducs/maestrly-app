@@ -1,6 +1,7 @@
+import { createServer as createNetServer } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { createServer, type ServerResponse } from 'node:http'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +21,14 @@ import {
   fleetSendMessageRequestSchema,
   fleetConversationCallRequestSchema,
   type FleetArchivedBot,
+  type FleetBotAccounts,
+  type FleetBotSkills,
+  type FleetBotMcpServers,
+  type FleetLoginAttempt,
+  type FleetLoginStartRequest,
+  type FleetAccountImportRequest,
+  type FleetSkillInstallRequest,
+  type FleetMcpImportRequest,
   type FleetBot,
   type FleetSelection,
   type FleetRoutine,
@@ -65,7 +74,32 @@ function stateContrastOnDialog(locator: Locator): Promise<number> {
 test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', async () => {
   test.setTimeout(180_000)
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-e2e-'))
-  const requests: Array<{ key: string; body: unknown }> = []
+  const requests: Array<{ key: string; body: unknown; path: string; method: string | undefined }> = []
+  const skillText =
+    '---\nname: e2e-notes\ndescription: Synthetic fleet notes.\n---\n# E2E notes\nRemember the fixture.\n'
+  const skillDir = path.join(root, '.agents', 'skills', 'e2e-notes')
+  await mkdir(skillDir, { recursive: true })
+  await writeFile(path.join(skillDir, 'SKILL.md'), skillText)
+  const portProbe = createNetServer()
+  await new Promise<void>((resolve) => portProbe.listen(0, '127.0.0.1', resolve))
+  const portAddress = portProbe.address()
+  if (!portAddress || typeof portAddress === 'string') throw new Error('No callback port')
+  const callbackPort = portAddress.port
+  await new Promise<void>((resolve) => portProbe.close(() => resolve()))
+  let occupiedPort: ReturnType<typeof createNetServer> | undefined
+  const provisioned = new Map<
+    string,
+    { accounts: FleetBotAccounts; skills: FleetBotSkills['skills']; servers: FleetBotMcpServers['servers'] }
+  >()
+  function botProvisioning(id: string) {
+    let value = provisioned.get(id)
+    if (!value) {
+      value = { accounts: { apiKeys: [], subscriptions: [] }, skills: [], servers: [] }
+      provisioned.set(id, value)
+    }
+    return value
+  }
+  const logins = new Map<string, { attempt: FleetLoginAttempt; polls: number }>()
   const streams = new Set<ServerResponse>()
   const host = fleetHostInfoSchema.parse({
     hostname: 'fleet-e2e-host',
@@ -91,6 +125,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     'base64'
   )
   const base = {
+    capabilities: ['provisioning'],
     role: 'Helps with orders',
     instructions: 'Check incoming orders',
     tint: '#6688aa',
@@ -369,7 +404,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         return
       }
     }
-    requests.push({ key, body })
+    requests.push({ key, body, path: url.pathname, method: request.method })
     if (key === 'botMessageSend') body = fleetSendMessageRequestSchema.parse(body)
     if (key === 'events') {
       response.writeHead(200, {
@@ -386,6 +421,142 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     const bot = bots.find((item) => item.id === id)
     let value: unknown
     switch (key) {
+      case 'botAccountsList':
+        value = botProvisioning(id).accounts
+        break
+      case 'botSkillsList':
+        value = { skills: botProvisioning(id).skills }
+        break
+      case 'botMcpServersList':
+        value = { servers: botProvisioning(id).servers }
+        break
+      case 'botAccountsImport': {
+        const input = body as FleetAccountImportRequest
+        value = {
+          results: input.items.map((item, index) => {
+            if (item.type === 'api-key')
+              botProvisioning(id).accounts.apiKeys.push({
+                providerId: 'prov_imported',
+                name: item.name,
+                kind: item.kind,
+                baseURL: item.baseURL,
+                keyHint: item.key.slice(-4),
+              })
+            return { index, target: 'prov_imported', outcome: 'added', error: null }
+          }),
+        }
+        break
+      }
+      case 'botSkillInstall': {
+        const input = body as FleetSkillInstallRequest
+        botProvisioning(id).skills.push({
+          name: input.name,
+          description: 'Synthetic fleet notes.',
+          files: input.files.length,
+          bytes: 100,
+          source: 'fleet',
+        })
+        value = { name: input.name, outcome: 'added' }
+        break
+      }
+      case 'botMcpServersImport': {
+        const input = body as FleetMcpImportRequest
+        value = {
+          results: input.servers.map((item, index) => {
+            botProvisioning(id).servers.push({
+              id: 'mcp_imported',
+              name: item.name,
+              transport: item.transport,
+              command: item.command ?? null,
+              host: item.url ? new URL(item.url).host : null,
+              enabled: item.enabled,
+              envKeys: [],
+              headerKeys: [],
+              unavailable: false,
+            })
+            return { index, target: 'mcp_imported', outcome: 'added', error: null }
+          }),
+        }
+        break
+      }
+      case 'botSubscriptionRemove':
+        botProvisioning(id).accounts.subscriptions = botProvisioning(id).accounts.subscriptions.filter(
+          (item) =>
+            item.kind !== url.pathname.split('/').at(-2) ||
+            (item.accountId ?? 'default') !== url.pathname.split('/').at(-1)
+        )
+        break
+      case 'botSkillRemove':
+        botProvisioning(id).skills = botProvisioning(id).skills.filter(
+          (item) => item.name !== decodeURIComponent(url.pathname.split('/').at(-1)!)
+        )
+        break
+      case 'botMcpServerRemove':
+        botProvisioning(id).servers = botProvisioning(id).servers.filter(
+          (item) => item.id !== url.pathname.split('/').at(-1)
+        )
+        break
+      case 'botLoginStart': {
+        const input = body as FleetLoginStartRequest
+        const attempt: FleetLoginAttempt = {
+          loginId: randomUUID(),
+          kind: input.kind,
+          accountId: null,
+          method: input.method,
+          state: 'pending',
+          expiresAt: new Date(Date.now() + 900_000).toISOString(),
+          browser:
+            input.kind === 'claude'
+              ? {
+                  authUrl:
+                    'https://claude.ai/oauth/authorize?redirect_uri=' +
+                    encodeURIComponent('http://localhost:' + callbackPort + '/callback'),
+                  callback: { port: callbackPort, path: '/callback' },
+                }
+              : null,
+          device:
+            input.kind === 'grok' ? { verificationUrl: 'https://accounts.x.ai/device', userCode: 'E2E-GROK' } : null,
+          manual: input.kind === 'claude' ? { url: 'https://platform.claude.com/oauth/authorize' } : null,
+          account: null,
+          error: null,
+        }
+        logins.set(attempt.loginId, { attempt, polls: 0 })
+        value = attempt
+        break
+      }
+      case 'botLoginGet':
+      case 'botLoginCallback':
+      case 'botLoginCode':
+      case 'botLoginCancel': {
+        const loginId = url.pathname.split('/')[5]
+        const login = logins.get(loginId)!
+        if (key === 'botLoginGet') login.polls++
+        if (key === 'botLoginCancel') login.attempt.state = 'cancelled'
+        else if (
+          key === 'botLoginCode' ||
+          key === 'botLoginCallback' ||
+          (login.attempt.kind === 'grok' && login.polls >= 2)
+        ) {
+          login.attempt.state = 'completed'
+          login.attempt.account = { label: login.attempt.kind, email: 'owner@example.com', plan: null }
+          const subscriptions = botProvisioning(id).accounts.subscriptions
+          if (!subscriptions.some((item) => item.kind === login.attempt.kind))
+            subscriptions.push({
+              kind: login.attempt.kind,
+              accountId: null,
+              label: login.attempt.kind === 'grok' ? 'Grok' : 'Claude',
+              email: 'owner@example.com',
+              plan: null,
+              state: 'connected',
+            })
+        }
+        value =
+          key === 'botLoginCallback'
+            ? { status: 302, location: 'https://platform.claude.com/oauth/code/success', contentType: null, body: '' }
+            : login.attempt
+        break
+      }
+
       case 'ownerMemoryList':
         ownerMemory.activeChars = ownerMemory.entries
           .filter((entry) => entry.status === 'active')
@@ -457,6 +628,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       case 'meta':
         value = {
           protocol: 1,
+          features: ['provisioning'],
           gatewayVersion: '0.9.2',
           botImage: 'test-image',
           botImageVersion: '0.9.2',
@@ -717,6 +889,14 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         response.end(png)
         return
       case 'botApiKeyAccountAdd': {
+        const input = body as { name: string; kind: 'openai'; baseURL: string | null; key: string }
+        botProvisioning(id).accounts.apiKeys.push({
+          providerId: 'prov_e2e',
+          name: input.name,
+          kind: input.kind,
+          baseURL: input.baseURL,
+          keyHint: input.key.slice(-4),
+        })
         value = { providerId: 'prov_e2e' }
         if (bot) {
           const input = body as { name: string }
@@ -734,6 +914,9 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       }
       case 'botAccountRemove': {
+        botProvisioning(id).accounts.apiKeys = botProvisioning(id).accounts.apiKeys.filter(
+          (item) => item.providerId !== url.pathname.split('/').at(-1)
+        )
         if (bot) {
           const updated = fleetBotSchema.parse({
             ...bot,
@@ -881,6 +1064,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       env: {
         ...process.env,
         AGENTS_E2E: '1',
+        AGENTS_E2E_SKILLS_HOME: root,
         AGENTS_CHANNEL: 'dev',
         AGENTS_INSTANCE: 'fleet-e2e',
         AGENTS_USERDATA: path.join(root, 'profile'),
@@ -888,8 +1072,42 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         ELECTRON_RENDERER_URL: '',
       },
     })
+    await app.evaluate(({ shell }) => {
+      const state = globalThis as typeof globalThis & { __opened: string[] }
+      state.__opened = []
+      shell.openExternal = async (url) => {
+        state.__opened.push(url)
+      }
+    })
     const page = await app.firstWindow()
     await page.waitForFunction(() => Boolean((window as any).api))
+    const inventory = await page.evaluate(async () => {
+      const provider = await window.api.chatAddProvider({
+        name: 'Mac fixture key',
+        kind: 'openai',
+        baseURL: 'https://api.example.com/v1',
+        key: '',
+      })
+      if (!provider.id) throw new Error('No fixture provider')
+      await window.api.chatSetKey(provider.id, 'sk-e2e-provision')
+      await window.api.chatMcpAdd({
+        name: 'Mac fixture MCP',
+        transport: 'stdio',
+        command: 'node',
+        args: ['fixture.mjs'],
+      })
+      return window.api.fleetProvisioningInventory()
+    })
+    expect(inventory.apiKeys.some((item) => item.name === 'Mac fixture key')).toBe(true)
+    expect(inventory.skills.some((item) => item.name === 'e2e-notes')).toBe(true)
+    // A cached authenticated provider is synthetic; inventory scanning and all import IPCs remain real.
+    await app.evaluate(({ ipcMain }, inventory) => {
+      ipcMain.removeHandler('fleet:provisioning:inventory')
+      ipcMain.handle('fleet:provisioning:inventory', () => ({
+        ...inventory,
+        logins: [{ id: 'grok:default', kind: 'grok', label: 'Grok', email: null }],
+      }))
+    }, inventory)
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
     await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
@@ -1213,7 +1431,28 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.mouse.move(0, 0)
     await expect.poll(() => stateContrastOnDialog(peer)).toBeLessThan(1.5)
     await page.getByRole('dialog', { name: 'Criar bot' }).getByLabel('Nome').fill('Orders')
+    await createDialog.getByRole('button', { name: 'Trazer do seu Mac', exact: true }).click()
+    await createDialog.getByRole('checkbox', { name: 'Mac fixture key', exact: true }).check()
+    await createDialog.getByRole('checkbox', { name: 'e2e-notes', exact: true }).check()
+    await createDialog.getByRole('checkbox', { name: 'Grok', exact: true }).check()
+    await createDialog.getByRole('checkbox', { name: 'Mac fixture MCP', exact: true }).check()
     await page.getByRole('dialog', { name: 'Criar bot' }).getByRole('button', { name: 'Criar bot' }).click()
+    const grokLogin = page.getByRole('dialog', { name: 'Entrar em Grok no Orders', exact: true })
+    await expect(grokLogin.getByText('E2E-GROK', { exact: true })).toBeVisible()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'botAccountsImport')?.body)
+      .toMatchObject({ items: [{ type: 'api-key', key: 'sk-e2e-provision', name: 'Mac fixture key' }] })
+    expect(requests.find((item) => item.key === 'botSkillInstall')?.body).toMatchObject({
+      name: 'e2e-notes',
+      files: [{ path: 'SKILL.md', data: Buffer.from(skillText).toString('base64'), executable: false }],
+    })
+    await expect
+      .poll(() => app!.evaluate(() => (globalThis as typeof globalThis & { __opened: string[] }).__opened))
+      .toContain('https://accounts.x.ai/device')
+    await expect(grokLogin.getByText('Conectado como owner@example.com')).toBeVisible()
+    await grokLogin.getByRole('button', { name: 'Pronto', exact: true }).click()
+    await expect(createDialog.getByRole('list').filter({ hasText: 'Mac fixture key' })).toContainText('Adicionado')
+    await createDialog.getByRole('button', { name: 'Concluir', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible()
     await page.getByRole('tab', { name: 'Tela' }).click()
     await expect(page.getByRole('region', { name: 'Tela do Orders' })).toBeVisible()
@@ -1273,6 +1512,88 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .toEqual({ mode: 'view' })
     expect(requests.filter((item) => item.key === 'botTakeoverRelease')).toHaveLength(1)
     await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const accountsSection = page.getByRole('region', { name: 'Contas do bot', exact: true })
+    const resourcesSection = page.getByRole('region', { name: 'Skills e MCP', exact: true })
+    await expect(accountsSection.getByText(/Mac fixture key.*…sion/)).toBeVisible()
+    await accountsSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
+    const importDialog = page.getByRole('dialog', { name: 'Trazer do seu Mac', exact: true })
+    await expect(importDialog.getByText('Já no bot', { exact: true })).toBeVisible()
+    await expect(importDialog.getByRole('checkbox', { name: 'e2e-notes', exact: true })).toHaveCount(0)
+    await importDialog.getByRole('button', { name: 'Fechar', exact: true }).click()
+    await resourcesSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
+    await expect(importDialog.getByText('Já no bot', { exact: true })).toHaveCount(2)
+    await expect(importDialog.getByRole('checkbox', { name: 'Mac fixture key', exact: true })).toHaveCount(0)
+    await importDialog.getByRole('button', { name: 'Fechar', exact: true }).click()
+    await accountsSection.getByRole('button', { name: 'Entrar com Claude', exact: true }).click()
+    const claudeLogin = page.getByRole('dialog', { name: 'Entrar em Claude no Orders', exact: true })
+    await expect(claudeLogin.getByText('Abrimos claude.ai no seu navegador. Entre e autorize.')).toBeVisible()
+    await expect(claudeLogin.getByLabel('Código', { exact: true })).toHaveCount(0)
+    const callback = await fetch('http://localhost:' + callbackPort + '/callback?code=a&state=b', {
+      redirect: 'manual',
+    })
+    expect(callback.status).toBe(302)
+    expect(callback.headers.get('location')).toBe('https://platform.claude.com/oauth/code/success')
+    expect(requests.find((item) => item.key === 'botLoginCallback')?.body).toEqual({
+      path: '/callback',
+      query: 'code=a&state=b',
+    })
+    await expect(claudeLogin.getByText('Conectado como owner@example.com')).toBeVisible()
+    await claudeLogin.getByRole('button', { name: 'Pronto', exact: true }).click()
+    occupiedPort = createNetServer()
+    await new Promise<void>((resolve) => occupiedPort!.listen(callbackPort, '127.0.0.1', resolve))
+    await accountsSection.getByRole('button', { name: 'Entrar com Claude', exact: true }).click()
+    await expect(claudeLogin.getByLabel('Código', { exact: true })).toBeVisible()
+    await claudeLogin.getByRole('button', { name: 'Abrir link', exact: true }).click()
+    await claudeLogin.getByLabel('Código', { exact: true }).fill('fixture-manual-code')
+    await claudeLogin.getByRole('button', { name: 'Enviar código', exact: true }).click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'botLoginCode')?.body)
+      .toEqual({ code: 'fixture-manual-code' })
+    await expect(claudeLogin.getByText('Conectado como owner@example.com')).toBeVisible()
+    await claudeLogin.getByRole('button', { name: 'Pronto', exact: true }).click()
+    await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
+    occupiedPort = undefined
+    for (const name of ['Grok', 'Claude', 'Mac fixture key']) {
+      await accountsSection
+        .getByRole('listitem')
+        .filter({ hasText: name })
+        .getByRole('button', { name: 'Remover', exact: true })
+        .click()
+      await page
+        .getByRole('dialog', { name: 'Remover conta de modelo?' })
+        .getByRole('button', { name: 'Remover', exact: true })
+        .click()
+      await expect(accountsSection.getByRole('listitem').filter({ hasText: name })).toHaveCount(0)
+    }
+    expect(requests.find((item) => item.path === '/v1/bots/new-bot/subscriptions/grok/default')?.method).toBe('DELETE')
+    for (const name of ['e2e-notes', 'Mac fixture MCP']) {
+      await resourcesSection
+        .getByRole('listitem')
+        .filter({ hasText: name })
+        .getByRole('button', { name: 'Remover', exact: true })
+        .click()
+      await page
+        .getByRole('dialog', { name: 'Remover ' + name + ' deste bot?' })
+        .getByRole('button', { name: 'Remover', exact: true })
+        .click()
+      await expect(resourcesSection.getByRole('listitem').filter({ hasText: name })).toHaveCount(0)
+    }
+    expect(requests.find((item) => item.key === 'botSkillRemove')).toMatchObject({
+      method: 'DELETE',
+      path: '/v1/bots/new-bot/skills/e2e-notes',
+    })
+    expect(requests.find((item) => item.key === 'botMcpServerRemove')).toMatchObject({
+      method: 'DELETE',
+      path: '/v1/bots/new-bot/mcp-servers/mcp_imported',
+    })
+    const withoutProvisioning = fleetBotSchema.parse({
+      ...bots.find((item) => item.id === 'new-bot'),
+      capabilities: [],
+    })
+    emit({ type: 'bot.updated', at: now(), bot: withoutProvisioning })
+    await expect(accountsSection.getByText('Reinicie este bot para atualizá-lo antes.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Trazer do Mac…', exact: true })).toHaveCount(0)
+    emit({ type: 'bot.updated', at: now(), bot: bots.find((item) => item.id === 'new-bot')! })
     const apiKey = 'fleet-e2e-secret-key-123'
     await page.getByLabel('Nome da conta').fill('Fake model')
     await page.getByLabel('Chave de API').fill(apiKey)
@@ -1286,7 +1607,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       key: apiKey,
       baseURL: 'http://fake-model:8080/v1',
     })
-    await expect(page.getByText('Fake model')).toBeVisible()
+    await expect(accountsSection.getByText(/Fake model.*fake-model:8080.*…-123/)).toBeVisible()
     expect(rendererPayloads.some((payload) => payload.includes(apiKey))).toBe(false)
     await expect(page.getByLabel('Chave de API')).toHaveValue('')
     await page.getByRole('button', { name: 'Remover', exact: true }).click()
@@ -1294,7 +1615,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .getByRole('dialog', { name: 'Remover conta de modelo?' })
       .getByRole('button', { name: 'Remover' })
       .click()
-    await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(1)
+    await expect.poll(() => requests.filter((item) => item.key === 'botAccountRemove').length).toBe(2)
     await page.getByRole('button', { name: 'Adicionar rotina' }).click()
     await expect(page.getByText('A cada 1 h 30 min')).toBeVisible()
     await expect(page.getByText('Criada pelo bot')).toBeVisible()
@@ -1389,6 +1710,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(deleteDialog).toHaveCount(0)
     await expect(archivedSection.getByText('Nenhum bot arquivado.')).toBeVisible()
   } finally {
+    if (occupiedPort) await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
     await app?.close()
     for (const stream of streams) stream.end()
     await new Promise<void>((resolve) => server.close(() => resolve()))

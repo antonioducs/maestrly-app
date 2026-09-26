@@ -1,3 +1,13 @@
+import { MacImportPicker } from './MacImportPicker'
+import { MacImportFlow } from './MacImportDialog'
+import {
+  emptyImportChoice,
+  hasImportChoice,
+  importGroups,
+  recommendedImportChoice,
+  provisioningAvailability,
+  useMacInventory,
+} from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,21 +36,36 @@ export function CreateBotDialog({
   fleet: FleetController
 }) {
   const { t } = useTranslation('fleet')
+  const supportsImport = fleet.state.connection.features.includes('provisioning')
+  const { inventory, error: inventoryError } = useMacInventory(open && supportsImport)
+  const [choice, setChoice] = useState(emptyImportChoice)
+  const [expanded, setExpanded] = useState(false)
+  const [choiceInitialized, setChoiceInitialized] = useState(false)
+  const selected = hasImportChoice(choice)
   const [value, setValue] = useState<BotFieldsValue>({ name: '', instructions: '', ceiling: 'auto', talksTo: [] })
   const [created, setCreated] = useState<FleetBot | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const current = created && (fleet.state.snapshot.bots.find((bot) => bot.id === created.id) ?? created)
   useEffect(() => {
+    if (open && expanded && inventory && !choiceInitialized) {
+      setChoice(recommendedImportChoice(inventory, importGroups))
+      setChoiceInitialized(true)
+    }
+  }, [open, expanded, inventory, choiceInitialized])
+  useEffect(() => {
     if (!open) {
       setValue({ name: '', instructions: '', ceiling: 'auto', talksTo: [] })
       setCreated(null)
+      setChoice(emptyImportChoice())
+      setExpanded(false)
+      setChoiceInitialized(false)
       setError('')
     }
   }, [open])
   useEffect(() => {
-    if (open && current?.setup.step === 'ready') onCreated(current.id)
-  }, [open, current?.id, current?.setup.step, onCreated])
+    if (open && !selected && current?.setup.step === 'ready') onCreated(current.id)
+  }, [open, selected, current?.id, current?.setup.step, onCreated])
   async function submit() {
     if (!value.name.trim() || busy) return
     setBusy(true)
@@ -88,10 +113,56 @@ export function CreateBotDialog({
                 {current.setup.errorMessage ?? t('create.failed')}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">{t('create.closeNote')}</p>
+            {current?.setup.step === 'ready' &&
+              selected &&
+              inventory &&
+              provisioningAvailability(fleet, current) === 'ready' && (
+                <MacImportFlow
+                  key={current.id}
+                  bot={current}
+                  inventory={inventory}
+                  choice={choice}
+                  autoStart
+                  onDone={() => onCreated(current.id)}
+                />
+              )}
+            {current?.setup.step === 'ready' && selected && provisioningAvailability(fleet, current) !== 'ready' && (
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  provisioningAvailability(fleet, current) === 'update-server'
+                    ? 'provisioning.updateServer'
+                    : 'provisioning.restartBot'
+                )}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {t(selected ? 'provisioning.finishLater' : 'create.closeNote')}
+            </p>
           </div>
         ) : (
-          <BotFields value={value} onChange={setValue} bots={fleet.state.snapshot.bots} />
+          <>
+            <BotFields value={value} onChange={setValue} bots={fleet.state.snapshot.bots} />
+            {supportsImport && (
+              <div className="space-y-3">
+                <Button variant="ghost" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+                  {t('provisioning.fromMac')}
+                </Button>
+                {expanded && (
+                  <>
+                    <p className="text-xs text-muted-foreground">{t('provisioning.fromMacHint')}</p>
+                    {inventoryError && (
+                      <p role="alert" className="text-xs text-destructive">
+                        {inventoryError}
+                      </p>
+                    )}
+                    {inventory && choiceInitialized && (
+                      <MacImportPicker inventory={inventory} value={choice} onChange={setChoice} />
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </>
         )}
         {error && (
           <p role="alert" className="text-xs text-destructive">

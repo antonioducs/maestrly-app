@@ -52,3 +52,31 @@ describe('fleet renderer wiring', () => {
     expect(server).toContain('server.gatewayVersion')
   })
 })
+
+describe('fleet provisioning wiring', () => {
+  it('offers importing during creation', () => {
+    expect(source('components/fleet/CreateBotDialog.tsx')).toContain('<MacImportPicker')
+  })
+  it('renders bot accounts and skills in settings', () => {
+    const settings = source('components/fleet/BotSettings.tsx')
+    expect(settings).toContain('<BotAccountsSection')
+    expect(settings).toContain('<BotSkillsMcpSection')
+  })
+  it('starts and cancels remote sign-ins without opening URLs in the renderer', () => {
+    const login = source('components/fleet/BotLoginDialog.tsx')
+    expect(login).toContain('fleetLoginStart')
+    expect(login).toContain('fleetLoginCancel')
+    expect(login).not.toContain('window.open')
+  })
+  it('avoids native select controls in provisioning', () => {
+    for (const name of [
+      'MacImportPicker',
+      'MacImportDialog',
+      'BotLoginDialog',
+      'BotAccountsSection',
+      'BotSkillsMcpSection',
+    ]) {
+      expect(source(`components/fleet/${name}.tsx`)).not.toMatch(/<select\b/)
+    }
+  })
+})
