@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  chatGptWebCapabilitiesInfo,
   chatGptWebCapabilityFingerprint,
   remoteMcpServerCapabilities,
   resolveChatGptWebCapabilities,
@@ -23,8 +24,28 @@ const servers: McpServer[] = [
 
 describe('ChatGPT Web capability policy', () => {
   it('intersects standalone restrictions without changing browser or MCP preferences', () => {
-    const policy = resolveChatGptWebCapabilities({ git: 'read', gh: 'read', memory: 'read', kanban: 'write', conversation: 'read', browser: 'interact', mcp: { jira: 'write' } }, servers, 'standalone')
-    expect(policy).toMatchObject({ git: 'off', gh: 'off', memory: 'off', kanban: 'off', browser: 'interact', conversation: 'read', mcp: { jira: 'write' } })
+    const policy = resolveChatGptWebCapabilities(
+      {
+        git: 'read',
+        gh: 'read',
+        memory: 'read',
+        kanban: 'write',
+        conversation: 'read',
+        browser: 'interact',
+        mcp: { jira: 'write' },
+      },
+      servers,
+      'standalone'
+    )
+    expect(policy).toMatchObject({
+      git: 'off',
+      gh: 'off',
+      memory: 'off',
+      kanban: 'off',
+      browser: 'interact',
+      conversation: 'read',
+      mcp: { jira: 'write' },
+    })
   })
 
   it('defaults to read-only and never grants a globally disabled server', () => {
@@ -50,6 +71,18 @@ describe('ChatGPT Web capability policy', () => {
         servers
       ).mcp
     ).toEqual({ jira: 'write', disabled: 'off' })
+  })
+
+  it('never grants or discloses a server whose connection details cannot be read', () => {
+    const unreadable: McpServer = { id: 'lost', name: 'Lost', transport: 'stdio', enabled: true, unavailable: true }
+    const policy = resolveChatGptWebCapabilities({ mcp: { lost: 'write' } } as unknown as ChatGptWebCapabilities, [
+      unreadable,
+    ])
+    expect(policy.mcp).toEqual({ lost: 'off' })
+    expect(remoteMcpServerCapabilities(policy, [unreadable])).toEqual([])
+    expect(chatGptWebCapabilitiesInfo(undefined, [unreadable], true).mcpServers).toEqual([
+      { id: 'lost', name: 'Lost', enabled: false, scope: 'off' },
+    ])
   })
 
   it('resolves legacy persisted policies with sensitive capabilities fail-closed', () => {
