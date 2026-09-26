@@ -2308,6 +2308,7 @@ function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChang
             <div className="truncate text-[11px] text-muted-foreground">
               {s.transport === 'http' ? s.url : s.command}
             </div>
+            {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
           </div>
           <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {s.transport}

@@ -18,6 +18,7 @@ import { tool, jsonSchema, type Tool, type ToolSet } from 'ai'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
 import { getAppSetting, setAppSetting } from '../store'
+import { isSecureStorageAvailable, secureGet, secureSet, secureRemove } from '../secure-store'
 import { gateInstanceAppTool } from '../fleet/instance/gate'
 import type { ChatToolImage, ToolOutput } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
@@ -46,13 +47,7 @@ import {
   writeMcpCatalog,
 } from './mcp-catalog'
 import { LazyMcpRuntime, type LazyMcpDiagnostic } from './mcp-lazy-runtime'
-import type {
-  ListedMcpTool,
-  McpCallToolResult,
-  McpConnection,
-  McpRequestOptions,
-  McpServer,
-} from './mcp-types'
+import type { ListedMcpTool, McpCallToolResult, McpConnection, McpRequestOptions, McpServer } from './mcp-types'
 export type {
   ListedMcpTool,
   McpCallToolResult,
@@ -65,7 +60,10 @@ export type {
 
 const MCP_KEY = 'chat.mcpServers'
 
-export function listMcpServers(): McpServer[] {
+const DETAILS_PREFIX = 'chat.mcpServer.'
+const DETAIL_KEYS = ['url', 'headers', 'command', 'args', 'env'] as const
+
+function readStored(): McpServer[] {
   const raw = getAppSetting(MCP_KEY)
   if (!raw) return []
   try {
@@ -76,8 +74,60 @@ export function listMcpServers(): McpServer[] {
   }
 }
 
+function storedOnly(server: McpServer): McpServer {
+  return { id: server.id, name: server.name, transport: server.transport, enabled: server.enabled }
+}
+
+function detailsOnly(server: Partial<McpServer>): Pick<McpServer, (typeof DETAIL_KEYS)[number]> {
+  return Object.fromEntries(DETAIL_KEYS.filter((key) => server[key] !== undefined).map((key) => [key, server[key]]))
+}
+
+function hasInlineDetails(server: Partial<McpServer>): boolean {
+  return DETAIL_KEYS.some((key) => server[key] !== undefined)
+}
+
+function migrateInlineDetails(): McpServer[] {
+  const list = readStored()
+  if (!isSecureStorageAvailable()) return list
+  let changed = false
+  const migrated = list.map((server) => {
+    if (!hasInlineDetails(server) || !secureSet(DETAILS_PREFIX + server.id, JSON.stringify(detailsOnly(server))))
+      return server
+    changed = true
+    return storedOnly(server)
+  })
+  if (changed) setAppSetting(MCP_KEY, JSON.stringify(migrated))
+  return migrated
+}
+
+export function listMcpServers(): McpServer[] {
+  return migrateInlineDetails().map((server) => {
+    if (hasInlineDetails(server)) return server
+    const raw = secureGet(DETAILS_PREFIX + server.id)
+    if (raw) {
+      try {
+        const details = JSON.parse(raw)
+        if (details && typeof details === 'object' && !Array.isArray(details)) {
+          return { ...storedOnly(server), ...detailsOnly(details) }
+        }
+      } catch {
+        // Keep the configured identity visible when its keyring entry cannot be read.
+      }
+    }
+    invalidateMcpRuntime(server.id)
+    return { ...storedOnly(server), unavailable: true }
+  })
+}
+
 function saveMcpServers(list: McpServer[]): void {
-  setAppSetting(MCP_KEY, JSON.stringify(list))
+  const stored = list.map((server) => {
+    const identity = storedOnly(server)
+    if (server.unavailable) return identity
+    const details = detailsOnly(server)
+    if (isSecureStorageAvailable() && secureSet(DETAILS_PREFIX + server.id, JSON.stringify(details))) return identity
+    return { ...identity, ...details }
+  })
+  setAppSetting(MCP_KEY, JSON.stringify(stored))
 }
 
 export function addMcpServer(input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean }): McpServer {
@@ -110,7 +160,10 @@ export function updateMcpServer(id: string, patch: Partial<McpServer>): void {
   const idx = list.findIndex((s) => s.id === id)
   if (idx < 0) return
   const previous = list[idx]
-  const next = { ...previous, ...patch, id: previous.id }
+  const next = { ...previous, ...patch, id: previous.id, unavailable: previous.unavailable }
+  if (hasInlineDetails(patch) && (next.transport === 'http' ? next.url : next.command)) {
+    delete next.unavailable
+  }
   list[idx] = next
   saveMcpServers(list)
   invalidateMcpRuntime(id)
@@ -119,6 +172,7 @@ export function updateMcpServer(id: string, patch: Partial<McpServer>): void {
 
 export function removeMcpServer(id: string): void {
   saveMcpServers(listMcpServers().filter((s) => s.id !== id))
+  secureRemove(DETAILS_PREFIX + id)
   invalidateMcpRuntime(id)
   removeMcpCatalog(id)
 }
@@ -184,6 +238,7 @@ function connectionFromClient(client: Client): McpConnection {
 
 /** Opens one configured server without exposing its transport credentials to consumers. */
 export async function connectMcpServer(server: McpServer, options: McpRequestOptions = {}): Promise<McpConnection> {
+  if (server.unavailable) throw new Error('MCP connection details are unavailable.')
   const client = new Client({ name: 'maestrly-chat', version: '1.0.0' })
   try {
     if (server.transport === 'http') {
@@ -486,7 +541,9 @@ function searchableMcpDeclaration(declaration: ListedMcpTool): Record<string, un
  * Cached declarations provide typed wrappers; mcp_search/mcp_call cover a cold catalog in the same turn.
  */
 export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-  const servers = listMcpServers().filter((server) => server.enabled && !args.disabledIds?.has(server.id))
+  const servers = listMcpServers().filter(
+    (server) => server.enabled && !server.unavailable && !args.disabledIds?.has(server.id)
+  )
   if (!servers.length) return { tools: {}, close: async () => {} }
 
   const context: ExternalMcpBuildContext = {

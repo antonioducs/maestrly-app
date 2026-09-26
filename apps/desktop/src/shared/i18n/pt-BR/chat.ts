@@ -3,6 +3,7 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
+  mcp: { unavailable: 'Não deu para ler os dados de conexão neste Mac. Configure de novo.' },
   memorySettings: {
     title: 'Memória',
     description: 'Como os agentes usam a memória durável do projeto.',

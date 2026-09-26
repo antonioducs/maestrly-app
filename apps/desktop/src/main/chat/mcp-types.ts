@@ -7,6 +7,7 @@ export interface McpServer {
   name: string
   transport: McpTransport
   enabled: boolean
+  unavailable?: boolean
   url?: string
   headers?: Record<string, string>
   command?: string

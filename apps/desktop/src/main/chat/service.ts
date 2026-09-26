@@ -2135,6 +2135,7 @@ function buildConfig(): ChatConfig {
       name: s.name,
       transport: s.transport,
       enabled: s.enabled,
+      unavailable: s.unavailable === true,
       url: s.url,
       command: s.command,
     })),

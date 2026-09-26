@@ -1651,6 +1651,7 @@ export interface ChatProviderPreset {
 }
 
 export interface McpServerInfo {
+  unavailable?: boolean
   id: string
   name: string
   transport: 'http' | 'stdio'

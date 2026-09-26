@@ -1,4 +1,5 @@
 export default {
+  mcp: { unavailable: 'Its connection details could not be read on this Mac. Configure it again.' },
   memorySettings: {
     title: 'Memory',
     description: 'How agents use durable project memory.',
