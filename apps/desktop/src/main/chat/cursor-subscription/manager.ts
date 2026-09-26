@@ -311,13 +311,17 @@ export class CursorSubscriptionManager {
     this.auth.cancelPendingLogins()
   }
 
-  async admitApiKey(apiKey: string, options: { expiresAtMs?: number | null } = {}): Promise<CursorSubscriptionStatus> {
+  async admitApiKey(
+    apiKey: string,
+    options: { expiresAtMs?: number | null; requireSecure?: boolean } = {}
+  ): Promise<CursorSubscriptionStatus> {
     while (this.resetPromise) await this.resetPromise
     if (this.disposed) throw new Error('Cursor subscription manager is disposed')
     const generation = ++this.loginGeneration
     await this.admitApiKeyInternal(apiKey, {
       expectedLoginGeneration: generation,
       apiKeyExpiresAtMs: options.expiresAtMs ?? undefined,
+      requireSecure: options.requireSecure,
     })
     return this.getStatus(true)
   }
@@ -332,7 +336,12 @@ export class CursorSubscriptionManager {
 
   private async admitApiKeyInternal(
     apiKey: string,
-    options: { expectedLoginGeneration?: number; signal?: AbortSignal; apiKeyExpiresAtMs?: number } = {}
+    options: {
+      expectedLoginGeneration?: number
+      signal?: AbortSignal
+      apiKeyExpiresAtMs?: number
+      requireSecure?: boolean
+    } = {}
   ): Promise<void> {
     const normalized = apiKey.trim()
     if (!normalized) throw new Error('Cursor User API Key is required')
@@ -346,7 +355,13 @@ export class CursorSubscriptionManager {
     ) {
       throw new Error('Cursor credential has expired')
     }
-    this.dependencies.tokenStore.set(normalized, options.apiKeyExpiresAtMs)
+    const previous = this.dependencies.tokenStore.getCredential()
+    const mode = this.dependencies.tokenStore.set(normalized, options.apiKeyExpiresAtMs)
+    if (options.requireSecure && mode !== 'secure') {
+      if (previous) this.dependencies.tokenStore.set(previous.apiKey, previous.expiresAtMs ?? undefined)
+      else this.dependencies.tokenStore.clear()
+      throw new Error('Secure credential storage is unavailable.')
+    }
     await this.changeIdentity(me)
     this.assertLoginAdmissionBarrier(options)
   }

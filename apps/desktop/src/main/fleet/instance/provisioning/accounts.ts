@@ -163,8 +163,9 @@ async function importAccount(
   }
   const accountId = credential(null) === null ? null : addSubscriptionAccount(kind, item.label).id
   try {
-    if (item.type === 'github-copilot') await getGitHubCopilotSubscriptionManager(accountId).admitToken(item.token)
-    else await getCursorSubscriptionManager(accountId).admitApiKey(item.apiKey, { expiresAtMs })
+    if (item.type === 'github-copilot')
+      await getGitHubCopilotSubscriptionManager(accountId).admitToken(item.token, { requireSecure: true })
+    else await getCursorSubscriptionManager(accountId).admitApiKey(item.apiKey, { expiresAtMs, requireSecure: true })
   } catch (error) {
     if (accountId) await cleanupBotSubscriptionSlot(accountId)
     throw error

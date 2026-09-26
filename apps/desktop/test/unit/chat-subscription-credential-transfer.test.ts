@@ -28,6 +28,7 @@ describe('subscription credential transfer', () => {
   const loadSdk = vi.fn()
   const createClient = vi.fn()
   beforeEach(() => {
+    vi.restoreAllMocks()
     persisted.clear()
     loadSdk.mockReset()
     createClient.mockReset()
@@ -61,6 +62,49 @@ describe('subscription credential transfer', () => {
     vi.useRealTimers()
   })
 
+  it.each(['copilot', 'cursor'] as const)(
+    'refuses memory-only %s admission when secure storage is required',
+    async (kind) => {
+      vi.spyOn(storage, 'setPersisted').mockReturnValue(false)
+      const admission =
+        kind === 'copilot'
+          ? copilot.admitToken('gho_good', { requireSecure: true })
+          : cursor.admitApiKey('key_1', { requireSecure: true })
+      await expect(admission).rejects.toThrow('Secure credential storage is unavailable.')
+      expect(copilot.exportToken()).toBeNull()
+      expect(cursor.exportCredential()).toBeNull()
+      expect(persisted.size).toBe(0)
+    }
+  )
+
+  it.each(['copilot', 'cursor'] as const)(
+    'restores the previous %s credential after a required secure write fails',
+    async (kind) => {
+      const expiresAtMs = Date.now() + 86_400_000
+      if (kind === 'copilot') await copilot.admitToken('gho_good')
+      else await cursor.admitApiKey('previous_key', { expiresAtMs })
+      const before = new Map(persisted)
+      vi.spyOn(storage, 'setPersisted').mockReturnValueOnce(false)
+      await expect(
+        kind === 'copilot'
+          ? copilot.admitToken('replacement', { requireSecure: true })
+          : cursor.admitApiKey('replacement', { requireSecure: true })
+      ).rejects.toThrow('Secure credential storage is unavailable.')
+      expect(persisted).toEqual(before)
+      if (kind === 'copilot') expect(copilot.exportToken()).toBe('gho_good')
+      else expect(cursor.exportCredential()).toEqual({ apiKey: 'previous_key', expiresAtMs })
+    }
+  )
+  it.each(['copilot', 'cursor'] as const)('retains optional memory-only %s admission', async (kind) => {
+    vi.spyOn(storage, 'setPersisted').mockReturnValue(false)
+    if (kind === 'copilot') {
+      await copilot.admitToken('gho_good')
+      expect(copilot.exportToken()).toBe('gho_good')
+    } else {
+      await cursor.admitApiKey('key_1')
+      expect(cursor.exportCredential()?.apiKey).toBe('key_1')
+    }
+  })
   it('admits and exports an accepted Copilot token', async () => {
     await expect(copilot.admitToken('gho_good')).resolves.toMatchObject({ authenticated: true })
     expect(copilot.exportToken()).toBe('gho_good')

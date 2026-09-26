@@ -43,7 +43,8 @@ vi.mock('../../src/main/secure-store', () => ({
 vi.mock('../../src/main/chat/github-copilot/manager', () => ({
   getGitHubCopilotSubscriptionManager: (id: string | null = null) => ({
     exportToken: () => state.tokens.get(id) ?? null,
-    admitToken: async (token: string) => {
+    admitToken: async (token: string, options?: { requireSecure?: boolean }) => {
+      if (options?.requireSecure && !state.writable) throw new Error('Secure credential storage is unavailable.')
       if (token.startsWith('refused')) throw new Error('Refused token ' + token)
       state.tokens.set(id, token)
       return { authenticated: true }
@@ -55,7 +56,8 @@ vi.mock('../../src/main/chat/github-copilot/manager', () => ({
 vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
   getCursorSubscriptionManager: (id: string | null = null) => ({
     exportCredential: () => state.cursors.get(id) ?? null,
-    admitApiKey: async (apiKey: string, options: { expiresAtMs: number | null }) => {
+    admitApiKey: async (apiKey: string, options: { expiresAtMs: number | null; requireSecure?: boolean }) => {
+      if (options.requireSecure && !state.writable) throw new Error('Secure credential storage is unavailable.')
       state.admitCursor(apiKey, options)
       state.cursors.set(id, { apiKey, ...options })
       return { authenticated: true }
@@ -151,7 +153,10 @@ it('passes Cursor expiry and deduplicates the full credential', async () => {
     expiresAt: '2027-01-01T00:00:00.000Z',
   }
   expect((await outcome(item)).outcome).toBe('added')
-  expect(state.admitCursor).toHaveBeenCalledWith(item.apiKey, { expiresAtMs: Date.parse(item.expiresAt) })
+  expect(state.admitCursor).toHaveBeenCalledWith(item.apiKey, {
+    expiresAtMs: Date.parse(item.expiresAt),
+    requireSecure: true,
+  })
   expect((await outcome(item)).outcome).toBe('unchanged')
 })
 it('lists hints and cached subscription identities without returning secrets', async () => {
@@ -263,4 +268,16 @@ it('refuses MCP details when encryption fails without changing raw settings', ()
   ).toMatchObject({ outcome: 'failed', error: 'Secure credential storage is unavailable.' })
   expect(getAppSetting('chat.mcpServers')).toBe(before)
   expect(getAppSetting('chat.mcpServers') ?? '').not.toContain('synthetic-secret')
+})
+it.each(['github-copilot', 'cursor'] as const)('cleans the new %s slot when secure admission fails', async (type) => {
+  state.tokens.set(null, 'existing')
+  state.cursors.set(null, { apiKey: 'existing', expiresAtMs: null })
+  state.writable = false
+  const item =
+    type === 'github-copilot'
+      ? { type, label: 'Synthetic', token: 'new-token' }
+      : { type, label: 'Synthetic', apiKey: 'new-key', expiresAt: null }
+  expect(await outcome(item)).toMatchObject({ outcome: 'failed', error: 'Secure credential storage is unavailable.' })
+  expect(state.cleanup).toHaveBeenCalledOnce()
+  expect(listSubscriptionAccounts()).toHaveLength(0)
 })

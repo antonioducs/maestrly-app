@@ -335,7 +335,7 @@ export class GitHubCopilotSubscriptionManager {
     return this.dependencies.tokenStore.get()
   }
 
-  async admitToken(token: string): Promise<GitHubCopilotSubscriptionStatus> {
+  async admitToken(token: string, options: { requireSecure?: boolean } = {}): Promise<GitHubCopilotSubscriptionStatus> {
     while (this.resetPromise) await this.resetPromise
     if (this.disposed) throw new Error('GitHub Copilot subscription manager is disposed')
     const normalized = token.trim()
@@ -344,7 +344,8 @@ export class GitHubCopilotSubscriptionManager {
     for (const record of this.loginRecords.values()) record.controller.abort()
     const previousToken = this.dependencies.tokenStore.get()
     try {
-      this.dependencies.tokenStore.set(normalized)
+      const mode = this.dependencies.tokenStore.set(normalized)
+      if (options.requireSecure && mode !== 'secure') throw new Error('Secure credential storage is unavailable.')
       await this.changeIdentity(tokenFingerprint(normalized))
       const status = await this.getStatus(true)
       if (this.disposed || generation !== this.loginGeneration) {
