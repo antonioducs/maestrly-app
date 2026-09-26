@@ -135,3 +135,21 @@ it('closes and invalidates polling before a rejected cancellation settles', asyn
   await Promise.resolve()
   expect(cancel).toHaveBeenCalledOnce()
 })
+
+it('settles a rejected import so selected sign-ins and Finish remain reachable', async () => {
+  const { settleMacImport } = await import('../../src/renderer/lib/fleet/provisioning')
+  const report = vi.fn()
+  const error = vi.fn()
+  const settled = vi.fn()
+  await settleMacImport(
+    async () => {
+      throw new Error('offline')
+    },
+    report,
+    error,
+    settled
+  )
+  expect(report).not.toHaveBeenCalled()
+  expect(error).toHaveBeenCalledWith('offline')
+  expect(settled).toHaveBeenCalledOnce()
+})

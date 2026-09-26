@@ -4,9 +4,9 @@ import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportReport } from '../../../shared/fleet-provisioning'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
 import {
   emptyImportChoice,
+  settleMacImport,
   hasImportChoice,
   importGroups,
   recommendedImportChoice,
@@ -34,6 +34,7 @@ export function MacImportFlow({
   const { t } = useTranslation('fleet')
   const [report, setReport] = useState<MacImportReport | null>(null)
   const [busy, setBusy] = useState(false)
+  const [settled, setSettled] = useState(false)
   const [error, setError] = useState('')
   const [loginIndex, setLoginIndex] = useState<number | null>(null)
   const started = useRef(false)
@@ -50,20 +51,22 @@ export function MacImportFlow({
     started.current = true
     setBusy(true)
     setError('')
-    try {
-      const { loginIds: _, ...selection } = choice
-      const result = await window.api.fleetImportFromMac(bot.id, selection)
-      if (!alive.current) return
-      setReport(result)
-      setLoginIndex(0)
-    } catch (cause) {
-      if (alive.current) {
-        started.current = false
-        setError(fleetErrorMessage(cause))
+    const { loginIds: _, ...selection } = choice
+    await settleMacImport(
+      () => window.api.fleetImportFromMac(bot.id, selection),
+      (result) => {
+        if (alive.current) setReport(result)
+      },
+      (message) => {
+        if (alive.current) setError(message)
+      },
+      () => {
+        if (!alive.current) return
+        setBusy(false)
+        setSettled(true)
+        setLoginIndex(0)
       }
-    } finally {
-      if (alive.current) setBusy(false)
-    }
+    )
   }
   useEffect(() => {
     if (autoStart) void send()
@@ -88,7 +91,7 @@ export function MacImportFlow({
           {error}
         </p>
       )}
-      {!report && (
+      {!settled && (
         <Button disabled={busy || !hasImportChoice(choice)} onClick={() => void send()}>
           {t('provisioning.send')}
         </Button>
@@ -103,7 +106,7 @@ export function MacImportFlow({
           onClose={() => setLoginIndex((index) => (index ?? 0) + 1)}
         />
       )}
-      {report && !login && <Button onClick={onDone}>{t('provisioning.finish')}</Button>}
+      {settled && !login && <Button onClick={onDone}>{t('provisioning.finish')}</Button>}
     </div>
   )
 }

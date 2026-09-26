@@ -172,3 +172,18 @@ export function closeBotLogin(invalidate: () => void, cancel: () => Promise<unkn
     .then(cancel)
     .catch(() => {})
 }
+
+export async function settleMacImport<T>(
+  send: () => Promise<T>,
+  report: (value: T) => void,
+  error: (message: string) => void,
+  settled: () => void
+): Promise<void> {
+  try {
+    report(await send())
+  } catch (cause) {
+    error(fleetErrorMessage(cause))
+  } finally {
+    settled()
+  }
+}
