@@ -42,6 +42,35 @@ its persistent home volume. Back up both gateway data and bot homes. A gateway
 binary refuses a database newer than its supported schema; an older gateway
 cannot open v5 unless it supports v5. Downgrade by restoring a matching backup.
 
+## MCP configuration
+
+On every desktop, `chat.mcpServers` in `app_settings` keeps the MCP identities
+`{ id, name, transport, enabled }`. Connection details (`url`, `headers`,
+`command`, `args`, `env`) are encrypted through the secure store under
+`chat.mcpServer.<id>` when secure storage is available. Existing inline details
+migrate when the list is read, and are removed from the inline list only after a
+successful secure write.
+
+Without secure storage, or if a secure write fails, details remain inline in
+`chat.mcpServers`. Treat that profile data as sensitive. A server whose encrypted
+details cannot be read remains listed as needing reconfiguration and never
+connects. Removing a server also removes its secure-store entry. Bot provisioning
+requires secure storage before accepting MCP imports.
+
+## Configuration brought to a bot
+
+Global skills sent from a Mac are installed atomically in
+`~/.agents/skills/<name>` on the bot, with provenance `fleet` (shown as
+**From a Mac**). They live in the bot's persistent home volume; changing or
+removing the Mac's source does not update that copy automatically.
+
+Subscription slots created for remote sign-in are ordinary bot subscription
+slots, kept in the bot's profile with credentials managed by the corresponding
+provider integration. They survive container replacement with the home volume.
+New slots are removed when their sign-in fails, expires or is cancelled;
+successful slots remain until removed. Back up bot homes together with gateway
+data as described in the [fleet guide](bot-fleet.md#updates-backups-and-removal).
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

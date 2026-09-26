@@ -96,6 +96,40 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
+### Configuring bots from a paired device
+
+Every paired device can configure every bot on its gateway. Selected stored
+credentials flow from the Mac main process through the gateway to the bot;
+provisioning does not retrieve stored bot secrets. The picker receives names,
+IDs, hosts and warnings, and bot account lists include only a last-four-character
+API-key hint. Stored secrets are not exposed to the renderer or recorded in logs,
+activity or gateway idempotency records. Import requests are not stored in the
+idempotency table.
+
+Successful additions and updates through provisioning, and subscription, skill
+and MCP removals, record `bot_configured` activity with the paired device's name
+and counts only. Unchanged imports and interactive logins do not create this
+activity; the existing API-key removal route does not create it either. Copilot
+and Cursor imports share the same credential between Mac and bot. Codex, Claude
+and Grok sign in to separate bot sessions. Accounts and MCP imports are refused
+when secure storage is unavailable on the bot.
+
+Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
+`claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
+subdomains for Grok. The Mac's callback relay binds only to loopback, accepts the
+attempt's exact callback path and closes on completion, cancellation or expiry.
+It never renders bot-provided content and redirects only to allowed provider
+origins; other responses use the Mac's own completion or failure page. Codex
+local success redirects are followed inside the bot, keeping tokens in those
+URLs on the bot.
+
+MCP URLs, headers, commands, arguments and environment values are encrypted at
+rest when secure storage is available, on both Mac and bot. General desktop MCP
+configuration retains an inline fallback when secure storage is unavailable or
+a secure write fails; unreadable encrypted entries are never connected. See
+[MCP storage](local-data.md#mcp-configuration) and the
+[fleet security boundary](bot-fleet.md#security-and-data).
+
 ## Commands, files, and Git
 
 Terminals and agent tools can modify source, run executables, and contact the

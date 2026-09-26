@@ -18,7 +18,7 @@ Compose publishes only the gateway's public listener on server loopback. The int
 
 The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the bot's installed skills and expand when the bot sends the turn.
 
-To install or manage skills and MCP servers, take control of the bot's **Screen** tab and open the corresponding Settings section in the bot's own Maestrly window. These changes affect the bot's environment; your Mac's local skills and MCP servers are separate.
+Use the bot's **Settings → Skills and MCP** on your Mac to bring over global skills and MCP servers or remove them. You can also take control of the **Screen** tab and open Settings in the bot's own Maestrly window. Changes affect the bot's environment; your Mac's local configuration remains separate.
 
 The bot's own Maestrly window shows only its **Maestrly Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with the bot goes through your Mac. Closing the window hides it; the bot keeps working in its browser window.
 
@@ -100,7 +100,7 @@ To remove the installation, stop Compose and explicitly delete the gateway and b
 
 The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, bot statuses, and **Awaiting you** requests. Create a bot with **+**; give it a **Name**, **Role**, **What it does**, an approval ceiling, and any peers it **Can talk to**. Container creation continues on the server if you close the dialog.
 
-Open the bot's **Settings** tab to choose an **Account and model**. Each bot needs its own model account. Use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint. Or choose **Log in on the bot’s screen** and authenticate inside that bot's desktop. The Mac's accounts are not copied to the bot. Adding an API key requires secure credential storage inside the bot; otherwise the request is refused.
+Open the bot's **Settings** tab to choose an **Account and model**. Each bot needs its own model account. Use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint. Or choose **Log in on the bot’s screen** and authenticate inside that bot's desktop. Use **Bring from your Mac…** to copy selected API keys, Copilot and Cursor credentials, or sign in to subscriptions as described below. Adding an API key requires secure credential storage inside the bot; otherwise the request is refused.
 
 Choose a **Compaction model** in the bot's Settings too. The bot remains in setup and queues messages until this model and its account are available. The chosen model prepares conversation summaries in the background at the configured token interval. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Background compaction settings inside the bot's own Maestrly window are locked and managed from the Mac. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
 
@@ -122,6 +122,117 @@ Bots can create up to 10 of their own routines through tools, subject to their a
 The **Server** page shows versions, CPU, memory, disk, bot resource use, and peer messages. After your Mac reconnects, **While your Mac was off** summarizes activity recorded by the gateway; open a bot to inspect its full conversation.
 
 The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in that bot's own desktop settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
+
+## Bring from your Mac
+
+In **Create bot**, expand **Bring from your Mac** and select what to send. For an
+existing bot, open **Settings → Bot accounts** or **Settings → Skills and MCP**
+and choose **Bring from your Mac…**. API keys (including their provider format
+and base URL), GitHub Copilot and Cursor credentials, global skills and MCP
+servers are copied. ChatGPT (Codex), Claude and Grok instead start a separate
+sign-in on the bot. Mac model selections and other settings are not imported.
+
+After the bot is ready, imports run in order: accounts, each skill, then MCP
+servers, followed by selected sign-ins one at a time. Each imported item reports
+**Added**, **Updated**, **Already there**, or **Failed**. Closing the dialog leaves
+the bot in place; finish configuration from its Settings. Older gateways require
+an update; older bot instances require a restart onto the updated image before
+these controls work.
+
+Review warnings before sending. Local API endpoints, localhost or `.local` MCP
+URLs, Mac home paths in arguments or environment values, other absolute command
+paths, and commands needing Docker, Podman, Bun or Deno are not selected by
+default. They may need a reachable endpoint or a Linux installation on the bot.
+Recognized runtime commands such as an absolute path to `npx` or `uvx` are sent
+as their command name. This does not copy their dependencies or rewrite paths in
+arguments. MCP servers with unreadable details must be configured again on the
+Mac before sending.
+
+Each request allows up to 50 accounts or 50 MCP servers. Each skill allows
+400 files and 8 MiB of raw content (the picker labels this “8 MB”), with at most
+4 MiB per file and 240 characters per relative path. A root `SKILL.md` is
+required. Hidden entries, `node_modules`, `__pycache__` and nested symbolic links
+are skipped; a linked skill root is followed. Project-only skills are not sent.
+Among the provisioning routes, only skill installs accept a 12 MiB request body;
+the others retain the 1 MiB limit.
+
+API keys match by provider format and normalized base URL: an identical key is
+unchanged; the same account name with a different key replaces that key;
+otherwise a new account is added. Copilot and Cursor credentials are validated,
+with identical credentials reused, an empty default slot used first, and an
+extra slot created otherwise. Skills replace the same name atomically; MCP
+servers match names without regard to case and update changed configuration.
+Account and MCP imports require secure storage on the bot.
+
+Use **Remove** beside an account, skill or MCP server to remove it from the bot.
+Removing a subscription signs it out and removes an extra account slot if it has
+one. The Mac's local copies remain separate; copied credentials can still be
+revoked or expire at the provider. Skills brought over appear as **From a Mac**.
+
+## Sign in to subscriptions
+
+In **Settings → Bot accounts**, choose **Sign in with ChatGPT (Codex)**,
+**Sign in with Claude**, or **Sign in with Grok**. The bot gets its own session;
+Maestrly never copies the Mac's Codex, Claude or Grok session. These sessions
+still use the owner's subscription quota. The provider's terms apply to using a
+subscription on a server; a separate bot session does not create another quota.
+
+For Codex and Claude, the Mac opens the provider in your browser and relays the
+loopback callback through the gateway to the bot. The relay redirects only to
+allowlisted provider origins and otherwise shows its own **Done** or failure
+page, never content returned by the bot. If Codex ends on its local
+`http://localhost:1455/success` page while the ChatGPT account still needs setup,
+the bot loads that page itself to finish signing in; tokens in that URL never
+leave the bot.
+
+For Codex, choose **Use a code instead** for device sign-in. This also happens
+automatically if port 1455 is busy on the Mac. If ChatGPT refuses the code, the
+dialog advises enabling device code sign-in for Codex in ChatGPT security
+settings. Codex browser sign-ins are serialized on the Mac. For Claude, expand
+**Didn't open or failed? Paste the code**, choose **Open link**, authorize, paste
+the code and choose **Send code**. This fallback opens automatically when its
+callback port is busy. Grok always uses a device code and opens the pre-filled
+verification page.
+
+Each bot allows one pending sign-in per provider, three in total, lasting up to
+15 minutes. Sign-in uses the default slot when disconnected, or creates an extra
+slot when it is already connected. A slot created for the attempt is removed on
+failure, expiry or cancellation. **Reconnect** signs in to the selected existing
+slot. Wait for the account to show **Connected**, then choose the bot's
+**Account and model** and **Compaction model**.
+
+## Toolchain
+
+The bot image includes Node.js 22.22.0 with npm, npx, corepack, pnpm and yarn;
+Python 3.11 with `python`, pip and venv; uv/uvx 0.12.15; mise 2026.9.10; git;
+OpenSSH client; build-essential; ripgrep; fd; jq; sqlite3; zip/unzip; less;
+procps; file; and xz. There is no Docker or sudo inside a bot.
+
+Image tools live outside `/home/bot` and change with image updates. Installs made
+with `npm -g`, `uv tool install`, `pip install --user` or mise live in the bot's
+persistent home and survive container replacement. `NPM_CONFIG_PREFIX` is
+`/home/bot/.local`; `/etc/profile.d/maestrly-toolchain.sh` gives login shells the
+same toolchain paths and npm prefix as the app's non-login shells. Use
+`mise use node@20` for another Node version; once installed, a project's `.nvmrc`
+is honored. Mise also supports installing other Python versions. The bot's
+identity prompt describes these tools and persistence rules. See the
+[operator quick start](../deploy/bot-fleet/README.md#toolchain) for image details.
+
+## Verify provisioning from your Mac
+
+1. Bring one API key, one global skill and one MCP server to a bot. Check the
+   per-item results and their entries under **Bot accounts** and **Skills and
+   MCP**. Repeat the import to check **Already there** for unchanged items.
+2. Sign in with each subscription you use. Check **Connected**, exercise Codex's
+   **Use a code instead** and Claude's paste-code fallback, and confirm Grok
+   opens its verification page. Choose the conversation and compaction models,
+   then send a message using the new account.
+3. Ask the bot to list its tool versions, use the imported skill and call the
+   imported MCP server. Review its tool output; an imported configuration alone
+   does not prove that an external server or dependency works.
+4. Restart the bot, then confirm its accounts, skills, MCP servers and a test
+   installation in its home remain. Remove a test item from Settings and confirm
+   it disappears from the bot while the Mac's copy remains.
 
 ## Bot memory
 
@@ -181,7 +292,7 @@ input; completed and cancelled are final.
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
 | `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Can talk to**, within gateway budgets. |
 
-A bot cannot use your Mac's screen, browser, terminal, accounts, or local files. Its approval ceiling bounds how far it may run without you:
+A bot cannot directly use your Mac's screen, browser, terminal, accounts, or local files. It can use credentials and files you explicitly bring to its own environment. Its approval ceiling bounds how far it may run without you:
 
 | Ceiling | Automatic work | Waits for you |
 | --- | --- | --- |
