@@ -102,3 +102,65 @@ export function useBotProvisioning(botId: string, enabled = true) {
   return { accounts: current?.accounts, skills: current?.skills, mcpServers: current?.mcpServers, error, refresh }
 }
 export type BotProvisioning = ReturnType<typeof useBotProvisioning>
+
+type OwnedLogin = { attempt: { loginId: string; state: string } }
+export function createLoginOwnership<T extends OwnedLogin = OwnedLogin>() {
+  let entry: {
+    key: string
+    result: Promise<T>
+    users: number
+    abandoned: boolean
+    attempt: OwnedLogin['attempt'] | null
+    cancel: (id: string) => Promise<unknown>
+  } | null = null
+  const abandon = () => {
+    const old = entry
+    entry = null
+    if (!old || old.abandoned) return
+    old.abandoned = true
+    void old.result
+      .then(() => {
+        if (old.attempt?.state === 'pending') return old.cancel(old.attempt.loginId)
+      })
+      .catch(() => {})
+  }
+  return {
+    abandon,
+    update(attempt: OwnedLogin['attempt']) {
+      if (entry) entry.attempt = attempt
+    },
+    acquire(key: string, start: () => Promise<T>, cancel: (id: string) => Promise<unknown>) {
+      if (entry?.key !== key) abandon()
+      if (!entry) {
+        const current = {
+          key,
+          result: start(),
+          users: 0,
+          abandoned: false,
+          attempt: null as OwnedLogin['attempt'] | null,
+          cancel,
+        }
+        current.result = current.result.then((value) => {
+          current.attempt = value.attempt
+          return value
+        })
+        entry = current
+      }
+      const current = entry
+      current.users++
+      let released = false
+      return {
+        result: current.result,
+        release() {
+          if (released) return
+          released = true
+          current.users--
+          // Strict Mode restores the effect synchronously; a real unmount does not.
+          queueMicrotask(() => {
+            if (entry === current && current.users === 0) abandon()
+          })
+        },
+      }
+    },
+  }
+}

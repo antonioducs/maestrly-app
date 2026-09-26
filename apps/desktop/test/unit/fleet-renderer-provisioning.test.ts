@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory } from '../../src/shared/fleet-provisioning'
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
@@ -67,4 +67,50 @@ describe('fleet provisioning choices', () => {
     expect(accountHost('openai-responses', null)).toBe('api.openai.com')
     expect(accountHost('openai', 'https://models.example.test:8080/v1')).toBe('models.example.test:8080')
   })
+})
+
+it('shares one pending login through Strict Mode effect replay', async () => {
+  const { createLoginOwnership } = await import('../../src/renderer/lib/fleet/provisioning')
+  const owner = createLoginOwnership()
+  let resolve!: (value: { attempt: { loginId: string; state: 'pending' } }) => void
+  const start = vi.fn(
+    () =>
+      new Promise<{ attempt: { loginId: string; state: 'pending' } }>((done) => {
+        resolve = done
+      })
+  )
+  const cancel = vi.fn(async () => {})
+  const first = owner.acquire('opening', start, cancel)
+  first.release()
+  const second = owner.acquire('opening', start, cancel)
+  resolve({ attempt: { loginId: 'one', state: 'pending' } })
+  await second.result
+  await Promise.resolve()
+  expect(start).toHaveBeenCalledOnce()
+  expect(cancel).not.toHaveBeenCalled()
+  second.release()
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(cancel).toHaveBeenCalledExactlyOnceWith('one')
+})
+
+it('cancels a late login response after a real unmount', async () => {
+  const { createLoginOwnership } = await import('../../src/renderer/lib/fleet/provisioning')
+  const owner = createLoginOwnership()
+  let resolve!: (value: { attempt: { loginId: string; state: 'pending' } }) => void
+  const cancel = vi.fn(async () => {})
+  const lease = owner.acquire(
+    'opening',
+    () =>
+      new Promise<{ attempt: { loginId: string; state: 'pending' } }>((done) => {
+        resolve = done
+      }),
+    cancel
+  )
+  lease.release()
+  await Promise.resolve()
+  resolve({ attempt: { loginId: 'late', state: 'pending' } })
+  await lease.result
+  await Promise.resolve()
+  expect(cancel).toHaveBeenCalledExactlyOnceWith('late')
 })

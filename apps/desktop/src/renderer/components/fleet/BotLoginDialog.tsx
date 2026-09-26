@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { createLoginOwnership } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 type LoginResult = 'completed' | 'cancelled' | 'failed'
@@ -37,6 +38,7 @@ export function BotLoginDialog({
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const ownership = useRef(createLoginOwnership<Awaited<ReturnType<typeof window.api.fleetLoginStart>>>())
   const generation = useRef(0)
   const liveAttempt = useRef<FleetLoginAttempt | null>(null)
   const primary = useRef<HTMLButtonElement>(null)
@@ -54,6 +56,7 @@ export function BotLoginDialog({
     const update = (value: FleetLoginAttempt) => {
       owned = value
       liveAttempt.current = value
+      ownership.current.update(value)
       setAttempt(value)
     }
     const poll = async () => {
@@ -68,13 +71,14 @@ export function BotLoginDialog({
       }
       if (active() && owned?.state === 'pending') timer = setTimeout(() => void poll(), 2000)
     }
-    void window.api
-      .fleetLoginStart(bot.id, { kind, slot, method })
-      .then(async (result) => {
-        if (!active()) {
-          await window.api.fleetLoginCancel(bot.id, result.attempt.loginId)
-          return
-        }
+    const lease = ownership.current.acquire(
+      JSON.stringify([bot.id, kind, slot, method, revision]),
+      () => window.api.fleetLoginStart(bot.id, { kind, slot, method }),
+      (loginId) => window.api.fleetLoginCancel(bot.id, loginId)
+    )
+    void lease.result
+      .then((result) => {
+        if (!active()) return
         update(result.attempt)
         setPaste(result.relay === 'unavailable')
         if (result.attempt.state === 'pending') timer = setTimeout(() => void poll(), 2000)
@@ -85,9 +89,8 @@ export function BotLoginDialog({
     return () => {
       generation.current++
       clearTimeout(timer)
-      const pending = liveAttempt.current?.state === 'pending'
       liveAttempt.current = null
-      if (pending && owned) void window.api.fleetLoginCancel(bot.id, owned.loginId).catch(() => {})
+      lease.release()
     }
   }, [open, bot.id, kind, slot, method, revision])
   useEffect(() => {
@@ -196,6 +199,7 @@ export function BotLoginDialog({
                           const current = generation.current
                           const value = await window.api.fleetLoginSubmitCode(bot.id, attempt.loginId, code.trim())
                           if (current === generation.current) {
+                            ownership.current.update(value)
                             liveAttempt.current = value
                             setAttempt(value)
                             setCode('')
