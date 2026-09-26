@@ -164,3 +164,11 @@ export function createLoginOwnership<T extends OwnedLogin = OwnedLogin>() {
     },
   }
 }
+
+export function closeBotLogin(invalidate: () => void, cancel: () => Promise<unknown>, onClose: () => void): void {
+  invalidate()
+  onClose()
+  void Promise.resolve()
+    .then(cancel)
+    .catch(() => {})
+}

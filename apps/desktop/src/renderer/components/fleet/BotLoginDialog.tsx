@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { createLoginOwnership } from '@/lib/fleet/provisioning'
+import { closeBotLogin, createLoginOwnership } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 type LoginResult = 'completed' | 'cancelled' | 'failed'
@@ -109,18 +109,24 @@ export function BotLoginDialog({
       if (current === generation.current) setBusy(false)
     }
   }
-  async function close() {
-    if (busy) return
+  function close() {
     const value = liveAttempt.current
-    if (value?.state === 'pending') {
-      await action(async () => {
-        await window.api.fleetLoginCancel(bot.id, value.loginId)
-        onClose('cancelled')
-      })
-    } else
-      onClose(
-        value?.state === 'completed' ? 'completed' : value && value.state !== 'cancelled' ? 'failed' : 'cancelled'
-      )
+    closeBotLogin(
+      () => {
+        generation.current++
+      },
+      async () => {
+        ownership.current.abandon()
+      },
+      () =>
+        onClose(
+          value?.state === 'completed'
+            ? 'completed'
+            : value && value.state !== 'pending' && value.state !== 'cancelled'
+              ? 'failed'
+              : 'cancelled'
+        )
+    )
   }
   const terminal = attempt && attempt.state !== 'pending'
   const failed = attempt?.state === 'failed' || attempt?.state === 'expired' || attempt?.state === 'cancelled'
@@ -270,7 +276,6 @@ export function BotLoginDialog({
         <DialogFooter>
           <Button
             ref={terminal ? primary : undefined}
-            disabled={busy}
             variant={terminal ? 'default' : 'outline'}
             onClick={() => void close()}
           >

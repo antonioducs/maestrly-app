@@ -114,3 +114,24 @@ it('cancels a late login response after a real unmount', async () => {
   await Promise.resolve()
   expect(cancel).toHaveBeenCalledExactlyOnceWith('late')
 })
+
+it('closes and invalidates polling before a rejected cancellation settles', async () => {
+  const { closeBotLogin } = await import('../../src/renderer/lib/fleet/provisioning')
+  let active = true
+  const cancel = vi.fn(async () => {
+    throw new Error('offline')
+  })
+  const close = vi.fn(() => {
+    expect(active).toBe(false)
+  })
+  closeBotLogin(
+    () => {
+      active = false
+    },
+    cancel,
+    close
+  )
+  expect(close).toHaveBeenCalledOnce()
+  await Promise.resolve()
+  expect(cancel).toHaveBeenCalledOnce()
+})
