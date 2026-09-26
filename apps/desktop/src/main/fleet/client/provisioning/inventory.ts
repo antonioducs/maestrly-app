@@ -64,7 +64,12 @@ export async function buildMacInventory(): Promise<MacInventory> {
     result.skills.push({
       name: skill.name,
       description: skill.description,
-      ...(await measureSkillDirectory(skill.dir)),
+      ...(await measureSkillDirectory(skill.dir).catch(() => ({
+        files: 0,
+        bytes: 0,
+        scripts: false,
+        problem: 'unreadable' as const,
+      }))),
     })
   }
   result.mcpServers = listMcpServers().map((server) => {

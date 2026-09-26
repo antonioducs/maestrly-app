@@ -15,7 +15,7 @@ export interface MacInventory {
     files: number
     bytes: number
     scripts: boolean
-    problem: 'too-large' | 'too-many-files' | 'no-skill-md' | null
+    problem: 'too-large' | 'too-many-files' | 'no-skill-md' | 'unreadable' | null
   }>
   mcpServers: Array<{
     id: string

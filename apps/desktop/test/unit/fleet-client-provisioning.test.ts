@@ -1,3 +1,6 @@
+import fsp from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   skillDir: '/synthetic/review',
@@ -211,5 +214,60 @@ describe('Mac import error privacy', () => {
       mcpServerIds: [],
     })
     expect(report.accounts[0].error).toBe(error)
+  })
+})
+
+describe('unreadable Mac skills', () => {
+  it('keeps accounts and MCP available when a nested skill directory cannot be read', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fleet-unreadable-'))
+    const nested = path.join(dir, 'nested')
+    await fsp.writeFile(path.join(dir, 'SKILL.md'), 'skill')
+    await fsp.mkdir(nested)
+    await fsp.chmod(nested, 0)
+    mocks.skillDir = dir
+    try {
+      const inventory = await buildMacInventory()
+      expect(inventory.skills[0]).toMatchObject({ name: 'review', problem: 'unreadable' })
+      expect(inventory.apiKeys).toHaveLength(1)
+      expect(inventory.mcpServers).toHaveLength(1)
+    } finally {
+      mocks.skillDir = '/synthetic/review'
+      await fsp.chmod(nested, 0o700)
+      await fsp.rm(dir, { recursive: true, force: true })
+    }
+  })
+  it('fails only the unreadable skill during import', async () => {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fleet-unreadable-'))
+    const nested = path.join(dir, 'nested')
+    await fsp.writeFile(path.join(dir, 'SKILL.md'), 'skill')
+    await fsp.mkdir(nested)
+    await fsp.chmod(nested, 0)
+    mocks.skillDir = dir
+    mocks.package.mockImplementationOnce(async () => {
+      const actual = await vi.importActual<typeof import('../../src/main/chat/skill-package')>(
+        '../../src/main/chat/skill-package'
+      )
+      return actual.packageSkillDirectory(dir)
+    })
+    try {
+      const call = vi.fn(async (_key: string) => ({
+        results: [{ index: 0, target: 'Tools', outcome: 'added', error: null }],
+      }))
+      const report = await importFromMac({ call } as unknown as FleetClientService, 'bot', {
+        apiKeyIds: [],
+        copyIds: [],
+        skillNames: ['review'],
+        mcpServerIds: ['m1'],
+      })
+      expect(report.skills[0].outcome).toBe('failed')
+      expect(report.skills[0].error).toContain('EACCES')
+      expect(report.mcpServers[0].outcome).toBe('added')
+      expect(call).toHaveBeenCalledOnce()
+      expect(call.mock.calls[0][0]).toBe('botMcpServersImport')
+    } finally {
+      mocks.skillDir = '/synthetic/review'
+      await fsp.chmod(nested, 0o700)
+      await fsp.rm(dir, { recursive: true, force: true })
+    }
   })
 })

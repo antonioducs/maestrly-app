@@ -29,6 +29,7 @@ export default {
       unavailable: 'Needs to be configured again on this Mac',
       'too-large': 'Too large to send (max. 8 MB)',
       'too-many-files': 'Too many files (max. 400)',
+      unreadable: "Could not read this skill's files",
       'no-skill-md': 'Missing SKILL.md',
     },
     send: 'Send to the bot',
