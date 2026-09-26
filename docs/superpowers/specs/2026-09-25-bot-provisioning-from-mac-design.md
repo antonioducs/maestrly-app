@@ -90,26 +90,27 @@ and says what to update.
 **Accounts.**
 
 - **`GET /v1/bots/:id/accounts`** returns `{ apiKeys, subscriptions }`:
-  - `apiKeys: [{ ref, name, kind, baseURL, keyHint }]`, where `keyHint` is the last 4 characters of the key.
-  - `subscriptions: [{ ref, kind, accountId, label, email, plan, state }]`, with `state` one of `'connected'`,
+  - `apiKeys: [{ providerId, name, kind, baseURL, keyHint }]`, where `keyHint` is the last 4 characters of the key.
+  - `subscriptions: [{ kind, accountId, label, email, plan, state }]`. `kind` is `'codex'`, `'claude'`, `'grok'`,
+    `'github-copilot'` or `'cursor'`; `accountId` is `null` for the default slot; `state` is `'connected'`,
     `'signed-out'` or `'signing-in'`.
-  - `ref` is `api-key:<providerId>` or `<kind>:default` / `<kind>:<accountId>`.
 - **`POST /v1/bots/:id/accounts/import`** takes `{ items }`. Each item is one of:
   - `{ type: 'api-key', name, kind, baseURL, key }`;
   - `{ type: 'github-copilot', label, token }`;
   - `{ type: 'cursor', label, apiKey, expiresAt | null }`.
 
-  It returns `{ results: [{ index, ref | null, outcome, error | null }] }`, with `outcome` one of `'added'`,
-  `'updated'`, `'unchanged'` or `'failed'`.
-- **`DELETE /v1/bots/:id/accounts/:ref`**:
-  - an API key removes the provider and its key;
-  - an extra subscription slot is signed out and removed;
-  - the default slot is signed out.
+  It returns `{ results: [{ index, target, outcome, error }] }`. `target` (or `null`) is the provider id, or
+  `<kind>:default` / `<kind>:<accountId>`; `outcome` is `'added'`, `'updated'`, `'unchanged'` or `'failed'`;
+  `error` is `null` unless the item failed.
+- **Removing an API key** keeps the existing `DELETE /v1/bots/:id/accounts/:providerId`.
+- **`DELETE /v1/bots/:id/subscriptions/:kind/:slot`** (new) signs out and removes an extra slot (`acc_…`), or signs
+  out the default slot (`default`).
 
 **Logins.**
 
-- **`POST /v1/bots/:id/logins`** takes `{ kind: 'codex' | 'claude' | 'grok', method: 'browser' | 'device', accountId? }`.
-  Grok accepts only `'device'`. It returns an attempt:
+- **`POST /v1/bots/:id/logins`** takes `{ kind: 'codex' | 'claude' | 'grok', method: 'browser' | 'device', slot }`.
+  `slot` is `'auto'` (the default: the default slot when it is not connected, otherwise a new slot), `'default'` or an
+  existing `acc_…` id. Grok accepts only `'device'`. It returns an attempt:
   - identity and timing: `loginId`, `kind`, `accountId`, `method`, `state`, `expiresAt`, `error`;
   - `browser` (for the `browser` method): `{ authUrl, callback: { port, path } }`;
   - `device` (for the `device` method): `{ verificationUrl, userCode }`;
@@ -139,7 +140,8 @@ and says what to update.
   args?, env? }] }` and returns results like the account import.
 - **`DELETE /v1/bots/:id/mcp-servers/:sid`** removes a server.
 
-**Instance routes.** They mirror these under `/v1/accounts…`, `/v1/logins…`, `/v1/skills…` and `/v1/mcp-servers…`.
+**Instance routes.** They mirror these under `/v1/accounts…`, `/v1/subscriptions…`, `/v1/logins…`, `/v1/skills…`
+and `/v1/mcp-servers…`. Route paths are unique per method (the existing protocol test checks it).
 
 **Activity.** A new activity kind, `bot_configured`, carries a summary such as "2 accounts, 3 skills, 1 MCP server"
 and data `{ accounts, skills, mcpServers, removed, device }`. It records counts and the device name, never values.
@@ -178,8 +180,8 @@ exactly as `addApiKeyAccount` does today.
 - 15-minute expiry;
 - cancelling an attempt that created a slot removes the slot.
 
-**Slot choice.** An explicit `accountId` is used as given (re-login). Otherwise the default slot is used when it is
-not connected, and a new slot is created when it is.
+**Slot choice.** An explicit `slot` (`'default'` or `acc_…`) is used as given (re-login). With `'auto'`, the default
+slot is used when it is not connected, and a new slot is created when it is.
 
 **Completion.** It is observed through the manager and followed by the same refresh as an account import. The result
 carries the account's email and plan.
@@ -310,8 +312,8 @@ Codex browser logins are serialized on the Mac (fixed port 1455).
 - `fleet:provisioning:inventory`
 - `fleet:provisioning:import(botId, { accountIds, skillNames, mcpServerIds })`: runs accounts, then each skill, then
   MCP, and returns per-item results.
-- `fleet:bot:accounts`, `fleet:bot:account-remove`, `fleet:bot:skills`, `fleet:bot:skill-remove`,
-  `fleet:bot:mcp-servers`, `fleet:bot:mcp-remove`
+- `fleet:bot:accounts`, `fleet:bot:subscription-remove`, `fleet:bot:skills`, `fleet:bot:skill-remove`,
+  `fleet:bot:mcp-servers`, `fleet:bot:mcp-remove` (API keys keep the existing `fleet:remove-account`)
 - `fleet:login:start`, `fleet:login:status`, `fleet:login:code`, `fleet:login:cancel`
 
 Every mutating channel uses `mhandle` and validates its arguments with the protocol schemas.
