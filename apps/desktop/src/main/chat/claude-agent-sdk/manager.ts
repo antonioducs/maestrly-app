@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import type { ChildProcess } from 'node:child_process'
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -78,6 +78,21 @@ export interface ClaudeSubscriptionLoginResult {
   error?: string
 }
 
+export interface ClaudeLoginProcess {
+  stdout: NodeJS.ReadableStream
+  stdin: NodeJS.WritableStream
+  exited: Promise<number | null>
+  kill(): void
+}
+
+export interface ClaudeInteractiveLogin {
+  autoUrl: string
+  manualUrl: string
+  submitCode(code: string): void
+  cancel(): void
+  done: Promise<ClaudeSubscriptionLoginResult>
+}
+
 export type ClaudeQueryFactory = (params: {
   prompt: string | AsyncIterable<SDKUserMessage>
   options?: ClaudeQueryOptions
@@ -105,6 +120,7 @@ export interface ClaudeSubscriptionManagerDependencies {
     args: string[],
     options: { env: Record<string, string>; signal?: AbortSignal }
   ) => Promise<ProcessResult>
+  spawnLogin: (executable: string, args: string[], options: { env: Record<string, string> }) => ClaudeLoginProcess
   queryFactory: ClaudeQueryFactory
   deleteSession: (
     sessionId: string,
@@ -204,6 +220,22 @@ const DEFAULT_DEPENDENCIES: ClaudeSubscriptionManagerDependencies = {
   readTextFile: (file) => readFile(file, 'utf8'),
   writePrivateFile: (file, contents) => writeFile(file, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' }),
   runProcess,
+  spawnLogin: (executable, args, options) => {
+    const child = spawn(executable, args, { env: options.env, stdio: ['pipe', 'pipe', 'pipe'] })
+    child.stderr.resume()
+    const exited = new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', resolve)
+    })
+    return {
+      stdout: child.stdout,
+      stdin: child.stdin,
+      exited,
+      kill: () => {
+        child.kill('SIGKILL')
+      },
+    }
+  },
   queryFactory: query,
   deleteSession: deleteSessionInIsolatedProcess,
 }
@@ -362,6 +394,10 @@ export class ClaudeSubscriptionManager {
 
   get isDisposed(): boolean {
     return this.disposed
+  }
+
+  peekStatus(): ClaudeSubscriptionStatus | null {
+    return this.cachedStatus
   }
 
   getStatusSnapshot(): ClaudeSubscriptionStatus | null {
@@ -779,6 +815,174 @@ export class ClaudeSubscriptionManager {
       signal?.removeEventListener('abort', abort)
       this.loginController = null
     }
+  }
+
+  async startInteractiveLogin(
+    options: { urlTimeoutMs?: number; totalTimeoutMs?: number } = {}
+  ): Promise<ClaudeInteractiveLogin> {
+    if (process.platform === 'win32') throw new Error('Interactive Claude login is not supported on Windows.')
+    if (this.loginController || this.loginRequestController) throw new Error('Claude login is already in progress.')
+    if (this.disposed) throw new Error('Claude provider has been disposed.')
+    this.beginProfileMutation()
+    const controller = new AbortController()
+    this.loginRequestController = controller
+    let ready = false
+    let resolveReady!: (login: ClaudeInteractiveLogin) => void
+    let rejectReady!: (error: unknown) => void
+    const started = new Promise<ClaudeInteractiveLogin>((resolve, reject) => {
+      resolveReady = resolve
+      rejectReady = reject
+    })
+    const done = this.runProfileOperation(async (): Promise<ClaudeSubscriptionLoginResult> => {
+      let directory: string | undefined
+      let child: ClaudeLoginProcess | undefined
+      let poll: ReturnType<typeof setInterval> | undefined
+      let urlTimer: ReturnType<typeof setTimeout> | undefined
+      let totalTimer: ReturnType<typeof setTimeout> | undefined
+      let startupError: Error | undefined
+      let autoUrl = ''
+      let manualUrl = ''
+      let output = ''
+      let finished = false
+      const kill = () => child?.kill()
+      const onInputError = () => kill()
+      const publish = () => {
+        if (ready || finished || !autoUrl || !manualUrl || controller.signal.aborted || startupError) return
+        ready = true
+        clearTimeout(urlTimer)
+        clearInterval(poll)
+        resolveReady({
+          autoUrl,
+          manualUrl,
+          done,
+          submitCode: (code) => {
+            if (!finished && !controller.signal.aborted) child?.stdin.write(`${code.trim()}\n`)
+          },
+          cancel: () => controller.abort(),
+        })
+      }
+      const onData = (chunk: Buffer | string) => {
+        output += chunk.toString()
+        const lines = output.split(/\r?\n/)
+        output = lines.pop()!.slice(-16_384)
+        for (const line of lines) {
+          const match = /visit:\s*(https:\/\/\S+)/.exec(line)
+          if (match) manualUrl = match[1]
+        }
+        publish()
+      }
+      try {
+        if (controller.signal.aborted) throw new Error('Claude login was cancelled.')
+        this.cachedStatus = null
+        this.updateIdentity(null)
+        this.abortAllQueries()
+        await this.dependencies.removeDirectory(this.configDirectory)
+        await this.prepare()
+        directory = await mkdtemp(path.join(os.tmpdir(), 'maestrly-claude-login-'))
+        const script = path.join(directory, 'browser.sh')
+        const urlFile = path.join(directory, 'url')
+        await writeFile(script, `#!/bin/sh\nprintf '%s\\n' "$1" >> "$MAESTRLY_LOGIN_URL_FILE"\n`, { mode: 0o700 })
+        if (controller.signal.aborted) throw new Error('Claude login was cancelled.')
+        this.loginController = controller
+        child = this.dependencies.spawnLogin(this.dependencies.resolveExecutable(), ['auth', 'login', '--claudeai'], {
+          env: { ...this.runtimeEnvironment(), BROWSER: script, MAESTRLY_LOGIN_URL_FILE: urlFile },
+        })
+        controller.signal.addEventListener('abort', kill, { once: true })
+        child.stdin.on('error', onInputError)
+        child.stdout.on('data', onData)
+        let reading = false
+        poll = setInterval(() => {
+          if (reading) return
+          reading = true
+          void readFile(urlFile, 'utf8')
+            .then((contents) => {
+              for (const line of contents.split(/\r?\n/)) {
+                try {
+                  const url = new URL(line)
+                  const redirect = new URL(url.searchParams.get('redirect_uri') ?? '')
+                  if (
+                    url.protocol === 'https:' &&
+                    redirect.protocol === 'http:' &&
+                    ['localhost', '127.0.0.1', '[::1]'].includes(redirect.hostname) &&
+                    redirect.port &&
+                    !redirect.username &&
+                    !redirect.password &&
+                    redirect.pathname === '/callback'
+                  ) {
+                    autoUrl = line
+                    publish()
+                    break
+                  }
+                } catch {
+                  /* Ignore incomplete or unrelated capture lines. */
+                }
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              reading = false
+            })
+        }, 100)
+        urlTimer = setTimeout(() => {
+          startupError = new Error('Claude did not start the sign-in (no URL was printed).')
+          kill()
+        }, options.urlTimeoutMs ?? 20_000)
+        totalTimer = setTimeout(kill, options.totalTimeoutMs ?? 15 * 60_000)
+        const exitCode = await child.exited
+        finished = true
+        clearInterval(poll)
+        clearTimeout(urlTimer)
+        clearTimeout(totalTimer)
+        const status = await this.statusUnlocked({ refresh: true, allowAuthenticationRequired: true })
+        if (exitCode === 0 && status.authenticated && !controller.signal.aborted) {
+          this.authenticationRequired = false
+          return { ok: true, status }
+        }
+        if (this.authenticationRequired) this.cachedStatus = this.authenticationRequiredStatus()
+        return {
+          ok: false,
+          status: this.cachedStatus ?? status,
+          error: controller.signal.aborted ? 'Claude login was cancelled.' : 'Claude login did not complete.',
+        }
+      } catch (error) {
+        startupError = error instanceof Error ? error : new Error(String(error))
+        const status = await this.statusUnlocked({
+          refresh: true,
+          allowAuthenticationRequired: !this.authenticationRequired,
+        })
+        return {
+          ok: false,
+          status,
+          error: controller.signal.aborted ? 'Claude login was cancelled.' : claudeSubscriptionErrorMessage(error),
+        }
+      } finally {
+        finished = true
+        clearInterval(poll)
+        clearTimeout(urlTimer)
+        clearTimeout(totalTimer)
+        controller.signal.removeEventListener('abort', kill)
+        child?.stdout.removeListener('data', onData)
+        if (child) {
+          child.kill()
+          await child.exited.catch(() => {})
+          child.stdin.removeListener('error', onInputError)
+        }
+        try {
+          if (directory) await rm(directory, { recursive: true, force: true })
+        } finally {
+          this.loginController = null
+          this.loginRequestController = null
+          this.endProfileMutation()
+          if (!ready)
+            rejectReady(
+              startupError ??
+                new Error(controller.signal.aborted ? 'Claude login was cancelled.' : 'Claude login did not complete.')
+            )
+        }
+      }
+    })
+    void done.catch(rejectReady)
+    return started
   }
 
   cancelLogin(): void {

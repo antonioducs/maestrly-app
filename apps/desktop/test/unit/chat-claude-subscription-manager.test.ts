@@ -96,6 +96,9 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       }
       throw new Error(`Unexpected subprocess: ${args.join(' ')}`)
     }),
+    spawnLogin: vi.fn(() => {
+      throw new Error('interactive login not expected')
+    }),
     queryFactory: vi.fn(() => {
       throw new Error('query not expected')
     }),
