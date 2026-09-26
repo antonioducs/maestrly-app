@@ -3,6 +3,18 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import {
   FLEET_INSTANCE_ROUTES,
+  FLEET_SKILL_BODY_MAX,
+  fleetSubscriptionKindSchema,
+  fleetAccountSlotIdSchema,
+  type FleetBotAccounts,
+  type FleetAccountImportRequest,
+  type FleetImportResults,
+  type FleetSubscriptionKind,
+  type FleetBotSkills,
+  type FleetSkillInstallRequest,
+  type FleetSkillInstallResponse,
+  type FleetBotMcpServers,
+  type FleetMcpImportRequest,
   FLEET_MESSAGE_BODY_MAX,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
@@ -39,6 +51,15 @@ export class InstanceHttpError extends Error {
   }
 }
 export interface InstanceControl {
+  accounts(): FleetBotAccounts
+  importAccounts(request: FleetAccountImportRequest): Promise<FleetImportResults>
+  removeSubscription(kind: FleetSubscriptionKind, slot: string): Promise<void>
+  skills(): Promise<FleetBotSkills>
+  installSkill(request: FleetSkillInstallRequest): Promise<FleetSkillInstallResponse>
+  removeSkill(name: string): Promise<void>
+  mcpServers(): FleetBotMcpServers
+  importMcpServers(request: FleetMcpImportRequest): Promise<FleetImportResults>
+  removeMcpServer(id: string): Promise<void>
   memories(status: 'active' | 'archived' | 'superseded' | 'all'): Promise<{ memories: FleetBotMemory[] }>
   patchMemory(id: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory>
   deleteMemory(id: string): Promise<void>
@@ -130,13 +151,20 @@ async function body(request: IncomingMessage, schema: z.ZodType | null, maxBytes
     throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid request body.')
   }
 }
-function routeFor(method: string, pathname: string): { key: keyof typeof FLEET_INSTANCE_ROUTES; id?: string } | null {
+function routeFor(
+  method: string,
+  pathname: string
+): { key: keyof typeof FLEET_INSTANCE_ROUTES; id?: string; slot?: string } | null {
   for (const [key, route] of Object.entries(FLEET_INSTANCE_ROUTES)) {
     if (route.method !== method) continue
     const pattern = route.path.replace(/:[A-Za-z][A-Za-z0-9_]*/g, '([^/]+)')
     const match = pathname.match(new RegExp('^' + pattern + '$'))
     if (match)
-      return { key: key as keyof typeof FLEET_INSTANCE_ROUTES, id: match[1] ? decodeURIComponent(match[1]) : undefined }
+      return {
+        key: key as keyof typeof FLEET_INSTANCE_ROUTES,
+        id: match[1] ? decodeURIComponent(match[1]) : undefined,
+        slot: match[2] ? decodeURIComponent(match[2]) : undefined,
+      }
   }
   return null
 }
@@ -164,7 +192,15 @@ export function createInstanceControlServer(
       if (match.key === 'screenView' || match.key === 'screenControl')
         throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
       const route = FLEET_INSTANCE_ROUTES[match.key]
-      const input = await body(request, route.body, match.key === 'inputSend' ? FLEET_MESSAGE_BODY_MAX : 1_048_576)
+      const input = await body(
+        request,
+        route.body,
+        match.key === 'skillInstall'
+          ? FLEET_SKILL_BODY_MAX
+          : match.key === 'inputSend'
+            ? FLEET_MESSAGE_BODY_MAX
+            : 1_048_576
+      )
       if (match.key === 'image') {
         const image = await control.image(match.id ?? '')
         response.writeHead(200, {
@@ -200,6 +236,37 @@ export function createInstanceControlServer(
       }
       let output: unknown
       switch (match.key) {
+        case 'accountsList':
+          output = control.accounts()
+          break
+        case 'accountsImport':
+          output = await control.importAccounts(input as FleetAccountImportRequest)
+          break
+        case 'subscriptionRemove': {
+          const kind = fleetSubscriptionKindSchema.safeParse(match.id)
+          const slot = match.slot === 'default' ? match.slot : fleetAccountSlotIdSchema.safeParse(match.slot).data
+          if (!kind.success || !slot) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid subscription slot.')
+          await control.removeSubscription(kind.data, slot)
+          break
+        }
+        case 'skillsList':
+          output = await control.skills()
+          break
+        case 'skillInstall':
+          output = await control.installSkill(input as FleetSkillInstallRequest)
+          break
+        case 'skillRemove':
+          await control.removeSkill(match.id ?? '')
+          break
+        case 'mcpServersList':
+          output = control.mcpServers()
+          break
+        case 'mcpServersImport':
+          output = await control.importMcpServers(input as FleetMcpImportRequest)
+          break
+        case 'mcpServerRemove':
+          await control.removeMcpServer(match.id ?? '')
+          break
         case 'memoriesList': {
           const raw = url.searchParams.get('status') ?? 'active'
           if (!['active', 'archived', 'superseded', 'all'].includes(raw))

@@ -6390,7 +6390,7 @@ async function logoutGrokSubscriptionAccount(
 }
 
 /** Completely removes an additional SLOT: logout/home cleanup + threads/sessions + defaults + slot. */
-async function removeSubscriptionAccountSlot(accountId: string): Promise<{ ok: boolean; error?: string }> {
+export async function removeSubscriptionAccountSlot(accountId: string): Promise<{ ok: boolean; error?: string }> {
   const account = getSubscriptionAccount(accountId)
   if (!account) return { ok: false, error: 'unknown-account' }
   const providerId = subscriptionProviderIdFor(account.kind, accountId)

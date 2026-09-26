@@ -1,8 +1,21 @@
+import { listBotAccounts, importBotAccounts, removeBotSubscription } from './provisioning/accounts'
+import { listBotSkills, installBotSkill, removeBotSkill } from './provisioning/skills'
+import { listBotMcpServers, importBotMcpServers, removeBotMcpServer } from './provisioning/mcp'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { app, type BrowserWindow } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
+  FLEET_PROVISIONING_FEATURE,
+  type FleetBotAccounts,
+  type FleetAccountImportRequest,
+  type FleetImportResults,
+  type FleetSubscriptionKind,
+  type FleetBotSkills,
+  type FleetSkillInstallRequest,
+  type FleetSkillInstallResponse,
+  type FleetBotMcpServers,
+  type FleetMcpImportRequest,
   FLEET_BOT_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   type FleetBotMemory,
@@ -493,6 +506,46 @@ export class BotInstanceRuntime implements InstanceControl {
     await this.refreshAccounts(true)
     return { options: this.accountOptions, current: this.currentSelection() }
   }
+  accounts(): FleetBotAccounts {
+    return listBotAccounts({
+      connectedProviderIds: new Set(this.accountOptions.map((option) => option.providerId)),
+      signingIn: [],
+    })
+  }
+  async importAccounts(request: FleetAccountImportRequest): Promise<FleetImportResults> {
+    const result = await importBotAccounts(request.items)
+    if (result.results.some((item) => item.outcome === 'added' || item.outcome === 'updated')) this.accountsChanged()
+    return result
+  }
+  async removeSubscription(kind: FleetSubscriptionKind, slot: string): Promise<void> {
+    await removeBotSubscription(kind, slot)
+    this.accountsChanged()
+  }
+  skills(): Promise<FleetBotSkills> {
+    return listBotSkills()
+  }
+  installSkill(request: FleetSkillInstallRequest): Promise<FleetSkillInstallResponse> {
+    return installBotSkill(request)
+  }
+  removeSkill(name: string): Promise<void> {
+    return removeBotSkill(name)
+  }
+  mcpServers(): FleetBotMcpServers {
+    return listBotMcpServers()
+  }
+  async importMcpServers(request: FleetMcpImportRequest): Promise<FleetImportResults> {
+    return importBotMcpServers(request.servers)
+  }
+  async removeMcpServer(id: string): Promise<void> {
+    removeBotMcpServer(id)
+  }
+  private accountsChanged(): void {
+    this.changed()
+    void this.refreshAccounts(true).then(() => {
+      this.changed()
+      void this.tick()
+    })
+  }
   async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
     if (apiKeyStorageMode() !== 'secure')
       throw new InstanceHttpError(409, 'CONFLICT', 'Secure credential storage is unavailable.')
@@ -721,7 +774,7 @@ export class BotInstanceRuntime implements InstanceControl {
                           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
-      capabilities: [],
+      capabilities: [FLEET_PROVISIONING_FEATURE],
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
       accounts: { connected: providers.length > 0, providers },

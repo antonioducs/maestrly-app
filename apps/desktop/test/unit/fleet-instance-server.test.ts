@@ -47,6 +47,15 @@ const botMemory = {
   updatedAt: '2026-09-20T10:00:00.000Z',
 }
 const control: InstanceControl = {
+  accounts: () => ({ apiKeys: [], subscriptions: [] }),
+  importAccounts: async () => ({ results: [] }),
+  removeSubscription: async () => {},
+  skills: async () => ({ skills: [] }),
+  installSkill: async () => ({ name: 'sample', outcome: 'added' }),
+  removeSkill: async () => {},
+  mcpServers: () => ({ servers: [] }),
+  importMcpServers: async () => ({ results: [] }),
+  removeMcpServer: async () => {},
   memories: async () => ({ memories: [botMemory] }),
   patchMemory: async () => botMemory,
   deleteMemory: async () => {},
@@ -335,4 +344,64 @@ it('dispatches memory routes and rejects invalid patches and statuses', async ()
   expect(patchMemory).toHaveBeenCalledTimes(1)
   expect((await fetch(base + '/v1/memories/m1', { method: 'DELETE', headers: headers() })).status).toBe(204)
   expect(deleteMemory).toHaveBeenCalledWith('m1')
+})
+
+it('dispatches provisioning routes, validates slots and accepts a 9 MiB skill body', async () => {
+  const methods = {
+    accounts: vi.fn(control.accounts),
+    importAccounts: vi.fn(control.importAccounts),
+    removeSubscription: vi.fn(control.removeSubscription),
+    skills: vi.fn(control.skills),
+    installSkill: vi.fn(control.installSkill),
+    removeSkill: vi.fn(control.removeSkill),
+    mcpServers: vi.fn(control.mcpServers),
+    importMcpServers: vi.fn(control.importMcpServers),
+    removeMcpServer: vi.fn(control.removeMcpServer),
+  }
+  const { base } = await setup({ ...control, ...methods })
+  const routes: Array<[string, string, unknown, keyof typeof methods]> = [
+    ['GET', '/v1/accounts', undefined, 'accounts'],
+    [
+      'POST',
+      '/v1/accounts/import',
+      { items: [{ type: 'github-copilot', label: 'Fake', token: 'synthetic' }] },
+      'importAccounts',
+    ],
+    ['DELETE', '/v1/subscriptions/codex/default', undefined, 'removeSubscription'],
+    ['GET', '/v1/skills', undefined, 'skills'],
+    [
+      'POST',
+      '/v1/skills',
+      {
+        name: 'sample',
+        files: [0, 1, 2].map((i) => ({
+          path: i ? 'f' + i : 'SKILL.md',
+          data: 'a'.repeat(3 * 1024 * 1024),
+          executable: false,
+        })),
+      },
+      'installSkill',
+    ],
+    ['DELETE', '/v1/skills/sample', undefined, 'removeSkill'],
+    ['GET', '/v1/mcp-servers', undefined, 'mcpServers'],
+    [
+      'POST',
+      '/v1/mcp-servers/import',
+      { servers: [{ name: 'Echo', transport: 'stdio', command: 'node', enabled: true }] },
+      'importMcpServers',
+    ],
+    ['DELETE', '/v1/mcp-servers/m1', undefined, 'removeMcpServer'],
+  ]
+  for (const [method, route, body, name] of routes) {
+    const response = await fetch(base + route, {
+      method,
+      headers: headers({ 'content-type': 'application/json' }),
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    expect(response.status, route).toBe(method === 'DELETE' ? 204 : 200)
+    expect(methods[name]).toHaveBeenCalledOnce()
+  }
+  expect(methods.removeSubscription).toHaveBeenCalledWith('codex', 'default')
+  for (const route of ['/v1/subscriptions/bogus/default', '/v1/subscriptions/codex/bad'])
+    expect((await fetch(base + route, { method: 'DELETE', headers: headers() })).status).toBe(400)
 })

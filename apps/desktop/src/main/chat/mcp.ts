@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 /**
  * MCP server support for BYOK chat. Users configure streamable HTTP or stdio MCP servers;
  * their tools join the chat toolset alongside built-ins (read/bash/edit/…). Uses
@@ -168,6 +169,37 @@ export function updateMcpServer(id: string, patch: Partial<McpServer>): void {
   saveMcpServers(list)
   invalidateMcpRuntime(id)
   if (mcpServerFingerprint(previous) !== mcpServerFingerprint(next)) removeMcpCatalog(id)
+}
+
+export function upsertMcpServerByName(input: Omit<McpServer, 'id' | 'unavailable'>): {
+  server: McpServer
+  outcome: 'added' | 'updated' | 'unchanged'
+} {
+  const name = input.name?.trim()
+  if (!name) throw new Error('Enter an MCP server name.')
+  if (input.transport === 'http') {
+    if (!input.url || !/^https?:\/\//i.test(input.url)) throw new Error('Enter the MCP server HTTP(S) URL.')
+    new URL(input.url)
+  } else if (input.transport === 'stdio') {
+    if (!input.command?.trim()) throw new Error('Enter the MCP server command (stdio).')
+  } else throw new Error('Invalid MCP transport.')
+  const previous = listMcpServers().find((server) => server.name.toLowerCase() === name.toLowerCase())
+  if (!previous) return { server: addMcpServer(input), outcome: 'added' }
+  const next: McpServer = {
+    id: previous.id,
+    name: previous.name,
+    transport: input.transport,
+    enabled: input.enabled,
+    url: input.url?.trim(),
+    headers: input.headers,
+    command: input.command?.trim(),
+    args: input.args,
+    env: input.env,
+  }
+  const comparable = { ...previous, ...Object.fromEntries(DETAIL_KEYS.map((key) => [key, previous[key]])) }
+  if (isDeepStrictEqual(comparable, next)) return { server: previous, outcome: 'unchanged' }
+  updateMcpServer(previous.id, next)
+  return { server: next, outcome: 'updated' }
 }
 
 export function removeMcpServer(id: string): void {
