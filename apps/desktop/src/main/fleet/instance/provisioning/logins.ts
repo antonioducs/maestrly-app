@@ -50,6 +50,7 @@ export interface RemoteLoginDeps {
 interface Entry {
   attempt: FleetLoginAttempt
   createdSlot: boolean
+  succeeded?: boolean
   settling?: boolean
   ready: Promise<void>
   releaseReady: () => void
@@ -177,7 +178,9 @@ export class RemoteLogins {
         .then(async (result) => {
           if (entry.attempt.state !== 'pending') return
           if (!result.success) return this.finish(entry, 'failed', result.error ?? 'Codex sign-in failed.')
-          const { account } = await manager.getStatus()
+          entry.succeeded = true
+          clearTimeout(entry.timer)
+          const { account } = await manager.getStatus().catch(() => ({ account: null }))
           await this.complete(entry, {
             label: 'Codex',
             email: account?.type === 'chatgpt' ? account.email : null,
@@ -200,7 +203,9 @@ export class RemoteLogins {
         .then(async (result) => {
           if (entry.attempt.state !== 'pending') return
           if (!result.success) return this.finish(entry, 'failed', result.error?.message ?? 'Grok sign-in failed.')
-          const { account } = await manager.getStatus()
+          entry.succeeded = true
+          clearTimeout(entry.timer)
+          const { account } = await manager.getStatus().catch(() => ({ account: null }))
           await this.complete(entry, { label: 'Grok', email: account?.email ?? null, plan: account?.planType ?? null })
         })
         .catch(() => this.finish(entry, 'failed', 'Grok sign-in failed.'))
@@ -224,6 +229,11 @@ export class RemoteLogins {
     error: string | null = null
   ): Promise<void> {
     if (entry.attempt.state !== 'pending') return entry.terminal ?? Promise.resolve()
+    if (entry.succeeded) {
+      state = 'completed'
+      error = null
+      entry.attempt.account ??= { label: LOGIN_PROVIDER_NAMES[entry.attempt.kind], email: null, plan: null }
+    }
     entry.settling = true
     entry.attempt.state = state
     entry.attempt.error = error?.slice(0, 300) ?? null

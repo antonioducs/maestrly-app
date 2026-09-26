@@ -78,7 +78,7 @@ function fixture() {
   }
   const logins = new RemoteLogins(deps satisfies RemoteLoginDeps)
   instances.push(logins)
-  return { logins, deps, codex, grok, completion, interactive, claudeDone }
+  return { logins, deps, codex, grok, completion, grokCompletion, interactive, claudeDone }
 }
 const instances: RemoteLogins[] = []
 beforeEach(() => vi.useFakeTimers())
@@ -264,4 +264,37 @@ it('preserves an existing explicit slot when cancelled and does not create anoth
   await f.logins.cancel(attempt.loginId)
   expect(f.deps.createSlot).not.toHaveBeenCalled()
   expect(f.deps.removeSlot).not.toHaveBeenCalled()
+})
+
+it.each(
+  (['codex', 'grok'] as const).flatMap((kind) =>
+    (['cancel', 'expiry', 'dispose', 'reject'] as const).map((action) => ({ kind, action }))
+  )
+)('preserves successful $kind sign-ins after $action during metadata lookup', async ({ kind, action }) => {
+  const f = fixture()
+  f.deps.isConnected.mockReturnValue(true)
+  let reject!: (error: Error) => void
+  const pending = new Promise<never>((_, no) => {
+    reject = no
+  })
+  f[kind].getStatus.mockImplementation(() => pending)
+  const attempt = await f.logins.start({ kind, method: 'device', slot: 'auto' })
+  if (kind === 'codex') f.completion.resolve({ loginId: 'provider-login', success: true, error: null })
+  else f.grokCompletion.resolve({ loginId: 'grok-login', success: true, error: null })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f[kind].getStatus).toHaveBeenCalledOnce()
+  if (action === 'cancel') await f.logins.cancel(attempt.loginId)
+  if (action === 'expiry') await vi.advanceTimersByTimeAsync(15 * 60_000)
+  if (action === 'dispose') await f.logins.dispose()
+  reject(new Error('Metadata unavailable'))
+  await vi.advanceTimersByTimeAsync(0)
+  if (action !== 'dispose')
+    expect(f.logins.get(attempt.loginId)).toMatchObject({
+      state: 'completed',
+      account: { email: null, plan: null },
+      error: null,
+    })
+  expect(f.deps.removeSlot).not.toHaveBeenCalled()
+  expect(f[kind].cancelLogin).not.toHaveBeenCalled()
+  await f.logins.dispose()
 })
