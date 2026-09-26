@@ -19,6 +19,7 @@ import { tool, jsonSchema, type Tool, type ToolSet } from 'ai'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
 import { getAppSetting, setAppSetting } from '../store'
+import { transaction } from '../store/db'
 import { isSecureStorageAvailable, secureGet, secureSet, secureRemove } from '../secure-store'
 import { gateInstanceAppTool } from '../fleet/instance/gate'
 import type { ChatToolImage, ToolOutput } from '../../shared/chat'
@@ -87,18 +88,31 @@ function hasInlineDetails(server: Partial<McpServer>): boolean {
   return DETAIL_KEYS.some((key) => server[key] !== undefined)
 }
 
-function migrateInlineDetails(): McpServer[] {
-  const list = readStored()
-  if (!isSecureStorageAvailable()) return list
-  let changed = false
-  const migrated = list.map((server) => {
-    if (!hasInlineDetails(server) || !secureSet(DETAILS_PREFIX + server.id, JSON.stringify(detailsOnly(server))))
-      return server
-    changed = true
-    return storedOnly(server)
+interface McpSaveOptions {
+  requireSecure?: boolean
+}
+function atomicMcpWrite<T>(write: () => T): T {
+  let result!: T
+  transaction(() => {
+    result = write()
   })
-  if (changed) setAppSetting(MCP_KEY, JSON.stringify(migrated))
-  return migrated
+  return result
+}
+
+function migrateInlineDetails(): McpServer[] {
+  return atomicMcpWrite(() => {
+    const list = readStored()
+    if (!isSecureStorageAvailable()) return list
+    let changed = false
+    const migrated = list.map((server) => {
+      if (!hasInlineDetails(server) || !secureSet(DETAILS_PREFIX + server.id, JSON.stringify(detailsOnly(server))))
+        return server
+      changed = true
+      return storedOnly(server)
+    })
+    if (changed) setAppSetting(MCP_KEY, JSON.stringify(migrated))
+    return migrated
+  })
 }
 
 export function listMcpServers(): McpServer[] {
@@ -120,93 +134,110 @@ export function listMcpServers(): McpServer[] {
   })
 }
 
-function saveMcpServers(list: McpServer[]): void {
-  const stored = list.map((server) => {
-    const identity = storedOnly(server)
-    if (server.unavailable) return identity
-    const details = detailsOnly(server)
-    if (isSecureStorageAvailable() && secureSet(DETAILS_PREFIX + server.id, JSON.stringify(details))) return identity
-    return { ...identity, ...details }
+function saveMcpServers(list: McpServer[], options: McpSaveOptions = {}): void {
+  return atomicMcpWrite(() => {
+    const stored = list.map((server) => {
+      const identity = storedOnly(server)
+      if (server.unavailable) return identity
+      const details = detailsOnly(server)
+      if (isSecureStorageAvailable() && secureSet(DETAILS_PREFIX + server.id, JSON.stringify(details))) return identity
+      if (options.requireSecure) throw new Error('Secure credential storage is unavailable.')
+      return { ...identity, ...details }
+    })
+    setAppSetting(MCP_KEY, JSON.stringify(stored))
   })
-  setAppSetting(MCP_KEY, JSON.stringify(stored))
 }
 
-export function addMcpServer(input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean }): McpServer {
-  const name = input.name?.trim()
-  if (!name) throw new Error('Enter an MCP server name.')
-  if (input.transport === 'http') {
-    if (!input.url || !/^https?:\/\//i.test(input.url)) throw new Error('Enter the MCP server HTTP(S) URL.')
-  } else if (input.transport === 'stdio') {
-    if (!input.command?.trim()) throw new Error('Enter the MCP server command (stdio).')
-  } else {
-    throw new Error('Invalid MCP transport.')
-  }
-  const server: McpServer = {
-    id: 'mcp_' + randomUUID(),
-    name,
-    transport: input.transport,
-    enabled: input.enabled ?? true,
-    url: input.url?.trim(),
-    headers: input.headers,
-    command: input.command?.trim(),
-    args: input.args,
-    env: input.env,
-  }
-  saveMcpServers([...listMcpServers(), server])
-  return server
+export function addMcpServer(
+  input: Omit<McpServer, 'id' | 'enabled'> & { enabled?: boolean },
+  options: McpSaveOptions = {}
+): McpServer {
+  return atomicMcpWrite(() => {
+    const name = input.name?.trim()
+    if (!name) throw new Error('Enter an MCP server name.')
+    if (input.transport === 'http') {
+      if (!input.url || !/^https?:\/\//i.test(input.url)) throw new Error('Enter the MCP server HTTP(S) URL.')
+    } else if (input.transport === 'stdio') {
+      if (!input.command?.trim()) throw new Error('Enter the MCP server command (stdio).')
+    } else {
+      throw new Error('Invalid MCP transport.')
+    }
+    const server: McpServer = {
+      id: 'mcp_' + randomUUID(),
+      name,
+      transport: input.transport,
+      enabled: input.enabled ?? true,
+      url: input.url?.trim(),
+      headers: input.headers,
+      command: input.command?.trim(),
+      args: input.args,
+      env: input.env,
+    }
+    saveMcpServers([...listMcpServers(), server], options)
+    return server
+  })
 }
 
-export function updateMcpServer(id: string, patch: Partial<McpServer>): void {
-  const list = listMcpServers()
-  const idx = list.findIndex((s) => s.id === id)
-  if (idx < 0) return
-  const previous = list[idx]
-  const next = { ...previous, ...patch, id: previous.id, unavailable: previous.unavailable }
-  if (hasInlineDetails(patch) && (next.transport === 'http' ? next.url : next.command)) {
-    delete next.unavailable
-  }
-  list[idx] = next
-  saveMcpServers(list)
-  invalidateMcpRuntime(id)
-  if (mcpServerFingerprint(previous) !== mcpServerFingerprint(next)) removeMcpCatalog(id)
+export function updateMcpServer(id: string, patch: Partial<McpServer>, options: McpSaveOptions = {}): void {
+  return atomicMcpWrite(() => {
+    const list = listMcpServers()
+    const idx = list.findIndex((s) => s.id === id)
+    if (idx < 0) return
+    const previous = list[idx]
+    const next = { ...previous, ...patch, id: previous.id, unavailable: previous.unavailable }
+    if (hasInlineDetails(patch) && (next.transport === 'http' ? next.url : next.command)) {
+      delete next.unavailable
+    }
+    list[idx] = next
+    saveMcpServers(list, options)
+    invalidateMcpRuntime(id)
+    if (mcpServerFingerprint(previous) !== mcpServerFingerprint(next)) removeMcpCatalog(id)
+  })
 }
 
-export function upsertMcpServerByName(input: Omit<McpServer, 'id' | 'unavailable'>): {
+export function upsertMcpServerByName(
+  input: Omit<McpServer, 'id' | 'unavailable'>,
+  options: McpSaveOptions = {}
+): {
   server: McpServer
   outcome: 'added' | 'updated' | 'unchanged'
 } {
-  const name = input.name?.trim()
-  if (!name) throw new Error('Enter an MCP server name.')
-  if (input.transport === 'http') {
-    if (!input.url || !/^https?:\/\//i.test(input.url)) throw new Error('Enter the MCP server HTTP(S) URL.')
-    new URL(input.url)
-  } else if (input.transport === 'stdio') {
-    if (!input.command?.trim()) throw new Error('Enter the MCP server command (stdio).')
-  } else throw new Error('Invalid MCP transport.')
-  const previous = listMcpServers().find((server) => server.name.toLowerCase() === name.toLowerCase())
-  if (!previous) return { server: addMcpServer(input), outcome: 'added' }
-  const next: McpServer = {
-    id: previous.id,
-    name: previous.name,
-    transport: input.transport,
-    enabled: input.enabled,
-    url: input.url?.trim(),
-    headers: input.headers,
-    command: input.command?.trim(),
-    args: input.args,
-    env: input.env,
-  }
-  const comparable = { ...previous, ...Object.fromEntries(DETAIL_KEYS.map((key) => [key, previous[key]])) }
-  if (isDeepStrictEqual(comparable, next)) return { server: previous, outcome: 'unchanged' }
-  updateMcpServer(previous.id, next)
-  return { server: next, outcome: 'updated' }
+  return atomicMcpWrite(() => {
+    const name = input.name?.trim()
+    if (!name) throw new Error('Enter an MCP server name.')
+    if (input.transport === 'http') {
+      if (!input.url || !/^https?:\/\//i.test(input.url)) throw new Error('Enter the MCP server HTTP(S) URL.')
+      new URL(input.url)
+    } else if (input.transport === 'stdio') {
+      if (!input.command?.trim()) throw new Error('Enter the MCP server command (stdio).')
+    } else throw new Error('Invalid MCP transport.')
+    const previous = listMcpServers().find((server) => server.name.toLowerCase() === name.toLowerCase())
+    if (!previous) return { server: addMcpServer(input, options), outcome: 'added' }
+    const next: McpServer = {
+      id: previous.id,
+      name: previous.name,
+      transport: input.transport,
+      enabled: input.enabled,
+      url: input.url?.trim(),
+      headers: input.headers,
+      command: input.command?.trim(),
+      args: input.args,
+      env: input.env,
+    }
+    const comparable = { ...previous, ...Object.fromEntries(DETAIL_KEYS.map((key) => [key, previous[key]])) }
+    if (isDeepStrictEqual(comparable, next)) return { server: previous, outcome: 'unchanged' }
+    updateMcpServer(previous.id, next, options)
+    return { server: next, outcome: 'updated' }
+  })
 }
 
 export function removeMcpServer(id: string): void {
-  saveMcpServers(listMcpServers().filter((s) => s.id !== id))
-  secureRemove(DETAILS_PREFIX + id)
-  invalidateMcpRuntime(id)
-  removeMcpCatalog(id)
+  return atomicMcpWrite(() => {
+    saveMcpServers(listMcpServers().filter((s) => s.id !== id))
+    if (!secureRemove(DETAILS_PREFIX + id)) throw new Error('Secure credential storage is unavailable.')
+    invalidateMcpRuntime(id)
+    removeMcpCatalog(id)
+  })
 }
 
 const MCP_TOOL_NAME_MAX_LENGTH = 64

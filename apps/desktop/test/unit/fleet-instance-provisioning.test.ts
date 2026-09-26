@@ -4,6 +4,7 @@ import path from 'node:path'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { freshDb, closeDb } from '../helpers/db'
 import { listProviders, listSubscriptionAccounts, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
+import { getAppSetting } from '../../src/main/store'
 import { getApiKey } from '../../src/main/chat/credentials'
 import {
   importBotAccounts,
@@ -244,4 +245,22 @@ it('advertises provisioning in runtime status', async () => {
     usage: null,
   })
   expect((await runtime.status()).capabilities).toEqual(['provisioning'])
+})
+
+it('refuses MCP details when encryption fails without changing raw settings', () => {
+  const before = getAppSetting('chat.mcpServers')
+  state.writable = false
+  expect(
+    importBotMcpServers([
+      {
+        name: 'Synthetic',
+        transport: 'http',
+        enabled: true,
+        url: 'https://example.test',
+        headers: { Authorization: 'synthetic-secret' },
+      },
+    ]).results[0]
+  ).toMatchObject({ outcome: 'failed', error: 'Secure credential storage is unavailable.' })
+  expect(getAppSetting('chat.mcpServers')).toBe(before)
+  expect(getAppSetting('chat.mcpServers') ?? '').not.toContain('synthetic-secret')
 })

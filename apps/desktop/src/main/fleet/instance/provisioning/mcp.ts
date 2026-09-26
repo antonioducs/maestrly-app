@@ -31,10 +31,18 @@ export function importBotMcpServers(servers: readonly FleetMcpServerImport[]): F
           return { index, target: null, outcome: 'failed' as const, error: 'Secure credential storage is unavailable.' }
         const parsed = fleetMcpServerImportSchema.safeParse(server)
         if (!parsed.success) throw new Error('Invalid MCP server configuration.')
-        const result = upsertMcpServerByName(parsed.data)
+        const result = upsertMcpServerByName(parsed.data, { requireSecure: true })
         return { index, target: result.server.id, outcome: result.outcome, error: null }
-      } catch {
-        return { index, target: null, outcome: 'failed' as const, error: 'The MCP server could not be imported.' }
+      } catch (error) {
+        return {
+          index,
+          target: null,
+          outcome: 'failed' as const,
+          error:
+            error instanceof Error && error.message === 'Secure credential storage is unavailable.'
+              ? error.message
+              : 'The MCP server could not be imported.',
+        }
       }
     }),
   }
