@@ -1664,7 +1664,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       type: 'activity',
       at: now(),
       entry: {
-        seq: 1,
+        // Gateway activity seqs only grow; stay above every entry this spec already served.
+        seq: 100,
         at: now(),
         botId: 'new-bot',
         kind: 'routine_created',
