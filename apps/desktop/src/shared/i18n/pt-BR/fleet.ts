@@ -1,4 +1,10 @@
 export default {
+  login: {
+    relayPage: {
+      done: 'Pronto. Pode fechar esta aba e voltar ao Maestrly.',
+      failed: 'O bot não conseguiu concluir o login. Volte ao Maestrly para tentar de novo.',
+    },
+  },
   ownerMemory: {
     full: 'A memória sobre você está cheia ({{max}} caracteres). Remova ou encurte um item antes.',
     title: 'Memória sobre você',

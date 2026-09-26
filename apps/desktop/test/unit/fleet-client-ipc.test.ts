@@ -32,6 +32,26 @@ afterEach(() => {
 })
 
 describe('fleet IPC validation', () => {
+  it('validates all login mutations before dispatch', () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar)
+    const mutate = (channel: string, ...args: unknown[]) => mutations.get(channel)?.({}, ...args)
+    expect(() => mutate('fleet:login:start', 'bot', { kind: 'grok', method: 'browser' })).toThrow()
+    expect(() => mutate('fleet:login:code', 'bot', 'l1', '')).toThrow()
+    expect(() => mutate('fleet:login:cancel', '../bot', 'l1')).toThrow()
+    expect(() => mutate('fleet:login:open', 'bot', 'l1', 'arbitrary')).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    expect(reads.has('fleet:login:status')).toBe(true)
+    for (const channel of ['fleet:login:start', 'fleet:login:code', 'fleet:login:cancel', 'fleet:login:open']) {
+      expect(mutations.has(channel)).toBe(true)
+      expect(reads.has(channel)).toBe(false)
+    }
+  })
   it('validates memory mutations before trusted dispatch and validates routine run ids', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
     const reads = new Map<string, (...args: unknown[]) => unknown>()

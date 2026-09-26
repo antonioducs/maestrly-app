@@ -87,6 +87,27 @@ afterEach(async () => {
 })
 
 describe('fleet API and events', () => {
+  it('allows provisioning calls to outlive gateway login and skill timeouts', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const api = new FleetApiClient(origin, 'valid')
+      await expect(
+        api.call('botLoginStart', { params: { id: 'bot' }, body: { kind: 'claude', method: 'browser', slot: 'auto' } })
+      ).rejects.toThrow('Invalid gateway response')
+      expect(timeout).toHaveBeenLastCalledWith(35_000)
+      await expect(
+        api.call('botSkillInstall', {
+          params: { id: 'bot' },
+          body: { name: 'review', files: [{ path: 'SKILL.md', data: 'c2tpbGw=', executable: false }] },
+        })
+      ).rejects.toThrow('Invalid gateway response')
+      expect(timeout).toHaveBeenLastCalledWith(65_000)
+      await api.call('meta')
+      expect(timeout).toHaveBeenLastCalledWith(15_000)
+    } finally {
+      timeout.mockRestore()
+    }
+  })
   it('calls the bot conversation endpoint with a validated request', async () => {
     const api = new FleetApiClient(origin, 'valid')
     await expect(

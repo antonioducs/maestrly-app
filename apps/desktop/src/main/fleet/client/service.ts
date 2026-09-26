@@ -1,3 +1,4 @@
+import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
@@ -85,6 +86,7 @@ export class FleetClientService {
   }
 
   stop(): void {
+    void disposeBotLogins()
     if (this.connection.state === 'connected') saveLastSeenAt(Date.now())
     this.generation++
     this.events?.stop()
@@ -169,6 +171,7 @@ export class FleetClientService {
   }
 
   async disconnect(): Promise<void> {
+    await disposeBotLogins()
     const api = this.api
     this.stop()
     this.api = null

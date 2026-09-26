@@ -175,9 +175,25 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:conversationCall', 'bot', 'chatSetConvTools', [{ imageGen: false }])
   })
 
+  it('forwards provisioning and login arguments in order', async () => {
+    const selection = { apiKeyIds: ['p1'], copyIds: [], skillNames: [], mcpServerIds: [] }
+    const request = { kind: 'codex', method: 'browser', slot: 'auto' }
+    await api.fleetImportFromMac('bot', selection)
+    await api.fleetLoginStart('bot', request)
+    await api.fleetLoginStatus('bot', 'l1')
+    await api.fleetLoginSubmitCode('bot', 'l1', 'code')
+    await api.fleetLoginCancel('bot', 'l1')
+    await api.fleetLoginOpen('bot', 'l1', 'manual')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:provisioning:import', 'bot', selection)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:start', 'bot', request)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:status', 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:code', 'bot', 'l1', 'code')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:cancel', 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:open', 'bot', 'l1', 'manual')
+  })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(466)
+    expect(keys).toHaveLength(471)
     expect(keys.sort()).toMatchSnapshot()
   })
 

@@ -126,7 +126,8 @@ export class FleetApiClient {
         method: route.method,
         headers,
         body,
-        signal: AbortSignal.timeout(15_000),
+        // The gateway waits up to 30s for login URLs and 60s for skill installation.
+        signal: AbortSignal.timeout(key === 'botLoginStart' ? 35_000 : key === 'botSkillInstall' ? 65_000 : 15_000),
       })
     } catch (error) {
       throw new FleetClientError(

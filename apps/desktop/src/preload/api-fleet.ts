@@ -1,3 +1,4 @@
+import type { FleetLoginAttempt, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
 import type {
   FleetBotAccounts,
@@ -142,6 +143,19 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 export const fleetApi = {
+  fleetLoginStart: (
+    botId: string,
+    request: FleetLoginStartRequest
+  ): Promise<{ attempt: FleetLoginAttempt; relay: 'listening' | 'unavailable' | 'none' }> =>
+    ipcRenderer.invoke('fleet:login:start', botId, request),
+  fleetLoginStatus: (botId: string, loginId: string): Promise<FleetLoginAttempt> =>
+    ipcRenderer.invoke('fleet:login:status', botId, loginId),
+  fleetLoginSubmitCode: (botId: string, loginId: string, code: string): Promise<FleetLoginAttempt> =>
+    ipcRenderer.invoke('fleet:login:code', botId, loginId, code),
+  fleetLoginCancel: (botId: string, loginId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:login:cancel', botId, loginId),
+  fleetLoginOpen: (botId: string, loginId: string, target: 'auth' | 'device' | 'manual'): Promise<void> =>
+    ipcRenderer.invoke('fleet:login:open', botId, loginId, target),
   fleetProvisioningInventory: (): Promise<MacInventory> => ipcRenderer.invoke('fleet:provisioning:inventory'),
   fleetImportFromMac: (botId: string, selection: MacImportSelection): Promise<MacImportReport> =>
     ipcRenderer.invoke('fleet:provisioning:import', botId, selection),

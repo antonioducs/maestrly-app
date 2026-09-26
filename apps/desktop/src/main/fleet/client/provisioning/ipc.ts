@@ -1,3 +1,5 @@
+import { fleetLoginStartRequestSchema, fleetLoginCodeRequestSchema } from '@maestrly/bot-fleet-protocol'
+import { startBotLogin, botLoginStatus, submitBotLoginCode, cancelBotLogin, reopenBotLogin } from './logins'
 import { z } from 'zod'
 import {
   fleetBotIdSchema,
@@ -21,6 +23,26 @@ const selection = z
   })
   .strict()
 export function registerFleetProvisioningIpc(reg: IpcRegistrar, fleet: FleetClientService): void {
+  reg.mhandle('fleet:login:start', (_event, botId: unknown, request: unknown) =>
+    startBotLogin(fleet, id.parse(botId), fleetLoginStartRequestSchema.parse(request))
+  )
+  reg.handle('fleet:login:status', (_event, botId: unknown, loginId: unknown) =>
+    botLoginStatus(fleet, id.parse(botId), opaqueId.parse(loginId))
+  )
+  reg.mhandle('fleet:login:code', (_event, botId: unknown, loginId: unknown, code: unknown) =>
+    submitBotLoginCode(
+      fleet,
+      id.parse(botId),
+      opaqueId.parse(loginId),
+      fleetLoginCodeRequestSchema.parse({ code }).code
+    )
+  )
+  reg.mhandle('fleet:login:cancel', (_event, botId: unknown, loginId: unknown) =>
+    cancelBotLogin(fleet, id.parse(botId), opaqueId.parse(loginId))
+  )
+  reg.mhandle('fleet:login:open', (_event, botId: unknown, loginId: unknown, target: unknown) =>
+    reopenBotLogin(fleet, id.parse(botId), opaqueId.parse(loginId), z.enum(['auth', 'device', 'manual']).parse(target))
+  )
   reg.handle('fleet:provisioning:inventory', () => buildMacInventory())
   reg.mhandle('fleet:provisioning:import', (_event, botId: unknown, input: unknown) =>
     importFromMac(fleet, id.parse(botId), selection.parse(input))
