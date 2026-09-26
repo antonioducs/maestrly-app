@@ -87,8 +87,14 @@ export async function importFromMac(
   }
   // Remote diagnostics are untrusted and may echo credentials from the request.
   const safeError = (error: unknown): string => {
-    let message = error instanceof Error ? error.message : String(error)
-    for (const secret of secrets) if (secret) message = message.split(secret).join('[redacted]')
+    const message = error instanceof Error ? error.message : String(error)
+    for (const secret of secrets) {
+      if (!secret) continue
+      if (message.includes(secret)) return 'The bot import failed. Please try again.'
+      for (let index = 0; index <= message.length - 8; index++) {
+        if (secret.includes(message.slice(index, index + 8))) return 'The bot import failed. Please try again.'
+      }
+    }
     return message.slice(0, 300)
   }
   const apply = (response: unknown, targets: MacImportItemResult[]): void => {
@@ -147,7 +153,7 @@ export async function importFromMac(
       result.error = 'This MCP server is unavailable on this Mac.'
       continue
     }
-    secrets.push(...Object.values(payload.env ?? {}), ...Object.values(payload.headers ?? {}))
+    secrets.push(...Object.values(payload.env ?? {}), ...Object.values(payload.headers ?? {}), ...(payload.args ?? []))
     if (payload.url) secrets.push(payload.url)
     payloads.push(payload)
     mcpSent.push(result)
