@@ -1,3 +1,15 @@
+import { RemoteLogins, LOGIN_PROVIDER_NAMES } from './provisioning/logins'
+import { forwardLoginCallback } from './provisioning/callback-forwarder'
+import { SUBSCRIPTION_PROVIDER_KIND, cleanupBotSubscriptionSlot } from './provisioning/accounts'
+import { getCodexSubscriptionManager } from '../../chat/codex-subscription/manager'
+import { getClaudeSubscriptionManager } from '../../chat/claude-agent-sdk/manager'
+import { getGrokSubscriptionManager } from '../../chat/grok-subscription/manager'
+import {
+  addSubscriptionAccount,
+  listSubscriptionAccounts,
+  renameSubscriptionAccount,
+  subscriptionProviderIdFor,
+} from '../../chat/catalog'
 import { listBotAccounts, importBotAccounts, removeBotSubscription } from './provisioning/accounts'
 import { listBotSkills, installBotSkill, removeBotSkill } from './provisioning/skills'
 import { listBotMcpServers, importBotMcpServers, removeBotMcpServer } from './provisioning/mcp'
@@ -6,6 +18,10 @@ import path from 'node:path'
 import { app, type BrowserWindow } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
+  type FleetLoginAttempt,
+  type FleetLoginStartRequest,
+  type FleetLoginCallbackRequest,
+  type FleetLoginCallbackResponse,
   FLEET_PROVISIONING_FEATURE,
   type FleetBotAccounts,
   type FleetAccountImportRequest,
@@ -249,6 +265,30 @@ export class BotInstanceRuntime implements InstanceControl {
   private compactionProblem: FleetCompactionState['problem'] = 'missing'
   private manualCompacting = false
 
+  private disposing = false
+  private readonly logins = new RemoteLogins({
+    now: Date.now,
+    onChanged: () => this.accountsChanged(),
+    isConnected: (kind, id) =>
+      this.accountOptions.some(
+        (option) => option.providerId === subscriptionProviderIdFor(SUBSCRIPTION_PROVIDER_KIND[kind], id)
+      ),
+    createSlot: (kind) => {
+      const providerKind = SUBSCRIPTION_PROVIDER_KIND[kind]
+      const count = listSubscriptionAccounts().filter((slot) => slot.kind === providerKind).length
+      return addSubscriptionAccount(providerKind, LOGIN_PROVIDER_NAMES[kind] + ' ' + (count + 2)).id
+    },
+    renameSlot: (id, label) => {
+      renameSubscriptionAccount(id, label)
+    },
+    removeSlot: cleanupBotSubscriptionSlot,
+    slotExists: (kind, id) =>
+      listSubscriptionAccounts().some((slot) => slot.id === id && slot.kind === SUBSCRIPTION_PROVIDER_KIND[kind]),
+    codex: getCodexSubscriptionManager,
+    claude: getClaudeSubscriptionManager,
+    grok: getGrokSubscriptionManager,
+    forward: forwardLoginCallback,
+  })
   constructor(
     readonly config: BotInstanceConfig,
     private readonly window: BrowserWindow,
@@ -350,10 +390,12 @@ export class BotInstanceRuntime implements InstanceControl {
     this.changed()
     void this.tick()
   }
-  dispose(): void {
+  async dispose(): Promise<void> {
+    this.disposing = true
     if (this.pollTimer) clearInterval(this.pollTimer)
     if (this.statusTimer) clearTimeout(this.statusTimer)
     if (this.transcriptTimer) clearTimeout(this.transcriptTimer)
+    await this.logins.dispose()
     this.stopObserving?.()
     this.stopGate?.()
     if (this.primaryConversationId) {
@@ -506,10 +548,25 @@ export class BotInstanceRuntime implements InstanceControl {
     await this.refreshAccounts(true)
     return { options: this.accountOptions, current: this.currentSelection() }
   }
+  startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt> {
+    return this.logins.start(request)
+  }
+  login(loginId: string): FleetLoginAttempt {
+    return this.logins.get(loginId)
+  }
+  loginCallback(loginId: string, request: FleetLoginCallbackRequest): Promise<FleetLoginCallbackResponse> {
+    return this.logins.callback(loginId, request)
+  }
+  submitLoginCode(loginId: string, code: string): Promise<FleetLoginAttempt> {
+    return this.logins.submitCode(loginId, code)
+  }
+  cancelLogin(loginId: string): Promise<void> {
+    return this.logins.cancel(loginId)
+  }
   accounts(): FleetBotAccounts {
     return listBotAccounts({
       connectedProviderIds: new Set(this.accountOptions.map((option) => option.providerId)),
-      signingIn: [],
+      signingIn: this.logins.signingIn(),
     })
   }
   async importAccounts(request: FleetAccountImportRequest): Promise<FleetImportResults> {
@@ -540,8 +597,10 @@ export class BotInstanceRuntime implements InstanceControl {
     removeBotMcpServer(id)
   }
   private accountsChanged(): void {
+    if (this.disposing) return
     this.changed()
     void this.refreshAccounts(true).then(() => {
+      if (this.disposing) return
       this.changed()
       void this.tick()
     })

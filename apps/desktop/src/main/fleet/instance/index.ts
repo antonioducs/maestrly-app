@@ -32,9 +32,9 @@ export async function startBotInstanceMode(
     })
   })
   runtime = instance
-  window.on('closed', () => {
+  window.on('closed', async () => {
     server.close()
-    instance.dispose()
+    await instance.dispose()
     if (runtime === instance) runtime = null
   })
   return instance

@@ -3,6 +3,10 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import {
   FLEET_INSTANCE_ROUTES,
+  type FleetLoginAttempt,
+  type FleetLoginStartRequest,
+  type FleetLoginCallbackRequest,
+  type FleetLoginCallbackResponse,
   FLEET_SKILL_BODY_MAX,
   fleetSubscriptionKindSchema,
   fleetAccountSlotIdSchema,
@@ -51,6 +55,11 @@ export class InstanceHttpError extends Error {
   }
 }
 export interface InstanceControl {
+  startLogin(request: FleetLoginStartRequest): Promise<FleetLoginAttempt>
+  login(loginId: string): FleetLoginAttempt
+  loginCallback(loginId: string, request: FleetLoginCallbackRequest): Promise<FleetLoginCallbackResponse>
+  submitLoginCode(loginId: string, code: string): Promise<FleetLoginAttempt>
+  cancelLogin(loginId: string): Promise<void>
   accounts(): FleetBotAccounts
   importAccounts(request: FleetAccountImportRequest): Promise<FleetImportResults>
   removeSubscription(kind: FleetSubscriptionKind, slot: string): Promise<void>
@@ -236,6 +245,21 @@ export function createInstanceControlServer(
       }
       let output: unknown
       switch (match.key) {
+        case 'loginStart':
+          output = await control.startLogin(input as FleetLoginStartRequest)
+          break
+        case 'loginGet':
+          output = control.login(match.id ?? '')
+          break
+        case 'loginCallback':
+          output = await control.loginCallback(match.id ?? '', input as FleetLoginCallbackRequest)
+          break
+        case 'loginCode':
+          output = await control.submitLoginCode(match.id ?? '', (input as { code: string }).code)
+          break
+        case 'loginCancel':
+          await control.cancelLogin(match.id ?? '')
+          break
         case 'accountsList':
           output = control.accounts()
           break

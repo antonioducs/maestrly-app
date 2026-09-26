@@ -46,7 +46,25 @@ const botMemory = {
   createdAt: '2026-09-20T10:00:00.000Z',
   updatedAt: '2026-09-20T10:00:00.000Z',
 }
+const loginAttempt = {
+  loginId: 'login-1',
+  kind: 'codex' as const,
+  method: 'device' as const,
+  accountId: null,
+  state: 'pending' as const,
+  expiresAt: '2026-09-25T20:00:00.000Z',
+  browser: null,
+  device: { verificationUrl: 'https://auth.openai.com/device', userCode: 'SYNTHETIC' },
+  manual: null,
+  account: null,
+  error: null,
+}
 const control: InstanceControl = {
+  startLogin: async () => loginAttempt,
+  login: () => loginAttempt,
+  loginCallback: async () => ({ status: 200, location: null, contentType: null, body: '' }),
+  submitLoginCode: async () => loginAttempt,
+  cancelLogin: async () => {},
   accounts: () => ({ apiKeys: [], subscriptions: [] }),
   importAccounts: async () => ({ results: [] }),
   removeSubscription: async () => {},
@@ -404,4 +422,35 @@ it('dispatches provisioning routes, validates slots and accepts a 9 MiB skill bo
   expect(methods.removeSubscription).toHaveBeenCalledWith('codex', 'default')
   for (const route of ['/v1/subscriptions/bogus/default', '/v1/subscriptions/codex/bad'])
     expect((await fetch(base + route, { method: 'DELETE', headers: headers() })).status).toBe(400)
+})
+
+it('dispatches login routes and rejects Grok browser before starting a provider', async () => {
+  const methods = {
+    startLogin: vi.fn(control.startLogin),
+    login: vi.fn(control.login),
+    loginCallback: vi.fn(control.loginCallback),
+    submitLoginCode: vi.fn(control.submitLoginCode),
+    cancelLogin: vi.fn(control.cancelLogin),
+  }
+  const { base } = await setup({ ...control, ...methods })
+  const request = (method: string, route: string, body?: unknown) =>
+    fetch(base + route, {
+      method,
+      headers: headers({ 'content-type': 'application/json' }),
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  expect((await request('POST', '/v1/logins', { kind: 'codex', method: 'device', slot: 'auto' })).status).toBe(200)
+  expect(methods.startLogin).toHaveBeenCalledWith({ kind: 'codex', method: 'device', slot: 'auto' })
+  expect((await request('GET', '/v1/logins/login-1')).status).toBe(200)
+  expect(methods.login).toHaveBeenCalledWith('login-1')
+  expect((await request('POST', '/v1/logins/login-1/callback', { path: '/callback', query: 'code=a' })).status).toBe(
+    200
+  )
+  expect(methods.loginCallback).toHaveBeenCalledWith('login-1', { path: '/callback', query: 'code=a' })
+  expect((await request('POST', '/v1/logins/login-1/code', { code: 'synthetic' })).status).toBe(200)
+  expect(methods.submitLoginCode).toHaveBeenCalledWith('login-1', 'synthetic')
+  expect((await request('DELETE', '/v1/logins/login-1')).status).toBe(204)
+  expect(methods.cancelLogin).toHaveBeenCalledWith('login-1')
+  expect((await request('POST', '/v1/logins', { kind: 'grok', method: 'browser' })).status).toBe(400)
+  expect(methods.startLogin).toHaveBeenCalledOnce()
 })

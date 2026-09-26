@@ -199,6 +199,7 @@ describe('runtime turn memory integration', () => {
       applyProfile: () => {},
       syncCompaction: async () => {},
       floatAttempted: true,
+      logins: { dispose: vi.fn(async () => {}) },
     })
     try {
       await (bot as unknown as { ensureConversation(): Promise<void> }).ensureConversation()
@@ -208,7 +209,7 @@ describe('runtime turn memory integration', () => {
       ])
       expect(getOwnerMemoryWriter(conversation.id)).toBeDefined()
     } finally {
-      bot.dispose()
+      await bot.dispose()
     }
     expect(memorySpaceForConversation(conversation.id)?.kind).not.toBe('bot')
     expect(await loadMemoryCoreExtras(conversation.id, new AbortController().signal)).toEqual([])
