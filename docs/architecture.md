@@ -105,6 +105,9 @@ notes are local data, with indexes treated as reproducible caches. Promotion to
 shared repository knowledge is an explicit filesystem write rather than an
 automatic upload.
 
+An [optional project memory provider proposal](memory-provider-proposal.md)
+explores external recall without changing the local-first default.
+
 ## Browser and loopback services
 
 Embedded browsing is expected network activity initiated through browser or web
