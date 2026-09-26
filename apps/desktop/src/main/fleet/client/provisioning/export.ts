@@ -1,6 +1,7 @@
 import { fleetApiKeyProviderKindSchema } from '@maestrly/bot-fleet-protocol'
 import os from 'node:os'
 import {
+  FLEET_PROVISIONING_LIMITS,
   fleetAccountImportRequestSchema,
   fleetImportResultsSchema,
   fleetMcpImportRequestSchema,
@@ -109,14 +110,19 @@ export async function importFromMac(
           : 'The bot did not return an import result.'
     }
   }
-  if (items.length) {
+  for (let offset = 0; offset < items.length; offset += FLEET_PROVISIONING_LIMITS.importItemsMax) {
+    const batch = items.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
+    const targets = sent.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
     try {
       apply(
-        await fleet.call('botAccountsImport', { params, body: fleetAccountImportRequestSchema.parse({ items }) }),
-        sent
+        await fleet.call('botAccountsImport', {
+          params,
+          body: fleetAccountImportRequestSchema.parse({ items: batch }),
+        }),
+        targets
       )
     } catch (error) {
-      for (const result of sent) result.error = safeError(error)
+      for (const result of targets) result.error = safeError(error)
     }
   }
   const skills = await listSkills('', skillsHome())
@@ -158,17 +164,19 @@ export async function importFromMac(
     payloads.push(payload)
     mcpSent.push(result)
   }
-  if (payloads.length) {
+  for (let offset = 0; offset < payloads.length; offset += FLEET_PROVISIONING_LIMITS.importItemsMax) {
+    const batch = payloads.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
+    const targets = mcpSent.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
     try {
       apply(
         await fleet.call('botMcpServersImport', {
           params,
-          body: fleetMcpImportRequestSchema.parse({ servers: payloads }),
+          body: fleetMcpImportRequestSchema.parse({ servers: batch }),
         }),
-        mcpSent
+        targets
       )
     } catch (error) {
-      for (const result of mcpSent) result.error = safeError(error)
+      for (const result of targets) result.error = safeError(error)
     }
   }
   return report

@@ -271,3 +271,61 @@ describe('unreadable Mac skills', () => {
     }
   })
 })
+
+describe('large Mac imports', () => {
+  it.each(['accounts', 'mcpServers'] as const)(
+    'batches 60 %s and maps batch-local indexes to selection ids',
+    async (group) => {
+      const providers = mocks.providers.slice()
+      const ids = Array.from({ length: 60 }, (_, index) => 'item-' + index)
+      if (group === 'accounts')
+        mocks.providers.splice(
+          0,
+          mocks.providers.length,
+          ...ids.map((id) => ({ id, name: id, kind: 'openai', baseURL: 'https://example.test/v1' }))
+        )
+      else
+        mocks.mcp.mockReturnValueOnce(
+          ids.map((id) => ({
+            id,
+            name: id,
+            transport: 'stdio',
+            enabled: true,
+            command: 'npx',
+            env: { TOKEN: 'synthetic-mcp-secret' },
+          }))
+        )
+      const batches: number[] = []
+      const call = vi.fn(
+        async (_key: string, request: { body: { items?: { name: string }[]; servers?: { name: string }[] } }) => {
+          const entries = request.body.items ?? request.body.servers!
+          batches.push(entries.length)
+          return {
+            results: entries
+              .map((entry, index) => ({
+                index,
+                target: entry.name,
+                outcome: Number(entry.name.slice(5)) % 2 ? 'updated' : 'added',
+                error: null,
+              }))
+              .reverse(),
+          }
+        }
+      )
+      try {
+        const report = await importFromMac({ call } as unknown as FleetClientService, 'bot', {
+          apiKeyIds: group === 'accounts' ? ids : [],
+          copyIds: [],
+          skillNames: [],
+          mcpServerIds: group === 'mcpServers' ? ids : [],
+        })
+        expect(batches).toEqual([50, 10])
+        expect(report[group]).toEqual(
+          ids.map((id, index) => ({ id, name: id, outcome: index % 2 ? 'updated' : 'added', error: null }))
+        )
+      } finally {
+        mocks.providers.splice(0, mocks.providers.length, ...providers)
+      }
+    }
+  )
+})
