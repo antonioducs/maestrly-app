@@ -1,3 +1,4 @@
+import type { SkillFile } from '../../src/main/chat/skills-registry'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -21,7 +22,9 @@ const mocks = vi.hoisted(() => ({
     { id: 'codex', name: 'Codex', builtin: 'codex-subscription' },
   ],
   key: vi.fn((): string | null => 'synthetic-api-secret'),
-  package: vi.fn(async () => [{ path: 'SKILL.md', data: Buffer.from('skill'), executable: false }]),
+  package: vi.fn(
+    async (): Promise<SkillFile[]> => [{ path: 'SKILL.md', data: Buffer.from('skill'), executable: false }]
+  ),
   status: vi.fn(() => ({ authenticated: true, account: { type: 'chatgpt', email: 'owner@example.test' } })),
 }))
 vi.mock('../../src/main/chat/catalog', () => ({
