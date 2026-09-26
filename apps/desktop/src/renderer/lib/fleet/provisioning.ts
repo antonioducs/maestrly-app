@@ -187,3 +187,11 @@ export async function settleMacImport<T>(
     settled()
   }
 }
+
+export function botProvisioningKey(bot: Pick<FleetBot, 'accounts' | 'status'>): string {
+  return JSON.stringify([
+    bot.accounts.connected,
+    bot.accounts.providers.map((provider) => provider.id).sort(),
+    bot.status,
+  ])
+}

@@ -1,6 +1,6 @@
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
-import { provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
+import { botProvisioningKey, provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -70,9 +70,10 @@ export function BotSettings({
   const { t, i18n } = useTranslation('fleet')
   const availability = provisioningAvailability(fleet, bot)
   const provisioning = useBotProvisioning(bot.id, availability === 'ready' && bot.lifecycle === 'running')
+  const provisioningKey = botProvisioningKey(bot)
   useEffect(() => {
     provisioning.refresh()
-  }, [bot.accounts, bot.status, provisioning.refresh])
+  }, [provisioningKey, provisioning.refresh])
   const [fields, setFields] = useState<BotFieldsValue>({
     name: bot.name,
     instructions: bot.instructions,

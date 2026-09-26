@@ -153,3 +153,24 @@ it('settles a rejected import so selected sign-ins and Finish remain reachable',
   expect(error).toHaveBeenCalledWith('offline')
   expect(settled).toHaveBeenCalledOnce()
 })
+
+it('refreshes provisioning for account membership, connection and status changes only', async () => {
+  const { botProvisioningKey } = await import('../../src/renderer/lib/fleet/provisioning')
+  const bot = {
+    accounts: {
+      connected: true,
+      providers: [
+        { id: 'b', label: 'B' },
+        { id: 'a', label: 'A' },
+      ],
+    },
+    status: 'idle',
+  } as FleetBot
+  const key = botProvisioningKey(bot)
+  expect(
+    botProvisioningKey({ ...bot, accounts: { ...bot.accounts, providers: [...bot.accounts.providers].reverse() } })
+  ).toBe(key)
+  expect(botProvisioningKey({ ...bot, accounts: { ...bot.accounts, connected: false } })).not.toBe(key)
+  expect(botProvisioningKey({ ...bot, accounts: { ...bot.accounts, providers: [] } })).not.toBe(key)
+  expect(botProvisioningKey({ ...bot, status: 'working' } as FleetBot)).not.toBe(key)
+})
