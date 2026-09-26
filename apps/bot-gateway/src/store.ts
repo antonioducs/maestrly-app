@@ -376,6 +376,7 @@ export class Store {
       resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
       screen: { width: 1280, height: 800, display: ':0' },
       appVersion: null,
+      capabilities: [],
     }
   }
   getBot(id: string): FleetBot | null {

@@ -103,3 +103,18 @@ export const FLEET_ROUTINE_RUN_LIMITS = {
   keepPerRoutine: 50,
 } as const
 export const FLEET_BOT_MEMORY_LIMITS = { contentMax: 4_000, listMax: 200 } as const
+
+/** Bringing a bot what the owner's Mac has: accounts, skills and MCP servers. */
+export const FLEET_PROVISIONING_LIMITS = {
+  importItemsMax: 50,
+  skillFilesMax: 400,
+  skillBytesMax: 8 * 1024 * 1024,
+  skillFileBytesMax: 4 * 1024 * 1024,
+  skillPathMax: 240,
+  loginTtlMs: 15 * 60_000,
+  callbackBodyMax: 64 * 1024,
+} as const
+/** JSON body limit for one skill install: 8 MiB of files, base64-encoded, plus paths. */
+export const FLEET_SKILL_BODY_MAX = 12 * 1024 * 1024
+/** Gateway feature (`/v1/meta`) and bot capability (instance status) the Mac checks before offering provisioning. */
+export const FLEET_PROVISIONING_FEATURE = 'provisioning'

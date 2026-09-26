@@ -41,6 +41,7 @@ afterEach(async () => {
 function status(id = 'test'): FleetInstanceStatus {
   return {
     appVersion: '1.2.3',
+    capabilities: [],
     protocol: 1,
     ready: true,
     accounts: { connected: true, providers: [] },

@@ -1,3 +1,4 @@
+import type { FleetLoginKind } from './api.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -117,4 +118,31 @@ export function normalizeMemoryText(text: string): string {
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/** True when a sign-in page belongs to the provider: the Mac opens nothing else a bot sends. */
+export function fleetLoginUrlAllowed(kind: FleetLoginKind, value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:' || url.username || url.password) return false
+  if (kind === 'codex') return url.origin === 'https://auth.openai.com'
+  if (kind === 'claude')
+    return ['https://claude.com', 'https://claude.ai', 'https://platform.claude.com'].includes(url.origin)
+  return url.hostname === 'x.ai' || url.hostname.endsWith('.x.ai')
+}
+/** The loopback redirect (`http://localhost:<port>/<path>`) an authorize URL sends the browser back to. */
+export function fleetLoginCallbackFromAuthUrl(authUrl: string): { port: number; path: string } | null {
+  try {
+    const redirect = new URL(new URL(authUrl).searchParams.get('redirect_uri') ?? '')
+    if (redirect.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(redirect.hostname)) return null
+    const port = Number(redirect.port)
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) return null
+    return /^\/[A-Za-z0-9/_-]{0,100}$/.test(redirect.pathname) ? { port, path: redirect.pathname } : null
+  } catch {
+    return null
+  }
 }

@@ -151,6 +151,7 @@ export class Lifecycle {
     const status = this.statuses.get(bot.id),
       resources = this.resources.get(bot.id)
     bot.appVersion = status?.appVersion ?? null
+    bot.capabilities = status?.capabilities ?? []
     bot.accounts = status?.accounts ?? { connected: false, providers: [] }
     bot.usage = status?.usage ?? null
     bot.compactionState = status?.compaction ?? null
@@ -214,6 +215,7 @@ export class Lifecycle {
       resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
       screen: { width: 1280, height: 800, display: ':0' },
       appVersion: null,
+      capabilities: [],
       usage: null,
       createdAt: at,
       updatedAt: at,

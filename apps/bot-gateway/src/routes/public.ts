@@ -2,6 +2,7 @@ import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
   FLEET_PROTOCOL_VERSION,
+  FLEET_PROVISIONING_FEATURE,
   FLEET_IMAGE_LIMITS,
   normalizePairingCode,
   type FleetCreateBotRequest,
@@ -80,6 +81,7 @@ export async function publicRoute(
         body: {
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: '0.1.0',
+          features: [FLEET_PROVISIONING_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: null,
         },

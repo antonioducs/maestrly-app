@@ -1,3 +1,4 @@
+import * as provisioning from '../src/index.js'
 import { randomUUID } from 'node:crypto'
 import {
   fleetOwnerMemorySchema,
@@ -618,5 +619,147 @@ describe('memory and routine history contracts', () => {
     expect(fleetActivityKindSchema.options).toEqual(
       expect.arrayContaining(['owner_memory_saved', 'owner_memory_forgotten'])
     )
+  })
+})
+
+describe('bot provisioning contracts', () => {
+  const apiKey = { type: 'api-key', kind: 'openai', name: 'Test', key: 'synthetic', baseURL: null }
+  it('accepts transferable accounts and rejects extra fields, excess items and missing expiry', () => {
+    const items = [
+      apiKey,
+      { type: 'github-copilot', label: 'Test', token: 'synthetic' },
+      { type: 'cursor', label: 'Test', apiKey: 'synthetic', expiresAt: null },
+    ]
+    expect(provisioning.fleetAccountImportRequestSchema.parse({ items })).toEqual({ items })
+    for (const items of [
+      [{ ...apiKey, extra: 1 }],
+      Array(51).fill(apiKey),
+      [{ type: 'cursor', label: 'Test', apiKey: 'synthetic' }],
+    ]) {
+      expect(provisioning.fleetAccountImportRequestSchema.safeParse({ items }).success).toBe(false)
+    }
+  })
+  it('validates login methods, slots and callback endpoints', () => {
+    expect(provisioning.fleetLoginStartRequestSchema.parse({ kind: 'codex', method: 'device' }).slot).toBe('auto')
+    expect(provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'grok', method: 'browser' }).success).toBe(false)
+    expect(
+      provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'codex', method: 'browser', slot: 'acc_x1' }).success
+    ).toBe(true)
+    expect(
+      provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'codex', method: 'browser', slot: '../x' }).success
+    ).toBe(false)
+    const attempt = {
+      loginId: 'l1',
+      kind: 'codex',
+      accountId: null,
+      method: 'browser',
+      state: 'pending',
+      expiresAt: at,
+      browser: { authUrl: 'https://auth.openai.com/oauth/authorize', callback: { port: 1455, path: '/auth/callback' } },
+      device: null,
+      manual: null,
+      account: null,
+      error: null,
+    }
+    expect(provisioning.fleetLoginAttemptSchema.parse(attempt)).toEqual(attempt)
+    for (const callback of [
+      { port: 80, path: '/auth/callback' },
+      { port: 1455, path: '/a?b' },
+    ]) {
+      expect(
+        provisioning.fleetLoginAttemptSchema.safeParse({ ...attempt, browser: { ...attempt.browser, callback } })
+          .success
+      ).toBe(false)
+    }
+  })
+  it('bounds skill installs and requires MCP connection details', () => {
+    const file = { path: 'SKILL.md', data: 'eA==', executable: false }
+    expect(provisioning.fleetSkillInstallRequestSchema.parse({ name: 'test', files: [file] }).name).toBe('test')
+    for (const input of [
+      { name: 'My Skill', files: [file] },
+      { name: 'test', files: Array(401).fill(file) },
+      { name: 'test', files: [{ ...file, path: 'x'.repeat(241) }] },
+    ]) {
+      expect(provisioning.fleetSkillInstallRequestSchema.safeParse(input).success).toBe(false)
+    }
+    for (const transport of ['http', 'stdio'])
+      expect(provisioning.fleetMcpServerImportSchema.safeParse({ name: 'x', transport, enabled: true }).success).toBe(
+        false
+      )
+    const server = {
+      name: 'x',
+      transport: 'stdio',
+      enabled: true,
+      command: 'npx',
+      args: ['-y', 'pkg'],
+      env: { K: 'v' },
+    }
+    expect(provisioning.fleetMcpServerImportSchema.parse(server)).toEqual(server)
+  })
+  it('defaults feature flags for older peers and includes configuration activity', () => {
+    expect(
+      provisioning.fleetMetaResponseSchema.parse({
+        protocol: 1,
+        gatewayVersion: '1',
+        botImage: 'i',
+        botImageVersion: null,
+      }).features
+    ).toEqual([])
+    expect(fleetBotSchema.parse(bot).capabilities).toEqual([])
+    expect(fleetInstanceStatusSchema.parse(status).capabilities).toEqual([])
+    expect(fleetActivityKindSchema.options).toContain('bot_configured')
+  })
+  it('allows only provider sign-in URLs and extracts loopback redirects', () => {
+    for (const [kind, url] of [
+      ['codex', 'https://auth.openai.com/oauth/authorize?x=1'],
+      ['codex', 'https://auth.openai.com/codex/device'],
+      ['claude', 'https://claude.com/cai/oauth/authorize?code=true'],
+      ['grok', 'https://accounts.x.ai/device?code=1'],
+    ] as const)
+      expect(provisioning.fleetLoginUrlAllowed(kind, url)).toBe(true)
+    for (const [kind, url] of [
+      ['codex', 'https://auth.openai.com.evil.io/'],
+      ['claude', 'http://claude.com/'],
+      ['grok', 'https://x.ai.evil.io/'],
+      ['codex', 'https://user:pw@auth.openai.com/'],
+    ] as const)
+      expect(provisioning.fleetLoginUrlAllowed(kind, url)).toBe(false)
+    expect(
+      provisioning.fleetLoginCallbackFromAuthUrl(
+        'https://claude.com/cai/oauth/authorize?redirect_uri=http%3A%2F%2Flocalhost%3A33749%2Fcallback'
+      )
+    ).toEqual({ port: 33749, path: '/callback' })
+    expect(
+      provisioning.fleetLoginCallbackFromAuthUrl(
+        'https://claude.com/cai/oauth/authorize?redirect_uri=https://platform.claude.com/oauth/code/callback'
+      )
+    ).toBeNull()
+  })
+  it('declares matching gateway and instance provisioning routes', () => {
+    const routes = [
+      ['botAccountsList', 'accountsList', 'GET', '/accounts'],
+      ['botAccountsImport', 'accountsImport', 'POST', '/accounts/import'],
+      ['botSubscriptionRemove', 'subscriptionRemove', 'DELETE', '/subscriptions/:kind/:slot'],
+      ['botLoginStart', 'loginStart', 'POST', '/logins'],
+      ['botLoginGet', 'loginGet', 'GET', '/logins/:lid'],
+      ['botLoginCallback', 'loginCallback', 'POST', '/logins/:lid/callback'],
+      ['botLoginCode', 'loginCode', 'POST', '/logins/:lid/code'],
+      ['botLoginCancel', 'loginCancel', 'DELETE', '/logins/:lid'],
+      ['botSkillsList', 'skillsList', 'GET', '/skills'],
+      ['botSkillInstall', 'skillInstall', 'POST', '/skills'],
+      ['botSkillRemove', 'skillRemove', 'DELETE', '/skills/:name'],
+      ['botMcpServersList', 'mcpServersList', 'GET', '/mcp-servers'],
+      ['botMcpServersImport', 'mcpServersImport', 'POST', '/mcp-servers/import'],
+      ['botMcpServerRemove', 'mcpServerRemove', 'DELETE', '/mcp-servers/:sid'],
+    ] as const
+    for (const [gateway, instance, method, path] of routes) {
+      expect(FLEET_GATEWAY_ROUTES[gateway]).toMatchObject({ method, path: '/v1/bots/:id' + path })
+      expect(FLEET_INSTANCE_ROUTES[instance]).toMatchObject({
+        method,
+        path: '/v1' + path,
+        body: FLEET_GATEWAY_ROUTES[gateway].body,
+        response: FLEET_GATEWAY_ROUTES[gateway].response,
+      })
+    }
   })
 })

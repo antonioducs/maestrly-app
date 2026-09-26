@@ -485,6 +485,7 @@ export default {
     kind: {
       owner_memory_saved: 'Learned about you · {{summary}}',
       owner_memory_forgotten: 'Removed from memory about you · {{summary}}',
+      bot_configured: 'Configured from {{summary}}',
       bot_created: 'Bot created',
       bot_started: 'Bot started',
       bot_stopped: 'Bot stopped',

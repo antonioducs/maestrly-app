@@ -246,6 +246,7 @@ export const fleetBotSchema = z.object({
     display: z.string(),
   }),
   appVersion: z.string().nullable(),
+  capabilities: z.array(z.string().max(40)).max(20).default([]),
   usage: fleetUsageSchema.nullable().default(null),
   /** The owner's compaction model (stored by the gateway, like `selection`). */
   compaction: fleetCompactionConfigSchema.nullable().default(null),
@@ -557,6 +558,8 @@ export const fleetActivityKindSchema = z.enum([
   'owner_memory_saved',
   'owner_memory_forgotten',
   'bot_created',
+  // The owner's device sent accounts, skills or MCP servers to the bot, or removed them (summary: device name).
+  'bot_configured',
   'bot_started',
   'bot_stopped',
   'bot_restarted',

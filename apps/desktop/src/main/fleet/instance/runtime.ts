@@ -721,6 +721,7 @@ export class BotInstanceRuntime implements InstanceControl {
                           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
+      capabilities: [],
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
       accounts: { connected: providers.length > 0, providers },

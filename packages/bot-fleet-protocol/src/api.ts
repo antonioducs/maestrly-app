@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  FLEET_PROVISIONING_LIMITS,
   FLEET_OWNER_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_IMAGE_LIMITS,
@@ -116,11 +117,14 @@ const fleetAttachmentsSchema = z
 const hasContent = (value: { text: string; attachments: unknown[] }) =>
   value.text.trim().length > 0 || value.attachments.length > 0
 
+export const fleetFeaturesSchema = z.array(z.string().max(40)).max(20).default([])
+
 export const fleetMetaResponseSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   gatewayVersion: z.string(),
   botImage: z.string(),
   botImageVersion: z.string().nullable(),
+  features: fleetFeaturesSchema,
 })
 export type FleetMetaResponse = z.infer<typeof fleetMetaResponseSchema>
 
@@ -176,6 +180,190 @@ export const fleetAddApiKeyAccountRequestSchema = z
 export type FleetAddApiKeyAccountRequest = z.infer<typeof fleetAddApiKeyAccountRequestSchema>
 export const fleetAddApiKeyAccountResponseSchema = z.object({ providerId: fleetIdSchema })
 export type FleetAddApiKeyAccountResponse = z.infer<typeof fleetAddApiKeyAccountResponseSchema>
+export const fleetSubscriptionKindSchema = z.enum(['codex', 'claude', 'grok', 'github-copilot', 'cursor'])
+export type FleetSubscriptionKind = z.infer<typeof fleetSubscriptionKindSchema>
+export const fleetLoginKindSchema = z.enum(['codex', 'claude', 'grok'])
+export type FleetLoginKind = z.infer<typeof fleetLoginKindSchema>
+export const fleetAccountSlotIdSchema = z.string().regex(/^acc_[A-Za-z0-9-]{1,80}$/)
+
+export const fleetBotAccountsSchema = z.object({
+  apiKeys: z.array(
+    z.object({
+      providerId: fleetIdSchema,
+      name: z.string(),
+      kind: fleetApiKeyProviderKindSchema,
+      baseURL: z.string().nullable(),
+      keyHint: z.string().max(8).nullable(),
+    })
+  ),
+  subscriptions: z.array(
+    z.object({
+      kind: fleetSubscriptionKindSchema,
+      accountId: fleetAccountSlotIdSchema.nullable(),
+      label: z.string(),
+      email: z.string().nullable(),
+      plan: z.string().nullable(),
+      state: z.enum(['connected', 'signed-out', 'signing-in']),
+    })
+  ),
+})
+export type FleetBotAccounts = z.infer<typeof fleetBotAccountsSchema>
+
+export const fleetAccountImportItemSchema = z.discriminatedUnion('type', [
+  z
+    .object({
+      type: z.literal('api-key'),
+      kind: fleetApiKeyProviderKindSchema,
+      name: fleetNameSchema,
+      key: z.string().min(1).max(512),
+      baseURL: fleetAddApiKeyAccountRequestSchema.shape.baseURL,
+    })
+    .strict(),
+  z.object({ type: z.literal('github-copilot'), label: fleetNameSchema, token: z.string().min(1).max(512) }).strict(),
+  z
+    .object({
+      type: z.literal('cursor'),
+      label: fleetNameSchema,
+      apiKey: z.string().min(1).max(512),
+      expiresAt: fleetTimestampSchema.nullable(),
+    })
+    .strict(),
+])
+export type FleetAccountImportItem = z.infer<typeof fleetAccountImportItemSchema>
+export const fleetAccountImportRequestSchema = z.object({
+  items: z.array(fleetAccountImportItemSchema).min(1).max(FLEET_PROVISIONING_LIMITS.importItemsMax),
+})
+export type FleetAccountImportRequest = z.infer<typeof fleetAccountImportRequestSchema>
+export const fleetImportOutcomeSchema = z.enum(['added', 'updated', 'unchanged', 'failed'])
+export type FleetImportOutcome = z.infer<typeof fleetImportOutcomeSchema>
+export const fleetImportResultsSchema = z.object({
+  results: z.array(
+    z.object({
+      index: fleetNonNegativeIntSchema,
+      target: z.string().max(200).nullable(),
+      outcome: fleetImportOutcomeSchema,
+      error: z.string().max(300).nullable(),
+    })
+  ),
+})
+export type FleetImportResults = z.infer<typeof fleetImportResultsSchema>
+
+const fleetCallbackPathSchema = z.string().regex(/^\/[A-Za-z0-9/_-]{0,100}$/)
+export const fleetLoginStartRequestSchema = z
+  .object({
+    kind: fleetLoginKindSchema,
+    method: z.enum(['browser', 'device']),
+    slot: z.union([z.literal('auto'), z.literal('default'), fleetAccountSlotIdSchema]).default('auto'),
+  })
+  .refine((value) => value.kind !== 'grok' || value.method === 'device', {
+    message: 'Grok signs in with the device flow',
+    path: ['method'],
+  })
+export type FleetLoginStartRequest = z.infer<typeof fleetLoginStartRequestSchema>
+export const fleetLoginAttemptSchema = z.object({
+  loginId: z.string().min(1).max(200),
+  kind: fleetLoginKindSchema,
+  accountId: fleetAccountSlotIdSchema.nullable(),
+  method: z.enum(['browser', 'device']),
+  state: z.enum(['pending', 'completed', 'failed', 'cancelled', 'expired']),
+  expiresAt: fleetTimestampSchema,
+  browser: z
+    .object({
+      authUrl: z.url().max(4096),
+      callback: z.object({ port: z.number().int().min(1024).max(65535), path: fleetCallbackPathSchema }),
+    })
+    .nullable(),
+  device: z.object({ verificationUrl: z.url().max(2048), userCode: z.string().min(1).max(64) }).nullable(),
+  manual: z.object({ url: z.url().max(4096) }).nullable(),
+  account: z.object({ label: z.string(), email: z.string().nullable(), plan: z.string().nullable() }).nullable(),
+  error: z.string().max(300).nullable(),
+})
+export type FleetLoginAttempt = z.infer<typeof fleetLoginAttemptSchema>
+export const fleetLoginCallbackRequestSchema = z.object({ path: fleetCallbackPathSchema, query: z.string().max(8192) })
+export type FleetLoginCallbackRequest = z.infer<typeof fleetLoginCallbackRequestSchema>
+export const fleetLoginCallbackResponseSchema = z.object({
+  status: z.number().int().min(100).max(599),
+  location: z.string().max(4096).nullable(),
+  contentType: z.string().max(200).nullable(),
+  body: z.string().max(FLEET_PROVISIONING_LIMITS.callbackBodyMax),
+})
+export type FleetLoginCallbackResponse = z.infer<typeof fleetLoginCallbackResponseSchema>
+export const fleetLoginCodeRequestSchema = z.object({ code: z.string().trim().min(1).max(2048) })
+
+export const fleetSkillNameSchema = z.string().regex(/^[a-z0-9_][a-z0-9_-]{0,63}$/)
+export const fleetSkillInstallRequestSchema = z.object({
+  name: fleetSkillNameSchema,
+  files: z
+    .array(
+      z.object({
+        path: z.string().min(1).max(FLEET_PROVISIONING_LIMITS.skillPathMax),
+        data: z.string().max(Math.ceil(FLEET_PROVISIONING_LIMITS.skillFileBytesMax / 3) * 4),
+        executable: z.boolean(),
+      })
+    )
+    .min(1)
+    .max(FLEET_PROVISIONING_LIMITS.skillFilesMax),
+})
+export type FleetSkillInstallRequest = z.infer<typeof fleetSkillInstallRequestSchema>
+export const fleetSkillInstallResponseSchema = z.object({
+  name: fleetSkillNameSchema,
+  outcome: z.enum(['added', 'updated', 'unchanged']),
+})
+export type FleetSkillInstallResponse = z.infer<typeof fleetSkillInstallResponseSchema>
+export const fleetBotSkillsSchema = z.object({
+  skills: z.array(
+    z.object({
+      name: z.string(),
+      description: z.string().max(1024),
+      files: fleetNonNegativeIntSchema,
+      bytes: fleetNonNegativeIntSchema,
+      source: z.enum(['fleet', 'registry', 'local']),
+    })
+  ),
+})
+export type FleetBotSkills = z.infer<typeof fleetBotSkillsSchema>
+
+export const fleetMcpServerImportSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    transport: z.enum(['http', 'stdio']),
+    enabled: z.boolean(),
+    url: z
+      .url()
+      .max(2048)
+      .refine((value) => /^https?:\/\//i.test(value))
+      .optional(),
+    headers: z.record(z.string().min(1).max(200), z.string().max(8192)).optional(),
+    command: z.string().trim().min(1).max(500).optional(),
+    args: z.array(z.string().max(4096)).max(100).optional(),
+    env: z.record(z.string().min(1).max(200), z.string().max(16_384)).optional(),
+  })
+  .strict()
+  .refine((value) => (value.transport === 'http' ? Boolean(value.url) : Boolean(value.command)), {
+    message: 'An http server needs a URL; a stdio server needs a command',
+  })
+export type FleetMcpServerImport = z.infer<typeof fleetMcpServerImportSchema>
+export const fleetMcpImportRequestSchema = z.object({
+  servers: z.array(fleetMcpServerImportSchema).min(1).max(FLEET_PROVISIONING_LIMITS.importItemsMax),
+})
+export type FleetMcpImportRequest = z.infer<typeof fleetMcpImportRequestSchema>
+export const fleetBotMcpServersSchema = z.object({
+  servers: z.array(
+    z.object({
+      id: fleetIdSchema,
+      name: z.string(),
+      transport: z.enum(['http', 'stdio']),
+      enabled: z.boolean(),
+      command: z.string().nullable(),
+      host: z.string().nullable(),
+      envKeys: z.array(z.string()),
+      headerKeys: z.array(z.string()),
+      unavailable: z.boolean(),
+    })
+  ),
+})
+export type FleetBotMcpServers = z.infer<typeof fleetBotMcpServersSchema>
+
 export const fleetSendMessageRequestSchema = z
   .object({
     text: z.string().max(FLEET_MESSAGE_TEXT_MAX),
@@ -296,6 +484,7 @@ export const fleetInstanceHoldSchema = z.object({
 })
 export type FleetInstanceHold = z.infer<typeof fleetInstanceHoldSchema>
 export const fleetInstanceStatusSchema = z.object({
+  capabilities: fleetFeaturesSchema,
   appVersion: z.string(),
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   ready: z.boolean(),
@@ -470,6 +659,61 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetAddApiKeyAccountRequestSchema,
     response: fleetAddApiKeyAccountResponseSchema,
   },
+  botAccountsList: { method: 'GET', path: '/v1/bots/:id/accounts', body: null, response: fleetBotAccountsSchema },
+  botAccountsImport: {
+    method: 'POST',
+    path: '/v1/bots/:id/accounts/import',
+    body: fleetAccountImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  botSubscriptionRemove: {
+    method: 'DELETE',
+    path: '/v1/bots/:id/subscriptions/:kind/:slot',
+    body: null,
+    response: null,
+  },
+  botLoginStart: {
+    method: 'POST',
+    path: '/v1/bots/:id/logins',
+    body: fleetLoginStartRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  botLoginGet: { method: 'GET', path: '/v1/bots/:id/logins/:lid', body: null, response: fleetLoginAttemptSchema },
+  botLoginCallback: {
+    method: 'POST',
+    path: '/v1/bots/:id/logins/:lid/callback',
+    body: fleetLoginCallbackRequestSchema,
+    response: fleetLoginCallbackResponseSchema,
+  },
+  botLoginCode: {
+    method: 'POST',
+    path: '/v1/bots/:id/logins/:lid/code',
+    body: fleetLoginCodeRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  botLoginCancel: { method: 'DELETE', path: '/v1/bots/:id/logins/:lid', body: null, response: null },
+  botSkillsList: { method: 'GET', path: '/v1/bots/:id/skills', body: null, response: fleetBotSkillsSchema },
+  botSkillInstall: {
+    method: 'POST',
+    path: '/v1/bots/:id/skills',
+    body: fleetSkillInstallRequestSchema,
+    response: fleetSkillInstallResponseSchema,
+  },
+  botSkillRemove: { method: 'DELETE', path: '/v1/bots/:id/skills/:name', body: null, response: null },
+  botMcpServersList: {
+    method: 'GET',
+    path: '/v1/bots/:id/mcp-servers',
+    body: null,
+    response: fleetBotMcpServersSchema,
+  },
+  botMcpServersImport: {
+    method: 'POST',
+    path: '/v1/bots/:id/mcp-servers/import',
+    body: fleetMcpImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  botMcpServerRemove: { method: 'DELETE', path: '/v1/bots/:id/mcp-servers/:sid', body: null, response: null },
+
   botAccountRemove: { method: 'DELETE', path: '/v1/bots/:id/accounts/:providerId', body: null, response: null },
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
   // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
@@ -598,6 +842,50 @@ export const FLEET_INSTANCE_ROUTES = {
     body: fleetAddApiKeyAccountRequestSchema,
     response: fleetAddApiKeyAccountResponseSchema,
   },
+  accountsList: { method: 'GET', path: '/v1/accounts', body: null, response: fleetBotAccountsSchema },
+  accountsImport: {
+    method: 'POST',
+    path: '/v1/accounts/import',
+    body: fleetAccountImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  subscriptionRemove: { method: 'DELETE', path: '/v1/subscriptions/:kind/:slot', body: null, response: null },
+  loginStart: {
+    method: 'POST',
+    path: '/v1/logins',
+    body: fleetLoginStartRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  loginGet: { method: 'GET', path: '/v1/logins/:lid', body: null, response: fleetLoginAttemptSchema },
+  loginCallback: {
+    method: 'POST',
+    path: '/v1/logins/:lid/callback',
+    body: fleetLoginCallbackRequestSchema,
+    response: fleetLoginCallbackResponseSchema,
+  },
+  loginCode: {
+    method: 'POST',
+    path: '/v1/logins/:lid/code',
+    body: fleetLoginCodeRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  loginCancel: { method: 'DELETE', path: '/v1/logins/:lid', body: null, response: null },
+  skillsList: { method: 'GET', path: '/v1/skills', body: null, response: fleetBotSkillsSchema },
+  skillInstall: {
+    method: 'POST',
+    path: '/v1/skills',
+    body: fleetSkillInstallRequestSchema,
+    response: fleetSkillInstallResponseSchema,
+  },
+  skillRemove: { method: 'DELETE', path: '/v1/skills/:name', body: null, response: null },
+  mcpServersList: { method: 'GET', path: '/v1/mcp-servers', body: null, response: fleetBotMcpServersSchema },
+  mcpServersImport: {
+    method: 'POST',
+    path: '/v1/mcp-servers/import',
+    body: fleetMcpImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  mcpServerRemove: { method: 'DELETE', path: '/v1/mcp-servers/:sid', body: null, response: null },
   accountRemove: { method: 'DELETE', path: '/v1/accounts/:providerId', body: null, response: null },
   transcript: { method: 'GET', path: '/v1/transcript', body: null, response: fleetTranscriptPageSchema },
   // Binary: the image bytes with their Content-Type.
