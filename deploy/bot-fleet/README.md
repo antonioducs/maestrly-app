@@ -25,3 +25,19 @@ The gateway uses the `maestrly-bots` Docker network and mounts the Docker socket
 To update, rebuild both images, set their tags in `.env`, then recreate the gateway with `docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d --force-recreate`. The force flag also recreates the gateway when rebuilding the same `:local` tag. Restart each bot from the Mac's **Server** page or its menu to move it to the new image. The bot container is replaced, while its home volume keeps accounts, logins, files, and conversation. Running bots stay on their current image until restarted.
 
 After building the images, run `npm run test:e2e:bot-fleet` for an opt-in real-container check. It uses its own Compose project, network, loopback port, bots, volumes, and local model, then removes them. Use `npm run test:e2e:bot-fleet -- --keep` to inspect the resources after a run.
+
+## Toolchain
+
+The bot image includes Node.js 22.22.0 (npm, npx, corepack, pnpm and yarn), Python 3.11
+(`python`, pip and venv), uv/uvx 0.12.15, mise v2026.9.10, git, ssh, build-essential,
+ripgrep, fd, jq, sqlite3, zip/unzip, less, procps, file and xz. Node and its headers,
+npm and corepack come from the app's build stage; uv and mise are pinned release
+binaries verified with SHA-256 for arm64 and amd64. There is no Docker or sudo.
+The toolchain adds about 0.23 GiB to the image.
+
+Image-provided tools live outside `/home/bot` and update with the image. Installs
+made with `npm -g`, `uv tool install`, `pip install --user` or mise live in the bot's
+home volume and survive updates. Plain and login shells use the same toolchain
+PATH and npm prefix (`/home/bot/.local`). Use `mise use node@20` for another Node
+version; once installed, a project's `.nvmrc` is honored. Mise can also install
+other Python versions.

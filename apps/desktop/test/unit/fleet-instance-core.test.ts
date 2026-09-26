@@ -233,6 +233,9 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/other/chat')).toBe('')
     expect(botIdentityPrompt('/bot/chat')).toContain('# Bot identity\nYour name is Scout.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
+    expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 22')
+    expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
+    expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
   })
 })
 
