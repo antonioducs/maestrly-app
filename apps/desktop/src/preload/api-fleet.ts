@@ -1,3 +1,10 @@
+import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
+import type {
+  FleetBotAccounts,
+  FleetBotSkills,
+  FleetBotMcpServers,
+  FleetSubscriptionKind,
+} from '@maestrly/bot-fleet-protocol'
 import { ipcRenderer } from 'electron'
 import type {
   FleetActivityEntry,
@@ -74,6 +81,7 @@ const _opsMatch: _OpsMatch = true
 void _opsMatch
 
 export type FleetConnectionView = {
+  features: string[]
   state: 'unconfigured' | 'connecting' | 'connected' | 'reconnecting' | 'unauthorized' | 'incompatible'
   deviceId: string | null
   url: string | null
@@ -134,6 +142,19 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 export const fleetApi = {
+  fleetProvisioningInventory: (): Promise<MacInventory> => ipcRenderer.invoke('fleet:provisioning:inventory'),
+  fleetImportFromMac: (botId: string, selection: MacImportSelection): Promise<MacImportReport> =>
+    ipcRenderer.invoke('fleet:provisioning:import', botId, selection),
+  fleetBotAccounts: (botId: string): Promise<FleetBotAccounts> => ipcRenderer.invoke('fleet:bot:accounts', botId),
+  fleetRemoveBotSubscription: (botId: string, kind: FleetSubscriptionKind, slot: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:subscription-remove', botId, kind, slot),
+  fleetBotSkills: (botId: string): Promise<FleetBotSkills> => ipcRenderer.invoke('fleet:bot:skills', botId),
+  fleetRemoveBotSkill: (botId: string, name: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:skill-remove', botId, name),
+  fleetBotMcpServers: (botId: string): Promise<FleetBotMcpServers> =>
+    ipcRenderer.invoke('fleet:bot:mcp-servers', botId),
+  fleetRemoveBotMcpServer: (botId: string, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:mcp-remove', botId, serverId),
   fleetGetConnection: (): Promise<FleetConnectionView> => ipcRenderer.invoke('fleet:getConnection'),
   fleetConnect: (input: { url: string; code: string; deviceName?: string }): Promise<FleetConnectionView> =>
     ipcRenderer.invoke('fleet:connect', input),

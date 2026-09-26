@@ -4,6 +4,7 @@ const state = vi.hoisted(() => ({
   settings: new Map<string, string>(),
   secure: new Map<string, string>(),
   secureAvailable: true,
+  features: undefined as string[] | undefined,
   events: [] as {
     onConnected: () => Promise<void>
     onEvent: (event: unknown) => void
@@ -79,6 +80,7 @@ function response(data: unknown): Response {
 beforeEach(() => {
   state.settings.clear()
   state.secure.clear()
+  state.features = undefined
   state.secureAvailable = true
   state.events.length = 0
   state.broadcasts.length = 0
@@ -93,6 +95,7 @@ beforeEach(() => {
       if (path === '/v1/meta')
         return response({
           protocol: 1,
+          features: state.features,
           gatewayVersion: '1',
           botImage: 'bot',
           botImageVersion: null,
@@ -115,6 +118,20 @@ beforeEach(() => {
   )
 })
 describe('fleet client service', () => {
+  it('refreshes advertised features on connect and every reconnect, defaulting absent metadata to empty', async () => {
+    state.features = ['provisioning']
+    const service = new FleetClientService()
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    expect(service.getConnection().features).toEqual(['provisioning'])
+    state.features = undefined
+    await state.events[0].onConnected()
+    expect(service.getConnection().features).toEqual([])
+    state.features = ['provisioning']
+    await state.events[0].onConnected()
+    expect(service.getConnection().features).toEqual(['provisioning'])
+    await service.disconnect()
+    expect(service.getConnection().features).toEqual([])
+  })
   it('pairs, securely stores credentials, skips the first digest, then persists an acknowledged digest', async () => {
     state.activity.push({
       seq: 1,

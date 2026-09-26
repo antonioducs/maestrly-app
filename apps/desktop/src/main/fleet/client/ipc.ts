@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   fleetBotIdSchema,
@@ -65,6 +66,7 @@ const actionRoute = {
 } as const
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
+  registerFleetProvisioningIpc(reg, fleet)
   if (process.env.MAESTRLY_BOT_MODE !== '1') {
     fleet.start()
     app.once('will-quit', () => fleet.stop())

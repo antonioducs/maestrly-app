@@ -25,6 +25,7 @@ import {
 import { FleetScreenBridge } from './screen-bridge'
 
 export type FleetConnectionView = {
+  features: string[]
   state: FleetConnectionState
   deviceId: string | null
   url: string | null
@@ -49,6 +50,7 @@ export class FleetClientService {
   private events: FleetEvents | null = null
   readonly screens = new FleetScreenBridge(() => this.requireApi())
   private connection: FleetConnectionView = {
+    features: [],
     state: 'unconfigured',
     deviceId: null,
     url: null,
@@ -119,6 +121,7 @@ export class FleetClientService {
     this.snapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
     this.digest = null
     this.setConnection({
+      features: [],
       state: 'connecting',
       deviceId: readFleetSettings().deviceId,
       url,
@@ -136,7 +139,11 @@ export class FleetClientService {
         if (generation === this.generation) this.setConnection({ state, error })
       },
       async () => {
-        if (generation === this.generation) await this.refresh()
+        if (generation !== this.generation) return
+        const meta = await this.requireApi().call('meta')
+        if (generation !== this.generation) return
+        this.setConnection({ features: meta.features ?? [] })
+        await this.refresh()
       }
     )
     this.events.start()
@@ -157,6 +164,7 @@ export class FleetClientService {
     })
     const persistence = saveFleetCredentials(allowed.origin, paired.deviceId, deviceName, paired.token)
     this.useCredentials(allowed.origin, paired.token, persistence)
+    this.setConnection({ features: meta.features ?? [] })
     return this.connection
   }
 
@@ -174,6 +182,7 @@ export class FleetClientService {
     this.digest = null
     broadcast('fleet:digest', null)
     this.setConnection({
+      features: [],
       state: 'unconfigured',
       deviceId: null,
       url: null,

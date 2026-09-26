@@ -29,6 +29,7 @@ export const emptyTranscript: TranscriptState = {
 }
 export const initialFleetState: FleetState = {
   connection: {
+    features: [],
     state: 'unconfigured',
     deviceId: null,
     url: null,
