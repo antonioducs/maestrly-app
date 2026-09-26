@@ -44,9 +44,11 @@ export async function importFromMac(
     const key = provider && getApiKey(id)
     if (!provider || !key) {
       result.error = missing
+      result.errorCode = 'account-missing'
       continue
     }
     secrets.push(key)
+    if (provider.baseURL) secrets.push(provider.baseURL)
     items.push({
       type: 'api-key',
       kind: fleetApiKeyProviderKindSchema.parse(getProviderKind(provider)),
@@ -85,6 +87,7 @@ export async function importFromMac(
       }
     }
     result.error = missing
+    result.errorCode = 'account-missing'
   }
   // Remote diagnostics are untrusted and may echo credentials from the request.
   const safeError = (error: unknown): string => {
@@ -103,6 +106,7 @@ export async function importFromMac(
     for (const [index, target] of targets.entries()) {
       const remote = parsed.results.find((result) => result.index === index)
       target.outcome = remote?.outcome ?? 'failed'
+      if (!remote) target.errorCode = 'missing-result'
       target.error = remote?.error
         ? safeError(remote.error)
         : remote
@@ -131,8 +135,18 @@ export async function importFromMac(
     report.skills.push(result)
     try {
       const skill = skills.find((candidate) => candidate.name === name)
-      if (!skill) throw new Error('This skill is no longer stored on this Mac.')
-      const files = await packageSkillDirectory(skill.dir)
+      if (!skill) {
+        result.errorCode = 'skill-missing'
+        throw new Error('This skill is no longer stored on this Mac.')
+      }
+      const files = await packageSkillDirectory(skill.dir).catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : ''
+        result.errorCode =
+          (['too-large', 'file-too-large', 'path-too-long', 'too-many-files', 'no-skill-md'] as const).find(
+            (code) => code === message
+          ) ?? 'unreadable'
+        throw error
+      })
       const body = fleetSkillInstallRequestSchema.parse({
         name,
         files: files.map((file) => ({
@@ -157,6 +171,7 @@ export async function importFromMac(
     const payload = server && transformMcpServerForBot(server, os.homedir()).payload
     if (!payload) {
       result.error = 'This MCP server is unavailable on this Mac.'
+      result.errorCode = 'mcp-unavailable'
       continue
     }
     secrets.push(...Object.values(payload.env ?? {}), ...Object.values(payload.headers ?? {}), ...(payload.args ?? []))
@@ -178,6 +193,9 @@ export async function importFromMac(
     } catch (error) {
       for (const result of targets) result.error = safeError(error)
     }
+  }
+  for (const result of [...report.accounts, ...report.skills, ...report.mcpServers]) {
+    if (result.error === 'The bot import failed. Please try again.') result.errorCode = 'import-failed'
   }
   return report
 }

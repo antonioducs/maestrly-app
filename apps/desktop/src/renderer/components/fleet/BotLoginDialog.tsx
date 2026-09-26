@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { closeBotLogin, createLoginOwnership } from '@/lib/fleet/provisioning'
+import { closeBotLogin, createLoginOwnership, provisioningErrorText } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
 type LoginResult = 'completed' | 'cancelled' | 'failed'
@@ -265,7 +265,7 @@ export function BotLoginDialog({
         )}
         {error && (
           <p role="alert" className="text-sm text-destructive">
-            {error}
+            {provisioningErrorText(error, t)}
           </p>
         )}
         {(failed || (!attempt && error)) && (

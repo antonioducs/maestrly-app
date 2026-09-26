@@ -356,3 +356,16 @@ it.each([
   })
   expect(response.apiKeys[0].baseURL).toBe(baseURL)
 })
+
+it('tags Mac-generated import failures while preserving provider diagnostics', async () => {
+  const call = vi.fn()
+  const report = await importFromMac({ call } as unknown as FleetClientService, 'bot', {
+    apiKeyIds: ['missing'],
+    copyIds: [],
+    skillNames: ['missing'],
+    mcpServerIds: ['missing'],
+  })
+  expect(report.accounts[0]).toMatchObject({ errorCode: 'account-missing' })
+  expect(report.skills[0]).toMatchObject({ errorCode: 'skill-missing' })
+  expect(report.mcpServers[0]).toMatchObject({ errorCode: 'mcp-unavailable' })
+})

@@ -174,3 +174,23 @@ it('refreshes provisioning for account membership, connection and status changes
   expect(botProvisioningKey({ ...bot, accounts: { ...bot.accounts, providers: [] } })).not.toBe(key)
   expect(botProvisioningKey({ ...bot, status: 'working' } as FleetBot)).not.toBe(key)
 })
+
+it('translates local provisioning codes and keeps unknown provider errors', async () => {
+  const { provisioningErrorText } = await import('../../src/renderer/lib/fleet/provisioning')
+  const en = (await import('../../src/shared/i18n/en/fleet')).default
+  const pt = (await import('../../src/shared/i18n/pt-BR/fleet')).default
+  const translate = (catalog: typeof en | typeof pt) => (key: string) => {
+    const code = key.replace('provisioning.error.', '') as keyof typeof en.provisioning.error
+    return catalog.provisioning.error[code]
+  }
+  expect(Object.keys(en.provisioning.error)).toEqual(Object.keys(pt.provisioning.error))
+  for (const code of Object.keys(en.provisioning.error)) {
+    expect(provisioningErrorText('raw', translate(pt), code)).toBe(translate(pt)('provisioning.error.' + code))
+    expect(provisioningErrorText('raw', translate(en), code)).toBe(translate(en)('provisioning.error.' + code))
+  }
+  expect(provisioningErrorText('[fleet:login-page-unavailable] unavailable', translate(pt))).toBe(
+    pt.provisioning.error['login-page-unavailable']
+  )
+  expect(provisioningErrorText('Provider rejected this account', translate(pt))).toBe('Provider rejected this account')
+  expect(provisioningErrorText('Future error', translate(pt), 'future-code')).toBe('Future error')
+})

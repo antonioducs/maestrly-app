@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   emptyImportChoice,
   settleMacImport,
+  provisioningErrorText,
   hasImportChoice,
   importGroups,
   recommendedImportChoice,
@@ -80,7 +81,10 @@ export function MacImportFlow({
           {(['accounts', 'skills', 'mcpServers'] as const).flatMap((group) =>
             report[group].map((item) => (
               <li key={`${group}:${item.id}`} className="rounded border border-border p-2 text-sm">
-                {item.name} · {t(`provisioning.outcome.${item.outcome}`, { error: item.error })}
+                {item.name} ·{' '}
+                {t(`provisioning.outcome.${item.outcome}`, {
+                  error: provisioningErrorText(item.error, t, item.errorCode),
+                })}
               </li>
             ))
           )}
@@ -88,7 +92,7 @@ export function MacImportFlow({
       )}
       {error && (
         <p role="alert" className="text-sm text-destructive">
-          {error}
+          {provisioningErrorText(error, t)}
         </p>
       )}
       {!settled && (
@@ -145,7 +149,7 @@ export function MacImportDialog({
         </DialogHeader>
         {error && (
           <p role="alert" className="text-sm text-destructive">
-            {error}
+            {provisioningErrorText(error, t)}
           </p>
         )}
         {inventory &&

@@ -37,6 +37,7 @@ export interface MacImportItemResult {
   name: string
   outcome: 'added' | 'updated' | 'unchanged' | 'failed'
   error: string | null
+  errorCode?: MacProvisioningErrorCode
 }
 export interface MacImportReport {
   accounts: MacImportItemResult[]
@@ -54,4 +55,27 @@ export function provisioningAccountBaseURL(value: string | null | undefined): st
   } catch {
     return null
   }
+}
+
+export const macProvisioningErrorCodes = [
+  'account-missing',
+  'skill-missing',
+  'mcp-unavailable',
+  'import-failed',
+  'missing-result',
+  'too-large',
+  'file-too-large',
+  'path-too-long',
+  'too-many-files',
+  'no-skill-md',
+  'unreadable',
+  'login-unexpected-page',
+  'login-cancelled',
+  'login-page-unavailable',
+] as const
+export type MacProvisioningErrorCode = (typeof macProvisioningErrorCodes)[number]
+
+/** Electron preserves error messages, but drops custom Error properties across invoke. */
+export function macProvisioningError(code: MacProvisioningErrorCode, message: string): Error {
+  return new Error(`[fleet:${code}] ${message}`)
 }

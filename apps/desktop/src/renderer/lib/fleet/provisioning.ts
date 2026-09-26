@@ -1,3 +1,4 @@
+import { macProvisioningErrorCodes } from '../../../shared/fleet-provisioning'
 import { useCallback, useEffect, useState } from 'react'
 import type { FleetBot, FleetBotAccounts, FleetBotSkills, FleetBotMcpServers } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection } from '../../../shared/fleet-provisioning'
@@ -194,4 +195,14 @@ export function botProvisioningKey(bot: Pick<FleetBot, 'accounts' | 'status'>): 
     bot.accounts.providers.map((provider) => provider.id).sort(),
     bot.status,
   ])
+}
+
+export function provisioningErrorText(
+  message: string | null,
+  translate: (key: string) => string,
+  errorCode?: string
+): string {
+  const code = errorCode ?? message?.match(/\[fleet:([a-z-]+)\]/)?.[1]
+  if (macProvisioningErrorCodes.some((known) => known === code)) return translate('provisioning.error.' + code)
+  return message ?? ''
 }

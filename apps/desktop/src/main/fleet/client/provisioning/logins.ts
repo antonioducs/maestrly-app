@@ -1,3 +1,4 @@
+import { macProvisioningError } from '../../../../shared/fleet-provisioning'
 import { shell } from 'electron'
 import {
   fleetLoginAttemptSchema,
@@ -30,7 +31,8 @@ let generation = 0
 const unexpected = 'The bot returned a sign-in page that is not from the provider.'
 function validate(attempt: FleetLoginAttempt): void {
   const urls = [attempt.browser?.authUrl, attempt.device?.verificationUrl, attempt.manual?.url]
-  if (urls.some((url) => url && !fleetLoginUrlAllowed(attempt.kind, url))) throw new Error(unexpected)
+  if (urls.some((url) => url && !fleetLoginUrlAllowed(attempt.kind, url)))
+    throw macProvisioningError('login-unexpected-page', unexpected)
   if (attempt.browser) {
     const callback = fleetLoginCallbackFromAuthUrl(attempt.browser.authUrl)
     if (
@@ -41,7 +43,7 @@ function validate(attempt: FleetLoginAttempt): void {
       (attempt.kind === 'claude' && callback.path !== '/callback') ||
       attempt.kind === 'grok'
     )
-      throw new Error(unexpected)
+      throw macProvisioningError('login-unexpected-page', unexpected)
   }
 }
 async function finish(login: ActiveLogin): Promise<void> {
@@ -99,11 +101,11 @@ export async function startBotLogin(
   let registered: ActiveLogin | undefined
   const params = { id: botId }
   try {
-    if (epoch !== generation) throw new Error('Sign-in was cancelled.')
+    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     attempt = fleetLoginAttemptSchema.parse(await fleet.call('botLoginStart', { params, body }))
     validate(attempt)
-    if (attempt.kind !== body.kind) throw new Error(unexpected)
-    if (epoch !== generation) throw new Error('Sign-in was cancelled.')
+    if (attempt.kind !== body.kind) throw macProvisioningError('login-unexpected-page', unexpected)
+    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     let relayState: 'listening' | 'unavailable' | 'none' = 'none'
     if (attempt.browser) {
       const { callback } = attempt.browser
@@ -133,13 +135,13 @@ export async function startBotLogin(
           await fleet.call('botLoginCancel', { params: { ...params, lid: attempt.loginId } })
           attempt = undefined
           release()
-          if (epoch !== generation) throw new Error('Sign-in was cancelled.')
+          if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
           return await startBotLogin(fleet, botId, { ...body, method: 'device' })
         }
         relayState = 'unavailable'
       }
     }
-    if (epoch !== generation) throw new Error('Sign-in was cancelled.')
+    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     const current = attempt
     const timer = setTimeout(
       () => {
@@ -219,7 +221,7 @@ export async function reopenBotLogin(
       : target === 'device'
         ? attempt.device?.verificationUrl
         : attempt.manual?.url
-  if (!url) throw new Error('This sign-in page is unavailable.')
+  if (!url) throw macProvisioningError('login-page-unavailable', 'This sign-in page is unavailable.')
   await shell.openExternal(url)
 }
 export async function disposeBotLogins(): Promise<void> {
