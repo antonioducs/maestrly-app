@@ -353,6 +353,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   let subagentsEnabled = true
   let subagentProfilesEnabled = true
   let takeoverConflicts = 1
+  let rejectCancellation = false
   const memoryActivity = {
     seq: 2,
     at: now(),
@@ -362,10 +363,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     data: {},
   }
   let memoryActivityReady = false
-  const rendererPayloads: string[] = []
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
-    rendererPayloads.push(JSON.stringify(valid))
     const frame = `event: fleet\ndata: ${JSON.stringify(valid)}\n\n`
     for (const stream of streams) stream.write(frame)
   }
@@ -376,7 +375,6 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         route.method === request.method && new RegExp(`^${route.path.replace(/:[^/]+/g, '[^/]+')}$`).test(url.pathname)
     )
     const send = (status: number, value: unknown) => {
-      rendererPayloads.push(JSON.stringify(value))
       response.writeHead(status, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify(value))
     }
@@ -531,6 +529,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         const loginId = url.pathname.split('/')[5]
         const login = logins.get(loginId)!
         if (key === 'botLoginGet') login.polls++
+        if (key === 'botLoginCancel' && rejectCancellation) {
+          rejectCancellation = false
+          send(503, { code: 'UNAVAILABLE', message: 'Synthetic cancellation failure' })
+          return
+        }
         if (key === 'botLoginCancel') login.attempt.state = 'cancelled'
         else if (
           key === 'botLoginCode' ||
@@ -1085,7 +1088,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       const provider = await window.api.chatAddProvider({
         name: 'Mac fixture key',
         kind: 'openai',
-        baseURL: 'https://api.example.com/v1',
+        baseURL: 'https://fixture-user:fixture-password@api.example.com/v1?token=fixture-url-token#fixture-fragment',
         key: '',
       })
       if (!provider.id) throw new Error('No fixture provider')
@@ -1095,9 +1098,19 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         transport: 'stdio',
         command: 'node',
         args: ['fixture.mjs'],
+        env: { FIXTURE_TOKEN: 'fixture-mcp-secret' },
       })
       return window.api.fleetProvisioningInventory()
     })
+    for (const secret of [
+      'sk-e2e-provision',
+      'fixture-user',
+      'fixture-password',
+      'fixture-url-token',
+      'fixture-fragment',
+      'fixture-mcp-secret',
+    ])
+      expect(JSON.stringify(inventory)).not.toContain(secret)
     expect(inventory.apiKeys.some((item) => item.name === 'Mac fixture key')).toBe(true)
     expect(inventory.skills.some((item) => item.name === 'e2e-notes')).toBe(true)
     // A cached authenticated provider is synthetic; inventory scanning and all import IPCs remain real.
@@ -1118,6 +1131,31 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       'fleet-e2e-host'
     )
     await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
+    const rendererProvisioning = await page.evaluate(async () => {
+      const inventory = await window.api.fleetProvisioningInventory()
+      const report = await window.api.fleetImportFromMac('privacy-check', {
+        apiKeyIds: inventory.apiKeys.filter((item) => item.name === 'Mac fixture key').map((item) => item.id),
+        copyIds: [],
+        skillNames: ['e2e-notes'],
+        mcpServerIds: inventory.mcpServers.filter((item) => item.name === 'Mac fixture MCP').map((item) => item.id),
+      })
+      const accounts = await window.api.fleetBotAccounts('privacy-check')
+      return { inventory, report, accounts }
+    })
+    expect(rendererProvisioning.report.accounts[0].outcome).toBe('added')
+    expect(rendererProvisioning.accounts.apiKeys[0].baseURL).toBe('https://api.example.com/v1')
+    for (const secret of [
+      'sk-e2e-provision',
+      'fixture-user',
+      'fixture-password',
+      'fixture-url-token',
+      'fixture-fragment',
+      'fixture-mcp-secret',
+    ]) {
+      expect(JSON.stringify(rendererProvisioning)).not.toContain(secret)
+      expect(await page.content()).not.toContain(secret)
+    }
+
     await page.getByRole('tab', { name: 'Bots' }).click()
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
     await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
@@ -1515,6 +1553,29 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     const accountsSection = page.getByRole('region', { name: 'Contas do bot', exact: true })
     const resourcesSection = page.getByRole('region', { name: 'Skills e MCP', exact: true })
     await expect(accountsSection.getByText(/Mac fixture key.*…sion/)).toBeVisible()
+    const listRequests = () =>
+      requests.filter((item) => ['botAccountsList', 'botSkillsList', 'botMcpServersList'].includes(item.key)).length
+    const beforeResourceUpdates = listRequests()
+    const currentBot = bots.find((item) => item.id === 'new-bot')!
+    for (let index = 0; index < 4; index++) {
+      emit({
+        type: 'bot.updated',
+        at: now(),
+        bot: { ...currentBot, resources: { ...currentBot.resources, cpuPercent: index + 1 } },
+      })
+      await page.waitForTimeout(250)
+    }
+    expect(listRequests()).toBe(beforeResourceUpdates)
+
+    for (const secret of [
+      'sk-e2e-provision',
+      'fixture-user',
+      'fixture-password',
+      'fixture-url-token',
+      'fixture-fragment',
+      'fixture-mcp-secret',
+    ])
+      expect(await page.content()).not.toContain(secret)
     await accountsSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
     const importDialog = page.getByRole('dialog', { name: 'Trazer do seu Mac', exact: true })
     await expect(importDialog.getByText('Já no bot', { exact: true })).toBeVisible()
@@ -1553,6 +1614,39 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await claudeLogin.getByRole('button', { name: 'Pronto', exact: true }).click()
     await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
     occupiedPort = undefined
+    // Closing must not wait for a failed cancellation or keep polling the abandoned attempt.
+    rejectCancellation = true
+    await accountsSection.getByRole('button', { name: 'Entrar com Claude', exact: true }).click()
+    await expect(claudeLogin.getByText('Abrimos claude.ai no seu navegador. Entre e autorize.')).toBeVisible()
+    const abandonedId = [...logins.keys()].at(-1)!
+    await claudeLogin.getByRole('button', { name: 'Cancelar', exact: true }).click()
+    await expect(claudeLogin).toHaveCount(0)
+    await expect.poll(() => rejectCancellation).toBe(false)
+    const abandonedPolls = logins.get(abandonedId)!.polls
+
+    // A rejected IPC import still advances through the selected logins and can finish.
+    await app.evaluate(({ ipcMain }) => {
+      const channel = 'fleet:provisioning:import'
+      const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, (...args: unknown[]) => unknown> })
+        ._invokeHandlers
+      const original = handlers.get(channel)!
+      ipcMain.removeHandler(channel)
+      ipcMain.handle(channel, () => {
+        ipcMain.removeHandler(channel)
+        ipcMain.handle(channel, original)
+        throw new Error('Synthetic import rejection')
+      })
+    })
+    await accountsSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
+    await importDialog.getByRole('checkbox', { name: 'Grok', exact: true }).check()
+    await importDialog.getByRole('button', { name: 'Enviar para o bot', exact: true }).click()
+    await expect(grokLogin.getByText('Conectado como owner@example.com')).toBeVisible()
+    await grokLogin.getByRole('button', { name: 'Pronto', exact: true }).click()
+    await expect(importDialog.getByRole('alert')).toContainText('Synthetic import rejection')
+    await importDialog.getByRole('button', { name: 'Concluir', exact: true }).click()
+    await expect(importDialog).toHaveCount(0)
+    expect(logins.get(abandonedId)!.polls).toBe(abandonedPolls)
+
     for (const name of ['Grok', 'Claude', 'Mac fixture key']) {
       await accountsSection
         .getByRole('listitem')
@@ -1608,7 +1702,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       baseURL: 'http://fake-model:8080/v1',
     })
     await expect(accountsSection.getByText(/Fake model.*fake-model:8080.*…-123/)).toBeVisible()
-    expect(rendererPayloads.some((payload) => payload.includes(apiKey))).toBe(false)
+    expect(JSON.stringify(await page.evaluate(() => window.api.fleetBotAccounts('new-bot')))).not.toContain(apiKey)
+    expect(await page.content()).not.toContain(apiKey)
     await expect(page.getByLabel('Chave de API')).toHaveValue('')
     await page.getByRole('button', { name: 'Remover', exact: true }).click()
     await page
