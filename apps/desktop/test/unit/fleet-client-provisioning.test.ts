@@ -162,7 +162,7 @@ describe('Mac provisioning', () => {
 })
 
 describe('Mac import error privacy', () => {
-  it.each(['arg-token-12345678', 'header-token-12345678', 'query-token-12345678', 'env-token-12345678'])(
+  it.each(['arg-ABCD98765432', 'hdr-ZYXW24681357', 'url-LMNO13579246', 'env-PQRS86427531'])(
     'hides partial echoes of %s',
     async (echo) => {
       mocks.mcp.mockReturnValueOnce([
@@ -171,10 +171,10 @@ describe('Mac import error privacy', () => {
           name: 'Tools',
           transport: 'http',
           enabled: true,
-          url: 'https://example.test/?key=query-token-12345678',
-          headers: { Authorization: 'Bearer header-token-12345678' },
-          args: ['--token=arg-token-12345678'],
-          env: { TOKEN: 'env-token-12345678' },
+          url: 'https://example.test/?key=url-LMNO13579246',
+          headers: { Authorization: 'Bearer hdr-ZYXW24681357' },
+          args: ['--token=arg-ABCD98765432'],
+          env: { TOKEN: 'env-PQRS86427531' },
         },
       ] as unknown as ReturnType<typeof mocks.mcp>)
       const call = vi.fn(async () => ({
