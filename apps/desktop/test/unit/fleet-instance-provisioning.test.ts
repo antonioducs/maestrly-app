@@ -252,6 +252,21 @@ it('advertises provisioning in runtime status', async () => {
   expect((await runtime.status()).capabilities).toEqual(['provisioning'])
 })
 
+it.each(['   ', ''])(
+  'rejects empty key %j without changing an existing provider and trims matching keys',
+  async (key) => {
+    const first = await outcome(api)
+    expect(await outcome({ ...api, key })).toMatchObject({ outcome: 'failed', error: 'The API key is empty.' })
+    expect(getApiKey(first.target!)).toBe(api.key)
+    expect((await outcome({ ...api, key: '  ' + api.key + '  ' })).outcome).toBe('unchanged')
+  }
+)
+it.each(['abcd', '12345678901', '123456789012'])('limits the hint for key %s', async (key) => {
+  await outcome({ ...api, key })
+  expect(listBotAccounts({ connectedProviderIds: new Set(), signingIn: [] }).apiKeys[0].keyHint).toBe(
+    key.length < 12 ? null : key.slice(-4)
+  )
+})
 it('refuses MCP details when encryption fails without changing raw settings', () => {
   const before = getAppSetting('chat.mcpServers')
   state.writable = false

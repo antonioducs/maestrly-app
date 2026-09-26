@@ -71,7 +71,7 @@ export function listBotAccounts(input: {
         name: provider.name,
         kind,
         baseURL: provider.baseURL ?? null,
-        keyHint: key.slice(-4),
+        keyHint: key.length < 12 ? null : key.slice(-4),
       })
   }
   const subscriptions: FleetBotAccounts['subscriptions'] = []
@@ -111,6 +111,8 @@ async function importAccount(
 ): Promise<{ target: string; outcome: 'added' | 'updated' | 'unchanged' }> {
   if (apiKeyStorageMode() !== 'secure') throw new Error(secureError)
   if (item.type === 'api-key') {
+    const key = item.key.trim()
+    if (!key) throw new Error('The API key is empty.')
     const baseURL = normalizedUrl(
       item.baseURL ?? (item.kind === 'anthropic' ? 'https://api.anthropic.com/v1' : 'https://api.openai.com/v1')
     )
@@ -118,13 +120,13 @@ async function importAccount(
       (provider) =>
         getProviderKind(provider) === item.kind && provider.baseURL && normalizedUrl(provider.baseURL) === baseURL
     )
-    const same = candidates.find((provider) => getApiKey(provider.id) === item.key)
+    const same = candidates.find((provider) => getApiKey(provider.id) === key)
     if (same) return { target: same.id, outcome: 'unchanged' }
     const existing = candidates.find((provider) => provider.name === item.name)
     const provider = existing ?? addProvider({ name: item.name, kind: item.kind, baseURL })
     const previous = existing ? getApiKey(existing.id) : null
     try {
-      if (setApiKey(provider.id, item.key) !== 'secure') throw new Error(secureError)
+      if (setApiKey(provider.id, key) !== 'secure') throw new Error(secureError)
     } catch (error) {
       if (existing && previous) setApiKey(provider.id, previous)
       else {
@@ -184,7 +186,7 @@ export async function importBotAccounts(items: readonly FleetAccountImportItem[]
         index,
         target: null,
         outcome: 'failed',
-        error: message.split(secret).join('[redacted]').slice(0, 300),
+        error: (secret ? message.split(secret).join('[redacted]') : message).slice(0, 300),
       })
     }
   }
