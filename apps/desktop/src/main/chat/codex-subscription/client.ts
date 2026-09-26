@@ -343,6 +343,10 @@ export class CodexAppServerClient {
     return this.request('account/login/start', params, options)
   }
 
+  cancelAccountLogin(params: { loginId: string }, options?: CodexRequestOptions): Promise<CodexEmptyResponse> {
+    return this.request('account/login/cancel', params, options)
+  }
+
   logoutAccount(options?: CodexRequestOptions): Promise<CodexEmptyResponse> {
     return this.request('account/logout', undefined, options)
   }

@@ -126,6 +126,8 @@ export interface CodexSubscriptionContextWindowObservation extends CodexContextW
   effectiveContextWindowPercent: number | null
 }
 
+export type CodexLoginMethod = 'browser' | 'device'
+
 export type CodexSubscriptionLoginState = 'pending' | 'succeeded' | 'failed'
 
 export interface CodexSubscriptionLoginCompletion {
@@ -137,6 +139,9 @@ export interface CodexSubscriptionLoginCompletion {
 export interface CodexSubscriptionLoginAttempt {
   loginId: string
   authUrl: string | null
+  method: CodexLoginMethod
+  verificationUrl: string | null
+  userCode: string | null
   state: CodexSubscriptionLoginState
   completion: CodexSubscriptionLoginCompletion | null
 }
@@ -167,6 +172,9 @@ interface LoginWaiter {
 interface LoginRecord {
   loginId: string
   authUrl: string | null
+  method: CodexLoginMethod
+  verificationUrl: string | null
+  userCode: string | null
   completion: CodexSubscriptionLoginCompletion | null
   waiters: Set<LoginWaiter>
 }
@@ -387,13 +395,9 @@ function parseModel(value: unknown): CodexSubscriptionModel {
       value.supports_experimental_context
     ),
     preferWebsockets: publishedBoolean(value.preferWebsockets, value.prefer_websockets),
-    supportsParallelToolCalls: publishedBoolean(
-      value.supportsParallelToolCalls,
-      value.supports_parallel_tool_calls
-    ),
+    supportsParallelToolCalls: publishedBoolean(value.supportsParallelToolCalls, value.supports_parallel_tool_calls),
     toolMode: publishedString(value.toolMode, value.tool_mode),
-    multiAgentVersion:
-      positiveInteger(value.multiAgentVersion) ?? positiveInteger(value.multi_agent_version),
+    multiAgentVersion: positiveInteger(value.multiAgentVersion) ?? positiveInteger(value.multi_agent_version),
     useResponsesLite: publishedBoolean(value.useResponsesLite, value.use_responses_lite),
     supportedVerbosity: stringArray(value.supportedVerbosity ?? value.supported_verbosity),
     defaultVerbosity: publishedString(value.defaultVerbosity, value.default_verbosity),
@@ -406,6 +410,9 @@ function loginSnapshot(record: LoginRecord): CodexSubscriptionLoginAttempt {
   return {
     loginId: record.loginId,
     authUrl: record.authUrl,
+    method: record.method,
+    verificationUrl: record.verificationUrl,
+    userCode: record.userCode,
     state: record.completion ? (record.completion.success ? 'succeeded' : 'failed') : 'pending',
     completion: record.completion ? { ...record.completion } : null,
   }
@@ -569,26 +576,53 @@ export class CodexSubscriptionManager {
     }
   }
 
-  async startLogin(): Promise<CodexSubscriptionLoginAttempt> {
+  peekStatus(): CodexSubscriptionStatus | null {
+    return this.statusCache
+  }
+
+  async startLogin(options: { method?: CodexLoginMethod } = {}): Promise<CodexSubscriptionLoginAttempt> {
+    const method = options.method ?? 'browser'
     const client = await this.getClient()
-    const response = await client.startAccountLogin({
-      type: 'chatgpt',
-      useHostedLoginSuccessPage: true,
-      appBrand: 'chatgpt',
-    })
-    if (response.type !== 'chatgpt') {
-      throw new CodexAppServerProtocolError(`Expected ChatGPT login response, received ${response.type}`)
+    const response = await client.startAccountLogin(
+      method === 'device'
+        ? { type: 'chatgptDeviceCode' }
+        : { type: 'chatgpt', useHostedLoginSuccessPage: true, appBrand: 'chatgpt' }
+    )
+    if (
+      (method === 'device' && response.type !== 'chatgptDeviceCode') ||
+      (method === 'browser' && response.type !== 'chatgpt')
+    ) {
+      throw new CodexAppServerProtocolError(`Expected ${method} login response, received ${response.type}`)
+    }
+    if (response.type !== 'chatgpt' && response.type !== 'chatgptDeviceCode') {
+      throw new CodexAppServerProtocolError('Expected ChatGPT login response')
     }
 
     const record = this.loginRecords.get(response.loginId) ?? {
       loginId: response.loginId,
       authUrl: null,
+      method: 'browser' as CodexLoginMethod,
+      verificationUrl: null,
+      userCode: null,
       completion: null,
       waiters: new Set<LoginWaiter>(),
     }
-    record.authUrl = response.authUrl
+    record.method = method
+    record.authUrl = response.type === 'chatgpt' ? response.authUrl : null
+    record.verificationUrl = response.type === 'chatgptDeviceCode' ? response.verificationUrl : null
+    record.userCode = response.type === 'chatgptDeviceCode' ? response.userCode : null
     this.loginRecords.set(response.loginId, record)
     return loginSnapshot(record)
+  }
+
+  async cancelLogin(loginId: string): Promise<void> {
+    const record = this.loginRecords.get(loginId)
+    if (!record || record.completion) return
+    const client = await this.getClient()
+    await client.cancelAccountLogin({ loginId })
+    if (!record.completion) {
+      this.handleLoginCompleted({ loginId, success: false, error: 'Codex login was cancelled' })
+    }
   }
 
   getLoginStatus(loginId: string): CodexSubscriptionLoginAttempt | null {
@@ -1223,6 +1257,9 @@ export class CodexSubscriptionManager {
     const record = this.loginRecords.get(params.loginId) ?? {
       loginId: params.loginId,
       authUrl: null,
+      method: 'browser' as CodexLoginMethod,
+      verificationUrl: null,
+      userCode: null,
       completion: null,
       waiters: new Set<LoginWaiter>(),
     }
