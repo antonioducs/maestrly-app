@@ -22,6 +22,27 @@ function requireBot(ctx: GatewayContext, id: string) {
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
 }
+function requireProvisioning(ctx: GatewayContext, id: string) {
+  const status = ctx.lifecycle.statuses.get(id)
+  if (status && !status.capabilities.includes(FLEET_PROVISIONING_FEATURE))
+    throw new GatewayError('CONFLICT', 'Restart this bot to update it before configuring it from the Mac.')
+}
+function recordConfiguration(
+  ctx: GatewayContext,
+  id: string,
+  res: ServerResponse,
+  counts: Partial<Record<'accounts' | 'skills' | 'mcpServers' | 'removed', number>>
+) {
+  if (!Object.values(counts).some((count) => count > 0)) return
+  const device = ctx.auth.device(res.req?.headers.authorization)
+  ctx.lifecycle.recordActivity(id, 'bot_configured', device.name, {
+    accounts: 0,
+    skills: 0,
+    mcpServers: 0,
+    removed: 0,
+    ...counts,
+  })
+}
 function number(value: string | null, max: number, defaultValue: number) {
   if (value === null) return defaultValue
   const parsed = Number(value)
@@ -150,6 +171,82 @@ export async function publicRoute(
         body: await ctx.lifecycle.instanceFor(id).addApiKeyAccount(body as FleetAddApiKeyAccountRequest),
         status: 201,
       }
+    case 'botAccountsList':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).accountsList() }
+    case 'botLoginStart':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).loginStart(body) }
+    case 'botLoginGet':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).loginGet(params.lid) }
+    case 'botLoginCallback':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).loginCallback(params.lid, body) }
+    case 'botLoginCode':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).loginCode(params.lid, body) }
+    case 'botSkillsList':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).skillsList() }
+    case 'botMcpServersList':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      return { body: await ctx.lifecycle.instanceFor(id).mcpServersList() }
+    case 'botSubscriptionRemove':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      await ctx.lifecycle.instanceFor(id).subscriptionRemove(params.kind, params.slot)
+      recordConfiguration(ctx, id, res, { removed: 1 })
+      return { status: 204 }
+    case 'botLoginCancel':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      await ctx.lifecycle.instanceFor(id).loginCancel(params.lid)
+      return { status: 204 }
+    case 'botSkillRemove':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      await ctx.lifecycle.instanceFor(id).skillRemove(params.name)
+      recordConfiguration(ctx, id, res, { removed: 1 })
+      return { status: 204 }
+    case 'botMcpServerRemove':
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      await ctx.lifecycle.instanceFor(id).mcpServerRemove(params.sid)
+      recordConfiguration(ctx, id, res, { removed: 1 })
+      return { status: 204 }
+    case 'botAccountsImport': {
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      const result = await ctx.lifecycle.instanceFor(id).accountsImport(body)
+      recordConfiguration(ctx, id, res, {
+        accounts: result.results.filter((item) => item.outcome === 'added' || item.outcome === 'updated').length,
+      })
+      return { body: result }
+    }
+    case 'botMcpServersImport': {
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      const result = await ctx.lifecycle.instanceFor(id).mcpServersImport(body)
+      recordConfiguration(ctx, id, res, {
+        mcpServers: result.results.filter((item) => item.outcome === 'added' || item.outcome === 'updated').length,
+      })
+      return { body: result }
+    }
+    case 'botSkillInstall': {
+      requireBot(ctx, id)
+      requireProvisioning(ctx, id)
+      const result = await ctx.lifecycle.instanceFor(id).skillInstall(body)
+      recordConfiguration(ctx, id, res, { skills: result.outcome === 'added' || result.outcome === 'updated' ? 1 : 0 })
+      return { body: result }
+    }
     case 'botAccountRemove':
       await ctx.lifecycle.instanceFor(id).removeAccount(params.providerId)
       return { status: 204 }

@@ -7,6 +7,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_MESSAGE_BODY_MAX,
+  FLEET_SKILL_BODY_MAX,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
   type FleetRoute,
@@ -171,7 +172,14 @@ export function createGatewayServers(ctx: GatewayContext) {
       if (!internal && match.key !== 'meta' && match.key !== 'pair') ctx.auth.device(req.headers.authorization)
       const body = match.route.body
         ? match.route.body.parse(
-            await readBody(req, !internal && match.key === 'botMessageSend' ? FLEET_MESSAGE_BODY_MAX : 1024 * 1024)
+            await readBody(
+              req,
+              !internal && match.key === 'botSkillInstall'
+                ? FLEET_SKILL_BODY_MAX
+                : !internal && match.key === 'botMessageSend'
+                  ? FLEET_MESSAGE_BODY_MAX
+                  : 1024 * 1024
+            )
           )
         : undefined
       if (internal) {

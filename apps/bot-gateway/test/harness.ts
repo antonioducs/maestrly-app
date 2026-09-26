@@ -6,6 +6,8 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_PROTOCOL_HEADER,
+  FLEET_INSTANCE_ROUTES,
+  type FleetImportResults,
   fleetInstanceProfileSchema,
   fleetInstanceInputSchema,
   fleetInstanceHoldRequestSchema,
@@ -46,6 +48,43 @@ async function fake() {
   const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
   const memoryRequests: unknown[] = []
+  const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
+  const provisioning = {
+    capabilities: ['provisioning'],
+    results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
+    skill: { name: 'x', outcome: 'added' },
+    failure: null as { code: string; message: string } | null,
+    login: {
+      loginId: 'login-test',
+      kind: 'claude',
+      accountId: null,
+      method: 'browser',
+      state: 'pending',
+      expiresAt: '2026-09-25T12:15:00.000Z',
+      browser: { authUrl: 'https://claude.ai/oauth/authorize', callback: { port: 4567, path: '/callback' } },
+      device: null,
+      manual: null,
+      account: null,
+      error: null,
+    },
+    callback: { status: 302, location: 'https://claude.ai', contentType: null, body: '' },
+  }
+  const provisioningKeys = [
+    'accountsList',
+    'accountsImport',
+    'subscriptionRemove',
+    'loginStart',
+    'loginGet',
+    'loginCallback',
+    'loginCode',
+    'loginCancel',
+    'skillsList',
+    'skillInstall',
+    'skillRemove',
+    'mcpServersList',
+    'mcpServersImport',
+    'mcpServerRemove',
+  ] as const
   const memories: import('@maestrly/bot-fleet-protocol').FleetBotMemory[] = [
     {
       id: 'm1',
@@ -78,6 +117,7 @@ async function fake() {
       return res.end(png)
     }
     const status = {
+      capabilities: provisioning.capabilities,
       appVersion: '1.0',
       protocol: 1,
       ready: true,
@@ -97,10 +137,44 @@ async function fake() {
     if (['POST', 'PUT', 'PATCH'].includes(req.method ?? '')) {
       const chunks: Buffer[] = []
       for await (const chunk of req) chunks.push(Buffer.from(chunk))
-      body = JSON.parse(Buffer.concat(chunks).toString())
+      const raw = Buffer.concat(chunks).toString()
+      body = raw ? JSON.parse(raw) : undefined
     }
     try {
       const url = new URL(req.url!, 'http://instance')
+      const provisioningKey = provisioningKeys.find((key) => {
+        const route = FLEET_INSTANCE_ROUTES[key]
+        return (
+          route.method === req.method &&
+          new RegExp('^' + route.path.replace(/:[A-Za-z]+/g, '[^/]+') + '$').test(url.pathname)
+        )
+      })
+      if (provisioningKey) {
+        provisioningRequests.push({ method: req.method!, path: url.pathname, body })
+        if (provisioning.failure) return send(409, provisioning.failure)
+        switch (provisioningKey) {
+          case 'accountsList':
+            return send(200, { apiKeys: [], subscriptions: [] })
+          case 'skillsList':
+            return send(200, { skills: [] })
+          case 'mcpServersList':
+            return send(200, { servers: [] })
+          case 'accountsImport':
+          case 'mcpServersImport':
+            return send(200, provisioning.results)
+          case 'skillInstall':
+            return send(200, provisioning.skill)
+          case 'loginStart':
+          case 'loginGet':
+          case 'loginCode':
+            return send(200, provisioning.login)
+          case 'loginCallback':
+            return send(200, provisioning.callback)
+          default:
+            res.writeHead(204)
+            return res.end()
+        }
+      }
       if (url.pathname === '/v1/memories' && req.method === 'GET') {
         const status = url.searchParams.get('status') ?? 'active'
         memoryRequests.push({ method: 'GET', status })
@@ -180,6 +254,8 @@ async function fake() {
     receipts,
     memories,
     memoryRequests,
+    provisioning,
+    provisioningRequests,
   }
 }
 

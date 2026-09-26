@@ -13,6 +13,13 @@ import {
   type FleetAddApiKeyAccountRequest,
   type FleetConversationCallRequest,
   type FleetUiOpenRequest,
+  type FleetAccountImportRequest,
+  type FleetImportResults,
+  type FleetLoginStartRequest,
+  type FleetLoginCallbackRequest,
+  type FleetSkillInstallRequest,
+  type FleetSkillInstallResponse,
+  type FleetMcpImportRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -28,11 +35,12 @@ export class InstanceClient {
     key: K,
     params: Record<string, string> = {},
     query?: Record<string, string | number | undefined>,
-    body?: unknown
+    body?: unknown,
+    timeoutMs = this.timeoutMs
   ): Promise<any> {
     const route = FLEET_INSTANCE_ROUTES[key]
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(this.origin + buildPath(route.path, params, query), {
         method: route.method,
@@ -98,6 +106,48 @@ export class InstanceClient {
   }
   addApiKeyAccount(body: FleetAddApiKeyAccountRequest) {
     return this.call('apiKeyAccountAdd', {}, undefined, body)
+  }
+  accountsList() {
+    return this.call('accountsList')
+  }
+  accountsImport(body: FleetAccountImportRequest): Promise<FleetImportResults> {
+    return this.call('accountsImport', {}, undefined, body)
+  }
+  subscriptionRemove(kind: string, slot: string) {
+    return this.call('subscriptionRemove', { kind, slot })
+  }
+  loginStart(body: FleetLoginStartRequest) {
+    return this.call('loginStart', {}, undefined, body, 30000)
+  }
+  loginGet(lid: string) {
+    return this.call('loginGet', { lid })
+  }
+  loginCallback(lid: string, body: FleetLoginCallbackRequest) {
+    return this.call('loginCallback', { lid }, undefined, body)
+  }
+  loginCode(lid: string, body: { code: string }) {
+    return this.call('loginCode', { lid }, undefined, body)
+  }
+  loginCancel(lid: string) {
+    return this.call('loginCancel', { lid })
+  }
+  skillsList() {
+    return this.call('skillsList')
+  }
+  skillInstall(body: FleetSkillInstallRequest): Promise<FleetSkillInstallResponse> {
+    return this.call('skillInstall', {}, undefined, body, 60000)
+  }
+  skillRemove(name: string) {
+    return this.call('skillRemove', { name })
+  }
+  mcpServersList() {
+    return this.call('mcpServersList')
+  }
+  mcpServersImport(body: FleetMcpImportRequest): Promise<FleetImportResults> {
+    return this.call('mcpServersImport', {}, undefined, body)
+  }
+  mcpServerRemove(sid: string) {
+    return this.call('mcpServerRemove', { sid })
   }
   removeAccount(providerId: string) {
     return this.call('accountRemove', { providerId })
