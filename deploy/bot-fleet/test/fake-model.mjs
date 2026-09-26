@@ -77,6 +77,19 @@ function reply(req) {
   }
   if (text.includes('launch code') && text.includes('<maestrly-memory kind="recall">') && text.includes('BLUEBIRD'))
     return { text: 'E2E-RECALL-BLUEBIRD' }
+  if (text.includes('E2E-PROVISION')) {
+    const context = messages.filter((entry) => entry.role === 'system').map((entry) => contentText(entry.content)).join('\n')
+    if (!context.includes('e2e-toolkit')) return { text: 'E2E-PROVISION-NO-SKILL' }
+    if (messages.slice(messages.lastIndexOf(lastUser) + 1).some((entry) => entry.role === 'tool' && contentText(entry.content).includes('E2E-ECHO:ping')))
+      return { text: 'E2E-PROVISION-OK' }
+    if (toolReturned) return { text: 'E2E-PROVISION-ECHO-FAILED' }
+    if (req.tools?.some((entry) => entry.function?.name?.endsWith('__echo')))
+      return validatedTool(req, '__echo', { text: 'ping' })
+    // Newly imported servers have no cached declarations, so use the cold-catalog entry point.
+    if (req.tools?.some((entry) => entry.function?.name === 'mcp_call'))
+      return validatedTool(req, 'mcp_call', { server: 'e2e-echo', tool: 'echo', arguments: { text: 'ping' } })
+    return { text: 'E2E-PROVISION-NO-MCP' }
+  }
   const start = messages.findLastIndex((entry) => entry.role === 'user' && JSON.stringify(entry.content).includes('E2E-START'))
   if (start < 0) return { text: 'E2E-IDLE' }
   const completed = messages.slice(start + 1).filter((entry) => entry.role === 'tool').length

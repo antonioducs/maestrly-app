@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { createWriteStream, mkdirSync } from 'node:fs'
+import { createWriteStream, mkdirSync, readFileSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -389,6 +389,40 @@ async function main() {
     assert.equal(value.appVersion, version)
   }
   pass('two bot containers', 'running, setup, appVersion ' + version)
+  const toolchainStarted = Date.now()
+  const binaries =
+    'node npm npx corepack pnpm python python3 pip uv uvx mise git ssh gcc make rg fd jq sqlite3 zip unzip'.split(' ')
+  const plainShell = (
+    await docker([
+      'exec',
+      botNames[1],
+      '/bin/sh',
+      '-c',
+      `set -eu; for binary in ${binaries.join(' ')}; do command -v "$binary"; done; node -v; npm config get prefix; python3 -m venv /tmp/e2e-venv; /tmp/e2e-venv/bin/python -c 'print(42)'`,
+    ])
+  ).stdout
+    .trim()
+    .split('\n')
+  assert.equal(plainShell.length, binaries.length + 3)
+  for (const line of plainShell.slice(0, binaries.length)) assert.ok(line.startsWith('/'))
+  const nodeVersion = plainShell[binaries.length]
+  assert.match(nodeVersion, /^v22\./)
+  assert.equal(plainShell[binaries.length + 1], '/home/bot/.local')
+  assert.equal(plainShell[binaries.length + 2], '42')
+  const loginShell = (
+    await docker(['exec', botNames[1], 'bash', '-lc', 'command -v node uv mise; echo $NPM_CONFIG_PREFIX'])
+  ).stdout
+    .trim()
+    .split('\n')
+  assert.equal(loginShell.length, 4)
+  for (const line of loginShell.slice(0, 3)) assert.ok(line.startsWith('/'))
+  assert.equal(loginShell[3], '/home/bot/.local')
+  timings.botToolchainMs = Date.now() - toolchainStarted
+  pass(
+    'bot toolchain',
+    'node ' + nodeVersion + ', python venv, uv, mise, git and gcc on PATH in plain and login shells'
+  )
+
   for (const vncPort of [5900, 5901]) {
     const attempt = await docker(
       ['exec', botNames[0], 'bash', '-c', `timeout 3 bash -c 'echo >/dev/tcp/${botNames[1]}/${vncPort}'`],
@@ -588,6 +622,98 @@ async function main() {
   assert.ok(imageUser?.images?.length, 'owner image has a transcript ref')
   assert.deepEqual(await fleetImage(scoutId, imageUser.images[0].id), smallPng)
   pass('conversation images and usage', 'owner PNG reached the model, image refs download, usage is present')
+  const provisioningStarted = Date.now()
+  const provisioningRoute = '/v1/bots/' + scoutId
+  assert.ok((await request('GET', '/v1/meta')).features.includes('provisioning'))
+  await poll('Scout provisioning capability', async () => (await bot(scoutId)).capabilities.includes('provisioning'))
+  const replay = await request('POST', provisioningRoute + '/accounts/import', {
+    items: [
+      { type: 'api-key', kind: 'openai', name: 'E2E Model', key: modelKey, baseURL: 'http://' + fakeName + ':8787/v1' },
+    ],
+  })
+  assert.equal(replay.results.length, 1)
+  assert.equal(replay.results[0].outcome, 'unchanged')
+  const skill = {
+    name: 'e2e-toolkit',
+    files: [
+      {
+        path: 'SKILL.md',
+        executable: false,
+        data: Buffer.from(
+          '---\nname: e2e-toolkit\ndescription: E2E toolkit that ships an MCP echo server.\n---\n# E2E toolkit\nUse the echo tool to check the MCP connection.\n'
+        ).toString('base64'),
+      },
+      {
+        path: 'scripts/mcp-echo.mjs',
+        executable: true,
+        data: readFileSync(path.join(root, 'deploy/bot-fleet/test/mcp-echo.mjs')).toString('base64'),
+      },
+    ],
+  }
+  assert.equal((await request('POST', provisioningRoute + '/skills', skill)).outcome, 'added')
+  assert.equal((await request('POST', provisioningRoute + '/skills', skill)).outcome, 'unchanged')
+  const imported = await request('POST', provisioningRoute + '/mcp-servers/import', {
+    servers: [
+      {
+        name: 'e2e-echo',
+        transport: 'stdio',
+        enabled: true,
+        command: 'node',
+        args: ['/home/bot/.agents/skills/e2e-toolkit/scripts/mcp-echo.mjs'],
+      },
+    ],
+  })
+  assert.equal(imported.results.length, 1)
+  assert.equal(imported.results[0].outcome, 'added')
+  const installedSkill = (await request('GET', provisioningRoute + '/skills')).skills.find(
+    (item) => item.name === skill.name
+  )
+  assert.equal(installedSkill?.source, 'fleet')
+  assert.equal(installedSkill?.files, 2)
+  const server = (await request('GET', provisioningRoute + '/mcp-servers')).servers.find(
+    (item) => item.name === 'e2e-echo'
+  )
+  assert.equal(server?.id, imported.results[0].target)
+  assert.equal(server?.unavailable, false)
+  const configured = (await request('GET', '/v1/activity')).entries
+  assert.ok(
+    configured.some(
+      (entry) => entry.botId === scoutId && entry.kind === 'bot_configured' && entry.summary === 'Fleet E2E'
+    )
+  )
+  assert.ok(!JSON.stringify(configured).includes(modelKey), 'Activity must not contain the model key')
+  await request('POST', provisioningRoute + '/messages', { text: 'E2E-PROVISION', idempotencyKey: randomUUID() })
+  await poll(
+    'provisioning model answer',
+    async () => {
+      const permission = (await inbox()).find(
+        (item) => item.botId === scoutId && item.interaction.kind === 'permission'
+      )
+      if (permission) await approve(permission.interaction.title)
+      return (await transcript(scoutId)).some(
+        (item) => item.kind === 'assistant' && item.text.includes('E2E-PROVISION-OK')
+      )
+    },
+    90000
+  )
+  assert.ok(
+    (await transcript(scoutId)).some(
+      (item) =>
+        item.kind === 'tool' &&
+        (item.name.endsWith('__echo') || item.name === 'mcp_call') &&
+        item.state === 'done' &&
+        item.output?.includes('E2E-ECHO:ping')
+    )
+  )
+  await request('DELETE', provisioningRoute + '/mcp-servers/' + server.id, undefined, { status: 204 })
+  await request('DELETE', provisioningRoute + '/skills/' + skill.name, undefined, { status: 204 })
+  assert.ok(!(await request('GET', provisioningRoute + '/mcp-servers')).servers.some((item) => item.id === server.id))
+  assert.ok(!(await request('GET', provisioningRoute + '/skills')).skills.some((item) => item.name === skill.name))
+  await request('POST', provisioningRoute + '/logins', { kind: 'grok', method: 'browser' }, { status: 400 })
+  await request('GET', provisioningRoute + '/logins/unknown', undefined, { status: 404 })
+  timings.provisioningMs = Date.now() - provisioningStarted
+  pass('provisioning from the Mac', 'account replay unchanged; skill and MCP server reached the model; removed again')
+
   const sendMemoryMessage = (text) =>
     request('POST', '/v1/bots/' + scoutId + '/messages', { text, idempotencyKey: randomUUID() })
   const memoryAnswer = (answer) =>
