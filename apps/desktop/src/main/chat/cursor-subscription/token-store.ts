@@ -10,6 +10,7 @@ export type CursorTokenStorageMode = 'secure' | 'memory'
 
 export interface CursorTokenStore {
   get(): string | null
+  getCredential(): { apiKey: string; expiresAtMs: number | null } | null
   set(token: string, apiKeyExpiresAtMs?: number): CursorTokenStorageMode
   clear(): void
   mode(): CursorTokenStorageMode
@@ -33,12 +34,13 @@ export function createCursorTokenStore(
 ): CursorTokenStore {
   let memoryToken: string | null = null
   const store: CursorTokenStore = {
-    get: () => {
+    get: () => store.getCredential()?.apiKey ?? null,
+    getCredential: () => {
       const raw = memoryToken ?? dependencies.getPersisted(tokenKey)
       if (!raw) return null
       // Existing installations stored a bare key. New expiring keys use one
       // secure-store value so the key and its expiry cannot be torn apart.
-      if (!raw.startsWith('{')) return raw
+      if (!raw.startsWith('{')) return { apiKey: raw, expiresAtMs: null }
       try {
         const credential: unknown = JSON.parse(raw)
         if (!credential || typeof credential !== 'object') return null
@@ -51,7 +53,7 @@ export function createCursorTokenStore(
           apiKeyExpiresAtMs <= Date.now()
         )
           return null
-        return apiKey
+        return { apiKey, expiresAtMs: apiKeyExpiresAtMs }
       } catch {
         return null
       }

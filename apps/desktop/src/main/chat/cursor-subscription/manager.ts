@@ -235,6 +235,14 @@ export class CursorSubscriptionManager {
     }
   }
 
+  peekStatus(): CursorSubscriptionStatus | null {
+    return this.statusCache
+  }
+
+  exportCredential(): { apiKey: string; expiresAtMs: number | null } | null {
+    return this.dependencies.tokenStore.getCredential()
+  }
+
   getStatusSnapshot(): CursorSubscriptionStatus | null {
     this.expireCachedIdentity()
     return this.disposed ? this.disposedStatus() : this.statusCache
@@ -303,11 +311,14 @@ export class CursorSubscriptionManager {
     this.auth.cancelPendingLogins()
   }
 
-  async admitApiKey(apiKey: string): Promise<CursorSubscriptionStatus> {
+  async admitApiKey(apiKey: string, options: { expiresAtMs?: number | null } = {}): Promise<CursorSubscriptionStatus> {
     while (this.resetPromise) await this.resetPromise
     if (this.disposed) throw new Error('Cursor subscription manager is disposed')
     const generation = ++this.loginGeneration
-    await this.admitApiKeyInternal(apiKey, { expectedLoginGeneration: generation })
+    await this.admitApiKeyInternal(apiKey, {
+      expectedLoginGeneration: generation,
+      apiKeyExpiresAtMs: options.expiresAtMs ?? undefined,
+    })
     return this.getStatus(true)
   }
 

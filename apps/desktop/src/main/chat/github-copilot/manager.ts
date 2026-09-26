@@ -327,6 +327,41 @@ export class GitHubCopilotSubscriptionManager {
     }
   }
 
+  peekStatus(): GitHubCopilotSubscriptionStatus | null {
+    return this.statusCache
+  }
+
+  exportToken(): string | null {
+    return this.dependencies.tokenStore.get()
+  }
+
+  async admitToken(token: string): Promise<GitHubCopilotSubscriptionStatus> {
+    while (this.resetPromise) await this.resetPromise
+    if (this.disposed) throw new Error('GitHub Copilot subscription manager is disposed')
+    const normalized = token.trim()
+    if (!normalized) throw new Error('GitHub Copilot token is required')
+    const generation = ++this.loginGeneration
+    for (const record of this.loginRecords.values()) record.controller.abort()
+    const previousToken = this.dependencies.tokenStore.get()
+    try {
+      this.dependencies.tokenStore.set(normalized)
+      await this.changeIdentity(tokenFingerprint(normalized))
+      const status = await this.getStatus(true)
+      if (this.disposed || generation !== this.loginGeneration) {
+        throw new GitHubCopilotOAuthError('cancelled', 'GitHub Copilot login was cancelled')
+      }
+      if (!status.authenticated) throw new Error('GitHub Copilot did not accept this token.')
+      return status
+    } catch (error) {
+      if (!this.disposed && generation === this.loginGeneration) {
+        if (previousToken) this.dependencies.tokenStore.set(previousToken)
+        else this.dependencies.tokenStore.clear()
+        await this.changeIdentity(previousToken ? tokenFingerprint(previousToken) : null)
+      }
+      throw error
+    }
+  }
+
   getStatusSnapshot(): GitHubCopilotSubscriptionStatus | null {
     return this.disposed ? this.disposedStatus() : this.statusCache
   }
