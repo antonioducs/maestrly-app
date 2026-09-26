@@ -108,6 +108,7 @@ export async function startBotLogin(
     if (attempt.browser) {
       const { callback } = attempt.browser
       const loginId = attempt.loginId
+      const kind = attempt.kind
       try {
         relay = await LoginRelay.start({
           ...callback,
@@ -123,6 +124,7 @@ export async function startBotLogin(
               })
             ),
           page: relayPage,
+          redirectAllowed: (url) => fleetLoginUrlAllowed(kind, url),
         })
         relayState = 'listening'
       } catch (error) {

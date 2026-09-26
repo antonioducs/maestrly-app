@@ -167,6 +167,9 @@ describe('Mac remote login flow', () => {
     expect(open).toHaveBeenCalledWith(value.browser!.authUrl)
     const options = relay.start.mock.calls[0][0]
     expect(options.page('done')).toContain('Pronto. Pode fechar esta aba')
+    expect(options.redirectAllowed('https://auth.openai.com/success')).toBe(true)
+    expect(options.redirectAllowed('https://chatgpt.com/codex/open-app')).toBe(false)
+    expect(options.redirectAllowed('https://auth.openai.com.evil.io/')).toBe(false)
     await options.forward('code=a')
     expect(call).toHaveBeenNthCalledWith(2, 'botLoginCallback', {
       params: { id: 'bot', lid: 'l1' },

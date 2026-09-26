@@ -7,6 +7,8 @@ export interface LoginRelayOptions {
   ttlMs: number
   forward: (query: string) => Promise<FleetLoginCallbackResponse>
   page: (kind: 'done' | 'failed') => string
+  /** The provider pages the browser may be sent to after the callback; anything else gets the Mac's own page. */
+  redirectAllowed: (url: string) => boolean
 }
 /** Receives the provider redirect on the Mac and relays it to the bot that started sign-in. */
 export class LoginRelay {
@@ -84,13 +86,16 @@ export class LoginRelay {
       if (!this.forwarding) this.forwarding = this.options.forward(url.search.slice(1))
       const reply = await this.forwarding
       this.done = reply.status < 400
-      if (reply.location?.startsWith('https://')) {
+      // Content from the bot never renders on this Mac's localhost origin, and redirects stay on the provider:
+      // a compromised bot can neither run script here nor send the owner to a look-alike page.
+      if (
+        reply.status >= 300 &&
+        reply.status < 400 &&
+        reply.location?.startsWith('https://') &&
+        this.options.redirectAllowed(reply.location)
+      ) {
         response.writeHead(reply.status, { Location: reply.location, 'Cache-Control': 'no-store' }).end()
-      } else if (reply.contentType?.toLowerCase().includes('text/html') && reply.body) {
-        response
-          .writeHead(reply.status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-          .end(reply.body)
-      } else page(reply.status, this.done ? 'done' : 'failed')
+      } else page(this.done ? 200 : reply.status, this.done ? 'done' : 'failed')
     } catch {
       if (!response.headersSent) page(502, 'failed')
       else response.end()
