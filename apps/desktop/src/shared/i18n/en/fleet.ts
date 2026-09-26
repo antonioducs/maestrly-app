@@ -28,6 +28,8 @@ export default {
       'unsupported-command': 'Needs a tool the bot does not have',
       unavailable: 'Needs to be configured again on this Mac',
       'too-large': 'Too large to send (max. 8 MB)',
+      'file-too-large': 'A file is larger than 4 MB',
+      'path-too-long': 'A file path is longer than 240 characters',
       'too-many-files': 'Too many files (max. 400)',
       unreadable: "Could not read this skill's files",
       'no-skill-md': 'Missing SKILL.md',

@@ -66,8 +66,8 @@ describe('skill file packaging', () => {
     const handle = await fsp.open(path.join(root, 'large'), 'w')
     await handle.truncate(limits.skillFileBytesMax + 1)
     await handle.close()
-    expect((await measureSkillDirectory(root)).problem).toBe('too-large')
-    await expect(packageSkillDirectory(root)).rejects.toThrow('too-large')
+    expect((await measureSkillDirectory(root)).problem).toBe('file-too-large')
+    await expect(packageSkillDirectory(root)).rejects.toThrow('file-too-large')
   })
 })
 
@@ -179,4 +179,21 @@ describe('skill file installation', () => {
       await expect(removeGlobalSkill(name, root)).rejects.toThrow('invalid-skill-name')
     }
   })
+})
+
+it('distinguishes total size and path length limits', async () => {
+  await fsp.writeFile(path.join(root, 'SKILL.md'), 'body')
+  const dir = path.join(root, 'a'.repeat(120))
+  await fsp.mkdir(dir)
+  await fsp.writeFile(path.join(dir, 'b'.repeat(120)), 'body')
+  expect((await measureSkillDirectory(root)).problem).toBe('path-too-long')
+  await expect(packageSkillDirectory(root)).rejects.toThrow('path-too-long')
+  await fsp.rm(dir, { recursive: true })
+  for (const name of ['a', 'b', 'c']) {
+    const handle = await fsp.open(path.join(root, name), 'w')
+    await handle.truncate(3 * 1024 * 1024)
+    await handle.close()
+  }
+  expect((await measureSkillDirectory(root)).problem).toBe('too-large')
+  await expect(packageSkillDirectory(root)).rejects.toThrow('too-large')
 })

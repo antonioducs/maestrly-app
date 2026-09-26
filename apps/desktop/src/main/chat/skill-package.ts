@@ -3,7 +3,7 @@ import path from 'node:path'
 import { FLEET_PROVISIONING_LIMITS as limits } from '@maestrly/bot-fleet-protocol'
 import type { SkillFile } from './skills-registry'
 
-export type SkillPackageProblem = 'too-large' | 'too-many-files' | 'no-skill-md'
+export type SkillPackageProblem = 'too-large' | 'file-too-large' | 'path-too-long' | 'too-many-files' | 'no-skill-md'
 
 type Entry = { path: string; absolute: string; bytes: number; executable: boolean }
 
@@ -35,12 +35,15 @@ function measure(files: Entry[]): {
   const problem =
     files.length > limits.skillFilesMax
       ? 'too-many-files'
-      : bytes > limits.skillBytesMax ||
-          files.some((file) => file.bytes > limits.skillFileBytesMax || file.path.length > limits.skillPathMax)
+      : bytes > limits.skillBytesMax
         ? 'too-large'
-        : !files.some((file) => file.path === 'SKILL.md')
-          ? 'no-skill-md'
-          : null
+        : files.some((file) => file.bytes > limits.skillFileBytesMax)
+          ? 'file-too-large'
+          : files.some((file) => file.path.length > limits.skillPathMax)
+            ? 'path-too-long'
+            : !files.some((file) => file.path === 'SKILL.md')
+              ? 'no-skill-md'
+              : null
   return {
     files: files.length,
     bytes,
@@ -65,7 +68,8 @@ export async function packageSkillDirectory(dir: string): Promise<SkillFile[]> {
     const data = await fsp.readFile(entry.absolute)
     bytes += data.byteLength
     // Files can change between measuring and reading.
-    if (data.byteLength > limits.skillFileBytesMax || bytes > limits.skillBytesMax) throw new Error('too-large')
+    if (bytes > limits.skillBytesMax) throw new Error('too-large')
+    if (data.byteLength > limits.skillFileBytesMax) throw new Error('file-too-large')
     files.push({ path: entry.path, data, executable: entry.executable })
   }
   return files
