@@ -38,6 +38,35 @@ it('forwards the exact query and localhost Host header and preserves an HTTPS re
   })
   expect(seen).toEqual({ url: '/callback?code=a&state=b', host: 'localhost:' + target.port })
 })
+it('loads a local success redirect itself and keeps its tokens on the bot', async () => {
+  const seen: string[] = []
+  let port = 0
+  const target = await serve((req, res) => {
+    seen.push(req.url ?? '')
+    if (req.url?.startsWith('/callback')) {
+      res.writeHead(302, { Location: `http://localhost:${port}/success?id_token=secret-token&needs_setup=true` })
+      res.end()
+    } else {
+      res.writeHead(200, { 'Content-Type': 'text/html' })
+      res.end('<p>signed in</p>')
+    }
+  })
+  port = target.port
+  const reply = await forwardLoginCallback(target, 'code=a&state=b')
+  expect(reply).toEqual({ status: 200, location: null, contentType: null, body: '' })
+  expect(seen).toEqual(['/callback?code=a&state=b', '/success?id_token=secret-token&needs_setup=true'])
+  expect(JSON.stringify(reply)).not.toContain('secret-token')
+})
+it('does not follow a redirect to another local port', async () => {
+  const seen: string[] = []
+  const target = await serve((req, res) => {
+    seen.push(req.url ?? '')
+    res.writeHead(302, { Location: 'http://localhost:1/elsewhere' })
+    res.end()
+  })
+  expect((await forwardLoginCallback(target, 'code=a')).location).toBeNull()
+  expect(seen).toEqual(['/callback?code=a'])
+})
 it('discards insecure redirects and bounds response bytes', async () => {
   const target = await serve((_req, res) => {
     res.writeHead(302, { Location: 'http://x' })
