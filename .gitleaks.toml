@@ -50,3 +50,14 @@ paths = [
 ]
 regexTarget = "line"
 regexes = ['''const (?:crsrSecret|secret|token) = 'crsr_live_AbCdEf1234567890'''']
+
+[[allowlists]]
+description = "Exact synthetic MCP credentials asserting that bot import errors never echo them"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^apps/desktop/test/unit/fleet-client-provisioning\.test\.ts$''']
+regexTarget = "line"
+regexes = [
+  '''args: \['--token=arg-ABCD98765432'\],''',
+  '''env: \{ TOKEN: 'env-PQRS86427531' \},''',
+]
