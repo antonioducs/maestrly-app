@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetScreenSurface, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
-import { fleetErrorMessage, isTakeoverConflict } from '@/lib/fleet/errors'
+import { fleetErrorText, isTakeoverConflict } from '@/lib/fleet/errors'
 import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { formatTimer, nextRadioIndex } from '@/lib/fleet/forms'
+import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
 import { environmentOf, ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ScreenFrame, useFleetScreen } from './ScreenFrame'
@@ -37,6 +38,11 @@ export function BotScreen({
   // With environments a bot has a browser area and an apps screen; before them, its browser area only.
   const environments = hasEnvironments(fleet.state.connection)
   const environment = environments ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
+  // An environment still on an image from before environments has one display, the bot's browser, where its settings
+  // open too: no apps screen and no environment screen until it restarts.
+  const oldImage = environment !== undefined && environmentScreenAvailability(environment) === 'restart-environment'
+  const shown: FleetScreenSurface = oldImage ? 'browser' : surface
+  const accountsEnvironment = oldImage ? undefined : environment
   const human = ownsTakeover(takeover, fleet.state.connection.deviceId)
   const otherHuman = takeover.state === 'human' && !human
   const mode = human ? 'control' : 'view'
@@ -45,7 +51,7 @@ export function BotScreen({
     container: target,
     kind: 'bot',
     id: bot.id,
-    surface: environments ? surface : null,
+    surface: environments ? shown : null,
     mode,
     disabled: shaded,
     onControlLost: () => setTakeover((value) => ({ ...value, state: 'none', since: null })),
@@ -68,6 +74,7 @@ export function BotScreen({
     const next = nextRadioIndex(index, event.key, surfaces.length)
     if (next === null) return
     event.preventDefault()
+    if (oldImage && surfaces[next] === 'apps') return
     setSurface(surfaces[next])
     surfaceRadios.current[next]?.focus()
   }
@@ -82,7 +89,7 @@ export function BotScreen({
       screen.retryControl()
       if (openAccounts) await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
     } catch (cause) {
-      setError(isTakeoverConflict(cause) ? t('screen.takeConflict') : fleetErrorMessage(cause))
+      setError(isTakeoverConflict(cause) ? t('screen.takeConflict') : fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }
@@ -113,7 +120,7 @@ export function BotScreen({
       setNote('')
       screen.resetRetries()
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }
@@ -133,7 +140,7 @@ export function BotScreen({
             name: bot.name,
             host: fleet.state.snapshot.host?.hostname ?? '',
           })
-  const alert = error || screen.error
+  const alert = error || (screen.error && fleetErrorText(screen.error, t))
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
@@ -177,16 +184,23 @@ export function BotScreen({
                 }}
                 type="button"
                 role="radio"
-                aria-checked={surface === name}
-                tabIndex={surface === name ? 0 : -1}
+                aria-checked={shown === name}
+                tabIndex={shown === name ? 0 : -1}
+                disabled={oldImage && name === 'apps'}
+                aria-describedby={oldImage && name === 'apps' ? 'fleet-screen-apps-restart' : undefined}
                 onClick={() => setSurface(name)}
                 onKeyDown={(event) => onSurfaceKey(event, index)}
-                className={`rounded-md px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${surface === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`rounded-md px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${shown === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 {name === 'browser' ? t('screen.browser') : t('screen.apps')}
               </button>
             ))}
           </div>
+        )}
+        {oldImage && (
+          <p id="fleet-screen-apps-restart" className="text-xs text-muted-foreground">
+            {t('screen.appsNeedsRestart')}
+          </p>
         )}
         <div className="ml-auto flex items-center gap-2">
           {human ? (
@@ -273,16 +287,21 @@ export function BotScreen({
             <div className="absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
               <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                {environment
-                  ? t('screen.environmentAccountDescription', { name: bot.name, environment: environment.name })
+                {accountsEnvironment
+                  ? t('screen.environmentAccountDescription', {
+                      name: bot.name,
+                      environment: accountsEnvironment.name,
+                    })
                   : t('screen.accountDescription', { name: bot.name })}
               </p>
               <Button
                 className="mt-4"
                 disabled={busy}
-                onClick={() => void (environment ? openEnvironmentAccounts(environment.id) : take(true))}
+                onClick={() =>
+                  void (accountsEnvironment ? openEnvironmentAccounts(accountsEnvironment.id) : take(true))
+                }
               >
-                {environment ? t('screen.useEnvironmentScreen') : t('screen.useScreen')}
+                {accountsEnvironment ? t('screen.useEnvironmentScreen') : t('screen.useScreen')}
               </Button>
               <p className="mt-2 text-xs text-muted-foreground">
                 <button

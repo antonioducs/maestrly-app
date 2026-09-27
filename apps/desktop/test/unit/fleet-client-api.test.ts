@@ -108,6 +108,43 @@ describe('fleet API and events', () => {
       timeout.mockRestore()
     }
   })
+  it('waits for environment lifecycle actions as long as the gateway does, and keeps reads fast', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const api = new FleetApiClient(origin, 'valid')
+      // The gateway answers these once the container stopped or its desktop answers again: up to 240 s, plus an
+      // image replacement. A bot's own start, stop and restart act on its environment.
+      const lifecycle = [
+        ['environmentStart', { eid: 'acme' }, '/v1/environments/acme/start'],
+        ['environmentStop', { eid: 'acme' }, '/v1/environments/acme/stop'],
+        ['environmentRestart', { eid: 'acme' }, '/v1/environments/acme/restart'],
+        ['environmentArchive', { eid: 'acme' }, '/v1/environments/acme/archive'],
+        ['botStart', { id: 'scout' }, '/v1/bots/scout/start'],
+        ['botStop', { id: 'scout' }, '/v1/bots/scout/stop'],
+        ['botRestart', { id: 'scout' }, '/v1/bots/scout/restart'],
+        ['botArchive', { id: 'scout' }, '/v1/bots/scout/archive'],
+        ['archivedBotDelete', { id: 'scout' }, '/v1/archived-bots/scout'],
+        ['archivedEnvironmentDelete', { eid: 'acme' }, '/v1/archived-environments/acme'],
+      ] as const
+      for (const [key, params, path] of lifecycle) {
+        await api.call(key, { params }).catch(() => undefined)
+        expect(requests.at(-1)?.url, key).toBe(path)
+        expect(timeout, key).toHaveBeenLastCalledWith(300_000)
+      }
+      const reads = [
+        ['environmentsList', {}],
+        ['botsList', {}],
+        ['botGet', { id: 'scout' }],
+        ['environmentGet', { eid: 'acme' }],
+      ] as const
+      for (const [key, params] of reads) {
+        await api.call(key, { params }).catch(() => undefined)
+        expect(timeout, key).toHaveBeenLastCalledWith(15_000)
+      }
+    } finally {
+      timeout.mockRestore()
+    }
+  })
   it('calls the bot conversation endpoint with a validated request', async () => {
     const api = new FleetApiClient(origin, 'valid')
     await expect(

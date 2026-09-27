@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory } from '../../src/shared/fleet-provisioning'
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 import {
   accountHost,
   emptyImportChoice,
+  environmentJoinAvailability,
+  environmentJoinHint,
+  environmentScreenAvailability,
   hasImportChoice,
   recommendedImportChoice,
   provisioningAvailability,
@@ -61,6 +64,47 @@ describe('fleet provisioning choices', () => {
     expect(provisioningAvailability(fleet(['provisioning']), bot('running', []))).toBe('restart-bot')
     expect(provisioningAvailability(fleet(['provisioning']), bot('running', ['provisioning']))).toBe('ready')
     expect(provisioningAvailability(fleet(['provisioning']), bot('creating', []))).toBe('ready')
+  })
+  it('lets a bot join only a running environment whose Maestrly hosts several bots', () => {
+    const fleet = (features: string[]) => ({ state: { connection: { features } } }) as FleetController
+    const connected = fleet(['provisioning', 'environments'])
+    const environment = (patch: Partial<FleetEnvironment> = {}) =>
+      ({
+        lifecycle: 'running',
+        capabilities: ['provisioning', 'environments'],
+        botIds: ['scout'],
+        ...patch,
+      }) as FleetEnvironment
+    expect(environmentJoinAvailability(connected, environment())).toBe('ready')
+    expect(environmentJoinAvailability(fleet(['provisioning']), environment())).toBe('update-server')
+    // A stopped environment installs a new bot only once started: the create dialog would wait at its profile.
+    expect(environmentJoinAvailability(connected, environment({ lifecycle: 'stopped' }))).toBe('start-environment')
+    expect(environmentJoinAvailability(connected, environment({ lifecycle: 'failed' }))).toBe('start-environment')
+    for (const lifecycle of ['creating', 'starting', 'restarting', 'stopping'] as const)
+      expect(environmentJoinAvailability(connected, environment({ lifecycle })), lifecycle).toBe('not-running')
+    // A bot migrated to its own environment runs its old image until restarted.
+    expect(environmentJoinAvailability(connected, environment({ capabilities: ['provisioning'] }))).toBe(
+      'restart-environment'
+    )
+    const full = environment({ botIds: Array.from({ length: 8 }, (_, index) => `bot-${index}`) })
+    expect(environmentJoinAvailability(connected, full)).toBe('full')
+    expect(environmentJoinHint('start-environment')).toEqual({ key: 'environment.startToJoin' })
+    expect(environmentJoinHint('not-running')).toEqual({ key: 'environment.waitToJoin' })
+    expect(environmentJoinHint('restart-environment')).toEqual({ key: 'environment.restartToJoin' })
+    expect(environmentJoinHint('full')).toEqual({ key: 'environment.full', values: { max: 8 } })
+    expect(environmentJoinHint('update-server')).toEqual({ key: 'provisioning.updateServer' })
+  })
+  it('keeps an environment on an image from before environments to its bot browser until it restarts', () => {
+    // What a migrated environment advertises after the gateway update, before its restart.
+    expect(environmentScreenAvailability({ lifecycle: 'running', capabilities: ['provisioning'] })).toBe(
+      'restart-environment'
+    )
+    expect(environmentScreenAvailability({ lifecycle: 'running', capabilities: [] })).toBe('restart-environment')
+    expect(
+      environmentScreenAvailability({ lifecycle: 'running', capabilities: ['provisioning', 'environments'] })
+    ).toBe('ready')
+    // A stopped environment shows no screen at all; it is not told to restart.
+    expect(environmentScreenAvailability({ lifecycle: 'stopped', capabilities: ['provisioning'] })).toBe('ready')
   })
   it('matches default provider hosts and preserves nondefault ports', () => {
     expect(accountHost('anthropic', null)).toBe('api.anthropic.com')

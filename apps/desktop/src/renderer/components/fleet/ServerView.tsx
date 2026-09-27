@@ -8,7 +8,7 @@ import { gb, memorySegments } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import { botsWithDifferentVersion, groupBotsByEnvironment } from '@/lib/fleet/selectors'
 import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
 
@@ -371,12 +371,12 @@ export function ServerView({
         <section>
           <h2 className="mb-2 font-semibold">{t('server.howTitle')}</h2>
           <p className="rounded-lg border border-border bg-surface-elevated p-4 text-sm text-muted-foreground">
-            {t('server.howDescription')}
+            {grouped ? t('server.howDescriptionEnvironments') : t('server.howDescription')}
           </p>
         </section>
         {(error || fleet.actionError) && (
           <p role="alert" className="text-xs text-destructive">
-            {error || fleet.actionError?.message}
+            {error || (fleet.actionError && fleetErrorText(fleet.actionError.message, t))}
           </p>
         )}
       </div>

@@ -19,6 +19,8 @@ import { backgroundCompactionState, compactionProgress } from '@/lib/fleet/compa
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { formatFleetUsage, selectionPatch, validateAttachments } from '@/lib/fleet/composer'
 import { hasEnvironments } from '@/lib/fleet/environments'
+import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
+import { environmentOf } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 type PendingImage = { file: File; attachment: UIAttachment }
@@ -51,7 +53,13 @@ export function BotComposer({
   onOpenScreenRef.current = onOpenScreen
   const onOpenEnvironmentScreenRef = useRef(onOpenEnvironmentScreen)
   onOpenEnvironmentScreenRef.current = onOpenEnvironmentScreen
-  const environmentId = hasEnvironments(fleet.state.connection) ? bot.environmentId : null
+  // An environment still on an image from before environments has no environment screen: its settings open in the
+  // bot's browser area, with a takeover, as they did before environments.
+  const environment = hasEnvironments(fleet.state.connection)
+    ? environmentOf(fleet.state.snapshot.environments, bot)
+    : undefined
+  const oldImage = environment !== undefined && environmentScreenAvailability(environment) === 'restart-environment'
+  const environmentId = hasEnvironments(fleet.state.connection) && !oldImage ? bot.environmentId : null
   const takeoverStateRef = useRef(bot.takeover.state)
   takeoverStateRef.current = bot.takeover.state
   // `bot` changes on every status/usage event; keep the source (and the command reload it drives) stable.

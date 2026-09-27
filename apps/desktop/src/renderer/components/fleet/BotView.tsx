@@ -5,6 +5,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { environmentOf, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { hasEnvironments, startBot } from '@/lib/fleet/environments'
+import { fleetErrorText } from '@/lib/fleet/errors'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
 import { BotSettings } from './BotSettings'
@@ -140,7 +141,7 @@ export function BotView({
         (fleet.actionError.botId === bot.id ||
           (bot.environmentId !== null && fleet.actionError.environmentId === bot.environmentId)) && (
           <p role="alert" className="px-5 py-2 text-xs text-destructive">
-            {fleet.actionError.message}
+            {fleetErrorText(fleet.actionError.message, t)}
           </p>
         )}
       <div

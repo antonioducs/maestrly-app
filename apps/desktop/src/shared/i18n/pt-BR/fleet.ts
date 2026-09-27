@@ -62,6 +62,7 @@ export default {
     restartBot: 'Reinicie este bot para atualizá-lo antes.',
     restartEnvironment: 'Reinicie este ambiente para atualizá-lo antes.',
     finishLater: 'Dá para terminar depois nas configurações do bot.',
+    finishLaterEnvironment: 'Dá para terminar depois na visão geral do ambiente.',
     finish: 'Concluir',
   },
   botAccounts: {
@@ -127,6 +128,8 @@ export default {
     title: 'Memória sobre você',
     description:
       'O que seus bots sabem sobre você. Todo bot lê antes de cada mensagem; os bots podem adicionar, substituir ou remover itens, e você pode editar ou desfazer qualquer coisa aqui.',
+    descriptionScoped:
+      'O que seus bots sabem sobre você. Antes de cada mensagem, um bot lê os itens de todos os bots e os do próprio ambiente. O que um bot salva fica no ambiente dele; você pode editar, mover ou desfazer qualquer coisa aqui.',
     usage: '{{used}} / {{max}} caracteres',
     add: 'Adicionar',
     addPlaceholder: 'Uma preferência ou fato sobre você, ex.: “Prefiro respostas curtas.”',
@@ -230,6 +233,8 @@ export default {
     newBotHere: 'Novo bot neste ambiente',
     full: 'Cheio ({{max}} bots)',
     restartToJoin: 'Reinicie este ambiente para atualizá-lo antes de adicionar bots.',
+    startToJoin: 'Inicie este ambiente antes de adicionar bots.',
+    waitToJoin: 'Espere este ambiente estar rodando para adicionar bots.',
     sharedNote: 'Bots no mesmo ambiente podem ver os arquivos e as telas uns dos outros.',
     sharedConfig: 'Compartilhado por todos os bots deste ambiente.',
     refresh: 'Atualizar',
@@ -238,8 +243,9 @@ export default {
     skillsMcp: 'Skills e MCP',
     emptySkills: 'Nenhuma skill neste ambiente.',
     emptyMcp: 'Nenhum servidor MCP neste ambiente.',
-    removeConfirm: 'Remover {{name}} deste ambiente?',
+    removeConfirm: 'Remover {{name}} deste ambiente? Todos os bots dele deixam de usar.',
     loginOnScreen: 'Fazer login na tela do ambiente',
+    loginNeedsRestart: 'Reinicie este ambiente para atualizá-lo antes de fazer login na tela dele.',
     screenLoginFailed: 'Não foi possível abrir as contas do ambiente.',
     screenTitle: 'Tela do ambiente',
     screenDescription:
@@ -347,6 +353,16 @@ export default {
     pause: 'Pausar',
     resume: 'Retomar',
     resumeBlocked: 'O controle da tela está em andamento. Devolva o controle antes de retomar.',
+  },
+  errors: {
+    sharedEnvironment: 'Este bot divide o ambiente com outros: inicie, pare ou reinicie o ambiente.',
+    restoreEnvironmentFirst: 'Restaure o ambiente dele antes.',
+    startEnvironmentFirst: 'Inicie o ambiente dele antes.',
+    slotInUse: 'O espaço da tela ainda está em uso. Inicie o bot novamente para tentar de novo.',
+    environmentFull: 'Este ambiente já tem {{max}} bots, o máximo que ele comporta.',
+    environmentNotRunning: 'Este ambiente não está rodando. Inicie-o antes.',
+    botNotRunning: 'Este bot não está rodando.',
+    screenOffline: 'Esta tela está offline: o bot ou o ambiente dela não está rodando.',
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {
@@ -458,6 +474,8 @@ export default {
     howTitle: 'Como funciona',
     howDescription:
       'Cada bot tem seu próprio desktop Linux e contêiner no servidor. O bot controla seu desktop lá; este Mac é só o controle remoto.',
+    howDescriptionEnvironments:
+      'Os bots rodam em ambientes no servidor. Um ambiente é um contêiner, com o desktop Linux, as contas, os arquivos e os logins de sites que os bots dele compartilham; cada bot tem o próprio navegador e a própria tela de apps lá. Este Mac é só o controle remoto.',
     title: 'Servidor de bots',
     system: 'Sistema',
     cpu: 'CPU',
@@ -488,6 +506,8 @@ export default {
       deleteTitle: 'Apagar {{name}} de vez?',
       deleteDescription:
         'Isso apaga do servidor a conversa, as contas conectadas, os arquivos, as rotinas e o histórico do {{name}}. Não dá para desfazer.',
+      deleteDescriptionEnvironment:
+        'Isso apaga do servidor a conversa, a memória, as rotinas, o histórico e as pastas próprias do {{name}}. O ambiente dele mantém as contas, skills, servidores MCP e arquivos compartilhados. Não dá para desfazer.',
       deleteConfirmLabel: 'Digite {{name}} para confirmar',
       cancel: 'Cancelar',
       deleteConfirm: 'Apagar de vez',
@@ -543,6 +563,8 @@ export default {
     apps: 'Apps',
     conflict: 'Outra tela deste ambiente está sendo controlada.',
     retryControl: 'Tentar de novo',
+    restartEnvironment: 'Reinicie este ambiente para atualizá-lo antes de abrir esta tela.',
+    appsNeedsRestart: 'Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.',
     useEnvironmentScreen: 'Usar a tela do ambiente',
     environmentAccountDescription:
       'O {{name}} precisa de uma conta de modelo. As contas ficam no ambiente dele, {{environment}}: faça login na tela do ambiente.',
@@ -577,7 +599,7 @@ export default {
     },
     full: {
       title: 'Acesso total',
-      description: 'Roda comandos e edita arquivos no contêiner dele.',
+      description: 'Roda comandos e edita arquivos sem perguntar, em qualquer lugar do contêiner onde roda.',
     },
   },
   botSettings: {
@@ -645,6 +667,10 @@ export default {
       'Arquive só este bot. O ambiente e os outros bots dele continuam rodando; dá para restaurar em Servidor de bots.',
     archiveOnlyConfirm:
       'Este bot sai do ambiente; o ambiente e os outros bots continuam rodando. A conversa e os arquivos ficam no servidor, e você pode restaurar o bot em Servidor de bots.',
+    archiveLastNote:
+      'Arquive só este bot. O ambiente dele continua rodando sem bots; pare ou arquive o ambiente para liberar a memória. Dá para restaurar o bot em Servidor de bots.',
+    archiveLastConfirm:
+      'Este bot sai do ambiente, que continua rodando sem bots até você parar ou arquivar. A conversa e os arquivos ficam no servidor, e você pode restaurar o bot em Servidor de bots.',
   },
   routine: {
     addTitle: 'Adicionar rotina',

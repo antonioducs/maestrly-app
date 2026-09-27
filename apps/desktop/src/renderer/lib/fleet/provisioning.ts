@@ -72,10 +72,17 @@ export function provisioningAvailability(
   const runtime = (target.environmentId && environmentOf(fleet.state.snapshot.environments, target)) || target
   return needsRestart(runtime, FLEET_PROVISIONING_FEATURE) ? 'restart-bot' : 'ready'
 }
-export type EnvironmentJoinAvailability = 'ready' | 'update-server' | 'restart-environment' | 'full'
+export type EnvironmentJoinAvailability =
+  | 'ready'
+  | 'update-server'
+  | 'restart-environment'
+  | 'full'
+  | 'start-environment'
+  | 'not-running'
 /**
- * Whether a new bot can join an environment: the gateway must have environments, the environment must have room,
- * and its running Maestrly must host several bots (an older image needs the environment restarted first).
+ * Whether a new bot can join an environment: the gateway must have environments, the environment must have room
+ * and run, and its Maestrly must host several bots (an older image needs the environment restarted first). A stopped
+ * environment would only set the bot up once started, so joining it waits for the owner to start it.
  */
 export function environmentJoinAvailability(
   fleet: FleetController,
@@ -83,6 +90,37 @@ export function environmentJoinAvailability(
 ): EnvironmentJoinAvailability {
   if (!fleet.state.connection.features.includes(FLEET_ENVIRONMENTS_FEATURE)) return 'update-server'
   if (environment.botIds.length >= FLEET_ENVIRONMENT_LIMITS.botsMax) return 'full'
+  if (environment.lifecycle === 'stopped' || environment.lifecycle === 'failed') return 'start-environment'
+  if (environment.lifecycle !== 'running') return 'not-running'
+  return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
+}
+/** Why a new bot cannot join an environment yet, as a translation key and its values. */
+export function environmentJoinHint(availability: Exclude<EnvironmentJoinAvailability, 'ready'>): {
+  key: string
+  values?: Record<string, unknown>
+} {
+  switch (availability) {
+    case 'full':
+      return { key: 'environment.full', values: { max: FLEET_ENVIRONMENT_LIMITS.botsMax } }
+    case 'update-server':
+      return { key: 'provisioning.updateServer' }
+    case 'start-environment':
+      return { key: 'environment.startToJoin' }
+    case 'not-running':
+      return { key: 'environment.waitToJoin' }
+    case 'restart-environment':
+      return { key: 'environment.restartToJoin' }
+  }
+}
+export type EnvironmentScreenAvailability = 'ready' | 'restart-environment'
+/**
+ * Whether an environment's Maestrly has the screens of environments: its own screen with its settings window, and an
+ * apps screen per bot. A running image from before them has one display, its bot's browser, where its settings open
+ * too; it gets the others once restarted on the current image. A stopped environment shows no screen either way.
+ */
+export function environmentScreenAvailability(
+  environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
+): EnvironmentScreenAvailability {
   return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
 }
 /** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */

@@ -2,13 +2,16 @@ import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
+import { fleetErrorText } from '@/lib/fleet/errors'
+import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ScreenFrame, useFleetScreen } from './ScreenFrame'
 
 /**
  * An environment's own screen: its Maestrly settings window, where the owner signs in to the accounts and sites its
  * bots share. It holds no bot, so control needs no takeover; the gateway still allows one control session on the
- * display this screen shares with the bots' browser areas.
+ * display this screen shares with the bots' browser areas. An environment still on an image from before
+ * environments has no such screen until it restarts: its settings open in its bot's browser area.
  */
 export function EnvironmentScreen({ environment, fleet }: { environment: FleetEnvironment; fleet: FleetController }) {
   const { t } = useTranslation('fleet')
@@ -16,13 +19,14 @@ export function EnvironmentScreen({ environment, fleet }: { environment: FleetEn
   const [mode, setMode] = useState<'view' | 'control'>('view')
   const shaded = environment.lifecycle !== 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
+  const oldImage = environmentScreenAvailability(environment) === 'restart-environment'
   const screen = useFleetScreen({
     container: target,
     kind: 'environment',
     id: environment.id,
     surface: null,
     mode,
-    disabled: shaded,
+    disabled: shaded || oldImage,
   })
   const controlling = mode === 'control' && !screen.conflict
   return (
@@ -39,7 +43,7 @@ export function EnvironmentScreen({ environment, fleet }: { environment: FleetEn
         ) : (
           <Button
             size="sm"
-            disabled={shaded}
+            disabled={shaded || oldImage}
             onClick={() => {
               screen.retryControl()
               setMode('control')
@@ -62,12 +66,17 @@ export function EnvironmentScreen({ environment, fleet }: { environment: FleetEn
             )}
           </div>
         )}
-        {!shaded && screen.phase === 'offline' && (
+        {!shaded && oldImage && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 px-6 text-center text-sm text-white">
+            {t('screen.restartEnvironment')}
+          </div>
+        )}
+        {!shaded && !oldImage && screen.phase === 'offline' && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-sm text-white">
             {t('environment.stopped')}
           </div>
         )}
-        {!shaded && screen.phase !== 'live' && (
+        {!shaded && !oldImage && screen.phase !== 'live' && (
           <div
             role="status"
             className="pointer-events-none absolute bottom-4 rounded bg-background/90 px-3 py-2 text-xs"
@@ -83,7 +92,7 @@ export function EnvironmentScreen({ environment, fleet }: { environment: FleetEn
       )}
       {screen.error && (
         <p role="alert" className="px-5 py-2 text-xs text-destructive">
-          {screen.error}
+          {fleetErrorText(screen.error, t)}
         </p>
       )}
       <p className="border-t border-border px-5 py-3 text-xs text-muted-foreground">

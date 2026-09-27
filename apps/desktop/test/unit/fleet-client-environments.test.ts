@@ -68,13 +68,19 @@ import { FleetClientService } from '../../src/main/fleet/client/service'
 import { FleetApiClient, FleetClientError } from '../../src/main/fleet/client/api'
 import { registerFleetClientIpc } from '../../src/main/fleet/client/ipc'
 import { FleetScreenBridge } from '../../src/main/fleet/client/screen-bridge'
+import { GATEWAY_RESTART_TO_OPEN_SCREEN, GATEWAY_SCREEN_CONTROLLED } from '../../src/main/fleet/client/targets'
 import {
   botLoginStatus,
   cancelBotLogin,
   disposeBotLogins,
   startBotLogin,
 } from '../../src/main/fleet/client/provisioning/logins'
-import { FLEET_ENVIRONMENTS_UNSUPPORTED, FLEET_SCREEN_CONFLICT, fleetTargetKey } from '../../src/shared/fleet-targets'
+import {
+  FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_SCREEN_CONFLICT,
+  FLEET_SCREEN_RESTART_REQUIRED,
+  fleetTargetKey,
+} from '../../src/shared/fleet-targets'
 import { fleetReducer, initialFleetState, type FleetState } from '../../src/renderer/lib/fleet/state'
 import { groupBotsByEnvironment } from '../../src/renderer/lib/fleet/selectors'
 import { memorySegments } from '../../src/renderer/lib/fleet/format'
@@ -506,9 +512,14 @@ describe('environment IPC', () => {
   it('marks a screen conflict so the view can tell that the environment display is in use', async () => {
     features.list = ['environments']
     const ipc = register()
-    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, 'Another control session is open'))
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_SCREEN_CONTROLLED))
     await expect(ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')).rejects.toThrow(
       FLEET_SCREEN_CONFLICT
+    )
+    // An environment on an image from before environments refuses with 409 too: that is no conflict.
+    mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN))
+    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
+      FLEET_SCREEN_RESTART_REQUIRED
     )
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('FORBIDDEN', 403, 'Takeover required for control'))
     await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'control')).rejects.toThrow(

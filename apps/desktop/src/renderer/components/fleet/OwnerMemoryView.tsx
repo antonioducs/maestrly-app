@@ -201,7 +201,9 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
       <div className="mx-auto max-w-3xl space-y-6">
         <header className="space-y-2">
           <h1 className="text-xl font-semibold">{t('ownerMemory.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('ownerMemory.description')}</p>
+          <p className="text-sm text-muted-foreground">
+            {scoped ? t('ownerMemory.descriptionScoped') : t('ownerMemory.description')}
+          </p>
         </header>
         {!connected ? (
           <p className="text-sm text-muted-foreground">{t('ownerMemory.unavailable')}</p>

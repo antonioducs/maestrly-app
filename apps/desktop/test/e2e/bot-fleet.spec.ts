@@ -1,6 +1,7 @@
 import { createServer as createNetServer } from 'node:net'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -2248,7 +2249,8 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'environmentScreenTicket':
         if (!environment) return notFound()
         if ((body as { mode: string }).mode === 'control' && screenConflicts-- > 0) {
-          send(409, { code: 'CONFLICT', message: 'Another control session holds the environment display' })
+          // The gateway's refusal, word for word: other 409s of a screen ticket are not conflicts.
+          send(409, { code: 'CONFLICT', message: 'Another screen in this environment is being controlled.' })
           return
         }
         value = ticket()
@@ -2434,6 +2436,17 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       JSON.stringify(await page.evaluate(() => window.api.fleetBotAccounts({ environmentId: 'acme' })))
     ).not.toContain(environmentKey)
     expect(await page.content()).not.toContain(environmentKey)
+    // The page's markup never holds a field's value: check the fields themselves.
+    await expect(page.getByLabel('Chave de API')).toHaveValue('')
+    expect(
+      await page.evaluate(
+        (secret) =>
+          Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')).some(
+            (field) => field.value.includes(secret)
+          ),
+        environmentKey
+      )
+    ).toBe(false)
     expect(requests.filter((item) => item.key === 'botApiKeyAccountAdd')).toHaveLength(0)
 
     // The composer manages skills on the environment screen, without taking over the bot.
@@ -2563,6 +2576,455 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('fleet UI keeps older environment images, stopped environments and refused screens actionable', async () => {
+  test.setTimeout(240_000)
+  const GB = 1024 ** 3
+  const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-compat-e2e-'))
+  const requests: Array<{ key: string; body: unknown; path: string }> = []
+  const streams = new Set<ServerResponse>()
+  const sockets = new Set<Duplex>()
+  const hostname = 'fleet-compat-host'
+  const host = fleetHostInfoSchema.parse({
+    hostname,
+    os: 'Linux',
+    kernel: '6.8',
+    arch: 'x64',
+    cpus: 4,
+    cpuPercent: 12,
+    memory: { totalBytes: 16 * GB, usedBytes: 4 * GB, botsBytes: 2 * GB },
+    disk: { totalBytes: 100 * GB, usedBytes: 20 * GB },
+    uptimeSeconds: 7200,
+    gatewayVersion: '0.9.3',
+    botImage: 'test-image',
+    botImageVersion: '0.9.3',
+    dockerVersion: '28',
+  })
+  const capable = ['provisioning', 'environments']
+  // What an environment migrated from a bot advertises once the gateway is updated, until it restarts on the new image.
+  const oldImage = ['provisioning']
+  const noResources = { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null }
+  const makeEnvironment = (id: string, name: string, botIds: string[], patch: Record<string, unknown> = {}) =>
+    fleetEnvironmentSchema.parse({
+      id,
+      name,
+      lifecycle: 'running',
+      setup: { step: 'ready', error: null, errorMessage: null },
+      resources: { memoryBytes: GB, memoryLimitBytes: 4 * GB, cpuPercent: 6, startedAt: now() },
+      memoryLimitBytes: null,
+      appVersion: '0.9.3',
+      capabilities: capable,
+      botIds,
+      createdAt: now(),
+      updatedAt: now(),
+      ...patch,
+    })
+  const makeBot = (id: string, name: string, environmentId: string, patch: Record<string, unknown> = {}) =>
+    fleetBotSchema.parse({
+      id,
+      name,
+      environmentId,
+      capabilities: capable,
+      role: '',
+      instructions: 'Synthetic compatibility bot',
+      tint: '#6688aa',
+      ceiling: 'auto',
+      selection: null,
+      talksTo: [],
+      paused: false,
+      lifecycle: 'running',
+      setup: { step: 'ready', error: null, errorMessage: null },
+      status: 'idle',
+      activity: null,
+      pendingCount: 0,
+      accounts: { connected: true, providers: [] },
+      takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
+      resources: noResources,
+      screen: { width: 1280, height: 800, display: ':1' },
+      appVersion: '0.9.3',
+      createdAt: now(),
+      updatedAt: now(),
+      ...patch,
+    })
+  const environments: FleetEnvironment[] = [
+    makeEnvironment('acme', 'Acme', ['ghost', 'scout']),
+    makeEnvironment('legacy', 'Legado', ['veteran'], { capabilities: oldImage, appVersion: '0.9.2' }),
+    makeEnvironment('parked', 'Parado', ['sleeper'], { lifecycle: 'stopped', resources: noResources }),
+  ]
+  const bots: FleetBot[] = [
+    makeBot('scout', 'Scout', 'acme'),
+    makeBot('ghost', 'Ghost', 'acme'),
+    makeBot('veteran', 'Veterano', 'legacy', {
+      capabilities: oldImage,
+      appVersion: '0.9.2',
+      status: 'setup',
+      activity: { kind: 'setup', need: 'account' },
+      accounts: { connected: false, providers: [] },
+    }),
+    makeBot('sleeper', 'Sleeper', 'parked', { lifecycle: 'stopped', status: 'offline' }),
+  ]
+  const archivedBots = [
+    fleetArchivedBotSchema.parse({
+      id: 'retired',
+      name: 'Retired',
+      role: '',
+      tint: '#aa6644',
+      createdAt: now(),
+      archivedAt: now(),
+      files: 'kept',
+      environmentId: 'parked',
+    }),
+  ]
+  // The gateway's own refusals of a screen ticket (apps/bot-gateway/src/screen.ts), word for word.
+  const restartToOpen = 'Restart this environment to update it before opening this screen.'
+  let issued = 0
+  const ticket = (kind: 'hold' | 'invalid' | 'limit') => {
+    const value = `${kind}-${++issued}`
+    return { ticket: value, path: `/v1/screen?ticket=${value}`, expiresAt: now() }
+  }
+  const conversationResult = (op: string): unknown => {
+    switch (op) {
+      case 'chatConfig':
+        return { mcpServers: [], appToolsEnabled: true, imageGenEnabled: true }
+      case 'chatGetConvTools':
+        return { app: true, imageGen: true, mcpDisabled: [] }
+      case 'chatSubagentProfilesGetConversation':
+        return { rules: null, diagnostics: [], enabled: true, subagentsEnabled: true }
+      case 'chatSkillsState':
+        return { skills: [], groups: [], selection: { kind: 'all' }, selectedGroupMissing: false, hasOverrides: false }
+      case 'chatCommands':
+        return { prompts: [], project: [], skills: [] }
+      default:
+        return { ok: true }
+    }
+  }
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const entry = Object.entries(FLEET_GATEWAY_ROUTES).find(
+      ([, route]) =>
+        route.method === request.method && new RegExp(`^${route.path.replace(/:[^/]+/g, '[^/]+')}$`).test(url.pathname)
+    )
+    const send = (status: number, value: unknown) => {
+      response.writeHead(status, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(value))
+    }
+    const refuse = (code: string, message: string) => send(code === 'NOT_FOUND' ? 404 : 409, { code, message })
+    if (!entry) return refuse('NOT_FOUND', 'Unknown route')
+    const [key, route] = entry
+    if (request.headers['x-maestrly-fleet-protocol'] !== '1') {
+      send(426, { code: 'PROTOCOL_INCOMPATIBLE', message: 'Bad protocol' })
+      return
+    }
+    if (!['meta', 'pair'].includes(key) && request.headers.authorization !== 'Bearer fixture-token') {
+      send(401, { code: 'UNAUTHORIZED', message: 'Bad token' })
+      return
+    }
+    let body: unknown
+    if (route.body) {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      try {
+        body = route.body.parse(JSON.parse(Buffer.concat(chunks).toString()))
+      } catch {
+        send(400, { code: 'INVALID_REQUEST', message: 'Bad body' })
+        return
+      }
+    }
+    requests.push({ key, body, path: url.pathname })
+    if (key === 'events') {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      streams.add(response)
+      response.write(': connected\n\n')
+      request.on('close', () => streams.delete(response))
+      return
+    }
+    const bot = bots.find((item) => item.id === url.pathname.match(/^\/v1\/bots\/([^/]+)/)?.[1])
+    const environment = environments.find((item) => item.id === url.pathname.match(/^\/v1\/environments\/([^/]+)/)?.[1])
+    let value: unknown
+    switch (key) {
+      case 'meta':
+        value = {
+          protocol: 1,
+          features: capable,
+          gatewayVersion: '0.9.3',
+          botImage: 'test-image',
+          botImageVersion: '0.9.3',
+        }
+        break
+      case 'pair':
+        value = { deviceId: 'device-compat-e2e', token: 'fixture-token' }
+        break
+      case 'host':
+        value = host
+        break
+      case 'botsList':
+        value = { bots }
+        break
+      case 'environmentsList':
+        value = { environments }
+        break
+      case 'inbox':
+        value = { items: [] }
+        break
+      case 'peerMessages':
+        value = { messages: [] }
+        break
+      case 'activity':
+        value = { entries: [], lastSeq: 0 }
+        break
+      case 'botGet':
+        if (!bot) return refuse('NOT_FOUND', 'Bot not found')
+        value = bot
+        break
+      case 'botTranscript':
+        value = { items: [], before: null }
+        break
+      case 'botSelections':
+        value = { options: [], current: null }
+        break
+      case 'botRoutinesList':
+        value = { routines: [] }
+        break
+      case 'botMemoriesList':
+        value = { memories: [] }
+        break
+      case 'botConversationCall':
+        value = { result: conversationResult(fleetConversationCallRequestSchema.parse(body).op) }
+        break
+      case 'environmentAccountsList':
+        value = { apiKeys: [], subscriptions: [] }
+        break
+      case 'environmentSkillsList':
+        value = { skills: [] }
+        break
+      case 'environmentMcpServersList':
+        value = { servers: [] }
+        break
+      case 'archivedBotsList':
+        value = { bots: archivedBots }
+        break
+      case 'archivedEnvironmentsList':
+        value = { environments: [] }
+        break
+      // Only a running environment's Maestrly deletes a bot's data, and this bot's environment is stopped.
+      case 'archivedBotDelete':
+        return refuse('CONFLICT', 'Start its environment first')
+      case 'botTakeover':
+        value = { state: 'human', deviceId: 'device-compat-e2e', deviceName: 'Mac', since: now() }
+        break
+      case 'botUiOpen':
+      case 'environmentUiOpen':
+        break
+      case 'botScreenTicket': {
+        if (!bot) return refuse('NOT_FOUND', 'Bot not found')
+        const home = environments.find((item) => item.id === bot.environmentId)
+        // Ghost's environment stopped before its status said so.
+        if (bot.id === 'ghost' || bot.lifecycle !== 'running') return refuse('BOT_NOT_RUNNING', 'Bot not running')
+        if ((body as { surface: string }).surface !== 'browser' && !home?.capabilities.includes('environments'))
+          return refuse('CONFLICT', restartToOpen)
+        value = ticket(bot.id === 'scout' ? 'invalid' : 'hold')
+        break
+      }
+      case 'environmentScreenTicket':
+        if (!environment) return refuse('NOT_FOUND', 'Environment not found')
+        if (environment.lifecycle !== 'running') return refuse('BOT_NOT_RUNNING', 'Environment not running')
+        if (!environment.capabilities.includes('environments')) return refuse('CONFLICT', restartToOpen)
+        // The display is free when a control ticket is issued, and taken by another Mac before it is used.
+        value = ticket((body as { mode: string }).mode === 'control' ? 'limit' : 'hold')
+        break
+      default:
+        return refuse('NOT_FOUND', 'Not found')
+    }
+    try {
+      if (route.response) value = route.response.parse(value)
+      if (!route.response) {
+        response.writeHead(204)
+        response.end()
+      } else send(200, value)
+    } catch (error) {
+      send(500, { code: 'INTERNAL', message: String(error) })
+    }
+  })
+  // Like the gateway, accept a screen's WebSocket and then close it with 4003 when its ticket cannot be used.
+  server.on('upgrade', (request, socket: Duplex) => {
+    sockets.add(socket)
+    socket.on('error', () => {})
+    socket.on('close', () => sockets.delete(socket))
+    const value = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('ticket') ?? ''
+    const accept = createHash('sha1')
+      .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
+    )
+    const reason = value.startsWith('limit') ? 'limit' : value.startsWith('invalid') ? 'ticket_invalid' : null
+    // A held screen stays open without frames.
+    if (!reason) return
+    const payload = Buffer.concat([Buffer.from([0x0f, 0xa3]), Buffer.from(reason)])
+    socket.write(Buffer.concat([Buffer.from([0x88, payload.length]), payload]))
+    setTimeout(() => socket.end(), 50)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('No address')
+  let app: Awaited<ReturnType<typeof electron.launch>> | undefined
+  try {
+    app = await electron.launch({
+      args: [path.join(desktop, 'out/main/index.js')],
+      env: {
+        ...process.env,
+        AGENTS_E2E: '1',
+        AGENTS_E2E_SKILLS_HOME: root,
+        AGENTS_CHANNEL: 'dev',
+        AGENTS_INSTANCE: 'fleet-compat-e2e',
+        AGENTS_USERDATA: path.join(root, 'profile'),
+        AGENTS_LOCALE: 'pt-BR',
+        ELECTRON_RENDERER_URL: '',
+      },
+    })
+    const page = await app.firstWindow()
+    await page.waitForFunction(() => Boolean((window as any).api))
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
+    await page.getByRole('button', { name: 'Configurações', exact: true }).click()
+    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByLabel('Endereço do servidor').fill(`http://127.0.0.1:${address.port}`)
+    await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
+    await page.getByRole('button', { name: 'Conectar', exact: true }).click()
+    await expect(page.getByRole('main').getByRole('status').filter({ hasText: 'Conectado' })).toContainText(hostname)
+    await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
+    await page.getByRole('tab', { name: 'Bots' }).click()
+    const group = (name: string) => page.getByRole('group', { name, exact: true })
+    const header = (name: string) => group(name).getByRole('button', { name: new RegExp(`^Ambiente ${name} · `) })
+    const botTickets = (id: string, surface?: string) =>
+      requests
+        .filter((item) => item.key === 'botScreenTicket' && item.path === `/v1/bots/${id}/screen-tickets`)
+        .map((item) => item.body as { mode: string; surface: string })
+        .filter((item) => !surface || item.surface === surface)
+    const environmentTickets = (id: string) =>
+      requests
+        .filter(
+          (item) => item.key === 'environmentScreenTicket' && item.path === `/v1/environments/${id}/screen-tickets`
+        )
+        .map((item) => item.body as { mode: string })
+    const bodyText = () => page.locator('body').innerText()
+
+    // A bot of an environment still on its old image keeps its browser area, and signs in on its own screen, which
+    // it holds: the settings of that image open there, not on an environment screen it does not have.
+    await group('Legado')
+      .getByRole('button', { name: /Veterano/ })
+      .click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    const surfaces = page.getByRole('radiogroup', { name: 'Área da tela' })
+    await expect(surfaces.getByRole('radio', { name: 'Navegador' })).toHaveAttribute('aria-checked', 'true')
+    await expect(surfaces.getByRole('radio', { name: 'Apps' })).toBeDisabled()
+    await expect(page.getByText('Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.')).toBeVisible()
+    await expect.poll(() => botTickets('veteran')).toContainEqual({ mode: 'view', surface: 'browser' })
+    await expect(page.getByRole('button', { name: 'Usar a tela do ambiente' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Usar a tela do bot' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botUiOpen').map((item) => [item.path, item.body]))
+      .toEqual([['/v1/bots/veteran/ui/open', { target: 'accounts' }]])
+    expect(requests.filter((item) => item.key === 'botTakeover').map((item) => item.path)).toEqual([
+      '/v1/bots/veteran/takeover',
+    ])
+    await expect.poll(() => botTickets('veteran').at(-1)).toEqual({ mode: 'control', surface: 'browser' })
+    expect(botTickets('veteran').filter((item) => item.surface !== 'browser')).toEqual([])
+    expect(requests.filter((item) => item.key === 'environmentUiOpen')).toHaveLength(0)
+
+    // Its environment has no screen or sign-in there until it restarts, and takes no second bot before that.
+    await header('Legado').click()
+    await expect(page.getByRole('heading', { name: 'Legado', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Fazer login na tela do ambiente' })).toBeDisabled()
+    await expect(
+      page.getByText('Reinicie este ambiente para atualizá-lo antes de fazer login na tela dele.')
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Abrir tela do ambiente' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Novo bot neste ambiente' })).toBeDisabled()
+    await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de adicionar bots.')).toBeVisible()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await expect(page.getByText('Reinicie este ambiente para atualizá-lo antes de abrir esta tela.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Assumir controle' })).toBeDisabled()
+    expect(environmentTickets('legacy')).toEqual([])
+    expect(requests.filter((item) => item.key === 'environmentUiOpen')).toHaveLength(0)
+
+    // A stopped environment takes no new bot until it starts: the bot would wait at its profile step meanwhile.
+    await header('Parado').click()
+    await expect(page.getByRole('heading', { name: 'Parado', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Novo bot neste ambiente' })).toBeDisabled()
+    await expect(page.getByText('Inicie este ambiente antes de adicionar bots.')).toBeVisible()
+    await page.getByRole('button', { name: 'Criar bot' }).first().click()
+    const createDialog = page.getByRole('dialog', { name: 'Criar bot' })
+    await createDialog.getByLabel('Nome', { exact: true }).fill('Helper')
+    await createDialog.getByRole('radio', { name: /Ambiente existente/ }).click()
+    await createDialog.getByRole('button', { name: 'Ambiente', exact: true }).click()
+    const parkedOption = page.getByRole('option', { name: /Parado/ })
+    await expect(parkedOption).toHaveAttribute('aria-disabled', 'true')
+    await expect(parkedOption).toContainText('Inicie este ambiente antes de adicionar bots.')
+    await expect(page.getByRole('option', { name: /Legado/ })).toHaveAttribute('aria-disabled', 'true')
+    await expect(page.getByRole('option', { name: /Acme/ })).not.toHaveAttribute('aria-disabled', 'true')
+    await page.keyboard.press('Escape')
+    await expect(createDialog.getByRole('button', { name: 'Criar bot' })).toBeDisabled()
+    await createDialog.getByRole('button', { name: 'Cancelar' }).click()
+    expect(requests.filter((item) => item.key === 'botsCreate')).toHaveLength(0)
+
+    // A bot whose environment stopped before its status said so shows an offline screen, never a raw marker.
+    await group('Acme').getByRole('button', { name: /Ghost/ }).click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await expect.poll(() => botTickets('ghost').length).toBeGreaterThan(0)
+    await expect(page.getByText('Bot parado', { exact: true }).first()).toBeVisible()
+    expect(await bodyText()).not.toContain('FLEET_')
+
+    // A refused ticket is retried once per screen: the apps area gets its own retry after the browser area's.
+    await group('Acme').getByRole('button', { name: /Scout/ }).click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await expect.poll(() => botTickets('scout', 'browser').length).toBe(2)
+    await expect(page.getByText('Tela indisponível. Tente reabrir esta aba.')).toBeVisible()
+    await page.getByRole('radiogroup', { name: 'Área da tela' }).getByRole('radio', { name: 'Apps' }).click()
+    await expect.poll(() => botTickets('scout', 'apps').length).toBe(2)
+    await expect(page.getByText('Tela indisponível. Tente reabrir esta aba.')).toBeVisible()
+    await page.waitForTimeout(1000)
+    expect(botTickets('scout', 'apps')).toHaveLength(2)
+    expect(botTickets('scout', 'browser')).toHaveLength(2)
+
+    // Another Mac takes the shared display between this Mac's control ticket and its use: this Mac watches instead
+    // of retrying control, and says why.
+    await header('Acme').click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await expect.poll(() => environmentTickets('acme')).toEqual([{ mode: 'view' }])
+    await page.getByRole('button', { name: 'Assumir controle' }).click()
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'Outra tela deste ambiente está sendo controlada.' })
+    ).toBeVisible()
+    await expect
+      .poll(() => environmentTickets('acme'))
+      .toEqual([{ mode: 'view' }, { mode: 'control' }, { mode: 'view' }])
+    await page.waitForTimeout(1000)
+    expect(environmentTickets('acme').filter((item) => item.mode === 'control')).toHaveLength(1)
+
+    // Deleting a bot of a shared environment keeps what the environment shares; a refusal says what to do.
+    await page.getByRole('button', { name: hostname, exact: true }).click()
+    const archivedBotsSection = page.getByRole('region', { name: 'Bots arquivados' })
+    await archivedBotsSection.getByRole('button', { name: 'Apagar Retired de vez' }).click()
+    const deleteDialog = page.getByRole('dialog', { name: 'Apagar Retired de vez?' })
+    await expect(deleteDialog).toContainText(
+      'O ambiente dele mantém as contas, skills, servidores MCP e arquivos compartilhados.'
+    )
+    await expect(deleteDialog).not.toContainText('as contas conectadas')
+    await deleteDialog.getByLabel('Digite Retired para confirmar').fill('Retired')
+    await deleteDialog.getByRole('button', { name: 'Apagar de vez' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'archivedBotDelete').map((item) => item.path))
+      .toEqual(['/v1/archived-bots/retired'])
+    await expect(page.getByText('Inicie o ambiente dele antes.')).toBeVisible()
+    expect(await bodyText()).not.toContain('Start its environment first')
+  } finally {
+    await app?.close()
+    for (const stream of streams) stream.end()
+    for (const socket of sockets) socket.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
   }

@@ -24,11 +24,16 @@ import {
   FLEET_IMAGE_LIMITS,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
-import { FLEET_SCREEN_CONFLICT } from '../../../shared/fleet-targets'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
-import { provisioningRoute, requireEnvironments, resolveProvisioningTarget, resolveScreenTarget } from './targets'
+import {
+  provisioningRoute,
+  requireEnvironments,
+  resolveProvisioningTarget,
+  resolveScreenTarget,
+  screenTicketError,
+} from './targets'
 
 const id = fleetBotIdSchema
 const environmentId = fleetEnvironmentIdSchema
@@ -109,7 +114,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:botAction', (_event, botId: unknown, rawAction: unknown) =>
     fleet.call(actionRoute[action.parse(rawAction)], { params: { id: id.parse(botId) } })
   )
-  reg.handle('fleet:listArchivedBots', () => fleet.call('archivedBotsList'))
+  reg.handle('fleet:listArchivedBots', () => fleet.call('archivedBotsList', { query: { separateEnvironments: 1 } }))
   reg.mhandle('fleet:restoreArchivedBot', (_event, botId: unknown) =>
     fleet.call('archivedBotRestore', { params: { id: id.parse(botId) } })
   )
@@ -288,9 +293,8 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const mode = z.enum(['view', 'control']).parse(rawMode)
     const target = resolveScreenTarget(fleet, rawTarget)
     return fleet.screens.openScreen(event.sender, target, mode).catch((error: unknown) => {
-      // Browser areas and the environment screen share one display: one control session at a time per environment.
-      if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_SCREEN_CONFLICT)
-      throw error
+      // Only a control session on the shared display is a conflict; the other 409s need a start or a restart.
+      throw screenTicketError(error)
     })
   })
   reg.mhandle('fleet:screenSend', (event, channelId: unknown, data: unknown) => {

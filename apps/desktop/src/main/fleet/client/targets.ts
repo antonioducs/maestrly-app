@@ -8,6 +8,9 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_SCREEN_CONFLICT,
+  FLEET_SCREEN_OFFLINE,
+  FLEET_SCREEN_RESTART_REQUIRED,
   type FleetProvisioningTarget,
   type FleetScreenTarget,
 } from '../../../shared/fleet-targets'
@@ -89,4 +92,25 @@ export function resolveScreenTarget(fleet: FleetFeatures, raw: unknown): FleetSc
   const target = screenTargetSchema.parse(raw)
   if ('environmentId' in target || target.surface !== 'browser') requireEnvironments(fleet)
   return target
+}
+
+/**
+ * The gateway's two `CONFLICT` refusals of a screen ticket, told apart by their exact messages: another control
+ * session holds the display that browser areas and the environment screen share, or the environment runs an image
+ * from before environments, which has neither apps screens nor an environment screen.
+ */
+export const GATEWAY_SCREEN_CONTROLLED = 'Another screen in this environment is being controlled.'
+export const GATEWAY_RESTART_TO_OPEN_SCREEN = 'Restart this environment to update it before opening this screen.'
+
+/**
+ * The error a refused screen ticket crosses IPC as, which keeps only its message: a stable marker for the refusals
+ * the screen handles itself, the gateway's own error otherwise.
+ */
+export function screenTicketError(error: unknown): unknown {
+  if (!(error instanceof FleetClientError)) return error
+  if (error.code === 'BOT_NOT_RUNNING') return new Error(FLEET_SCREEN_OFFLINE)
+  if (error.code !== 'CONFLICT') return error
+  if (error.message === GATEWAY_SCREEN_CONTROLLED) return new Error(FLEET_SCREEN_CONFLICT)
+  if (error.message === GATEWAY_RESTART_TO_OPEN_SCREEN) return new Error(FLEET_SCREEN_RESTART_REQUIRED)
+  return error
 }

@@ -1,4 +1,10 @@
-import { FLEET_ENVIRONMENTS_UNSUPPORTED, FLEET_SCREEN_CONFLICT } from '../../../shared/fleet-targets'
+import { FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_SCREEN_CONFLICT,
+  FLEET_SCREEN_OFFLINE,
+  FLEET_SCREEN_RESTART_REQUIRED,
+} from '../../../shared/fleet-targets'
 
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
 // Main-process errors arrive as "<Class>: message"; gateway failures are FleetClientError instances.
@@ -35,6 +41,67 @@ export function isScreenConflict(cause: unknown): boolean {
   return fleetErrorMessage(cause).includes(FLEET_SCREEN_CONFLICT)
 }
 
+/** The environment runs an image from before environments, without this screen until it restarts. */
+export function isScreenRestartRequired(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_SCREEN_RESTART_REQUIRED)
+}
+
+/** The screen's bot or environment stopped before the gateway issued its ticket. */
+export function isScreenOffline(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_SCREEN_OFFLINE)
+}
+
 export function isOwnerMemoryFull(cause: unknown): boolean {
   return /^Owner memory is full\s*\(/.test(fleetErrorMessage(cause))
+}
+
+type Translate = (key: string, options?: Record<string, unknown>) => string
+type KnownRefusal = { matches: (message: string) => boolean; key: string; values?: Record<string, unknown> }
+
+const exactly = (text: string) => (message: string) => message === text
+const marked = (marker: string) => (message: string) => message.includes(marker)
+/**
+ * Refusals the owner can act on, and the hint the Bots UI shows for each. IPC keeps only an error's message, so they
+ * are recognized by the markers the main process raises or by the gateway's exact messages; any other failure keeps
+ * its own text.
+ */
+const KNOWN_REFUSALS: KnownRefusal[] = [
+  { matches: marked(FLEET_ENVIRONMENTS_UNSUPPORTED), key: 'provisioning.updateServer' },
+  { matches: marked(FLEET_SCREEN_CONFLICT), key: 'screen.conflict' },
+  { matches: marked(FLEET_SCREEN_RESTART_REQUIRED), key: 'screen.restartEnvironment' },
+  { matches: marked(FLEET_SCREEN_OFFLINE), key: 'errors.screenOffline' },
+  {
+    matches: exactly('Restart this environment to update it before opening this screen.'),
+    key: 'screen.restartEnvironment',
+  },
+  { matches: exactly('Restart this environment to update it before adding bots.'), key: 'environment.restartToJoin' },
+  {
+    matches: (message) => /^This environment already has (?:\d+ bots|the most bots it can hold)\.$/.test(message),
+    key: 'errors.environmentFull',
+    values: { max: FLEET_ENVIRONMENT_LIMITS.botsMax },
+  },
+  {
+    matches: exactly('This bot shares its environment. Restart the environment instead.'),
+    key: 'errors.sharedEnvironment',
+  },
+  { matches: exactly('Restore its environment first'), key: 'errors.restoreEnvironmentFirst' },
+  { matches: exactly('Start its environment first'), key: 'errors.startEnvironmentFirst' },
+  { matches: exactly('Its display slot is still in use. Start the bot again to retry.'), key: 'errors.slotInUse' },
+  {
+    matches: exactly('Restart this environment to update it before configuring it from the Mac.'),
+    key: 'provisioning.restartEnvironment',
+  },
+  {
+    matches: exactly('Restart this bot to update it before configuring it from the Mac.'),
+    key: 'provisioning.restartBot',
+  },
+  { matches: exactly('Environment not running'), key: 'errors.environmentNotRunning' },
+  { matches: exactly('Bot not running'), key: 'errors.botNotRunning' },
+]
+
+/** The text the Bots UI shows for a failure: a localized hint for a known refusal, else the failure's own message. */
+export function fleetErrorText(cause: unknown, t: Translate): string {
+  const message = fleetErrorMessage(cause)
+  const known = KNOWN_REFUSALS.find((refusal) => refusal.matches(message))
+  return known ? t(known.key, known.values) : message
 }

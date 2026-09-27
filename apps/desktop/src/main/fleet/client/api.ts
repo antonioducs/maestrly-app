@@ -23,12 +23,28 @@ export class FleetClientError extends Error {
 type Routes = typeof FLEET_GATEWAY_ROUTES
 type RouteKey = keyof Routes
 type RouteResponse<K extends RouteKey> = Routes[K]['response'] extends { _output: infer T } ? T : void
+/**
+ * Lifecycle actions answer once the environment is done: after its container stops, or after its desktop answers
+ * again (the gateway waits up to 240 s, after replacing the container when the server offers a newer image). A bot's
+ * own start, stop and restart act on its environment when it is alone there.
+ */
+const LIFECYCLE_TIMEOUT_MS = 300_000
 /** The gateway waits up to 30 s for sign-in pages and 60 s for a skill installation, for bots and environments. */
 const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
   botLoginStart: 35_000,
   environmentLoginStart: 35_000,
   botSkillInstall: 65_000,
   environmentSkillInstall: 65_000,
+  environmentStart: LIFECYCLE_TIMEOUT_MS,
+  environmentStop: LIFECYCLE_TIMEOUT_MS,
+  environmentRestart: LIFECYCLE_TIMEOUT_MS,
+  environmentArchive: LIFECYCLE_TIMEOUT_MS,
+  botStart: LIFECYCLE_TIMEOUT_MS,
+  botStop: LIFECYCLE_TIMEOUT_MS,
+  botRestart: LIFECYCLE_TIMEOUT_MS,
+  botArchive: LIFECYCLE_TIMEOUT_MS,
+  archivedBotDelete: LIFECYCLE_TIMEOUT_MS,
+  archivedEnvironmentDelete: LIFECYCLE_TIMEOUT_MS,
 }
 
 export class FleetApiClient {

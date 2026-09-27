@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { MacInventory, MacImportReport } from '../../../shared/fleet-provisioning'
-import type { ProvisioningSubject } from '@/lib/fleet/environments'
+import { finishLaterKey, type ProvisioningSubject } from '@/lib/fleet/environments'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -169,7 +169,7 @@ export function MacImportDialog({
               </Button>
             </>
           ))}
-        <p className="text-xs text-muted-foreground">{t('provisioning.finishLater')}</p>
+        <p className="text-xs text-muted-foreground">{t(finishLaterKey(subject.target))}</p>
       </DialogContent>
     </Dialog>
   )

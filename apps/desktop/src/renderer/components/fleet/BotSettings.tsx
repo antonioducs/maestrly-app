@@ -4,7 +4,7 @@ import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentOf } from '@/lib/fleet/selectors'
 import { botProvisioningKey, provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetRoutine, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
@@ -72,6 +72,8 @@ export function BotSettings({
   // there; without them, a bot keeps every section it had.
   const shared = hasEnvironments(fleet.state.connection) && bot.environmentId !== null
   const environment = shared ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
+  // The last bot of an environment leaves it running, empty, until the owner stops or archives it.
+  const lastInEnvironment = environment?.botIds.every((id) => id === bot.id) ?? false
   const availability = provisioningAvailability(fleet, bot)
   const provisioning = useBotProvisioning(bot.id, !shared && availability === 'ready' && bot.lifecycle === 'running')
   const provisioningKey = botProvisioningKey(bot)
@@ -308,7 +310,7 @@ export function BotSettings({
       }
       setConfirm(null)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }
@@ -624,7 +626,11 @@ export function BotSettings({
         )}
         <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
           <p className="text-xs text-muted-foreground">
-            {shared ? t('botSettings.archiveOnlyNote') : t('botSettings.archiveNote')}
+            {shared
+              ? lastInEnvironment
+                ? t('botSettings.archiveLastNote')
+                : t('botSettings.archiveOnlyNote')
+              : t('botSettings.archiveNote')}
           </p>
           <Button variant="destructive" size="sm" onClick={() => setConfirm({ kind: 'archive' })}>
             {t('botSettings.archive', { name: bot.name })}
@@ -798,7 +804,9 @@ export function BotSettings({
           message={t(
             confirm.kind === 'archive'
               ? shared
-                ? 'botSettings.archiveOnlyConfirm'
+                ? lastInEnvironment
+                  ? 'botSettings.archiveLastConfirm'
+                  : 'botSettings.archiveOnlyConfirm'
                 : 'botSettings.archiveConfirm'
               : confirm.kind === 'account'
                 ? 'botSettings.removeAccountConfirm'

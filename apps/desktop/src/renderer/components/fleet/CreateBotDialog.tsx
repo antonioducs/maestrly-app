@@ -3,6 +3,7 @@ import { MacImportFlow } from './MacImportDialog'
 import {
   emptyImportChoice,
   environmentJoinAvailability,
+  environmentJoinHint,
   hasImportChoice,
   importGroups,
   recommendedImportChoice,
@@ -10,13 +11,14 @@ import {
   useMacInventory,
   type EnvironmentJoinAvailability,
 } from '@/lib/fleet/provisioning'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   creationStepReached,
   creationSteps,
   editEnvironmentName,
   emptyEnvironmentName,
   environmentNameFor,
+  finishLaterKey,
   followBotName,
   hasEnvironments,
   placementRequest,
@@ -25,7 +27,7 @@ import {
 } from '@/lib/fleet/environments'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FLEET_ENVIRONMENT_LIMITS, type FleetBot } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -121,10 +123,9 @@ export function CreateBotDialog({
   useEffect(() => {
     if (open && !selected && current?.setup.step === 'ready') onCreated(current.id)
   }, [open, selected, current?.id, current?.setup.step, onCreated])
-  function joinHint(availability: EnvironmentJoinAvailability): string {
-    if (availability === 'full') return t('environment.full', { max: FLEET_ENVIRONMENT_LIMITS.botsMax })
-    if (availability === 'update-server') return t('provisioning.updateServer')
-    return t('environment.restartToJoin')
+  function joinHint(availability: Exclude<EnvironmentJoinAvailability, 'ready'>): string {
+    const hint = environmentJoinHint(availability)
+    return t(hint.key, hint.values)
   }
   function onPlacementKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const next = nextRadioIndex(index, event.key, placements.length)
@@ -150,7 +151,7 @@ export function CreateBotDialog({
       setCreated(bot)
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot } })
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }
@@ -198,7 +199,7 @@ export function CreateBotDialog({
             ))}
             {current?.setup.step === 'failed' && (
               <p role="alert" className="text-destructive">
-                {current.setup.errorMessage ?? t('create.failed')}
+                {current.setup.errorMessage ? fleetErrorText(current.setup.errorMessage, t) : t('create.failed')}
               </p>
             )}
             {current?.setup.step === 'ready' &&
@@ -227,7 +228,7 @@ export function CreateBotDialog({
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              {t(selected ? 'provisioning.finishLater' : 'create.closeNote')}
+              {selected && importSubject ? t(finishLaterKey(importSubject.target)) : t('create.closeNote')}
             </p>
           </div>
         ) : (

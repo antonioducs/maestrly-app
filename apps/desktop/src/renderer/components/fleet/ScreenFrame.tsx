@@ -4,8 +4,8 @@ import type RFB from '@novnc/novnc'
 import type { FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
 import type { FleetScreenTargetInput } from '../../../preload/api-fleet'
 import { loadNoVnc } from '@/lib/fleet/load-novnc'
-import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
-import { fleetErrorMessage, isScreenConflict } from '@/lib/fleet/errors'
+import { FleetScreenChannel, ScreenRetries, screenCloseOutcome } from '@/lib/fleet/screen-channel'
+import { fleetErrorMessage, isScreenConflict, isScreenOffline } from '@/lib/fleet/errors'
 
 export type ScreenPhase = 'connecting' | 'live' | 'offline' | 'error'
 
@@ -13,7 +13,7 @@ export type ScreenPhase = 'connecting' | 'live' | 'offline' | 'error'
  * Streams a screen into `container`: a bot's browser or apps area, or an environment's screen. A null surface is a
  * bot's browser area opened as before environments. Browser areas and the environment screen share one display, so
  * the gateway allows one control session on it per environment: a refused control request watches instead, until
- * the owner retries or asks for another screen.
+ * the owner retries or asks for another screen. `error` is the failure's raw message, for `fleetErrorText`.
  */
 export function useFleetScreen({
   container,
@@ -35,7 +35,7 @@ export function useFleetScreen({
   const [phase, setPhase] = useState<ScreenPhase>('connecting')
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
-  const retries = useRef(0)
+  const retries = useRef(new ScreenRetries())
   const lost = useRef(onControlLost)
   lost.current = onControlLost
   const request = `${kind}:${id}:${surface ?? ''}`
@@ -59,16 +59,17 @@ export function useFleetScreen({
         if (disposed) return
         if (state.state === 'open') setPhase('live')
         if (state.state === 'error') setPhase('error')
-        if (state.state === 'closed') {
-          if (state.code === 4001) {
-            lost.current?.()
-            setPhase('connecting')
-          } else if (state.code === 4002) setPhase('offline')
-          else if (state.code === 4003 && retries.current < 1) {
-            retries.current++
-            setAttempt((value) => value + 1)
-          } else setPhase('error')
-        }
+        if (state.state !== 'closed') return
+        const outcome = screenCloseOutcome(state, effective)
+        if (outcome === 'released') {
+          lost.current?.()
+          setPhase('connecting')
+        } else if (outcome === 'offline') setPhase('offline')
+        // Another session took the shared display between the ticket and its use: watch it instead.
+        else if (outcome === 'conflict') setBlocked(request)
+        else if (outcome === 'retry' && retries.current.take(`${request}:${effective}`))
+          setAttempt((value) => value + 1)
+        else setPhase('error')
       })
       return { opened, NoVncClient }
     }
@@ -89,6 +90,8 @@ export function useFleetScreen({
         remote.qualityLevel = 6
         remote.compressionLevel = 4
         remote.addEventListener('connect', () => {
+          // The screen really answered: a later refusal of this screen may retry again.
+          retries.current.reset()
           setPhase('live')
           if (effective === 'control') remote.focus({ preventScroll: true })
         })
@@ -103,6 +106,11 @@ export function useFleetScreen({
           setBlocked(request)
           return
         }
+        // The bot or environment stopped before its status said so.
+        if (isScreenOffline(cause)) {
+          setPhase('offline')
+          return
+        }
         setError(fleetErrorMessage(cause))
         setPhase('error')
       })
@@ -114,12 +122,12 @@ export function useFleetScreen({
   }, [container, kind, id, surface, request, effective, disabled, attempt])
   /** Asks for control again once the other session is done. */
   const retryControl = useCallback(() => {
-    retries.current = 0
+    retries.current.reset()
     setBlocked(null)
   }, [])
   /** A new takeover starts with a fresh retry allowance. */
   const resetRetries = useCallback(() => {
-    retries.current = 0
+    retries.current.reset()
   }, [])
   return { phase, error, conflict, retryControl, resetRetries }
 }

@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
+import {
+  FLEET_SCREEN_CONFLICT,
+  FLEET_SCREEN_OFFLINE,
+  FLEET_SCREEN_RESTART_REQUIRED,
+} from '../../src/shared/fleet-targets'
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(async (): Promise<unknown> => undefined),
@@ -25,6 +31,7 @@ vi.mock('../../src/main/fleet/client/service', () => ({
 }))
 import { registerFleetClientIpc } from '../../src/main/fleet/client/ipc'
 import { FleetClientError } from '../../src/main/fleet/client/api'
+import { GATEWAY_RESTART_TO_OPEN_SCREEN, GATEWAY_SCREEN_CONTROLLED } from '../../src/main/fleet/client/targets'
 
 afterEach(() => {
   delete process.env.MAESTRLY_BOT_MODE
@@ -145,7 +152,7 @@ describe('fleet IPC validation', () => {
     await mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, 'scout')
     await mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, 'scout')
     expect(mocks.call.mock.calls).toEqual([
-      ['archivedBotsList'],
+      ['archivedBotsList', { query: { separateEnvironments: 1 } }],
       ['archivedBotRestore', { params: { id: 'scout' } }],
       ['archivedBotDelete', { params: { id: 'scout' } }],
     ])
@@ -217,5 +224,45 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     mocks.call.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, 'Bot is finishing a step'))
     await expect(handlers.get('fleet:takeover')?.({ sender: {} }, 'bot')).rejects.toThrow('FLEET_TAKEOVER_CONFLICT')
+  })
+  it('calls only a control session on the shared display a screen conflict, among the 409s of a screen ticket', async () => {
+    process.env.MAESTRLY_BOT_MODE = '1'
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const screenOpen = handlers.get('fleet:screenOpen')
+    if (!screenOpen) throw new Error('fleet:screenOpen is not registered')
+    const open = (mode: 'view' | 'control') =>
+      (screenOpen({ sender: {} }, 'scout', mode) as Promise<unknown>).then(
+        () => 'opened',
+        (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
+      )
+    // Each refusal of the gateway's screen tickets as the Mac receives it, and what crosses IPC for it.
+    const refusals: Array<[FleetClientError, string]> = [
+      [new FleetClientError('CONFLICT', 409, GATEWAY_SCREEN_CONTROLLED), FLEET_SCREEN_CONFLICT],
+      [new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN), FLEET_SCREEN_RESTART_REQUIRED],
+      [new FleetClientError('BOT_NOT_RUNNING', 409, 'Bot not running'), FLEET_SCREEN_OFFLINE],
+      [new FleetClientError('BOT_NOT_RUNNING', 409, 'Environment not running'), FLEET_SCREEN_OFFLINE],
+      // Any other refusal keeps its own message and is never shown as a screen conflict.
+      [
+        new FleetClientError('CONFLICT', 409, 'Idempotency key used with different request'),
+        'Idempotency key used with different request',
+      ],
+      [new FleetClientError('FORBIDDEN', 403, 'Takeover required for control'), 'Takeover required for control'],
+    ]
+    for (const mode of ['view', 'control'] as const)
+      for (const [error, expected] of refusals) {
+        mocks.screens.openScreen.mockRejectedValueOnce(error)
+        await expect(open(mode)).resolves.toBe(expected)
+      }
+  })
+  it('recognizes the screen refusals by the exact messages the gateway sends', () => {
+    const gateway = readFileSync(new URL('../../../bot-gateway/src/screen.ts', import.meta.url), 'utf8')
+    expect(gateway).toContain(`export const SCREEN_CONTROLLED = '${GATEWAY_SCREEN_CONTROLLED}'`)
+    expect(gateway).toContain(`export const RESTART_TO_OPEN_SCREEN = '${GATEWAY_RESTART_TO_OPEN_SCREEN}'`)
+    expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')")
+    expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')")
   })
 })

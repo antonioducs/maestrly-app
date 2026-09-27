@@ -5,7 +5,7 @@ import { FLEET_ENVIRONMENT_LIMITS, type FleetBot, type FleetEnvironment } from '
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   createKeyWatcher,
   environmentBots,
@@ -20,7 +20,9 @@ import { gb } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
   environmentJoinAvailability,
+  environmentJoinHint,
   environmentProvisioningKey,
+  environmentScreenAvailability,
   provisioningAvailability,
   useFleetProvisioning,
 } from '@/lib/fleet/provisioning'
@@ -120,7 +122,7 @@ export function EnvironmentView({
       </header>
       {fleet.actionError?.environmentId === environment.id && (
         <p role="alert" className="px-5 py-2 text-xs text-destructive">
-          {fleet.actionError.message}
+          {fleetErrorText(fleet.actionError.message, t)}
         </p>
       )}
       <div
@@ -180,6 +182,9 @@ function EnvironmentOverview({
     running,
   }
   const join = environmentJoinAvailability(fleet, environment)
+  const joinHint = join === 'ready' ? null : environmentJoinHint(join)
+  // An image from before environments has no environment screen: its settings open in its bot's browser area.
+  const oldImage = environmentScreenAvailability(environment) === 'restart-environment'
   const host = fleet.state.snapshot.host
   const update = environmentUpdateAvailable(environment, host)
   const names =
@@ -227,7 +232,7 @@ function EnvironmentOverview({
       })
       setLimitSaved(true)
     } catch (cause) {
-      setLimitError(fleetErrorMessage(cause))
+      setLimitError(fleetErrorText(cause, t))
     } finally {
       setLimitBusy(false)
     }
@@ -249,19 +254,11 @@ function EnvironmentOverview({
       setConfirm(null)
       if (confirm === 'archive') onArchived()
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }
   }
-  const joinHint =
-    join === 'full'
-      ? t('environment.full', { max: FLEET_ENVIRONMENT_LIMITS.botsMax })
-      : join === 'update-server'
-        ? t('provisioning.updateServer')
-        : join === 'restart-environment'
-          ? t('environment.restartToJoin')
-          : ''
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl space-y-8">
@@ -292,7 +289,7 @@ function EnvironmentOverview({
             <Button size="sm" disabled={join !== 'ready'} onClick={() => onCreateBot(environment.id)}>
               {t('environment.newBotHere')}
             </Button>
-            {joinHint && <p className="text-xs text-muted-foreground">{joinHint}</p>}
+            {joinHint && <p className="text-xs text-muted-foreground">{t(joinHint.key, joinHint.values)}</p>}
           </div>
           <p className="text-xs text-muted-foreground">{t('environment.sharedNote')}</p>
         </section>
@@ -316,9 +313,15 @@ function EnvironmentOverview({
               await fleet.refresh()
             }}
           />
-          <Button variant="outline" size="sm" disabled={screenBusy || !running} onClick={() => void logInOnScreen()}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={screenBusy || !running || oldImage}
+            onClick={() => void logInOnScreen()}
+          >
             {t('environment.loginOnScreen')}
           </Button>
+          {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
           {screenError && (
             <p role="alert" className="text-xs text-destructive">
               {screenError}
@@ -331,9 +334,10 @@ function EnvironmentOverview({
             {t('environment.screenTitle')}
           </h2>
           <p className="text-xs text-muted-foreground">{t('environment.screenDescription')}</p>
-          <Button size="sm" variant="outline" onClick={onOpenScreen}>
+          <Button size="sm" variant="outline" disabled={oldImage} onClick={onOpenScreen}>
             {t('environment.openScreen')}
           </Button>
+          {oldImage && <p className="text-xs text-muted-foreground">{t('screen.restartEnvironment')}</p>}
         </section>
         <section className="space-y-3" aria-labelledby="fleet-environment-resources">
           <h2 id="fleet-environment-resources" className="font-semibold">

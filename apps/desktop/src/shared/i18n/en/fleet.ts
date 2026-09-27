@@ -62,6 +62,7 @@ export default {
     restartBot: 'Restart this bot to update it first.',
     restartEnvironment: 'Restart this environment to update it first.',
     finishLater: 'You can finish this later in the bot settings.',
+    finishLaterEnvironment: "You can finish this later in the environment's overview.",
     finish: 'Finish',
   },
   botAccounts: {
@@ -126,6 +127,8 @@ export default {
     title: 'Memory about you',
     description:
       'What your bots know about you. Every bot reads it before each message; bots can add, replace or remove entries, and you can edit or undo anything here.',
+    descriptionScoped:
+      'What your bots know about you. Before each message, a bot reads the entries for all bots and those of its own environment. Entries a bot saves stay in its environment; you can edit, move or undo anything here.',
     usage: '{{used}} / {{max}} characters',
     add: 'Add',
     addPlaceholder: 'A preference or fact about you, e.g. “Prefer short answers.”',
@@ -229,6 +232,8 @@ export default {
     newBotHere: 'New bot in this environment',
     full: 'Full ({{max}} bots)',
     restartToJoin: 'Restart this environment to update it before adding bots.',
+    startToJoin: 'Start this environment before adding bots to it.',
+    waitToJoin: 'Wait until this environment is running to add bots to it.',
     sharedNote: "Bots in the same environment can see each other's files and screens.",
     sharedConfig: 'Shared by every bot in this environment.',
     refresh: 'Refresh',
@@ -237,8 +242,9 @@ export default {
     skillsMcp: 'Skills and MCP',
     emptySkills: 'No skills in this environment.',
     emptyMcp: 'No MCP servers in this environment.',
-    removeConfirm: 'Remove {{name}} from this environment?',
+    removeConfirm: 'Remove {{name}} from this environment? Every bot in it stops using it.',
     loginOnScreen: 'Log in on the environment screen',
+    loginNeedsRestart: 'Restart this environment to update it before signing in on its screen.',
     screenLoginFailed: "Could not open the environment's account settings.",
     screenTitle: 'Environment screen',
     screenDescription:
@@ -345,6 +351,16 @@ export default {
     pause: 'Pause',
     resume: 'Resume',
     resumeBlocked: 'Screen control is in progress. Give control back before resuming.',
+  },
+  errors: {
+    sharedEnvironment: 'This bot shares its environment: start, stop or restart the environment instead.',
+    restoreEnvironmentFirst: 'Restore its environment first.',
+    startEnvironmentFirst: 'Start its environment first.',
+    slotInUse: 'Its screen slot is still in use. Start the bot again to retry.',
+    environmentFull: 'This environment already has {{max}} bots, the most it can hold.',
+    environmentNotRunning: 'This environment is not running. Start it first.',
+    botNotRunning: 'This bot is not running.',
+    screenOffline: 'This screen is offline: its bot or environment is not running.',
   },
   conversation: { recalled: 'Recalled: {{titles}}' },
   transcript: {
@@ -456,6 +472,8 @@ export default {
     howTitle: 'How it works',
     howDescription:
       'Each bot has its own Linux desktop and container on the server. The bot controls its desktop there; this Mac is the remote control.',
+    howDescriptionEnvironments:
+      'Bots run in environments on the server. An environment is one container, with the Linux desktop, accounts, files and site logins its bots share; each bot has its own browser and apps screen there. This Mac is the remote control.',
     title: 'Bot server',
     system: 'System',
     cpu: 'CPU',
@@ -486,6 +504,8 @@ export default {
       deleteTitle: 'Delete {{name}} forever?',
       deleteDescription:
         "This deletes {{name}}'s conversation, connected accounts, files, routines, and history from the server. It cannot be undone.",
+      deleteDescriptionEnvironment:
+        "This deletes {{name}}'s conversation, memory, routines, history and own folders from the server. Its environment keeps its accounts, skills, MCP servers and shared files. It cannot be undone.",
       deleteConfirmLabel: 'Type {{name}} to confirm',
       cancel: 'Cancel',
       deleteConfirm: 'Delete forever',
@@ -541,6 +561,8 @@ export default {
     apps: 'Apps',
     conflict: 'Another screen in this environment is being controlled.',
     retryControl: 'Try again',
+    restartEnvironment: 'Restart this environment to update it before opening this screen.',
+    appsNeedsRestart: 'Restart this environment to update it before opening the apps screen.',
     useEnvironmentScreen: 'Use the environment screen',
     environmentAccountDescription:
       '{{name}} needs a model account. Accounts live in its environment, {{environment}}: sign in on the environment screen.',
@@ -575,7 +597,7 @@ export default {
     },
     full: {
       title: 'Full access',
-      description: 'Runs commands and edits files in its own container.',
+      description: 'Runs commands and edits files without asking, anywhere in the container it runs in.',
     },
   },
   botSettings: {
@@ -643,6 +665,10 @@ export default {
       'Archive only this bot. Its environment and the other bots in it keep running; restore it from Bot server.',
     archiveOnlyConfirm:
       'This bot leaves its environment; the environment and its other bots keep running. Its conversation and files stay on the server, and you can restore it from Bot server.',
+    archiveLastNote:
+      'Archive only this bot. Its environment keeps running with no bots; stop or archive it to free its memory. Restore the bot from Bot server.',
+    archiveLastConfirm:
+      'This bot leaves its environment, which keeps running with no bots until you stop or archive it. Its conversation and files stay on the server, and you can restore it from Bot server.',
   },
   routine: {
     addTitle: 'Add routine',

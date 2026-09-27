@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { FleetScreenChannel, type ScreenApi } from '../../src/renderer/lib/fleet/screen-channel'
+import {
+  FleetScreenChannel,
+  ScreenRetries,
+  screenCloseOutcome,
+  type ScreenApi,
+} from '../../src/renderer/lib/fleet/screen-channel'
 
 type State = Parameters<Parameters<ScreenApi['onFleetScreenState']>[0]>[0]
 type Data = Parameters<Parameters<ScreenApi['onFleetScreenData']>[0]>[0]
@@ -80,5 +85,30 @@ describe('fleet raw screen channel', () => {
     channel.close()
     expect(channel.readyState).toBe(2)
     expect(fake.api.fleetScreenClose).toHaveBeenCalledWith('ch1')
+  })
+})
+describe('refused screen tickets', () => {
+  it('watches instead of retrying when another session took the shared display after the ticket', () => {
+    // The gateway accepts the WebSocket, then closes it with 4003: `limit` for a display already controlled.
+    expect(screenCloseOutcome({ code: 4003, reason: 'limit' }, 'control')).toBe('conflict')
+    expect(screenCloseOutcome({ code: 4003, reason: 'limit' }, 'view')).toBe('retry')
+    expect(screenCloseOutcome({ code: 4003, reason: 'ticket_invalid' }, 'control')).toBe('retry')
+    expect(screenCloseOutcome({ code: 4001, reason: 'released' }, 'control')).toBe('released')
+    expect(screenCloseOutcome({ code: 4002, reason: 'bot_offline' }, 'view')).toBe('offline')
+    // A transport that reports no close code ends in an error, never in a retry.
+    expect(screenCloseOutcome({}, 'view')).toBe('error')
+    expect(screenCloseOutcome({ code: 1006, reason: '' }, 'control')).toBe('error')
+  })
+  it('gives each screen its own retry, and a screen that connected a fresh one', () => {
+    const retries = new ScreenRetries()
+    expect(retries.take('bot:scout:browser:view')).toBe(true)
+    expect(retries.take('bot:scout:browser:view')).toBe(false)
+    // Switching to the apps area, or to another bot, used to find the single retry already spent.
+    expect(retries.take('bot:scout:apps:view')).toBe(true)
+    expect(retries.take('bot:scout:apps:view')).toBe(false)
+    expect(retries.take('environment:acme::control')).toBe(true)
+    retries.reset()
+    expect(retries.take('environment:acme::control')).toBe(true)
+    expect(retries.take('environment:acme::control')).toBe(false)
   })
 })

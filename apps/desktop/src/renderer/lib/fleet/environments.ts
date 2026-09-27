@@ -1,6 +1,7 @@
 import {
   FLEET_ENVIRONMENTS_FEATURE,
   type FleetActivityEntry,
+  type FleetArchivedBot,
   type FleetBot,
   type FleetEnvironment,
   type FleetHostInfo,
@@ -194,6 +195,25 @@ export function environmentUpdateAvailable(
 
 export function isEnvironmentTarget(target: FleetProvisioningTargetInput): target is { environmentId: string } {
   return typeof target === 'object' && 'environmentId' in target
+}
+
+/**
+ * What deleting an archived bot forever removes. In an environment whose Maestrly hosts several bots, only the bot's
+ * conversation, memory and folders go; its environment keeps its accounts and files. Before environments, or on an
+ * environment still on an image from before them, the bot goes with the files it had alone, as with its own container.
+ */
+export function archivedBotPurge(
+  bot: Pick<FleetArchivedBot, 'environmentId'>,
+  environments: Pick<FleetEnvironment, 'id' | 'capabilities'>[],
+  enabled: boolean
+): 'bot' | 'files' {
+  const environment = enabled && bot.environmentId ? environments.find((item) => item.id === bot.environmentId) : null
+  return environment?.capabilities.includes(FLEET_ENVIRONMENTS_FEATURE) ? 'bot' : 'files'
+}
+
+/** Where to finish bringing accounts from the Mac later: the environment that shares them, or the bot's settings. */
+export function finishLaterKey(target: FleetProvisioningTargetInput): string {
+  return isEnvironmentTarget(target) ? 'provisioning.finishLaterEnvironment' : 'provisioning.finishLater'
 }
 
 /** Who a provisioning view acts on: its target (an environment, or a bot before environments) and its name. */

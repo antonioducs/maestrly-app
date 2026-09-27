@@ -11,6 +11,7 @@ import { resources } from '../../src/shared/i18n/resources'
 import { groupBotsByEnvironment } from '../../src/renderer/lib/fleet/selectors'
 import {
   activitySubject,
+  archivedBotPurge,
   createKeyWatcher,
   creationStepReached,
   creationSteps,
@@ -21,6 +22,7 @@ import {
   environmentNameFor,
   environmentUpdateAvailable,
   filterEnvironmentGroups,
+  finishLaterKey,
   fleetSearchCount,
   followBotName,
   formatNames,
@@ -283,6 +285,23 @@ describe('environment helpers', () => {
     expect(provisioningHintKey('restart-environment')).toBe('provisioning.restartEnvironment')
   })
 
+  it('warns that deleting a bot of a shared environment keeps the files and accounts of its environment', () => {
+    const old = environment('legacy', 'Legacy', [], { capabilities: ['provisioning'] })
+    // A Maestrly that hosts several bots deletes only the bot's own data.
+    expect(archivedBotPurge({ environmentId: 'acme' }, [acme, old], true)).toBe('bot')
+    // An image from before environments, or one whose Maestrly is unknown, goes with the files the bot had alone.
+    expect(archivedBotPurge({ environmentId: 'legacy' }, [acme, old], true)).toBe('files')
+    expect(archivedBotPurge({ environmentId: 'gone' }, [acme, old], true)).toBe('files')
+    // Without environments, the warning stays the one from before them.
+    expect(archivedBotPurge({ environmentId: 'acme' }, [acme], false)).toBe('files')
+    expect(archivedBotPurge({ environmentId: null }, [acme], true)).toBe('files')
+  })
+
+  it('points to the environment, not the bot settings, to finish bringing accounts later', () => {
+    expect(finishLaterKey({ environmentId: 'acme' })).toBe('provisioning.finishLaterEnvironment')
+    expect(finishLaterKey('scout')).toBe('provisioning.finishLater')
+  })
+
   it('refreshes on a changed key only, never on mount or on a Strict Mode re-run', () => {
     const changed = createKeyWatcher('a')
     expect(changed('a')).toBe(false)
@@ -433,6 +452,8 @@ describe('environment translations', () => {
       'components/fleet/EnvironmentScreen.tsx',
       'components/fleet/ScreenFrame.tsx',
       'components/fleet/ArchivedEnvironments.tsx',
+      'components/fleet/ArchivedBots.tsx',
+      'components/fleet/MacImportDialog.tsx',
       'components/fleet/ApiKeyAccountForm.tsx',
       'components/fleet/BotScreen.tsx',
       'components/fleet/BotSettings.tsx',

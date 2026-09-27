@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { fleetErrorText } from '@/lib/fleet/errors'
 import { formatNames } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
@@ -32,7 +32,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
     void window.api
       .fleetListArchivedEnvironments()
       .then((result) => alive && setEnvironments(result.environments))
-      .catch((cause) => alive && setError(fleetErrorMessage(cause)))
+      .catch((cause) => alive && setError(fleetErrorText(cause, t)))
     return () => {
       alive = false
     }
@@ -51,7 +51,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
       // Its bots come back with it: list them without waiting for their events.
       await fleet.refresh()
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
       reload()
     } finally {
       setBusy(null)
@@ -66,7 +66,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
       setEnvironments((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
       setDeleting(null)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
       reload()
     } finally {
       setBusy(null)

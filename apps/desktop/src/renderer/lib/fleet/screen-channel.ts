@@ -1,5 +1,45 @@
 import type { FleetScreenData, FleetScreenState, FleetScreenTargetInput } from '../../../preload/api-fleet'
 
+export type ScreenCloseOutcome = 'released' | 'offline' | 'conflict' | 'retry' | 'error'
+/**
+ * What a closed screen channel means for its view. The gateway accepts the WebSocket before it checks the ticket, so
+ * a refused ticket arrives as a close with code 4003: `limit` on a control request means another session holds the
+ * display (watch instead of retrying); any other 4003 may be retried with a fresh ticket. A close without a code
+ * (the transport lost the connection) is an error.
+ */
+export function screenCloseOutcome(
+  close: Pick<FleetScreenState, 'code' | 'reason'>,
+  mode: 'view' | 'control'
+): ScreenCloseOutcome {
+  if (close.code === 4001) return 'released'
+  if (close.code === 4002) return 'offline'
+  if (close.code !== 4003) return 'error'
+  return mode === 'control' && close.reason === 'limit' ? 'conflict' : 'retry'
+}
+
+/**
+ * Retries of a refused screen ticket: one per screen (target, area and mode). Another screen starts with a fresh
+ * allowance, and so does a screen once it really connected.
+ */
+export class ScreenRetries {
+  private key = ''
+  private used = 0
+  constructor(private readonly max = 1) {}
+  /** Whether the screen named `key` may retry once more; it counts the retry. */
+  take(key: string): boolean {
+    if (key !== this.key) {
+      this.key = key
+      this.used = 0
+    }
+    if (this.used >= this.max) return false
+    this.used++
+    return true
+  }
+  reset(): void {
+    this.used = 0
+  }
+}
+
 export type ScreenApi = Pick<
   typeof window.api,
   'fleetScreenOpen' | 'fleetScreenSend' | 'fleetScreenClose' | 'onFleetScreenData' | 'onFleetScreenState'

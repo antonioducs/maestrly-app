@@ -12,8 +12,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { hasEnvironments } from '@/lib/fleet/environments'
+import { fleetErrorText } from '@/lib/fleet/errors'
+import { archivedBotPurge, hasEnvironments } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /**
@@ -41,7 +41,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
     void window.api
       .fleetListArchivedBots()
       .then((result) => alive && setBots(result.bots))
-      .catch((cause) => alive && setError(fleetErrorMessage(cause)))
+      .catch((cause) => alive && setError(fleetErrorText(cause, t)))
     return () => {
       alive = false
     }
@@ -55,7 +55,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: restored } })
       setBots((current) => current?.filter((item) => item.id !== bot.id) ?? null)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
       reload()
     } finally {
       setBusy(null)
@@ -70,7 +70,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
       setBots((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
       setDeleting(null)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
       reload()
     } finally {
       setBusy(null)
@@ -158,7 +158,10 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
           <DialogHeader>
             <DialogTitle>{t('server.archived.deleteTitle', { name: deleting?.name ?? '' })}</DialogTitle>
             <DialogDescription>
-              {t('server.archived.deleteDescription', { name: deleting?.name ?? '' })}
+              {/* In a shared environment only the bot's own data goes; its environment keeps the rest. */}
+              {deleting && archivedBotPurge(deleting, fleet.state.snapshot.environments, environments) === 'bot'
+                ? t('server.archived.deleteDescriptionEnvironment', { name: deleting.name })
+                : t('server.archived.deleteDescription', { name: deleting?.name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {/* Typing the name keeps an irreversible delete from being one Enter away. */}

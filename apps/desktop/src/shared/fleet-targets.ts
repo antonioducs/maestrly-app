@@ -23,3 +23,7 @@ export function fleetTargetKey(target: FleetProvisioningTargetInput): string {
 export const FLEET_ENVIRONMENTS_UNSUPPORTED = 'FLEET_ENVIRONMENTS_UNSUPPORTED'
 /** Raised when another control session holds the environment display that browser areas and its screen share. */
 export const FLEET_SCREEN_CONFLICT = 'FLEET_SCREEN_CONFLICT'
+/** Raised when an environment still runs an image from before environments: restarting it updates it. */
+export const FLEET_SCREEN_RESTART_REQUIRED = 'FLEET_SCREEN_RESTART_REQUIRED'
+/** Raised when the bot or environment of a screen stopped before the gateway could issue its ticket. */
+export const FLEET_SCREEN_OFFLINE = 'FLEET_SCREEN_OFFLINE'
