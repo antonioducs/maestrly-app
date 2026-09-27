@@ -174,7 +174,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         ? match.route.body.parse(
             await readBody(
               req,
-              !internal && match.key === 'botSkillInstall'
+              !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
                 ? FLEET_SKILL_BODY_MAX
                 : !internal && match.key === 'botMessageSend'
                   ? FLEET_MESSAGE_BODY_MAX
@@ -210,8 +210,9 @@ export function createGatewayServers(ctx: GatewayContext) {
         } else if (match.key.startsWith('ownerMemory')) {
           const bot = ctx.store.getBot(caller!)
           if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          // A bot sees the global entries and its environment's, and writes only in its environment.
           if (match.key === 'ownerMemoryGet')
-            return send(res, 200, match.route.response!.parse(ownerMemory.list('active')))
+            return send(res, 200, match.route.response!.parse(ownerMemory.listFor(caller!)))
           if (match.key === 'ownerMemoryForget') {
             const { reason } = body as { reason: string }
             return send(res, 200, match.route.response!.parse(ownerMemory.forget(caller!, match.params.mid, reason)))

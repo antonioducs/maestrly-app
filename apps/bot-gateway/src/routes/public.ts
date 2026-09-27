@@ -1,12 +1,15 @@
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
+  FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
   FLEET_IMAGE_LIMITS,
   normalizePairingCode,
   type FleetCreateBotRequest,
+  type FleetCreateEnvironmentRequest,
   type FleetPatchBotRequest,
+  type FleetPatchEnvironmentRequest,
   type FleetSendMessageRequest,
   type FleetAddApiKeyAccountRequest,
   type FleetConversationCallRequest,
@@ -14,34 +17,132 @@ import {
 import type { ServerResponse } from 'node:http'
 import type { GatewayContext } from '../context.js'
 import { GatewayError } from '../errors.js'
+import type { InstanceClient } from '../instance.js'
 
 type Result = { body?: unknown; status?: number; stream?: boolean }
 const pendingMessages = new Map<string, { hash: string; promise: Promise<unknown> }>()
+/** Accounts, subscriptions, sign-ins, skills and MCP servers: an environment's, reached through its bots' routes too. */
+const PROVISIONING = new Set([
+  'AccountsList',
+  'AccountsImport',
+  'SubscriptionRemove',
+  'LoginStart',
+  'LoginGet',
+  'LoginCallback',
+  'LoginCode',
+  'LoginCancel',
+  'SkillsList',
+  'SkillInstall',
+  'SkillRemove',
+  'McpServersList',
+  'McpServersImport',
+  'McpServerRemove',
+])
 function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
+}
+function requireEnvironment(ctx: GatewayContext, id: string) {
+  const environment = ctx.lifecycle.environment(id)
+  if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
+  return environment
 }
 function requireProvisioning(ctx: GatewayContext, id: string) {
   const status = ctx.lifecycle.statuses.get(id)
   if (status && !status.capabilities.includes(FLEET_PROVISIONING_FEATURE))
     throw new GatewayError('CONFLICT', 'Restart this bot to update it before configuring it from the Mac.')
 }
+/** An environment's Maestrly takes configuration from the Mac once it has provisioning; before environments, its bot tells. */
+function requireEnvironmentProvisioning(ctx: GatewayContext, id: string) {
+  if (ctx.lifecycle.environmentCapable(id) === true) return
+  for (const bot of ctx.store.botsOfEnvironment(id)) {
+    const status = ctx.lifecycle.statuses.get(bot.id)
+    if (status && !status.capabilities.includes(FLEET_PROVISIONING_FEATURE))
+      throw new GatewayError('CONFLICT', 'Restart this environment to update it before configuring it from the Mac.')
+  }
+}
+/**
+ * Records a configuration from the Mac on the environment, whose accounts, skills and MCP servers it changed: counts
+ * and the device name only, never what was sent.
+ */
 function recordConfiguration(
   ctx: GatewayContext,
-  id: string,
+  environmentId: string,
   res: ServerResponse,
   counts: Partial<Record<'accounts' | 'skills' | 'mcpServers' | 'removed', number>>
 ) {
   if (!Object.values(counts).some((count) => count > 0)) return
   const device = ctx.auth.device(res.req?.headers.authorization)
-  ctx.lifecycle.recordActivity(id, 'bot_configured', device.name, {
-    accounts: 0,
-    skills: 0,
-    mcpServers: 0,
-    removed: 0,
-    ...counts,
-  })
+  ctx.lifecycle.recordEnvironmentActivity(
+    environmentId,
+    'bot_configured',
+    { accounts: 0, skills: 0, mcpServers: 0, removed: 0, ...counts },
+    device.name
+  )
+}
+const changed = (results: { outcome: string }[]) =>
+  results.filter((item) => item.outcome === 'added' || item.outcome === 'updated').length
+/** One provisioning call on an environment's instance (`action` is the route key without its prefix). */
+async function provision(
+  ctx: GatewayContext,
+  action: string,
+  client: InstanceClient,
+  environmentId: string,
+  params: Record<string, string>,
+  body: any,
+  res: ServerResponse
+): Promise<Result> {
+  switch (action) {
+    case 'AccountsList':
+      return { body: await client.accountsList() }
+    case 'AccountsImport': {
+      const result = await client.accountsImport(body)
+      recordConfiguration(ctx, environmentId, res, { accounts: changed(result.results) })
+      return { body: result }
+    }
+    case 'SubscriptionRemove':
+      await client.subscriptionRemove(params.kind, params.slot)
+      recordConfiguration(ctx, environmentId, res, { removed: 1 })
+      return { status: 204 }
+    case 'LoginStart':
+      return { body: await client.loginStart(body) }
+    case 'LoginGet':
+      return { body: await client.loginGet(params.lid) }
+    case 'LoginCallback':
+      return { body: await client.loginCallback(params.lid, body) }
+    case 'LoginCode':
+      return { body: await client.loginCode(params.lid, body) }
+    case 'LoginCancel':
+      await client.loginCancel(params.lid)
+      return { status: 204 }
+    case 'SkillsList':
+      return { body: await client.skillsList() }
+    case 'SkillInstall': {
+      const result = await client.skillInstall(body)
+      recordConfiguration(ctx, environmentId, res, {
+        skills: result.outcome === 'added' || result.outcome === 'updated' ? 1 : 0,
+      })
+      return { body: result }
+    }
+    case 'SkillRemove':
+      await client.skillRemove(params.name)
+      recordConfiguration(ctx, environmentId, res, { removed: 1 })
+      return { status: 204 }
+    case 'McpServersList':
+      return { body: await client.mcpServersList() }
+    case 'McpServersImport': {
+      const result = await client.mcpServersImport(body)
+      recordConfiguration(ctx, environmentId, res, { mcpServers: changed(result.results) })
+      return { body: result }
+    }
+    case 'McpServerRemove':
+      await client.mcpServerRemove(params.sid)
+      recordConfiguration(ctx, environmentId, res, { removed: 1 })
+      return { status: 204 }
+    default:
+      throw new GatewayError('NOT_FOUND', 'Route not found')
+  }
 }
 function number(value: string | null, max: number, defaultValue: number) {
   if (value === null) return defaultValue
@@ -57,7 +158,21 @@ export async function publicRoute(
   res: ServerResponse,
   ctx: GatewayContext
 ): Promise<Result> {
-  const id = params.id
+  const id = params.id,
+    eid = params.eid
+  if (key.startsWith('environment') && PROVISIONING.has(key.slice('environment'.length))) {
+    requireEnvironment(ctx, eid)
+    requireEnvironmentProvisioning(ctx, eid)
+    const client = ctx.lifecycle.environmentInstance(eid)
+    return provision(ctx, key.slice('environment'.length), client, eid, params, body, res)
+  }
+  // A bot's provisioning routes configure its environment.
+  if (key.startsWith('bot') && PROVISIONING.has(key.slice('bot'.length))) {
+    const bot = requireBot(ctx, id)
+    requireProvisioning(ctx, id)
+    const client = ctx.lifecycle.instanceFor(id)
+    return provision(ctx, key.slice('bot'.length), client, bot.environmentId!, params, body, res)
+  }
   switch (key) {
     // public.ts
     case 'botMemoriesList': {
@@ -102,7 +217,7 @@ export async function publicRoute(
         body: {
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: '0.1.0',
-          features: [FLEET_PROVISIONING_FEATURE],
+          features: [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: null,
         },
@@ -119,11 +234,68 @@ export async function publicRoute(
       return { status: 204 }
     }
     case 'host':
+      // Measured per environment, so memory its bots share is counted once.
       return {
         body: await ctx.host.read(
           [...ctx.lifecycle.resources.values()].reduce((sum, stats) => sum + stats.memoryBytes, 0)
         ),
       }
+    case 'environmentsList':
+      return { body: { environments: ctx.lifecycle.environments() } }
+    case 'environmentsCreate': {
+      const input = body as FleetCreateEnvironmentRequest
+      const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      const result = ctx.store.idempotent('environmentsCreate', input.idempotencyKey, hash, () => ({
+        response: ctx.lifecycle.createEnvironment({ name: input.name, memoryLimitBytes: input.memoryLimitBytes }),
+        status: 201,
+      }))
+      return { body: result.response, status: result.status }
+    }
+    case 'environmentGet':
+      return { body: requireEnvironment(ctx, eid) }
+    case 'environmentPatch': {
+      requireEnvironment(ctx, eid)
+      const input = body as FleetPatchEnvironmentRequest
+      return { body: await ctx.lifecycle.patchEnvironment(eid, input) }
+    }
+    case 'environmentStart':
+      return { body: await ctx.lifecycle.startEnvironment(eid) }
+    case 'environmentStop':
+      return { body: await ctx.lifecycle.stopEnvironment(eid) }
+    case 'environmentRestart':
+      return { body: await ctx.lifecycle.restartEnvironment(eid) }
+    case 'environmentArchive':
+      return { body: await ctx.lifecycle.archiveEnvironment(eid) }
+    case 'archivedEnvironmentsList':
+      return { body: { environments: await ctx.lifecycle.archivedEnvironments() } }
+    case 'archivedEnvironmentRestore': {
+      const restored = ctx.lifecycle.restoreEnvironment(eid)
+      // Its bots' routines resume from now: runs missed while archived are neither replayed nor recorded.
+      for (const botId of restored.botIds) ctx.routines?.reschedule(botId)
+      return { body: restored.environment }
+    }
+    case 'archivedEnvironmentDelete':
+      await ctx.lifecycle.purgeEnvironment(eid)
+      return { status: 204 }
+    case 'environmentScreenTicket': {
+      requireEnvironment(ctx, eid)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.screen!.environmentTicket(eid, device.id, body.mode), status: 201 }
+    }
+    case 'environmentUiOpen':
+      requireEnvironment(ctx, eid)
+      await ctx.lifecycle.environmentInstance(eid).uiOpen(body)
+      return { status: 204 }
+    case 'environmentApiKeyAccountAdd':
+      requireEnvironment(ctx, eid)
+      return {
+        body: await ctx.lifecycle.environmentInstance(eid).addApiKeyAccount(body as FleetAddApiKeyAccountRequest),
+        status: 201,
+      }
+    case 'environmentAccountRemove':
+      requireEnvironment(ctx, eid)
+      await ctx.lifecycle.environmentInstance(eid).removeAccount(params.providerId)
+      return { status: 204 }
     case 'botsList':
       return { body: { bots: ctx.lifecycle.list() } }
     case 'botsCreate': {
@@ -139,6 +311,7 @@ export async function publicRoute(
       return { body: requireBot(ctx, id) }
     case 'botPatch':
       return { body: await ctx.lifecycle.patch(id, body as FleetPatchBotRequest) }
+    // A bot's own start, stop and restart act on its environment when it is alone there.
     case 'botStart':
       return { body: await ctx.lifecycle.start(id) }
     case 'botStop':
@@ -171,82 +344,6 @@ export async function publicRoute(
         body: await ctx.lifecycle.instanceFor(id).addApiKeyAccount(body as FleetAddApiKeyAccountRequest),
         status: 201,
       }
-    case 'botAccountsList':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).accountsList() }
-    case 'botLoginStart':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).loginStart(body) }
-    case 'botLoginGet':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).loginGet(params.lid) }
-    case 'botLoginCallback':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).loginCallback(params.lid, body) }
-    case 'botLoginCode':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).loginCode(params.lid, body) }
-    case 'botSkillsList':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).skillsList() }
-    case 'botMcpServersList':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      return { body: await ctx.lifecycle.instanceFor(id).mcpServersList() }
-    case 'botSubscriptionRemove':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      await ctx.lifecycle.instanceFor(id).subscriptionRemove(params.kind, params.slot)
-      recordConfiguration(ctx, id, res, { removed: 1 })
-      return { status: 204 }
-    case 'botLoginCancel':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      await ctx.lifecycle.instanceFor(id).loginCancel(params.lid)
-      return { status: 204 }
-    case 'botSkillRemove':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      await ctx.lifecycle.instanceFor(id).skillRemove(params.name)
-      recordConfiguration(ctx, id, res, { removed: 1 })
-      return { status: 204 }
-    case 'botMcpServerRemove':
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      await ctx.lifecycle.instanceFor(id).mcpServerRemove(params.sid)
-      recordConfiguration(ctx, id, res, { removed: 1 })
-      return { status: 204 }
-    case 'botAccountsImport': {
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      const result = await ctx.lifecycle.instanceFor(id).accountsImport(body)
-      recordConfiguration(ctx, id, res, {
-        accounts: result.results.filter((item) => item.outcome === 'added' || item.outcome === 'updated').length,
-      })
-      return { body: result }
-    }
-    case 'botMcpServersImport': {
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      const result = await ctx.lifecycle.instanceFor(id).mcpServersImport(body)
-      recordConfiguration(ctx, id, res, {
-        mcpServers: result.results.filter((item) => item.outcome === 'added' || item.outcome === 'updated').length,
-      })
-      return { body: result }
-    }
-    case 'botSkillInstall': {
-      requireBot(ctx, id)
-      requireProvisioning(ctx, id)
-      const result = await ctx.lifecycle.instanceFor(id).skillInstall(body)
-      recordConfiguration(ctx, id, res, { skills: result.outcome === 'added' || result.outcome === 'updated' ? 1 : 0 })
-      return { body: result }
-    }
     case 'botAccountRemove':
       await ctx.lifecycle.instanceFor(id).removeAccount(params.providerId)
       return { status: 204 }
@@ -334,7 +431,7 @@ export async function publicRoute(
     case 'botScreenTicket': {
       requireBot(ctx, id)
       const device = ctx.auth.device(res.req?.headers.authorization)
-      return { body: ctx.screen!.ticket(id, device.id, body.mode), status: 201 }
+      return { body: ctx.screen!.ticket(id, device.id, body.mode, body.surface), status: 201 }
     }
     case 'screen':
       throw new GatewayError('INVALID_REQUEST', 'WebSocket upgrade required')
@@ -365,9 +462,11 @@ export async function publicRoute(
     case 'activity':
       return {
         body: {
+          // Environment entries only when asked: Macs from before environments cannot read their kinds.
           entries: ctx.store.activity(
             number(url.searchParams.get('after'), Number.MAX_SAFE_INTEGER, 0),
-            number(url.searchParams.get('limit'), 500, 200)
+            number(url.searchParams.get('limit'), 500, 200),
+            url.searchParams.get('includeEnvironmentActivity') === '1'
           ),
           lastSeq: ctx.store.lastActivitySeq(),
         },

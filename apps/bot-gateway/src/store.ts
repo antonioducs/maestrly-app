@@ -666,7 +666,7 @@ export class Store {
     }
     if (previous !== undefined && !this.slotTaken(environmentId, previous)) return previous
     const free = this.freeSlot(environmentId)
-    if (free === null) throw new GatewayError('CONFLICT', `This environment already has ${SLOTS} bots`)
+    if (free === null) throw new GatewayError('CONFLICT', `This environment already has ${SLOTS} bots.`)
     return free
   }
   botPlacement(id: string): BotPlacement | null {
@@ -954,18 +954,27 @@ export class Store {
       .run(at, botId, environment, kind, summary, JSON.stringify(data))
     return { seq: Number(result.lastInsertRowid), at, botId, environmentId: environment, kind, summary, data }
   }
-  activity(after = 0, limit = 200): FleetActivityEntry[] {
-    return (this.db.prepare('SELECT * FROM activity WHERE seq>? ORDER BY seq LIMIT ?').all(after, limit) as Row[]).map(
-      (row) => ({
-        seq: Number(row.seq),
-        at: String(row.at),
-        botId: row.bot_id as string | null,
-        environmentId: (row.environment_id as string | null) ?? null,
-        kind: row.kind as FleetActivityKind,
-        summary: row.summary as string | null,
-        data: JSON.parse(String(row.data_json)),
-      })
-    )
+  /**
+   * Activity entries after `after`, oldest first. Without `includeEnvironment`, entries about environments themselves
+   * are left out (before the limit applies), for devices that predate them.
+   */
+  activity(after = 0, limit = 200, includeEnvironment = true): FleetActivityEntry[] {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM activity WHERE seq>?' +
+          (includeEnvironment ? '' : " AND kind NOT LIKE 'environment\\_%' ESCAPE '\\'") +
+          ' ORDER BY seq LIMIT ?'
+      )
+      .all(after, limit) as Row[]
+    return rows.map((row) => ({
+      seq: Number(row.seq),
+      at: String(row.at),
+      botId: row.bot_id as string | null,
+      environmentId: (row.environment_id as string | null) ?? null,
+      kind: row.kind as FleetActivityKind,
+      summary: row.summary as string | null,
+      data: JSON.parse(String(row.data_json)),
+    }))
   }
   lastActivitySeq(): number {
     return Number((this.db.prepare('SELECT MAX(seq) AS seq FROM activity').get() as Row).seq ?? 0)

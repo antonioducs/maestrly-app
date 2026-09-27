@@ -48,6 +48,7 @@ async function fake(environments: boolean) {
   const installs: FleetInstanceBotInstall[] = []
   const uninstalls: Array<{ botId: string; purge: boolean }> = []
   const botRequests: Array<{ botId: string; method: string; path: string }> = []
+  const uiOpens: unknown[] = []
   let hold: {
     state: 'none' | 'held'
     reason: 'takeover' | 'paused' | null
@@ -277,6 +278,11 @@ async function fake(environments: boolean) {
         hold = { state: 'none', reason: null, since: null, interruptedTurn: false }
         return send(200, hold)
       }
+      if (req.url === '/v1/ui/open' && req.method === 'POST') {
+        uiOpens.push(body)
+        res.writeHead(204)
+        return res.end()
+      }
       if (req.url === '/v1/conversation/call' && req.method === 'POST') {
         const call = fleetConversationCallRequestSchema.parse(body)
         if (call.op === 'chatGetConvTools' && call.args.length !== 0) throw new Error('Invalid arguments')
@@ -314,6 +320,7 @@ async function fake(environments: boolean) {
     installs,
     uninstalls,
     botRequests,
+    uiOpens,
   }
 }
 

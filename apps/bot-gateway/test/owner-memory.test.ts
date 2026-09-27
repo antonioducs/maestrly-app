@@ -139,7 +139,8 @@ it('saves, replays, deduplicates, replaces, forgets, edits, restores and deletes
   )
   await h.lifecycle.archive(h.bot.id)
   expect((await h.request('GET', '/internal/v1/owner-memory', undefined, true)).status).toBe(404)
-  h.store.deleteBot(h.bot.id)
+  // Deleting the bot keeps the entries it saved in its environment.
+  h.store.purgeBot(h.bot.id)
   expect(h.store.ownerMemories()).toHaveLength(1)
   expect(h.store.db.prepare('SELECT * FROM idempotency WHERE scope=?').all('botOwnerMemorySave:' + h.bot.id)).toEqual(
     []
@@ -207,12 +208,13 @@ it('rejects ambiguous, short, inactive and unknown prefixes with actionable erro
     await h.request('POST', '/v1/owner-memory', { content: 'First fact', idempotencyKey: randomUUID() })
   ).json()
   h.store.deleteOwnerMemory(entry.id)
+  // Entries of the bot's environment, which it may replace or forget.
   for (const [id, status] of [
     ['abcdefgh-one', 'active'],
     ['abcdefgh-two', 'active'],
     ['archived-one', 'archived'],
   ] as const)
-    h.store.saveOwnerMemory({ ...entry, id, status })
+    h.store.saveOwnerMemory({ ...entry, id, status, environmentId: h.bot.environmentId })
   for (const id of ['abcdefgh', 'abcdefg', 'archived', 'unknown1']) {
     for (const response of [
       await h.request(
