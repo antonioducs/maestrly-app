@@ -39,12 +39,7 @@ import {
   forgetLocalMemory,
 } from '../../memory/local-memory-service'
 import { OwnerMemoryClient } from './owner-memory'
-import {
-  estimatedCostOfUsage,
-  usageMetaForModel,
-  type ChatContextSnapshot,
-  type ChatStreamEvent,
-} from '../../../shared/chat'
+import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
 import { selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
@@ -72,7 +67,12 @@ import {
   startManualCompaction,
 } from '../../chat/service'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
-import { chatHistoryStats, findLatestChatMessage, getChatMessage, listChatMessagesPage } from '../../chat/chat-store'
+import {
+  chatHistoryStats,
+  getChatMessage,
+  latestMeasuredContextSnapshot,
+  listChatMessagesPage,
+} from '../../chat/chat-store'
 import { listProviders } from '../../chat/catalog'
 import { hasApiKey } from '../../chat/credentials'
 import { observeChatHost } from '../../chat/host-events'
@@ -744,18 +744,8 @@ export class BotRuntime {
     const task = this.usageTask
       .then(async () => {
         if (this.disposed) return
-        const measured = (value: ChatContextSnapshot | undefined) =>
-          !!value &&
-          Number.isFinite(value.usedTokens) &&
-          value.usedTokens >= 0 &&
-          Number.isFinite(value.modelContextWindow) &&
-          (value.modelContextWindow ?? 0) > 0
-        // The newest measured assistant, found without reading the whole conversation.
-        const snapshot = findLatestChatMessage(
-          id,
-          (message) => message.role === 'assistant' && !message.internal && measured(message.contextSnapshot),
-          { role: 'assistant', metaContaining: '"contextSnapshot"' }
-        )?.message.contextSnapshot
+        // The newest measured assistant, from the kept totals of the conversation's older messages.
+        const snapshot = latestMeasuredContextSnapshot(id)
         const history = chatHistoryStats(id)
         const fallback = history.lastUsage
         const contextUsedTokens = snapshot

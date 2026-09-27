@@ -12,11 +12,13 @@ import {
   forgetChatStoreCaches,
   getChatMessage,
   getMessageSeq,
+  latestMeasuredContextSnapshot,
+  listChatMessages,
   recordChatUsageAttempt,
   updateChatMessageParts,
   upsertChatMessage,
 } from '../../src/main/chat/chat-store'
-import type { ChatUsage, MessagePart } from '../../src/shared/chat'
+import type { ChatContextSnapshot, ChatUsage, MessagePart } from '../../src/shared/chat'
 
 beforeEach(freshDb)
 afterEach(closeDb)
@@ -437,5 +439,153 @@ describe('chat store write boundary', () => {
       'store/db.ts',
       'store/legacy-conversation-import.ts',
     ])
+  })
+})
+
+describe('latest measured context snapshot', () => {
+  /** What the bot runtime computed from the whole conversation before. */
+  const reference = (conversationId: string) =>
+    [...listChatMessages(conversationId)]
+      .reverse()
+      .filter((message) => message.role === 'assistant' && !message.internal)
+      .map((message) => message.contextSnapshot)
+      .find(
+        (value) =>
+          !!value &&
+          Number.isFinite(value.usedTokens) &&
+          value.usedTokens >= 0 &&
+          Number.isFinite(value.modelContextWindow) &&
+          (value.modelContextWindow ?? 0) > 0
+      ) ?? null
+  const expectLatest = (conversationId: string) => {
+    const kept = latestMeasuredContextSnapshot(conversationId)
+    expect(kept).toEqual(reference(conversationId))
+    forgetChatStoreCaches()
+    expect(latestMeasuredContextSnapshot(conversationId)).toEqual(kept)
+    return kept
+  }
+  const measured = (sequence: number, usedTokens = 1_000 + sequence): ChatContextSnapshot => ({
+    usedTokens,
+    modelContextWindow: 272_000,
+    model: models[sequence % 3],
+    quality: 'measured',
+    observedAt: 10_000 + sequence,
+    sequence,
+  })
+  /** Snapshots as runners leave them, and as they may be found: estimated, without a window, invalid. */
+  const snapshot = (random: () => number, sequence: number): unknown => {
+    const kind = random()
+    const valid = measured(sequence, Math.floor(random() * 200_000))
+    if (kind < 0.25) return valid
+    if (kind < 0.35) return { ...valid, quality: 'estimated' }
+    if (kind < 0.55) return { ...valid, modelContextWindow: undefined }
+    if (kind < 0.6) return { ...valid, usedTokens: -5 }
+    if (kind < 0.65) return { ...valid, modelContextWindow: 0 }
+    if (kind < 0.7) return { ...valid, sequence: 'first' }
+    return undefined
+  }
+  const say = (conversationId: string, random: () => number, id: string, index: number) =>
+    upsertChatMessage({
+      id,
+      conversationId,
+      role: random() < 0.7 ? 'assistant' : 'user',
+      createdAt: index * 1_000,
+      parts: [{ type: 'text', id: 't', text: 'Row ' + id }],
+      model: models[index % 3],
+      contextSnapshot: snapshot(random, index) as ChatContextSnapshot,
+      ...(random() < 0.1 ? { internal: true } : {}),
+      ...(random() < 0.1 ? { executionScope: reviewLoop } : {}),
+    })
+
+  it('finds what a read of the whole conversation finds, through growth, rewrites and deletions', () => {
+    for (const seed of [41, 43, 47]) {
+      const random = prng(seed)
+      const conversationId = newConversation()
+      const id = (index: number) => `s${seed}r${index}`
+      let next = 0
+      const grow = (count: number) => {
+        for (let index = 0; index < count; index++) say(conversationId, random, id(next), next++)
+      }
+      grow(300)
+      expectLatest(conversationId)
+      grow(3)
+      expectLatest(conversationId)
+      // Its message loses its snapshot, then is deleted: an older one takes over.
+      const current = reference(conversationId)
+      const owner = [...listChatMessages(conversationId)]
+        .reverse()
+        .find(
+          (message) =>
+            message.role === 'assistant' &&
+            !message.internal &&
+            JSON.stringify(message.contextSnapshot) === JSON.stringify(current)
+        )!
+      upsertChatMessage({ ...owner, contextSnapshot: undefined })
+      expectLatest(conversationId)
+      deleteChatMessage(owner.id)
+      expectLatest(conversationId)
+      grow(100)
+      expectLatest(conversationId)
+    }
+  })
+
+  it('sees a kept message that gains or loses the newest measured snapshot', () => {
+    const conversationId = newConversation()
+    for (let index = 0; index < 200; index++)
+      upsertChatMessage({
+        id: `m${index}`,
+        conversationId,
+        role: 'assistant',
+        createdAt: index,
+        parts: [{ type: 'text', id: 't', text: 'Row' }],
+        model: models[0],
+        contextSnapshot:
+          index < 50 ? measured(index) : ({ ...measured(index), modelContextWindow: undefined } as ChatContextSnapshot),
+      })
+    expect(expectLatest(conversationId)?.sequence).toBe(49)
+    const kept = getChatMessage(conversationId, 'm120')!
+    upsertChatMessage({ ...kept, contextSnapshot: measured(120) })
+    expect(expectLatest(conversationId)?.sequence).toBe(120)
+    upsertChatMessage({ ...kept, contextSnapshot: measured(120), internal: true })
+    expect(expectLatest(conversationId)?.sequence).toBe(49)
+    deleteChatMessage('m49')
+    expect(expectLatest(conversationId)?.sequence).toBe(48)
+    // What callers get is theirs to change.
+    const mine = latestMeasuredContextSnapshot(conversationId)!
+    mine.usedTokens = -1
+    expect(latestMeasuredContextSnapshot(conversationId)?.usedTokens).toBe(measured(48).usedTokens)
+  })
+
+  it('finds none without a measured snapshot, however long the conversation', () => {
+    const conversationId = newConversation()
+    for (let index = 0; index < 150; index++)
+      upsertChatMessage({
+        id: `m${index}`,
+        conversationId,
+        role: index % 2 ? 'assistant' : 'user',
+        createdAt: index,
+        parts: [{ type: 'text', id: 't', text: 'Row' }],
+        contextSnapshot: { ...measured(index), modelContextWindow: undefined } as ChatContextSnapshot,
+      })
+    expect(expectLatest(conversationId)).toBeNull()
+    // Measured, but on a user message or an internal one: neither is the context meter's.
+    upsertChatMessage({
+      id: 'user',
+      conversationId,
+      role: 'user',
+      createdAt: 200,
+      parts: [{ type: 'text', id: 't', text: 'Hello' }],
+      contextSnapshot: measured(200),
+    })
+    upsertChatMessage({
+      id: 'internal',
+      conversationId,
+      role: 'assistant',
+      createdAt: 201,
+      parts: [{ type: 'text', id: 't', text: 'Hidden' }],
+      contextSnapshot: measured(201),
+      internal: true,
+    })
+    expect(expectLatest(conversationId)).toBeNull()
   })
 })

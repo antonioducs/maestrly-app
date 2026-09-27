@@ -10,6 +10,7 @@ import { normalizeForSearch } from '../memory/relevance'
 
 import { getDb, inTransaction } from '../store'
 import type {
+  ChatContextSnapshot,
   ChatExecutionScope,
   ChatHistoryPage,
   ChatHistoryStats,
@@ -1314,6 +1315,7 @@ function textOfParts(partsJson: string): string {
 type HistoryStatsRow = {
   id: string
   seq: number
+  role: string
   meta_json: string | null
   is_comp: number
   is_native_comp: number
@@ -1324,7 +1326,7 @@ type HistoryStatsRow = {
 // and cannot match). New native checkpoint deliberately uses `text`: older versions preserve it without treating
 // it as a compaction boundary.
 // is_main_ctx: legacy without executionScope OR kind=conversation — only these affect lastUsage/compaction.
-const HISTORY_STATS_ROWS = `SELECT id, seq, meta_json,
+const HISTORY_STATS_ROWS = `SELECT id, seq, role, meta_json,
         CASE WHEN parts_json LIKE '%"type":"compaction"%'
                OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_comp,
         CASE WHEN parts_json LIKE '%"strategy":"openai-native"%'
@@ -1347,12 +1349,20 @@ interface HistoryStatsTotals {
    * one counts only if the caller confirms its sidecar against the current identity, at the time of the call.
    */
   milestones: Array<{ id: string; seq: number; native: boolean; summaryTokens: number; contextWindow: number }>
+  /** The snapshot of the newest assistant message shown to the user whose snapshot measured its window. */
+  snapshot: ChatContextSnapshot | null
 }
-const emptyHistoryTotals = (): HistoryStatsTotals => ({ byModel: new Map(), last: null, milestones: [] })
+const emptyHistoryTotals = (): HistoryStatsTotals => ({
+  byModel: new Map(),
+  last: null,
+  milestones: [],
+  snapshot: null,
+})
 const copyHistoryTotals = (totals: HistoryStatsTotals): HistoryStatsTotals => ({
   byModel: new Map([...totals.byModel].map(([key, usage]) => [key, { ...usage }])),
   last: totals.last,
   milestones: [...totals.milestones],
+  snapshot: totals.snapshot,
 })
 function addHistoryStatsRow(totals: HistoryStatsTotals, r: HistoryStatsRow): void {
   let meta: MetaJson = {}
@@ -1362,6 +1372,17 @@ function addHistoryStatsRow(totals: HistoryStatsTotals, r: HistoryStatsRow): voi
     meta = {}
   }
   const isMainCtx = r.is_main_ctx === 1
+  if (r.role === 'assistant' && !meta.internal && meta.contextSnapshot) {
+    const snapshot = parseContextSnapshot(meta.contextSnapshot)
+    if (
+      snapshot &&
+      Number.isFinite(snapshot.usedTokens) &&
+      snapshot.usedTokens >= 0 &&
+      Number.isFinite(snapshot.modelContextWindow) &&
+      (snapshot.modelContextWindow ?? 0) > 0
+    )
+      totals.snapshot = snapshot
+  }
   // Isolated-round compaction does NOT affect main-context occupancy.
   if (isMainCtx && r.is_comp) {
     const milestone = {
@@ -1423,15 +1444,10 @@ function noteHistoryStatsLedger(conversationId: string): void {
 }
 
 /**
- * FULL history summary for context/cost meter (#559). Reads only `meta_json` (no
- * `parts_json`), cheap even in huge conversations: the totals of older rows are kept, so each call reads only the
- * newest ones. Aggregates usage by provider+model — linear cost means sum tokens per pair and price once == price
- * each turn and sum.
+ * The totals of every row of a conversation, reading only the rows after its kept ones, and whether what was read
+ * may be kept.
  */
-export function chatHistoryStats(
-  conversationId: string,
-  opts: { isNativeCompactionActive?: (messageId: string) => boolean } = {}
-): StoredChatHistoryStats {
+function historyTotals(conversationId: string): { totals: HistoryStatsTotals; cacheable: boolean } {
   const db = getDb()
   const cacheable = historyStatsCachesCurrent()
   let prefix = historyStatsPrefixes.get(conversationId)
@@ -1461,6 +1477,30 @@ export function chatHistoryStats(
       })
     addHistoryStatsRow(totals, row)
   })
+  return { totals, cacheable }
+}
+
+/**
+ * The context snapshot of the newest assistant message shown to the user (not internal) whose snapshot has a finite,
+ * non-negative occupancy and a positive window, or null: read like `chatHistoryStats`, only the newest rows each call.
+ */
+export function latestMeasuredContextSnapshot(conversationId: string): ChatContextSnapshot | null {
+  const snapshot = historyTotals(conversationId).totals.snapshot
+  return snapshot ? structuredClone(snapshot) : null
+}
+
+/**
+ * FULL history summary for context/cost meter (#559). Reads only `meta_json` (no
+ * `parts_json`), cheap even in huge conversations: the totals of older rows are kept, so each call reads only the
+ * newest ones. Aggregates usage by provider+model — linear cost means sum tokens per pair and price once == price
+ * each turn and sum.
+ */
+export function chatHistoryStats(
+  conversationId: string,
+  opts: { isNativeCompactionActive?: (messageId: string) => boolean } = {}
+): StoredChatHistoryStats {
+  const db = getDb()
+  const { totals, cacheable } = historyTotals(conversationId)
 
   // Host-managed transcript anchors are intentionally deleted after execution. Their ledger rows retain the
   // conversation key (without an FK), so billing remains visible in this conversation's historical cost summary.
