@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import {
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_ROUTES,
   FLEET_MESSAGE_BODY_MAX,
@@ -63,10 +64,15 @@ export class InstanceHttpError extends Error {
 }
 
 /**
- * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins) and several
- * bots, each addressed by id under `/v1/bots/:botId`. Its health and every status advertise them.
+ * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
+ * each addressed by id under `/v1/bots/:botId`, and the list of its models for the environment's default compaction
+ * model. Its health and every status advertise them.
  */
-export const INSTANCE_CAPABILITIES: readonly string[] = [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE]
+export const INSTANCE_CAPABILITIES: readonly string[] = [
+  FLEET_PROVISIONING_FEATURE,
+  FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
 const MEMORY_STATUSES: readonly string[] = ['active', 'archived', 'superseded', 'all']
@@ -100,6 +106,8 @@ export interface InstanceEnvironment {
   readonly events: InstanceEvents
   health(): { ok: true; appVersion: string; protocol: 1; ready: boolean; capabilities: readonly string[] }
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus>
+  /** The models of the environment's accounts, freshly read; `current` is null, an environment has no selection. */
+  selections(): Promise<{ options: FleetSelectionOption[]; current: null }>
   /** The installed bot, or a NOT_FOUND error. */
   bot(botId: string): InstanceBot
   installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus>
@@ -357,6 +365,7 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
   const handlers: Partial<Record<RouteKey, Handler>> = {
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
+    environmentSelections: () => environment.selections(),
     loginStart: ({ input }) => environment.startLogin(input as FleetLoginStartRequest),
     loginGet: ({ params }) => environment.login(params.lid),
     loginCallback: ({ params, input }) => environment.loginCallback(params.lid, input as FleetLoginCallbackRequest),

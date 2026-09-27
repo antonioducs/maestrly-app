@@ -26,6 +26,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import {
   createInstanceControlServer,
+  INSTANCE_CAPABILITIES,
   InstanceEvents,
   InstanceHttpError,
   type InstanceBot,
@@ -174,6 +175,20 @@ function fakeEnvironment() {
       bots: await Promise.all(
         [...bots.values()].map(async (bot) => ({ botId: bot.botId, slot: bot.slot, status: await bot.status() }))
       ),
+    })),
+    selections: vi.fn(async () => ({
+      options: [
+        {
+          id: 'prov_test::model-a',
+          providerId: 'prov_test',
+          providerLabel: 'Synthetic account',
+          modelId: 'model-a',
+          modelLabel: 'Model A',
+          efforts: ['low', 'high'],
+          fastMode: false,
+        },
+      ],
+      current: null,
     })),
     bot: vi.fn((botId: string): FakeBot => {
       const bot = bots.get(botId)
@@ -350,6 +365,33 @@ describe('instance control HTTP', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta' } } },
       ],
     })
+  })
+
+  it("lists the environment's models for its default compaction model", async () => {
+    expect(INSTANCE_CAPABILITIES).toEqual(['provisioning', 'environments', 'environment-compaction'])
+    const { base, environment } = await setup()
+    const response = await send(base, 'GET', '/v1/environment/selections')
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      options: [
+        {
+          id: 'prov_test::model-a',
+          providerId: 'prov_test',
+          providerLabel: 'Synthetic account',
+          modelId: 'model-a',
+          modelLabel: 'Model A',
+          efforts: ['low', 'high'],
+          fastMode: false,
+        },
+      ],
+      current: null,
+    })
+    expect(environment.selections).toHaveBeenCalledTimes(1)
+    const unauthorized = await send(base, 'GET', '/v1/environment/selections', undefined, {
+      Authorization: 'Bearer wrong',
+    })
+    expect(unauthorized.status).toBe(401)
+    expect(environment.selections).toHaveBeenCalledTimes(1)
   })
 
   it('enforces protocol, bearer, Origin and response schema', async () => {

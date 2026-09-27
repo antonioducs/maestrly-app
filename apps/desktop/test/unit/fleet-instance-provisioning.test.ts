@@ -234,7 +234,7 @@ it('upserts MCP servers and projects names instead of secret values', () => {
   expect(() => removeBotMcpServer(first.target!)).toThrow('does not exist')
 })
 
-it('advertises provisioning and environments in runtime status', async () => {
+it('advertises provisioning, environments and environment compaction in runtime status', async () => {
   const runtime = Object.create(BotRuntime.prototype) as BotRuntime
   Object.assign(runtime, {
     refreshAccounts: async () => {},
@@ -250,7 +250,7 @@ it('advertises provisioning and environments in runtime status', async () => {
     ready: true,
     usage: null,
   })
-  expect((await runtime.status()).capabilities).toEqual(['provisioning', 'environments'])
+  expect((await runtime.status()).capabilities).toEqual(['provisioning', 'environments', 'environment-compaction'])
 })
 
 it.each(['   ', ''])(

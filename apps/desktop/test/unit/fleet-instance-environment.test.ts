@@ -292,8 +292,12 @@ describe('bot environment registry', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta', name: 'Beta' }, conversationId: convB } },
       ],
     })
-    expect(aggregate.capabilities).toEqual(['provisioning', 'environments'])
-    expect(runtime.health()).toMatchObject({ ok: true, ready: true, capabilities: ['provisioning', 'environments'] })
+    expect(aggregate.capabilities).toEqual(['provisioning', 'environments', 'environment-compaction'])
+    expect(runtime.health()).toMatchObject({
+      ok: true,
+      ready: true,
+      capabilities: ['provisioning', 'environments', 'environment-compaction'],
+    })
   })
 
   it('installs idempotently, moves a bot to another slot and refuses a slot in use', async () => {
@@ -831,11 +835,11 @@ describe('bot environment registry', () => {
         appVersion: expect.any(String),
         protocol: 1,
         ready: true,
-        capabilities: ['provisioning', 'environments'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction'],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
         environmentId: 'env-one',
-        capabilities: ['provisioning', 'environments'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction'],
         bots: [
           { botId: 'alpha', slot: 1 },
           { botId: 'beta', slot: 2 },
@@ -843,8 +847,11 @@ describe('bot environment registry', () => {
       })
       expect(await (await request('GET', '/v1/bots/beta/status')).json()).toMatchObject({
         profile: { botId: 'beta', name: 'Beta' },
-        capabilities: ['provisioning', 'environments'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction'],
       })
+      const selections = await request('GET', '/v1/environment/selections')
+      expect(selections.status).toBe(200)
+      expect(await selections.json()).toEqual({ options: expect.any(Array), current: null })
       expect((await request('GET', '/v1/bots/gamma/status')).status).toBe(404)
       expect((await request('GET', '/v1/status')).status).toBe(404)
       expect((await request('PUT', '/v1/profile', profile('alpha', 'Alpha'))).status).toBe(404)

@@ -260,6 +260,11 @@ export class EnvironmentRuntime {
     }
   }
 
+  /** The models of the environment's accounts, read again, for its default compaction model. */
+  async selections(): Promise<{ options: FleetSelectionOption[]; current: null }> {
+    return { options: await this.accountOptions(true), current: null }
+  }
+
   /**
    * Installs a bot, or updates an installed one: its profile, display slot and gateway token. Installing the same
    * values again changes nothing. A slot another bot uses is a CONFLICT.
