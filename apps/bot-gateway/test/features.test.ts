@@ -371,11 +371,20 @@ describe('instance link and takeover', () => {
       type: 'transcript.upsert',
       item: { kind: 'assistant', id: 'a1', at: new Date().toISOString(), text: 'Done', streaming: false },
     })
-    fake.emit({ type: 'turn.finished', outcome: 'completed', summary: 'Finished' })
-    await until(() => f.events.some((event: any) => event.type === 'transcript.upsert'))
-    expect(f.store.activity().some((entry) => entry.kind === 'turn_completed' && entry.summary === 'Finished')).toBe(
-      true
-    )
+    fake.emit({ type: 'turn.finished', outcome: 'completed', summary: 'Finished', source: 'routine' })
+    fake.emit({ type: 'turn.finished', outcome: 'failed', summary: null })
+    await until(() => f.store.activity().some((entry) => entry.kind === 'turn_failed'))
+    expect(f.events.some((event: any) => event.type === 'transcript.upsert')).toBe(true)
+    // Who started the turn goes with it, so that devices can leave the routines' turns silent.
+    expect(
+      f.store
+        .activity()
+        .filter((entry) => entry.kind === 'turn_completed' || entry.kind === 'turn_failed')
+        .map((entry) => [entry.kind, entry.summary, entry.data])
+    ).toEqual([
+      ['turn_completed', 'Finished', { source: 'routine' }],
+      ['turn_failed', null, {}],
+    ])
     fake.regress()
     fake.setState({ ...fake.state, pending: [] })
     await until(() => f.events.some((event: any) => event.type === 'transcript.reset'))

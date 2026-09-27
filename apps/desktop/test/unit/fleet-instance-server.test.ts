@@ -514,6 +514,7 @@ describe('instance control HTTP', () => {
       type: 'turn.finished',
       inputId: null,
       text: null,
+      source: null,
       outcome: 'completed',
       summary: 'Hello',
       botId: 'beta',

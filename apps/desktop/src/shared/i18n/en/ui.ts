@@ -498,6 +498,9 @@ export default {
       volume: 'Master volume',
       mute: 'Mute this sound',
       unmute: 'Unmute this sound',
+      botsTitle: 'Bot alerts',
+      botsDesc:
+        'Plays the sounds above when a bot finishes or fails what you asked, or needs you. Routines and conversations between bots stay silent.',
       events: {
         ready: 'Turn ready',
         error: 'Turn failed',

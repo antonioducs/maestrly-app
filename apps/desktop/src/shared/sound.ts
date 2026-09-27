@@ -36,6 +36,8 @@ export interface SoundSettings {
   mutedEvents: Record<SoundEvent, boolean>
   /** Volume (0..1) for each event. */
   volumes: Record<SoundEvent, number>
+  /** Whether remote bots also sound, with the same voices, when a turn the owner asked for ends or one needs them. */
+  bots: boolean
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -44,6 +46,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   events: { ready: 'glass', error: 'glass', permission: 'glass', plan: 'submarine' },
   mutedEvents: { ready: false, error: false, permission: false, plan: false },
   volumes: { ready: 1, error: 1, permission: 1, plan: 1 },
+  bots: true,
 }
 
 function isVoice(v: unknown): v is SoundVoice {
@@ -83,6 +86,7 @@ export function coerceSoundSettings(raw: unknown): SoundSettings {
     events,
     mutedEvents,
     volumes,
+    bots: typeof r.bots === 'boolean' ? r.bots : DEFAULT_SOUND_SETTINGS.bots,
   }
 }
 

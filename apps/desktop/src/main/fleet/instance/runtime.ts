@@ -1088,6 +1088,7 @@ export class BotRuntime {
         type: 'turn.finished',
         inputId: item.id,
         text: finalText,
+        source: item.input.source,
         outcome: outcome.status === 'success' ? 'completed' : outcome.status === 'cancelled' ? 'cancelled' : 'failed',
         summary,
       })
@@ -1107,6 +1108,7 @@ export class BotRuntime {
         type: 'turn.finished',
         inputId: item.id,
         text: null,
+        source: item.input.source,
         outcome: cancelled ? 'cancelled' : 'failed',
         summary: null,
       })

@@ -629,7 +629,27 @@ describe('memory and routine history contracts', () => {
       outcome: 'completed',
       summary: 'ok',
     })
-    expect(old).toMatchObject({ inputId: null, text: null })
+    expect(old).toMatchObject({ inputId: null, text: null, source: null })
+    expect(
+      fleetInstanceEventSchema.parse({
+        seq: 2,
+        at: old.at,
+        type: 'turn.finished',
+        source: 'routine',
+        outcome: 'failed',
+        summary: null,
+      })
+    ).toMatchObject({ source: 'routine' })
+    expect(
+      fleetInstanceEventSchema.safeParse({
+        seq: 2,
+        at: old.at,
+        type: 'turn.finished',
+        source: 'cron',
+        outcome: 'failed',
+        summary: null,
+      }).success
+    ).toBe(false)
     expect(fleetRoutineRunReportSchema.safeParse({ summary: '', pending: null, notes: null }).success).toBe(false)
   })
   it('declares the new routes and events', () => {

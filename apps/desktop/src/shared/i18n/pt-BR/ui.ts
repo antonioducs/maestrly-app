@@ -507,6 +507,9 @@ export default {
       volume: 'Volume geral',
       mute: 'Silenciar este som',
       unmute: 'Ativar este som',
+      botsTitle: 'Alertas dos bots',
+      botsDesc:
+        'Toca os sons acima quando um bot termina ou falha no que você pediu, ou precisa de você. Rotinas e conversas entre bots não tocam.',
       events: {
         ready: 'Turno pronto',
         error: 'Turno falhou',

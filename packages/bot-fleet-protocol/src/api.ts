@@ -645,6 +645,8 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
     type: z.literal('turn.finished'),
     inputId: z.string().nullable().default(null),
     text: z.string().max(FLEET_ROUTINE_RUN_LIMITS.finalTextMax).nullable().default(null),
+    /** Who sent the input the turn answered; null from an instance that predates it. */
+    source: fleetInputSourceSchema.nullable().default(null),
     outcome: z.enum(['completed', 'cancelled', 'failed']),
     summary: z.string().nullable(),
   }),

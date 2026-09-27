@@ -335,6 +335,8 @@ describe('runtime turn memory integration', () => {
           botId: 'scout',
           inputId: item.id,
           text: scenario === 'throw' ? null : 'Done\n' + 'x'.repeat(3995),
+          // Devices sound only for the turns the owner asked for, so the turn names who sent its input.
+          source,
           outcome:
             scenario === 'throw' || scenario === 'error'
               ? 'failed'

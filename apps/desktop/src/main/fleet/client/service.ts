@@ -15,6 +15,7 @@ import {
   type FleetPeerMessage,
 } from '@maestrly/bot-fleet-protocol'
 import { broadcast } from '../../window-ipc'
+import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
 import { FleetEvents, type FleetConnectionState } from './events'
 import {
@@ -67,6 +68,8 @@ export class FleetClientService {
   private snapshot: FleetSnapshot = emptySnapshot()
   private digest: FleetDigest = null
   private generation = 0
+  /** Plays a bot's alert; set by the main process, which owns the sound settings. */
+  onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
 
   start(): void {
     if (process.env.MAESTRLY_BOT_MODE === '1') return
@@ -309,6 +312,18 @@ export class FleetClientService {
           ...this.snapshot.peerMessages.filter((message) => message.id !== event.message.id),
         ].slice(0, 200)
         break
+      case 'activity': {
+        // Only live entries sound: what happened while the Mac was away arrives in the digest instead.
+        const alert = fleetAlertFor(event.entry)
+        if (alert && event.entry.botId) {
+          try {
+            this.onAlert?.(event.entry.botId, alert)
+          } catch {
+            /* A sound failure must not stop the event from reaching the window. */
+          }
+        }
+        break
+      }
     }
     broadcast('fleet:event', event)
   }

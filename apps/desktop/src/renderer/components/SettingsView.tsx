@@ -257,6 +257,8 @@ export function SettingsView({
 
   const toggleSoundMute = () => updateSound((cur) => ({ ...cur, muted: !cur.muted }))
 
+  const toggleBotSounds = () => updateSound((cur) => ({ ...cur, bots: !cur.bots }))
+
   const setMasterVolume = (v: number) => updateSound((cur) => ({ ...cur, volume: v }))
 
   const setEventVoice = (event: SoundEvent, voice: SoundVoice) => {
@@ -392,6 +394,7 @@ export function SettingsView({
                 t={t}
                 sound={sound}
                 toggleSoundMute={toggleSoundMute}
+                toggleBotSounds={toggleBotSounds}
                 setMasterVolume={setMasterVolume}
                 setEventVoice={setEventVoice}
                 toggleEventMute={toggleEventMute}

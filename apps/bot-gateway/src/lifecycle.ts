@@ -255,8 +255,14 @@ export class Lifecycle {
       this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
     else if (event.type === 'turn.finished') {
       this.onTurnFinished?.(id, { outcome: event.outcome, inputId: event.inputId, text: event.text })
+      // Devices sound an alert for the turns the owner asked for, and need who started it to leave out the others.
       if (event.outcome !== 'cancelled')
-        this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
+        this.recordActivity(
+          id,
+          event.outcome === 'completed' ? 'turn_completed' : 'turn_failed',
+          event.summary,
+          event.source ? { source: event.source } : {}
+        )
     }
   }
   /**

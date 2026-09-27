@@ -1,4 +1,4 @@
-import { Bell, BellOff, CheckCircle2, Languages, Volume2, VolumeX } from 'lucide-react'
+import { Bell, BellOff, Bot, CheckCircle2, Languages, Volume2, VolumeX } from 'lucide-react'
 import { LOCALES, LOCALE_LABELS, type SupportedLocale } from '../../../shared/locale'
 import {
   SOUND_EVENTS,
@@ -61,10 +61,12 @@ export function SoundSection({
   toggleEventMute,
   setEventVolume,
   previewEventVolume,
+  toggleBotSounds,
 }: {
   t: TFn
   sound: SoundSettings
   toggleSoundMute: () => void
+  toggleBotSounds: () => void
   setMasterVolume: (v: number) => void
   setEventVoice: (event: SoundEvent, voice: SoundVoice) => void
   toggleEventMute: (event: SoundEvent) => void
@@ -199,6 +201,32 @@ export function SoundSection({
           )
         })}
       </div>
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={sound.bots}
+        onClick={toggleBotSounds}
+        disabled={sound.muted}
+        className={cn(
+          'flex items-start gap-2.5 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]',
+          sound.muted && 'pointer-events-none opacity-50'
+        )}
+      >
+        <Bot className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-foreground">{t('settings.sound.botsTitle')}</div>
+          <div className="text-[11px] leading-snug text-muted-foreground">{t('settings.sound.botsDesc')}</div>
+        </div>
+        <span
+          className={cn(
+            'mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors',
+            sound.bots ? 'bg-primary' : 'bg-white/15'
+          )}
+        >
+          <span className={cn('size-4 rounded-full bg-white transition-transform', sound.bots && 'translate-x-4')} />
+        </span>
+      </button>
     </section>
   )
 }

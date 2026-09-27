@@ -13,10 +13,10 @@ const state = vi.hoisted(() => ({
   activity: [] as {
     seq: number
     at: string
-    botId: null
-    kind: 'bot_started'
+    botId: string | null
+    kind: 'bot_started' | 'turn_completed' | 'turn_failed' | 'needs_you'
     summary: null
-    data: Record<string, never>
+    data: Record<string, string>
   }[],
 }))
 vi.mock('../../src/main/store', () => ({
@@ -209,6 +209,47 @@ describe('fleet client service', () => {
     expect(service.getSnapshot().bots).toEqual([])
     state.events[0].onEvent({ type: 'bot.updated', at, bot: { ...bot, lifecycle: 'creating' } })
     expect(service.getSnapshot().bots.map((item) => item.id)).toEqual(['scout'])
+    service.stop()
+  })
+
+  it('sounds for live bot activity the owner is waiting on, never for what happened while away', async () => {
+    const service = new FleetClientService()
+    const alerts: string[] = []
+    service.onAlert = (botId, alert) => alerts.push(botId + ':' + alert)
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    await state.events[0].onConnected()
+    const at = '2026-01-01T00:00:00Z'
+    const entry = (
+      seq: number,
+      kind: (typeof state.activity)[number]['kind'],
+      data: Record<string, string> = {},
+      botId: string | null = 'scout'
+    ) => ({ seq, at, botId, kind, summary: null, data })
+    state.activity.push(entry(1, 'turn_completed', { source: 'owner' }), entry(2, 'needs_you'))
+    await state.events[0].onConnected()
+    expect(service.getDigest()?.entries).toHaveLength(2)
+    expect(alerts).toEqual([])
+    const live = [
+      entry(3, 'turn_completed', { source: 'owner' }),
+      entry(4, 'turn_failed', { source: 'continuation' }, 'orders'),
+      // Routines and peer messages end silently; what waits for the owner sounds whoever started it.
+      entry(5, 'turn_completed', { source: 'routine' }),
+      entry(6, 'turn_failed', { source: 'peer' }),
+      entry(7, 'needs_you', {}, 'ads'),
+      // A gateway that does not say who started a turn still sounds.
+      entry(8, 'turn_failed', {}, 'crm'),
+      entry(9, 'bot_started'),
+      entry(10, 'turn_completed', { source: 'owner' }, null),
+    ]
+    for (const item of live) state.events[0].onEvent({ type: 'activity', at, entry: item })
+    expect(alerts).toEqual(['scout:ready', 'orders:error', 'ads:permission', 'crm:error'])
+    // A failing sound does not keep the event from the window.
+    service.onAlert = () => {
+      throw new Error('Synthetic sound failure')
+    }
+    state.broadcasts.length = 0
+    state.events[0].onEvent({ type: 'activity', at, entry: entry(11, 'needs_you') })
+    expect(state.broadcasts.map((item) => item.channel)).toEqual(['fleet:event'])
     service.stop()
   })
 
