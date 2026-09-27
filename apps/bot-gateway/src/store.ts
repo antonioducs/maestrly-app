@@ -200,6 +200,7 @@ export class Store {
       origin: (row.origin as FleetOwnerMemoryEntry['origin']) ?? null,
       replacesId: (row.replaces_id as string | null) ?? null,
       replacedById: (row.replaced_by_id as string | null) ?? null,
+      environmentId: null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }
@@ -377,6 +378,7 @@ export class Store {
       screen: { width: 1280, height: 800, display: ':0' },
       appVersion: null,
       capabilities: [],
+      environmentId: null,
     }
   }
   getBot(id: string): FleetBot | null {
@@ -447,7 +449,7 @@ export class Store {
     const result = this.db
       .prepare('INSERT INTO activity(at,bot_id,kind,summary,data_json) VALUES(?,?,?,?,?)')
       .run(at, botId, kind, summary, JSON.stringify(data))
-    return { seq: Number(result.lastInsertRowid), at, botId, kind, summary, data }
+    return { seq: Number(result.lastInsertRowid), at, botId, environmentId: null, kind, summary, data }
   }
   activity(after = 0, limit = 200): FleetActivityEntry[] {
     return (this.db.prepare('SELECT * FROM activity WHERE seq>? ORDER BY seq LIMIT ?').all(after, limit) as Row[]).map(
@@ -455,6 +457,7 @@ export class Store {
         seq: Number(row.seq),
         at: String(row.at),
         botId: row.bot_id as string | null,
+        environmentId: null,
         kind: row.kind as FleetActivityKind,
         summary: row.summary as string | null,
         data: JSON.parse(String(row.data_json)),

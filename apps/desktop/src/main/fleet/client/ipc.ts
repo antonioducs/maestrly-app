@@ -52,7 +52,8 @@ const connectInput = z
     deviceName: z.string().min(1).max(160).optional(),
   })
   .strict()
-const createBot = fleetCreateBotRequestSchema.omit({ idempotencyKey: true })
+// A refined schema cannot `.omit()` the key: the renderer's fields are checked with the key the main process picks.
+const createBotInput = z.record(z.string(), z.unknown())
 const createRoutine = fleetCreateRoutineRequestSchema.omit({ idempotencyKey: true })
 const action = z.enum(['start', 'stop', 'restart', 'archive', 'pause', 'resume', 'cancel'])
 const actionRoute = {
@@ -80,7 +81,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:listBots', () => fleet.call('botsList'))
   reg.handle('fleet:getBot', (_event, botId: unknown) => fleet.call('botGet', { params: { id: id.parse(botId) } }))
   reg.mhandle('fleet:createBot', (_event, input: unknown) =>
-    fleet.call('botsCreate', { body: { ...createBot.parse(input), idempotencyKey: fleet.idempotencyKey() } })
+    fleet.call('botsCreate', {
+      body: fleetCreateBotRequestSchema.parse({
+        ...createBotInput.parse(input),
+        idempotencyKey: fleet.idempotencyKey(),
+      }),
+    })
   )
   reg.mhandle('fleet:updateBot', (_event, botId: unknown, patch: unknown) =>
     fleet.call('botPatch', { params: { id: id.parse(botId) }, body: fleetPatchBotRequestSchema.parse(patch) })

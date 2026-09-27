@@ -153,6 +153,7 @@ describe('fleet pure state', () => {
       seq,
       at: '2026-01-01T00:00:00Z',
       botId: null,
+      environmentId: null,
       kind: 'bot_started' as const,
       summary: null,
       data: {},

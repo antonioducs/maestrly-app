@@ -200,6 +200,9 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
           }
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }
+        // The state does not keep environments yet.
+        case 'environment.updated':
+        case 'environment.removed':
         case 'hello':
           return state
       }

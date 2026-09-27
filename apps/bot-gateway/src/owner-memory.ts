@@ -90,6 +90,7 @@ export class OwnerMemory {
         origin: author.kind === 'bot' ? (input.origin ?? null) : null,
         replacesId: replaced?.id ?? null,
         replacedById: null,
+        environmentId: null,
         createdAt: at,
         updatedAt: at,
       }

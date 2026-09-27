@@ -210,7 +210,7 @@ describe('instance control HTTP', () => {
     expect(origin.status).toBe(403)
     const health = await fetch(base + '/v1/health', { headers: headers() })
     expect(health.status).toBe(200)
-    expect(await health.json()).toEqual({ ok: true, appVersion: '1.0.0', protocol: 1, ready: true })
+    expect(await health.json()).toEqual({ ok: true, appVersion: '1.0.0', protocol: 1, ready: true, capabilities: [] })
     const missing = await fetch(base + '/v1/missing', { headers: headers() })
     expect(missing.status).toBe(404)
   })

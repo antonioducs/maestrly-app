@@ -8,6 +8,30 @@ import {
   fleetRoutineRunReportSchema,
   fleetActivityKindSchema,
 } from '../src/index.js'
+import {
+  FLEET_BOT_ENV,
+  FLEET_ENVIRONMENT_DISPLAY,
+  FLEET_ENVIRONMENT_LIMITS,
+  FLEET_ENVIRONMENTS_FEATURE,
+  type FleetRoute,
+  fleetArchivedBotSchema,
+  fleetArchivedEnvironmentsResponseSchema,
+  fleetCreateEnvironmentRequestSchema,
+  fleetEnvironmentScreenTicketRequestSchema,
+  fleetEnvironmentSchema,
+  fleetEnvironmentsResponseSchema,
+  fleetEnvironmentTile,
+  fleetInstanceBotInstallSchema,
+  fleetInstanceEnvironmentStatusSchema,
+  fleetMemoryLimitSchema,
+  fleetOwnerMemoryCreateRequestSchema,
+  fleetPatchEnvironmentRequestSchema,
+  fleetResourcesSchema,
+  fleetScreenSurfaceSchema,
+  fleetScreenTicketRequestSchema,
+  fleetScreenTicketResponseSchema,
+  fleetUiOpenRequestSchema,
+} from '../src/index.js'
 import { describe, expect, it } from 'vitest'
 import {
   FLEET_ERROR_STATUS,
@@ -760,6 +784,496 @@ describe('bot provisioning contracts', () => {
         body: FLEET_GATEWAY_ROUTES[gateway].body,
         response: FLEET_GATEWAY_ROUTES[gateway].response,
       })
+    }
+  })
+})
+
+describe('environment contracts', () => {
+  const GiB = 1024 ** 3
+  const environment = {
+    id: 'acme',
+    name: 'Acme',
+    lifecycle: 'running',
+    setup: { step: 'ready', error: null, errorMessage: null },
+    resources: { memoryBytes: 512, memoryLimitBytes: 4 * GiB, cpuPercent: 3, startedAt: at },
+    memoryLimitBytes: 4 * GiB,
+    appVersion: '0.9.3',
+    botIds: ['scout', 'dev'],
+    createdAt: at,
+    updatedAt: at,
+  }
+  const expectRoute = (
+    route: FleetRoute,
+    method: FleetRoute['method'],
+    path: string,
+    body: FleetRoute['body'],
+    response: FleetRoute['response']
+  ) => {
+    expect({ method: route.method, path: route.path }).toEqual({ method, path })
+    expect(route.body).toBe(body)
+    expect(route.response).toBe(response)
+  }
+
+  it('declares the feature, the limits, the environment display and the container variable', () => {
+    expect(FLEET_ENVIRONMENTS_FEATURE).toBe('environments')
+    expect(FLEET_ENVIRONMENT_LIMITS).toEqual({
+      botsMax: 8,
+      memoryLimitMinBytes: 2 * GiB,
+      memoryLimitMaxBytes: 64 * GiB,
+    })
+    expect(FLEET_ENVIRONMENT_DISPLAY).toEqual({ columns: 3, rows: 3, width: 3840, height: 2400 })
+    expect(FLEET_BOT_ENV.environmentId).toBe('MAESTRLY_ENVIRONMENT_ID')
+  })
+
+  it('places the environment screen and the eight bot browsers on tiles of the environment display', () => {
+    expect(fleetEnvironmentTile(0)).toEqual({ x: 0, y: 0, width: 1280, height: 800 })
+    expect(fleetEnvironmentTile(4)).toEqual({ x: 1280, y: 800, width: 1280, height: 800 })
+    expect(fleetEnvironmentTile(8)).toEqual({ x: 2560, y: 1600, width: 1280, height: 800 })
+    for (const index of [9, -1, 1.5, Number.NaN]) expect(() => fleetEnvironmentTile(index)).toThrow(RangeError)
+  })
+
+  it('accepts environments with defaults for older peers and at most eight bots', () => {
+    const parsed = fleetEnvironmentSchema.parse(environment)
+    expect(parsed.capabilities).toEqual([])
+    expect(parsed.resources).toEqual(environment.resources)
+    expect(fleetBotSchema.shape.resources).toBe(fleetResourcesSchema)
+    expect(fleetEnvironmentsResponseSchema.parse({ environments: [environment] }).environments).toHaveLength(1)
+    const ids = Array.from({ length: 9 }, (_, index) => 'bot-' + index)
+    expect(fleetEnvironmentSchema.safeParse({ ...environment, botIds: ids.slice(0, 8) }).success).toBe(true)
+    expect(fleetEnvironmentSchema.safeParse({ ...environment, botIds: ids }).success).toBe(false)
+    expect(fleetEnvironmentSchema.safeParse({ ...environment, id: 'Acme Corp' }).success).toBe(false)
+    expect(fleetEnvironmentSchema.safeParse({ ...environment, memoryLimitBytes: null, appVersion: null }).success).toBe(
+      true
+    )
+    for (const step of ['container', 'desktop', 'ready', 'failed'])
+      expect(fleetEnvironmentSchema.safeParse({ ...environment, setup: { ...environment.setup, step } }).success).toBe(
+        true
+      )
+    // Profiles belong to bots: an environment is set up once its desktop answers.
+    expect(
+      fleetEnvironmentSchema.safeParse({ ...environment, setup: { ...environment.setup, step: 'profile' } }).success
+    ).toBe(false)
+  })
+
+  it('keeps archived environments and their bots in their own collection', () => {
+    const archived = {
+      id: 'acme',
+      name: 'Acme',
+      createdAt: at,
+      archivedAt: at,
+      files: 'kept',
+      bots: [{ id: 'scout', name: 'Scout', role: 'Research', tint: '#336699' }],
+    }
+    expect(fleetArchivedEnvironmentsResponseSchema.parse({ environments: [archived] }).environments).toEqual([archived])
+    expect(
+      fleetArchivedEnvironmentsResponseSchema.safeParse({ environments: [{ ...archived, files: 'gone' }] }).success
+    ).toBe(false)
+    expect(
+      fleetArchivedEnvironmentsResponseSchema.safeParse({
+        environments: [{ ...archived, bots: [{ id: 'Bad Id', name: 'Scout', role: '', tint: '#336699' }] }],
+      }).success
+    ).toBe(false)
+  })
+
+  it('defaults the environment of bots, archived bots, owner memories and activity to null for older gateways', () => {
+    const archivedBot = {
+      id: 'scout',
+      name: 'Scout',
+      role: '',
+      tint: '#336699',
+      createdAt: at,
+      archivedAt: at,
+      files: 'kept',
+    }
+    const entry = {
+      id: 'om-1',
+      content: 'Prefers short answers.',
+      status: 'active',
+      author: { kind: 'owner' },
+      origin: null,
+      replacesId: null,
+      replacedById: null,
+      createdAt: at,
+      updatedAt: at,
+    }
+    const activity = { seq: 1, at, botId: 'scout', kind: 'bot_started', summary: null, data: {} }
+    const cases = [
+      [fleetBotSchema, bot],
+      [fleetArchivedBotSchema, archivedBot],
+      [fleetOwnerMemoryEntrySchema, entry],
+      [fleetActivityEntrySchema, activity],
+    ] as const
+    for (const [schema, value] of cases) {
+      expect(schema.parse(value).environmentId).toBeNull()
+      expect(schema.parse({ ...value, environmentId: 'acme' }).environmentId).toBe('acme')
+      expect(schema.safeParse({ ...value, environmentId: 'Acme Corp' }).success).toBe(false)
+    }
+  })
+
+  it('records environment activity and announces environment changes', () => {
+    const kinds = [
+      'environment_created',
+      'environment_started',
+      'environment_stopped',
+      'environment_restarted',
+      'environment_archived',
+      'environment_restored',
+      'environment_deleted',
+    ]
+    expect(fleetActivityKindSchema.options).toEqual(expect.arrayContaining(kinds))
+    for (const kind of kinds)
+      expect(
+        fleetActivityEntrySchema.parse({
+          seq: 2,
+          at,
+          botId: null,
+          environmentId: 'acme',
+          kind,
+          summary: 'Acme',
+          data: {},
+        })
+      ).toMatchObject({ kind, botId: null, environmentId: 'acme' })
+    expect(fleetGatewayEventSchema.parse({ type: 'environment.updated', at, environment })).toMatchObject({
+      type: 'environment.updated',
+      environment: { id: 'acme', capabilities: [] },
+    })
+    expect(fleetGatewayEventSchema.parse({ type: 'environment.removed', at, environmentId: 'acme' })).toEqual({
+      type: 'environment.removed',
+      at,
+      environmentId: 'acme',
+    })
+    expect(
+      fleetGatewayEventSchema.safeParse({ type: 'environment.removed', at, environmentId: 'Acme Corp' }).success
+    ).toBe(false)
+  })
+
+  it('bounds environment memory limits to whole bytes from 2 to 64 GiB', () => {
+    for (const bytes of [1 * GiB, 65 * GiB, 2 * GiB - 1, 64 * GiB + 1, 4 * GiB + 0.5, -GiB])
+      expect(fleetMemoryLimitSchema.safeParse(bytes).success, String(bytes)).toBe(false)
+    for (const bytes of [2 * GiB, 4 * GiB, 64 * GiB]) expect(fleetMemoryLimitSchema.parse(bytes)).toBe(bytes)
+    const request = { name: 'Acme', idempotencyKey: key }
+    expect(fleetCreateEnvironmentRequestSchema.parse(request)).toEqual({ ...request, memoryLimitBytes: null })
+    expect(fleetCreateEnvironmentRequestSchema.parse({ ...request, memoryLimitBytes: 4 * GiB }).memoryLimitBytes).toBe(
+      4 * GiB
+    )
+    for (const memoryLimitBytes of [1 * GiB, 65 * GiB])
+      expect(fleetCreateEnvironmentRequestSchema.safeParse({ ...request, memoryLimitBytes }).success).toBe(false)
+    expect(fleetCreateEnvironmentRequestSchema.safeParse({ ...request, name: '' }).success).toBe(false)
+    expect(fleetCreateEnvironmentRequestSchema.safeParse({ name: 'Acme' }).success).toBe(false)
+  })
+
+  it('patches the name or the memory limit of an environment, and refuses an empty patch', () => {
+    expect(fleetPatchEnvironmentRequestSchema.safeParse({}).success).toBe(false)
+    expect(fleetPatchEnvironmentRequestSchema.parse({ name: 'Acme 2' })).toEqual({ name: 'Acme 2' })
+    expect(fleetPatchEnvironmentRequestSchema.parse({ memoryLimitBytes: null })).toEqual({ memoryLimitBytes: null })
+    expect(fleetPatchEnvironmentRequestSchema.parse({ memoryLimitBytes: 8 * GiB })).toEqual({
+      memoryLimitBytes: 8 * GiB,
+    })
+    for (const patch of [{ memoryLimitBytes: 1 * GiB }, { memoryLimitBytes: 65 * GiB }, { name: '' }])
+      expect(fleetPatchEnvironmentRequestSchema.safeParse(patch).success).toBe(false)
+  })
+
+  it('creates a bot in an existing or a new environment, never both, and accepts older requests', () => {
+    const request = { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [], idempotencyKey: key }
+    expect(fleetCreateBotRequestSchema.parse(request)).toStrictEqual(request)
+    expect(fleetCreateBotRequestSchema.parse({ ...request, environmentId: 'acme' }).environmentId).toBe('acme')
+    expect(fleetCreateBotRequestSchema.parse({ ...request, environment: { name: 'Acme' } }).environment).toEqual({
+      name: 'Acme',
+      memoryLimitBytes: null,
+    })
+    expect(
+      fleetCreateBotRequestSchema.parse({ ...request, environment: { name: 'Acme', memoryLimitBytes: 4 * GiB } })
+        .environment
+    ).toEqual({ name: 'Acme', memoryLimitBytes: 4 * GiB })
+    for (const change of [
+      { environmentId: 'acme', environment: { name: 'Acme' } },
+      { environmentId: 'Acme Corp' },
+      { environment: { name: '' } },
+      { environment: { name: 'Acme', memoryLimitBytes: 1 * GiB } },
+      { environment: { name: 'Acme', memoryLimitBytes: 65 * GiB } },
+    ])
+      expect(fleetCreateBotRequestSchema.safeParse({ ...request, ...change }).success, JSON.stringify(change)).toBe(
+        false
+      )
+  })
+
+  it('names the screen surface of a bot ticket, the browser by default', () => {
+    expect(fleetScreenSurfaceSchema.options).toEqual(['browser', 'apps'])
+    expect(fleetScreenTicketRequestSchema.parse({ mode: 'view' })).toEqual({ mode: 'view', surface: 'browser' })
+    expect(fleetScreenTicketRequestSchema.parse({ mode: 'control', surface: 'apps' })).toEqual({
+      mode: 'control',
+      surface: 'apps',
+    })
+    expect(fleetScreenTicketRequestSchema.safeParse({ mode: 'view', surface: 'environment' }).success).toBe(false)
+    expect(fleetEnvironmentScreenTicketRequestSchema.parse({ mode: 'control' })).toEqual({ mode: 'control' })
+    expect(fleetEnvironmentScreenTicketRequestSchema.safeParse({ mode: 'drive' }).success).toBe(false)
+  })
+
+  it('scopes owner memory: global by default, per environment on request, from the token for bots', () => {
+    const create = { content: 'Uses the Acme VPN.', idempotencyKey: key }
+    expect(fleetOwnerMemoryCreateRequestSchema.parse(create)).toEqual({ ...create, environmentId: null })
+    expect(fleetOwnerMemoryCreateRequestSchema.parse({ ...create, environmentId: 'acme' }).environmentId).toBe('acme')
+    expect(fleetOwnerMemoryCreateRequestSchema.safeParse({ ...create, environmentId: 'Acme Corp' }).success).toBe(false)
+    // A bot's entries belong to its environment: the gateway derives it from the bot's token, never from the body.
+    expect(Object.keys(fleetInternalOwnerMemorySaveRequestSchema.shape)).not.toContain('environmentId')
+    expect(
+      fleetInternalOwnerMemorySaveRequestSchema.parse({ ...create, environmentId: 'other', origin: 'auto' })
+    ).toStrictEqual({ ...create, origin: 'auto' })
+    expect(fleetInternalOwnerMemorySaveRequestSchema.safeParse(create).success).toBe(false)
+    // Making an entry global, or moving it to an environment, is a change of its own.
+    expect(fleetOwnerMemoryPatchRequestSchema.parse({ environmentId: null })).toEqual({ environmentId: null })
+    expect(fleetOwnerMemoryPatchRequestSchema.parse({ environmentId: 'acme' })).toEqual({ environmentId: 'acme' })
+    expect(fleetOwnerMemoryPatchRequestSchema.safeParse({}).success).toBe(false)
+    expect(fleetOwnerMemoryPatchRequestSchema.safeParse({ environmentId: 'Acme Corp' }).success).toBe(false)
+  })
+
+  it('installs bots into an environment instance and reports every bot of it', () => {
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: true },
+    }
+    const install = { profile, slot: 1, gatewayToken: 'g'.repeat(16) }
+    expect(fleetInstanceBotInstallSchema.parse(install)).toEqual({
+      ...install,
+      profile: { ...profile, compaction: null },
+    })
+    expect(fleetInstanceBotInstallSchema.parse({ ...install, slot: 8, gatewayToken: 'g'.repeat(200) }).slot).toBe(8)
+    for (const change of [
+      { slot: 0 },
+      { slot: 9 },
+      { slot: 1.5 },
+      { gatewayToken: 'g'.repeat(15) },
+      { gatewayToken: 'g'.repeat(201) },
+    ])
+      expect(fleetInstanceBotInstallSchema.safeParse({ ...install, ...change }).success, JSON.stringify(change)).toBe(
+        false
+      )
+    const environmentStatus = {
+      environmentId: 'acme',
+      appVersion: '0.9.3',
+      protocol: 1,
+      ready: true,
+      bots: [{ botId: 'scout', slot: 1, status }],
+    }
+    const parsed = fleetInstanceEnvironmentStatusSchema.parse(environmentStatus)
+    expect(parsed.capabilities).toEqual([])
+    expect(parsed.bots[0]).toMatchObject({ botId: 'scout', slot: 1, status: { capabilities: [], lastEventSeq: 3 } })
+    expect(
+      fleetInstanceEnvironmentStatusSchema.parse({
+        ...environmentStatus,
+        environmentId: null,
+        capabilities: [FLEET_ENVIRONMENTS_FEATURE],
+      }).capabilities
+    ).toEqual(['environments'])
+    for (const change of [
+      { bots: [{ botId: 'scout', slot: 0, status }] },
+      { protocol: 2 },
+      { environmentId: 'Bad Id' },
+    ])
+      expect(fleetInstanceEnvironmentStatusSchema.safeParse({ ...environmentStatus, ...change }).success).toBe(false)
+    const health = { ok: true, appVersion: '0.9.3', protocol: 1, ready: true }
+    expect(fleetInstanceHealthSchema.parse(health).capabilities).toEqual([])
+    expect(fleetInstanceHealthSchema.parse({ ...health, capabilities: ['environments'] }).capabilities).toEqual([
+      'environments',
+    ])
+  })
+
+  it('tags every instance event with its bot, null from older instances', () => {
+    const events = [
+      { seq: 1, at, type: 'status', status },
+      { seq: 2, at, type: 'transcript.upsert', item: transcript },
+      { seq: 3, at, type: 'turn.finished', outcome: 'completed', summary: null },
+      { seq: 4, at, type: 'reset' },
+    ]
+    for (const event of events) {
+      expect(fleetInstanceEventSchema.parse(event).botId, event.type).toBeNull()
+      expect(fleetInstanceEventSchema.parse({ ...event, botId: 'scout' }).botId).toBe('scout')
+      expect(fleetInstanceEventSchema.safeParse({ ...event, botId: 'Bad Id' }).success).toBe(false)
+    }
+  })
+
+  it('declares the environment routes of the gateway', () => {
+    const environmentPath = '/v1/environments/:eid'
+    const routes = FLEET_GATEWAY_ROUTES
+    expectRoute(routes.environmentsList, 'GET', '/v1/environments', null, fleetEnvironmentsResponseSchema)
+    expectRoute(
+      routes.environmentsCreate,
+      'POST',
+      '/v1/environments',
+      fleetCreateEnvironmentRequestSchema,
+      fleetEnvironmentSchema
+    )
+    expectRoute(routes.environmentGet, 'GET', environmentPath, null, fleetEnvironmentSchema)
+    expectRoute(
+      routes.environmentPatch,
+      'PATCH',
+      environmentPath,
+      fleetPatchEnvironmentRequestSchema,
+      fleetEnvironmentSchema
+    )
+    for (const [key, action] of [
+      ['environmentStart', 'start'],
+      ['environmentStop', 'stop'],
+      ['environmentRestart', 'restart'],
+      ['environmentArchive', 'archive'],
+    ] as const)
+      expectRoute(routes[key], 'POST', environmentPath + '/' + action, null, fleetEnvironmentSchema)
+    expectRoute(
+      routes.archivedEnvironmentsList,
+      'GET',
+      '/v1/archived-environments',
+      null,
+      fleetArchivedEnvironmentsResponseSchema
+    )
+    expectRoute(
+      routes.archivedEnvironmentRestore,
+      'POST',
+      '/v1/archived-environments/:eid/restore',
+      null,
+      fleetEnvironmentSchema
+    )
+    expectRoute(routes.archivedEnvironmentDelete, 'DELETE', '/v1/archived-environments/:eid', null, null)
+    expectRoute(
+      routes.environmentScreenTicket,
+      'POST',
+      environmentPath + '/screen-tickets',
+      fleetEnvironmentScreenTicketRequestSchema,
+      fleetScreenTicketResponseSchema
+    )
+    expectRoute(routes.environmentUiOpen, 'POST', environmentPath + '/ui/open', fleetUiOpenRequestSchema, null)
+    expect(routes.botScreenTicket.body).toBe(fleetScreenTicketRequestSchema)
+  })
+
+  it('mirrors every bot provisioning route on the environment', () => {
+    const pairs = [
+      ['botApiKeyAccountAdd', 'environmentApiKeyAccountAdd'],
+      ['botAccountRemove', 'environmentAccountRemove'],
+      ['botAccountsList', 'environmentAccountsList'],
+      ['botAccountsImport', 'environmentAccountsImport'],
+      ['botSubscriptionRemove', 'environmentSubscriptionRemove'],
+      ['botLoginStart', 'environmentLoginStart'],
+      ['botLoginGet', 'environmentLoginGet'],
+      ['botLoginCallback', 'environmentLoginCallback'],
+      ['botLoginCode', 'environmentLoginCode'],
+      ['botLoginCancel', 'environmentLoginCancel'],
+      ['botSkillsList', 'environmentSkillsList'],
+      ['botSkillInstall', 'environmentSkillInstall'],
+      ['botSkillRemove', 'environmentSkillRemove'],
+      ['botMcpServersList', 'environmentMcpServersList'],
+      ['botMcpServersImport', 'environmentMcpServersImport'],
+      ['botMcpServerRemove', 'environmentMcpServerRemove'],
+    ] as const
+    expect(pairs).toHaveLength(16)
+    for (const [botKey, environmentKey] of pairs) {
+      const botRoute: FleetRoute = FLEET_GATEWAY_ROUTES[botKey]
+      expect(botRoute.path.startsWith('/v1/bots/:id/'), botKey).toBe(true)
+      expectRoute(
+        FLEET_GATEWAY_ROUTES[environmentKey],
+        botRoute.method,
+        botRoute.path.replace('/v1/bots/:id/', '/v1/environments/:eid/'),
+        botRoute.body,
+        botRoute.response
+      )
+    }
+  })
+
+  it('scopes instance bot routes under the bot and keeps the legacy single-bot routes', () => {
+    const legacy = [
+      'selections',
+      'memoriesList',
+      'memoryPatch',
+      'memoryDelete',
+      'transcript',
+      'image',
+      'inputSend',
+      'inputDelete',
+      'turnCancel',
+      'interactionResolve',
+      'hold',
+      'holdRelease',
+      'conversationCall',
+    ] as const
+    const routes: Record<string, FleetRoute> = FLEET_INSTANCE_ROUTES
+    for (const key of legacy) {
+      const botKey = 'bot' + key[0].toUpperCase() + key.slice(1)
+      expect(routes[botKey], botKey).toBeDefined()
+      expectRoute(
+        routes[botKey],
+        routes[key].method,
+        '/v1/bots/:botId' + routes[key].path.slice('/v1'.length),
+        routes[key].body,
+        routes[key].response
+      )
+    }
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.environmentStatus,
+      'GET',
+      '/v1/environment/status',
+      null,
+      fleetInstanceEnvironmentStatusSchema
+    )
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.botInstall,
+      'PUT',
+      '/v1/bots/:botId',
+      fleetInstanceBotInstallSchema,
+      fleetInstanceStatusSchema
+    )
+    expectRoute(FLEET_INSTANCE_ROUTES.botUninstall, 'DELETE', '/v1/bots/:botId', null, null)
+    expectRoute(FLEET_INSTANCE_ROUTES.botStatus, 'GET', '/v1/bots/:botId/status', null, fleetInstanceStatusSchema)
+    expectRoute(FLEET_INSTANCE_ROUTES.botScreenView, 'GET', '/v1/bots/:botId/screen/:surface/view', null, null)
+    expectRoute(FLEET_INSTANCE_ROUTES.botScreenControl, 'GET', '/v1/bots/:botId/screen/:surface/control', null, null)
+    expectRoute(FLEET_INSTANCE_ROUTES.environmentScreenView, 'GET', '/v1/screen/environment/view', null, null)
+    expectRoute(FLEET_INSTANCE_ROUTES.environmentScreenControl, 'GET', '/v1/screen/environment/control', null, null)
+    // Gateways keep calling instances without the capability on their legacy routes.
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.profile,
+      'PUT',
+      '/v1/profile',
+      fleetInstanceProfileSchema,
+      fleetInstanceStatusSchema
+    )
+    expectRoute(FLEET_INSTANCE_ROUTES.status, 'GET', '/v1/status', null, fleetInstanceStatusSchema)
+    expectRoute(FLEET_INSTANCE_ROUTES.screenView, 'GET', '/v1/screen/view', null, null)
+    expectRoute(FLEET_INSTANCE_ROUTES.screenControl, 'GET', '/v1/screen/control', null, null)
+  })
+
+  it('reaches exactly one route of its method from every concrete path, in every route family', () => {
+    const values = [
+      'archived',
+      'archived-bots',
+      'archived-environments',
+      'environments',
+      'environment',
+      'bots',
+      'restore',
+      'status',
+      'screen',
+      'browser',
+      'apps',
+      'view',
+      'control',
+      'x',
+    ]
+    const pattern = (path: string) => new RegExp('^' + path.replace(/:[A-Za-z][A-Za-z0-9_]*/g, '[^/]+') + '$')
+    const families: Record<string, FleetRoute>[] = [FLEET_GATEWAY_ROUTES, FLEET_INSTANCE_ROUTES, FLEET_INTERNAL_ROUTES]
+    for (const family of families) {
+      const routes = Object.entries(family)
+      for (const [name, route] of routes)
+        for (const value of values) {
+          const concrete = route.path.replace(/:[A-Za-z][A-Za-z0-9_]*/g, value)
+          const matches = routes.filter(
+            ([, other]) => other.method === route.method && pattern(other.path).test(concrete)
+          )
+          expect(
+            matches.map(([match]) => match),
+            `${name} ${concrete}`
+          ).toEqual([name])
+        }
     }
   })
 })

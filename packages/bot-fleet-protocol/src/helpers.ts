@@ -1,4 +1,5 @@
 import type { FleetLoginKind } from './api.js'
+import { FLEET_ENVIRONMENT_DISPLAY } from './constants.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -118,6 +119,25 @@ export function normalizeMemoryText(text: string): string {
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+export type FleetScreenArea = { x: number; y: number; width: number; height: number }
+/**
+ * A tile of the environment display, in pixels: tile 0 holds the environment screen and tile k (1 to 8) the browser
+ * of the bot in slot k. Tiles fill the display row by row.
+ */
+export function fleetEnvironmentTile(index: number): FleetScreenArea {
+  const { columns, rows, width, height } = FLEET_ENVIRONMENT_DISPLAY
+  if (!Number.isInteger(index) || index < 0 || index >= columns * rows)
+    throw new RangeError('tile index must be an integer from 0 to ' + (columns * rows - 1))
+  const tileWidth = width / columns
+  const tileHeight = height / rows
+  return {
+    x: (index % columns) * tileWidth,
+    y: Math.floor(index / columns) * tileHeight,
+    width: tileWidth,
+    height: tileHeight,
+  }
 }
 
 /** True when a sign-in page belongs to the provider: the Mac opens nothing else a bot sends. */

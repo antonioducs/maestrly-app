@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROVISIONING_LIMITS,
   FLEET_OWNER_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
@@ -20,10 +21,13 @@ import {
   fleetBotMemorySchema,
   fleetActivityEntrySchema,
   fleetArchivedBotSchema,
+  fleetArchivedEnvironmentSchema,
   fleetBotIdSchema,
   fleetBotSchema,
   fleetBotStatusSchema,
   fleetCeilingSchema,
+  fleetEnvironmentIdSchema,
+  fleetEnvironmentSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
   fleetIdempotencyKeySchema,
@@ -38,6 +42,7 @@ import {
   fleetRoleSchema,
   fleetRoutineScheduleSchema,
   fleetRoutineSchema,
+  fleetScreenSurfaceSchema,
   fleetSelectionOptionSchema,
   fleetSelectionSchema,
   fleetTakeoverStateSchema,
@@ -55,6 +60,8 @@ import {
 export const fleetOwnerMemoryCreateRequestSchema = z.object({
   content: z.string().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax),
   replacesId: fleetIdSchema.optional(),
+  /** The owner's entries are global (null) unless the owner scopes them to an environment. */
+  environmentId: fleetEnvironmentIdSchema.nullable().default(null),
   idempotencyKey: fleetIdempotencyKeySchema,
 })
 export type FleetOwnerMemoryCreateRequest = z.infer<typeof fleetOwnerMemoryCreateRequestSchema>
@@ -62,12 +69,18 @@ export const fleetOwnerMemoryPatchRequestSchema = z
   .object({
     content: z.string().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax).optional(),
     status: z.enum(['active', 'archived']).optional(),
+    /** Null makes the entry global; an id scopes it to that environment. */
+    environmentId: fleetEnvironmentIdSchema.nullable().optional(),
   })
-  .refine((value) => value.content !== undefined || value.status !== undefined, 'nothing to change')
+  .refine(
+    (value) => value.content !== undefined || value.status !== undefined || value.environmentId !== undefined,
+    'nothing to change'
+  )
 export type FleetOwnerMemoryPatchRequest = z.infer<typeof fleetOwnerMemoryPatchRequestSchema>
-export const fleetInternalOwnerMemorySaveRequestSchema = fleetOwnerMemoryCreateRequestSchema.extend({
-  origin: fleetOwnerMemoryOriginSchema,
-})
+/** A bot's entries belong to its environment, which the gateway derives from the bot's token, never from the body. */
+export const fleetInternalOwnerMemorySaveRequestSchema = fleetOwnerMemoryCreateRequestSchema
+  .omit({ environmentId: true })
+  .extend({ origin: fleetOwnerMemoryOriginSchema })
 export type FleetInternalOwnerMemorySaveRequest = z.infer<typeof fleetInternalOwnerMemorySaveRequestSchema>
 export const fleetInternalOwnerMemoryForgetRequestSchema = z.object({
   reason: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.reasonMax),
@@ -140,13 +153,54 @@ export const fleetBotsResponseSchema = z.object({ bots: z.array(fleetBotSchema) 
 export type FleetBotsResponse = z.infer<typeof fleetBotsResponseSchema>
 export const fleetArchivedBotsResponseSchema = z.object({ bots: z.array(fleetArchivedBotSchema) })
 export type FleetArchivedBotsResponse = z.infer<typeof fleetArchivedBotsResponseSchema>
-export const fleetCreateBotRequestSchema = z.object({
+/** The container memory limit the owner may set for an environment, in whole bytes. */
+export const fleetMemoryLimitSchema = z
+  .number()
+  .int()
+  .min(FLEET_ENVIRONMENT_LIMITS.memoryLimitMinBytes)
+  .max(FLEET_ENVIRONMENT_LIMITS.memoryLimitMaxBytes)
+export type FleetMemoryLimit = z.infer<typeof fleetMemoryLimitSchema>
+export const fleetEnvironmentsResponseSchema = z.object({ environments: z.array(fleetEnvironmentSchema) })
+export type FleetEnvironmentsResponse = z.infer<typeof fleetEnvironmentsResponseSchema>
+export const fleetArchivedEnvironmentsResponseSchema = z.object({
+  environments: z.array(fleetArchivedEnvironmentSchema),
+})
+export type FleetArchivedEnvironmentsResponse = z.infer<typeof fleetArchivedEnvironmentsResponseSchema>
+export const fleetCreateEnvironmentRequestSchema = z.object({
   name: fleetNameSchema,
-  instructions: fleetInstructionsSchema,
-  ceiling: fleetCeilingSchema,
-  talksTo: z.array(fleetBotIdSchema),
+  /** Null uses the gateway's default limit. */
+  memoryLimitBytes: fleetMemoryLimitSchema.nullable().default(null),
   idempotencyKey: fleetIdempotencyKeySchema,
 })
+export type FleetCreateEnvironmentRequest = z.infer<typeof fleetCreateEnvironmentRequestSchema>
+export const fleetPatchEnvironmentRequestSchema = z
+  .object({
+    name: fleetNameSchema.optional(),
+    /** Null goes back to the gateway's default limit. */
+    memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
+  })
+  .refine((value) => value.name !== undefined || value.memoryLimitBytes !== undefined, 'nothing to change')
+export type FleetPatchEnvironmentRequest = z.infer<typeof fleetPatchEnvironmentRequestSchema>
+/**
+ * A new bot joins an existing environment (`environmentId`) or gets a new one (`environment`), never both. With
+ * neither, as older Macs send it, the gateway creates a new environment named after the bot.
+ */
+export const fleetCreateBotRequestSchema = z
+  .object({
+    name: fleetNameSchema,
+    instructions: fleetInstructionsSchema,
+    ceiling: fleetCeilingSchema,
+    talksTo: z.array(fleetBotIdSchema),
+    idempotencyKey: fleetIdempotencyKeySchema,
+    environmentId: fleetEnvironmentIdSchema.optional(),
+    environment: z
+      .object({ name: fleetNameSchema, memoryLimitBytes: fleetMemoryLimitSchema.nullable().default(null) })
+      .optional(),
+  })
+  .refine((value) => value.environmentId === undefined || value.environment === undefined, {
+    message: 'Choose an existing environment or a new one, not both',
+    path: ['environment'],
+  })
 export type FleetCreateBotRequest = z.infer<typeof fleetCreateBotRequestSchema>
 export const fleetPatchBotRequestSchema = z.object({
   name: fleetNameSchema.optional(),
@@ -376,8 +430,15 @@ export const fleetInputReceiptSchema = z.object({ inputId: fleetIdSchema, itemId
 export type FleetInputReceipt = z.infer<typeof fleetInputReceiptSchema>
 export const fleetTakeoverReleaseRequestSchema = z.object({ note: fleetNoteSchema.nullable(), continue: z.boolean() })
 export type FleetTakeoverReleaseRequest = z.infer<typeof fleetTakeoverReleaseRequestSchema>
-export const fleetScreenTicketRequestSchema = z.object({ mode: z.enum(['view', 'control']) })
+export const fleetScreenTicketRequestSchema = z.object({
+  mode: z.enum(['view', 'control']),
+  /** Older Macs only know the browser area. */
+  surface: fleetScreenSurfaceSchema.default('browser'),
+})
 export type FleetScreenTicketRequest = z.infer<typeof fleetScreenTicketRequestSchema>
+/** The environment screen shows only Maestrly's settings: control needs no takeover. */
+export const fleetEnvironmentScreenTicketRequestSchema = z.object({ mode: z.enum(['view', 'control']) })
+export type FleetEnvironmentScreenTicketRequest = z.infer<typeof fleetEnvironmentScreenTicketRequestSchema>
 export const fleetScreenTicketResponseSchema = z.object({
   ticket: fleetIdSchema,
   path: z.string().startsWith('/v1/screen?ticket='),
@@ -476,6 +537,13 @@ export const fleetInstanceProfileSchema = z.object({
   gateway: z.object({ peersEnabled: z.boolean() }),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
+/** Installs or updates a bot in an environment instance: its profile, its display slot and its own gateway token. */
+export const fleetInstanceBotInstallSchema = z.object({
+  profile: fleetInstanceProfileSchema,
+  slot: z.number().int().min(1).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
+  gatewayToken: z.string().min(16).max(200),
+})
+export type FleetInstanceBotInstall = z.infer<typeof fleetInstanceBotInstallSchema>
 export const fleetInstanceHoldSchema = z.object({
   state: z.enum(['none', 'holding', 'held']),
   reason: z.enum(['takeover', 'paused']).nullable(),
@@ -518,6 +586,18 @@ export const fleetInstanceStatusSchema = z.object({
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>
+/** The aggregate status of an environment instance: one status per installed bot. */
+export const fleetInstanceEnvironmentStatusSchema = z.object({
+  environmentId: fleetEnvironmentIdSchema.nullable(),
+  capabilities: fleetFeaturesSchema,
+  appVersion: z.string(),
+  protocol: z.literal(FLEET_PROTOCOL_VERSION),
+  ready: z.boolean(),
+  bots: z.array(
+    z.object({ botId: fleetBotIdSchema, slot: z.number().int().min(1), status: fleetInstanceStatusSchema })
+  ),
+})
+export type FleetInstanceEnvironmentStatus = z.infer<typeof fleetInstanceEnvironmentStatusSchema>
 export const fleetInstanceInputSchema = z
   .object({
     idempotencyKey: fleetIdempotencyKeySchema,
@@ -538,29 +618,24 @@ export const fleetInstanceInputSchema = z
   .refine(hasContent, 'an input needs text or an image')
   .refine((value) => value.source === 'owner' || value.attachments.length === 0, 'only owner inputs carry images')
 export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
+/** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
+const instanceEventBase = {
+  seq: fleetNonNegativeIntSchema,
+  at: fleetTimestampSchema,
+  botId: fleetBotIdSchema.nullable().default(null),
+}
 export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
+  z.object({ ...instanceEventBase, type: z.literal('status'), status: fleetInstanceStatusSchema }),
+  z.object({ ...instanceEventBase, type: z.literal('transcript.upsert'), item: fleetTranscriptItemSchema }),
   z.object({
-    seq: fleetNonNegativeIntSchema,
-    at: fleetTimestampSchema,
-    type: z.literal('status'),
-    status: fleetInstanceStatusSchema,
-  }),
-  z.object({
-    seq: fleetNonNegativeIntSchema,
-    at: fleetTimestampSchema,
-    type: z.literal('transcript.upsert'),
-    item: fleetTranscriptItemSchema,
-  }),
-  z.object({
-    seq: fleetNonNegativeIntSchema,
-    at: fleetTimestampSchema,
+    ...instanceEventBase,
     type: z.literal('turn.finished'),
     inputId: z.string().nullable().default(null),
     text: z.string().max(FLEET_ROUTINE_RUN_LIMITS.finalTextMax).nullable().default(null),
     outcome: z.enum(['completed', 'cancelled', 'failed']),
     summary: z.string().nullable(),
   }),
-  z.object({ seq: fleetNonNegativeIntSchema, at: fleetTimestampSchema, type: z.literal('reset') }),
+  z.object({ ...instanceEventBase, type: z.literal('reset') }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
 export const fleetInstanceHealthSchema = z.object({
@@ -568,6 +643,7 @@ export const fleetInstanceHealthSchema = z.object({
   appVersion: z.string(),
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   ready: z.boolean(),
+  capabilities: fleetFeaturesSchema,
 })
 export type FleetInstanceHealth = z.infer<typeof fleetInstanceHealthSchema>
 export const fleetInstanceHoldRequestSchema = z.object({ reason: z.enum(['takeover', 'paused']) })
@@ -715,6 +791,156 @@ export const FLEET_GATEWAY_ROUTES = {
   botMcpServerRemove: { method: 'DELETE', path: '/v1/bots/:id/mcp-servers/:sid', body: null, response: null },
 
   botAccountRemove: { method: 'DELETE', path: '/v1/bots/:id/accounts/:providerId', body: null, response: null },
+
+  // Environments: one container whose accounts, skills, MCP servers and site logins its bots share. Archived
+  // environments are a separate collection, like archived bots.
+  environmentsList: { method: 'GET', path: '/v1/environments', body: null, response: fleetEnvironmentsResponseSchema },
+  environmentsCreate: {
+    method: 'POST',
+    path: '/v1/environments',
+    body: fleetCreateEnvironmentRequestSchema,
+    response: fleetEnvironmentSchema,
+  },
+  environmentGet: { method: 'GET', path: '/v1/environments/:eid', body: null, response: fleetEnvironmentSchema },
+  environmentPatch: {
+    method: 'PATCH',
+    path: '/v1/environments/:eid',
+    body: fleetPatchEnvironmentRequestSchema,
+    response: fleetEnvironmentSchema,
+  },
+  environmentStart: {
+    method: 'POST',
+    path: '/v1/environments/:eid/start',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  environmentStop: { method: 'POST', path: '/v1/environments/:eid/stop', body: null, response: fleetEnvironmentSchema },
+  environmentRestart: {
+    method: 'POST',
+    path: '/v1/environments/:eid/restart',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  environmentArchive: {
+    method: 'POST',
+    path: '/v1/environments/:eid/archive',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  archivedEnvironmentsList: {
+    method: 'GET',
+    path: '/v1/archived-environments',
+    body: null,
+    response: fleetArchivedEnvironmentsResponseSchema,
+  },
+  archivedEnvironmentRestore: {
+    method: 'POST',
+    path: '/v1/archived-environments/:eid/restore',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  /** Irreversible: removes the home volume and every gateway record of the environment and its bots. */
+  archivedEnvironmentDelete: { method: 'DELETE', path: '/v1/archived-environments/:eid', body: null, response: null },
+  environmentScreenTicket: {
+    method: 'POST',
+    path: '/v1/environments/:eid/screen-tickets',
+    body: fleetEnvironmentScreenTicketRequestSchema,
+    response: fleetScreenTicketResponseSchema,
+  },
+  environmentUiOpen: {
+    method: 'POST',
+    path: '/v1/environments/:eid/ui/open',
+    body: fleetUiOpenRequestSchema,
+    response: null,
+  },
+  // The environment's provisioning; the bot provisioning routes above act on the bot's environment.
+  environmentApiKeyAccountAdd: {
+    method: 'POST',
+    path: '/v1/environments/:eid/accounts/api-key',
+    body: fleetAddApiKeyAccountRequestSchema,
+    response: fleetAddApiKeyAccountResponseSchema,
+  },
+  environmentAccountRemove: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/accounts/:providerId',
+    body: null,
+    response: null,
+  },
+  environmentAccountsList: {
+    method: 'GET',
+    path: '/v1/environments/:eid/accounts',
+    body: null,
+    response: fleetBotAccountsSchema,
+  },
+  environmentAccountsImport: {
+    method: 'POST',
+    path: '/v1/environments/:eid/accounts/import',
+    body: fleetAccountImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  environmentSubscriptionRemove: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/subscriptions/:kind/:slot',
+    body: null,
+    response: null,
+  },
+  environmentLoginStart: {
+    method: 'POST',
+    path: '/v1/environments/:eid/logins',
+    body: fleetLoginStartRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  environmentLoginGet: {
+    method: 'GET',
+    path: '/v1/environments/:eid/logins/:lid',
+    body: null,
+    response: fleetLoginAttemptSchema,
+  },
+  environmentLoginCallback: {
+    method: 'POST',
+    path: '/v1/environments/:eid/logins/:lid/callback',
+    body: fleetLoginCallbackRequestSchema,
+    response: fleetLoginCallbackResponseSchema,
+  },
+  environmentLoginCode: {
+    method: 'POST',
+    path: '/v1/environments/:eid/logins/:lid/code',
+    body: fleetLoginCodeRequestSchema,
+    response: fleetLoginAttemptSchema,
+  },
+  environmentLoginCancel: { method: 'DELETE', path: '/v1/environments/:eid/logins/:lid', body: null, response: null },
+  environmentSkillsList: {
+    method: 'GET',
+    path: '/v1/environments/:eid/skills',
+    body: null,
+    response: fleetBotSkillsSchema,
+  },
+  environmentSkillInstall: {
+    method: 'POST',
+    path: '/v1/environments/:eid/skills',
+    body: fleetSkillInstallRequestSchema,
+    response: fleetSkillInstallResponseSchema,
+  },
+  environmentSkillRemove: { method: 'DELETE', path: '/v1/environments/:eid/skills/:name', body: null, response: null },
+  environmentMcpServersList: {
+    method: 'GET',
+    path: '/v1/environments/:eid/mcp-servers',
+    body: null,
+    response: fleetBotMcpServersSchema,
+  },
+  environmentMcpServersImport: {
+    method: 'POST',
+    path: '/v1/environments/:eid/mcp-servers/import',
+    body: fleetMcpImportRequestSchema,
+    response: fleetImportResultsSchema,
+  },
+  environmentMcpServerRemove: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/mcp-servers/:sid',
+    body: null,
+    response: null,
+  },
+
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
   // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
   botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
@@ -916,6 +1142,89 @@ export const FLEET_INSTANCE_ROUTES = {
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
   screenView: { method: 'GET', path: '/v1/screen/view', body: null, response: null },
   screenControl: { method: 'GET', path: '/v1/screen/control', body: null, response: null },
+
+  // An environment instance (capability `environments`) hosts several bots: their routes live under /v1/bots/:botId,
+  // with the bodies and responses of the unprefixed routes above, which keep serving gateways without the capability.
+  environmentStatus: {
+    method: 'GET',
+    path: '/v1/environment/status',
+    body: null,
+    response: fleetInstanceEnvironmentStatusSchema,
+  },
+  botInstall: {
+    method: 'PUT',
+    path: '/v1/bots/:botId',
+    body: fleetInstanceBotInstallSchema,
+    response: fleetInstanceStatusSchema,
+  },
+  /** `?purge=1` also deletes the bot's conversation, memory space and folders. */
+  botUninstall: { method: 'DELETE', path: '/v1/bots/:botId', body: null, response: null },
+  botStatus: { method: 'GET', path: '/v1/bots/:botId/status', body: null, response: fleetInstanceStatusSchema },
+  botSelections: {
+    method: 'GET',
+    path: '/v1/bots/:botId/selections',
+    body: null,
+    response: fleetSelectionsResponseSchema,
+  },
+  botMemoriesList: {
+    method: 'GET',
+    path: '/v1/bots/:botId/memories',
+    body: null,
+    response: fleetBotMemoriesResponseSchema,
+  },
+  botMemoryPatch: {
+    method: 'PATCH',
+    path: '/v1/bots/:botId/memories/:id',
+    body: fleetBotMemoryPatchRequestSchema,
+    response: fleetBotMemorySchema,
+  },
+  botMemoryDelete: { method: 'DELETE', path: '/v1/bots/:botId/memories/:id', body: null, response: null },
+  botTranscript: {
+    method: 'GET',
+    path: '/v1/bots/:botId/transcript',
+    body: null,
+    response: fleetTranscriptPageSchema,
+  },
+  // Binary: the image bytes with their Content-Type.
+  botImage: { method: 'GET', path: '/v1/bots/:botId/images/:imageId', body: null, response: null },
+  botInputSend: {
+    method: 'POST',
+    path: '/v1/bots/:botId/inputs',
+    body: fleetInstanceInputSchema,
+    response: fleetInputReceiptSchema,
+  },
+  botInputDelete: { method: 'DELETE', path: '/v1/bots/:botId/inputs/:inputId', body: null, response: null },
+  botTurnCancel: { method: 'POST', path: '/v1/bots/:botId/turn/cancel', body: null, response: null },
+  botInteractionResolve: {
+    method: 'POST',
+    path: '/v1/bots/:botId/interactions/:id/resolve',
+    body: fleetInteractionResolutionSchema,
+    response: null,
+  },
+  botHold: {
+    method: 'POST',
+    path: '/v1/bots/:botId/hold',
+    body: fleetInstanceHoldRequestSchema,
+    response: fleetInstanceHoldSchema,
+  },
+  botHoldRelease: {
+    method: 'POST',
+    path: '/v1/bots/:botId/hold/release',
+    body: fleetInstanceReleaseRequestSchema,
+    response: fleetInstanceHoldSchema,
+  },
+  botConversationCall: {
+    method: 'POST',
+    path: '/v1/bots/:botId/conversation/call',
+    body: fleetConversationCallRequestSchema,
+    response: fleetConversationCallResponseSchema,
+  },
+  // Screen upgrades: a bot's browser area (its tile of the environment display) or its apps display (`:surface` is a
+  // FleetScreenSurface), and the environment screen (tile 0).
+  botScreenView: { method: 'GET', path: '/v1/bots/:botId/screen/:surface/view', body: null, response: null },
+  botScreenControl: { method: 'GET', path: '/v1/bots/:botId/screen/:surface/control', body: null, response: null },
+  environmentScreenView: { method: 'GET', path: '/v1/screen/environment/view', body: null, response: null },
+  environmentScreenControl: { method: 'GET', path: '/v1/screen/environment/control', body: null, response: null },
 } as const satisfies Record<string, FleetRoute>
 
 export function buildPath(

@@ -89,8 +89,11 @@ export interface InstanceControl {
   open(target: FleetUiOpenRequest['target']): Promise<void>
   conversationCall(value: FleetConversationCallRequest): Promise<{ result: unknown }>
 }
+// `botId` defaults to null when the event is parsed.
 type EventPayload = {
-  [K in FleetInstanceEvent['type']]: Omit<Extract<FleetInstanceEvent, { type: K }>, 'seq' | 'at'>
+  [K in FleetInstanceEvent['type']]: Omit<Extract<FleetInstanceEvent, { type: K }>, 'seq' | 'at' | 'botId'> & {
+    botId?: string | null
+  }
 }[FleetInstanceEvent['type']]
 export class InstanceEvents {
   private seq = 0
@@ -233,7 +236,7 @@ export function createInstanceControlServer(
           connection: 'keep-alive',
         })
         if (replay === null)
-          response.write(sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset' }))
+          response.write(sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null }))
         else for (const event of replay) response.write(sseFrame(event))
         const unsubscribe = events.subscribe((event) => response.write(sseFrame(event)))
         const heartbeat = setInterval(() => response.write(': ping\n\n'), 15_000)

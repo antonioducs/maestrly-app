@@ -25,6 +25,7 @@ const entry = {
   origin: 'owner',
   replacesId: null,
   replacedById: null,
+  environmentId: null,
   createdAt: at,
   updatedAt: at,
 }

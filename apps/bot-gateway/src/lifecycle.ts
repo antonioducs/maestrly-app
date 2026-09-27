@@ -217,6 +217,7 @@ export class Lifecycle {
       appVersion: null,
       capabilities: [],
       usage: null,
+      environmentId: null,
       createdAt: at,
       updatedAt: at,
     }
@@ -480,6 +481,7 @@ export class Lifecycle {
         createdAt: bot.createdAt,
         archivedAt,
         files: (await this.docker.volumeExists(homeVolume(bot.id))) ? ('kept' as const) : ('missing' as const),
+        environmentId: null,
       }))
     )
   }

@@ -75,6 +75,7 @@ export const FLEET_BOT_ENV = {
   controlToken: 'MAESTRLY_BOT_CONTROL_TOKEN',
   gatewayUrl: 'MAESTRLY_BOT_GATEWAY_URL',
   gatewayToken: 'MAESTRLY_BOT_GATEWAY_TOKEN',
+  environmentId: 'MAESTRLY_ENVIRONMENT_ID',
 } as const
 
 export const FLEET_SCREEN_CLOSE_CODES = {
@@ -118,3 +119,20 @@ export const FLEET_PROVISIONING_LIMITS = {
 export const FLEET_SKILL_BODY_MAX = 12 * 1024 * 1024
 /** Gateway feature (`/v1/meta`) and bot capability (instance status) the Mac checks before offering provisioning. */
 export const FLEET_PROVISIONING_FEATURE = 'provisioning'
+
+/**
+ * Gateway feature (`/v1/meta`) and bot capability (instance status) for environments: one container, one Maestrly and
+ * one set of accounts, skills, MCP servers and site logins shared by up to `FLEET_ENVIRONMENT_LIMITS.botsMax` bots.
+ */
+export const FLEET_ENVIRONMENTS_FEATURE = 'environments'
+/** Bots per environment, and the range of the container memory limit the owner may set. */
+export const FLEET_ENVIRONMENT_LIMITS = {
+  botsMax: 8,
+  memoryLimitMinBytes: 2 * 1024 ** 3,
+  memoryLimitMaxBytes: 64 * 1024 ** 3,
+} as const
+/**
+ * The environment display: a grid of `FLEET_SCREEN`-sized tiles. Tile 0 holds the environment screen (Maestrly's
+ * settings); tile k (1 to 8) holds the browser of the bot in slot k.
+ */
+export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, height: 2400 } as const

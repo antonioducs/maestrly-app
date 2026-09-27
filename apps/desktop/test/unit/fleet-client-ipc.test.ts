@@ -77,7 +77,13 @@ describe('fleet IPC validation', () => {
     expect(mocks.call.mock.calls).toEqual([
       [
         'ownerMemoryCreate',
-        { body: { content: 'Prefer short answers.', idempotencyKey: '550e8400-e29b-41d4-a716-446655440000' } },
+        {
+          body: {
+            content: 'Prefer short answers.',
+            environmentId: null,
+            idempotencyKey: '550e8400-e29b-41d4-a716-446655440000',
+          },
+        },
       ],
       ['ownerMemoryPatch', { params: { mid: 'm1' }, body: { status: 'archived' } }],
       ['botRoutineRuns', { params: { id: 'scout', rid: 'r1' } }],

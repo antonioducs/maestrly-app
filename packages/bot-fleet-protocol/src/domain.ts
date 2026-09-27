@@ -13,6 +13,7 @@ import {
   FLEET_ROLE_MAX,
   FLEET_COMPACTION_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
+  FLEET_ENVIRONMENT_LIMITS,
   FLEET_ROUTINE_LIMITS,
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
@@ -22,6 +23,9 @@ import {
 
 export const fleetIdSchema = z.string().min(1)
 export const fleetBotIdSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/)
+/** Environment ids are slugs like bot ids: an existing bot became the environment with its own id. */
+export const fleetEnvironmentIdSchema = fleetBotIdSchema
+export type FleetEnvironmentId = z.infer<typeof fleetEnvironmentIdSchema>
 export const fleetTimestampSchema = z.iso.datetime().regex(/Z$/)
 export const fleetNonNegativeIntSchema = z.number().int().nonnegative()
 export const fleetNonNegativeNumberSchema = z.number().finite().nonnegative()
@@ -214,6 +218,19 @@ export const fleetTakeoverStateSchema = z.object({
 })
 export type FleetTakeoverState = z.infer<typeof fleetTakeoverStateSchema>
 
+/** A bot's screen areas: its browser window (a tile of the environment display) and its own apps display. */
+export const fleetScreenSurfaceSchema = z.enum(['browser', 'apps'])
+export type FleetScreenSurface = z.infer<typeof fleetScreenSurfaceSchema>
+
+/** Container resources, measured per environment. */
+export const fleetResourcesSchema = z.object({
+  memoryBytes: fleetNonNegativeNumberSchema.nullable(),
+  memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
+  cpuPercent: fleetNonNegativeNumberSchema.nullable(),
+  startedAt: fleetTimestampSchema.nullable(),
+})
+export type FleetResources = z.infer<typeof fleetResourcesSchema>
+
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
   name: fleetNameSchema,
@@ -234,12 +251,7 @@ export const fleetBotSchema = z.object({
     providers: z.array(z.object({ id: fleetIdSchema, label: z.string() })),
   }),
   takeover: fleetTakeoverStateSchema,
-  resources: z.object({
-    memoryBytes: fleetNonNegativeNumberSchema.nullable(),
-    memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
-    cpuPercent: fleetNonNegativeNumberSchema.nullable(),
-    startedAt: fleetTimestampSchema.nullable(),
-  }),
+  resources: fleetResourcesSchema,
   screen: z.object({
     width: z.literal(FLEET_SCREEN.width),
     height: z.literal(FLEET_SCREEN.height),
@@ -252,6 +264,8 @@ export const fleetBotSchema = z.object({
   compaction: fleetCompactionConfigSchema.nullable().default(null),
   /** Reported by the running bot; null when it is not running or predates bot compaction. */
   compactionState: fleetCompactionStateSchema.nullable().default(null),
+  /** The environment the bot runs in; null from gateways that predate environments. */
+  environmentId: fleetEnvironmentIdSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -267,8 +281,50 @@ export const fleetArchivedBotSchema = z.object({
   archivedAt: fleetTimestampSchema,
   /** `missing` when the home volume was removed outside Maestrly: a restored bot then starts with an empty home. */
   files: z.enum(['kept', 'missing']),
+  /** The environment it was archived from; null from gateways that predate environments. */
+  environmentId: fleetEnvironmentIdSchema.nullable().default(null),
 })
 export type FleetArchivedBot = z.infer<typeof fleetArchivedBotSchema>
+
+/** An environment has no profile step: each bot sets up its own profile once the environment is ready. */
+export const fleetEnvironmentSetupSchema = z.object({
+  step: z.enum(['container', 'desktop', 'ready', 'failed']),
+  error: fleetErrorCodeSchema.nullable(),
+  errorMessage: z.string().nullable(),
+})
+export type FleetEnvironmentSetup = z.infer<typeof fleetEnvironmentSetupSchema>
+
+/**
+ * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
+ * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
+ */
+export const fleetEnvironmentSchema = z.object({
+  id: fleetEnvironmentIdSchema,
+  name: fleetNameSchema,
+  lifecycle: fleetLifecycleSchema,
+  setup: fleetEnvironmentSetupSchema,
+  resources: fleetResourcesSchema,
+  /** The limit the owner set for the container; null when it uses the gateway's default. */
+  memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
+  appVersion: z.string().nullable(),
+  capabilities: z.array(z.string().max(40)).max(20).default([]),
+  botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
+  createdAt: fleetTimestampSchema,
+  updatedAt: fleetTimestampSchema,
+})
+export type FleetEnvironment = z.infer<typeof fleetEnvironmentSchema>
+
+/** An archived environment: no container; its home volume and the records of its bots kept on the server. */
+export const fleetArchivedEnvironmentSchema = z.object({
+  id: fleetEnvironmentIdSchema,
+  name: fleetNameSchema,
+  createdAt: fleetTimestampSchema,
+  archivedAt: fleetTimestampSchema,
+  /** `missing` when the home volume was removed outside Maestrly: a restored environment starts with an empty home. */
+  files: z.enum(['kept', 'missing']),
+  bots: z.array(z.object({ id: fleetBotIdSchema, name: fleetNameSchema, role: fleetRoleSchema, tint: z.string() })),
+})
+export type FleetArchivedEnvironment = z.infer<typeof fleetArchivedEnvironmentSchema>
 
 export const fleetQuestionSchema = z.object({
   question: z.string(),
@@ -293,6 +349,8 @@ export const fleetOwnerMemoryEntrySchema = z.object({
   origin: fleetOwnerMemoryOriginSchema.nullable(),
   replacesId: fleetIdSchema.nullable(),
   replacedById: fleetIdSchema.nullable(),
+  /** Null for a global entry (every bot sees it); otherwise only the bots of that environment see it. */
+  environmentId: fleetEnvironmentIdSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -568,6 +626,14 @@ export const fleetActivityKindSchema = z.enum([
   'bot_restored',
   // botId is null (the bot no longer exists); the summary carries its name.
   'bot_deleted',
+  // An environment's lifecycle (botId is null; environmentId names it and the summary carries its name).
+  'environment_created',
+  'environment_started',
+  'environment_stopped',
+  'environment_restarted',
+  'environment_archived',
+  'environment_restored',
+  'environment_deleted',
   'turn_completed',
   'turn_failed',
   'needs_you',
@@ -588,6 +654,8 @@ export const fleetActivityEntrySchema = z.object({
   seq: fleetNonNegativeIntSchema,
   at: fleetTimestampSchema,
   botId: fleetBotIdSchema.nullable(),
+  /** The environment it happened in; null for fleet-wide entries and from gateways that predate environments. */
+  environmentId: fleetEnvironmentIdSchema.nullable().default(null),
   kind: fleetActivityKindSchema,
   summary: z.string().nullable(),
   data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
@@ -599,6 +667,12 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), at: fleetTimestampSchema, lastActivitySeq: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('bot.updated'), at: fleetTimestampSchema, bot: fleetBotSchema }),
   z.object({ type: z.literal('bot.removed'), at: fleetTimestampSchema, botId: fleetBotIdSchema }),
+  z.object({ type: z.literal('environment.updated'), at: fleetTimestampSchema, environment: fleetEnvironmentSchema }),
+  z.object({
+    type: z.literal('environment.removed'),
+    at: fleetTimestampSchema,
+    environmentId: fleetEnvironmentIdSchema,
+  }),
   z.object({ type: z.literal('host.updated'), at: fleetTimestampSchema, host: fleetHostInfoSchema }),
   z.object({ type: z.literal('inbox.updated'), at: fleetTimestampSchema, items: z.array(fleetInboxItemSchema) }),
   z.object({
