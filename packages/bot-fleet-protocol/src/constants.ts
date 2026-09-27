@@ -125,6 +125,11 @@ export const FLEET_PROVISIONING_FEATURE = 'provisioning'
  * one set of accounts, skills, MCP servers and site logins shared by up to `FLEET_ENVIRONMENT_LIMITS.botsMax` bots.
  */
 export const FLEET_ENVIRONMENTS_FEATURE = 'environments'
+/**
+ * Gateway feature (`/v1/meta`): environments have a default compaction model that their bots without one of their own
+ * inherit. As an instance capability: the instance lists its environment's model options.
+ */
+export const FLEET_ENVIRONMENT_COMPACTION_FEATURE = 'environment-compaction'
 /** Bots per environment, and the range of the container memory limit the owner may set. */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,

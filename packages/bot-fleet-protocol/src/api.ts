@@ -178,8 +178,13 @@ export const fleetPatchEnvironmentRequestSchema = z
     name: fleetNameSchema.optional(),
     /** Null goes back to the gateway's default limit. */
     memoryLimitBytes: fleetMemoryLimitSchema.nullable().optional(),
+    /** The default compaction model of its bots; null removes it. */
+    compaction: fleetCompactionConfigSchema.nullable().optional(),
   })
-  .refine((value) => value.name !== undefined || value.memoryLimitBytes !== undefined, 'nothing to change')
+  .refine(
+    (value) => value.name !== undefined || value.memoryLimitBytes !== undefined || value.compaction !== undefined,
+    'nothing to change'
+  )
 export type FleetPatchEnvironmentRequest = z.infer<typeof fleetPatchEnvironmentRequestSchema>
 /**
  * A new bot joins an existing environment (`environmentId`) or gets a new one (`environment`), never both. With
@@ -209,6 +214,10 @@ export const fleetPatchBotRequestSchema = z.object({
   ceiling: fleetCeilingSchema.optional(),
   talksTo: z.array(fleetBotIdSchema).optional(),
   selection: fleetSelectionSchema.nullable().optional(),
+  /**
+   * The bot's own compaction model. Null makes it use its environment's default. In an environment without a default,
+   * a model becomes that default, used by the bot and its siblings without one.
+   */
   compaction: fleetCompactionConfigSchema.nullable().optional(),
 })
 export type FleetPatchBotRequest = z.infer<typeof fleetPatchBotRequestSchema>
@@ -813,6 +822,13 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetPatchEnvironmentRequestSchema,
     response: fleetEnvironmentSchema,
   },
+  /** The models of the environment's accounts, for its default compaction model; `current` is always null. */
+  environmentSelections: {
+    method: 'GET',
+    path: '/v1/environments/:eid/selections',
+    body: null,
+    response: fleetSelectionsResponseSchema,
+  },
   environmentStart: {
     method: 'POST',
     path: '/v1/environments/:eid/start',
@@ -1155,6 +1171,13 @@ export const FLEET_INSTANCE_ROUTES = {
     path: '/v1/environment/status',
     body: null,
     response: fleetInstanceEnvironmentStatusSchema,
+  },
+  /** Capability `environment-compaction`: the model options of the environment's accounts; `current` is null. */
+  environmentSelections: {
+    method: 'GET',
+    path: '/v1/environment/selections',
+    body: null,
+    response: fleetSelectionsResponseSchema,
   },
   botInstall: {
     method: 'PUT',

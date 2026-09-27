@@ -260,8 +260,16 @@ export const fleetBotSchema = z.object({
   appVersion: z.string().nullable(),
   capabilities: z.array(z.string().max(40)).max(20).default([]),
   usage: fleetUsageSchema.nullable().default(null),
-  /** The owner's compaction model (stored by the gateway, like `selection`). */
+  /**
+   * The model the bot compacts with: its own, or else its environment's default. Stored by the gateway, like
+   * `selection`.
+   */
   compaction: fleetCompactionConfigSchema.nullable().default(null),
+  /**
+   * Where `compaction` comes from: the bot's own choice or its environment's default. Null when no model is set, or
+   * from gateways that predate environment defaults (a set `compaction` is then the bot's own).
+   */
+  compactionSource: z.enum(['bot', 'environment']).nullable().default(null),
   /** Reported by the running bot; null when it is not running or predates bot compaction. */
   compactionState: fleetCompactionStateSchema.nullable().default(null),
   /** The environment the bot runs in; null from gateways that predate environments. */
@@ -306,6 +314,8 @@ export const fleetEnvironmentSchema = z.object({
   resources: fleetResourcesSchema,
   /** The limit the owner set for the container; null when it uses the gateway's default. */
   memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
+  /** The compaction model of its bots that have none of their own; null when none is set or the gateway predates it. */
+  compaction: fleetCompactionConfigSchema.nullable().default(null),
   appVersion: z.string().nullable(),
   capabilities: z.array(z.string().max(40)).max(20).default([]),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),

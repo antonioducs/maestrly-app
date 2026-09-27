@@ -10,6 +10,7 @@ import {
 } from '../src/index.js'
 import {
   FLEET_BOT_ENV,
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -971,6 +972,47 @@ describe('environment contracts', () => {
     })
     for (const patch of [{ memoryLimitBytes: 1 * GiB }, { memoryLimitBytes: 65 * GiB }, { name: '' }])
       expect(fleetPatchEnvironmentRequestSchema.safeParse(patch).success).toBe(false)
+  })
+
+  it('gives environments a default compaction model and tells where a bot takes its model from', () => {
+    const compaction = {
+      providerId: 'prov_test',
+      modelId: 'model-a',
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: 100_000,
+    }
+    expect(FLEET_ENVIRONMENT_COMPACTION_FEATURE).toBe('environment-compaction')
+    expect(fleetEnvironmentSchema.parse(environment).compaction).toBeNull()
+    expect(fleetEnvironmentSchema.parse({ ...environment, compaction }).compaction).toEqual(compaction)
+    expect(
+      fleetEnvironmentSchema.safeParse({ ...environment, compaction: { ...compaction, intervalTokens: 1 } }).success
+    ).toBe(false)
+    expect(fleetBotSchema.parse(bot).compactionSource).toBeNull()
+    for (const compactionSource of ['bot', 'environment'] as const)
+      expect(fleetBotSchema.parse({ ...bot, compaction, compactionSource }).compactionSource).toBe(compactionSource)
+    expect(fleetBotSchema.safeParse({ ...bot, compactionSource: 'global' }).success).toBe(false)
+    expect(fleetPatchEnvironmentRequestSchema.parse({ compaction: null })).toEqual({ compaction: null })
+    expect(fleetPatchEnvironmentRequestSchema.parse({ compaction })).toEqual({ compaction })
+    expect(fleetPatchEnvironmentRequestSchema.safeParse({}).success).toBe(false)
+    expect(
+      fleetPatchEnvironmentRequestSchema.safeParse({ compaction: { ...compaction, intervalTokens: 1 } }).success
+    ).toBe(false)
+    expect(fleetPatchBotRequestSchema.parse({ compaction: null })).toEqual({ compaction: null })
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.environmentSelections,
+      'GET',
+      '/v1/environments/:eid/selections',
+      null,
+      fleetSelectionsResponseSchema
+    )
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.environmentSelections,
+      'GET',
+      '/v1/environment/selections',
+      null,
+      fleetSelectionsResponseSchema
+    )
   })
 
   it('creates a bot in an existing or a new environment, never both, and accepts older requests', () => {
