@@ -308,7 +308,10 @@ describe('instance link and takeover', () => {
       intervalTokens: 100_000,
     }
     await f.lifecycle.patch(created.id, { compaction })
-    expect(f.store.getBot(created.id)?.compaction).toEqual(compaction)
+    // Its environment had no default: the bot's first model became it, which the bot inherits.
+    expect(f.store.getEnvironment(created.environmentId!)?.compaction).toEqual(compaction)
+    expect(f.store.getBot(created.id)?.compaction).toBeNull()
+    expect(f.lifecycle.get(created.id)).toMatchObject({ compaction, compactionSource: 'environment' })
     expect(fake.profiles.at(-1)).toMatchObject({ compaction })
     fake.setState({
       ...fake.state,

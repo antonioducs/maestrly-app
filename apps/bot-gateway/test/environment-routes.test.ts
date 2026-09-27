@@ -70,7 +70,11 @@ describe('environment routes', () => {
   it('advertises environments and creates, lists, renames and limits environments', async () => {
     const h = await harness(Date.now, { environments: true })
     const docker = h.lifecycle.docker as FakeDockerDriver
-    expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual(['provisioning', 'environments'])
+    expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
+      'provisioning',
+      'environments',
+      'environment-compaction',
+    ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
     expect(created.status).toBe(201)

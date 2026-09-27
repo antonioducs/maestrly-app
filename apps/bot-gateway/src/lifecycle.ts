@@ -1,6 +1,7 @@
 import {
   deriveBotId,
   FLEET_BOT_ENV,
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
   type FleetActivityEntry,
@@ -8,6 +9,7 @@ import {
   type FleetArchivedEnvironment,
   type FleetBot,
   type FleetBotSetup,
+  type FleetCompactionConfig,
   type FleetCreateBotRequest,
   type FleetEnvironment,
   type FleetEnvironmentSetup,
@@ -19,6 +21,7 @@ import {
   type FleetInstanceStatus,
   type FleetLifecycle,
   type FleetPatchBotRequest,
+  type FleetSelectionsResponse,
   type FleetTakeoverState,
 } from '@maestrly/bot-fleet-protocol'
 import { token, sha256 } from './auth.js'
@@ -40,6 +43,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 export const environmentContainerName = (id: string) => 'maestrly-env-' + id
 export const environmentVolumeName = (id: string) => environmentContainerName(id) + '-home'
 export const RESTART_TO_ADD_BOTS = 'Restart this environment to update it before adding bots.'
+export const RESTART_TO_CHOOSE_COMPACTION =
+  'Restart this environment to update it before choosing its compaction model.'
 export const SHARED_ENVIRONMENT = 'This bot shares its environment. Restart the environment instead.'
 export const RESTORE_ENVIRONMENT_FIRST = 'Restore its environment first'
 export const START_ENVIRONMENT_FIRST = 'Start its environment first'
@@ -56,6 +61,15 @@ const environmentKinds = {
   stopped: 'environment_stopped',
   restarted: 'environment_restarted',
 } as const
+const sameCompaction = (a: FleetCompactionConfig | null, b: FleetCompactionConfig | null) =>
+  a === b ||
+  (!!a &&
+    !!b &&
+    a.providerId === b.providerId &&
+    a.modelId === b.modelId &&
+    a.reasoning === b.reasoning &&
+    a.fastMode === b.fastMode &&
+    a.intervalTokens === b.intervalTokens)
 function failureCode(error: unknown): FleetErrorCode {
   if (error instanceof GatewayError) return error.code
   return error instanceof DockerError && error.status === 404 ? 'IMAGE_MISSING' : 'DOCKER_UNAVAILABLE'
@@ -348,11 +362,21 @@ export class Lifecycle {
       setup: environment.setup.step === 'ready' ? bot.setup : { ...environment.setup },
     }
   }
+  /** The model a bot compacts with: its own, or else its environment's default. */
+  private effectiveCompaction(bot: FleetBot, environment: StoredEnvironment | null): FleetCompactionConfig | null {
+    return bot.compaction ?? environment?.compaction ?? null
+  }
+  /**
+   * The bot as devices see it, from its stored record. The result is a view: it is never saved, since its `compaction`
+   * may be its environment's default rather than its own (`update` and `syncPeers` save records read from the store).
+   */
   private assemble(bot: FleetBot): FleetBot {
     const environment = bot.environmentId ? this.store.getEnvironment(bot.environmentId) : null
     const state = this.placementState(bot, environment)
     bot.lifecycle = state.lifecycle
     bot.setup = state.setup
+    bot.compactionSource = bot.compaction ? 'bot' : environment?.compaction ? 'environment' : null
+    bot.compaction = this.effectiveCompaction(bot, environment)
     const status = this.statuses.get(bot.id)
     // Resources are measured per environment: a bot reports them only when it is alone in it, so that devices that
     // add up bots do not count shared memory twice.
@@ -465,14 +489,16 @@ export class Lifecycle {
     const bot = this.store.getBot(id)
     if (bot && bot.lifecycle !== 'archived') this.update(id, changes)
   }
+  /** What a bot's Maestrly runs it with, from its stored record: its model, or else its environment's default. */
   private profile(bot: FleetBot): FleetInstanceProfile {
+    const environment = bot.environmentId ? this.store.getEnvironment(bot.environmentId) : null
     return {
       botId: bot.id,
       name: bot.name,
       instructions: bot.instructions,
       ceiling: bot.ceiling,
       selection: bot.selection,
-      compaction: bot.compaction,
+      compaction: this.effectiveCompaction(bot, environment),
       gateway: { peersEnabled: bot.talksTo.length > 0 },
     }
   }
@@ -1079,23 +1105,27 @@ export class Lifecycle {
     })
   }
   /**
-   * Changes an environment's name or memory limit. A new limit reaches its container live first: when Docker refuses
-   * it, the container and the record both keep the previous one.
+   * Changes an environment's name, memory limit or default compaction model. A new limit reaches its container live
+   * first: when Docker refuses it, the container and the record both keep the previous one. A new default then reaches
+   * the bots that inherit it.
    */
   async patchEnvironment(
     id: string,
-    input: { name?: string; memoryLimitBytes?: number | null }
+    input: { name?: string; memoryLimitBytes?: number | null; compaction?: FleetCompactionConfig | null }
   ): Promise<FleetEnvironment> {
     const environment = this.requireEnvironment(id)
     const limit = input.memoryLimitBytes
-    if (limit === undefined || limit === environment.memoryLimitBytes) {
+    const changesLimit = limit !== undefined && limit !== environment.memoryLimitBytes
+    const changesCompaction =
+      input.compaction !== undefined && !sameCompaction(input.compaction, environment.compaction)
+    if (!changesLimit && !changesCompaction) {
       if (input.name !== undefined && input.name !== environment.name) this.updateEnvironment(id, { name: input.name })
       return this.environment(id)!
     }
     return this.exclusive(id, async () => {
       const current = this.requireEnvironment(id)
-      const container = await this.container(current)
-      if (container) {
+      const container = changesLimit ? await this.container(current) : null
+      if (limit !== undefined && container) {
         const bytes = limit ?? this.config.botMemory
         try {
           await this.docker.updateMemory(container.id, bytes)
@@ -1110,9 +1140,24 @@ export class Lifecycle {
         const measured = this.resources.get(id)
         if (measured) this.resources.set(id, { ...measured, memoryLimitBytes: bytes })
       }
-      this.updateEnvironment(id, { name: input.name, memoryLimitBytes: limit })
+      this.store.updateEnvironment(id, {
+        name: input.name,
+        ...(changesLimit ? { memoryLimitBytes: limit } : {}),
+        ...(changesCompaction ? { compaction: input.compaction } : {}),
+      })
+      // A new limit shows in the resources of a bot alone in its environment; a new default only in the bots that
+      // inherit it, which it reaches next.
+      this.emitEnvironment(id, changesLimit)
+      if (changesCompaction) await this.propagateCompaction(id, null)
       return this.environment(id)!
     })
+  }
+  /** The models of a running environment's accounts, to choose its default compaction model from. */
+  async environmentSelections(id: string): Promise<FleetSelectionsResponse> {
+    const client = this.environmentInstance(id)
+    if (!this.environmentCapabilities(id).includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE))
+      throw new GatewayError('CONFLICT', RESTART_TO_CHOOSE_COMPACTION)
+    return client.environmentSelections()
   }
   /**
    * Removes an environment's container and archives it with its active bots; its home volume and records stay, and
@@ -1457,32 +1502,94 @@ export class Lifecycle {
     this.activity(id, 'resumed')
     return result
   }
+  /**
+   * Changes a bot; a running bot takes its new profile first, and a refusal changes nothing. A compaction model of
+   * null makes the bot use its environment's default; in an environment without one, a model becomes that default.
+   */
   async patch(id: string, input: FleetPatchBotRequest): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (input.talksTo) this.validatePeers(id, input.talksTo)
-    if (bot.lifecycle === 'running') {
-      const environmentId = bot.environmentId!
-      await this.exclusive(environmentId, async () => {
-        const current = this.get(id)
-        if (current?.lifecycle !== 'running') return
-        const next = this.profile({ ...current, ...input })
-        const status = this.capable(environmentId)
-          ? await this.client(environmentId).botInstall(id, {
-              profile: next,
-              slot: this.store.botPlacement(id)!.slot,
-              gatewayToken: this.store.botGatewaySecrets(id)!.gatewayToken,
-            })
-          : await this.botClient(id).putProfile(next)
-        this.updateStatus(id, status)
+    const environmentId = bot.environmentId!
+    const { compaction } = input
+    let adopted = false
+    if (compaction && !this.store.getEnvironment(environmentId)?.compaction)
+      adopted = await this.exclusive(environmentId, () => this.adoptCompaction(id, input, compaction))
+    if (!adopted) {
+      if (bot.lifecycle === 'running')
+        await this.exclusive(environmentId, async () => {
+          const current = this.store.getBot(id)
+          if (!current || this.get(id)?.lifecycle !== 'running') return
+          this.updateStatus(id, await this.reinstallProfile(environmentId, { ...current, ...input }))
+        })
+      this.store.transaction(() => {
+        this.update(id, input)
+        if (input.talksTo) this.syncPeers(id, input.talksTo)
       })
     }
-    this.store.transaction(() => {
-      this.update(id, input)
-      if (input.talksTo) this.syncPeers(id, input.talksTo)
-    })
     if (input.talksTo) for (const peerId of new Set([...bot.talksTo, ...input.talksTo])) this.emitBot(peerId)
     return this.get(id)!
+  }
+  /**
+   * Makes a bot's model the default of its environment, which has none; the environment must be exclusive. The bot
+   * takes it first (a refusal changes nothing), then inherits it, and so do its siblings without a model of their own.
+   * False, with nothing done, when a default was set meanwhile: the model is then the bot's own.
+   */
+  private async adoptCompaction(
+    id: string,
+    input: FleetPatchBotRequest,
+    compaction: FleetCompactionConfig
+  ): Promise<boolean> {
+    const current = this.store.getBot(id)
+    if (!current || current.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    const environmentId = current.environmentId!
+    if (this.requireEnvironment(environmentId).compaction) return false
+    if (this.get(id)?.lifecycle === 'running')
+      this.updateStatus(id, await this.reinstallProfile(environmentId, { ...current, ...input }))
+    this.store.transaction(() => {
+      this.store.updateEnvironment(environmentId, { compaction })
+      this.update(id, { ...input, compaction: null })
+      if (input.talksTo) this.syncPeers(id, input.talksTo)
+    })
+    this.emitEnvironment(environmentId, false)
+    await this.propagateCompaction(environmentId, id)
+    return true
+  }
+  /** Sends a running bot its profile again, from its stored record. */
+  private reinstallProfile(environmentId: string, bot: FleetBot): Promise<FleetInstanceStatus> {
+    const profile = this.profile(bot)
+    return this.capable(environmentId)
+      ? this.client(environmentId).botInstall(bot.id, {
+          profile,
+          slot: this.store.botPlacement(bot.id)!.slot,
+          gatewayToken: this.store.botGatewaySecrets(bot.id)!.gatewayToken,
+        })
+      : this.botClient(bot.id).putProfile(profile)
+  }
+  /**
+   * Gives an environment's default compaction model to its bots without one of their own, but `except`; the
+   * environment must be exclusive. A running bot takes it at once; one that cannot now takes it from a later
+   * reconcile, and a bot that is not running takes it when it is installed.
+   */
+  private async propagateCompaction(environmentId: string, except: string | null) {
+    const running = this.store.getEnvironment(environmentId)?.lifecycle === 'running'
+    for (const { id } of this.store.botsOfEnvironment(environmentId)) {
+      const bot = this.store.getBot(id)
+      if (!bot || bot.compaction || id === except) continue
+      if (running && this.get(id)?.lifecycle === 'running')
+        try {
+          this.updateStatus(id, await this.reinstallProfile(environmentId, bot))
+          continue
+        } catch (error) {
+          this.logger.warn('Could not apply the environment compaction model', {
+            botId: id,
+            environmentId,
+            failure: failureCode(error),
+          })
+          this.scheduleReconcile(environmentId, 1000)
+        }
+      this.emitBot(id)
+    }
   }
   instanceFor(id: string) {
     const bot = this.get(id)

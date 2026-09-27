@@ -41,7 +41,11 @@ function noSecrets(h: Harness) {
 
 it('discovers provisioning on the gateway and the live bot', async () => {
   const h = await harness()
-  expect((await (await h.request('GET', '/v1/meta')).json()).features).toEqual(['provisioning', 'environments'])
+  expect((await (await h.request('GET', '/v1/meta')).json()).features).toEqual([
+    'provisioning',
+    'environments',
+    'environment-compaction',
+  ])
   expect((await (await h.request('GET', '/v1/bots/' + h.bot.id)).json()).capabilities).toEqual(['provisioning'])
 })
 

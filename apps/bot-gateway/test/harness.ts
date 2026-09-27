@@ -40,9 +40,10 @@ afterEach(async () => {
 })
 /**
  * A synthetic bot instance. With `environments` it hosts several bots like an environment's Maestrly: it installs
- * and uninstalls them and serves each one's routes under `/v1/bots/:botId`, recorded in `botRequests`.
+ * and uninstalls them and serves each one's routes under `/v1/bots/:botId`, recorded in `botRequests`. With
+ * `compaction` it also lists its environment's models, as a Maestrly with environment compaction defaults does.
  */
-async function fake(environments: boolean) {
+async function fake(environments: boolean, compaction = false) {
   let account: { id: string; label: string } | null = null
   const installed = new Map<string, { slot: number; gatewayToken: string }>()
   const installs: FleetInstanceBotInstall[] = []
@@ -60,8 +61,23 @@ async function fake(environments: boolean) {
   const conversationCalls: unknown[] = []
   const memoryRequests: unknown[] = []
   const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
+  /** Installations to refuse, the next ones first, with a synthetic internal error. */
+  const control = { installFailures: 0 }
+  const selectionOptions = [
+    {
+      id: 'prov_test::model-a',
+      providerId: 'prov_test',
+      providerLabel: 'Test',
+      modelId: 'model-a',
+      modelLabel: 'Model A',
+      efforts: [],
+      fastMode: false,
+    },
+  ]
   const provisioning = {
-    capabilities: environments ? ['provisioning', 'environments'] : ['provisioning'],
+    capabilities: environments
+      ? ['provisioning', 'environments', ...(compaction ? ['environment-compaction'] : [])]
+      : ['provisioning'],
     results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
     skill: { name: 'x', outcome: 'added' },
     failure: null as { code: string; message: string } | null,
@@ -176,9 +192,15 @@ async function fake(environments: boolean) {
             status: { ...status, profile: { botId, name: botId } },
           })),
         })
+      if (compaction && url.pathname === '/v1/environment/selections' && req.method === 'GET')
+        return send(200, { options: selectionOptions, current: null })
       const member = environments ? /^\/v1\/bots\/([^/]+)$/.exec(url.pathname) : null
       if (member && req.method === 'PUT') {
         const install = fleetInstanceBotInstallSchema.parse(body)
+        if (control.installFailures > 0) {
+          control.installFailures--
+          return send(500, { code: 'INTERNAL', message: 'Synthetic failure' })
+        }
         installed.set(decodeURIComponent(member[1]), { slot: install.slot, gatewayToken: install.gatewayToken })
         installs.push(install)
         return send(200, { ...status, profile: { botId: install.profile.botId, name: install.profile.name } })
@@ -321,15 +343,21 @@ async function fake(environments: boolean) {
     uninstalls,
     botRequests,
     uiOpens,
+    control,
+    selectionOptions,
   }
 }
 
 /**
  * A gateway with one running bot, `test`, alone in its environment. By default its instance predates environments;
- * with `environments` it is an environment instance (every environment of the harness shares it).
+ * with `environments` it is an environment instance (every environment of the harness shares it), which with
+ * `compaction` also lists its environment's models.
  */
-export async function harness(now: () => number = Date.now, options: { environments?: boolean } = {}) {
-  const instance = await fake(options.environments === true),
+export async function harness(
+  now: () => number = Date.now,
+  options: { environments?: boolean; compaction?: boolean } = {}
+) {
+  const instance = await fake(options.environments === true, options.compaction === true),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
   const cfg = loadConfig({

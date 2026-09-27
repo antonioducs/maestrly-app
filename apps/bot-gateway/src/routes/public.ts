@@ -1,6 +1,7 @@
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
@@ -226,7 +227,7 @@ export async function publicRoute(
         body: {
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: '0.1.0',
-          features: [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE],
+          features: [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE, FLEET_ENVIRONMENT_COMPACTION_FEATURE],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },
@@ -267,6 +268,8 @@ export async function publicRoute(
       const input = body as FleetPatchEnvironmentRequest
       return { body: await ctx.lifecycle.patchEnvironment(eid, input) }
     }
+    case 'environmentSelections':
+      return { body: await ctx.lifecycle.environmentSelections(eid) }
     case 'environmentStart':
       return { body: await ctx.lifecycle.startEnvironment(eid) }
     case 'environmentStop':

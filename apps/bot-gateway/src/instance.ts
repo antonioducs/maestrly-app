@@ -165,6 +165,10 @@ export class InstanceClient {
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus> {
     return this.call('environmentStatus')
   }
+  /** The model options of the environment's accounts, for its default compaction model (`environment-compaction`). */
+  environmentSelections() {
+    return this.call('environmentSelections')
+  }
   /** Installs a bot in the environment, or updates it: its profile, display slot and gateway token. */
   botInstall(botId: string, body: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {
     return this.call('botInstall', { botId }, undefined, body)
