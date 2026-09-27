@@ -191,16 +191,18 @@ in that one process, and therefore on one display.
 - **Environments.**
   - `GET /v1/environments`, `POST /v1/environments` (`{ name, memoryLimitBytes? }`).
   - `GET` and `PATCH /v1/environments/:eid` (name, memory limit).
-  - `POST /v1/environments/:eid/{start,stop,restart,archive,restore}`.
-  - `GET /v1/environments/archived`, `DELETE /v1/environments/:eid` (purge an archived environment).
-  - `POST /v1/environments/:eid/screen/ticket`.
+  - `POST /v1/environments/:eid/{start,stop,restart,archive}`.
+  - `GET /v1/archived-environments`, `POST /v1/archived-environments/:eid/restore` and
+    `DELETE /v1/archived-environments/:eid` (purge). Like archived bots, they are a separate collection so that an
+    environment named `archived` cannot collide with them.
+  - `POST /v1/environments/:eid/screen-tickets` and `POST /v1/environments/:eid/ui/open`.
 - **Provisioning** moves to `/v1/environments/:eid/{accounts,subscriptions,logins,skills,mcp-servers}`. The bot routes
   added yesterday remain as aliases that resolve to the bot's environment.
 - **`POST /v1/bots`** accepts either `environmentId` (existing environment) or `environment: { name }` (new one). With
   neither, as an older Mac sends it, it creates a new environment named after the bot.
 - **Bot `start`, `stop` and `restart`** act on the environment when it has one bot. With more bots they answer
   `CONFLICT` ("This bot shares its environment. Restart the environment instead.").
-- **Screen ticket.** `POST /v1/bots/:id/screen/ticket` gains `surface: 'browser' | 'apps'`, default `browser`.
+- **Screen ticket.** `POST /v1/bots/:id/screen-tickets` gains `surface: 'browser' | 'apps'`, default `browser`.
 - **Events.** New `environment.updated` and `environment.removed`.
 - **Bot fields.** `FleetBot` gains `environmentId` (null for older gateways). `resources` stays filled only when the
   environment has one bot, so older Macs do not count memory twice.
