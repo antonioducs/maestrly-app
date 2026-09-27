@@ -195,8 +195,16 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   area or apps screen requires that device's takeover. The environment screen
   shows only Maestrly's settings, so a paired device can control it without a
   takeover. The browser areas and the environment screen share one display, and
-  the gateway allows one control session on it per environment at a time; each
-  apps screen is a separate display with its own input.
+  the gateway allows one control session on it per environment at a time. While
+  it lasts, Electron windows outside the controlled screen are disabled for
+  native input and cannot request keyboard focus. Opening other bots' browser
+  popups or settings leaves the controlled screen focused. If window-manager
+  fallback assigns focus to a disabled window, keys are dropped until the owner
+  clicks their screen. The shared display has no window-move, resize, maximize
+  or cycling bindings; page-driven popup moves stay within the bot's area.
+  Bot popups suppress native JavaScript dialogs, including confirmations, so
+  they cannot block another screen. Each apps screen is a separate display
+  with its own input.
 - **Browsers.** The browser that bots drive with `browser_*` keeps one set of
   cookies and site logins for the whole environment. Programs on a bot's apps
   screen open Chromium with a separate per-bot profile that uses Chromium's

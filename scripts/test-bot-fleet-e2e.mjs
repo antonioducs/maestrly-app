@@ -2074,6 +2074,17 @@ async function main() {
       (await docker(['image', 'inspect', image, '--format', '{{.Size}}'])).stdout.trim(),
     ])
   )
+  // Browser keyboard focus between the screens of one environment, in a container of its own. That test always removes
+  // its own container and volume, even with --keep, and saves its report under .bot-fleet-local/focus/.
+  const focus = await run(process.execPath, [path.join(root, 'scripts/test-bot-fleet-focus.mjs')])
+  const focusSummary = JSON.parse(focus.stdout.trim().split('\n').at(-1))
+  pass(
+    'browser keyboard focus',
+    focusSummary.checks +
+      " checks over RFB: Alpha kept the keyboard through settings, a new browser, Beta's popup and its dialogs, and " +
+      'Alt+Tab; its own popup, the release and the environment screen took it in turn; report ' +
+      focusSummary.report
+  )
   console.log(
     JSON.stringify(
       {
