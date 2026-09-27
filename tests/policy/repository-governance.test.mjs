@@ -100,7 +100,10 @@ test('release workflow publishes verified native artifacts only from version tag
     /^deb:\n {2}packageName: maestrly-app\n {2}artifactName: maestrly-app_\$\{version\}_\$\{arch\}\.\$\{ext\}$/m
   )
 
-  assert.match(source, /^ {2}publish:\n {4}name: Publish GitHub Release\n {4}needs: \[validate, linux, windows, macos\]$/m)
+  assert.match(
+    source,
+    /^ {2}publish:\n {4}name: Publish GitHub Release\n {4}needs: \[validate, linux, windows, macos\]$/m
+  )
   assert.match(source, /^ {2}publish:\n[\s\S]*?^ {4}permissions:\n {6}contents: write$/m)
   const publishBlock = source.slice(source.indexOf('\n  publish:'))
   assert.match(
@@ -183,9 +186,11 @@ test('Gitleaks uses only constrained current-tree exceptions', () => {
   assert.match(source, /^\[extend\]\nuseDefault = true$/m)
   assert.doesNotMatch(source, /^commits\s*=/m)
   assert.equal(existsSync(path.join(root, '.gitleaksignore')), false)
-  assert.equal((source.match(/targetRules = \["generic-api-key"\]/g) ?? []).length, 6)
-  assert.equal((source.match(/condition = "AND"/g) ?? []).length, 6)
-  assert.equal((source.match(/regexTarget = "line"/g) ?? []).length, 6)
+  assert.equal((source.match(/targetRules = \["generic-api-key"\]/g) ?? []).length, 7)
+  assert.equal((source.match(/condition = "AND"/g) ?? []).length, 7)
+  assert.equal((source.match(/regexTarget = "line"/g) ?? []).length, 7)
+  assert.ok(source.includes('^apps/desktop/test/unit/fleet-instance-server\\.test\\.ts$'))
+  assert.ok(source.includes("idempotencyKey: '8e0f3c5a-2b6d-4c1e-9f7a-3d5b1c2e4f60',"))
   assert.match(source, /chat-chatgpt-web-\(\?:bridge\|router\)/)
   assert.doesNotMatch(source, /paths\s*=\s*\[\s*'''\^test\/\.\*'''/)
 })

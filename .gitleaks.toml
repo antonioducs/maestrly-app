@@ -61,3 +61,11 @@ regexes = [
   '''args: \['--token=arg-ABCD98765432'\],''',
   '''env: \{ TOKEN: 'env-PQRS86427531' \},''',
 ]
+
+[[allowlists]]
+description = "Exact non-secret UUID asserting instance input idempotency routing"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^apps/desktop/test/unit/fleet-instance-server\.test\.ts$''']
+regexTarget = "line"
+regexes = ['''idempotencyKey: '8e0f3c5a-2b6d-4c1e-9f7a-3d5b1c2e4f60',''']
