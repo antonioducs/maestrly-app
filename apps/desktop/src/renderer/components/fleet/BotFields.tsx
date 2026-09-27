@@ -15,20 +15,15 @@ export type BotFieldsValue = {
   ceiling: FleetBot['ceiling']
   talksTo: string[]
 }
+/** The fields of a new bot. An existing bot's are edited in its settings. */
 export function BotFields({
   value,
   onChange,
   bots,
-  selfId,
-  role,
-  onRoleChange,
 }: {
   value: BotFieldsValue
   onChange: (value: BotFieldsValue) => void
   bots: FleetBot[]
-  selfId?: string
-  role?: string
-  onRoleChange?: (value: string) => void
 }) {
   const { t } = useTranslation('fleet')
   const radios = useRef<Array<HTMLButtonElement | null>>([])
@@ -51,17 +46,6 @@ export function BotFields({
           onChange={(event) => set({ name: event.target.value })}
         />
       </label>
-      {onRoleChange && (
-        <label className="block text-sm font-medium">
-          {t('botFields.role')}
-          <Input
-            className="mt-1 bg-surface-elevated"
-            value={role ?? ''}
-            maxLength={80}
-            onChange={(event) => onRoleChange(event.target.value)}
-          />
-        </label>
-      )}
       <label className="block text-sm font-medium">
         {t('botFields.instructions')}
         <textarea
@@ -103,30 +87,26 @@ export function BotFields({
       <fieldset>
         <legend className="mb-2 text-sm font-medium">{t('botFields.talksTo')}</legend>
         <div className="flex flex-wrap gap-2">
-          {bots
-            .filter((bot) => bot.id !== selfId)
-            .map((bot) => (
-              <Button
-                key={bot.id}
-                size="sm"
-                variant="outline"
-                className={choiceClass(value.talksTo.includes(bot.id))}
-                aria-pressed={value.talksTo.includes(bot.id)}
-                onClick={() =>
-                  set({
-                    talksTo: value.talksTo.includes(bot.id)
-                      ? value.talksTo.filter((id) => id !== bot.id)
-                      : [...value.talksTo, bot.id],
-                  })
-                }
-              >
-                {value.talksTo.includes(bot.id) && <Check aria-hidden="true" />}
-                {bot.name}
-              </Button>
-            ))}
-          {bots.filter((bot) => bot.id !== selfId).length === 0 && (
-            <span className="text-xs text-muted-foreground">{t('botFields.noPeers')}</span>
-          )}
+          {bots.map((bot) => (
+            <Button
+              key={bot.id}
+              size="sm"
+              variant="outline"
+              className={choiceClass(value.talksTo.includes(bot.id))}
+              aria-pressed={value.talksTo.includes(bot.id)}
+              onClick={() =>
+                set({
+                  talksTo: value.talksTo.includes(bot.id)
+                    ? value.talksTo.filter((id) => id !== bot.id)
+                    : [...value.talksTo, bot.id],
+                })
+              }
+            >
+              {value.talksTo.includes(bot.id) && <Check aria-hidden="true" />}
+              {bot.name}
+            </Button>
+          ))}
+          {bots.length === 0 && <span className="text-xs text-muted-foreground">{t('botFields.noPeers')}</span>}
         </div>
         <p className="mt-2 text-xs text-muted-foreground">{t('botFields.talksNote')}</p>
       </fieldset>

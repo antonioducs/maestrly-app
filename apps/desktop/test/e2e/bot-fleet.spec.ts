@@ -1267,8 +1267,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     expect(imageReads.slice(readsBeforeLeaving)).toEqual(['shot-gone'])
     await expect(page.getByText('Lembrou: Portal login')).toBeVisible()
     await page.getByRole('tab', { name: 'Ajustes' }).click()
-    const scoutRoutine = page.getByText('Scout check', { exact: true }).locator('../../..')
-    await scoutRoutine.getByRole('button', { name: 'Histórico', exact: true }).click()
+    await page.getByRole('button', { name: 'Mais ações para Scout check', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Histórico', exact: true }).click()
     await expect(page.getByText('Concluída', { exact: true })).toBeVisible()
     await expect(page.getByText('Fez: Checked 3 stores', { exact: true })).toBeVisible()
     await expect(page.getByText('Notas para a próxima: Retry Magalu first', { exact: true })).toBeVisible()
@@ -1333,7 +1333,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('option', { name: /Padrão do ambiente/ })).toHaveCount(0)
     await page.getByRole('option', { name: 'Fake · Model' }).click()
     await page.getByLabel('Preparar um resumo a cada (mil tokens)').fill('100')
-    await page.getByRole('button', { name: 'Salvar compactação' }).click()
+    // Every setting that waits is saved from one bar, which names what changed.
+    const saveBar = page.getByRole('region', { name: 'Alterações não salvas', exact: true })
+    await expect(saveBar.getByRole('button', { name: 'Compactação', exact: true })).toBeVisible()
+    await saveBar.getByRole('button', { name: /^Salvar alterações/ }).click()
+    await expect(saveBar).toHaveCount(0)
     await expect
       .poll(
         () =>
@@ -2503,7 +2507,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .click()
     await page.getByRole('tab', { name: 'Ajustes' }).click()
     await expect(
-      page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Ambiente: Acme' })
+      page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Abrir ambiente' })
     ).toBeVisible()
     await expect(page.getByRole('region', { name: 'Contas do bot', exact: true })).toHaveCount(0)
     await expect(page.getByRole('region', { name: 'Skills e MCP', exact: true })).toHaveCount(0)
@@ -3429,9 +3433,14 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toHaveCount(0)
     await page.getByRole('tab', { name: 'Ajustes' }).click()
     const botCompaction = page.getByRole('region', { name: 'Compactação', exact: true })
+    const saveBar = () => page.getByRole('region', { name: 'Alterações não salvas', exact: true })
+    const saveChanges = () =>
+      saveBar()
+        .getByRole('button', { name: /^Salvar alterações/ })
+        .click()
     await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · Shared · Model B')
     await expect(botCompaction.getByLabel('Preparar um resumo a cada (mil tokens)')).toHaveCount(0)
-    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
+    await expect(saveBar()).toHaveCount(0)
     await botCompaction.getByRole('button', { name: 'Editar padrão do ambiente' }).click()
     await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
     await expect(section().getByText('Usado por: Helper e Scout', { exact: true })).toBeVisible()
@@ -3444,13 +3453,13 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Padrão do ambiente · Shared · Model B', exact: true }).click()
-    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await saveChanges()
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: null })
-    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
+    await expect(saveBar()).toHaveCount(0)
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
     await botCompaction.getByLabel('Preparar um resumo a cada (mil tokens)').fill('90')
-    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await saveChanges()
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a', 90_000) })
 
     // Without a default, the environment explains that a bot's first model becomes it, and so does the bot.
@@ -3466,7 +3475,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(
       botCompaction.getByText('Também vira o padrão de Home; os outros bots dele passam a usá-lo.')
     ).toBeVisible()
-    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await saveChanges()
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a') })
     await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · Shared · Model A')
     await expect(botCompaction.getByText(/Também vira o padrão/)).toHaveCount(0)
@@ -3482,7 +3491,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(page.getByRole('option', { name: 'Shared · Model B', exact: true })).toBeVisible()
     await expect(page.getByRole('option', { name: /Padrão do ambiente/ })).toHaveCount(0)
     await page.keyboard.press('Escape')
-    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
+    await expect(saveBar()).toHaveCount(0)
 
     // A stopped environment shows its default without changing it; an older image asks for a restart.
     await header('Lab').click()

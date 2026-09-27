@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import type { KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
@@ -8,7 +8,7 @@ import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
-import { BotSettings } from './BotSettings'
+import { BotSettings, type SettingsLeaveGuard } from './BotSettings'
 
 const tabs = ['conversation', 'screen', 'settings'] as const
 export function BotView({
@@ -29,9 +29,18 @@ export function BotView({
   const environment = hasEnvironments(fleet.state.connection)
     ? environmentOf(fleet.state.snapshot.environments, bot)
     : undefined
+  // Settings with unsaved changes ask before this view leaves them.
+  const leaveGuard = useRef<SettingsLeaveGuard | null>(null)
+  const go = (next: FleetView) => {
+    const guard = tab === 'settings' ? leaveGuard.current : null
+    if (guard) guard(() => onView(next))
+    else onView(next)
+  }
   const openEnvironment = (next: 'overview' | 'screen') =>
-    environment && onView({ kind: 'environment', environmentId: environment.id, tab: next })
-  const setTab = (next: typeof tab) => onView({ kind: 'bot', botId: bot.id, tab: next })
+    environment && go({ kind: 'environment', environmentId: environment.id, tab: next })
+  const setTab = (next: typeof tab) => {
+    if (next !== tab) go({ kind: 'bot', botId: bot.id, tab: next })
+  }
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = tabs.indexOf(tab)
     const next =
@@ -65,7 +74,7 @@ export function BotView({
           </div>
           <button
             type="button"
-            onClick={() => onView({ kind: 'server' })}
+            onClick={() => go({ kind: 'server' })}
             className="max-w-36 truncate rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
             title={fleet.state.snapshot.host?.hostname ?? t('view.server')}
           >
@@ -177,6 +186,7 @@ export function BotView({
             onOpenScreen={() => setTab('screen')}
             onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
             onArchived={() => onView({ kind: 'server' })}
+            leaveGuard={leaveGuard}
           />
         )}
       </div>

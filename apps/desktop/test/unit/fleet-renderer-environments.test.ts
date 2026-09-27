@@ -375,6 +375,13 @@ describe('environment UI wiring', () => {
     'ServerView',
     'BotSettings',
     'BotView',
+    'BotAutonomyTable',
+    'BotPeersList',
+    'BotRoutinesSection',
+    'BotSaveBar',
+    'BotMemorySection',
+    'SettingsSection',
+    'SettingsSwitch',
   ]
 
   it('uses the app controls and theme: no native select and no raw colors', () => {
@@ -454,9 +461,23 @@ describe('environment UI wiring', () => {
     const settings = source('components/fleet/BotSettings.tsx')
     expect(settings).toContain('<BotAccountsSection')
     expect(settings).toContain('<BotSkillsMcpSection')
-    expect(settings).toContain("t('environment.link'")
+    expect(settings).toContain("t('botSettings.openEnvironment')")
+    expect(settings).toContain('i18nKey="botSettings.modelFromEnvironment"')
     expect(settings).toContain("t('botSettings.where')")
     expect(settings).toContain('<ApiKeyAccountForm')
+  })
+
+  it('saves the bot settings from one bar and asks before leaving them with unsaved changes', () => {
+    const settings = source('components/fleet/BotSettings.tsx')
+    expect(settings).toContain('<BotSaveBar')
+    expect(settings).toContain('botSettingsPatch(')
+    expect(settings).toContain('<LeaveSettingsDialog')
+    // One save for every field that waits for it: compaction is no longer saved apart.
+    expect(settings).not.toContain("t('botSettings.compaction.save')")
+    expect(settings.match(/fleetUpdateBot\(/g)).toHaveLength(1)
+    const view = source('components/fleet/BotView.tsx')
+    expect(view).toContain('leaveGuard={leaveGuard}')
+    expect(view).not.toMatch(/onClick=\{\(\) => onView\(/)
   })
 
   it('switches bot screen areas, keeps takeover control, and reports the shared display conflict', () => {
@@ -522,6 +543,12 @@ describe('environment translations', () => {
       'components/fleet/ApiKeyAccountForm.tsx',
       'components/fleet/BotScreen.tsx',
       'components/fleet/BotSettings.tsx',
+      'components/fleet/BotAutonomyTable.tsx',
+      'components/fleet/BotPeersList.tsx',
+      'components/fleet/BotRoutinesSection.tsx',
+      'components/fleet/BotSaveBar.tsx',
+      'components/fleet/BotMemorySection.tsx',
+      'components/fleet/SettingsSection.tsx',
       'components/fleet/BotView.tsx',
       'components/fleet/BotComposer.tsx',
       'components/fleet/BotAccountsSection.tsx',
@@ -534,8 +561,8 @@ describe('environment translations', () => {
     ]
     const missing: string[] = []
     for (const file of files) {
-      for (const match of source(file).matchAll(/\bt\(\s*'([A-Za-z0-9_.-]+)'/g)) {
-        const key = match[1]
+      for (const match of source(file).matchAll(/\bt\(\s*'([A-Za-z0-9_.-]+)'|i18nKey="([A-Za-z0-9_.-]+)"/g)) {
+        const key = match[1] ?? match[2]
         if (!exists(en, key)) missing.push(`${file}: en ${key}`)
         if (!exists(pt, key)) missing.push(`${file}: pt-BR ${key}`)
       }

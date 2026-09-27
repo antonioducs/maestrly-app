@@ -195,9 +195,9 @@ The environment view has **Overview** and **Screen** tabs:
 - **Overview** lists its bots, with **New bot in this environment**; **Environment accounts**; **Skills and MCP**; a link to the environment screen; **Resources**, with memory, CPU, uptime, version, and **Memory limit**; **Start and stop**; and **Archive**. **Restart environment**, **Stop environment**, and **Archive** each ask for confirmation and name every bot they affect.
 - **Screen** shows the environment screen. **Take control** operates it without holding or pausing any bot; **Stop controlling** returns to watching.
 
-A bot's view has **Conversation**, **Screen**, and **Settings** tabs. Its **Settings** keep what belongs to the bot: name, role, instructions, ceiling, peers, **Account and model**, **Compaction**, **Routines**, and **Bot memory**. Its **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
+A bot's view has **Conversation**, **Screen**, and **Settings** tabs. Its **Settings** keep what belongs to the bot, in sections listed at the side: **Identity** (name, role, and what it does), **Autonomy**, **Model** (its **Main model** and **Compaction**), **Conversations with other bots**, **Routines**, **Bot memory**, **Environment**, and **Archive**. **Autonomy** shows, for each ceiling, what the bot does on its own and what it asks you about. Changes to the identity, autonomy, models, and peers wait in a bar that names each changed field until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; leaving the settings with unsaved changes asks first. Routines and bot memory are saved as you change them. The **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
 
-Model accounts belong to the environment. Add them under **Environment accounts** in the environment view: use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from your Mac…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Account and model** among the environment's accounts in its **Settings**.
+Model accounts belong to the environment. Add them under **Environment accounts** in the environment view: use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from your Mac…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Main model** among the environment's accounts in its **Settings**.
 
 Each environment has a **Default compaction model**, chosen in its environment view, which lists the bots that use it. A bot without a model of its own uses that default: its **Compaction** settings show **Environment default** with the model, a link to edit the default, and new bots start with it. Changing the default applies at once to the running bots that use it, and to the others when they start. A bot can choose its own **Compaction model** instead, and choose **Environment default** again to go back. In an environment without a default, the first model chosen for one of its bots becomes the default for that bot and its siblings without one. A bot remains in setup and queues messages until its model and account are available. The chosen model prepares conversation summaries in the background at the configured token interval. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Compaction settings apply to that bot's conversation only; background compaction settings on the environment screen are locked and managed from the Mac. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
 
@@ -302,7 +302,7 @@ lasting up to 15 minutes. Sign-in uses the default slot when disconnected, or
 creates an extra slot when it is already connected. A slot created for the
 attempt is removed on failure, expiry or cancellation. **Reconnect** signs in to
 the selected existing slot. Wait for the account to show **Connected**, then
-choose each bot's **Account and model**, and the environment's **Default compaction model** or a bot's own.
+choose each bot's **Main model**, and the environment's **Default compaction model** or a bot's own.
 
 ## Toolchain
 
@@ -417,8 +417,8 @@ A bot cannot directly use your Mac's screen, browser, terminal, accounts, or loc
 
 | Ceiling | Automatic work | Waits for you |
 | --- | --- | --- |
-| **Ask for approval** | Unprotected reading. | Other edits, commands, and new sites. |
-| **Approve for me** | Reads and edits its own folder. | Commands and work outside that folder. |
+| **Ask for approval** | Unprotected reading. | Other edits, commands, new sites, and MCP tools. |
+| **Approve for me** | Reads and edits its own folder, opens sites, and uses MCP tools. | Commands and work outside that folder. |
 | **Full access** | Commands and edits in its environment's container, including files other bots use. | Plan approval still remains yours. |
 
 The memory writes listed above are explicit bot exemptions. Permanent deletion with
@@ -449,7 +449,7 @@ compatible. See [memory storage](local-data.md#memory-storage),
 
 | Symptom | Check |
 | --- | --- |
-| **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Account and model**. |
+| **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Main model**. |
 | **Needs a compaction model** | Choose the environment's **Default compaction model**, or a model of the bot's own in its **Settings** tab; reconnect the environment's account if it became unavailable. Queued messages resume when setup is complete. |
 | **offline** or **starting** | Check the environment's container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart** on the environment. |
 | "This bot shares its environment. Restart the environment instead." | A Mac from before environments, or the API, tried to start, stop, or restart one bot of a shared environment. Use the environment's actions on a current Mac. |

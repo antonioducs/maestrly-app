@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Archive, ArchiveRestore, Pin, PinOff, Trash2 } from 'lucide-react'
 import { FLEET_BOT_MEMORY_LIMITS, type FleetBot, type FleetBotMemory } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { cn } from '@/lib/utils'
+import { SavesNowTag, SettingsSection } from './SettingsSection'
 
-export function BotMemorySection({ bot }: { bot: FleetBot }) {
+/** Long enough that three lines may hide part of it. */
+const longMemory = (memory: FleetBotMemory) =>
+  memory.truncated || memory.content.length > 240 || memory.content.split('\n').length > 3
+
+const iconButton =
+  'flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50'
+
+export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetBot; id?: string }) {
   const { t, i18n } = useTranslation('fleet')
   const [memories, setMemories] = useState<FleetBotMemory[] | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -45,80 +55,138 @@ export function BotMemorySection({ bot }: { bot: FleetBot }) {
       setBusy(false)
     }
   }
+  // Pinned memories first: they are the ones always in the bot's context.
+  const sorted = memories && [...memories].sort((a, b) => Number(b.pinned) - Number(a.pinned))
   return (
-    <section className="space-y-3" aria-labelledby="fleet-bot-memory-heading">
-      <h2 id="fleet-bot-memory-heading" className="font-semibold">
-        {t('botMemory.heading')}
-      </h2>
-      <p className="text-xs text-muted-foreground">{t('botMemory.description')}</p>
-      <Button size="sm" variant="ghost" aria-expanded={showArchived} onClick={() => setShowArchived((value) => !value)}>
-        {t(showArchived ? 'botMemory.hideArchived' : 'botMemory.showArchived')}
-      </Button>
-      {memories?.length === 0 && <p className="text-xs text-muted-foreground">{t('botMemory.empty')}</p>}
-      <ul className="space-y-2">
-        {memories?.map((memory) => (
-          <li key={memory.id} className="space-y-2 rounded-lg border border-border bg-surface-elevated p-3 text-sm">
-            <h3 className="font-medium">{memory.title}</h3>
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <span>{t(`botMemory.type.${memory.type}`)}</span>
-              <span className="rounded border border-border px-1.5">{t(`botMemory.source.${memory.source}`)}</span>
-              {memory.pinned && <span className="text-primary">{t('botMemory.pinned')}</span>}
-              {memory.status !== 'active' && (
-                <span>{t(memory.status === 'superseded' ? 'ownerMemory.replaced' : 'ownerMemory.removed')}</span>
-              )}
-            </div>
-            <p
-              className={`whitespace-pre-wrap break-words text-xs text-muted-foreground ${expanded[memory.id] ? '' : 'line-clamp-3'}`}
-            >
-              {memory.content}
-            </p>
-            {memory.truncated && (
-              <p className="text-xs text-muted-foreground">
-                {t('botMemory.truncated', { max: FLEET_BOT_MEMORY_LIMITS.contentMax.toLocaleString(i18n.language) })}
-              </p>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-expanded={!!expanded[memory.id]}
-              onClick={() => setExpanded((value) => ({ ...value, [memory.id]: !value[memory.id] }))}
-            >
-              {t(expanded[memory.id] ? 'botMemory.collapse' : 'botMemory.expand')}
-            </Button>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  void mutate(() => window.api.fleetPatchBotMemory(bot.id, memory.id, { pinned: !memory.pinned }))
-                }
-              >
-                {t(memory.pinned ? 'botMemory.unpin' : 'botMemory.pin')}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  void mutate(() =>
-                    window.api.fleetPatchBotMemory(bot.id, memory.id, {
-                      status: memory.status === 'active' ? 'archived' : 'active',
-                    })
-                  )
-                }
-              >
-                {t(memory.status === 'active' ? 'botMemory.archive' : 'botMemory.restore')}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirm(memory)}>
-                {t('botMemory.delete')}
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
+    <SettingsSection
+      id={id}
+      title={t('botMemory.heading')}
+      note={t('botMemory.description')}
+      aside={
+        <>
+          <SavesNowTag />
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            aria-expanded={showArchived}
+            onClick={() => setShowArchived((value) => !value)}
+          >
+            {t(showArchived ? 'botMemory.hideArchived' : 'botMemory.showArchived')}
+          </Button>
+        </>
+      }
+    >
+      {sorted?.length === 0 ? (
+        <div className="rounded-xl border border-border bg-foreground/[0.025] p-4 text-[13px] text-muted-foreground">
+          {t('botMemory.empty')}
+        </div>
+      ) : (
+        sorted && (
+          <ul className="divide-y divide-border rounded-xl border border-border bg-foreground/[0.025]">
+            {sorted.map((memory) => {
+              const active = memory.status === 'active'
+              return (
+                <li key={memory.id} className="flex items-start gap-3 px-4 py-3">
+                  <div className={cn('flex min-w-0 flex-1 flex-col gap-1', !active && 'opacity-60')}>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <span>{t(`botMemory.type.${memory.type}`)}</span>
+                      <span className="rounded border border-border px-1.5">
+                        {t(`botMemory.source.${memory.source}`)}
+                      </span>
+                      {memory.pinned && (
+                        <span className="inline-flex items-center gap-1 text-foreground">
+                          <Pin className="size-3" aria-hidden="true" />
+                          {t('botMemory.pinned')}
+                        </span>
+                      )}
+                      {!active && (
+                        <span>
+                          {t(memory.status === 'superseded' ? 'ownerMemory.replaced' : 'ownerMemory.removed')}
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-[13.5px] font-medium">{memory.title}</h3>
+                    <p
+                      className={cn(
+                        'whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground/75',
+                        !expanded[memory.id] && 'line-clamp-3'
+                      )}
+                    >
+                      {memory.content}
+                    </p>
+                    {memory.truncated && (
+                      <p className="text-xs text-muted-foreground">
+                        {t('botMemory.truncated', {
+                          max: FLEET_BOT_MEMORY_LIMITS.contentMax.toLocaleString(i18n.language),
+                        })}
+                      </p>
+                    )}
+                    {longMemory(memory) && (
+                      <button
+                        type="button"
+                        aria-expanded={!!expanded[memory.id]}
+                        onClick={() => setExpanded((value) => ({ ...value, [memory.id]: !value[memory.id] }))}
+                        className="self-start text-xs text-foreground/75 underline decoration-foreground/30 underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {t(expanded[memory.id] ? 'botMemory.collapse' : 'botMemory.expand')}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-0.5">
+                    <button
+                      type="button"
+                      className={cn(iconButton, memory.pinned && 'text-foreground')}
+                      aria-label={t(memory.pinned ? 'botMemory.unpin' : 'botMemory.pin')}
+                      title={t(memory.pinned ? 'botMemory.unpin' : 'botMemory.pin')}
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate(() => window.api.fleetPatchBotMemory(bot.id, memory.id, { pinned: !memory.pinned }))
+                      }
+                    >
+                      {memory.pinned ? (
+                        <PinOff className="size-4" aria-hidden="true" />
+                      ) : (
+                        <Pin className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className={iconButton}
+                      aria-label={t(active ? 'botMemory.archive' : 'botMemory.restore')}
+                      title={t(active ? 'botMemory.archive' : 'botMemory.restore')}
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate(() =>
+                          window.api.fleetPatchBotMemory(bot.id, memory.id, { status: active ? 'archived' : 'active' })
+                        )
+                      }
+                    >
+                      {active ? (
+                        <Archive className="size-4" aria-hidden="true" />
+                      ) : (
+                        <ArchiveRestore className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(iconButton, 'hover:text-destructive')}
+                      aria-label={t('botMemory.delete')}
+                      title={t('botMemory.delete')}
+                      disabled={busy}
+                      onClick={() => setConfirm(memory)}
+                    >
+                      <Trash2 className="size-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )
+      )}
       {error && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="mt-2 text-xs text-destructive">
           {error}
         </p>
       )}
@@ -135,6 +203,6 @@ export function BotMemorySection({ bot }: { bot: FleetBot }) {
           onConfirm={() => void mutate(() => window.api.fleetDeleteBotMemory(bot.id, confirm.id))}
         />
       )}
-    </section>
+    </SettingsSection>
   )
 }
