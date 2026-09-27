@@ -13,7 +13,14 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 
-vi.mock('../../src/main/fleet/instance', () => ({ requestOwnerHelp: vi.fn(async () => 'help-id') }))
+const conversationBot = vi.hoisted(() => ({
+  bot: null as null | { gatewayConfigured: boolean; gatewayConfig: { url: string; token: string } | null },
+}))
+vi.mock('../../src/main/fleet/instance', () => ({
+  requestOwnerHelp: vi.fn(async () => 'help-id'),
+  botRuntimeForConversation: (conversationId: string | undefined) =>
+    conversationId === 'primary' ? conversationBot.bot : null,
+}))
 const servers: Server[] = []
 afterEach(async () => {
   for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()))
@@ -71,13 +78,13 @@ async function fixture() {
   gateway.listen(0, '127.0.0.1')
   await once(gateway, 'listening')
   const server = new McpServer({ name: 'routines', version: '1' })
+  conversationBot.bot = {
+    gatewayConfigured: true,
+    gatewayConfig: { url: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`, token: 'token' },
+  }
   registerBotModeTools(
     { server, convId: 'primary', locale: 'en', t: (() => '') as never },
-    {
-      MAESTRLY_BOT_MODE: '1',
-      MAESTRLY_BOT_GATEWAY_URL: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`,
-      MAESTRLY_BOT_GATEWAY_TOKEN: 'token',
-    },
+    { MAESTRLY_BOT_MODE: '1' },
     () => false
   )
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()

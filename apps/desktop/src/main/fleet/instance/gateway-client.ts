@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  FLEET_BOT_ENV,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
@@ -16,19 +15,6 @@ export function keyForToolCall(extra: unknown): string {
   if (typeof meta?.toolCallId !== 'string' || !meta.toolCallId) return randomUUID()
   const hex = createHash('sha256').update(meta.toolCallId).digest('hex')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
-}
-
-export function configuredGateway(env: NodeJS.ProcessEnv = process.env): GatewayConfig | null {
-  const url = env[FLEET_BOT_ENV.gatewayUrl]
-  const token = env[FLEET_BOT_ENV.gatewayToken]
-  if (!url || !token) return null
-  try {
-    const parsed = new URL(url)
-    if (!['http:', 'https:'].includes(parsed.protocol)) return null
-    return { url: parsed.toString(), token }
-  } catch {
-    return null
-  }
 }
 
 export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTES>(

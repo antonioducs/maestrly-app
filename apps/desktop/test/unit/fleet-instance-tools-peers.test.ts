@@ -16,21 +16,44 @@ import os from 'node:os'
 import path from 'node:path'
 
 const help = vi.hoisted(() => ({ requestOwnerHelp: vi.fn(async () => 'help-id') }))
+type FakeBot = {
+  gatewayConfigured: boolean
+  gatewayConfig: { url: string; token: string } | null
+  peerNames: Map<string, string>
+}
+// The bot of the conversation 'primary'; every other conversation has none.
+const conversationBot = vi.hoisted(() => ({ bot: null as FakeBot | null }))
 
 // MCP tool results type `content` as unknown; the tools under test always return text blocks.
 const firstContent = (result: unknown): Record<string, unknown> =>
   (result as { content: Array<Record<string, unknown>> }).content[0]
-vi.mock('../../src/main/fleet/instance', () => ({ requestOwnerHelp: help.requestOwnerHelp }))
+vi.mock('../../src/main/fleet/instance', () => ({
+  requestOwnerHelp: help.requestOwnerHelp,
+  botRuntimeForConversation: (conversationId: string | undefined) =>
+    conversationId === 'primary' ? conversationBot.bot : null,
+}))
 const servers: Server[] = []
 afterEach(async () => {
   vi.unstubAllEnvs()
   for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve()))
   help.requestOwnerHelp.mockClear()
+  conversationBot.bot = null
+})
+const botWith = (gatewayConfig: FakeBot['gatewayConfig']): FakeBot => ({
+  gatewayConfigured: true,
+  gatewayConfig,
+  peerNames: new Map(),
 })
 
-async function appClient(env: NodeJS.ProcessEnv, computer = () => false) {
+async function appClient(
+  env: NodeJS.ProcessEnv,
+  computer = () => false,
+  bot: FakeBot | null = null,
+  convId = 'primary'
+) {
+  conversationBot.bot = bot
   const server = new McpServer({ name: 'bot-tools', version: '1' })
-  registerBotModeTools({ server, convId: 'primary', locale: 'en', t: (() => '') as never }, env, computer)
+  registerBotModeTools({ server, convId, locale: 'en', t: (() => '') as never }, env, computer)
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'test', version: '1' })
   await server.connect(serverTransport)
@@ -107,16 +130,24 @@ describe('bot instance tool registration and gateway', () => {
     await expect(off.client.listTools()).rejects.toThrow('Method not found')
     await off.client.close()
     await off.server.close()
-    const bot = await appClient({ MAESTRLY_BOT_MODE: '1' })
+    const bot = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, {
+      gatewayConfigured: false,
+      gatewayConfig: null,
+      peerNames: new Map(),
+    })
     expect((await bot.client.listTools()).tools.map((tool) => tool.name)).toEqual(['request_owner_help'])
     await bot.client.close()
     await bot.server.close()
-    const gateway = await appClient({
+    // A container's own gateway variables no longer give a conversation gateway access: each bot has its own token.
+    const legacy = await appClient({
       MAESTRLY_BOT_MODE: '1',
       MAESTRLY_BOT_GATEWAY_URL: 'http://localhost:7444',
       MAESTRLY_BOT_GATEWAY_TOKEN: 'token',
     })
-    expect((await gateway.client.listTools()).tools.map((tool) => tool.name)).toEqual([
+    expect((await legacy.client.listTools()).tools.map((tool) => tool.name)).toEqual(['request_owner_help'])
+    await legacy.client.close()
+    await legacy.server.close()
+    const allTools = [
       'request_owner_help',
       'bot_peers_list',
       'bot_peers_send',
@@ -127,9 +158,32 @@ describe('bot instance tool registration and gateway', () => {
       'owner_memory_save',
       'owner_memory_forget',
       'routine_report',
-    ])
+    ]
+    const gateway = await appClient(
+      { MAESTRLY_BOT_MODE: '1' },
+      () => false,
+      botWith({ url: 'http://localhost:7444/', token: 'token' })
+    )
+    expect((await gateway.client.listTools()).tools.map((tool) => tool.name)).toEqual(allTools)
     await gateway.client.close()
     await gateway.server.close()
+    const other = await appClient(
+      { MAESTRLY_BOT_MODE: '1' },
+      () => false,
+      botWith({ url: 'http://localhost:7444/', token: 'token' }),
+      'other'
+    )
+    expect((await other.client.listTools()).tools.map((tool) => tool.name)).toEqual(['request_owner_help'])
+    await other.client.close()
+    await other.server.close()
+    // A bot adopted from an older container offers its tools but waits for the gateway to install its token.
+    const waiting = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, botWith(null))
+    expect((await waiting.client.listTools()).tools.map((tool) => tool.name)).toEqual(allTools)
+    const early = await waiting.client.callTool({ name: 'bot_peers_list', arguments: {} })
+    expect(early.isError).toBe(true)
+    expect(firstContent(early)).toMatchObject({ text: expect.stringContaining('has not connected this bot yet') })
+    await waiting.client.close()
+    await waiting.server.close()
     const withComputer = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => true)
     expect((await withComputer.client.listTools()).tools.map((tool) => tool.name)).toContain('computer_screenshot')
     await withComputer.client.close()
@@ -138,14 +192,12 @@ describe('bot instance tool registration and gateway', () => {
 
   it('validates gateway headers and body, and explains ACL, rate limit and offline delivery', async () => {
     const gateway = await fakeGateway()
-    const { client, server } = await appClient({
-      MAESTRLY_BOT_MODE: '1',
-      MAESTRLY_BOT_GATEWAY_URL: gateway.url,
-      MAESTRLY_BOT_GATEWAY_TOKEN: 'secret',
-    })
+    const bot = botWith({ url: gateway.url, token: 'secret' })
+    const { client, server } = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot)
     try {
       const list = await client.callTool({ name: 'bot_peers_list', arguments: {} })
       expect(firstContent(list)).toMatchObject({ text: expect.stringContaining('Scout') })
+      expect(bot.peerNames.get('scout')).toBe('Scout')
       gateway.setMalformed(true)
       const invalid = await client.callTool({ name: 'bot_peers_list', arguments: {} })
       expect(invalid.isError).toBe(true)
@@ -188,7 +240,7 @@ describe('bot instance tool registration and gateway', () => {
     const { client, server } = await appClient({ MAESTRLY_BOT_MODE: '1' })
     try {
       const result = await client.callTool({ name: 'request_owner_help', arguments: { reason: 'Login needed' } })
-      expect(help.requestOwnerHelp).toHaveBeenCalledWith('Login needed')
+      expect(help.requestOwnerHelp).toHaveBeenCalledWith('primary', 'Login needed')
       expect(firstContent(result)).toMatchObject({ text: expect.stringContaining('End your turn now') })
     } finally {
       await client.close()

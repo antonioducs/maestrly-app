@@ -16,7 +16,7 @@ import {
   toolTarget,
 } from '../../src/main/fleet/instance/transcript'
 import {
-  BotInstanceRuntime,
+  BotRuntime,
   canDispatch,
   continuationText,
   releaseSystemCode,
@@ -30,11 +30,13 @@ import { clearEphemeralToolImages, mcpResultToChatToolOutput } from '../../src/m
 import { freshDb, closeDb } from '../helpers/db'
 
 const key = () => randomUUID()
+/** Queued owner images live in the folder a queue is given, never in one derived from its file. */
+const attachmentsFor = (file: string) => path.join(path.dirname(file), 'attachments')
 describe('fleet conversation admission', () => {
   it('holds queued work in compaction setup and reports the required model', async () => {
     freshDb()
     try {
-      const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
       Object.assign(runtime, {
         refreshAccounts: vi.fn(async () => {}),
         pending: () => [],
@@ -88,7 +90,7 @@ describe('fleet conversation admission', () => {
   it('reports the input that started the current turn and clears it when idle', async () => {
     freshDb()
     try {
-      const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+      const runtime = Object.create(BotRuntime.prototype) as BotRuntime
       Object.assign(runtime, {
         refreshAccounts: vi.fn(async () => {}),
         pending: () => [],
@@ -109,7 +111,7 @@ describe('fleet conversation admission', () => {
     }
   })
   it('returns a conflict before a primary conversation exists', async () => {
-    const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+    const runtime = Object.create(BotRuntime.prototype) as BotRuntime
     await expect(runtime.conversationCall({ op: 'chatGetConvTools', args: [] })).rejects.toMatchObject({
       status: 409,
       code: 'CONFLICT',
@@ -244,7 +246,7 @@ describe('persistent input queue', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-image-queue-'))
     try {
       const file = path.join(dir, 'fleet-instance', 'inputs.json')
-      const queue = new InstanceInputQueue(file)
+      const queue = new InstanceInputQueue(file, attachmentsFor(file))
       const png = Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==',
         'base64'
@@ -256,9 +258,10 @@ describe('persistent input queue', () => {
         attachments: [{ name: 'small.png', mediaType: 'image/png' as const, dataBase64: png.toString('base64') }],
       }
       const receipt = await queue.enqueue(input)
+      expect(await readFile(path.join(attachmentsFor(file), receipt.inputId, '0.png'))).toEqual(png)
       const index = await readFile(file, 'utf8')
       expect(index).not.toContain(input.attachments[0].dataBase64)
-      const reopened = new InstanceInputQueue(file)
+      const reopened = new InstanceInputQueue(file, attachmentsFor(file))
       await reopened.load()
       expect(reopened.refs(reopened.list()[0])).toMatchObject([
         { id: `q-${receipt.inputId}-0`, mediaType: 'image/png' },
@@ -284,7 +287,7 @@ describe('persistent input queue', () => {
     try {
       const file = path.join(dir, 'queue.json')
       let failNext = true
-      const queue = new InstanceInputQueue(file, async (target, contents) => {
+      const queue = new InstanceInputQueue(file, attachmentsFor(file), async (target, contents) => {
         if (failNext) {
           failNext = false
           throw new Error('disk full')
@@ -296,7 +299,7 @@ describe('persistent input queue', () => {
       expect(queue.list()).toHaveLength(0)
       const receipt = await queue.enqueue(input)
       const checkDisk = async () => {
-        const reopened = new InstanceInputQueue(file)
+        const reopened = new InstanceInputQueue(file, attachmentsFor(file))
         await reopened.load()
         expect(reopened.all()).toEqual(queue.all())
       }
@@ -330,7 +333,7 @@ describe('persistent input queue', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
       const file = path.join(dir, 'inputs.json')
-      const queue = new InstanceInputQueue(file)
+      const queue = new InstanceInputQueue(file, attachmentsFor(file))
       await queue.load()
       const firstKey = key()
       const first = await queue.enqueue({ idempotencyKey: firstKey, source: 'owner', text: 'hello' })
@@ -344,12 +347,12 @@ describe('persistent input queue', () => {
       })
       const continuation = await queue.enqueue({ idempotencyKey: key(), source: 'continuation', text: 'resume' })
       expect(queue.list().map((item) => item.id)).toEqual([continuation.inputId, first.inputId, second.inputId])
-      const reopened = new InstanceInputQueue(file)
+      const reopened = new InstanceInputQueue(file, attachmentsFor(file))
       await reopened.load()
       expect(reopened.list().map((item) => item.id)).toEqual([continuation.inputId, first.inputId, second.inputId])
       await reopened.markStarted(continuation.inputId)
       await reopened.mapNativeMessage(continuation.inputId, 'native-user')
-      const mapped = new InstanceInputQueue(file)
+      const mapped = new InstanceInputQueue(file, attachmentsFor(file))
       await mapped.load()
       expect(mapped.all().find((item) => item.id === continuation.inputId)?.nativeMessageId).toBe('native-user')
       expect(await reopened.delete(continuation.inputId)).toBe('started')
@@ -366,15 +369,15 @@ describe('persistent input queue', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
       const file = path.join(dir, 'queue.json')
-      const queue = new InstanceInputQueue(file)
+      const queue = new InstanceInputQueue(file, attachmentsFor(file))
       const receipt = await queue.enqueue({ idempotencyKey: key(), source: 'owner', text: 'Hello' })
       await queue.markStarted(receipt.inputId)
-      const beforeAdmission = new InstanceInputQueue(file)
+      const beforeAdmission = new InstanceInputQueue(file, attachmentsFor(file))
       await beforeAdmission.load()
       await beforeAdmission.reconcile([])
       expect(beforeAdmission.list().map((item) => item.id)).toContain(receipt.inputId)
       await beforeAdmission.markStarted(receipt.inputId)
-      const afterAdmission = new InstanceInputQueue(file)
+      const afterAdmission = new InstanceInputQueue(file, attachmentsFor(file))
       await afterAdmission.load()
       await afterAdmission.reconcile([{ id: 'native-user', at: Date.now(), text: 'Hello' }])
       expect(afterAdmission.list()).toHaveLength(0)
@@ -387,13 +390,13 @@ describe('persistent input queue', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
       const file = path.join(dir, 'queue.json')
-      const queue = new InstanceInputQueue(file)
+      const queue = new InstanceInputQueue(file, attachmentsFor(file))
       await Promise.all(
         Array.from({ length: 20 }, (_, index) =>
           queue.enqueue({ idempotencyKey: key(), source: 'owner', text: String(index) })
         )
       )
-      const reopened = new InstanceInputQueue(file)
+      const reopened = new InstanceInputQueue(file, attachmentsFor(file))
       await reopened.load()
       expect(reopened.list()).toHaveLength(20)
     } finally {
@@ -405,7 +408,7 @@ describe('persistent input queue', () => {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
-      const queue = new InstanceInputQueue(path.join(dir, 'queue.json'))
+      const queue = new InstanceInputQueue(path.join(dir, 'queue.json'), path.join(dir, 'attachments'))
       const idempotencyKey = key()
       const first = await queue.enqueue({ idempotencyKey, source: 'owner', text: 'First' })
       vi.setSystemTime(new Date('2026-01-02T00:00:01.000Z'))
@@ -427,7 +430,7 @@ describe('persistent input queue', () => {
     )
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {
-      const queue = new InstanceInputQueue(path.join(dir, 'queue.json'))
+      const queue = new InstanceInputQueue(path.join(dir, 'queue.json'), path.join(dir, 'attachments'))
       await expect(queue.enqueue({ idempotencyKey: key(), source: 'peer', text: 'hello' })).rejects.toThrow('metadata')
     } finally {
       await rm(dir, { recursive: true, force: true })
@@ -804,7 +807,7 @@ describe('hold gate', () => {
     }))
     const system = vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined)
     const resolveAll = vi.fn(async () => {})
-    const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+    const runtime = Object.create(BotRuntime.prototype) as BotRuntime
     Object.assign(runtime, {
       holdManager: manager,
       help: { pending: () => [], resolveAll },
@@ -979,9 +982,9 @@ describe('routine memory prompts', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-routine-memory-'))
     try {
       const file = path.join(dir, 'queue.json')
-      const queue = new InstanceInputQueue(file)
+      const queue = new InstanceInputQueue(file, attachmentsFor(file))
       await queue.enqueue(input)
-      const reopened = new InstanceInputQueue(file)
+      const reopened = new InstanceInputQueue(file, attachmentsFor(file))
       await reopened.load()
       expect(reopened.list()[0].input.routine).toEqual(input.routine)
       expect(promptForInput(reopened.list()[0].input)).toBe(prompt)

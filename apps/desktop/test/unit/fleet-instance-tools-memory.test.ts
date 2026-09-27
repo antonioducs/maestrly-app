@@ -14,7 +14,8 @@ const state = vi.hoisted(() => ({
 }))
 vi.mock('../../src/main/fleet/instance', () => ({
   requestOwnerHelp: vi.fn(),
-  getBotInstanceRuntime: () => ({ currentInput: () => state.input, ownerMemory: state.ownerMemory }),
+  botRuntimeForConversation: (conversationId: string | undefined) =>
+    conversationId === 'primary' ? { currentInput: () => state.input, ownerMemory: state.ownerMemory } : null,
 }))
 const at = '2026-09-20T10:00:00.000Z'
 const entry = {

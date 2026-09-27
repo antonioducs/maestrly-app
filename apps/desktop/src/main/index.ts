@@ -4,6 +4,8 @@ import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
+import { clampToArea } from './fleet/instance/window-bounds'
+import { fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -14,6 +16,7 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  screen,
   session,
   type MenuItemConstructorOptions,
   type IpcMainEvent,
@@ -202,6 +205,15 @@ async function stopConversationLive(convId: string): Promise<void> {
   popupManager.disposeConversation(convId)
   disposeConversation(convId)
   await Promise.all([stoppingChat, unwatchNotes(convId)])
+}
+
+/**
+ * In bot mode the main window is the environment screen: Maestrly's settings, kept in tile 0 of the environment
+ * display (the other tiles hold the bots' browsers). On a smaller display it keeps inside the display.
+ */
+function placeEnvironmentScreen(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  window.setBounds(clampToArea(fleetEnvironmentTile(0), screen.getPrimaryDisplay().bounds))
 }
 
 async function stopAllLiveWork(): Promise<void> {
@@ -819,10 +831,17 @@ app.whenReady().then(async () => {
     )
   }
   if (isBotMode() && mainWindow) {
+    const environmentScreen = mainWindow
     try {
-      await startBotInstanceMode(mainWindow, (id) => {
-        floatingManager.detach(id, 'browser')
-        floatingManager.setPinned(id, 'browser', true)
+      placeEnvironmentScreen(environmentScreen)
+      await startBotInstanceMode(environmentScreen, {
+        floatBrowser: (id) => {
+          floatingManager.detach(id, 'browser')
+          floatingManager.setPinned(id, 'browser', true)
+        },
+        closeConversation: (id) => stopConversationLive(id),
+        purgeConversation: (id) => deleteConversation(id),
+        placeSettingsWindow: () => placeEnvironmentScreen(environmentScreen),
       })
     } catch (error) {
       console.error(

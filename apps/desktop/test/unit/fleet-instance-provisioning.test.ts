@@ -17,7 +17,8 @@ import {
   listBotMcpServers,
   removeBotMcpServer,
 } from '../../src/main/fleet/instance/provisioning/mcp'
-import { BotInstanceRuntime } from '../../src/main/fleet/instance/runtime'
+import { BotRuntime } from '../../src/main/fleet/instance/runtime'
+import { EnvironmentRuntime } from '../../src/main/fleet/instance/environment'
 
 const state = vi.hoisted(() => ({
   secure: true,
@@ -103,7 +104,7 @@ const api = {
 const outcome = async (item: Parameters<typeof importBotAccounts>[0][number]) =>
   (await importBotAccounts([item])).results[0]
 it('upserts API keys by kind, normalized URL, key and name, refreshing only mutations', async () => {
-  const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+  const runtime = Object.create(EnvironmentRuntime.prototype) as EnvironmentRuntime
   const changed = vi.fn()
   Object.assign(runtime, { accountsChanged: changed })
   const first = (await runtime.importAccounts({ items: [api] })).results[0]
@@ -234,7 +235,7 @@ it('upserts MCP servers and projects names instead of secret values', () => {
 })
 
 it('advertises provisioning in runtime status', async () => {
-  const runtime = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+  const runtime = Object.create(BotRuntime.prototype) as BotRuntime
   Object.assign(runtime, {
     refreshAccounts: async () => {},
     pending: () => [],

@@ -322,6 +322,10 @@ export class InstanceTranscriptExtras {
   list(): FleetTranscriptItem[] {
     return [...this.items]
   }
+  /** Resolves once every write started so far has finished. */
+  async idle(): Promise<void> {
+    await this.writeTail
+  }
   async upsert(item: FleetTranscriptItem): Promise<void> {
     const valid = fleetTranscriptItemSchema.parse(item)
     const index = this.items.findIndex((existing) => existing.id === item.id)

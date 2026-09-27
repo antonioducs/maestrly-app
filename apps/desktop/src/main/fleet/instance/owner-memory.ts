@@ -12,12 +12,18 @@ import { gatewayRequest, type GatewayConfig } from './gateway-client'
 const INTRO =
   'Facts and preferences about your owner, shared by all of the owner’s bots. Follow them. Save a stable new preference or fact with owner_memory_save (replace an outdated entry with replaces_id); remove a wrong one with owner_memory_forget. Never store secrets.'
 
+/** A bot's gateway access, or a function that returns it at each request (a bot's token can arrive later). */
+export type GatewaySource = GatewayConfig | null | (() => GatewayConfig | null)
+
 export class OwnerMemoryClient {
   private cache: FleetOwnerMemory | null = null
   constructor(
-    private readonly gateway: GatewayConfig | null,
+    private readonly source: GatewaySource,
     private readonly timeoutMs = 1_000
   ) {}
+  private get gateway(): GatewayConfig | null {
+    return typeof this.source === 'function' ? this.source() : this.source
+  }
 
   async get(signal?: AbortSignal): Promise<FleetOwnerMemory | null> {
     if (!this.gateway) return null

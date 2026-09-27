@@ -58,6 +58,10 @@ export class FleetImageStore {
   private entries = new Map<string, Entry>()
   private writing = Promise.resolve()
   constructor(private readonly root: string) {}
+  /** Resolves once every capture started so far has finished. */
+  async idle(): Promise<void> {
+    await this.writing
+  }
   async load(): Promise<void> {
     try {
       const data: unknown = JSON.parse(await fs.readFile(path.join(this.root, 'index.json'), 'utf8'))

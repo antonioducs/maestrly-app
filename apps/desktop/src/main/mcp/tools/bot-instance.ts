@@ -12,8 +12,8 @@ import {
   type FleetRoutineSchedule,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
-import { requestOwnerHelp, getBotInstanceRuntime } from '../../fleet/instance'
-import { configuredGateway, gatewayRequest, keyForToolCall } from '../../fleet/instance/gateway-client'
+import { requestOwnerHelp, botRuntimeForConversation } from '../../fleet/instance'
+import { gatewayRequest, keyForToolCall, type GatewayConfig } from '../../fleet/instance/gateway-client'
 import { OwnerMemoryClient } from '../../fleet/instance/owner-memory'
 import { isBotMode } from '../../fleet/instance/config'
 import { canUseComputer, registerComputerTools } from './computer'
@@ -84,8 +84,19 @@ function weekly(
   if (!isValidTimeZone(timezone)) throw new Error('Invalid time zone.' + routineHint)
   return { kind: 'weekly', time, days, timezone }
 }
-const peerNames = new Map<string, string>()
-export function registerBotInstanceTools(ctx: McpToolContext, gateway = configuredGateway()): void {
+/**
+ * Registers the bot tools of a conversation. Each call resolves the conversation's own bot: its gateway token, current
+ * input, owner-memory client and peer names. `gateway`, when given, replaces the bot's gateway access.
+ */
+export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayConfig | null): void {
+  const bot = () => botRuntimeForConversation(ctx.convId)
+  const localPeerNames = new Map<string, string>()
+  const peerNames = () => bot()?.peerNames ?? localPeerNames
+  const gatewayFor = (): GatewayConfig => {
+    const config = gateway === undefined ? (bot()?.gatewayConfig ?? null) : gateway
+    if (!config) throw new Error('The gateway has not connected this bot yet. Try again later or ask your owner.')
+    return config
+  }
   ctx.server.registerTool(
     'request_owner_help',
     {
@@ -96,7 +107,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async ({ reason }) => {
       try {
-        const helpId = await requestOwnerHelp(reason)
+        const helpId = await requestOwnerHelp(ctx.convId, reason)
         return ok(
           `Owner notified (helpId: ${helpId}). End your turn now. You will receive a message when the owner hands the screen back.`
         )
@@ -106,7 +117,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     }
   )
 
-  if (!gateway) return
+  if (gateway === undefined ? !bot()?.gatewayConfigured : !gateway) return
   ctx.server.registerTool(
     'bot_peers_list',
     {
@@ -116,8 +127,8 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async () => {
       try {
-        const result = await gatewayRequest(gateway, 'peers')
-        for (const peer of result.peers) peerNames.set(peer.botId, peer.name)
+        const result = await gatewayRequest(gatewayFor(), 'peers')
+        for (const peer of result.peers) peerNames().set(peer.botId, peer.name)
         return ok(JSON.stringify(result))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
@@ -134,7 +145,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async ({ to, text }, extra) => {
       try {
-        const result = await gatewayRequest(gateway, 'peerMessageSend', {
+        const result = await gatewayRequest(gatewayFor(), 'peerMessageSend', {
           to,
           text,
           idempotencyKey: keyForToolCall(extra),
@@ -143,7 +154,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
           JSON.stringify({
             ...result,
             to,
-            name: peerNames.get(to) ?? to,
+            name: peerNames().get(to) ?? to,
             status: result.delivered ? 'delivered' : 'queued',
           })
         )
@@ -162,7 +173,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async () => {
       try {
-        const result = await gatewayRequest(gateway, 'routinesList')
+        const result = await gatewayRequest(gatewayFor(), 'routinesList')
         return ok(JSON.stringify({ routines: result.routines.map(routineOutput) }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
@@ -184,7 +195,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
           return err('Days and timezone require a weekly time schedule.')
         const schedule: FleetRoutineSchedule =
           everyMinutes !== undefined ? { kind: 'interval', everyMinutes } : weekly(time!, days, timezone)
-        const routine = await gatewayRequest(gateway, 'routineCreate', {
+        const routine = await gatewayRequest(gatewayFor(), 'routineCreate', {
           title,
           prompt,
           schedule,
@@ -224,7 +235,9 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
             return err('Days and timezone require a weekly time schedule.')
           schedule = { kind: 'interval', everyMinutes }
         } else if (time !== undefined || days !== undefined || timezone !== undefined) {
-          const current = (await gatewayRequest(gateway, 'routinesList')).routines.find((item) => item.id === routineId)
+          const current = (await gatewayRequest(gatewayFor(), 'routinesList')).routines.find(
+            (item) => item.id === routineId
+          )
           if (!current) return err('Routine not found.' + routineHint)
           if (current.createdBy !== 'bot') return err('Only your owner can change this routine.' + routineHint)
           const previous = current.schedule.kind === 'weekly' ? current.schedule : null
@@ -237,7 +250,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
           ...(schedule === undefined ? {} : { schedule }),
           ...(enabled === undefined ? {} : { enabled }),
         }
-        const routine = await gatewayRequest(gateway, 'routinePatch', patch, { rid: routineId })
+        const routine = await gatewayRequest(gatewayFor(), 'routinePatch', patch, { rid: routineId })
         return ok(JSON.stringify(routineOutput(routine)))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
@@ -253,10 +266,10 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     },
     async ({ routineId }) => {
       try {
-        const title = (await gatewayRequest(gateway, 'routinesList').catch(() => null))?.routines.find(
+        const title = (await gatewayRequest(gatewayFor(), 'routinesList').catch(() => null))?.routines.find(
           (item) => item.id === routineId
         )?.title
-        await gatewayRequest(gateway, 'routineDelete', undefined, { rid: routineId })
+        await gatewayRequest(gatewayFor(), 'routineDelete', undefined, { rid: routineId })
         return ok(JSON.stringify({ deleted: true, routineId, title }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
@@ -264,8 +277,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
     }
   )
   let fallbackOwnerMemory: OwnerMemoryClient | undefined
-  const ownerMemory = () =>
-    getBotInstanceRuntime()?.ownerMemory ?? (fallbackOwnerMemory ??= new OwnerMemoryClient(gateway))
+  const ownerMemory = () => bot()?.ownerMemory ?? (fallbackOwnerMemory ??= new OwnerMemoryClient(() => gateway ?? null))
   ctx.server.registerTool(
     'owner_memory_save',
     {
@@ -282,7 +294,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
         const entry = await ownerMemory().save({
           content,
           ...(replaces_id ? { replacesId: replaces_id } : {}),
-          origin: getBotInstanceRuntime()?.currentInput()?.source ?? 'owner',
+          origin: bot()?.currentInput()?.source ?? 'owner',
           idempotencyKey: keyForToolCall(extra),
         })
         return ok(JSON.stringify({ saved: true, id: entry.id, content: entry.content }))
@@ -321,11 +333,11 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway = configur
       annotations: { readOnlyHint: false },
     },
     async ({ summary, pending, notes_for_next_run }) => {
-      const routine = getBotInstanceRuntime()?.currentInput()?.routine
+      const routine = bot()?.currentInput()?.routine
       if (!routine?.runId) return err('routine_report works only while running a scheduled routine.')
       try {
         await gatewayRequest(
-          gateway,
+          gatewayFor(),
           'routineRunReport',
           { summary, pending: pending || null, notes: notes_for_next_run || null },
           { rid: routine.id, runId: routine.runId }
@@ -344,6 +356,6 @@ export function registerBotModeTools(
   computerAvailable: () => boolean = canUseComputer
 ): void {
   if (!isBotMode(env)) return
-  registerBotInstanceTools(ctx, configuredGateway(env))
+  registerBotInstanceTools(ctx)
   if (computerAvailable()) registerComputerTools(ctx)
 }

@@ -7,13 +7,31 @@ const refusal = {
   takeover: 'The owner has taken over your screen. End your turn now.',
   paused: 'The owner has paused you. End your turn now.',
 }
+/**
+ * The hold (takeover or pause) of one bot. `conversationId` names the bot's conversation: a hold cancels only that
+ * conversation's screen actions, so holding one bot never interrupts another bot of the environment. Without it, the
+ * conversation registered through `registerInstanceHoldGate` is used, and without either, every screen action.
+ */
 export class InstanceHoldManager {
   private current: FleetInstanceHold = { state: 'none', reason: null, since: null, interruptedTurn: false }
   private inflight = 0
   private pausedAfterTakeover = false
   private settling: Promise<void> | null = null
   private waiters = new Set<() => void>()
-  constructor(private readonly onChange: () => void = () => {}) {}
+  /** The conversation this manager gates, set by `registerInstanceHoldGate`. */
+  gatedConversationId: string | null = null
+  constructor(
+    private readonly onChange: () => void = () => {},
+    private readonly conversationId?: () => string | null
+  ) {}
+  private abortScreen(): void {
+    if (this.conversationId) {
+      const id = this.conversationId()
+      if (id) abortScreenActions(id)
+      return
+    }
+    abortScreenActions(this.gatedConversationId ?? undefined)
+  }
   get state(): FleetInstanceHold {
     return { ...this.current }
   }
@@ -57,7 +75,7 @@ export class InstanceHoldManager {
     this.onChange()
     this.settling = (async () => {
       try {
-        abortScreenActions()
+        this.abortScreen()
         const cancellation = running
           ? cancel().then(
               () => null,
@@ -109,15 +127,20 @@ export class InstanceHoldManager {
   }
 }
 
-let activeGate: { manager: InstanceHoldManager; conversationId: string } | null = null
+/** The hold gate of each bot conversation of this environment. */
+const gates = new Map<string, InstanceHoldManager>()
 export function registerInstanceHoldGate(manager: InstanceHoldManager, conversationId: string): () => void {
-  const entry = { manager, conversationId }
-  activeGate = entry
+  gates.set(conversationId, manager)
+  manager.gatedConversationId = conversationId
   return () => {
-    if (activeGate === entry) activeGate = null
+    if (gates.get(conversationId) !== manager) return
+    gates.delete(conversationId)
+    if (manager.gatedConversationId === conversationId) manager.gatedConversationId = null
   }
 }
+/** Runs an app tool of a conversation through its bot's hold gate; other conversations are not gated. */
 export async function gateInstanceAppTool<T>(conversationId: string, call: () => Promise<T>): Promise<T> {
-  if (!isBotMode() || !activeGate) return call()
-  return activeGate.manager.gate(conversationId, activeGate.conversationId, call)
+  const manager = isBotMode() ? gates.get(conversationId) : undefined
+  if (!manager) return call()
+  return manager.gate(conversationId, conversationId, call)
 }

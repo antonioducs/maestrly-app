@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetOwnerMemory } from '@maestrly/bot-fleet-protocol'
 import { OwnerMemoryClient } from '../../src/main/fleet/instance/owner-memory'
-import { BotInstanceRuntime } from '../../src/main/fleet/instance/runtime'
+import { BotRuntime } from '../../src/main/fleet/instance/runtime'
+import { InstanceHoldManager } from '../../src/main/fleet/instance/gate'
 import { InstanceHttpError } from '../../src/main/fleet/instance/server'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
 import * as chatService from '../../src/main/chat/service'
@@ -11,7 +12,7 @@ import { InstanceEvents } from '../../src/main/fleet/instance/server'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
 import { loadMemoryCoreExtras } from '../../src/main/memory/core'
 import { getOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
-import { BOT_MEMORY_SPACE_ID, memorySpaceForConversation } from '../../src/main/memory/spaces'
+import { botMemorySpaceId, memorySpaceForConversation } from '../../src/main/memory/spaces'
 import { freshDb, closeDb } from '../helpers/db'
 
 const at = '2026-09-20T10:00:00.000Z'
@@ -33,6 +34,7 @@ const memory: FleetOwnerMemory = {
   entries: [entry, { ...entry, id: randomUUID(), author: { kind: 'owner' } }],
 }
 const gateway = { url: 'http://gateway.test', token: 'synthetic-token' }
+const BOT_SPACE = botMemorySpaceId('scout')
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -99,10 +101,10 @@ describe('owner memory client', () => {
 describe('instance durable memory control', () => {
   beforeEach(freshDb)
   afterEach(closeDb)
-  const runtime = () => Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+  const runtime = () => Object.assign(Object.create(BotRuntime.prototype) as BotRuntime, { botId: 'scout' })
   it('lists only bot memories and truncates transport content without changing storage', async () => {
     const local = createLocalMemory({
-      workspaceId: BOT_MEMORY_SPACE_ID,
+      workspaceId: BOT_SPACE,
       title: 'Portal',
       content: 'x'.repeat(4001),
       type: 'reference',
@@ -114,6 +116,13 @@ describe('instance durable memory control', () => {
       content: 'Other fact',
       type: 'reference',
       source: 'user',
+    })
+    createLocalMemory({
+      workspaceId: botMemorySpaceId('sibling'),
+      title: 'Sibling',
+      content: 'A sibling bot of the environment knows this',
+      type: 'reference',
+      source: 'auto',
     })
     expect(await runtime().memories('active')).toEqual({
       memories: [
@@ -132,11 +141,11 @@ describe('instance durable memory control', () => {
         },
       ],
     })
-    expect(getLocalMemory(BOT_MEMORY_SPACE_ID, local.id)?.content).toHaveLength(4001)
+    expect(getLocalMemory(BOT_SPACE, local.id)?.content).toHaveLength(4001)
   })
   it('pins, archives, restores and forgets a memory', async () => {
     const local = createLocalMemory({
-      workspaceId: BOT_MEMORY_SPACE_ID,
+      workspaceId: BOT_SPACE,
       title: 'Portal',
       content: 'Open the portal',
       type: 'procedure',
@@ -149,7 +158,7 @@ describe('instance durable memory control', () => {
     expect((await bot.memories('all')).memories).toHaveLength(1)
     expect(await bot.patchMemory(local.id, { status: 'active' })).toMatchObject({ status: 'active' })
     await bot.deleteMemory(local.id)
-    expect(getLocalMemory(BOT_MEMORY_SPACE_ID, local.id)).toBeUndefined()
+    expect(getLocalMemory(BOT_SPACE, local.id)).toBeUndefined()
   })
   it('rejects unknown and other-space ids with HTTP 404', async () => {
     const other = createLocalMemory({
@@ -159,7 +168,14 @@ describe('instance durable memory control', () => {
       type: 'reference',
       source: 'user',
     }).memory
-    for (const id of ['missing', other.id]) {
+    const sibling = createLocalMemory({
+      workspaceId: botMemorySpaceId('sibling'),
+      title: 'Sibling',
+      content: 'A sibling bot fact',
+      type: 'reference',
+      source: 'auto',
+    }).memory
+    for (const id of ['missing', other.id, sibling.id]) {
       await expect(runtime().patchMemory(id, { pinned: true })).rejects.toBeInstanceOf(InstanceHttpError)
       await expect(runtime().patchMemory(id, { pinned: true })).rejects.toMatchObject({ status: 404 })
       await expect(runtime().deleteMemory(id)).rejects.toMatchObject({ status: 404 })
@@ -192,19 +208,28 @@ describe('runtime turn memory integration', () => {
   it('registers the bot space, owner core and writer and clears them on dispose', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(memory)))
-    const bot = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+    const bot = Object.create(BotRuntime.prototype) as BotRuntime
+    const idle = { idle: async () => {} }
     Object.assign(bot, {
-      config: { gatewayUrl: gateway.url, gatewayToken: gateway.token },
+      botId: 'scout',
+      host: { gatewayUrl: gateway.url },
+      gatewayToken: gateway.token,
       stored: { primaryConversationId: conversation.id },
       ownerMemory: new OwnerMemoryClient(gateway),
+      holdManager: new InstanceHoldManager(),
       applyProfile: () => {},
       syncCompaction: async () => {},
       floatAttempted: true,
-      logins: { dispose: vi.fn(async () => {}) },
+      floatTimers: new Set(),
+      queue: idle,
+      extras: idle,
+      images: idle,
+      usageTask: Promise.resolve(),
+      turnSettled: Promise.resolve(),
     })
     try {
       await (bot as unknown as { ensureConversation(): Promise<void> }).ensureConversation()
-      expect(memorySpaceForConversation(conversation.id)).toEqual({ id: BOT_MEMORY_SPACE_ID, kind: 'bot', roots: [] })
+      expect(memorySpaceForConversation(conversation.id)).toEqual({ id: BOT_SPACE, kind: 'bot', roots: [] })
       expect(await loadMemoryCoreExtras(conversation.id, new AbortController().signal)).toMatchObject([
         { key: 'owner' },
       ])
@@ -233,8 +258,9 @@ describe('runtime turn memory integration', () => {
         },
       }
       const events = new InstanceEvents()
-      const bot = Object.create(BotInstanceRuntime.prototype) as BotInstanceRuntime
+      const bot = Object.create(BotRuntime.prototype) as BotRuntime
       Object.assign(bot, {
+        botId: 'scout',
         stored: { primaryConversationId: conversation.id },
         retryAt: 0,
         ready: true,
@@ -296,6 +322,7 @@ describe('runtime turn memory integration', () => {
       expect(events.replay(0)).toEqual([
         expect.objectContaining({
           type: 'turn.finished',
+          botId: 'scout',
           inputId: item.id,
           text: scenario === 'throw' ? null : 'Done\n' + 'x'.repeat(3995),
           outcome:

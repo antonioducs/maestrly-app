@@ -61,16 +61,25 @@ const recordSchema = z.object({
 })
 const stateSchema = z.object({ items: z.array(recordSchema) })
 
+/**
+ * A bot's durable input queue. Owner images wait as files in `attachmentRoot/<inputId>/`, a folder only this queue
+ * uses: its sweep removes every input folder there that no queued input owns.
+ */
 export class InstanceInputQueue {
   private items: QueuedInput[] = []
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
     private readonly file: string,
+    private readonly attachmentRoot: string,
     private readonly writer: (file: string, contents: string) => Promise<void> = (file, contents) =>
       fs.writeFile(file, contents, { mode: 0o600 })
   ) {}
+  /** Resolves once every write started so far has finished. */
+  async idle(): Promise<void> {
+    await this.writeTail
+  }
   private attachmentDir(id: string): string {
-    return path.join(path.dirname(path.dirname(this.file)), 'fleet-inputs', id)
+    return path.join(this.attachmentRoot, id)
   }
   private attachmentFile(id: string, index: number, mediaType: string): string {
     const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[mediaType]
@@ -120,7 +129,7 @@ export class InstanceInputQueue {
     await fs.rm(this.attachmentDir(id), { recursive: true, force: true })
   }
   async sweepAttachments(): Promise<void> {
-    const root = path.join(path.dirname(path.dirname(this.file)), 'fleet-inputs')
+    const root = this.attachmentRoot
     let entries: string[]
     try {
       entries = await fs.readdir(root)
