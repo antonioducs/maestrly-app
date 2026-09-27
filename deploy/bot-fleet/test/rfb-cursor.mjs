@@ -1,4 +1,5 @@
-// Run inside a bot container with ELECTRON_RUN_AS_NODE=1 to prove passive RFB cursor pixels move.
+// Run inside an environment container with ELECTRON_RUN_AS_NODE=1 to prove passive RFB cursor pixels move. Port 5901
+// is the environment screen view (tile 0 of :0), whose VNC server starts on demand: keep a view of it open meanwhile.
 import net from 'node:net'
 import { execFileSync } from 'node:child_process'
 
