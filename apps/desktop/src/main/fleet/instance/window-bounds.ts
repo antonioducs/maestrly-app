@@ -1,5 +1,10 @@
 import type { ScreenArea } from '../../conversation-screen'
 
+/** A bot's primary browser is the one floating window that fills its whole screen area. */
+export function fillsScreenArea(tab: string, botMode: boolean): boolean {
+  return botMode && tab === 'browser'
+}
+
 /** A bot's primary browser uses its whole virtual screen; other floating windows retain their saved bounds. */
 export function initialFloatingBounds<T>(
   tab: string,
@@ -7,7 +12,24 @@ export function initialFloatingBounds<T>(
   primaryWorkArea: T,
   saved: T | undefined
 ): T | undefined {
-  return botMode && tab === 'browser' ? primaryWorkArea : saved
+  return fillsScreenArea(tab, botMode) ? primaryWorkArea : saved
+}
+
+/**
+ * What the environment display's window manager draws around a framed window, as its `_NET_FRAME_EXTENTS` report:
+ * openbox with the Clearlooks theme (deploy/bot-fleet/openbox-rc.xml) adds a 20 px title bar, 1 px side borders and
+ * a 5 px bottom edge. The frame goes around the bounds the window asks for, so it lies outside them.
+ */
+export const ENVIRONMENT_WINDOW_FRAME = Object.freeze({ left: 1, right: 1, top: 20, bottom: 5 })
+
+/** The part of an area that a framed window may use so that its frame stays inside the area too. */
+export function insideWindowFrame(area: ScreenArea, frame = ENVIRONMENT_WINDOW_FRAME): ScreenArea {
+  return {
+    x: area.x + frame.left,
+    y: area.y + frame.top,
+    width: Math.max(1, area.width - frame.left - frame.right),
+    height: Math.max(1, area.height - frame.top - frame.bottom),
+  }
 }
 
 /** A side length that fits the area; an unusable length takes the whole side. */

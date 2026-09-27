@@ -28,7 +28,7 @@ import { restoreFocusAfterFloatingClose } from './popup-manager'
 import { attachWindowNavigation } from './mouse-navigation'
 import { setDrawerPlacementPerformance } from './drawer/performance'
 import { isBotMode } from './fleet/instance/config'
-import { centerInArea, clampToArea, initialFloatingBounds } from './fleet/instance/window-bounds'
+import { centerInArea, clampToArea, fillsScreenArea, initialFloatingBounds } from './fleet/instance/window-bounds'
 import {
   conversationScreen,
   onConversationScreenChange,
@@ -203,8 +203,12 @@ function floatingBounds(tab: FloatTab, saved: FloatingBounds | undefined, area: 
 }
 
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
+  // The bot browser fills its screen area exactly and has no window manager frame: openbox would draw its title bar
+  // and borders around those bounds, outside the area, and move a frame that starts above the display down.
+  const frameless = fillsScreenArea(tab, isBotMode())
   const win = new BrowserWindow({
     ...floatingBounds(tab, getConvUiPrefs(convId).floating?.[tab], conversationScreen(convId)?.windowArea),
+    ...(frameless ? { frame: false } : {}),
     minWidth: MIN_W,
     minHeight: MIN_H,
     show: false,

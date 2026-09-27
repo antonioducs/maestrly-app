@@ -16,7 +16,7 @@ import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationScreen } from '../conversation-screen'
-import { centerInArea } from '../fleet/instance/window-bounds'
+import { centerInArea, insideWindowFrame } from '../fleet/instance/window-bounds'
 import {
   OFFSCREEN,
   activeConvId,
@@ -105,7 +105,10 @@ function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<Na
             if (!image.isEmpty()) finish(() => resolve(image))
           },
           (error) => {
-            if (/UnknownVizError/i.test(String((error as Error)?.message ?? error)) && captureAttempts < maxCaptureAttempts) {
+            if (
+              /UnknownVizError/i.test(String((error as Error)?.message ?? error)) &&
+              captureAttempts < maxCaptureAttempts
+            ) {
               wc.invalidate()
               setTimeout(requestFrame, 75)
               return
@@ -481,9 +484,10 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       }
     }
     try {
-      // A conversation with its own screen area keeps its popups there; others center on their display.
+      // A conversation with its own screen area keeps its popups there, window manager frame included: they keep the
+      // frame for its close button. Others center on their display.
       const area = conversationScreen(convId)?.windowArea
-      if (area) child.setBounds(centerInArea(child.getBounds(), area))
+      if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
       else child.center()
       child.show()
       child.focus()

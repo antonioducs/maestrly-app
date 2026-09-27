@@ -162,7 +162,8 @@ import {
 } from '../../src/main/conversation-screen'
 import { centerInArea, clampToArea } from '../../src/main/fleet/instance/window-bounds'
 import { detach, disposeAll, getFloatWin, initFloatingManager, setFloatBounds } from '../../src/main/floating-manager'
-import { getConvUiPrefs } from '../../src/main/store'
+import { getConvUiPrefs, type FloatTab } from '../../src/main/store'
+import { isBotMode } from '../../src/main/fleet/instance/config'
 import { createBrowserTab, disposeBrowserTabEviction, flushPendingBrowserPersists } from '../../src/main/drawer/browser'
 import { initDrawer } from '../../src/main/drawer/state'
 import { disposeMemoryReclaimer } from '../../src/main/performance/memory-reclaimer'
@@ -175,6 +176,24 @@ const botA: ConversationScreen = {
 }
 const conversations = ['bot-a', 'bot-late', 'plain', 'popup-bot', 'popup-plain']
 
+/** The fake native window behind a floating tab, with the options it was created with. */
+function nativeWindow(convId: string, tab: FloatTab): InstanceType<typeof h.FakeWindow> {
+  const win = getFloatWin(convId, tab)
+  if (!win) throw new Error(`No floating ${tab} window for ${convId}`)
+  return win as unknown as InstanceType<typeof h.FakeWindow>
+}
+
+/**
+ * The whole window openbox draws on the environment display for a framed client: it reports frame extents of 1, 1, 20
+ * and 5 px (left, right, top, bottom) with the Clearlooks theme, and keeps the client where it was asked to be.
+ */
+const withOpenboxFrame = (b: { x: number; y: number; width: number; height: number }) => ({
+  x: b.x - 1,
+  y: b.y - 20,
+  width: b.width + 2,
+  height: b.height + 25,
+})
+
 afterEach(() => {
   for (const id of conversations) setConversationScreen(id, null)
   disposeAll()
@@ -182,6 +201,7 @@ afterEach(() => {
   disposeBrowserTabEviction()
   disposeMemoryReclaimer()
   vi.clearAllMocks()
+  vi.mocked(isBotMode).mockReturnValue(true)
   h.views.length = 0
 })
 
@@ -278,6 +298,29 @@ describe('floating windows of a conversation', () => {
     expect(terminal?.getBounds()).toEqual({ x: 2160, y: 1300, width: 400, height: 300 })
   })
 
+  it('opens the bot browser without a window manager frame, so nothing is drawn outside its area', () => {
+    initFloatingManager({} as never)
+    setConversationScreen('bot-a', botA)
+
+    detach('bot-a', 'browser')
+    detach('bot-a', 'terminal')
+
+    // A framed window would get a title bar and borders around these bounds, outside the area.
+    expect(nativeWindow('bot-a', 'browser').options).toMatchObject({ frame: false, ...botA.windowArea })
+    expect(nativeWindow('bot-a', 'browser').getBounds()).toEqual(botA.windowArea)
+    // Its other windows keep their frame, so they can still be moved and closed.
+    expect(nativeWindow('bot-a', 'terminal').options).not.toHaveProperty('frame')
+  })
+
+  it('keeps the native frame of floating browsers outside bot mode', () => {
+    vi.mocked(isBotMode).mockReturnValue(false)
+    initFloatingManager({} as never)
+
+    detach('plain', 'browser')
+
+    expect(nativeWindow('plain', 'browser').options).not.toHaveProperty('frame')
+  })
+
   it('keeps the primary work area for a conversation without a screen', () => {
     initFloatingManager({} as never)
 
@@ -304,22 +347,26 @@ describe('browser popups of a conversation', () => {
   }
   const popup = (bounds: { x: number; y: number; width: number; height: number }) => new h.FakeWindow({ ...bounds })
 
-  it('centers popups, and popups they open, inside the conversation area', () => {
+  it('centers popups, and popups they open, with their frame inside the conversation area', () => {
+    const area = { x: 2560, y: 0, width: 1280, height: 800 }
     initDrawer(mainWindow as never)
-    setConversationScreen('popup-bot', { ...botA, windowArea: { x: 2560, y: 0, width: 1280, height: 800 } })
+    setConversationScreen('popup-bot', { ...botA, windowArea: area })
     createBrowserTab('popup-bot', 'https://site.test')
     const signIn = popup({ x: 0, y: 0, width: 500, height: 600 })
 
     h.views.at(-1)?.webContents.emit('did-create-window', signIn)
 
-    expect(signIn.getBounds()).toEqual({ x: 2950, y: 100, width: 500, height: 600 })
+    // Popups keep their title bar and its close button, so the client is centered in the area minus that frame.
+    expect(signIn.getBounds()).toEqual({ x: 2950, y: 107, width: 500, height: 600 })
+    expect(withOpenboxFrame(signIn.getBounds())).toEqual({ x: 2949, y: 87, width: 502, height: 625 })
     expect(signIn.center).not.toHaveBeenCalled()
     expect(signIn.show).toHaveBeenCalledOnce()
 
     const consent = popup({ x: 0, y: 0, width: 1600, height: 900 })
     signIn.webContents.emit('did-create-window', consent)
 
-    expect(consent.getBounds()).toEqual({ x: 2560, y: 0, width: 1280, height: 800 })
+    expect(consent.getBounds()).toEqual({ x: 2561, y: 20, width: 1278, height: 775 })
+    expect(withOpenboxFrame(consent.getBounds())).toEqual(area)
     expect(consent.center).not.toHaveBeenCalled()
   })
 
