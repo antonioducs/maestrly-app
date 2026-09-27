@@ -312,7 +312,12 @@ describe('legacy single-bot adoption', () => {
       })!,
       userData,
       home: path.join(dir, 'home'),
-      displays: { startBot, stopBot: vi.fn(async () => {}), dispose: vi.fn(async () => {}) },
+      displays: {
+        startBot,
+        stopBot: vi.fn(async () => {}),
+        acquireVnc: vi.fn(async () => ({ port: 5903, release: () => {} })),
+        dispose: vi.fn(async () => {}),
+      },
       floatBrowser: vi.fn(),
       closeConversation: vi.fn(async () => {}),
       purgeConversation: vi.fn(async () => {}),

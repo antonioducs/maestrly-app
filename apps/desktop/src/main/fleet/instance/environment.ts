@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROTOCOL_VERSION,
-  FLEET_PROVISIONING_FEATURE,
   FLEET_SCREEN,
   fleetEnvironmentTile,
   fleetInstanceBotInstallSchema,
@@ -51,7 +51,7 @@ import { botMemorySpaceId } from '../../memory/spaces'
 import { deleteLocalMemorySpace, getAppSetting, setAppSetting } from '../../store'
 import { adoptLegacyBot } from './adoption'
 import type { EnvironmentInstanceConfig } from './config'
-import type { BotDisplay, DisplayManagerDeps } from './displays'
+import type { BotDisplay, BotDisplayEnv, DisplayManagerDeps, DisplaySurface, VncLease, VncMode } from './displays'
 import {
   SUBSCRIPTION_PROVIDER_KIND,
   cleanupBotSubscriptionSlot,
@@ -65,6 +65,7 @@ import { importBotMcpServers, listBotMcpServers, removeBotMcpServer } from './pr
 import { installBotSkill, listBotSkills, removeBotSkill } from './provisioning/skills'
 import {
   type InstalledBot,
+  botPaths,
   clearGatewayToken,
   deleteBotSettings,
   isBotId,
@@ -75,12 +76,13 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, type BotRuntimeHost, type BotScreen } from './runtime'
-import { InstanceEvents, InstanceHttpError } from './server'
+import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
 
 /** The part of the display manager an environment uses. */
 export interface EnvironmentDisplays {
   startBot(botId: string, slot: number): Promise<BotDisplay>
   stopBot(botId: string): Promise<void>
+  acquireVnc(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
   dispose(): Promise<void>
 }
 
@@ -106,6 +108,8 @@ function log(level: 'info' | 'error', message: string): void {
   console.error(JSON.stringify({ component: 'bot-instance', level, message }))
 }
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/** The browser wrapper every bot's `BROWSER` names; it opens Chromium with the bot's own profile. */
+const BOT_BROWSER = '/usr/local/bin/maestrly-bot-browser'
 
 function gatewayUrl(value: string | undefined): string | null {
   if (!value) return null
@@ -210,8 +214,14 @@ export class EnvironmentRuntime {
     await this.displays?.dispose().catch((error: unknown) => log('error', errorMessage(error)))
     if (current === this) current = null
   }
-  health(): { ok: true; appVersion: string; protocol: 1; ready: boolean } {
-    return { ok: true, appVersion: app.getVersion(), protocol: FLEET_PROTOCOL_VERSION, ready: this.ready }
+  health(): { ok: true; appVersion: string; protocol: 1; ready: boolean; capabilities: string[] } {
+    return {
+      ok: true,
+      appVersion: app.getVersion(),
+      protocol: FLEET_PROTOCOL_VERSION,
+      ready: this.ready,
+      capabilities: [...INSTANCE_CAPABILITIES],
+    }
   }
 
   /** The installed bot, or NOT_FOUND. */
@@ -236,7 +246,7 @@ export class EnvironmentRuntime {
     )
     return {
       environmentId: this.deps.config.environmentId ?? null,
-      capabilities: [FLEET_PROVISIONING_FEATURE],
+      capabilities: [...INSTANCE_CAPABILITIES],
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
@@ -253,23 +263,6 @@ export class EnvironmentRuntime {
     if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid bot installation.')
     const { profile, slot, gatewayToken } = parsed.data
     const bot = await this.serialize(() => this.install(profile, slot, gatewayToken))
-    return bot.status()
-  }
-  /**
-   * Installs a profile that arrived without a slot or token, from a gateway that predates environments: it updates the
-   * installed bot, or installs the bot in the first free slot until the gateway installs it with its token.
-   */
-  async installProfile(value: FleetInstanceProfile): Promise<FleetInstanceStatus> {
-    const bot = await this.serialize(async () => {
-      const installed = this.registry.get(value.botId)
-      if (installed) return this.install(value, installed.slot, null)
-      const used = new Set([...readInstalledBots().map((member) => member.slot), ...this.bots().map((b) => b.slot)])
-      const slot = Array.from({ length: FLEET_ENVIRONMENT_LIMITS.botsMax }, (_, index) => index + 1).find(
-        (candidate) => !used.has(candidate)
-      )
-      if (!slot) throw new InstanceHttpError(409, 'CONFLICT', 'This environment has no free bot slot.')
-      return this.install(value, slot, null)
-    })
     return bot.status()
   }
   /**
@@ -305,6 +298,20 @@ export class EnvironmentRuntime {
       }
       await this.purge(botId, conversationId)
     })
+  }
+
+  /**
+   * A VNC server for a screen: the environment screen, or the browser area or apps display of an installed bot.
+   * The caller releases the lease when its connection ends.
+   */
+  async acquireScreen(surface: DisplaySurface, mode: VncMode): Promise<VncLease> {
+    this.assertOpen()
+    if (surface.kind !== 'environment') {
+      if (!isBotId(surface.botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+      this.bot(surface.botId)
+    }
+    if (!this.displays) throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
+    return this.displays.acquireVnc(surface, mode)
   }
 
   private serialize<T>(action: () => Promise<T>): Promise<T> {
@@ -368,8 +375,9 @@ export class EnvironmentRuntime {
     this.registry.set(member.botId, bot)
   }
   /**
-   * Starts the bot's apps display. When it cannot start, the bot still gets its own display number and browser area,
-   * so its computer tools and programs never fall back to the environment display that every bot's browser shares.
+   * Starts the bot's apps display. When it cannot start, the bot still gets its own display number, browser area, bus
+   * and browser profile, so its computer tools and programs never fall back to the environment display, the
+   * environment's session bus or its default browser profile, which every bot shares.
    */
   private async startDisplay(botId: string, slot: number): Promise<BotScreen | null> {
     if (!this.displays) return null
@@ -389,8 +397,18 @@ export class EnvironmentRuntime {
         width: FLEET_SCREEN.width,
         height: FLEET_SCREEN.height,
         browserArea: fleetEnvironmentTile(slot),
-        env: { DISPLAY: `:${slot}` },
+        env: this.fallbackEnv(botId, slot),
       }
+    }
+  }
+  /** The variables the display manager gives a bot's programs: its display, its session bus and its browser. */
+  private fallbackEnv(botId: string, slot: number): BotDisplayEnv {
+    const paths = botPaths(this.deps.userData, this.deps.home, botId)
+    return {
+      DISPLAY: `:${slot}`,
+      DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(paths.cache, 'bus')}`,
+      BROWSER: BOT_BROWSER,
+      MAESTRLY_BOT_BROWSER_PROFILE: path.join(paths.browserConfig, 'chromium'),
     }
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */

@@ -7,9 +7,53 @@ else
   exec dbus-run-session -- /usr/local/bin/bot-entrypoint --session "$@"
 fi
 
+# The environment display :0 is a 3x3 grid of 1280x800 tiles: tile 0 shows the environment screen (Maestrly's
+# settings) and tile k the browser of the bot in slot k. openbox places the windows. Maestrly's display manager runs
+# each bot's apps display (:1 to :8) and every VNC server.
+readonly environment_screen=3840x2400x24
+readonly electron=/opt/maestrly/node_modules/electron/dist/electron
+readonly exit_wait_tenths=80
+
 children=()
+app_pid=''
+sleep_pid=''
+
+# Stops what a Maestrly process left running in its own session after it exited: the bots' apps displays (Xvfb, their
+# D-Bus buses, openbox and tint2), the VNC servers and the other programs it started. Its replacement can then start
+# the same displays again. The environment display, its window manager, the keyring and the environment's bus run in
+# this script's session and are never touched.
+stop_app_session() {
+  local session="$1" tenth left
+  [[ "$session" =~ ^[1-9][0-9]*$ ]] || return 0
+  left=$(pgrep -c -s "$session" 2>/dev/null || true)
+  [[ "$left" =~ ^[1-9][0-9]*$ ]] || return 0
+  echo "[bot] Stopping $left programs left by Maestrly" >&2
+  pkill -TERM -s "$session" 2>/dev/null || true
+  for ((tenth = 0; tenth < exit_wait_tenths; tenth++)); do
+    pgrep -s "$session" >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  echo '[bot] Programs left by Maestrly did not exit; killing them' >&2
+  pkill -KILL -s "$session" 2>/dev/null || true
+}
+
+# Waits a few seconds at most for a process to exit.
+wait_for_exit() {
+  local pid="$1" tenth
+  for ((tenth = 0; tenth < exit_wait_tenths; tenth++)); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+}
+
 stop() {
   trap - TERM INT
+  if [[ -n "$sleep_pid" ]]; then kill "$sleep_pid" 2>/dev/null || true; fi
+  if [[ -n "$app_pid" ]]; then
+    kill -TERM "$app_pid" 2>/dev/null || true
+    wait_for_exit "$app_pid"
+    stop_app_session "$app_pid"
+  fi
   for pid in "${children[@]}"; do kill "$pid" 2>/dev/null || true; done
   wait || true
   exit 0
@@ -17,6 +61,7 @@ stop() {
 trap stop TERM INT
 
 mkdir -p "$HOME/.config/tint2" "$HOME/.config/gtk-3.0" "$HOME/.local/share/keyrings"
+# The bots' apps displays run tint2 with this configuration.
 cp /opt/maestrly/tint2rc "$HOME/.config/tint2/tint2rc"
 cat > "$HOME/.config/mimeapps.list" <<'MIME'
 [Default Applications]
@@ -34,27 +79,27 @@ printf '%s\n' "$MAESTRLY_BOT_KEYRING_PASSWORD" | gnome-keyring-daemon --unlock -
 unset MAESTRLY_BOT_KEYRING_PASSWORD
 
 /usr/local/bin/prepare-xvfb-display
-Xvfb :0 -screen 0 1280x800x24 -nolisten tcp -noreset & children+=("$!")
-for i in {1..50}; do
+Xvfb :0 -screen 0 "$environment_screen" -nolisten tcp -noreset & children+=("$!")
+for _ in {1..50}; do
   if xdpyinfo -display :0 >/dev/null 2>&1; then break; fi
   sleep 0.1
 done
 xdpyinfo -display :0 >/dev/null
 openbox --config-file /opt/maestrly/openbox-rc.xml & children+=("$!")
-tint2 -c "$HOME/.config/tint2/tint2rc" & children+=("$!")
-# -nocursorshape draws the X cursor into framebuffer updates for passive viewers.
-x11vnc -display :0 -rfbport 5900 -localhost -forever -shared -nopw -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
-x11vnc -display :0 -rfbport 5901 -localhost -forever -shared -nopw -viewonly -cursor arrow -nocursorshape -nocursorpos -noxfixes -quiet & children+=("$!")
 
 export MAESTRLY_BOT_MODE=1
 export BROWSER=/usr/bin/chromium
 while true; do
-  /opt/maestrly/node_modules/electron/dist/electron /opt/maestrly/apps/desktop \
-    --disable-gpu --password-store=gnome-libsecret "$@" &
+  # Maestrly runs in a session of its own, so everything it starts can be stopped once it exits. Without job control a
+  # background command is never a process group leader, so setsid does not fork: the session id is Maestrly's pid.
+  setsid "$electron" /opt/maestrly/apps/desktop --disable-gpu --password-store=gnome-libsecret "$@" &
   app_pid=$!
-  children+=("$app_pid")
   wait "$app_pid" || true
+  stop_app_session "$app_pid"
+  app_pid=''
   echo '[bot] Maestrly exited; restarting in 3 seconds' >&2
-  sleep 3 & sleep_pid=$!; children+=("$sleep_pid")
+  sleep 3 &
+  sleep_pid=$!
   wait "$sleep_pid" || true
+  sleep_pid=''
 done

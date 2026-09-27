@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { once } from 'node:events'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -32,7 +34,8 @@ import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
-import { InstanceHttpError } from '../../src/main/fleet/instance/server'
+import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
+import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { conversationScreen } from '../../src/main/conversation-screen'
 import { conversationShellEnv } from '../../src/main/chat/conversation-env'
@@ -83,6 +86,7 @@ function fakeDisplays(home: string) {
       browserArea: fleetEnvironmentTile(slot),
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
+    acquireVnc: vi.fn(async (_surface: DisplaySurface, _mode: VncMode) => ({ port: 5903, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }
 }
@@ -226,8 +230,8 @@ describe('bot environment registry', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta', name: 'Beta' }, conversationId: convB } },
       ],
     })
-    // Environment routes arrive with the routing task: until then the capability is not advertised.
-    expect(aggregate.capabilities).not.toContain('environments')
+    expect(aggregate.capabilities).toEqual(['provisioning', 'environments'])
+    expect(runtime.health()).toMatchObject({ ok: true, ready: true, capabilities: ['provisioning', 'environments'] })
   })
 
   it('installs idempotently, moves a bot to another slot and refuses a slot in use', async () => {
@@ -557,6 +561,113 @@ describe('bot environment registry', () => {
       expect(await exists(path.join(home, '.cache', 'maestrly-bots', 'alpha'))).toBe(true)
     }
   )
+
+  it('gives a bot whose apps display cannot start its own display variables, never the environment ones', async () => {
+    const displays = fakeDisplays(home)
+    displays.startBot.mockRejectedValueOnce(new Error('Display :1 is already in use.'))
+    const { runtime } = environment(displays)
+    await runtime.start()
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    const convA = runtime.bot('alpha').primaryConversationId!
+    expect(conversationScreen(convA)).toEqual({
+      display: ':1',
+      width: 1280,
+      height: 800,
+      windowArea: fleetEnvironmentTile(1),
+    })
+    expect(conversationShellEnv(convA)).toEqual({
+      DISPLAY: ':1',
+      DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/alpha/bus`,
+      BROWSER: '/usr/local/bin/maestrly-bot-browser',
+      MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/alpha/chromium`,
+    })
+    expect(conversationShellEnv(runtime.bot('beta').primaryConversationId!)).toMatchObject({ DISPLAY: ':2' })
+  })
+
+  it('lends VNC servers for the screens of installed bots and the environment screen only', async () => {
+    const { runtime, displays, deps } = await twoBots()
+    const lease = await runtime.acquireScreen({ kind: 'apps', botId: 'beta' }, 'control')
+    expect(lease.port).toBe(5903)
+    await runtime.acquireScreen({ kind: 'environment' }, 'view')
+    expect(displays.acquireVnc.mock.calls).toEqual([
+      [{ kind: 'apps', botId: 'beta' }, 'control'],
+      [{ kind: 'environment' }, 'view'],
+    ])
+    for (const surface of [
+      { kind: 'browser', botId: 'gamma' },
+      { kind: 'apps', botId: 'Not_A_Bot' },
+    ] as const)
+      await expect(runtime.acquireScreen(surface, 'view')).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' })
+    expect(displays.acquireVnc).toHaveBeenCalledTimes(2)
+    const bare = new EnvironmentRuntime({ ...deps, displays: null })
+    environments.push(bare)
+    await expect(bare.acquireScreen({ kind: 'environment' }, 'view')).rejects.toMatchObject({
+      status: 503,
+      code: 'INSTANCE_UNAVAILABLE',
+    })
+  })
+
+  it('serves its bots through the control API, each by its own id', async () => {
+    const { runtime, deps } = await twoBots()
+    const server = createInstanceControlServer(deps.config, runtime)
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const request = (method: string, route: string, body?: unknown) =>
+      fetch(base + route, {
+        method,
+        headers: {
+          'X-Maestrly-Fleet-Protocol': '1',
+          Authorization: `Bearer ${deps.config.controlToken}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    try {
+      expect(await (await request('GET', '/v1/health')).json()).toEqual({
+        ok: true,
+        appVersion: expect.any(String),
+        protocol: 1,
+        ready: true,
+        capabilities: ['provisioning', 'environments'],
+      })
+      expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
+        environmentId: 'env-one',
+        capabilities: ['provisioning', 'environments'],
+        bots: [
+          { botId: 'alpha', slot: 1 },
+          { botId: 'beta', slot: 2 },
+        ],
+      })
+      expect(await (await request('GET', '/v1/bots/beta/status')).json()).toMatchObject({
+        profile: { botId: 'beta', name: 'Beta' },
+        capabilities: ['provisioning', 'environments'],
+      })
+      expect((await request('GET', '/v1/bots/gamma/status')).status).toBe(404)
+      expect((await request('GET', '/v1/status')).status).toBe(404)
+      expect((await request('PUT', '/v1/profile', profile('alpha', 'Alpha'))).status).toBe(404)
+      const held = await request('POST', '/v1/bots/alpha/hold', { reason: 'takeover' })
+      expect(await held.json()).toMatchObject({ state: 'held', reason: 'takeover' })
+      expect((await runtime.bot('alpha').status()).hold).toMatchObject({ state: 'held', reason: 'takeover' })
+      expect((await runtime.bot('beta').status()).hold.state).toBe('none')
+      const install = { profile: profile('gamma', 'Gamma'), slot: 3, gatewayToken: 'synthetic-gateway-token-gamma' }
+      expect((await request('PUT', '/v1/bots/beta', install)).status).toBe(400)
+      expect((await request('PUT', '/v1/bots/gamma', install)).status).toBe(200)
+      expect(runtime.bots().map((bot) => [bot.botId, bot.slot])).toEqual([
+        ['alpha', 1],
+        ['beta', 2],
+        ['gamma', 3],
+      ])
+      expect(runtime.bot('gamma').gatewayConfig?.token).toBe('synthetic-gateway-token-gamma')
+      expect((await request('DELETE', '/v1/bots/gamma?purge=1')).status).toBe(204)
+      expect(runtime.bots().map((bot) => bot.botId)).toEqual(['alpha', 'beta'])
+      expect(getAppSetting('fleet.instance.bots.gamma.profile')).toBeNull()
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
 
   it('resolves owner help and gateway tools by the calling conversation', async () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')

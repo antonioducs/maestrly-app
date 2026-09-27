@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
-  FLEET_PROVISIONING_FEATURE,
   FLEET_BOT_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   type FleetBotMemory,
@@ -71,7 +70,7 @@ import { hasApiKey } from '../../chat/credentials'
 import { observeChatHost } from '../../chat/host-events'
 import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/conversation-env'
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
-import { InstanceHttpError, type InstanceEvents } from './server'
+import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import {
@@ -827,7 +826,7 @@ export class BotRuntime {
                           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
-      capabilities: [FLEET_PROVISIONING_FEATURE],
+      capabilities: [...INSTANCE_CAPABILITIES],
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
       accounts: { connected: providers.length > 0, providers },
