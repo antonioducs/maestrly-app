@@ -379,7 +379,14 @@ describe('Docker and host parsers', () => {
       else if (req.url?.includes('/images/missing/json')) {
         res.writeHead(404)
         res.end(JSON.stringify({ message: 'No such image' }))
-      } else if (req.url?.includes('/images/image/json')) res.end(JSON.stringify({ Id: 'sha256:engine-image' }))
+      } else if (req.url?.includes('/images/image/json'))
+        res.end(
+          JSON.stringify({
+            Id: 'sha256:engine-image',
+            Config: { Labels: { 'org.opencontainers.image.version': ' 1.2.3 ' } },
+          })
+        )
+      else if (req.url?.includes('/images/unlabeled/json')) res.end(JSON.stringify({ Id: 'sha256:unlabeled' }))
       else if (req.url?.endsWith('/networks/fleet'))
         res.end(
           JSON.stringify({
@@ -420,7 +427,8 @@ describe('Docker and host parsers', () => {
       { subnet: 'fd00::/64', gateway: null },
     ])
     expect(await docker.imageInspect('missing')).toBeNull()
-    expect(await docker.imageInspect('image')).toEqual({ id: 'sha256:engine-image' })
+    expect(await docker.imageInspect('image')).toEqual({ id: 'sha256:engine-image', version: '1.2.3' })
+    expect(await docker.imageInspect('unlabeled')).toEqual({ id: 'sha256:unlabeled', version: null })
     await docker.volumeCreate('home', {})
     expect(
       await docker.containerCreate({

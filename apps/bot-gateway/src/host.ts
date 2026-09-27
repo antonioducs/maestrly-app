@@ -44,6 +44,13 @@ export class HostMonitor {
     readonly docker: DockerDriver,
     readonly gatewayVersion = getGatewayVersion()
   ) {}
+  async botImageVersion(): Promise<string | null> {
+    try {
+      return (await this.docker.imageInspect(this.config.botImage))?.version ?? null
+    } catch {
+      return null
+    }
+  }
   async read(botsBytes = 0): Promise<FleetHostInfo> {
     const mem =
       process.platform === 'linux'
@@ -84,7 +91,7 @@ export class HostMonitor {
       uptimeSeconds: os.uptime(),
       gatewayVersion: this.gatewayVersion,
       botImage: this.config.botImage,
-      botImageVersion: null,
+      botImageVersion: await this.botImageVersion(),
       dockerVersion,
     }
   }

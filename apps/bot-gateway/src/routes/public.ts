@@ -219,7 +219,7 @@ export async function publicRoute(
           gatewayVersion: '0.1.0',
           features: [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE],
           botImage: ctx.config.botImage,
-          botImageVersion: null,
+          botImageVersion: await ctx.host.botImageVersion(),
         },
       }
     case 'pair': {

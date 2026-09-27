@@ -23,13 +23,14 @@ export type ContainerInfo = {
   labels: Record<string, string>
 }
 export type ContainerStats = { memoryBytes: number; memoryLimitBytes: number; cpuPercent: number }
+export type ImageInfo = { id: string; version?: string | null }
 /** A fleet network subnet and its bridge gateway address (the host side of the bridge). */
 export type FleetNetworkSubnet = { subnet: string; gateway: string | null }
 export interface DockerDriver {
   version(): Promise<string>
   ensureNetwork(name: string): Promise<void>
   networkInspect(name: string): Promise<FleetNetworkSubnet[]>
-  imageInspect(ref: string): Promise<{ id: string } | null>
+  imageInspect(ref: string): Promise<ImageInfo | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
   volumeExists(name: string): Promise<boolean>
   /** Removes a volume; one already gone is not an error, one a container uses fails with 409. */
@@ -133,10 +134,11 @@ export class DockerEngineDriver implements DockerDriver {
       entry.Subnet ? [{ subnet: entry.Subnet, gateway: entry.Gateway ? entry.Gateway : null }] : []
     )
   }
-  async imageInspect(ref: string): Promise<{ id: string } | null> {
+  async imageInspect(ref: string): Promise<ImageInfo | null> {
     try {
       const result = await this.request('GET', await this.route('/images/' + encodeURIComponent(ref) + '/json'))
-      return { id: String(result.Id) }
+      const version = result.Config?.Labels?.['org.opencontainers.image.version']
+      return { id: String(result.Id), version: typeof version === 'string' ? version.trim() || null : null }
     } catch (error) {
       if (error instanceof DockerError && error.status === 404) return null
       throw error
@@ -263,7 +265,7 @@ export class FakeDockerDriver implements DockerDriver {
     this.images.add(ref)
     this.imageIds.set(ref, id)
   }
-  async imageInspect(ref: string) {
+  async imageInspect(ref: string): Promise<ImageInfo | null> {
     return this.images.has(ref)
       ? { id: this.imageIds.get(ref) ?? 'sha256:' + createHash('sha256').update(ref).digest('hex') }
       : null
