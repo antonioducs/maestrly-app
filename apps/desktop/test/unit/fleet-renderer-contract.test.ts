@@ -63,9 +63,15 @@ describe('fleet provisioning wiring', () => {
     expect(settings).toContain('<BotSkillsMcpSection')
   })
   it('starts and cancels remote sign-ins without opening URLs in the renderer', () => {
-    const login = source('components/fleet/BotLoginDialog.tsx')
+    const login = source('lib/fleet/use-bot-login.ts')
     expect(login).toContain('fleetLoginStart')
     expect(login).toContain('fleetLoginCancel')
+    // The dialog and the cards of a new bot sign in through the same hook.
+    for (const name of ['BotLoginDialog', 'BotLoginCard']) {
+      const component = source(`components/fleet/${name}.tsx`)
+      expect(component, name).toContain('useBotLogin(')
+      expect(component, name).not.toContain('window.open')
+    }
     expect(login).not.toContain('window.open')
   })
   it('avoids native select controls in provisioning', () => {
@@ -73,6 +79,10 @@ describe('fleet provisioning wiring', () => {
       'MacImportPicker',
       'MacImportDialog',
       'BotLoginDialog',
+      'BotLoginCard',
+      'CreateBotDialog',
+      'CreateBotImportSection',
+      'CreateBotProgress',
       'BotAccountsSection',
       'BotSkillsMcpSection',
     ]) {

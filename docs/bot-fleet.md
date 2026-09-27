@@ -33,7 +33,7 @@ An environment is the unit of sharing, isolation, and resources. When you create
 
 | Shared by the bots of an environment | Each bot's own |
 | --- | --- |
-| The container, its one Maestrly process, and its memory limit | Name, role, instructions, tint, approval ceiling, and **Can talk to** peers |
+| The container, its one Maestrly process, and its memory limit | Name, role, instructions, tint, approval ceiling, and the peers in **Conversations with other bots** |
 | The home folder (`/home/bot`), its files, and the tools installed there | Conversation, queue, pause, and screen takeover |
 | Model accounts: API keys and subscription sign-ins | Model selection and compaction model |
 | Skills and MCP servers | Bot memory, routines, and requests in **Awaiting you** |
@@ -183,10 +183,12 @@ Environment default compaction models need the gateway's `environment-compaction
 
 The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, **Memory about you**, **Awaiting you** requests, and your environments, each with its bots listed under it. An environment header shows its name, status, memory, and bot count; select it to open the environment view. Search matches environment names as well as bot names and roles.
 
-Create a bot with **+**. Give it a **Name**, **What it does**, an approval ceiling, and any peers it **Can talk to**, then choose **Where it runs**:
+Create a bot with **+**. Give it a **Name** and **What it does**, then choose **Where it runs**:
 
-- **New environment** creates a container for this bot. The environment's name follows the bot's name until you edit it. Progress shows **Creating container**, **Starting desktop**, **Setting up profile**, and **Ready**. Only a new environment offers **Bring from your Mac**.
-- **Existing environment** adds the bot to an environment you pick from a searchable list. The bot uses that environment's accounts, skills, MCP servers, and site logins. Full environments, and environments on an image from before environments, cannot be picked. Progress shows **Setting up profile** and **Ready**.
+- **New environment** creates a container for this bot. The environment's name follows the bot's name until you edit it. Progress shows **Creating container**, **Starting desktop**, **Setting up profile**, and **Ready**. Only a new environment offers **Accounts, skills, and MCP** from your Mac (see [Bring from your Mac](#bring-from-your-mac)).
+- **Existing environment** adds the bot to an environment you pick from a searchable list. The bot uses that environment's accounts, skills, MCP servers, and site logins, and the dialog shows how many of each it already has. Full, stopped, and older-image environments cannot be picked; the list says why.
+
+Then choose how far it goes without asking, which lists what the bot does on its own and what it asks you about, and the bots it can talk to: search by bot or environment name, check the ones to allow, and remove any from the chips under the field. The footer sums up what will be created.
 
 **New bot in this environment** in an environment view opens the same dialog with that environment chosen. Creation continues on the server if you close the dialog. Set the bot's **Role** later in its **Settings**.
 
@@ -214,7 +216,7 @@ In **Settings → Routines**, give a routine a title and self-contained prompt. 
 
 Bots can create up to 10 of their own routines through tools, subject to their access ceiling and owner approval. Settings marks routines created by a bot. The owner can edit or delete any routine; a bot can change or delete only routines it created. Each run uses a full model turn and the owner's model quota, so choose the longest useful interval.
 
-**Can talk to** grants a bot access to named peers, in its own or another environment. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
+**Conversations with other bots** grants a bot access to named peers, in its own or another environment. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
 
 The **Server** page shows versions, CPU, memory, disk, and peer messages. With environments, it lists one row per environment, with memory, CPU, uptime, **Restart**, **Stop**, and **Start**, and its bots under it; memory and CPU are measured for the whole environment, and the memory bar has one segment per environment. **Restart** and **Stop** ask for confirmation and name the environment's bots. After your Mac reconnects, **While your Mac was off** summarizes activity recorded by the gateway; open a bot to inspect its full conversation.
 
@@ -222,8 +224,13 @@ The conversation composer offers the bot's available models, reasoning effort an
 
 ## Bring from your Mac
 
-In **Create bot**, choose **New environment**, expand **Bring from your Mac**,
-and select what to send. For an existing environment, open its environment view
+In **Create bot**, choose **New environment**. **Accounts, skills, and MCP**
+shows, for model accounts, skills, and MCP servers, how many are selected and
+their names; nothing is selected until you choose. **Choose** opens the list of
+that kind, with a tab per kind, a search, and **Selected only**; items are grouped
+by what happens to them (copied or signed in again, ready or blocked, working
+anywhere or depending on your Mac). **Use the recommended ones** selects
+everything that works outside your Mac. For an existing environment, open its environment view
 and choose **Bring from your Mac…** under **Environment accounts** or
 **Skills and MCP**. On a gateway from before environments, use the bot's
 **Settings → Bot accounts** or **Settings → Skills and MCP** instead. API keys
@@ -234,9 +241,13 @@ selections and other settings are not imported. Everything brought over is
 shared by the environment's bots.
 
 After the bot is ready, imports run in order: accounts, each skill, then MCP
-servers, followed by selected sign-ins one at a time. Each imported item reports
-**Added**, **Updated**, **Already there**, or **Failed**. Closing the dialog
-leaves the bot in place; finish configuration from the environment view. Older
+servers. The creation dialog reports how many items arrived, lists the ones that
+did not with their reason, and **Try again** sends only those; **See what was
+copied** shows each item's **Added**, **Updated**, **Already there**, or
+**Failed**. Each selected subscription gets a card: **Sign in in the browser**
+starts it (Grok shows its code there), one at a time, or **Skip** leaves it for
+later. **Open** goes to the bot; closing the dialog leaves the bot in place, and
+you can finish configuration from the environment view. Older
 gateways require an update; environments on an older bot image require a restart
 onto the updated image before these controls work.
 
@@ -411,7 +422,7 @@ input; completed and cancelled are final.
 | `owner_memory_save`, `owner_memory_forget`, `routine_report` | Update its environment's owner memory and report a routine run without approval prompts. |
 | `memory_forget` | Permanently delete its own memory, subject to the normal approval gate. |
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
-| `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Can talk to**, within gateway budgets. |
+| `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Conversations with other bots**, within gateway budgets. |
 
 A bot cannot directly use your Mac's screen, browser, terminal, accounts, or local files. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
 
@@ -424,7 +435,7 @@ A bot cannot directly use your Mac's screen, browser, terminal, accounts, or loc
 The memory writes listed above are explicit bot exemptions. Permanent deletion with
 `memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
-The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Can talk to** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
+The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
 
 ## Security and data
 
@@ -432,7 +443,7 @@ Pairing codes are one-use and expire after ten minutes. The gateway stores **has
 
 The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores environment and bot profiles, routines and prompts, routine runs, owner memory, activity, peer messages, device token hashes, and **plaintext** secrets needed to restart containers: a control token and keyring password per environment and a gateway token per bot. Host root can read them. API keys pass through the gateway when added but are **not stored** there; the environment stores them in its own encrypted credential store inside its home volume. Each environment's keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Secrets flow only from the Mac through the gateway to the environment and are never returned. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot or environment names or error text.
 
-**Inside an environment, bots trust each other.** Its bots run in one container as the same Linux user, with one home folder and one unlocked keyring. A bot that can run commands, because of **Full access** or a command you approved, can read and change the other bots' files, conversations, memories, browser profiles, and stored credentials; operate their screens and programs; and use their gateway tokens to act as them toward the gateway, for example to send a peer message or save owner memory as another bot. The approval ceiling and **Can talk to** limit each bot's own tools and messages but are not a security boundary inside an environment. Put bots that must not share data or credentials in separate environments.
+**Inside an environment, bots trust each other.** Its bots run in one container as the same Linux user, with one home folder and one unlocked keyring. A bot that can run commands, because of **Full access** or a command you approved, can read and change the other bots' files, conversations, memories, browser profiles, and stored credentials; operate their screens and programs; and use their gateway tokens to act as them toward the gateway, for example to send a peer message or save owner memory as another bot. The approval ceiling and **Conversations with other bots** limit each bot's own tools and messages but are not a security boundary inside an environment. Put bots that must not share data or credentials in separate environments.
 
 **Environments are separated from each other** as bots were before environments: each has its own container, home volume, keyring, and control token. This separates ordinary activity, but it is not a hostile-code security boundary against the Docker host. All environment containers share the fleet Docker bridge network, and Maestrly does not filter traffic between them: a program that a bot starts and that listens on a network port can be reached from other environments. The gateway protects its own services on that network: its public API refuses fleet-network clients, the internal API accepts only fleet-network and loopback clients and identifies each bot by its gateway token, every control-server request needs the environment's control token, and VNC listens only on each container's loopback.
 

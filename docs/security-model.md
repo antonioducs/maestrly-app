@@ -177,7 +177,7 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   conversations, memories, queued inputs, browser profiles and stored
   credentials, operate their displays and programs, and use their gateway
   tokens to call the gateway as them, for example to message a peer or save the
-  environment's owner memory. Approval ceilings, **Can talk to** grants, per-bot
+  environment's owner memory. Approval ceilings, **Conversations with other bots** grants, per-bot
   memory spaces and per-bot displays limit each bot's own tools; they are not a
   security boundary between bots of one environment.
 - **Environments are separated** by their own container, home volume, keyring

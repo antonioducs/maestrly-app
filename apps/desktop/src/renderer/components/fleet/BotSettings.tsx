@@ -37,7 +37,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
 import { BotMemorySection } from './BotMemorySection'
-import { BotPeersList } from './BotPeersList'
+import { BotPeerPicker } from './BotPeerPicker'
 import { BotRoutinesSection } from './BotRoutinesSection'
 import { BotSaveBar, LeaveSettingsDialog } from './BotSaveBar'
 import { CompactionFields } from './CompactionFields'
@@ -701,12 +701,13 @@ export function BotSettings({
               )
             }
           >
-            <BotPeersList
+            <BotPeerPicker
               bots={fleet.state.snapshot.bots}
               selfId={bot.id}
               environments={environments}
               value={draft.talksTo}
               onChange={(talksTo) => edit({ talksTo })}
+              labelledBy="fleet-settings-peers-heading"
             />
           </SettingsSection>
 

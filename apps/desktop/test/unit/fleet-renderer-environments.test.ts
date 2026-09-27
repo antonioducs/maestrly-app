@@ -376,7 +376,11 @@ describe('environment UI wiring', () => {
     'BotSettings',
     'BotView',
     'BotAutonomyTable',
-    'BotPeersList',
+    'BotPeerPicker',
+    'BotLoginCard',
+    'CreateBotProgress',
+    'CreateBotImportSection',
+    'MacImportPicker',
     'BotRoutinesSection',
     'BotSaveBar',
     'BotMemorySection',
@@ -416,11 +420,16 @@ describe('environment UI wiring', () => {
     expect(dialog).toContain('choiceClass(')
     expect(dialog).toContain('<SearchSelect')
     expect(dialog).toContain('placementRequest(')
-    expect(dialog).toContain('creationSteps(')
     expect(dialog).toContain('environmentJoinAvailability(')
     expect(dialog).toContain("t('environment.sharedNote')")
-    // Bringing accounts from the Mac is for a new environment only.
+    expect(source('components/fleet/CreateBotProgress.tsx')).toContain('creationSteps(')
+    // Bringing accounts from the Mac is for a new environment only, and nothing is chosen until the owner asks.
     expect(dialog).toMatch(/supportsImport && \(!environments \|\| where === 'new'\)/)
+    expect(dialog).toContain('useState<ImportChoice>(emptyImportChoice)')
+    expect(dialog).not.toContain('recommendedImportChoice(')
+    // Peers are picked from a searchable list, which scales to many bots.
+    expect(dialog).toContain('<BotPeerPicker')
+    expect(source('components/fleet/BotSettings.tsx')).toContain('<BotPeerPicker')
   })
 
   it('shares accounts, skills and MCP servers through the environment and refreshes them on real changes', () => {
@@ -544,7 +553,12 @@ describe('environment translations', () => {
       'components/fleet/BotScreen.tsx',
       'components/fleet/BotSettings.tsx',
       'components/fleet/BotAutonomyTable.tsx',
-      'components/fleet/BotPeersList.tsx',
+      'components/fleet/BotPeerPicker.tsx',
+      'components/fleet/BotLoginCard.tsx',
+      'components/fleet/BotLoginDialog.tsx',
+      'components/fleet/CreateBotProgress.tsx',
+      'components/fleet/CreateBotImportSection.tsx',
+      'components/fleet/MacImportPicker.tsx',
       'components/fleet/BotRoutinesSection.tsx',
       'components/fleet/BotSaveBar.tsx',
       'components/fleet/BotMemorySection.tsx',
