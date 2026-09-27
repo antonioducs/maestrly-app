@@ -23,7 +23,11 @@ vi.mock('../../src/main/mcp/tools/computer', async (original) => ({
 }))
 
 import * as chatService from '../../src/main/chat/service'
-import { EnvironmentRuntime, type EnvironmentRuntimeDeps } from '../../src/main/fleet/instance/environment'
+import {
+  EnvironmentRuntime,
+  productionDisplayDeps,
+  type EnvironmentRuntimeDeps,
+} from '../../src/main/fleet/instance/environment'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
@@ -532,6 +536,27 @@ describe('bot environment registry', () => {
     expect((await second.runtime.bot('beta').status()).hold.state).toBe('none')
     expect(botRuntimeForConversation(first.convB)).toBe(second.runtime.bot('beta'))
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'runs display programs with the process environment plus their variables and reports how they exit',
+    async () => {
+      const deps = productionDisplayDeps(home)
+      const merged = deps.spawn(
+        process.execPath,
+        ['-e', 'process.exit(process.env.SYNTHETIC_DISPLAY_VAR === "set" && process.env.PATH ? 0 : 3)'],
+        { env: { SYNTHETIC_DISPLAY_VAR: 'set' } }
+      )
+      expect(await merged.exited).toBe(0)
+      expect(await deps.spawn(process.execPath, ['-e', 'process.exit(3)'], { env: {} }).exited).toBe(3)
+      expect(await deps.spawn('maestrly-synthetic-missing-program', [], { env: {} }).exited).toBe(127)
+      const sleeping = deps.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { env: {} })
+      sleeping.kill()
+      expect(await sleeping.exited).toBeNull()
+      sleeping.kill()
+      await deps.mkdir(path.join(home, '.cache', 'maestrly-bots', 'alpha'))
+      expect(await exists(path.join(home, '.cache', 'maestrly-bots', 'alpha'))).toBe(true)
+    }
+  )
 
   it('resolves owner help and gateway tools by the calling conversation', async () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
