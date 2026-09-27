@@ -297,12 +297,14 @@ async function instanceStatus(name) {
   return JSON.parse(output.stdout)
 }
 async function instanceProcess(name) {
+  // Electron rewrites cmdline into one display string. The entrypoint starts its main process as a session leader;
+  // renderer and utility processes share that session but are not its leader.
   const result = await docker([
     'exec',
     name,
     'node',
     '-e',
-    "const fs = require('node:fs'); const pids = fs.readdirSync('/proc').filter(id => /^\\d+$/.test(id)).filter(id => { try { return fs.readFileSync('/proc/' + id + '/cmdline', 'utf8').split('\\0')[1] === '/opt/maestrly/apps/desktop' } catch { return false } }); if (pids.length !== 1) throw new Error('Expected one Maestrly main process'); console.log(pids[0])",
+    "const fs = require('node:fs'); const pids = fs.readdirSync('/proc').filter(id => /^\\d+$/.test(id)).filter(id => { try { const exe = fs.readlinkSync('/proc/' + id + '/exe'); const stat = fs.readFileSync('/proc/' + id + '/stat', 'utf8'); const session = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[3]); return exe.endsWith('/electron') && session === Number(id) } catch { return false } }); if (pids.length !== 1) throw new Error('Expected one Maestrly main process'); console.log(pids[0])",
   ])
   return Number(result.stdout.trim())
 }
