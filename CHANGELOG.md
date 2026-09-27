@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-26
+
 ### Added
 
 - Attach PDF files to chat messages. Models that read PDFs receive the
