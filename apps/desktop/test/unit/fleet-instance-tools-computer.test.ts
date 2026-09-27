@@ -440,6 +440,36 @@ describe('computer tools on a conversation screen', () => {
     }
   })
 
+  it('enforces the capture deadline when the capture process ignores SIGTERM', async () => {
+    setConversationScreen('bot-a', botScreen)
+    let started!: (child: FakeChild) => void
+    const importer = new Promise<FakeChild>((resolve) => {
+      started = resolve
+    })
+    fakeXdotool((_args, child) => {
+      child.kill.mockImplementation((signal?: string) => {
+        if (signal === 'SIGKILL') queueMicrotask(() => child.emit('close', null))
+        return true
+      })
+      started(child)
+    })
+    const { a, close } = await clients()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let child: FakeChild | undefined
+    try {
+      const shot = a.callTool({ name: 'computer_screenshot', arguments: {} })
+      void shot.catch(() => undefined)
+      child = await importer
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(JSON.stringify((await shot).content)).toContain('timed out')
+    } finally {
+      child?.emit('close', null)
+      vi.useRealTimers()
+      await close()
+    }
+  })
+
   it('offers desktop tools only when both xdotool and import run', async () => {
     for (const [importStatus, available] of [
       [1, false],

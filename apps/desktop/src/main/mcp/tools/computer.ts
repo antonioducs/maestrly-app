@@ -230,7 +230,8 @@ async function captureDisplay(scope: ScreenActionScope, display: string, signal:
     let failure: Error | null = null
     const stop = (error: Error): void => {
       failure ??= error
-      child.kill()
+      // Capturing has no durable state to flush; the limit must also stop an unresponsive helper.
+      child.kill('SIGKILL')
     }
     const timer = setTimeout(
       () => stop(new Error('The screen capture timed out after 10 seconds.')),
