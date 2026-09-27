@@ -69,19 +69,19 @@ function fakeXdotool(
 describe('computer actions', () => {
   const size = { width: 1280, height: 800 }
   it('builds exact xdotool argument arrays without a shell', () => {
-    expect(computerArguments('move', { x: 0, y: 799 }, size)).toEqual([['mousemove', '--sync', '0', '799']])
+    expect(computerArguments('move', { x: 0, y: 799 }, size)).toEqual([['mousemove', '0', '799']])
     expect(computerArguments('click', { x: 10, y: 20 }, size)).toEqual([
-      ['mousemove', '--sync', '10', '20'],
+      ['mousemove', '10', '20'],
       ['click', '1'],
     ])
     expect(computerArguments('click', { x: 10, y: 20, button: 'right', double: true }, size)).toEqual([
-      ['mousemove', '--sync', '10', '20'],
+      ['mousemove', '10', '20'],
       ['click', '--repeat', '2', '3'],
     ])
     expect(computerArguments('drag', { fromX: 1, fromY: 2, toX: 3, toY: 4 }, size)).toEqual([
-      ['mousemove', '--sync', '1', '2'],
+      ['mousemove', '1', '2'],
       ['mousedown', '1'],
-      ['mousemove', '--sync', '3', '4'],
+      ['mousemove', '3', '4'],
       ['mouseup', '1'],
     ])
     for (const [direction, button] of [
@@ -91,7 +91,7 @@ describe('computer actions', () => {
       ['right', '7'],
     ]) {
       expect(computerArguments('scroll', { x: 3, y: 4, direction, amount: 2 }, size)).toEqual([
-        ['mousemove', '--sync', '3', '4'],
+        ['mousemove', '3', '4'],
         ['click', '--repeat', '2', button],
       ])
     }
@@ -210,12 +210,62 @@ describe('computer actions', () => {
     }
   })
 
+  it('clicks, moves, drags and scrolls where the pointer already is', async () => {
+    // Models the X pointer and xdotool 3.20160805: "mousemove --sync" waits for the pointer to move, which never
+    // happens when it is already at the target.
+    const pointer = { x: 640, y: 400 }
+    const events: string[] = []
+    fakeXdotool((args, child) => {
+      const [command, ...rest] = args
+      if (command === 'mousemove') {
+        const sync = rest[0] === '--sync'
+        const [x, y] = rest.slice(sync ? 1 : 0).map(Number)
+        const moved = x !== pointer.x || y !== pointer.y
+        Object.assign(pointer, { x, y })
+        events.push(`move ${x},${y}`)
+        if (sync && !moved) return
+      } else events.push(`${command} ${args.at(-1)} at ${pointer.x},${pointer.y}`)
+      queueMicrotask(() => child.emit('close', 0))
+    })
+    const { client, server } = await clientForComputer()
+    try {
+      const calls: Array<[string, Record<string, unknown>]> = [
+        ['computer_click', { x: 640, y: 400 }],
+        ['computer_move', { x: 640, y: 400 }],
+        ['computer_drag', { fromX: 640, fromY: 400, toX: 700, toY: 450 }],
+        ['computer_scroll', { x: 700, y: 450, direction: 'down' }],
+        ['computer_click', { x: 700, y: 450, button: 'right', double: true }],
+      ]
+      for (const [name, args] of calls) {
+        const result = await client.callTool({ name, arguments: args })
+        expect(result.isError, name + ' ' + JSON.stringify(result.content)).toBeFalsy()
+      }
+      // Each button acts where the pointer was just moved.
+      expect(events).toEqual([
+        'move 640,400',
+        'click 1 at 640,400',
+        'move 640,400',
+        'move 640,400',
+        'mousedown 1 at 640,400',
+        'move 700,450',
+        'mouseup 1 at 700,450',
+        'move 700,450',
+        'click 5 at 700,450',
+        'move 700,450',
+        'click 3 at 700,450',
+      ])
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  }, 30_000)
+
   it('stops typing between chunks and releases a drag after interruption', async () => {
     fakeXdotool((args, child) => {
       if (args[0] === 'type') {
         abortScreenActions()
         queueMicrotask(() => child.emit('close', 0))
-      } else if (args[0] === 'mousemove' && args[2] === '3') {
+      } else if (args[0] === 'mousemove' && args.at(-2) === '3') {
         abortScreenActions()
         queueMicrotask(() => child.emit('close', null))
       } else queueMicrotask(() => child.emit('close', 0))
@@ -302,7 +352,7 @@ describe('computer tools on a conversation screen', () => {
       const clicked = await a.callTool({ name: 'computer_click', arguments: { x: 1000, y: 700 } })
       expect(clicked.isError).toBeFalsy()
       expect(spawned()).toEqual([
-        ['xdotool', ['mousemove', '--sync', '1000', '700']],
+        ['xdotool', ['mousemove', '1000', '700']],
         ['xdotool', ['click', '1']],
       ])
       for (const index of [0, 1]) {

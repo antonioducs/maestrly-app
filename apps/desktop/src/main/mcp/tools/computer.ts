@@ -125,20 +125,22 @@ export function computerArguments(
       throw new Error(`Coordinates must be integer screen pixels within 0..${size.width - 1}, 0..${size.height - 1}.`)
     return [String(x), String(y)]
   }
-  if (action === 'move') return [['mousemove', '--sync', ...point(input.x, input.y)]]
+  // No --sync: xdotool 3.20160805 then waits for a motion that never comes when the pointer is already at the target.
+  // Each xdotool run ends only after the X server handled its requests, so the next command acts at the new position.
+  if (action === 'move') return [['mousemove', ...point(input.x, input.y)]]
   if (action === 'click') {
     const button = { left: '1', middle: '2', right: '3' }[String(input.button ?? 'left')]
     if (!button) throw new Error('Button must be left, middle, or right.')
     return [
-      ['mousemove', '--sync', ...point(input.x, input.y)],
+      ['mousemove', ...point(input.x, input.y)],
       ['click', ...(input.double ? ['--repeat', '2'] : []), button],
     ]
   }
   if (action === 'drag')
     return [
-      ['mousemove', '--sync', ...point(input.fromX, input.fromY)],
+      ['mousemove', ...point(input.fromX, input.fromY)],
       ['mousedown', '1'],
-      ['mousemove', '--sync', ...point(input.toX, input.toY)],
+      ['mousemove', ...point(input.toX, input.toY)],
       ['mouseup', '1'],
     ]
   if (action === 'scroll') {
@@ -147,7 +149,7 @@ export function computerArguments(
     if (!direction || !Number.isInteger(amount) || (amount as number) < 1 || (amount as number) > 20)
       throw new Error('Scroll requires a direction and an amount from 1 to 20.')
     return [
-      ['mousemove', '--sync', ...point(input.x, input.y)],
+      ['mousemove', ...point(input.x, input.y)],
       ['click', '--repeat', String(amount), direction],
     ]
   }
