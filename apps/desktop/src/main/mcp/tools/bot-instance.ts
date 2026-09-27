@@ -282,7 +282,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayC
     'owner_memory_save',
     {
       description:
-        'Save a stable preference or fact about your owner, shared with all of the owner’s bots and shown to the owner on their Mac. One idea per entry, written as a short directive ("Prefer…", "Never…") or a plain fact, up to 500 characters, in the owner’s language. Replace an outdated entry by passing its id as replaces_id instead of adding a contradicting one. Never store secrets.',
+        'Save a stable preference or fact about your owner, shared with the bots in your environment and shown to the owner on their Mac. Your owner can make it global. One idea per entry, written as a short directive ("Prefer…", "Never…") or a plain fact, up to 500 characters, in the owner’s language. Replace an outdated entry from your environment by passing its id as replaces_id instead of adding a contradicting one. You cannot replace global entries or entries from another environment. Never store secrets.',
       inputSchema: {
         content: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.entryMax),
         replaces_id: fleetIdSchema.optional(),
@@ -307,7 +307,7 @@ export function registerBotInstanceTools(ctx: McpToolContext, gateway?: GatewayC
     'owner_memory_forget',
     {
       description:
-        'Remove an owner memory entry that is wrong or no longer true. The owner can restore it on their Mac.',
+        'Remove an owner memory entry from your environment that is wrong or no longer true. You cannot remove global entries or entries from another environment. The owner can restore it on their Mac.',
       inputSchema: { id: fleetIdSchema, reason: z.string().trim().min(1).max(FLEET_OWNER_MEMORY_LIMITS.reasonMax) },
       annotations: { readOnlyHint: false },
     },

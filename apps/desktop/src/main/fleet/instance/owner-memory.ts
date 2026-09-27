@@ -10,7 +10,7 @@ import type { OwnerMemoryWriter } from '../../memory/extraction/owner-writer'
 import { gatewayRequest, type GatewayConfig } from './gateway-client'
 
 const INTRO =
-  'Facts and preferences about your owner, shared by all of the owner’s bots. Follow them. Save a stable new preference or fact with owner_memory_save (replace an outdated entry with replaces_id); remove a wrong one with owner_memory_forget. Never store secrets.'
+  'Facts and preferences about your owner that apply to this environment, including global entries. Follow them. Save a stable new preference or fact with owner_memory_save; your entries stay in this environment unless your owner makes them global. Replace an outdated entry from this environment with replaces_id, or remove a wrong one with owner_memory_forget. Only your owner can change global entries. Never store secrets.'
 
 /** A bot's gateway access, or a function that returns it at each request (a bot's token can arrive later). */
 export type GatewaySource = GatewayConfig | null | (() => GatewayConfig | null)
