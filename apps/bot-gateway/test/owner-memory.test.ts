@@ -6,17 +6,16 @@ import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { Store } from '../src/store.js'
 import { harness } from './harness.js'
+import { createSchema5Database } from './store-fixtures.js'
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
-it('preserves every populated v4 table when migrating and reopens v5 without changes', () => {
+it('preserves every populated v4 table when migrating and reopens the current schema without changes', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'owner-migration-'))
   dirs.push(dir)
-  let store = new Store(dir)
-  const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
-  expect(version()).toEqual({ value: '5' })
-  store.db.exec(`
+  const db = createSchema5Database(dir)
+  db.exec(`
     INSERT INTO devices VALUES('device-1','Synthetic device','synthetic-device-hash','2026-09-20T10:00:00Z','2026-09-21T10:00:00Z',NULL);
     INSERT INTO pairing_codes VALUES('synthetic-pairing-hash','2026-09-26T10:00:00Z',NULL,2);
     INSERT INTO bots VALUES('bot-1','Synthetic bot','Assistant','Check prices','blue','ask','null','[]',0,'stopped','{}','2026-09-20T10:00:00Z','2026-09-21T10:00:00Z',NULL,'{"enabled":true}');
@@ -34,19 +33,36 @@ it('preserves every populated v4 table when migrating and reopens v5 without cha
     DELETE FROM meta WHERE key='owner_memory_revision';
     UPDATE meta SET value='4' WHERE key='schema_version';
   `)
-  const tables = store.db
+  const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name!='meta' ORDER BY name")
     .all()
     .map((row) => String(row.name))
-  const snapshot = () =>
-    Object.fromEntries(tables.map((table) => [table, store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
-  const before = snapshot()
+  const snapshot = (database: DatabaseSync) =>
+    Object.fromEntries(tables.map((table) => [table, database.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+  const before = snapshot(db)
   for (const rows of Object.values(before)) expect(rows.length).toBeGreaterThan(0)
-  const meta = store.db.prepare("SELECT * FROM meta WHERE key!='schema_version' ORDER BY key").all()
-  store.close()
-  store = new Store(dir)
-  expect(version()).toEqual({ value: '5' })
-  expect(snapshot()).toEqual(before)
+  const meta = db.prepare("SELECT * FROM meta WHERE key!='schema_version' ORDER BY key").all()
+  db.close()
+  // Schema 6 gives every bot an environment of one: bots and activity gain environment columns and the control token
+  // and keyring password move from bot_secrets to environment_secrets. Every other v4 value stays as it was.
+  const migrated = {
+    ...before,
+    bots: before.bots.map((row) => ({ ...row, environment_id: row.id, slot: 1, archived_with_environment: 0 })),
+    bot_secrets: before.bot_secrets.map((row) => ({
+      bot_id: row.bot_id,
+      gateway_token: row.gateway_token,
+      gateway_token_sha256: row.gateway_token_sha256,
+    })),
+    activity: before.activity.map((row) => ({ ...row, environment_id: null })),
+  }
+  let store = new Store(dir)
+  const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
+  expect(version()).toEqual({ value: '6' })
+  expect(snapshot(store.db)).toEqual(migrated)
+  expect(store.environmentSecrets('bot-1')).toEqual({
+    controlToken: 'synthetic-control',
+    keyringPassword: 'synthetic-keyring',
+  })
   expect(
     store.db
       .prepare("SELECT * FROM meta WHERE key NOT IN ('schema_version','owner_memory_revision') ORDER BY key")
@@ -61,8 +77,8 @@ it('preserves every populated v4 table when migrating and reopens v5 without cha
   const migratedMeta = store.db.prepare('SELECT * FROM meta ORDER BY key').all()
   store.close()
   store = new Store(dir)
-  expect(version()).toEqual({ value: '5' })
-  expect(snapshot()).toEqual(before)
+  expect(version()).toEqual({ value: '6' })
+  expect(snapshot(store.db)).toEqual(migrated)
   expect(store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(schema)
   expect(store.db.prepare('SELECT * FROM meta ORDER BY key').all()).toEqual(migratedMeta)
   expect(store.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })

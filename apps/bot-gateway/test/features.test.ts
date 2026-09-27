@@ -21,6 +21,7 @@ import { InstanceClient } from '../src/instance.js'
 import { Lifecycle } from '../src/lifecycle.js'
 import { Routines, nextRun, nextWeeklyRun } from '../src/routines.js'
 import { Store } from '../src/store.js'
+import { createSchema5Database } from './store-fixtures.js'
 
 const dirs: string[] = []
 const closeFns: (() => Promise<void>)[] = []
@@ -220,12 +221,13 @@ describe('secrets and configuration', () => {
     const dir = temp(),
       db = new DatabaseSync(path.join(dir, 'gateway.sqlite'))
     db.exec(
-      "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO meta VALUES('schema_version','1'); CREATE TABLE bot_secrets(bot_id TEXT PRIMARY KEY,control_token TEXT NOT NULL,gateway_token TEXT NOT NULL,gateway_token_sha256 TEXT NOT NULL UNIQUE); INSERT INTO bot_secrets VALUES('test','control','gateway','hash'); CREATE TABLE routines(id TEXT PRIMARY KEY)"
+      "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL); INSERT INTO meta VALUES('schema_version','1'); CREATE TABLE bots(id TEXT PRIMARY KEY,name TEXT NOT NULL,role TEXT NOT NULL,instructions TEXT NOT NULL,tint TEXT NOT NULL,ceiling TEXT NOT NULL,selection_json TEXT,talks_to_json TEXT NOT NULL,paused INTEGER NOT NULL,lifecycle TEXT NOT NULL,setup_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived_at TEXT); INSERT INTO bots VALUES('test','Test','','','#ffffff','ask','null','[]',0,'stopped','{}','2026-01-05T10:00:00.000Z','2026-01-05T10:00:00.000Z',NULL); CREATE TABLE bot_secrets(bot_id TEXT PRIMARY KEY,control_token TEXT NOT NULL,gateway_token TEXT NOT NULL,gateway_token_sha256 TEXT NOT NULL UNIQUE); INSERT INTO bot_secrets VALUES('test','control','gateway','hash'); CREATE TABLE routines(id TEXT PRIMARY KEY); CREATE TABLE activity(seq INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,bot_id TEXT REFERENCES bots(id),kind TEXT NOT NULL,summary TEXT,data_json TEXT NOT NULL)"
     )
     db.close()
     const store = new Store(dir),
       password = store.botSecrets('test')?.keyringPassword
     expect(password).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(store.environmentSecrets('test')).toEqual({ controlToken: 'control', keyringPassword: password })
     store.close()
     const reopened = new Store(dir)
     expect(reopened.botSecrets('test')?.keyringPassword).toBe(password)
@@ -233,44 +235,40 @@ describe('secrets and configuration', () => {
   })
   it('migrates version 2 routines to owner-created records', () => {
     const dir = temp()
-    const store = new Store(dir)
-    store.db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run()
+    const db = createSchema5Database(dir)
+    db.prepare("UPDATE meta SET value='2' WHERE key='schema_version'").run()
     const botId = 'test'
     const at = '2026-01-05T10:00:00.000Z'
-    store.db
-      .prepare(
-        'INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
-      )
-      .run(botId, 'Test', '', '', '#ffffff', 'ask', 'null', '[]', 0, 'running', '{}', at, at)
-    store.db
-      .prepare(
-        'INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)'
-      )
-      .run(
-        'old',
-        botId,
-        'Old',
-        'Check',
-        JSON.stringify({ kind: 'weekly', time: '09:00', days: [], timezone: 'UTC' }),
-        1,
-        at,
-        at
-      )
-    store.db.exec('ALTER TABLE routines DROP COLUMN created_by; ALTER TABLE routines DROP COLUMN last_input_id')
-    store.close()
+    db.prepare(
+      'INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    ).run(botId, 'Test', '', '', '#ffffff', 'ask', 'null', '[]', 0, 'running', '{}', at, at)
+    db.prepare(
+      'INSERT INTO routines(id,bot_id,title,prompt,schedule_json,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)'
+    ).run(
+      'old',
+      botId,
+      'Old',
+      'Check',
+      JSON.stringify({ kind: 'weekly', time: '09:00', days: [], timezone: 'UTC' }),
+      1,
+      at,
+      at
+    )
+    db.exec('ALTER TABLE routines DROP COLUMN created_by; ALTER TABLE routines DROP COLUMN last_input_id')
+    db.close()
     const migrated = new Store(dir)
     expect(migrated.routineById('old')?.createdBy).toBe('owner')
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '6' })
     migrated.close()
   })
   it('migrates version 3 bots and persists their compaction model', () => {
     const dir = temp()
-    const store = new Store(dir)
-    store.db.exec('ALTER TABLE bots DROP COLUMN compaction_json')
-    store.db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
-    store.close()
+    const db = createSchema5Database(dir)
+    db.exec('ALTER TABLE bots DROP COLUMN compaction_json')
+    db.prepare("UPDATE meta SET value='3' WHERE key='schema_version'").run()
+    db.close()
     const migrated = new Store(dir)
-    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '5' })
+    expect(migrated.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({ value: '6' })
     expect(migrated.db.prepare('PRAGMA table_info(bots)').all()).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'compaction_json' })])
     )
