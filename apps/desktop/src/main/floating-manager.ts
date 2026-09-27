@@ -28,7 +28,13 @@ import { restoreFocusAfterFloatingClose } from './popup-manager'
 import { attachWindowNavigation } from './mouse-navigation'
 import { setDrawerPlacementPerformance } from './drawer/performance'
 import { isBotMode } from './fleet/instance/config'
-import { initialFloatingBounds } from './fleet/instance/window-bounds'
+import { centerInArea, clampToArea, initialFloatingBounds } from './fleet/instance/window-bounds'
+import {
+  conversationScreen,
+  onConversationScreenChange,
+  type ConversationScreen,
+  type ScreenArea,
+} from './conversation-screen'
 
 function tabTitle(tab: FloatTab): string {
   return tMain('main')(`floating.${tab}`)
@@ -145,8 +151,20 @@ function emitFloatingState(convId: string): void {
   })
 }
 
-/** Clamp saved bounds to a display workArea; fall back to the primary display center. */
-function clampBounds(saved?: FloatingBounds): FloatingBounds {
+/**
+ * Clamp saved bounds to a display workArea; fall back to the primary display center. A conversation with its own
+ * screen area keeps its windows inside that area instead.
+ */
+function clampBounds(saved?: FloatingBounds, area?: ScreenArea): FloatingBounds {
+  if (area) {
+    const size = {
+      width: Math.max(MIN_W, saved?.width ?? DEFAULT_W),
+      height: Math.max(MIN_H, saved?.height ?? DEFAULT_H),
+    }
+    return saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)
+      ? clampToArea({ x: saved.x, y: saved.y, ...size }, area)
+      : centerInArea(size, area)
+  }
   const primary = screen.getPrimaryDisplay().workArea
   const width = Math.min(Math.max(MIN_W, Math.round(saved?.width ?? DEFAULT_W)), primary.width)
   const height = Math.min(Math.max(MIN_H, Math.round(saved?.height ?? DEFAULT_H)), primary.height)
@@ -176,16 +194,17 @@ function clampBounds(saved?: FloatingBounds): FloatingBounds {
   }
 }
 
+/** Initial bounds of a floating window: the bot browser fills its area (or the work area), others keep theirs. */
+function floatingBounds(tab: FloatTab, saved: FloatingBounds | undefined, area: ScreenArea | undefined) {
+  return clampBounds(
+    initialFloatingBounds<FloatingBounds>(tab, isBotMode(), area ?? screen.getPrimaryDisplay().workArea, saved),
+    area
+  )
+}
+
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   const win = new BrowserWindow({
-    ...clampBounds(
-      initialFloatingBounds(
-        tab,
-        isBotMode(),
-        screen.getPrimaryDisplay().workArea,
-        getConvUiPrefs(convId).floating?.[tab]
-      )
-    ),
+    ...floatingBounds(tab, getConvUiPrefs(convId).floating?.[tab], conversationScreen(convId)?.windowArea),
     minWidth: MIN_W,
     minHeight: MIN_H,
     show: false,
@@ -300,8 +319,16 @@ export function reattach(convId: string, tab: FloatTab): void {
 /** Programmatically set clamped floating bounds; the resize debounce persists them. */
 export function setFloatBounds(convId: string, tab: FloatTab, bounds: FloatingBounds): void {
   const en = entry(convId, tab)
-  if (en && !en.win.isDestroyed()) en.win.setBounds(clampBounds(bounds))
+  if (en && !en.win.isDestroyed()) en.win.setBounds(clampBounds(bounds, conversationScreen(convId)?.windowArea))
 }
+
+/** A conversation's screen may be registered after its windows opened; move them into its (new) area. */
+function placeConversationWindows(convId: string, registered: ConversationScreen | null): void {
+  for (const [tab, en] of floats.get(convId) ?? []) {
+    if (!en.win.isDestroyed()) en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea))
+  }
+}
+onConversationScreenChange(placeConversationWindows)
 
 /**
  * Show the visible conversation's floating windows and pinned windows from any conversation. Hide

@@ -3,12 +3,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { EventEmitter } from 'node:events'
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
 
-vi.mock('node:child_process', async (original) => ({
-  ...(await original<typeof import('node:child_process')>()),
-  spawn: vi.fn(),
-}))
+vi.mock('node:child_process', async (original) => {
+  const actual = await original<typeof import('node:child_process')>()
+  return { ...actual, spawn: vi.fn(), spawnSync: vi.fn(actual.spawnSync) }
+})
 
 const capture = vi.hoisted(() => ({
   getSources: vi.fn(async () => [
@@ -31,10 +31,11 @@ import {
 import { APP_TOOL_POLICY } from '../../src/main/chat/tool-policy'
 import { toolsFromClient } from '../../src/main/chat/mcp'
 import { InstanceHoldManager, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
+import { setConversationScreen, type ConversationScreen } from '../../src/main/conversation-screen'
 
-async function clientForComputer() {
+async function clientForComputer(convId = 'primary') {
   const server = new McpServer({ name: 'computer-test', version: '1' })
-  registerComputerTools({ server, convId: 'primary', locale: 'en', t: (() => '') as never })
+  registerComputerTools({ server, convId, locale: 'en', t: (() => '') as never })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   const client = new Client({ name: 'computer-client', version: '1' })
   await server.connect(serverTransport)
@@ -47,15 +48,20 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-function fakeXdotool(onSpawn: (args: string[], child: EventEmitter) => void): void {
-  vi.mocked(spawn).mockImplementation(((_command: string, args: string[]) => {
-    const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; kill: ReturnType<typeof vi.fn> }
+type FakeChild = EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> }
+
+function fakeXdotool(
+  onSpawn: (args: string[], child: FakeChild, options: SpawnOptions | undefined, command: string) => void
+): void {
+  vi.mocked(spawn).mockImplementation(((command: string, args: string[], options?: SpawnOptions) => {
+    const child = new EventEmitter() as FakeChild
+    child.stdout = new EventEmitter()
     child.stderr = new EventEmitter()
     child.kill = vi.fn(() => {
       queueMicrotask(() => child.emit('close', null))
       return true
     })
-    onSpawn(args, child)
+    onSpawn(args, child, options, command)
     return child
   }) as unknown as typeof spawn)
 }
@@ -236,6 +242,222 @@ describe('computer actions', () => {
     } finally {
       await client.close()
       await server.close()
+    }
+  })
+})
+
+describe('computer tools on a conversation screen', () => {
+  const botScreen: ConversationScreen = {
+    display: ':2',
+    width: 1024,
+    height: 768,
+    windowArea: { x: 1280, y: 0, width: 1280, height: 800 },
+  }
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from('bot-a screen'),
+  ])
+  const spawnOptions = (index: number) => vi.mocked(spawn).mock.calls[index]?.[2] as SpawnOptions | undefined
+  const spawned = () => vi.mocked(spawn).mock.calls.map((call) => [call[0], call[1]])
+
+  afterEach(() => {
+    setConversationScreen('bot-a', null)
+    vi.useRealTimers()
+  })
+
+  async function clients() {
+    const a = await clientForComputer('bot-a')
+    const b = await clientForComputer('plain')
+    return {
+      a: a.client,
+      b: b.client,
+      close: async () => {
+        await a.client.close()
+        await a.server.close()
+        await b.client.close()
+        await b.server.close()
+      },
+    }
+  }
+
+  it('clicks and captures on the registered display while other conversations keep the primary screen', async () => {
+    setConversationScreen('bot-a', botScreen)
+    fakeXdotool((_args, child, _options, command) => {
+      queueMicrotask(() => {
+        if (command === 'import') child.stdout.emit('data', png)
+        child.emit('close', 0)
+      })
+    })
+    const { a, b, close } = await clients()
+    try {
+      const shot = await a.callTool({ name: 'computer_screenshot', arguments: {} })
+      expect(shot.content).toEqual([
+        { type: 'image', data: png.toString('base64'), mimeType: 'image/png' },
+        { type: 'text', text: expect.stringContaining('1024 × 768') },
+      ])
+      expect(capture.getSources).not.toHaveBeenCalled()
+      expect(spawned()).toEqual([['import', ['-display', ':2', '-window', 'root', 'png:-']]])
+
+      vi.mocked(spawn).mockClear()
+      const clicked = await a.callTool({ name: 'computer_click', arguments: { x: 1000, y: 700 } })
+      expect(clicked.isError).toBeFalsy()
+      expect(spawned()).toEqual([
+        ['xdotool', ['mousemove', '--sync', '1000', '700']],
+        ['xdotool', ['click', '1']],
+      ])
+      for (const index of [0, 1]) {
+        expect(spawnOptions(index)?.env?.DISPLAY).toBe(':2')
+        expect(spawnOptions(index)?.env?.PATH).toBe(process.env.PATH)
+      }
+      const outside = await a.callTool({ name: 'computer_click', arguments: { x: 1100, y: 10 } })
+      expect(outside.isError).toBe(true)
+      expect(JSON.stringify(outside.content)).toContain('0..1023')
+
+      vi.mocked(spawn).mockClear()
+      const plainShot = await b.callTool({ name: 'computer_screenshot', arguments: {} })
+      expect(plainShot.content).toEqual([
+        { type: 'image', data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' },
+        { type: 'text', text: expect.stringContaining('1280 × 800') },
+      ])
+      expect(capture.getSources).toHaveBeenCalledOnce()
+      const plainClick = await b.callTool({ name: 'computer_click', arguments: { x: 1100, y: 10 } })
+      expect(plainClick.isError).toBeFalsy()
+      expect(spawned().map(([command]) => command)).toEqual(['xdotool', 'xdotool'])
+      expect(spawnOptions(0)).not.toHaveProperty('env')
+      expect(spawnOptions(1)).not.toHaveProperty('env')
+    } finally {
+      await close()
+    }
+  })
+
+  it('cancels only the actions of the conversation whose screen is aborted', async () => {
+    setConversationScreen('bot-a', botScreen)
+    const children: Array<{ display: string | undefined; args: string[]; child: FakeChild }> = []
+    let releasePlain = false
+    fakeXdotool((args, child, options) => {
+      const display = options?.env?.DISPLAY
+      children.push({ display, args, child })
+      if (display === undefined && releasePlain) queueMicrotask(() => child.emit('close', 0))
+    })
+    const { a, b, close } = await clients()
+    try {
+      const pendingA = a.callTool({ name: 'computer_click', arguments: { x: 10, y: 10 } })
+      const pendingB = b.callTool({ name: 'computer_click', arguments: { x: 20, y: 20 } })
+      await vi.waitFor(() => expect(children).toHaveLength(2))
+      const childA = children.find((entry) => entry.display === ':2')?.child
+      const childB = children.find((entry) => entry.display === undefined)?.child
+
+      abortScreenActions('bot-a')
+
+      const resultA = await pendingA
+      expect(resultA.isError).toBe(true)
+      expect(JSON.stringify(resultA.content)).toContain('interrupted:')
+      expect(childA?.kill).toHaveBeenCalledWith('SIGTERM')
+      expect(childB?.kill).not.toHaveBeenCalled()
+
+      releasePlain = true
+      childB?.emit('close', 0)
+      const resultB = await pendingB
+      expect(resultB.isError).toBeFalsy()
+      expect(JSON.stringify(resultB.content)).toContain('Desktop click completed.')
+      expect(children.filter((entry) => entry.display === undefined).map((entry) => entry.args[0])).toEqual([
+        'mousemove',
+        'click',
+      ])
+    } finally {
+      await close()
+    }
+  })
+
+  it('keeps registered screens running when an unscreened conversation aborts, and aborts all without an id', async () => {
+    setConversationScreen('bot-a', botScreen)
+    const children: Array<{ display: string | undefined; child: FakeChild }> = []
+    fakeXdotool((_args, child, options) => {
+      children.push({ display: options?.env?.DISPLAY, child })
+    })
+    const { a, b, close } = await clients()
+    try {
+      const pendingA = a.callTool({ name: 'computer_move', arguments: { x: 10, y: 10 } })
+      const pendingB = b.callTool({ name: 'computer_move', arguments: { x: 20, y: 20 } })
+      await vi.waitFor(() => expect(children).toHaveLength(2))
+      const childA = children.find((entry) => entry.display === ':2')?.child
+
+      abortScreenActions('plain')
+      expect(JSON.stringify((await pendingB).content)).toContain('interrupted:')
+      expect(childA?.kill).not.toHaveBeenCalled()
+
+      abortScreenActions()
+      expect(JSON.stringify((await pendingA).content)).toContain('interrupted:')
+      expect(childA?.kill).toHaveBeenCalledWith('SIGTERM')
+    } finally {
+      await close()
+    }
+  })
+
+  it('stops a screen capture larger than 32 MiB', async () => {
+    setConversationScreen('bot-a', botScreen)
+    let importer: FakeChild | undefined
+    fakeXdotool((_args, child) => {
+      importer = child
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.alloc(32 * 1024 * 1024))
+        child.stdout.emit('data', Buffer.alloc(1))
+      })
+    })
+    const { a, close } = await clients()
+    try {
+      const shot = await a.callTool({ name: 'computer_screenshot', arguments: {} })
+      expect(shot.isError).toBe(true)
+      expect(JSON.stringify(shot.content)).toContain('32 MiB')
+      expect(importer?.kill).toHaveBeenCalled()
+    } finally {
+      await close()
+    }
+  })
+
+  it('stops a screen capture after 10 seconds', async () => {
+    setConversationScreen('bot-a', botScreen)
+    let started: (child: FakeChild) => void = () => {}
+    const importer = new Promise<FakeChild>((resolve) => {
+      started = resolve
+    })
+    fakeXdotool((_args, child) => started(child))
+    const { a, close } = await clients()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const shot = a.callTool({ name: 'computer_screenshot', arguments: {} })
+      const child = await importer
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(child.kill).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(child.kill).toHaveBeenCalled()
+      const result = await shot
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain('timed out')
+    } finally {
+      vi.useRealTimers()
+      await close()
+    }
+  })
+
+  it('offers desktop tools only when both xdotool and import run', async () => {
+    for (const [importStatus, available] of [
+      [1, false],
+      [0, true],
+    ] as const) {
+      vi.resetModules()
+      const childProcess = await import('node:child_process')
+      vi.mocked(childProcess.spawnSync).mockImplementation(((command: string) => ({
+        status: command === 'import' ? importStatus : 0,
+      })) as unknown as typeof childProcess.spawnSync)
+      try {
+        const computer = await import('../../src/main/mcp/tools/computer')
+        expect(computer.canUseComputer('linux', ':0')).toBe(available)
+        expect(childProcess.spawnSync).toHaveBeenCalledWith('xdotool', ['--version'], expect.anything())
+        expect(childProcess.spawnSync).toHaveBeenCalledWith('import', ['-version'], expect.anything())
+      } finally {
+        vi.mocked(childProcess.spawnSync).mockReset()
+      }
     }
   })
 })

@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { desktopCapturer, screen } from 'electron'
 import { z } from 'zod'
+import { conversationScreen, type ConversationScreen } from '../../conversation-screen'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 
@@ -8,14 +9,78 @@ const keyPattern = /^[A-Za-z0-9_+ -]{1,64}$/
 const coordinate = z.number().int().nonnegative()
 const description =
   'Use for desktop apps outside the Maestrly browser. Prefer browser_* for websites. Coordinates are screen pixels from the last computer_screenshot.'
-let xdotoolAvailable: boolean | null = null
-let screenActionGeneration = 0
-const runningActions = new Set<ChildProcess>()
+const screenshotTimeoutMs = 10_000
+const screenshotMaxBytes = 32 * 1024 * 1024
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+let computerCommandsAvailable: boolean | null = null
 const interrupted = 'interrupted: the owner took over / paused.'
 
-export function abortScreenActions(): void {
-  screenActionGeneration++
-  for (const child of runningActions) {
+/**
+ * Screen actions are cancelled per screen. A conversation with a registered screen owns its actions. Conversations
+ * without one share the primary display, so cancelling any of them cancels every action on that display. Cancelling
+ * without a conversation cancels everything.
+ */
+export interface ScreenActionScope {
+  conversationId: string | undefined
+  /** The conversation's registered screen, or null for the primary display. */
+  screen: ConversationScreen | null
+  all: number
+  conversation: number
+  shared: number
+}
+interface RunningAction {
+  conversationId: string | undefined
+  shared: boolean
+}
+let allGeneration = 0
+let sharedGeneration = 0
+const conversationGenerations = new Map<string, number>()
+const runningActions = new Map<ChildProcess, RunningAction>()
+
+function screenScope(
+  conversationId: string | undefined,
+  registered: ConversationScreen | null = conversationScreen(conversationId)
+): ScreenActionScope {
+  return {
+    conversationId,
+    screen: registered,
+    all: allGeneration,
+    conversation: conversationId === undefined ? 0 : (conversationGenerations.get(conversationId) ?? 0),
+    shared: sharedGeneration,
+  }
+}
+
+function isInterrupted(scope: ScreenActionScope): boolean {
+  return (
+    scope.all !== allGeneration ||
+    (scope.conversationId !== undefined &&
+      scope.conversation !== (conversationGenerations.get(scope.conversationId) ?? 0)) ||
+    (scope.screen === null && scope.shared !== sharedGeneration)
+  )
+}
+
+function checkScreenAction(scope: ScreenActionScope): void {
+  if (isInterrupted(scope)) throw new Error(interrupted)
+}
+
+function trackAction(child: ChildProcess, scope: ScreenActionScope): void {
+  runningActions.set(child, { conversationId: scope.conversationId, shared: scope.screen === null })
+}
+
+/** Cancel the screen actions of one conversation's screen, or of every screen without a conversation. */
+export function abortScreenActions(conversationId?: string): void {
+  let affected: (action: RunningAction) => boolean
+  if (conversationId === undefined) {
+    allGeneration++
+    affected = () => true
+  } else {
+    const shared = conversationScreen(conversationId) === null
+    conversationGenerations.set(conversationId, (conversationGenerations.get(conversationId) ?? 0) + 1)
+    if (shared) sharedGeneration++
+    affected = (action) => action.conversationId === conversationId || (shared && action.shared)
+  }
+  for (const [child, action] of runningActions) {
+    if (!affected(action)) continue
     child.kill('SIGTERM')
     const timer = setTimeout(() => {
       if (runningActions.has(child)) child.kill('SIGKILL')
@@ -24,20 +89,20 @@ export function abortScreenActions(): void {
   }
 }
 
-function checkScreenAction(generation: number): void {
-  if (generation !== screenActionGeneration) throw new Error(interrupted)
+function commandRuns(command: string, args: string[]): boolean {
+  const result = spawnSync(command, args, { timeout: 2_000, stdio: 'ignore' })
+  return !result.error && result.status === 0
 }
 
+/** Desktop tools need xdotool for input and ImageMagick's import to capture a conversation's own display. */
 export function canUseComputer(platform = process.platform, display = process.env.DISPLAY): boolean {
   if (platform !== 'linux' || !display) return false
-  if (xdotoolAvailable === null) {
-    const result = spawnSync('xdotool', ['--version'], { timeout: 2_000, stdio: 'ignore' })
-    xdotoolAvailable = !result.error && result.status === 0
-  }
-  return xdotoolAvailable
+  computerCommandsAvailable ??= commandRuns('xdotool', ['--version']) && commandRuns('import', ['-version'])
+  return computerCommandsAvailable
 }
 
-function dimensions(): { width: number; height: number } {
+function dimensions(registered: ConversationScreen | null): { width: number; height: number } {
+  if (registered) return { width: registered.width, height: registered.height }
   const { width, height } = screen.getPrimaryDisplay().size
   if (width < 1 || height < 1) throw new Error('The primary screen has invalid dimensions.')
   return { width, height }
@@ -107,12 +172,17 @@ export function computerArguments(
 export async function runXdotool(
   args: string[],
   signal?: AbortSignal,
-  generation = screenActionGeneration
+  scope: ScreenActionScope = screenScope(undefined)
 ): Promise<void> {
-  checkScreenAction(generation)
+  checkScreenAction(scope)
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('xdotool', args, { stdio: ['ignore', 'ignore', 'pipe'], signal })
-    runningActions.add(child)
+    const child = spawn('xdotool', args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      signal,
+      // A conversation screen is its own X display; without one, xdotool uses the inherited DISPLAY.
+      ...(scope.screen ? { env: { ...process.env, DISPLAY: scope.screen.display } } : {}),
+    })
+    trackAction(child, scope)
     let stderr = ''
     let processError: Error | null = null
     const timer = setTimeout(() => child.kill(), 5_000)
@@ -142,7 +212,78 @@ export async function runXdotool(
         )
     })
   })
-  checkScreenAction(generation)
+  checkScreenAction(scope)
+}
+
+/** Capture an X display as PNG with ImageMagick's import, bounded in time and size. */
+async function captureDisplay(scope: ScreenActionScope, display: string, signal: AbortSignal): Promise<Buffer> {
+  checkScreenAction(scope)
+  const png = await new Promise<Buffer>((resolve, reject) => {
+    const child = spawn('import', ['-display', display, '-window', 'root', 'png:-'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      signal,
+    })
+    trackAction(child, scope)
+    const chunks: Buffer[] = []
+    let bytes = 0
+    let stderr = ''
+    let failure: Error | null = null
+    const stop = (error: Error): void => {
+      failure ??= error
+      child.kill()
+    }
+    const timer = setTimeout(
+      () => stop(new Error('The screen capture timed out after 10 seconds.')),
+      screenshotTimeoutMs
+    )
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (failure) return
+      bytes += chunk.length
+      if (bytes > screenshotMaxBytes) {
+        chunks.length = 0
+        stop(new Error('The screen capture exceeded 32 MiB.'))
+      } else chunks.push(chunk)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (stderr.length < 300) stderr += chunk.toString().slice(0, 300 - stderr.length)
+    })
+    child.once('error', (error) => {
+      clearTimeout(timer)
+      failure ??= error
+      if (child.pid === undefined) {
+        runningActions.delete(child)
+        reject(error)
+      }
+    })
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      runningActions.delete(child)
+      if (failure) reject(failure)
+      else if (code === 0) resolve(Buffer.concat(chunks))
+      else
+        reject(
+          new Error(
+            code === null
+              ? 'import was interrupted.'
+              : `import exited with code ${code}: ${stderr.trim() || 'no details'}`
+          )
+        )
+    })
+  })
+  checkScreenAction(scope)
+  return png
+}
+
+function screenshotResult(png: Buffer, width: number, height: number) {
+  return {
+    content: [
+      { type: 'image' as const, data: png.toString('base64'), mimeType: 'image/png' },
+      {
+        type: 'text' as const,
+        text: `Screen: ${width} × ${height} pixels. Coordinates for computer_* are screen pixels from this screenshot.`,
+      },
+    ],
+  }
 }
 
 export function registerComputerTools(ctx: McpToolContext): void {
@@ -150,29 +291,30 @@ export function registerComputerTools(ctx: McpToolContext): void {
   server.registerTool(
     'computer_screenshot',
     {
-      description: `Capture the whole primary desktop screen as PNG. ${description}`,
+      description: `Capture the whole desktop screen as PNG. ${description}`,
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
-    async () => {
+    async (_args, extra) => {
+      const scope = screenScope(ctx.convId)
       try {
-        const { width, height } = dimensions()
+        const { width, height } = dimensions(scope.screen)
+        if (scope.screen) {
+          const png = await captureDisplay(scope, scope.screen.display, extra.signal)
+          if (png.length <= pngSignature.length || !png.subarray(0, pngSignature.length).equals(pngSignature))
+            return err('Could not capture the screen: import returned no PNG image.')
+          return screenshotResult(png, width, height)
+        }
         const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width, height } })
         const source =
           sources.find((candidate) => candidate.display_id === String(screen.getPrimaryDisplay().id)) ?? sources[0]
         if (!source || source.thumbnail.isEmpty())
           return err('Could not capture the primary screen. Check DISPLAY and screen permissions.')
-        return {
-          content: [
-            { type: 'image' as const, data: source.thumbnail.toPNG().toString('base64'), mimeType: 'image/png' },
-            {
-              type: 'text' as const,
-              text: `Screen: ${width} × ${height} pixels. Coordinates for computer_* are screen pixels from this screenshot.`,
-            },
-          ],
-        }
+        return screenshotResult(source.thumbnail.toPNG(), width, height)
       } catch (error) {
-        return err(`Screen capture failed: ${error instanceof Error ? error.message : String(error)}`)
+        return err(
+          `Screen capture failed: ${isInterrupted(scope) ? interrupted : error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
   )
@@ -191,23 +333,26 @@ export function registerComputerTools(ctx: McpToolContext): void {
       },
       async (args, extra) => {
         let buttonDown = false
-        const generation = screenActionGeneration
+        const scope = screenScope(ctx.convId)
         try {
-          const commands = computerArguments(name, args as T, dimensions())
+          const commands = computerArguments(name, args as T, dimensions(scope.screen))
           const signal = AbortSignal.any([extra.signal, AbortSignal.timeout(5_000)])
           for (const command of commands) {
-            checkScreenAction(generation)
+            checkScreenAction(scope)
             if (command[0] === 'mousedown') buttonDown = true
-            await runXdotool(command, signal, generation)
+            await runXdotool(command, signal, scope)
             if (command[0] === 'mouseup') buttonDown = false
           }
           await new Promise((resolve) => setTimeout(resolve, 150))
-          checkScreenAction(generation)
+          checkScreenAction(scope)
           return ok(`Desktop ${name} completed.`)
         } catch (error) {
-          if (buttonDown) await runXdotool(['mouseup', '1']).catch(() => undefined)
+          if (buttonDown)
+            await runXdotool(['mouseup', '1'], undefined, screenScope(scope.conversationId, scope.screen)).catch(
+              () => undefined
+            )
           return err(
-            `Desktop ${name} failed: ${generation !== screenActionGeneration ? interrupted : error instanceof Error ? error.message : String(error)}`
+            `Desktop ${name} failed: ${isInterrupted(scope) ? interrupted : error instanceof Error ? error.message : String(error)}`
           )
         }
       }

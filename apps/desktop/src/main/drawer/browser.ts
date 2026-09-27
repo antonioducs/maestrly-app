@@ -15,6 +15,8 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
+import { conversationScreen } from '../conversation-screen'
+import { centerInArea } from '../fleet/instance/window-bounds'
 import {
   OFFSCREEN,
   activeConvId,
@@ -479,7 +481,10 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       }
     }
     try {
-      child.center()
+      // A conversation with its own screen area keeps its popups there; others center on their display.
+      const area = conversationScreen(convId)?.windowArea
+      if (area) child.setBounds(centerInArea(child.getBounds(), area))
+      else child.center()
       child.show()
       child.focus()
     } catch {
