@@ -54,7 +54,8 @@ async function main() {
       })
       if (archived.status !== 0) throw new Error(`git archive exited ${archived.status}: ${archived.stderr}`)
       writeFileSync(archive, archived.stdout)
-      await run('tar', ['-xf', archive, '-C', temporary])
+      // Preserve Git's modes even when the caller protects local files with umask 077: the bot runs as another uid.
+      await run('tar', ['-xpf', archive, '-C', temporary])
       rmSync(archive)
       // Image definitions are this task's uncommitted source; all application source remains HEAD.
       cpSync(path.join(root, 'deploy/bot-fleet'), path.join(temporary, 'deploy/bot-fleet'), { recursive: true })
