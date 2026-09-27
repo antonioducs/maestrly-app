@@ -544,6 +544,8 @@ export const fleetInstanceBotInstallSchema = z.object({
   gatewayToken: z.string().min(16).max(200),
   /** Applied before queued work starts, including a pause recorded while the environment was stopped. */
   paused: z.boolean().optional(),
+  /** Restores an owner's takeover before dispatch after the environment process restarts. */
+  takeover: z.boolean().optional(),
 })
 export type FleetInstanceBotInstall = z.infer<typeof fleetInstanceBotInstallSchema>
 export const fleetInstanceHoldSchema = z.object({

@@ -267,8 +267,8 @@ export class EnvironmentRuntime {
   async installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {
     const parsed = fleetInstanceBotInstallSchema.safeParse(value)
     if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid bot installation.')
-    const { profile, slot, gatewayToken, paused } = parsed.data
-    const bot = await this.serialize(() => this.install(profile, slot, gatewayToken, paused))
+    const { profile, slot, gatewayToken, paused, takeover } = parsed.data
+    const bot = await this.serialize(() => this.install(profile, slot, gatewayToken, { paused, takeover }))
     return bot.status()
   }
   /**
@@ -285,6 +285,7 @@ export class EnvironmentRuntime {
       const bot = this.registry.get(botId)
       let conversationId: string | null = null
       if (bot) {
+        bot.deactivate()
         this.registry.delete(botId)
         conversationId = bot.primaryConversationId
         await bot.cancel().catch((error: unknown) => log('error', errorMessage(error)))
@@ -358,7 +359,7 @@ export class EnvironmentRuntime {
     profile: FleetInstanceProfile,
     slot: number,
     token: string | null,
-    paused?: boolean
+    hold: Pick<FleetInstanceBotInstall, 'paused' | 'takeover'> = {}
   ): Promise<BotRuntime> {
     this.assertOpen()
     const botId = profile.botId
@@ -377,7 +378,8 @@ export class EnvironmentRuntime {
         existing.attachScreen(await this.startDisplay(botId, slot))
         writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
       }
-      if (paused) await existing.hold('paused')
+      if (hold.paused) await existing.hold('paused')
+      if (hold.takeover) await existing.hold('takeover')
       await existing.profile(profile)
       existing.activate()
       return existing
@@ -390,7 +392,8 @@ export class EnvironmentRuntime {
     try {
       bot.attachScreen(await this.startDisplay(botId, slot))
       await bot.start()
-      if (paused) await bot.hold('paused')
+      if (hold.paused) await bot.hold('paused')
+      if (hold.takeover) await bot.hold('takeover')
       await bot.profile(profile)
       writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
     } catch (error) {

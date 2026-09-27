@@ -800,6 +800,7 @@ describe('hold gate', () => {
     const manager = new InstanceHoldManager()
     await manager.hold('paused', true, async () => {})
     await manager.hold('takeover', false, async () => {})
+    expect(manager.state).toMatchObject({ state: 'held', reason: 'takeover' })
     const input = vi.fn(async (_value: { idempotencyKey: string }) => ({
       inputId: 'input',
       itemId: 'item',
@@ -879,6 +880,7 @@ describe('hold gate', () => {
     expect(manager.release()).toMatchObject({ state: 'none', reason: null })
     await manager.hold('takeover', false, async () => {})
     await manager.hold('paused', false, async () => {})
+    expect(manager.state).toMatchObject({ state: 'held', reason: 'takeover' })
     expect(manager.release()).toMatchObject({ state: 'held', reason: 'paused' })
   })
   it('stops waiting after ten seconds', async () => {

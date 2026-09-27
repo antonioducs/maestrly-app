@@ -49,7 +49,7 @@ const headers = {
 // The environment display :0 is a grid of 1280x800 tiles, three per row: tile 0 shows Maestrly's settings, and tile
 // <slot> the browser of the bot in that slot.
 const TILE = { width: 1280, height: 800, columns: 3 }
-const KEYSYM = { alt: 0xffe9, tab: 0xff09, enter: 0xff0d }
+const KEYSYM = { alt: 0xffe9, tab: 0xff09, f4: 0xffc1 }
 const browserWindow = (botName) => botName + ' — Browser'
 const execFileAsync = promisify(execFile)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -351,7 +351,9 @@ async function main() {
   state = await fixture()
   const typed = state.values.alpha === 'owner-alpha' && state.values.popup === ''
   check('owner typing lands in Alpha only', typed, state.values)
-  const dialogEvents = state.events.map(([event]) => event).filter((event) => /^(modal|confirm)-/.test(event))
+  const dialogEvents = state.events
+    .map(([event]) => event)
+    .filter((event) => /^(?:root-)?(?:modal|confirm)-/.test(event))
   check(
     "Beta's popup alert does not block its script",
     dialogEvents.includes('modal-before') && dialogEvents.includes('modal-after'),
@@ -360,6 +362,16 @@ async function main() {
   check(
     "Beta's popup confirmation is canceled",
     dialogEvents.includes('confirm-false') && !dialogEvents.includes('confirm-true'),
+    dialogEvents
+  )
+  check(
+    "Beta's page alert does not block its script",
+    dialogEvents.includes('root-modal-before') && dialogEvents.includes('root-modal-after'),
+    dialogEvents
+  )
+  check(
+    "Beta's page confirmation follows its default accept policy",
+    dialogEvents.includes('root-confirm-true'),
     dialogEvents
   )
   // A native dialog that took the keyboard would still hold it: the remaining steps could only time out.
@@ -381,7 +393,7 @@ async function main() {
   check("Alpha's popup stays in Alpha's tile", insideTile(alphaPopupArea, 1), alphaPopupArea)
   await alpha.text('in-popup')
   await sleep(600)
-  await alpha.press(KEYSYM.enter)
+  await alpha.press(KEYSYM.alt, KEYSYM.f4)
   await sleep(1200)
   const closed = await step("Alpha's popup closed")
   check("closing Alpha's popup returns the keyboard to Alpha", closed.focus === browserWindow('Alpha'), closed)
@@ -393,6 +405,14 @@ async function main() {
     state.values.alpha === 'owner-alphaX' && state.values.alphaPopup === 'in-popup' && state.values.popup === '',
     state.values
   )
+  await alpha.press(KEYSYM.alt, KEYSYM.f4)
+  await sleep(800)
+  const browserClose = await step('Alt+F4 on the controlled browser')
+  check('closing the bot browser keeps it in its tile', browserClose.focus === browserWindow('Alpha'), browserClose)
+  await alpha.text('Y')
+  await sleep(500)
+  state = await fixture()
+  check('typing still reaches the browser after Alt+F4', state.values.alpha === 'owner-alphaXY', state.values)
 
   alpha.close()
   await sleep(2000)

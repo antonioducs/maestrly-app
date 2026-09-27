@@ -33,7 +33,10 @@ const pages = {
   // Another bot's page: once clicked, it opens a popup after a delay.
   beta: () =>
     `<button style="width:100vw;height:100vh" onclick="fetch('/ready?owner=beta-clicked'); ` +
-    `setTimeout(() => window.open('/popup', 'betapopup', 'popup,width=500,height=400'), ${BETA_POPUP_DELAY_MS})">` +
+    `setTimeout(() => { window.open('/popup', 'betapopup', 'popup,width=500,height=400'); ` +
+    `setTimeout(() => { fetch('/event?name=root-modal-before'); alert('Synthetic Beta page notice'); ` +
+    `fetch('/event?name=root-confirm-' + confirm('Synthetic Beta page question')); ` +
+    `fetch('/event?name=root-modal-after') }, 100) }, ${BETA_POPUP_DELAY_MS})">` +
     `Delayed popup</button>`,
   // Beta's popup shows native dialogs as it loads. They must neither block its script nor take the owner's keyboard;
   // a bot popup's confirmation is canceled.

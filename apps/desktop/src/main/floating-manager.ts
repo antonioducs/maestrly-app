@@ -315,6 +315,9 @@ export function detach(convId: string, tab: FloatTab, options: { focus?: boolean
 
 /** Reattach the tab to the drawer and close its window; idempotent. */
 export function reattach(convId: string, tab: FloatTab): void {
+  // A bot's browser has no drawer to return to: native close and app hotkeys must keep it in its screen tile.
+  // Uninstall and process shutdown destroy these windows through disposeConversation/disposeAll instead.
+  if (isBotMode() && tab === 'browser') return
   const byTab = floats.get(convId)
   const en = byTab?.get(tab)
   if (!en) return

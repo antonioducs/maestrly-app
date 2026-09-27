@@ -13,6 +13,7 @@ import {
   type FleetEnvironmentSetup,
   type FleetErrorCode,
   type FleetGatewayEvent,
+  type FleetInstanceEnvironmentStatus,
   type FleetInstanceEvent,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
@@ -202,12 +203,21 @@ export class Lifecycle {
         ...this.store.botsOfEnvironment(environmentId).map((bot) => this.statuses.get(bot.id)?.lastEventSeq ?? 0)
       )
       let delay = 1000
+      // Once the stream broke, the instance may have restarted, and one whose new sequence already passed the cursor
+      // sends no reset: its bots are checked before the stream is followed again, still from the cursor, which replays
+      // what an instance that did not restart sent meanwhile.
+      let broken = false
       while (!controller.signal.aborted) {
         try {
           const client = this.client(environmentId)
+          if (broken && this.capable(environmentId))
+            await client.environmentStatus().then(
+              (aggregate) => this.recoverMembers(environmentId, aggregate, controller.signal),
+              () => {}
+            )
           for await (const event of client.events(since, controller.signal)) {
             if (event.type === 'reset' || event.seq <= since) {
-              since = await this.refreshStatuses(environmentId, client, event.seq)
+              since = await this.refreshStatuses(environmentId, client, event.seq, controller.signal)
               continue
             }
             since = event.seq
@@ -215,6 +225,7 @@ export class Lifecycle {
             this.dispatch(environmentId, event)
           }
         } catch {}
+        broken = true
         if (!controller.signal.aborted) {
           await sleep(delay)
           delay = Math.min(delay * 2, 30000)
@@ -261,17 +272,28 @@ export class Lifecycle {
     const own = this.legacyBot(environmentId)
     return own && own.lifecycle !== 'archived' ? own : null
   }
-  /** After a reset, or a sequence going back because the instance restarted: reloads its bots and returns the cursor. */
-  private async refreshStatuses(environmentId: string, client: InstanceClient, seq: number): Promise<number> {
+  /**
+   * After a reset, or a sequence going back because the instance restarted: reloads its bots and returns the cursor. An
+   * environment instance that restarted recreated its bots unready: they are installed again (see `recoverMembers`).
+   */
+  private async refreshStatuses(
+    environmentId: string,
+    client: InstanceClient,
+    seq: number,
+    signal: AbortSignal
+  ): Promise<number> {
     if (!this.capable(environmentId)) {
       const id = this.eventBot(environmentId, null)
       if (!id) return seq
       const fresh = await client.forBot(id, false).status()
+      if (signal.aborted) return seq
       this.updateStatus(id, fresh)
       this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
       return fresh.lastEventSeq
     }
     const aggregate = await client.environmentStatus()
+    // A link stopped meanwhile (its environment stopped, restarted or was reconciled) no longer speaks for its bots.
+    if (signal.aborted) return seq
     let latest = seq
     for (const installed of aggregate.bots) {
       const id = this.eventBot(environmentId, installed.botId)
@@ -280,7 +302,22 @@ export class Lifecycle {
       this.updateStatus(id, installed.status)
       this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
     }
+    this.recoverMembers(environmentId, aggregate, signal)
     return latest
+  }
+  /**
+   * Installs again, through a reconcile, the bots the gateway runs in an environment whose instance does not run them
+   * ready: its Maestrly restarted in the running container and recreated them unready and without their pause, until
+   * the gateway installs them. An installation reports its bot unready for a moment too, which is why only a reset or a
+   * broken stream leads here, never a status event. The reconcile installs only the environment's active bots.
+   */
+  private recoverMembers(environmentId: string, aggregate: FleetInstanceEnvironmentStatus, signal: AbortSignal) {
+    if (signal.aborted || (aggregate.environmentId !== null && aggregate.environmentId !== environmentId)) return
+    const ready = new Set(aggregate.bots.flatMap((item) => (item.status.ready ? [item.botId] : [])))
+    const waiting = this.store
+      .botsOfEnvironment(environmentId)
+      .some((bot) => this.get(bot.id)?.lifecycle === 'running' && !ready.has(bot.id))
+    if (waiting) this.scheduleReconcile(environmentId, 1000)
   }
   get(id: string): FleetBot | null {
     const bot = this.store.getBot(id)
@@ -823,11 +860,13 @@ export class Lifecycle {
     const fresh = bot.lifecycle !== 'running'
     if (fresh) this.updateActive(id, { setup: botSetup('profile') })
     try {
+      const takeover = this.takeovers.get(id)?.state
       const status = await client.botInstall(id, {
         profile: this.profile(bot),
         slot,
         gatewayToken: secrets.gatewayToken,
         paused: bot.paused,
+        takeover: takeover === 'human' || takeover === 'acquiring',
       })
       await this.settle(id, client.forBot(id, true), status)
       if (fresh && this.store.getBot(id)?.lifecycle === 'running') this.recordActivity(id, 'bot_started')
@@ -889,17 +928,31 @@ export class Lifecycle {
       throw new GatewayError('INSTANCE_UNAVAILABLE', 'An archived bot could not be held')
     }
   }
-  /** Brings an installed bot's hold in line with the gateway, then records it running. */
+  /**
+   * Brings an installed bot's hold in line with the gateway, then records it running. The bot is read again after each
+   * answer: a pause or a resume recorded meanwhile (a bot not running yet only records it) is applied before the bot
+   * counts as running, and a bot archived meanwhile stays archived.
+   */
   private async settle(id: string, client: InstanceClient, installed: FleetInstanceStatus) {
-    const bot = this.store.getBot(id)
-    if (!bot || bot.lifecycle === 'archived') return
+    const active = () => {
+      const bot = this.store.getBot(id)
+      return bot && bot.lifecycle !== 'archived' ? bot : null
+    }
+    if (!active()) return
     let status = installed
     const release = () => client.release({ note: null, durationMs: null, continue: true })
     // A takeover or a pause the gateway no longer knows about (it restarted, or the bot was restored) is released.
     if (status.hold.reason === 'takeover' && !this.takeovers.has(id)) status = { ...status, hold: await release() }
-    if (status.hold.reason === 'paused' && !bot.paused) status = { ...status, hold: await release() }
-    if (bot.paused && status.hold.reason === null) status = { ...status, hold: await client.hold({ reason: 'paused' }) }
-    if (this.store.getBot(id)?.lifecycle === 'archived') return
+    // A few rounds at most, so that an owner pausing and resuming meanwhile cannot keep the bot from running.
+    for (let round = 0; round < 4; round++) {
+      const bot = active()
+      if (!bot) return
+      if (status.hold.reason === 'paused' && !bot.paused) status = { ...status, hold: await release() }
+      else if (bot.paused && status.hold.reason === null)
+        status = { ...status, hold: await client.hold({ reason: 'paused' }) }
+      else break
+    }
+    if (!active()) return
     this.updateStatus(id, status)
     this.updateActive(id, { lifecycle: 'running', setup: botSetup('ready') })
   }

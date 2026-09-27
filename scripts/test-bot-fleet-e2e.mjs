@@ -296,6 +296,16 @@ async function instanceStatus(name) {
   ])
   return JSON.parse(output.stdout)
 }
+async function instanceProcess(name) {
+  const result = await docker([
+    'exec',
+    name,
+    'node',
+    '-e',
+    "const fs = require('node:fs'); const pids = fs.readdirSync('/proc').filter(id => /^\\d+$/.test(id)).filter(id => { try { return fs.readFileSync('/proc/' + id + '/cmdline', 'utf8').split('\\0')[1] === '/opt/maestrly/apps/desktop' } catch { return false } }); if (pids.length !== 1) throw new Error('Expected one Maestrly main process'); console.log(pids[0])",
+  ])
+  return Number(result.stdout.trim())
+}
 const slots = (status) => status.bots.map((item) => [item.botId, item.slot]).sort((a, b) => a[1] - b[1])
 const processRuns = async (name, pattern) =>
   (await docker(['exec', name, 'pgrep', '-f', pattern], { allowFailure: true })).code === 0
@@ -1927,6 +1937,54 @@ async function main() {
     'environment restart',
     `both bots back in ${timings.environmentRestartMs} ms with their conversations and slots 1 and 2; ` +
       'environment_restarted only for devices that ask'
+  )
+
+  // The entrypoint must recover a process crash without a gateway restart or a container replacement, reinstalling
+  // membership and current holds before any queued work can run.
+  await request('POST', '/v1/bots/' + scoutId + '/pause')
+  await request('POST', '/v1/bots/' + partnerId + '/takeover')
+  const beforeProcessCrash = await instanceStatus(containers[1])
+  const beforeProcessContainer = await containerState(containers[1])
+  const beforePid = await instanceProcess(containers[1])
+  await docker([
+    'exec',
+    containers[1],
+    'node',
+    '-e',
+    "process.kill(Number(process.argv[1]), 'SIGTERM')",
+    String(beforePid),
+  ])
+  const recovered = await poll(
+    'Maestrly process recovery with its pause and takeover',
+    async () => {
+      const state = await instanceStatus(containers[1])
+      const scout = state.bots.find((entry) => entry.botId === scoutId)
+      const partner = state.bots.find((entry) => entry.botId === partnerId)
+      return scout?.status.ready &&
+        partner?.status.ready &&
+        scout.status.hold.reason === 'paused' &&
+        partner.status.hold.reason === 'takeover' &&
+        (await instanceProcess(containers[1])) !== beforePid
+        ? state
+        : null
+    },
+    25000
+  )
+  assert.deepEqual(
+    recovered.bots.map((entry) => [entry.botId, entry.status.conversationId]).sort(),
+    beforeProcessCrash.bots.map((entry) => [entry.botId, entry.status.conversationId]).sort()
+  )
+  const afterProcessContainer = await containerState(containers[1])
+  assert.deepEqual(
+    [afterProcessContainer.id, afterProcessContainer.startedAt],
+    [beforeProcessContainer.id, beforeProcessContainer.startedAt]
+  )
+  await request('POST', '/v1/bots/' + partnerId + '/takeover/release', { note: null, continue: false })
+  await request('POST', '/v1/bots/' + scoutId + '/resume')
+  await answer(await send(partnerId, 'E2E-ALIVE tag=process-restart'), 'E2E-ALIVE-OK tag=process-restart')
+  pass(
+    'Maestrly process recovery',
+    'same container and conversations; pause and takeover reinstalled, then a new turn answered'
   )
 
   const devRoute = '/v1/environments/' + devEnvId

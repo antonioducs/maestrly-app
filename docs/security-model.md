@@ -202,8 +202,9 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   fallback assigns focus to a disabled window, keys are dropped until the owner
   clicks their screen. The shared display has no window-move, resize, maximize
   or cycling bindings; page-driven popup moves stay within the bot's area.
-  Bot popups suppress native JavaScript dialogs, including confirmations, so
-  they cannot block another screen. Each apps screen is a separate display
+  Bot browser pages answer JavaScript dialogs with their per-tab policy instead
+  of opening native windows. Popups suppress native dialogs, including confirmations,
+  so they cannot block another screen. Each apps screen is a separate display
   with its own input.
 - **Browsers.** The browser that bots drive with `browser_*` keeps one set of
   cookies and site logins for the whole environment. Programs on a bot's apps

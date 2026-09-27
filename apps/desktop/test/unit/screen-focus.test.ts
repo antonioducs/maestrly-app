@@ -218,9 +218,11 @@ import { setConversationScreen, type ScreenArea } from '../../src/main/conversat
 import {
   detach,
   disposeAll,
+  disposeConversation,
   focusFloatIfAny,
   getFloatWin,
   initFloatingManager,
+  reattach,
   setPinned,
 } from '../../src/main/floating-manager'
 import {
@@ -317,6 +319,22 @@ describe('the keyboard of the shared environment display', () => {
   beforeEach(() => {
     initDrawer(mainWindow as never)
     initFloatingManager(mainWindow as never)
+  })
+
+  it('keeps the bot browser in its tile when it is closed or docked, but still destroys it on uninstall', async () => {
+    const alpha = bot('bot-alpha', 1)
+    control(conversation('bot-alpha'))
+    const preventDefault = vi.fn()
+    alpha.window.emit('close', { preventDefault })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(alpha.window.destroyed).toBe(false)
+    expect(getFloatWin('bot-alpha', 'browser')).toBe(alpha.window)
+    reattach('bot-alpha', 'browser')
+    expect(alpha.window.destroyed).toBe(false)
+    expect(getFloatWin('bot-alpha', 'browser')).toBe(alpha.window)
+    disposeConversation('bot-alpha')
+    expect(alpha.window.destroyed).toBe(true)
   })
 
   it("keeps the owner's typing in the controlled bot's browser while another bot opens a popup", () => {

@@ -66,7 +66,9 @@ export class InstanceHoldManager {
         (reason === 'paused' && this.current.reason === 'takeover')
       )
         this.pausedAfterTakeover = true
-      if (reason === 'paused') this.current.reason = 'paused'
+      // A pause stops the bot, not the owner's control. Keep takeover as the visible hold and remember the pause
+      // underneath it, so giving the screen back returns to paused instead of dispatching work.
+      if (reason === 'takeover' || this.current.reason !== 'takeover') this.current.reason = reason
       this.onChange()
       await this.settling
       return this.state

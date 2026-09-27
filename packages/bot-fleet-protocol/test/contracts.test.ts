@@ -1045,6 +1045,8 @@ describe('environment contracts', () => {
     expect(fleetInstanceBotInstallSchema.parse(install).paused).toBeUndefined()
     expect(fleetInstanceBotInstallSchema.parse({ ...install, paused: true }).paused).toBe(true)
     expect(fleetInstanceBotInstallSchema.parse({ ...install, paused: false }).paused).toBe(false)
+    expect(fleetInstanceBotInstallSchema.parse(install).takeover).toBeUndefined()
+    expect(fleetInstanceBotInstallSchema.parse({ ...install, takeover: true }).takeover).toBe(true)
     for (const change of [
       { slot: 0 },
       { slot: 9 },
@@ -1052,6 +1054,7 @@ describe('environment contracts', () => {
       { gatewayToken: 'g'.repeat(15) },
       { gatewayToken: 'g'.repeat(201) },
       { paused: 'true' },
+      { takeover: 'true' },
     ])
       expect(fleetInstanceBotInstallSchema.safeParse({ ...install, ...change }).success, JSON.stringify(change)).toBe(
         false

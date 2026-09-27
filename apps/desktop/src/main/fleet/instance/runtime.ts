@@ -308,7 +308,8 @@ export class BotRuntime {
     this.holdManager = new InstanceHoldManager(
       () => {
         if (this.disposed) return
-        if (this.holdManager.state.reason === 'paused') writeBotPaused(this.botId, true)
+        if (this.holdManager.state.reason === 'paused' || this.holdManager.releaseKeepsPaused)
+          writeBotPaused(this.botId, true)
         else if (this.holdManager.state.state === 'none') writeBotPaused(this.botId, false)
         this.changed()
       },
@@ -582,6 +583,10 @@ export class BotRuntime {
     this.ready = true
     this.changed()
     void this.tick()
+  }
+  /** Stops dispatch immediately, before asynchronous cancellation and window cleanup during uninstall. */
+  deactivate(): void {
+    this.ready = false
   }
   private async refreshAccounts(force = false): Promise<void> {
     if (!force && Date.now() - this.accountCheckedAt < 10_000) return
@@ -1044,7 +1049,9 @@ export class BotRuntime {
         return
       this.applyProfile()
       const attachments = await this.queue.readAttachments(item)
+      this.turnAbort.signal.throwIfAborted()
       await this.queue.markStarted(item.id)
+      this.turnAbort.signal.throwIfAborted()
       const handle = await startExecutorChatTurn({
         conversationId: id,
         prompt: promptForInput(item.input),

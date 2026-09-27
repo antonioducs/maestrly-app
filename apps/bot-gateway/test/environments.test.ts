@@ -49,8 +49,8 @@ function lastIndex<T>(items: T[], test: (item: T) => boolean) {
   for (let index = items.length - 1; index >= 0; index--) if (test(items[index])) return index
   return -1
 }
-async function until(test: () => boolean) {
-  for (let i = 0; i < 300; i++) {
+async function until(test: () => boolean, attempts = 300) {
+  for (let i = 0; i < attempts; i++) {
     if (test()) return
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
@@ -58,6 +58,12 @@ async function until(test: () => boolean) {
 }
 type Hold = FleetInstanceStatus['hold']
 const noHold: Hold = { state: 'none', reason: null, since: null, interruptedTurn: false }
+const pausedHold = (): Hold => ({
+  state: 'held',
+  reason: 'paused',
+  since: new Date().toISOString(),
+  interruptedTurn: false,
+})
 function instanceStatus(botId: string, capabilities: string[], seq: number, hold: Hold): FleetInstanceStatus {
   return {
     capabilities,
@@ -79,7 +85,14 @@ function instanceStatus(botId: string, capabilities: string[], seq: number, hold
     lastEventSeq: seq,
   }
 }
-type Installed = { slot: number; gatewayToken: string | null; hold: Hold; profile: FleetInstanceProfile }
+/** `ready`: the bot may work, which a bot the instance recreated after restarting waits for its installation to allow. */
+type Installed = {
+  slot: number
+  gatewayToken: string | null
+  hold: Hold
+  profile: FleetInstanceProfile
+  ready: boolean
+}
 /**
  * A synthetic environment instance. With the `environments` capability it serves the environment routes and every bot
  * under `/v1/bots/:botId`; without it, it is a Maestrly from before environments: one bot on the unprefixed routes.
@@ -100,7 +113,14 @@ async function environmentInstance(environmentId: string, capable = true) {
   // An instance from before environments names no capability in its health check.
   let healthCapabilities = true
   let reportedEnvironmentId = environmentId
-  const statusOf = (botId: string) => instanceStatus(botId, capabilities, seq, installed.get(botId)?.hold ?? noHold)
+  // An instance from before the pause travelled with the installation answers it unheld.
+  let pausesOnInstall = true
+  /** Answers held back until the test lets them through, by method and path. */
+  const deferred = new Map<string, Promise<void>>()
+  const statusOf = (botId: string): FleetInstanceStatus => ({
+    ...instanceStatus(botId, capabilities, seq, installed.get(botId)?.hold ?? noHold),
+    ready: installed.get(botId)?.ready ?? true,
+  })
   const emit = (event: Record<string, unknown>) => {
     seq++
     const frame = { ...event, seq, at: new Date().toISOString() }
@@ -127,15 +147,24 @@ async function environmentInstance(environmentId: string, capable = true) {
     }
     const route = url.pathname + url.search
     requests.push({ method: req.method ?? '', path: route, body })
+    const gate = deferred.get(req.method + ' ' + route)
+    if (gate) {
+      deferred.delete(req.method + ' ' + route)
+      await gate
+    }
     const failure = failures.find((item) => item.method === req.method && item.path === route)
     if (failure?.transport === 'drop') return req.socket.destroy()
     if (failure?.transport === 'hang') return
     if (failure) return send(failure.status, { code: failure.code, message: 'Synthetic failure' })
     if (url.pathname === '/v1/events') {
-      subscriptions.push(Number(url.searchParams.get('since') ?? 0))
+      const since = Number(url.searchParams.get('since') ?? 0)
+      subscriptions.push(since)
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       streams.add(res)
       res.on('close', () => streams.delete(res))
+      // A cursor past the sequence (the instance restarted since) cannot be replayed.
+      const reset = { type: 'reset', botId: null, seq, at: new Date().toISOString() }
+      if (since > seq) res.write('id: ' + seq + '\ndata: ' + JSON.stringify(reset) + '\n\n')
       return
     }
     if (url.pathname === '/v1/health')
@@ -169,11 +198,18 @@ async function environmentInstance(environmentId: string, capable = true) {
                 code: 'CONFLICT',
                 message: 'Display slot ' + install.slot + ' is used by another bot.',
               })
+            const hold = installed.get(botId)?.hold ?? noHold
+            // Like an environment's Maestrly, it applies the pause it is installed with before the bot may work.
             installed.set(botId, {
               slot: install.slot,
               gatewayToken: install.gatewayToken,
-              hold: installed.get(botId)?.hold ?? noHold,
+              hold: install.takeover
+                ? { state: 'held', reason: 'takeover', since: new Date().toISOString(), interruptedTurn: false }
+                : install.paused && pausesOnInstall && hold.state === 'none'
+                  ? pausedHold()
+                  : hold,
               profile: install.profile,
+              ready: true,
             })
             return send(200, statusOf(botId))
           }
@@ -207,7 +243,7 @@ async function environmentInstance(environmentId: string, capable = true) {
           const profile = fleetInstanceProfileSchema.parse(body)
           const hold = installed.get(profile.botId)?.hold ?? noHold
           installed.clear()
-          installed.set(profile.botId, { slot: 1, gatewayToken: null, hold, profile })
+          installed.set(profile.botId, { slot: 1, gatewayToken: null, hold, profile, ready: true })
           return send(200, statusOf(profile.botId))
         }
         const current = single ? installed.get(single) : undefined
@@ -271,6 +307,27 @@ async function environmentInstance(environmentId: string, capable = true) {
     /** Makes the instance say it belongs to another environment. */
     reportAs(id: string) {
       reportedEnvironmentId = id
+    },
+    /**
+     * The environment's Maestrly restarts in its running container: its bots come back from its installed list unready
+     * and without the holds it kept in memory, until the gateway installs them again. Its sequence starts over at
+     * `nextSeq` (the events of recreating its bots), and its event streams break.
+     */
+    restart(nextSeq = 0) {
+      for (const item of installed.values()) Object.assign(item, { ready: false, hold: noHold })
+      seq = nextSeq
+      for (const res of streams) res.destroy()
+      streams.clear()
+    },
+    /** Answers installations without the pause they carry, as an instance from before that did. */
+    ignorePausedInstall() {
+      pausesOnInstall = false
+    },
+    /** Holds back the next answer to a request until `resume` is called. */
+    defer(method: string, path: string) {
+      let resume = () => {}
+      deferred.set(method + ' ' + path, new Promise<void>((resolve) => (resume = resolve)))
+      return { resume: () => resume() }
     },
     /** How long the gateway waits for each answer. */
     timeoutMs: 15000,
@@ -1458,5 +1515,161 @@ describe('environment screens', () => {
     expect(view.readyState).toBe(WebSocket.OPEN)
     await until(() => solo.upgrades.length > 0)
     expect(solo.upgrades).toEqual(['/v1/screen/view'])
+  })
+})
+
+describe('instance restarts', () => {
+  it('reinstalls a human takeover before the restarted bot can dispatch work', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    await until(() => work.subscriptions.length > 0)
+    await f.lifecycle.takeover(ads, 'one', 'Mac')
+    const requests = work.requests.length
+    work.restart(50)
+    await until(() => installRequests(work, requests).length > 0 && work.installed.get(ads)?.ready === true, 800)
+    const install = work.requests
+      .slice(requests)
+      .find((entry) => entry.method === 'PUT' && entry.path === '/v1/bots/' + ads)
+    expect(install?.body).toMatchObject({ takeover: true })
+    expect(work.installed.get(ads)?.hold).toMatchObject({ state: 'held', reason: 'takeover' })
+    await expect(f.lifecycle.releaseTakeover(ads, 'one', null, false)).resolves.toMatchObject({ state: 'none' })
+  }, 20000)
+
+  const installRequests = (fake: Fake, from: number) =>
+    fake.requests.slice(from).flatMap((item) => {
+      if (item.method !== 'PUT' || !item.path.startsWith('/v1/bots/')) return []
+      const body = fleetInstanceBotInstallSchema.parse(item.body)
+      return [[body.profile.botId, body.paused ?? false]]
+    })
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('installs its bots again, with their pause, when its Maestrly restarts in the running container', async () => {
+    const f = fixture()
+    const work = await f.instance('work'),
+      home = await f.instance('home')
+    const {
+      ids: [ads, scout],
+    } = await environment(f, 'Work', ['Ads', 'Scout'])
+    const {
+      ids: [cleo],
+    } = await environment(f, 'Home', ['Cleo'])
+    await f.lifecycle.pause(scout)
+    // The instance also reports a bot of another environment: it is never installed through this one.
+    work.installed.set(cleo, { ...home.installed.get(cleo)!, slot: 3 })
+    await until(() => work.subscriptions.length > 0)
+    for (let i = 0; i < 4; i++) work.emit({ type: 'status', botId: ads, status: work.statusOf(ads) })
+    work.emit({ type: 'status', botId: ads, status: { ...work.statusOf(ads), activity: { kind: 'thinking' } } })
+    await until(() => f.lifecycle.get(ads)?.activity?.kind === 'thinking')
+    const original = container(f, 'maestrly-env-work')!.id
+    const requests = work.requests.length,
+      subscriptions = work.subscriptions.length
+    // Its bots come back unready and unheld, and its sequence starts over below the gateway's cursor.
+    work.restart(2)
+    await until(() => f.lifecycle.get(ads)?.status === 'starting', 800)
+    await until(
+      () =>
+        installRequests(work, requests).length === 2 &&
+        f.lifecycle.get(ads)?.status === 'idle' &&
+        f.lifecycle.get(scout)?.status === 'paused',
+      800
+    )
+    expect(installRequests(work, requests)).toEqual([
+      [ads, false],
+      [scout, true],
+    ])
+    expect(work.installed.get(ads)).toMatchObject({ ready: true, hold: noHold })
+    expect(work.installed.get(scout)).toMatchObject({ ready: true, hold: { state: 'held', reason: 'paused' } })
+    expect(f.lifecycle.get(scout)).toMatchObject({ lifecycle: 'running', paused: true })
+    // The environment kept running in the same container, and the other environment's bot was left alone.
+    expect(container(f, 'maestrly-env-work')?.id).toBe(original)
+    expect(f.lifecycle.environment('work')?.lifecycle).toBe('running')
+    expect(work.requests.filter((item) => item.path.startsWith('/v1/bots/' + cleo))).toEqual([])
+    expect(work.installed.get(cleo)?.ready).toBe(false)
+    // Its bots work again, through the stream followed anew.
+    await until(() => work.subscriptions.length >= subscriptions + 2)
+    const turn = { state: 'running', startedAt: new Date().toISOString(), inputId: null }
+    work.emit({ type: 'status', botId: ads, status: { ...work.statusOf(ads), turn } })
+    await until(() => f.lifecycle.get(ads)?.status === 'working')
+    // An installation reports its bot unready for a moment: status events never install it again, and the restart,
+    // however many times it was noticed, installed each bot once.
+    work.emit({ type: 'status', botId: ads, status: { ...work.statusOf(ads), ready: false } })
+    work.emit({ type: 'status', botId: ads, status: work.statusOf(ads) })
+    await wait(1500)
+    expect(installRequests(work, requests)).toHaveLength(2)
+    expect(f.lifecycle.get(ads)?.status).toBe('idle')
+  }, 20000)
+
+  it('installs its bots again after a restart whose sequence already passed the cursor of the gateway', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    await until(() => work.subscriptions.length > 0)
+    const requests = work.requests.length
+    // Recreating its bots took the restarted instance past every event the gateway saw: no reset says it restarted.
+    work.restart(50)
+    await until(() => installRequests(work, requests).length > 0 && f.lifecycle.get(ads)?.status === 'idle', 800)
+    expect(installRequests(work, requests)).toEqual([[ads, false]])
+    expect(work.installed.get(ads)?.ready).toBe(true)
+  }, 20000)
+})
+
+describe('pauses during an installation', () => {
+  it('applies a pause that arrives while the installation releases an older one', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      environmentId,
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    const scout = f.lifecycle.create({ ...botInput('Scout'), environmentId }).id
+    // The instance still holds Scout paused from before: its installation releases that pause.
+    const previous = work.installed.get(ads)!
+    work.installed.set(scout, {
+      ...previous,
+      slot: 2,
+      hold: pausedHold(),
+      profile: { ...previous.profile, botId: scout, name: 'Scout' },
+      ready: false,
+    })
+    const release = work.defer('POST', '/v1/bots/' + scout + '/hold/release')
+    await until(() => work.requests.some((item) => item.path === '/v1/bots/' + scout + '/hold/release'))
+    // Not running yet, the bot only records the pause.
+    expect(f.lifecycle.get(scout)?.lifecycle).toBe('creating')
+    await f.lifecycle.pause(scout)
+    release.resume()
+    await running(f, scout)
+    expect(work.installed.get(scout)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    expect(f.lifecycle.statuses.get(scout)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    const published = f.events.flatMap((event) =>
+      event.type === 'bot.updated' && event.bot.id === scout ? [event.bot] : []
+    )
+    expect(published.at(-1)).toMatchObject({ lifecycle: 'running', paused: true, status: 'paused' })
+    // Resuming releases the pause the instance now holds.
+    await f.lifecycle.resume(scout)
+    expect(work.installed.get(scout)?.hold).toEqual(noHold)
+    expect(f.lifecycle.get(scout)).toMatchObject({ paused: false, status: 'idle' })
+  })
+
+  it('lifts a pause that is lifted while the installation applies it', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const { environmentId } = await environment(f, 'Work', ['Ads'])
+    // An instance from before the pause travelled with the installation answers it unheld: the gateway holds the bot.
+    work.ignorePausedInstall()
+    const scout = f.lifecycle.create({ ...botInput('Scout'), environmentId }).id
+    const hold = work.defer('POST', '/v1/bots/' + scout + '/hold')
+    await f.lifecycle.pause(scout)
+    await until(() => work.requests.some((item) => item.path === '/v1/bots/' + scout + '/hold'))
+    await f.lifecycle.resume(scout)
+    hold.resume()
+    await running(f, scout)
+    expect(work.installed.get(scout)?.hold).toEqual(noHold)
+    expect(f.lifecycle.statuses.get(scout)?.hold).toEqual(noHold)
+    expect(f.lifecycle.get(scout)).toMatchObject({ paused: false, status: 'idle' })
   })
 })

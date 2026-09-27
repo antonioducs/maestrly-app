@@ -33,6 +33,7 @@ import {
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { writeBotPaused } from '../../src/main/fleet/instance/registry'
+import { InstanceInputQueue } from '../../src/main/fleet/instance/queue'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
 import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
@@ -203,10 +204,19 @@ describe('bot environment registry', () => {
     expect((await restarted.runtime.bot('alpha').status()).ready).toBe(false)
     expect((await restarted.runtime.bot('alpha').status()).queue).toHaveLength(1)
     // If still a member, its current gateway pause is installed before any work is allowed.
-    await restarted.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA, paused: true })
+    await restarted.runtime.installBot({
+      profile: configured,
+      slot: 1,
+      gatewayToken: tokenA,
+      paused: true,
+      takeover: true,
+    })
     await settle(100)
     expect(start).not.toHaveBeenCalled()
+    expect((await restarted.runtime.bot('alpha').status()).hold.reason).toBe('takeover')
+    await restarted.runtime.bot('alpha').release({ note: null, durationMs: null, continue: false })
     expect((await restarted.runtime.bot('alpha').status()).hold.reason).toBe('paused')
+    expect(start).not.toHaveBeenCalled()
     await restarted.runtime.bot('alpha').release({ note: null, durationMs: null, continue: false })
     await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
   })
@@ -484,6 +494,100 @@ describe('bot environment registry', () => {
     expect(getAppSetting('fleet.instance.bots.alpha.paused')).toBeNull()
     expect((await b.status()).queue).toHaveLength(1)
     await expect(runtime.uninstallBot('alpha', { purge: true })).resolves.toBeUndefined()
+  })
+
+  it('does not start the next queued input while uninstall is cancelling and closing the conversation', async () => {
+    const setup = environment()
+    await setup.runtime.start()
+    setup.deps.closeConversation.mockImplementation(async () => {
+      await settle(200)
+    })
+    const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
+      const done = new Promise<{ status: 'cancelled'; assistantMessageId: null }>((resolve) => {
+        input.signal.addEventListener(
+          'abort',
+          () => {
+            input.slot?.release()
+            resolve({ status: 'cancelled', assistantMessageId: null })
+          },
+          { once: true }
+        )
+      })
+      return {
+        executionId: input.conversationId,
+        conversationId: input.conversationId,
+        assistantMessageId: () => null,
+        cancel: () => {},
+        done,
+      } as never
+    })
+    const configured = profile('alpha', 'Alpha', {
+      compaction: {
+        providerId: model.providerId,
+        modelId: model.modelId,
+        reasoning: null,
+        fastMode: false,
+        intervalTokens: 100_000,
+      },
+    })
+    await setup.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    const alpha = setup.runtime.bot('alpha')
+    await alpha.input({ idempotencyKey: randomUUID(), source: 'owner', text: 'First task', attachments: [] })
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+    await alpha.input({ idempotencyKey: randomUUID(), source: 'owner', text: 'Leave this queued', attachments: [] })
+    await setup.runtime.uninstallBot('alpha', { purge: false })
+    expect(start).toHaveBeenCalledOnce()
+    expect((await alpha.status()).queue).toHaveLength(1)
+  })
+
+  it('keeps an input queued when uninstall interrupts attachment loading before the provider starts', async () => {
+    const setup = environment()
+    await setup.runtime.start()
+    let continueReading!: () => void
+    let reading!: () => void
+    const entered = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      continueReading = resolve
+    })
+    vi.spyOn(InstanceInputQueue.prototype, 'readAttachments').mockImplementation(async () => {
+      reading()
+      await pending
+      return []
+    })
+    const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
+      input.slot?.release()
+      return {
+        executionId: input.conversationId,
+        conversationId: input.conversationId,
+        assistantMessageId: () => null,
+        cancel: () => {},
+        done: Promise.resolve({ status: 'cancelled', assistantMessageId: null }),
+      } as never
+    })
+    await setup.runtime.installBot({
+      profile: profile('alpha', 'Alpha', {
+        compaction: {
+          providerId: model.providerId,
+          modelId: model.modelId,
+          reasoning: null,
+          fastMode: false,
+          intervalTokens: 100_000,
+        },
+      }),
+      slot: 1,
+      gatewayToken: tokenA,
+    })
+    const alpha = setup.runtime.bot('alpha')
+    await alpha.input({ idempotencyKey: randomUUID(), source: 'owner', text: 'Keep this input', attachments: [] })
+    await entered
+    const uninstall = setup.runtime.uninstallBot('alpha', { purge: false })
+    await settle(30)
+    continueReading()
+    await uninstall
+    expect(start).not.toHaveBeenCalled()
+    expect((await alpha.status()).queue).toHaveLength(1)
   })
 
   it('stops the running turn of a purged bot and writes nothing of it back afterwards', async () => {

@@ -50,6 +50,17 @@ type WindowOpenHandler = Parameters<WebContents['setWindowOpenHandler']>[0]
 let popupBrowserRelayout: ((convId: string) => void) | null = null
 const oauthOwnerScopeByWindow = new Map<BrowserWindow, string>()
 const browserCaptureTails = new WeakMap<WebContents, Promise<void>>()
+const browserDialogReady = new WeakMap<WebContents, Promise<void>>()
+
+/** Bot pages load only once their nonblocking dialog policy is installed. Native dialogs are disabled from creation. */
+function loadBrowserUrl(wc: WebContents, url: string): void {
+  const load = () => {
+    if (!wc.isDestroyed()) void wc.loadURL(url).catch(() => {})
+  }
+  const ready = browserDialogReady.get(wc)
+  if (ready) void ready.then(load)
+  else load()
+}
 
 function enqueueBrowserCapture<T>(wc: WebContents, operation: () => Promise<T>): Promise<T> {
   const previous = browserCaptureTails.get(wc) ?? Promise.resolve()
@@ -423,7 +434,7 @@ export function hardenBrowserSession(): void {
 function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebContentsView {
   const resourceId = tab.id
   const v = new WebContentsView({
-    webPreferences: { partition: BROWSER_PARTITION },
+    webPreferences: { partition: BROWSER_PARTITION, ...(isBotMode() ? { disableDialogs: true } : {}) },
   })
   v.setBackgroundColor('#0A0A0B')
   v.setBounds(OFFSCREEN)
@@ -449,7 +460,18 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   })
   // Attach CDP early; Page/DevTools coexist while Runtime/Log/Network capture follows activity leases and
   // tool demand.
-  attachToView(wc)
+  const dialogs = attachToView(wc, { nativeDialogsDisabled: isBotMode() })
+  if (isBotMode()) {
+    // Runtime.evaluate needs a renderer before it can install the current-document override. Bootstrap only an empty
+    // document; waiting for CDP before creating that renderer would deadlock the first real navigation.
+    const blank = wc.loadURL('about:blank')
+    browserDialogReady.set(
+      wc,
+      Promise.all([blank, dialogs])
+        .then(() => attachToView(wc, { nativeDialogsDisabled: true }))
+        .catch(() => undefined)
+    )
+  }
   attachHotkeyCapture(wc) // #328: capture shortcuts while browser content has focus
   attachMacMouseNavigation(wc, (direction) => {
     if (direction === 'back') browserBack(convId)
@@ -655,7 +677,7 @@ function materializeBrowserTab(convId: string, tab: BrowserTab): WebContentsView
   tab.url = normalizeUrl(tab.url || 'https://www.google.com')
   touchBrowserTab(tab)
   registerBrowserTabReclaimable(convId, tab)
-  void tab.view.webContents.loadURL(tab.url)
+  loadBrowserUrl(tab.view.webContents, tab.url)
   scheduleColdBrowserEviction()
   return tab.view
 }
@@ -815,7 +837,7 @@ export function navigateBrowser(convId: string, input: string): void {
   touchBrowserTab(active)
   scheduleColdBrowserEviction()
   const wc = active.view.webContents
-  wc.loadURL(normalizeUrl(input))
+  loadBrowserUrl(wc, normalizeUrl(input))
 }
 export function browserBack(convId: string): void {
   const d = getDrawer(convId)

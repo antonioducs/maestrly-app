@@ -51,7 +51,7 @@ Each bot is told which other bots share its environment and that its home folder
 
 Each bot has two screen areas, shown on the Mac with a **Browser** | **Apps** switch:
 
-- **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Browser popups, such as sign-in windows, open inside the bot's area. Native JavaScript dialogs in these popups are suppressed so they cannot interrupt another screen; native confirmations are canceled.
+- **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Browser popups, such as sign-in windows, open inside the bot's area. The main page answers JavaScript dialogs using the bot’s automatic dialog policy, without opening native windows. Native dialogs in popups are suppressed so they cannot interrupt another screen; popup confirmations are canceled.
 - **Apps** is the bot's own Linux desktop. Its `computer_*` tools, its shells, and the programs it starts use this display. Its `BROWSER` opens Chromium with a separate profile for that bot, so these windows open on the right screen; that Chromium profile does not share the cookies of the **Browser** area.
 
 MCP `stdio` servers belong to the environment and do not receive a bot's display, session bus, or `BROWSER`; neither do GitHub Copilot and Cursor runtimes.
@@ -143,7 +143,7 @@ To remove a Mac's access, revoke its device or **Disconnect** it in Settings.
 
 **Archive a bot** from its **Settings** tab. This archives only that bot: its environment's Maestrly uninstalls it and stops its screens, and its slot becomes free. Its conversation, memory, and files stay in the environment's home volume. Its routines, background compaction, and memory extraction stop until it is restored. Late replies cannot add memories or activate summaries; model usage already incurred can still be recorded. The environment and its other bots keep running. An environment keeps running, and using memory, even after its last bot is archived; stop or archive the environment to free that memory.
 
-After an environment restarts, its bots wait for the gateway to confirm membership and pause state before processing queued work. A bot archived or paused while the environment was stopped cannot resume its old queue during startup.
+After an environment restarts, its bots wait for the gateway to confirm membership, pause and any active takeover before processing queued work. The gateway also repeats this installation automatically when Maestrly restarts inside the same container. A bot archived or paused while the environment was stopped cannot resume its old queue during startup.
 
 **Archive an environment** from its environment view. This stops and removes its container, keeps its home volume, and archives every bot in it. An archived environment uses no memory, and its bots' routines do not run.
 
