@@ -37,19 +37,22 @@ Both are deleted with their conversation. `memory_consolidation_state` tracks
 new automatic entries and the last consolidation per space. Search indexes and
 embeddings remain rebuildable caches; back up the profile for authoritative data.
 
-The [bot gateway](bot-fleet.md#security-and-data) database is at schema v6.
+The [bot gateway](bot-fleet.md#security-and-data) database is at schema v7.
 Schema v5 added `owner_memories`, `routine_runs` and
 `meta.owner_memory_revision`. Schema v6 adds `environments` and
 `environment_secrets`, gives each bot an `environment_id` and display `slot`,
 and adds a nullable `environment_id` to owner memory (null for global entries)
 and activity. The migration turns every bot into an environment of one, in one
-transaction with integrity and foreign-key checks. Owner memory survives bot
+transaction with integrity and foreign-key checks. Schema v7 adds
+`environments.compaction_json`, the default compaction model of an
+environment's bots without one of their own (`bots.compaction_json` is null);
+the migration seeds it from each environment's bots in the same transaction. Owner memory survives bot
 deletion; entries that belong to an environment are deleted with that
 environment. Routine runs are deleted with their routine or bot. Each bot's own
 memory lives in its environment's desktop profile inside the environment's
 persistent home volume. Back up both gateway data and environment homes. A
 gateway binary refuses a database newer than its supported schema; an older
-gateway cannot open v6 unless it supports v6. Downgrade by restoring a matching
+gateway cannot open v7 unless it supports v7. Downgrade by restoring a matching
 backup.
 
 ## MCP configuration

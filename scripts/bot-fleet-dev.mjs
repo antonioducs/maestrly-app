@@ -172,7 +172,8 @@ async function readRecords(file) {
   try {
     const version = Number(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value)
     const record = (row, container, volume) => ({ id: String(row.id), container, volume, createdAt: row.created_at })
-    if (version === 6)
+    // Schema 7 only adds each environment's default compaction model.
+    if (version === 6 || version === 7)
       return db
         .prepare('SELECT id, container_name, volume_name, created_at FROM environments')
         .all()

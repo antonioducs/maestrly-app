@@ -96,7 +96,8 @@ function otherFleets() {
 }
 /**
  * Writes a gateway data directory whose rows are still only in the write-ahead log, as a gateway that stopped without
- * a checkpoint leaves it. Schema 6 records environments; older schemas record bots, whose names the gateway derives.
+ * a checkpoint leaves it. Schemas 6 and 7 record environments (7 with their default compaction model); older schemas
+ * record bots, whose names the gateway derives.
  */
 function gatewayData(directory, schema, rows) {
   const data = path.join(directory, 'gateway-data')
@@ -107,12 +108,13 @@ function gatewayData(directory, schema, rows) {
   db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0')
   db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
   db.prepare("INSERT INTO meta(key,value) VALUES('schema_version',?)").run(String(schema))
-  if (schema === 6) {
+  if (schema === 6 || schema === 7) {
     db.exec(
       'CREATE TABLE environments (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT NOT NULL, setup_json TEXT NOT NULL, container_name TEXT NOT NULL UNIQUE, volume_name TEXT NOT NULL UNIQUE, memory_limit_bytes INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT)'
     )
+    if (schema === 7) db.exec('ALTER TABLE environments ADD COLUMN compaction_json TEXT')
     const insert = db.prepare(
-      "INSERT INTO environments VALUES(?, ?, ?, '{}', ?, ?, NULL, ?, ?, CASE WHEN ? = 'archived' THEN ? END)"
+      "INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,created_at,updated_at,archived_at) VALUES(?, ?, ?, '{}', ?, ?, NULL, ?, ?, CASE WHEN ? = 'archived' THEN ? END)"
     )
     for (const row of rows)
       insert.run(
@@ -259,6 +261,33 @@ test('down removes every environment of the dev fleet, archived ones included, w
   assert.deepEqual(result.temporary, [], 'the copy of the gateway database was not deleted')
   for (const name of ['maestrly-bot-dev', 'maestrly-env-notes', 'maestrly-env-orphan-home', 'maestrly-env-lab-home'])
     assert.match(result.stdout, new RegExp(name))
+})
+
+test('down removes the environments a schema 7 gateway recorded, as it does for schema 6', { skip }, async () => {
+  const result = await down(async (directory) => ({
+    fleet: { port: await closedPort(), token: 'dev-token', bots: ['scout'] },
+    docker: combine(otherFleets(), {
+      containers: [
+        gateway(
+          project,
+          devNetwork,
+          gatewayData(directory, 7, [
+            { id: 'scout', container: 'maestrly-env-scout', lifecycle: 'running' },
+            { id: 'lab', container: 'maestrly-env-lab', lifecycle: 'archived' },
+          ])
+        ),
+        environment('maestrly-env-scout', 'scout', devNetwork),
+      ],
+      volumes: [home('maestrly-env-scout-home', 'scout'), home('maestrly-env-lab-home', 'lab'), composeVolume(project)],
+      networks: [composeNetwork(project, devNetwork)],
+    }),
+  }))
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(names(result.docker), names(otherFleets()))
+  assertOthersUntouched(result)
+  assert.equal(result.fleetKept, false)
+  assert.deepEqual(result.temporary, [], 'the copy of the gateway database was not deleted')
+  for (const name of ['maestrly-env-scout', 'maestrly-env-lab-home']) assert.match(result.stdout, new RegExp(name))
 })
 
 test('down removes the bots of a gateway from before environments, archived ones included', { skip }, async () => {

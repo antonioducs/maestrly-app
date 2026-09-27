@@ -888,19 +888,30 @@ async function main() {
       state.compactionState?.problem === 'missing'
     )
   })
-  await request('PATCH', '/v1/bots/' + scoutId, {
-    compaction: {
-      providerId: selection.providerId,
-      modelId: selection.modelId,
-      reasoning: null,
-      fastMode: false,
-      intervalTokens: 100000,
-    },
-  })
+  const scoutDefault = {
+    providerId: selection.providerId,
+    modelId: selection.modelId,
+    reasoning: null,
+    fastMode: false,
+    intervalTokens: 100000,
+  }
+  await request('PATCH', '/v1/bots/' + scoutId, { compaction: scoutDefault })
   await poll('Scout compaction ready', async () => {
     const state = await bot(scoutId)
     return state.compactionState?.configured === true && state.status !== 'setup'
   })
+  // Scout's environment had no default: Scout's first model became it, and Scout uses it from there.
+  assert.deepEqual((await request('GET', '/v1/environments/' + scoutEnvId)).compaction, scoutDefault)
+  assert.equal((await bot(scoutId)).compactionSource, 'environment')
+  assert.equal(
+    (
+      await poll('Scout default compaction event', () =>
+        events.findLast((event) => event.type === 'environment.updated' && event.environment.id === scoutEnvId)
+      )
+    ).environment.compaction?.modelId,
+    selection.modelId
+  )
+  pass('environment default compaction', `Scout's first model became the default of ${scoutEnvId}`)
   const conversationCall = (op, args = []) =>
     request('POST', '/v1/bots/' + scoutId + '/conversation/call', { op, args })
   const initialTools = (await conversationCall('chatGetConvTools')).result
@@ -1337,8 +1348,8 @@ async function main() {
   await request('DELETE', '/v1/bots/' + scoutId + '/routines/' + botRoutine.id, undefined, { status: 204 })
   pass('bot-created routine', botRoutine.id + ' interval and activity; owner deleted it')
 
-  // A second bot joins Scout's environment: no new container, the environment's accounts, skills and MCP servers at
-  // once, and a model selection and compaction of its own to choose.
+  // A second bot joins Scout's environment: no new container, the environment's accounts, skills and MCP servers and
+  // its default compaction model at once, and a model selection of its own to choose.
   const containersBeforeJoin = await ownContainers()
   const scoutContainer = await containerState(containers[1])
   const joinStarted = Date.now()
@@ -1389,14 +1400,13 @@ async function main() {
   }
   assert.ok((await request('GET', environmentRoute + '/accounts')).apiKeys.some((item) => item.name === 'E2E Model'))
   assert.equal(partner.selection, null)
-  assert.equal(partner.compaction, null)
-  await poll('Partner needs compaction model', async () => {
+  // Partner compacts with its environment's default from the start: it never waits for a compaction model.
+  assert.equal(partner.compactionSource, 'environment')
+  assert.deepEqual(partner.compaction, scoutDefault)
+  await poll('Partner inherits the default compaction model', async () => {
     const state = await bot(partnerId)
     return (
-      state.status === 'setup' &&
-      state.activity?.kind === 'setup' &&
-      state.activity.need === 'compaction' &&
-      state.compactionState?.problem === 'missing'
+      state.compactionSource === 'environment' && state.compactionState?.configured === true && state.status !== 'setup'
     )
   })
   // The environment's Maestrly keeps each bot's own choice: none for Partner yet, Scout's own for Scout.
@@ -1417,16 +1427,38 @@ async function main() {
     fastMode: false,
   }
   await request('PATCH', '/v1/bots/' + partnerId, { selection: partnerChoice })
+  // With a default in place, Partner's model is its own.
   await request('PATCH', '/v1/bots/' + partnerId, { compaction: { ...partnerChoice, intervalTokens: 100000 } })
   await poll('Partner compaction ready', async () => {
     const state = await bot(partnerId)
-    return state.compactionState?.configured === true && state.status !== 'setup'
+    return state.compactionSource === 'bot' && state.compactionState?.configured === true && state.status !== 'setup'
   })
+  assert.deepEqual((await request('GET', environmentRoute)).compaction, scoutDefault)
   assert.equal((await request('GET', '/v1/bots/' + partnerId + '/selections')).current?.modelId, 'e2e-model-b')
   assert.equal((await request('GET', '/v1/bots/' + scoutId + '/selections')).current?.modelId, selection.modelId)
   const scoutAfterJoin = await bot(scoutId)
   assert.equal(scoutAfterJoin.selection?.modelId, selection.modelId)
   assert.equal(scoutAfterJoin.compaction?.intervalTokens, 100000)
+  // A new default reaches the bot that inherits it, never the one with its own model.
+  const retuned = await request('PATCH', environmentRoute, { compaction: { ...scoutDefault, intervalTokens: 120000 } })
+  assert.equal(retuned.compaction?.intervalTokens, 120000)
+  const scoutRetuned = await poll('Scout takes the new default', async () => {
+    const state = await bot(scoutId)
+    return state.compaction?.intervalTokens === 120000 && state.compactionState?.configured === true && state
+  })
+  assert.equal(scoutRetuned.compactionSource, 'environment')
+  const partnerKept = await bot(partnerId)
+  assert.deepEqual(
+    [partnerKept.compactionSource, partnerKept.compaction?.modelId, partnerKept.compaction?.intervalTokens],
+    ['bot', 'e2e-model-b', 100000]
+  )
+  assert.equal(partnerKept.compactionState?.configured, true)
+  await request('PATCH', environmentRoute, { compaction: scoutDefault })
+  await poll(
+    'Scout back on the previous default',
+    async () => (await bot(scoutId)).compaction?.intervalTokens === 100000
+  )
+  pass('environment default compaction change', 'Scout (inherits) took 120000 tokens and back; Partner kept its own')
   // Older Macs start, stop and restart bots; a shared bot's environment is restarted instead.
   for (const [id, action] of [
     [scoutId, 'restart'],
@@ -2044,6 +2076,9 @@ async function main() {
   }
   await request('PATCH', '/v1/bots/' + devId, { selection: devChoice })
   await request('PATCH', '/v1/bots/' + devId, { compaction: { ...devChoice, intervalTokens: 100000 } })
+  // Dev's own environment had no default either: Dev's model became it.
+  assert.deepEqual((await request('GET', devRoute)).compaction, { ...devChoice, intervalTokens: 100000 })
+  assert.equal((await bot(devId)).compactionSource, 'environment')
   await poll(
     'Dev ready and done with its queue',
     async () => {
