@@ -172,6 +172,65 @@ describe('environment compaction defaults', () => {
     expect(await bot(h, 'test')).toMatchObject({ compaction: z, compactionSource: 'environment', lifecycle: 'running' })
   })
 
+  it("sends a bot its own model when a sibling's model became the default while both waited", async () => {
+    const h = await harness(Date.now, { environments: true })
+    const scout = await sibling(h, 'Scout')
+    await json(await h.request('POST', '/v1/environments/test/stop'))
+    await until(() => h.lifecycle.environment('test')?.lifecycle === 'stopped')
+    const x = model('model-x'),
+      y = model('model-y')
+    // Both changes wait for the start; the first one makes its model the default and gives it to Scout meanwhile.
+    const started = h.lifecycle.startEnvironment('test')
+    const [first, second] = await Promise.all([
+      h.lifecycle.patch('test', { compaction: x }),
+      h.lifecycle.patch(scout, { compaction: y }),
+    ])
+    await started
+    expect(first).toMatchObject({ compaction: x, compactionSource: 'environment' })
+    expect(second).toMatchObject({ compaction: y, compactionSource: 'bot' })
+    expect(await environment(h)).toMatchObject({ compaction: x })
+    expect(installed(h, 'test')?.profile.compaction).toEqual(x)
+    expect(installed(h, scout)?.profile.compaction).toEqual(y)
+  })
+
+  it('applies default changes in the order the owner made them while the environment is busy', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const x = model('model-x'),
+      z = model('model-z')
+    await patchEnvironment(h, { compaction: x })
+    await json(await h.request('POST', '/v1/environments/test/stop'))
+    await until(() => h.lifecycle.environment('test')?.lifecycle === 'stopped')
+    const started = h.lifecycle.startEnvironment('test')
+    // The second change goes back to the stored default: it still comes after the first one.
+    const changes = Promise.all([
+      h.lifecycle.patchEnvironment('test', { compaction: z }),
+      h.lifecycle.patchEnvironment('test', { compaction: x }),
+    ])
+    await started
+    const [, last] = await changes
+    expect(last.compaction).toEqual(x)
+    expect(h.store.getEnvironment('test')?.compaction).toEqual(x)
+    expect(installed(h, 'test')?.profile.compaction).toEqual(x)
+  })
+
+  it('leaves the other bots to a later reconcile once the instance cannot be reached', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const scout = await sibling(h, 'Scout'),
+      helper = await sibling(h, 'Helper')
+    await patchEnvironment(h, { compaction: model('model-x') })
+    const z = model('model-z')
+    const attempts = h.instance.control.installAttempts
+    h.instance.control.installDrops = 1
+    expect(await patchEnvironment(h, { compaction: z })).toMatchObject({ compaction: z })
+    expect(h.instance.control.installAttempts).toBe(attempts + 1)
+    await until(
+      () => ['test', scout, helper].every((id) => installed(h, id)?.profile.compaction?.modelId === 'model-z'),
+      500
+    )
+    for (const id of ['test', scout, helper])
+      expect(await bot(h, id)).toMatchObject({ compaction: z, compactionSource: 'environment', lifecycle: 'running' })
+  })
+
   it('lists the models of a running environment whose instance can', async () => {
     const h = await harness(Date.now, { environments: true, compaction: true })
     expect(await json(await h.request('GET', '/v1/environments/test/selections'))).toEqual({

@@ -61,8 +61,11 @@ async function fake(environments: boolean, compaction = false) {
   const conversationCalls: unknown[] = []
   const memoryRequests: unknown[] = []
   const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
-  /** Installations to refuse, the next ones first, with a synthetic internal error. */
-  const control = { installFailures: 0 }
+  /**
+   * Installations to refuse with a synthetic internal error, or to drop (the connection closes unanswered), the next
+   * ones first; and how many installations were asked for, answered or not.
+   */
+  const control = { installFailures: 0, installDrops: 0, installAttempts: 0 }
   const selectionOptions = [
     {
       id: 'prov_test::model-a',
@@ -197,6 +200,11 @@ async function fake(environments: boolean, compaction = false) {
       const member = environments ? /^\/v1\/bots\/([^/]+)$/.exec(url.pathname) : null
       if (member && req.method === 'PUT') {
         const install = fleetInstanceBotInstallSchema.parse(body)
+        control.installAttempts++
+        if (control.installDrops > 0) {
+          control.installDrops--
+          return req.socket.destroy()
+        }
         if (control.installFailures > 0) {
           control.installFailures--
           return send(500, { code: 'INTERNAL', message: 'Synthetic failure' })
