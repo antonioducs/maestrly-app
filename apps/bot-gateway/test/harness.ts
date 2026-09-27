@@ -8,6 +8,8 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_INSTANCE_ROUTES,
   type FleetImportResults,
+  type FleetInstanceBotInstall,
+  fleetInstanceBotInstallSchema,
   fleetInstanceProfileSchema,
   fleetInstanceInputSchema,
   fleetInstanceHoldRequestSchema,
@@ -36,8 +38,16 @@ afterEach(async () => {
   }
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
-async function fake() {
+/**
+ * A synthetic bot instance. With `environments` it hosts several bots like an environment's Maestrly: it installs
+ * and uninstalls them and serves each one's routes under `/v1/bots/:botId`, recorded in `botRequests`.
+ */
+async function fake(environments: boolean) {
   let account: { id: string; label: string } | null = null
+  const installed = new Map<string, { slot: number; gatewayToken: string }>()
+  const installs: FleetInstanceBotInstall[] = []
+  const uninstalls: Array<{ botId: string; purge: boolean }> = []
+  const botRequests: Array<{ botId: string; method: string; path: string }> = []
   let hold: {
     state: 'none' | 'held'
     reason: 'takeover' | 'paused' | null
@@ -50,7 +60,7 @@ async function fake() {
   const memoryRequests: unknown[] = []
   const provisioningRequests: Array<{ method: string; path: string; body: unknown }> = []
   const provisioning = {
-    capabilities: ['provisioning'],
+    capabilities: environments ? ['provisioning', 'environments'] : ['provisioning'],
     results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
     skill: { name: 'x', outcome: 'added' },
     failure: null as { code: string; message: string } | null,
@@ -107,6 +117,16 @@ async function fake() {
     }
     if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' || req.headers.authorization !== 'Bearer control')
       return send(401, { code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    // A bot's route of an environment instance is the route a single-bot instance serves, under /v1/bots/:botId.
+    const scoped = environments ? /^\/v1\/bots\/([^/?]+)(\/[^?]*)(\?.*)?$/.exec(req.url ?? '') : null
+    if (scoped) {
+      botRequests.push({
+        botId: decodeURIComponent(scoped[1]),
+        method: req.method ?? '',
+        path: scoped[2] + (scoped[3] ?? ''),
+      })
+      req.url = '/v1' + scoped[2] + (scoped[3] ?? '')
+    }
     if (req.url?.startsWith('/v1/events')) {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       return
@@ -142,6 +162,33 @@ async function fake() {
     }
     try {
       const url = new URL(req.url!, 'http://instance')
+      if (environments && url.pathname === '/v1/environment/status')
+        return send(200, {
+          environmentId: null,
+          capabilities: provisioning.capabilities,
+          appVersion: '1.0',
+          protocol: 1,
+          ready: true,
+          bots: [...installed].map(([botId, item]) => ({
+            botId,
+            slot: item.slot,
+            status: { ...status, profile: { botId, name: botId } },
+          })),
+        })
+      const member = environments ? /^\/v1\/bots\/([^/]+)$/.exec(url.pathname) : null
+      if (member && req.method === 'PUT') {
+        const install = fleetInstanceBotInstallSchema.parse(body)
+        installed.set(decodeURIComponent(member[1]), { slot: install.slot, gatewayToken: install.gatewayToken })
+        installs.push(install)
+        return send(200, { ...status, profile: { botId: install.profile.botId, name: install.profile.name } })
+      }
+      if (member && req.method === 'DELETE') {
+        const botId = decodeURIComponent(member[1])
+        uninstalls.push({ botId, purge: url.searchParams.get('purge') === '1' })
+        installed.delete(botId)
+        res.writeHead(204)
+        return res.end()
+      }
       const provisioningKey = provisioningKeys.find((key) => {
         const route = FLEET_INSTANCE_ROUTES[key]
         return (
@@ -196,7 +243,14 @@ async function fake() {
           return res.end()
         }
       }
-      if (req.url === '/v1/health') return send(200, { ok: true, appVersion: '1.0', protocol: 1, ready: true })
+      if (req.url === '/v1/health')
+        return send(200, {
+          ok: true,
+          appVersion: '1.0',
+          protocol: 1,
+          ready: true,
+          ...(environments ? { capabilities: provisioning.capabilities } : {}),
+        })
       if (req.url === '/v1/status') return send(200, status)
       if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {
         const input = body as { name: string }
@@ -256,11 +310,19 @@ async function fake() {
     memoryRequests,
     provisioning,
     provisioningRequests,
+    installed,
+    installs,
+    uninstalls,
+    botRequests,
   }
 }
 
-export async function harness(now: () => number = Date.now) {
-  const instance = await fake(),
+/**
+ * A gateway with one running bot, `test`, alone in its environment. By default its instance predates environments;
+ * with `environments` it is an environment instance (every environment of the harness shares it).
+ */
+export async function harness(now: () => number = Date.now, options: { environments?: boolean } = {}) {
+  const instance = await fake(options.environments === true),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
   const cfg = loadConfig({

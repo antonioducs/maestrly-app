@@ -1,12 +1,22 @@
 import {
   deriveBotId,
   FLEET_BOT_ENV,
+  FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_PORTS,
   type FleetActivityEntry,
   type FleetArchivedBot,
+  type FleetArchivedEnvironment,
   type FleetBot,
+  type FleetBotSetup,
   type FleetCreateBotRequest,
+  type FleetEnvironment,
+  type FleetEnvironmentSetup,
+  type FleetErrorCode,
   type FleetGatewayEvent,
+  type FleetInstanceEvent,
+  type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetLifecycle,
   type FleetPatchBotRequest,
   type FleetTakeoverState,
 } from '@maestrly/bot-fleet-protocol'
@@ -16,29 +26,63 @@ import { type ContainerInfo, DockerError, type DockerDriver, type ContainerStats
 import { GatewayError } from './errors.js'
 import { InstanceClient } from './instance.js'
 import { Logger } from './logger.js'
-import type { Store } from './store.js'
+import type { EnvironmentChanges, Store, StoredEnvironment } from './store.js'
 
 const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
-const botLabel = 'org.maestrly.fleet.bot-id'
+const environmentLabel = 'org.maestrly.fleet.environment-id'
+/** The label of containers created before environments: their bot's id, which their environment took over. */
+const legacyBotLabel = 'org.maestrly.fleet.bot-id'
 const now = () => new Date().toISOString()
-const containerName = (id: string) => 'maestrly-bot-' + id
-/** The bot's `/home/bot`: its accounts, logins, conversation and files. Archiving keeps it. */
-const homeVolume = (id: string) => containerName(id) + '-home'
-export type InstanceFactory = (botId: string, token: string) => InstanceClient
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/** The container and home volume of an environment created with environments; migrated ones keep their bot's names. */
+export const environmentContainerName = (id: string) => 'maestrly-env-' + id
+export const environmentVolumeName = (id: string) => environmentContainerName(id) + '-home'
+export const RESTART_TO_ADD_BOTS = 'Restart this environment to update it before adding bots.'
+export const SHARED_ENVIRONMENT = 'This bot shares its environment. Restart the environment instead.'
+export const RESTORE_ENVIRONMENT_FIRST = 'Restore its environment first'
+export const START_ENVIRONMENT_FIRST = 'Start its environment first'
+const botSetup = (step: FleetBotSetup['step']): FleetBotSetup => ({ step, error: null, errorMessage: null })
+const environmentSetup = (step: FleetEnvironmentSetup['step']): FleetEnvironmentSetup => ({
+  step,
+  error: null,
+  errorMessage: null,
+})
+const botKinds = { started: 'bot_started', stopped: 'bot_stopped', restarted: 'bot_restarted' } as const
+const environmentKinds = {
+  started: 'environment_started',
+  stopped: 'environment_stopped',
+  restarted: 'environment_restarted',
+} as const
+function failureCode(error: unknown): FleetErrorCode {
+  if (error instanceof GatewayError) return error.code
+  return error instanceof DockerError && error.status === 404 ? 'IMAGE_MISSING' : 'DOCKER_UNAVAILABLE'
+}
+export type InstanceFactory = (environmentId: string, token: string, host: string) => InstanceClient
+type Resources = ContainerStats & { startedAt: string | null }
+/** The bot whose own start, stop or restart acted on its environment: the activity is then recorded as the bot's. */
+type Via = { botId: string } | null
 export class Lifecycle {
   readonly statuses = new Map<string, FleetInstanceStatus>()
-  readonly resources = new Map<string, ContainerStats & { startedAt: string | null }>()
+  /** Container measurements, by environment. */
+  readonly resources = new Map<string, Resources>()
+  /** Whether an environment's container runs an older image than the configured one, by environment. */
   readonly imageOutdated = new Map<string, boolean>()
   readonly takeovers = new Map<string, FleetTakeoverState>()
+  /** What each environment's Maestrly reported at its last health check. */
+  private readonly instances = new Map<string, { appVersion: string; capabilities: string[] }>()
+  /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
   private readonly reconcileTimers = new Map<string, NodeJS.Timeout>()
   private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
-  /** Archived bots being deleted forever: neither listed nor restorable meanwhile. */
+  private readonly locks = new Map<string, Promise<void>>()
+  /** Archived bots and environments being deleted forever: neither listed nor restorable meanwhile. */
   private readonly deleting = new Set<string>()
+  private readonly deletingEnvironments = new Set<string>()
   private readonly logger = new Logger()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
+  onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
   controlCount: (id: string) => number = () => 0
   onReady: (id: string) => void = () => {}
   onTurnFinished?: (
@@ -50,17 +94,40 @@ export class Lifecycle {
     readonly store: Store,
     readonly docker: DockerDriver,
     readonly config: GatewayConfig,
-    readonly instance: InstanceFactory = (id, secret) => new InstanceClient(id, secret),
+    readonly instance: InstanceFactory = (id, secret, host) =>
+      new InstanceClient(id, secret, 'http://' + host + ':' + FLEET_PORTS.instanceControl),
     readonly healthTimeoutMs = 240000,
     readonly controllerLostMs = 300000
   ) {}
+  /**
+   * Runs an environment's container, membership and installation changes one at a time, so that a bot joining while
+   * its environment starts, or taking a slot another bot just left, always sees what the change before it did.
+   */
+  private exclusive<T>(environmentId: string, action: () => Promise<T>): Promise<T> {
+    const run = (this.locks.get(environmentId) ?? Promise.resolve()).then(action)
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    )
+    this.locks.set(environmentId, settled)
+    void settled.then(() => {
+      if (this.locks.get(environmentId) === settled) this.locks.delete(environmentId)
+    })
+    return run
+  }
   private emitBot(id: string) {
     const bot = this.get(id)
     if (bot) this.onEvent({ type: 'bot.updated', at: now(), bot })
   }
+  /** Tells devices about an environment and, since their lifecycle follows it, about its bots. */
+  private emitEnvironment(environmentId: string, bots = true) {
+    const environment = this.environment(environmentId)
+    if (!environment) return
+    this.onEvent({ type: 'environment.updated', at: now(), environment })
+    if (bots) for (const id of environment.botIds) this.emitBot(id)
+  }
   private activity(id: string | null, kind: FleetActivityEntry['kind']) {
-    const entry = this.store.addActivity(id, kind)
-    this.onEvent({ type: 'activity', at: entry.at, entry })
+    this.recordActivity(id, kind)
   }
   recordActivity(
     id: string | null,
@@ -70,6 +137,25 @@ export class Lifecycle {
   ) {
     const entry = this.store.addActivity(id, kind, summary, data)
     this.onEvent({ type: 'activity', at: entry.at, entry })
+  }
+  /** Records an entry about an environment itself: no bot, the environment's name as the summary unless given. */
+  recordEnvironmentActivity(
+    environmentId: string,
+    kind: FleetActivityEntry['kind'],
+    data: FleetActivityEntry['data'] = {},
+    summary: string | null = this.store.getEnvironment(environmentId)?.name ?? null
+  ) {
+    const entry = this.store.addActivity(null, kind, summary, data, environmentId)
+    this.onEvent({ type: 'activity', at: entry.at, entry })
+  }
+  private lifecycleActivity(
+    environmentId: string,
+    via: Via,
+    kind: keyof typeof botKinds,
+    data: FleetActivityEntry['data'] = {}
+  ) {
+    if (via) this.recordActivity(via.botId, botKinds[kind], null, data)
+    else this.recordEnvironmentActivity(environmentId, environmentKinds[kind], data)
   }
   inbox() {
     return [...this.statuses].flatMap(([botId, status]) =>
@@ -93,52 +179,101 @@ export class Lifecycle {
     this.statuses.set(id, status)
     this.emitBot(id)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
-    if (status.ready && this.store.getBot(id)?.lifecycle === 'running') this.onReady(id)
+    if (status.ready && this.get(id)?.lifecycle === 'running') this.onReady(id)
   }
-  private stopLink(id: string) {
-    this.links.get(id)?.abort()
-    this.links.delete(id)
+  private stopLink(environmentId: string) {
+    this.links.get(environmentId)?.abort()
+    this.links.delete(environmentId)
   }
   private removeStatus(id: string) {
     const before = JSON.stringify(this.inbox())
     this.statuses.delete(id)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
   }
-  private startLink(id: string) {
-    this.stopLink(id)
+  /** Follows an environment's one event stream and hands each event to the bot it names. */
+  private startLink(environmentId: string) {
+    this.stopLink(environmentId)
     const controller = new AbortController()
-    this.links.set(id, controller)
+    this.links.set(environmentId, controller)
     void (async () => {
-      let since = this.statuses.get(id)?.lastEventSeq ?? 0
+      let since = Math.max(
+        0,
+        ...this.store.botsOfEnvironment(environmentId).map((bot) => this.statuses.get(bot.id)?.lastEventSeq ?? 0)
+      )
       let delay = 1000
       while (!controller.signal.aborted) {
         try {
-          for await (const event of this.client(id).events(since, controller.signal)) {
+          const client = this.client(environmentId)
+          for await (const event of client.events(since, controller.signal)) {
             if (event.type === 'reset' || event.seq <= since) {
-              const fresh = await this.client(id).status()
-              since = fresh.lastEventSeq
-              this.updateStatus(id, fresh)
-              this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
+              since = await this.refreshStatuses(environmentId, client, event.seq)
               continue
             }
             since = event.seq
             delay = 1000
-            if (event.type === 'status') this.updateStatus(id, event.status)
-            else if (event.type === 'transcript.upsert')
-              this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
-            else if (event.type === 'turn.finished') {
-              this.onTurnFinished?.(id, { outcome: event.outcome, inputId: event.inputId, text: event.text })
-              if (event.outcome !== 'cancelled')
-                this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
-            }
+            this.dispatch(environmentId, event)
           }
         } catch {}
         if (!controller.signal.aborted) {
-          await new Promise((resolve) => setTimeout(resolve, delay))
+          await sleep(delay)
           delay = Math.min(delay * 2, 30000)
         }
       }
     })()
+  }
+  private dispatch(environmentId: string, event: FleetInstanceEvent) {
+    const id = this.eventBot(environmentId, event.botId)
+    if (!id) return
+    if (event.type === 'status') this.updateStatus(id, event.status)
+    else if (event.type === 'transcript.upsert')
+      this.onEvent({ type: 'transcript.upsert', at: now(), botId: id, item: event.item })
+    else if (event.type === 'turn.finished') {
+      this.onTurnFinished?.(id, { outcome: event.outcome, inputId: event.inputId, text: event.text })
+      if (event.outcome !== 'cancelled')
+        this.recordActivity(id, event.outcome === 'completed' ? 'turn_completed' : 'turn_failed', event.summary)
+    }
+  }
+  /**
+   * The active bot of this environment that an instance event is about. An environment's stream speaks only for its
+   * own bots: events naming another environment's bot, an unknown or archived bot, or no bot at all are dropped. An
+   * instance from before environments names no bot; its events belong to its one bot.
+   */
+  private eventBot(environmentId: string, botId: string | null): string | null {
+    if (botId === null) return this.capable(environmentId) ? null : (this.singleBot(environmentId)?.id ?? null)
+    if (this.store.botPlacement(botId)?.environmentId !== environmentId) return null
+    return this.store.getBot(botId)?.lifecycle === 'archived' ? null : botId
+  }
+  /**
+   * The bot an instance from before environments runs, if active: the one its environment was made from (a migrated
+   * bot gave the environment its id), or else its first bot. The instance keeps that bot's conversation.
+   */
+  private singleBot(environmentId: string): FleetBot | null {
+    const everyone = this.store.botsOfEnvironment(environmentId, true)
+    const own =
+      everyone.find((bot) => bot.id === environmentId) ??
+      [...everyone].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+    return own && own.lifecycle !== 'archived' ? own : null
+  }
+  /** After a reset, or a sequence going back because the instance restarted: reloads its bots and returns the cursor. */
+  private async refreshStatuses(environmentId: string, client: InstanceClient, seq: number): Promise<number> {
+    if (!this.capable(environmentId)) {
+      const id = this.eventBot(environmentId, null)
+      if (!id) return seq
+      const fresh = await client.forBot(id, false).status()
+      this.updateStatus(id, fresh)
+      this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
+      return fresh.lastEventSeq
+    }
+    const aggregate = await client.environmentStatus()
+    let latest = seq
+    for (const installed of aggregate.bots) {
+      const id = this.eventBot(environmentId, installed.botId)
+      if (!id) continue
+      latest = Math.max(latest, installed.status.lastEventSeq)
+      this.updateStatus(id, installed.status)
+      this.onEvent({ type: 'transcript.reset', at: now(), botId: id })
+    }
+    return latest
   }
   get(id: string): FleetBot | null {
     const bot = this.store.getBot(id)
@@ -147,9 +282,39 @@ export class Lifecycle {
   list(): FleetBot[] {
     return this.store.listBots().map((bot) => this.assemble(bot))
   }
+  /**
+   * A bot's lifecycle and setup as devices see them: its own while it is archived or being installed in a running
+   * environment, otherwise its environment's, whose setup steps it shows until the environment's desktop answers.
+   */
+  private placementState(
+    bot: FleetBot,
+    environment: StoredEnvironment | null
+  ): { lifecycle: FleetLifecycle; setup: FleetBotSetup } {
+    if (bot.lifecycle === 'archived' || !environment) return { lifecycle: bot.lifecycle, setup: bot.setup }
+    if (environment.lifecycle === 'running')
+      return {
+        lifecycle:
+          bot.lifecycle === 'running' || bot.lifecycle === 'failed' || bot.lifecycle === 'creating'
+            ? bot.lifecycle
+            : 'starting',
+        setup: bot.setup,
+      }
+    return {
+      lifecycle: environment.lifecycle,
+      setup: environment.setup.step === 'ready' ? bot.setup : { ...environment.setup },
+    }
+  }
   private assemble(bot: FleetBot): FleetBot {
-    const status = this.statuses.get(bot.id),
-      resources = this.resources.get(bot.id)
+    const environment = bot.environmentId ? this.store.getEnvironment(bot.environmentId) : null
+    const state = this.placementState(bot, environment)
+    bot.lifecycle = state.lifecycle
+    bot.setup = state.setup
+    const status = this.statuses.get(bot.id)
+    // Resources are measured per environment: a bot reports them only when it is alone in it, so that devices that
+    // add up bots do not count shared memory twice.
+    const alone =
+      !!environment && bot.lifecycle !== 'archived' && this.store.botsOfEnvironment(environment.id).length === 1
+    const resources = alone ? this.resources.get(environment.id) : undefined
     bot.appVersion = status?.appVersion ?? null
     bot.capabilities = status?.capabilities ?? []
     bot.accounts = status?.accounts ?? { connected: false, providers: [] }
@@ -181,6 +346,54 @@ export class Lifecycle {
     else bot.status = 'idle'
     return bot
   }
+  /** An active environment as devices see it, or null. */
+  environment(id: string): FleetEnvironment | null {
+    const environment = this.store.getEnvironment(id)
+    return environment && !environment.archivedAt ? this.environmentView(environment) : null
+  }
+  environments(): FleetEnvironment[] {
+    return this.store.listEnvironments().map((environment) => this.environmentView(environment))
+  }
+  private environmentView(environment: StoredEnvironment): FleetEnvironment {
+    const instance = this.instances.get(environment.id),
+      resources = this.resources.get(environment.id)
+    return {
+      id: environment.id,
+      name: environment.name,
+      lifecycle: environment.lifecycle,
+      setup: environment.setup,
+      resources: {
+        memoryBytes: resources?.memoryBytes ?? null,
+        memoryLimitBytes: resources?.memoryLimitBytes ?? null,
+        cpuPercent: resources?.cpuPercent ?? null,
+        startedAt: resources?.startedAt ?? null,
+      },
+      memoryLimitBytes: environment.memoryLimitBytes,
+      appVersion: instance?.appVersion ?? null,
+      capabilities: instance?.capabilities ?? [],
+      botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
+      createdAt: environment.createdAt,
+      updatedAt: environment.updatedAt,
+    }
+  }
+  /** Whether an environment's Maestrly hosts several bots; null until its health has been checked. */
+  environmentCapable(id: string): boolean | null {
+    const instance = this.instances.get(id)
+    return instance ? instance.capabilities.includes(FLEET_ENVIRONMENTS_FEATURE) : null
+  }
+  private capable(id: string): boolean {
+    return this.environmentCapable(id) === true
+  }
+  private requireEnvironment(id: string): StoredEnvironment {
+    const environment = this.store.getEnvironment(id)
+    if (!environment || environment.archivedAt || this.deletingEnvironments.has(id))
+      throw new GatewayError('NOT_FOUND', 'Environment not found')
+    return environment
+  }
+  private updateEnvironment(id: string, changes: EnvironmentChanges) {
+    this.store.updateEnvironment(id, changes)
+    this.emitEnvironment(id)
+  }
   private update(id: string, changes: Partial<FleetBot>) {
     const bot = this.store.getBot(id)
     if (!bot) throw new GatewayError('NOT_FOUND', 'Bot not found')
@@ -189,10 +402,60 @@ export class Lifecycle {
     this.emitBot(id)
     return this.get(id)!
   }
+  /** Records how an installation went, unless the bot was archived meanwhile: it then stays archived. */
+  private updateActive(id: string, changes: Partial<FleetBot>) {
+    const bot = this.store.getBot(id)
+    if (bot && bot.lifecycle !== 'archived') this.update(id, changes)
+  }
+  private profile(bot: FleetBot): FleetInstanceProfile {
+    return {
+      botId: bot.id,
+      name: bot.name,
+      instructions: bot.instructions,
+      ceiling: bot.ceiling,
+      selection: bot.selection,
+      compaction: bot.compaction,
+      gateway: { peersEnabled: bot.talksTo.length > 0 },
+    }
+  }
+  private insertEnvironment(name: string, memoryLimitBytes: number | null, at: string): string {
+    const taken = [...this.store.listEnvironments(), ...this.store.archivedEnvironments()].map((item) => item.id)
+    const id = deriveBotId(name, taken)
+    this.store.insertEnvironment(
+      {
+        id,
+        name,
+        lifecycle: 'creating',
+        setup: environmentSetup('container'),
+        containerName: environmentContainerName(id),
+        volumeName: environmentVolumeName(id),
+        memoryLimitBytes,
+        createdAt: at,
+        updatedAt: at,
+        archivedAt: null,
+      },
+      { controlToken: token(), keyringPassword: token() }
+    )
+    return id
+  }
+  /** Creates an environment with no bot yet: its container, then its desktop. */
+  createEnvironment(input: { name: string; memoryLimitBytes: number | null }): FleetEnvironment {
+    const id = this.insertEnvironment(input.name, input.memoryLimitBytes, now())
+    this.recordEnvironmentActivity(id, 'environment_created')
+    this.emitEnvironment(id, false)
+    this.queueProvision(id, false)
+    return this.environment(id)!
+  }
+  /**
+   * Creates a bot in an existing environment (`environmentId`) or in a new one (`environment`, or else one named after
+   * the bot, as older Macs ask). A new environment gets its container and desktop first; the bot then installs its
+   * profile, which is all a bot joining an existing environment needs.
+   */
   create(input: FleetCreateBotRequest): FleetBot {
     const ids = this.store.listBots(true).map((bot) => bot.id)
     const id = deriveBotId(input.name, ids),
       at = now()
+    const joining = input.environmentId !== undefined
     const bot: FleetBot = {
       id,
       name: input.name,
@@ -206,7 +469,7 @@ export class Lifecycle {
       talksTo: input.talksTo,
       paused: false,
       lifecycle: 'creating',
-      setup: { step: 'container', error: null, errorMessage: null },
+      setup: botSetup(joining ? 'profile' : 'container'),
       status: 'starting',
       activity: null,
       pendingCount: 0,
@@ -221,23 +484,39 @@ export class Lifecycle {
       createdAt: at,
       updatedAt: at,
     }
-    const controlToken = token(),
-      gatewayToken = token()
-    this.store.transaction(() => {
+    const gatewayToken = token()
+    const environmentId = this.store.transaction(() => {
       this.validatePeers(id, input.talksTo)
-      this.store.insertBot(bot, {
-        controlToken,
-        gatewayToken,
-        gatewayTokenSha256: sha256(gatewayToken),
-        keyringPassword: token(),
-      })
+      let target: string
+      if (input.environmentId !== undefined) {
+        target = this.requireEnvironment(input.environmentId).id
+        this.requireSingleBotRoom(target, id)
+      } else
+        target = this.insertEnvironment(
+          input.environment?.name ?? input.name,
+          input.environment?.memoryLimitBytes ?? null,
+          at
+        )
+      this.store.insertBot(bot, { gatewayToken, gatewayTokenSha256: sha256(gatewayToken) }, { environmentId: target })
       this.syncPeers(id, input.talksTo)
+      return target
     })
     this.activity(id, 'bot_created')
-    queueMicrotask(() => {
-      void this.provision(id).catch((error) => this.fail(id, error))
-    })
+    if (joining) {
+      this.emitEnvironment(environmentId, false)
+      this.emitBot(id)
+      this.queueInstall(environmentId, [id], false)
+    } else {
+      this.emitEnvironment(environmentId)
+      this.queueProvision(environmentId, false)
+    }
     return this.get(id)!
+  }
+  /** An instance from before environments runs one bot, and keeps its conversation: no other bot can join it. */
+  private requireSingleBotRoom(environmentId: string, botId: string) {
+    if (this.environmentCapable(environmentId) !== false) return
+    if (this.store.botsOfEnvironment(environmentId, true).some((bot) => bot.id !== botId))
+      throw new GatewayError('CONFLICT', RESTART_TO_ADD_BOTS)
   }
   private validatePeers(id: string, talksTo: string[]) {
     if (new Set(talksTo).size !== talksTo.length || talksTo.includes(id))
@@ -257,135 +536,310 @@ export class Lifecycle {
       this.store.saveBot(peer)
     }
   }
-  private client(id: string): InstanceClient {
-    const secret = this.store.botSecrets(id)
-    if (!secret) throw new GatewayError('INTERNAL', 'Bot secrets missing')
-    return this.instance(id, secret.controlToken)
+  private activePeers(bot: FleetBot): string[] {
+    return bot.talksTo.filter((peerId) => {
+      const peer = this.store.getBot(peerId)
+      return !!peer && peer.lifecycle !== 'archived'
+    })
   }
-  private async container(id: string): Promise<ContainerInfo | null> {
+  private client(environmentId: string): InstanceClient {
+    const environment = this.store.getEnvironment(environmentId),
+      secrets = this.store.environmentSecrets(environmentId)
+    if (!environment || !secrets) throw new GatewayError('INTERNAL', 'Environment secrets missing')
+    return this.instance(environmentId, secrets.controlToken, environment.containerName)
+  }
+  private botClient(id: string): InstanceClient {
+    const placement = this.store.botPlacement(id)
+    if (!placement) throw new GatewayError('NOT_FOUND', 'Bot not found')
+    return this.client(placement.environmentId).forBot(id, this.capable(placement.environmentId))
+  }
+  private async container(environment: StoredEnvironment): Promise<ContainerInfo | null> {
     try {
-      return await this.docker.inspect(containerName(id))
+      return await this.docker.inspect(environment.containerName)
     } catch (error) {
       if (error instanceof DockerError && error.status === 404) return null
       throw error
     }
   }
-  private async provision(id: string) {
+  /** Creates an environment's container on its home volume (a restored environment finds its files there). */
+  private queueProvision(environmentId: string, replaceLeftover: boolean) {
+    void this.exclusive(environmentId, async () => {
+      const environment = this.store.getEnvironment(environmentId)
+      if (!environment || environment.archivedAt) return
+      try {
+        if (replaceLeftover) {
+          // An archive interrupted after stopping the container may have left it behind.
+          const leftover = await this.container(environment)
+          if (leftover) await this.docker.remove(leftover.id, true)
+        }
+        await this.provision(environmentId)
+      } catch (error) {
+        this.failEnvironment(environmentId, error)
+      }
+    })
+  }
+  /**
+   * Installs bots that joined or came back once their environment runs; a stopped environment installs them when it
+   * starts, unless `bringUp` starts it for them.
+   */
+  private queueInstall(environmentId: string, ids: string[], bringUp: boolean) {
+    void this.exclusive(environmentId, async () => {
+      const environment = this.store.getEnvironment(environmentId)
+      if (!environment || environment.archivedAt) return
+      if (environment.lifecycle !== 'running') {
+        if (bringUp)
+          try {
+            await this.bringUp(environment)
+          } catch (error) {
+            this.failEnvironment(environmentId, error)
+          }
+        return
+      }
+      const pending = ids.filter((id) => {
+        const bot = this.store.getBot(id)
+        return !!bot && bot.lifecycle !== 'archived'
+      })
+      try {
+        await this.installMembers(environmentId, this.client(environmentId), pending, false)
+      } catch (error) {
+        for (const id of pending) if (this.store.getBot(id)?.lifecycle !== 'running') this.failBot(id, error)
+      }
+      for (const id of pending) if (this.get(id)?.lifecycle === 'running') this.onReady(id)
+    })
+  }
+  /** Brings a stopped or failed environment back: its container if it still has one, otherwise a new one. */
+  private async bringUp(environment: StoredEnvironment) {
+    const container = await this.container(environment)
+    if (container) await this.startWithCurrentImage(environment.id, container, false, null)
+    else await this.provision(environment.id)
+  }
+  private async provision(environmentId: string) {
+    const environment = this.store.getEnvironment(environmentId)!
     if (!(await this.docker.imageInspect(this.config.botImage)))
       throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
     await this.docker.ensureNetwork(this.config.network)
-    // Docker returns the existing volume for a restored bot, keeping its files.
-    await this.docker.volumeCreate(homeVolume(id), { [managed]: 'true', [botLabel]: id })
-    const container = await this.createContainer(id)
-    this.imageOutdated.set(id, false)
+    // Docker returns the existing volume of a restored environment, keeping its files.
+    await this.docker.volumeCreate(environment.volumeName, { [managed]: 'true', [environmentLabel]: environmentId })
+    const container = await this.createContainer(environmentId)
+    this.imageOutdated.set(environmentId, false)
     await this.docker.start(container)
-    await this.ready(id)
+    await this.ready(environmentId)
   }
-  private async createContainer(id: string): Promise<string> {
-    const bot = this.store.getBot(id)!,
-      secrets = this.store.botSecrets(id)!
-    const name = containerName(id),
-      volume = homeVolume(id)
+  /** The container carries its environment, never a bot: bots arrive through the control API with their own token. */
+  private async createContainer(environmentId: string): Promise<string> {
+    const environment = this.store.getEnvironment(environmentId)!,
+      secrets = this.store.environmentSecrets(environmentId)!
     const env = {
       [FLEET_BOT_ENV.mode]: '1',
-      [FLEET_BOT_ENV.id]: id,
-      [FLEET_BOT_ENV.name]: bot.name,
+      [FLEET_BOT_ENV.environmentId]: environmentId,
       [FLEET_BOT_ENV.controlHost]: '0.0.0.0',
-      [FLEET_BOT_ENV.controlPort]: '7680',
+      [FLEET_BOT_ENV.controlPort]: String(FLEET_PORTS.instanceControl),
       [FLEET_BOT_ENV.controlToken]: secrets.controlToken,
       [FLEET_BOT_ENV.gatewayUrl]: this.config.internalUrl,
-      [FLEET_BOT_ENV.gatewayToken]: secrets.gatewayToken,
       MAESTRLY_BOT_KEYRING_PASSWORD: secrets.keyringPassword,
       TZ: this.config.timezone,
     }
     return this.docker.containerCreate({
-      name,
+      name: environment.containerName,
       image: this.config.botImage,
-      hostname: id,
-      labels: { [managed]: 'true', [botLabel]: id },
+      hostname: environmentId,
+      labels: { [managed]: 'true', [environmentLabel]: environmentId },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
       network: this.config.network,
-      volume,
-      memory: this.config.botMemory,
+      volume: environment.volumeName,
+      memory: environment.memoryLimitBytes ?? this.config.botMemory,
       shmSize: this.config.botShm,
       securityOpt: this.config.botSecurityOpt,
     })
   }
-  private async updateImageState(id: string, container: ContainerInfo): Promise<string | null> {
+  private async updateImageState(environmentId: string, container: ContainerInfo): Promise<string | null> {
     const image = await this.docker.imageInspect(this.config.botImage)
     if (!image) {
-      this.imageOutdated.set(id, false)
+      this.imageOutdated.set(environmentId, false)
       this.logger.warn('Configured bot image missing; keeping existing container', {
-        botId: id,
+        environmentId,
         image: this.config.botImage,
       })
       return null
     }
-    this.imageOutdated.set(id, container.imageId !== image.id)
+    this.imageOutdated.set(environmentId, container.imageId !== image.id)
     return image.id
   }
-  private async startWithCurrentImage(id: string, container: ContainerInfo, restart: boolean): Promise<boolean> {
-    const imageId = await this.updateImageState(id, container)
+  private async startWithCurrentImage(
+    environmentId: string,
+    container: ContainerInfo,
+    restart: boolean,
+    via: Via
+  ): Promise<boolean> {
+    const imageId = await this.updateImageState(environmentId, container)
     if (imageId && container.imageId !== imageId) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
-      const replacement = await this.createContainer(id)
+      this.instances.delete(environmentId)
+      const replacement = await this.createContainer(environmentId)
       await this.docker.start(replacement)
-      await this.ready(id)
-      this.imageOutdated.set(id, false)
+      await this.ready(environmentId)
+      this.imageOutdated.set(environmentId, false)
       const fromImage = container.imageId.replace(/^sha256:/, '').slice(0, 12)
       const toImage = imageId.replace(/^sha256:/, '').slice(0, 12)
-      this.logger.info('Bot container updated', { botId: id, fromImage, toImage })
-      this.recordActivity(id, 'bot_restarted', null, { updated: true, fromImage, toImage })
+      this.logger.info('Environment container updated', { environmentId, fromImage, toImage })
+      this.lifecycleActivity(environmentId, via, 'restarted', { updated: true, fromImage, toImage })
       return true
     }
     if (restart) await this.docker.restart(container.id)
     else await this.docker.start(container.id)
-    await this.ready(id)
+    await this.ready(environmentId)
     return false
   }
-  private async ready(id: string) {
-    this.update(id, { lifecycle: 'starting', setup: { step: 'desktop', error: null, errorMessage: null } })
-    const client = this.client(id),
+  /** Waits for the environment's desktop, then installs its bots; the environment runs once they are in place. */
+  private async ready(environmentId: string) {
+    this.updateEnvironment(environmentId, { lifecycle: 'starting', setup: environmentSetup('desktop') })
+    const client = this.client(environmentId),
       deadline = Date.now() + this.healthTimeoutMs
+    let health: { appVersion: string; capabilities: string[] } | null = null
     while (Date.now() < deadline) {
       try {
-        const health = await client.health()
-        if (health.ready) break
+        const value = await client.health()
+        if (value.ready) {
+          health = { appVersion: value.appVersion, capabilities: value.capabilities }
+          break
+        }
       } catch {}
-      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, Math.max(1, deadline - Date.now()))))
+      await sleep(Math.min(1000, Math.max(1, deadline - Date.now())))
     }
-    if (Date.now() >= deadline) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop did not become ready')
-    this.update(id, { setup: { step: 'profile', error: null, errorMessage: null } })
-    const bot = this.store.getBot(id)!
-    const status = await client.putProfile({
-      botId: id,
-      name: bot.name,
-      instructions: bot.instructions,
-      ceiling: bot.ceiling,
-      selection: bot.selection,
-      compaction: bot.compaction,
-      gateway: { peersEnabled: bot.talksTo.length > 0 },
-    })
-    this.updateStatus(id, status)
-    if (bot.paused) await client.hold({ reason: 'paused' })
-    this.update(id, { lifecycle: 'running', setup: { step: 'ready', error: null, errorMessage: null } })
-    this.onReady(id)
-    this.startLink(id)
-    this.activity(id, 'bot_started')
+    if (!health) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop did not become ready')
+    this.instances.set(environmentId, health)
+    // The desktop answers: bots still to be installed move on to their profile step.
+    for (const bot of this.store.botsOfEnvironment(environmentId))
+      if (bot.lifecycle !== 'running' && bot.setup.step !== 'profile')
+        this.store.saveBot({ ...bot, setup: botSetup('profile'), updatedAt: now() })
+    this.updateEnvironment(environmentId, { setup: environmentSetup('ready') })
+    await this.installMembers(environmentId, client, null, true)
+    this.updateEnvironment(environmentId, { lifecycle: 'running' })
+    for (const bot of this.store.botsOfEnvironment(environmentId))
+      if (this.get(bot.id)?.lifecycle === 'running') this.onReady(bot.id)
+    this.startLink(environmentId)
   }
-  private fail(id: string, error: unknown) {
-    this.cancelReconcile(id)
-    this.stopLink(id)
+  /**
+   * Installs the environment's active bots (all of them, or those named) in the slots the gateway recorded. Bots the
+   * instance still runs although the gateway archived them, or runs in another slot, leave first: a bot taking a
+   * freed slot never meets the bot that held it. The instance's bots of other environments are not touched.
+   */
+  private async installMembers(environmentId: string, client: InstanceClient, only: string[] | null, strict: boolean) {
+    if (!this.capable(environmentId)) return this.installSingle(environmentId, client, only, strict)
+    const members = this.store.botsOfEnvironment(environmentId)
+    const aggregate = await client.environmentStatus()
+    if (aggregate.environmentId !== null && aggregate.environmentId !== environmentId)
+      throw new GatewayError('INSTANCE_UNAVAILABLE', 'The instance belongs to another environment')
+    const slots = new Map(members.map((bot) => [bot.id, this.store.botPlacement(bot.id)!.slot]))
+    const moved = new Set<string>()
+    for (const installed of aggregate.bots) {
+      if (this.store.botPlacement(installed.botId)?.environmentId !== environmentId) continue
+      const slot = slots.get(installed.botId)
+      if (slot === installed.slot) continue
+      await this.uninstall(client, installed.botId, false)
+      if (slot !== undefined) moved.add(installed.botId)
+    }
+    for (const bot of members)
+      if (!only || only.includes(bot.id) || moved.has(bot.id))
+        await this.installOne(client, bot.id, slots.get(bot.id)!, strict)
+  }
+  private async installOne(client: InstanceClient, id: string, slot: number, strict: boolean) {
+    const bot = this.store.getBot(id),
+      secrets = this.store.botGatewaySecrets(id)
+    if (!bot || bot.lifecycle === 'archived' || !secrets) return
+    const fresh = bot.lifecycle !== 'running'
+    if (fresh) this.updateActive(id, { setup: botSetup('profile') })
+    try {
+      const status = await client.botInstall(id, {
+        profile: this.profile(bot),
+        slot,
+        gatewayToken: secrets.gatewayToken,
+      })
+      await this.settle(id, client.forBot(id, true), status)
+      if (fresh && this.store.getBot(id)?.lifecycle === 'running') this.recordActivity(id, 'bot_started')
+    } catch (error) {
+      if (strict && failureCode(error) === 'INSTANCE_UNAVAILABLE') throw error
+      this.failBot(id, error)
+    }
+  }
+  /**
+   * An instance from before environments runs one bot through the routes it has always had, and keeps that bot's
+   * conversation: any other bot of the environment waits for the environment to be updated.
+   */
+  private async installSingle(environmentId: string, client: InstanceClient, only: string[] | null, strict: boolean) {
+    const bot = this.singleBot(environmentId)
+    for (const other of this.store.botsOfEnvironment(environmentId))
+      if (other.id !== bot?.id && (!only || only.includes(other.id)))
+        this.failBot(other.id, new GatewayError('CONFLICT', RESTART_TO_ADD_BOTS))
+    if (!bot || (only && !only.includes(bot.id))) return
+    const fresh = bot.lifecycle !== 'running'
+    if (fresh) this.updateActive(bot.id, { setup: botSetup('profile') })
+    const single = client.forBot(bot.id, false)
+    try {
+      const status = await single.putProfile(this.profile(bot))
+      if (!status.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
+      await this.settle(bot.id, single, status)
+      if (fresh && this.store.getBot(bot.id)?.lifecycle === 'running') this.recordActivity(bot.id, 'bot_started')
+    } catch (error) {
+      if (strict) throw error
+      this.failBot(bot.id, error)
+    }
+  }
+  /** Brings an installed bot's hold in line with the gateway, then records it running. */
+  private async settle(id: string, client: InstanceClient, installed: FleetInstanceStatus) {
+    const bot = this.store.getBot(id)
+    if (!bot || bot.lifecycle === 'archived') return
+    let status = installed
+    const release = () => client.release({ note: null, durationMs: null, continue: true })
+    // A takeover or a pause the gateway no longer knows about (it restarted, or the bot was restored) is released.
+    if (status.hold.reason === 'takeover' && !this.takeovers.has(id)) status = { ...status, hold: await release() }
+    if (status.hold.reason === 'paused' && !bot.paused) status = { ...status, hold: await release() }
+    if (bot.paused && status.hold.reason === null) status = { ...status, hold: await client.hold({ reason: 'paused' }) }
+    if (this.store.getBot(id)?.lifecycle === 'archived') return
+    this.updateStatus(id, status)
+    this.updateActive(id, { lifecycle: 'running', setup: botSetup('ready') })
+  }
+  private async uninstall(client: InstanceClient, id: string, purge: boolean) {
+    try {
+      await client.botUninstall(id, purge)
+    } catch (error) {
+      if (!(error instanceof GatewayError && error.code === 'NOT_FOUND')) throw error
+    }
+  }
+  private failBot(id: string, error: unknown) {
+    const bot = this.store.getBot(id)
+    if (!bot || bot.lifecycle === 'archived') return
     this.clearTakeover(id, 4002)
     this.removeStatus(id)
-    const code =
-      error instanceof GatewayError
-        ? error.code
-        : error instanceof DockerError && error.status === 404
-          ? 'IMAGE_MISSING'
-          : 'DOCKER_UNAVAILABLE'
+    const code = failureCode(error)
     this.update(id, {
+      lifecycle: 'failed',
+      setup: {
+        step: 'failed',
+        error: code,
+        errorMessage: code === 'CONFLICT' && error instanceof GatewayError ? error.message : 'Bot startup failed',
+      },
+    })
+    this.activity(id, 'bot_failed')
+    this.logger.warn('Bot installation failed', { botId: id, failure: code })
+  }
+  /** Ends every takeover and forgets every status of an environment's bots: its container stops or goes away. */
+  private releaseBots(environmentId: string, code: number) {
+    for (const bot of this.store.botsOfEnvironment(environmentId)) {
+      this.clearTakeover(bot.id, code)
+      this.removeStatus(bot.id)
+    }
+  }
+  private failEnvironment(environmentId: string, error: unknown) {
+    const environment = this.store.getEnvironment(environmentId)
+    if (!environment || environment.archivedAt) return
+    this.cancelReconcile(environmentId)
+    this.stopLink(environmentId)
+    this.releaseBots(environmentId, 4002)
+    this.onCloseEnvironmentScreens(environmentId, 4002)
+    const code = failureCode(error)
+    this.updateEnvironment(environmentId, {
       lifecycle: 'failed',
       setup: {
         step: 'failed',
@@ -393,76 +847,285 @@ export class Lifecycle {
         errorMessage: code === 'IMAGE_MISSING' ? 'Bot image missing' : 'Bot startup failed',
       },
     })
-    this.activity(id, 'bot_failed')
+    for (const bot of this.store.botsOfEnvironment(environmentId)) this.activity(bot.id, 'bot_failed')
+    this.logger.warn('Environment startup failed', { environmentId, failure: code })
+  }
+  async startEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    return this.exclusive(id, async () => {
+      const environment = this.requireEnvironment(id)
+      if (environment.lifecycle !== 'running') {
+        const container = await this.container(environment)
+        if (!container)
+          throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
+        try {
+          await this.startWithCurrentImage(id, container, false, via)
+          this.lifecycleActivity(id, via, 'started')
+        } catch (error) {
+          this.failEnvironment(id, error)
+        }
+      }
+      return this.environmentView(this.store.getEnvironment(id)!)
+    })
+  }
+  async stopEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    return this.exclusive(id, async () => {
+      const environment = this.requireEnvironment(id)
+      this.updateEnvironment(id, { lifecycle: 'stopping' })
+      this.cancelReconcile(id)
+      this.stopLink(id)
+      this.releaseBots(id, 4002)
+      this.onCloseEnvironmentScreens(id, 4002)
+      const container = await this.container(environment)
+      if (container) await this.docker.stop(container.id)
+      this.resources.delete(id)
+      this.updateEnvironment(id, { lifecycle: 'stopped' })
+      this.lifecycleActivity(id, via, 'stopped')
+      return this.environmentView(this.store.getEnvironment(id)!)
+    })
+  }
+  /** Restarts every bot of an environment, recreating its container on the configured image when it is older. */
+  async restartEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    return this.exclusive(id, async () => {
+      const environment = this.requireEnvironment(id)
+      const container = await this.container(environment)
+      if (!container)
+        throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
+      this.updateEnvironment(id, { lifecycle: 'restarting' })
+      this.cancelReconcile(id)
+      this.stopLink(id)
+      this.releaseBots(id, 4002)
+      this.onCloseEnvironmentScreens(id, 4002)
+      try {
+        if (!(await this.startWithCurrentImage(id, container, true, via))) this.lifecycleActivity(id, via, 'restarted')
+      } catch (error) {
+        this.failEnvironment(id, error)
+      }
+      return this.environmentView(this.store.getEnvironment(id)!)
+    })
+  }
+  /**
+   * Changes an environment's name or memory limit. A new limit reaches its container live first: when Docker refuses
+   * it, the container and the record both keep the previous one.
+   */
+  async patchEnvironment(
+    id: string,
+    input: { name?: string; memoryLimitBytes?: number | null }
+  ): Promise<FleetEnvironment> {
+    const environment = this.requireEnvironment(id)
+    const limit = input.memoryLimitBytes
+    if (limit === undefined || limit === environment.memoryLimitBytes) {
+      if (input.name !== undefined && input.name !== environment.name) this.updateEnvironment(id, { name: input.name })
+      return this.environment(id)!
+    }
+    return this.exclusive(id, async () => {
+      const current = this.requireEnvironment(id)
+      const container = await this.container(current)
+      if (container) {
+        const bytes = limit ?? this.config.botMemory
+        try {
+          await this.docker.updateMemory(container.id, bytes)
+        } catch (error) {
+          if (error instanceof DockerError)
+            throw new GatewayError(
+              error.status >= 400 && error.status < 500 ? 'CONFLICT' : 'DOCKER_UNAVAILABLE',
+              'Docker could not change the memory limit'
+            )
+          throw error
+        }
+        const measured = this.resources.get(id)
+        if (measured) this.resources.set(id, { ...measured, memoryLimitBytes: bytes })
+      }
+      this.updateEnvironment(id, { name: input.name, memoryLimitBytes: limit })
+      return this.environment(id)!
+    })
+  }
+  /**
+   * Removes an environment's container and archives it with its active bots; its home volume and records stay, and
+   * restoring it brings those bots back.
+   */
+  async archiveEnvironment(id: string): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    return this.exclusive(id, async () => {
+      const environment = this.requireEnvironment(id)
+      const container = await this.container(environment)
+      this.cancelReconcile(id)
+      this.stopLink(id)
+      this.releaseBots(id, 4002)
+      this.onCloseEnvironmentScreens(id, 4002)
+      if (container) {
+        await this.docker.stop(container.id)
+        await this.docker.remove(container.id, true)
+      }
+      this.resources.delete(id)
+      this.imageOutdated.delete(id)
+      this.instances.delete(id)
+      const members = this.store.botsOfEnvironment(id)
+      const botIds = this.store.transaction(() => {
+        const archived = this.store.archiveEnvironment(id)
+        for (const botId of archived) this.syncPeers(botId, [])
+        return archived
+      })
+      for (const peerId of new Set(members.flatMap((bot) => bot.talksTo))) this.emitBot(peerId)
+      for (const botId of botIds) this.onEvent({ type: 'bot.removed', at: now(), botId })
+      this.recordEnvironmentActivity(id, 'environment_archived')
+      this.onEvent({ type: 'environment.removed', at: now(), environmentId: id })
+      return this.environmentView(this.store.getEnvironment(id)!)
+    })
+  }
+  async archivedEnvironments(): Promise<FleetArchivedEnvironment[]> {
+    const archived = this.store
+      .archivedEnvironments()
+      .filter((environment) => !this.deletingEnvironments.has(environment.id))
+    return Promise.all(
+      archived.map(async (environment) => ({
+        id: environment.id,
+        name: environment.name,
+        createdAt: environment.createdAt,
+        archivedAt: environment.archivedAt!,
+        files: (await this.docker.volumeExists(environment.volumeName)) ? ('kept' as const) : ('missing' as const),
+        bots: this.store
+          .botsOfEnvironment(environment.id, true)
+          .map((bot) => ({ id: bot.id, name: bot.name, role: bot.role, tint: bot.tint })),
+      }))
+    )
+  }
+  /**
+   * Brings an archived environment back in a new container on its kept home volume, with the bots archived along with
+   * it (bots archived on their own before stay archived). The environment leaves `archived` before any await, so a
+   * second request fails instead of racing the first.
+   */
+  restoreEnvironment(id: string): { environment: FleetEnvironment; botIds: string[] } {
+    const environment = this.store.getEnvironment(id)
+    if (!environment?.archivedAt || this.deletingEnvironments.has(id))
+      throw new GatewayError('NOT_FOUND', 'Archived environment not found')
+    const peers = new Set<string>()
+    const botIds = this.store.transaction(() => {
+      const restored = this.store.restoreEnvironment(id)
+      for (const botId of restored) {
+        const talksTo = this.activePeers(this.store.getBot(botId)!)
+        this.update(botId, { talksTo })
+        this.syncPeers(botId, talksTo)
+        for (const peerId of talksTo) peers.add(peerId)
+      }
+      return restored
+    })
+    for (const peerId of peers) this.emitBot(peerId)
+    this.recordEnvironmentActivity(id, 'environment_restored')
+    this.emitEnvironment(id)
+    this.queueProvision(id, true)
+    return { environment: this.environment(id)!, botIds }
+  }
+  /** Irreversible: removes an archived environment's container if any, its home volume, and every record of it. */
+  async purgeEnvironment(id: string): Promise<void> {
+    const environment = this.store.getEnvironment(id)
+    if (!environment?.archivedAt || this.deletingEnvironments.has(id))
+      throw new GatewayError('NOT_FOUND', 'Archived environment not found')
+    this.deletingEnvironments.add(id)
+    let removed: { botIds: string[]; ownerMemoriesDeleted: number }
+    try {
+      removed = await this.exclusive(id, async () => {
+        // Files first: if this fails, the records remain and deleting again finishes the job.
+        await this.removeFiles(environment, 'environment')
+        return this.store.purgeEnvironment(id)
+      })
+    } finally {
+      this.deletingEnvironments.delete(id)
+    }
+    for (const botId of removed.botIds) this.pendingSeen.delete(botId)
+    this.forgetEnvironment(id)
+    if (removed.ownerMemoriesDeleted)
+      this.onEvent({ type: 'owner_memory.updated', at: now(), revision: this.store.ownerMemoryRevision() })
+    this.recordEnvironmentActivity(id, 'environment_deleted', {}, environment.name)
+    this.onEvent({ type: 'environment.removed', at: now(), environmentId: id })
+  }
+  private async removeFiles(environment: StoredEnvironment, subject: 'bot' | 'environment') {
+    const leftover = await this.container(environment)
+    if (leftover) await this.docker.remove(leftover.id, true)
+    try {
+      await this.docker.volumeRemove(environment.volumeName)
+    } catch (error) {
+      if (error instanceof DockerError)
+        throw new GatewayError(
+          error.status === 409 ? 'CONFLICT' : 'DOCKER_UNAVAILABLE',
+          error.status === 409
+            ? `The ${subject} files are still in use`
+            : `Docker could not remove the ${subject} files`
+        )
+      throw error
+    }
+  }
+  private forgetEnvironment(id: string) {
+    this.cancelReconcile(id)
+    this.stopLink(id)
+    this.resources.delete(id)
+    this.imageOutdated.delete(id)
+    this.instances.delete(id)
+  }
+  /** A bot's own start, stop and restart act on its environment, which only a bot alone in it may do. */
+  private soleEnvironment(id: string): string {
+    const bot = this.store.getBot(id)
+    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    const environmentId = this.store.botPlacement(id)!.environmentId
+    if (this.store.botsOfEnvironment(environmentId).length > 1) throw new GatewayError('CONFLICT', SHARED_ENVIRONMENT)
+    return environmentId
   }
   async start(id: string): Promise<FleetBot> {
-    const bot = this.get(id)
-    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    if (bot.lifecycle === 'running') return bot
-    const container = await this.container(id)
-    if (!container) throw new GatewayError('NOT_FOUND', 'Bot container missing')
-    try {
-      await this.startWithCurrentImage(id, container, false)
-    } catch (error) {
-      this.fail(id, error)
-    }
+    await this.startEnvironment(this.soleEnvironment(id), { botId: id })
     return this.get(id)!
   }
   async stop(id: string): Promise<FleetBot> {
-    const bot = this.get(id)
-    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    this.update(id, { lifecycle: 'stopping' })
-    this.cancelReconcile(id)
-    this.stopLink(id)
-    this.clearTakeover(id, 4002)
-    const container = await this.container(id)
-    if (container) await this.docker.stop(container.id)
-    this.removeStatus(id)
-    this.resources.delete(id)
-    const result = this.update(id, { lifecycle: 'stopped' })
-    this.activity(id, 'bot_stopped')
-    return result
-  }
-  async restart(id: string): Promise<FleetBot> {
-    const bot = this.get(id)
-    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    const container = await this.container(id)
-    if (!container) throw new GatewayError('NOT_FOUND', 'Bot container missing')
-    this.update(id, { lifecycle: 'restarting' })
-    this.cancelReconcile(id)
-    this.stopLink(id)
-    this.clearTakeover(id, 4002)
-    this.removeStatus(id)
-    try {
-      if (!(await this.startWithCurrentImage(id, container, true))) this.activity(id, 'bot_restarted')
-    } catch (error) {
-      this.fail(id, error)
-    }
+    await this.stopEnvironment(this.soleEnvironment(id), { botId: id })
     return this.get(id)!
   }
+  async restart(id: string): Promise<FleetBot> {
+    await this.restartEnvironment(this.soleEnvironment(id), { botId: id })
+    return this.get(id)!
+  }
+  /**
+   * Archives one bot: its environment's instance uninstalls it and keeps its data, its slot becomes free and its
+   * records stay. Its siblings keep running.
+   */
   async archive(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    const container = await this.container(id)
-    this.cancelReconcile(id)
-    this.stopLink(id)
+    const environmentId = bot.environmentId!
     this.clearTakeover(id, 4002)
-    if (container) {
-      await this.docker.stop(container.id)
-      await this.docker.remove(container.id, true)
-    }
     this.removeStatus(id)
-    this.resources.delete(id)
-    this.imageOutdated.delete(id)
-    const result = this.store.transaction(() => {
-      const archived = this.update(id, { lifecycle: 'archived' })
+    this.store.transaction(() => {
+      this.store.archiveBot(id)
       this.syncPeers(id, [])
-      return archived
     })
     for (const peerId of bot.talksTo) this.emitBot(peerId)
     this.activity(id, 'bot_archived')
     this.onEvent({ type: 'bot.removed', at: now(), botId: id })
-    return result
+    this.emitEnvironment(environmentId, false)
+    await this.exclusive(environmentId, async () => {
+      const environment = this.store.getEnvironment(environmentId)
+      // A stopped environment's instance uninstalls the bot when it next starts.
+      if (environment?.lifecycle !== 'running' || this.store.getBot(id)?.lifecycle !== 'archived') return
+      const client = this.client(environmentId)
+      if (!this.capable(environmentId)) {
+        // An instance from before environments cannot uninstall its bot: holding it keeps it from working meanwhile.
+        await client
+          .forBot(id, false)
+          .hold({ reason: 'paused' })
+          .catch(() => this.logger.warn('Could not hold an archived bot', { botId: id, environmentId }))
+        return
+      }
+      try {
+        await this.uninstall(client, id, false)
+      } catch {
+        this.logger.warn('An archived bot is still installed; it leaves when its environment is reconciled', {
+          botId: id,
+          environmentId,
+        })
+        this.scheduleReconcile(environmentId, 1000)
+      }
+    })
+    return this.get(id)!
   }
   private requireArchived(id: string): FleetBot {
     const bot = this.store.getBot(id)
@@ -470,83 +1133,111 @@ export class Lifecycle {
       throw new GatewayError('NOT_FOUND', 'Archived bot not found')
     return bot
   }
+  /** Bots archived on their own in an active environment; the bots of archived environments are listed with them. */
   async archivedList(): Promise<FleetArchivedBot[]> {
-    const archived = this.store.archivedBots().filter(({ bot }) => !this.deleting.has(bot.id))
+    const archived = this.store.archivedBots().flatMap((record) => {
+      const environment = record.bot.environmentId ? this.store.getEnvironment(record.bot.environmentId) : null
+      return environment && !environment.archivedAt && !this.deleting.has(record.bot.id)
+        ? [{ ...record, environment }]
+        : []
+    })
     return Promise.all(
-      archived.map(async ({ bot, archivedAt }) => ({
+      archived.map(async ({ bot, archivedAt, environment }) => ({
         id: bot.id,
         name: bot.name,
         role: bot.role,
         tint: bot.tint,
         createdAt: bot.createdAt,
         archivedAt,
-        files: (await this.docker.volumeExists(homeVolume(bot.id))) ? ('kept' as const) : ('missing' as const),
-        environmentId: null,
+        files: (await this.docker.volumeExists(environment.volumeName)) ? ('kept' as const) : ('missing' as const),
+        environmentId: environment.id,
       }))
     )
   }
   /**
-   * Brings an archived bot back in a new container on its kept home volume, with the same secrets (its keyring,
-   * and so its saved API keys, stay readable), talking again to the peers still active. The bot leaves `archived`
-   * before any await, so a second request fails instead of racing the first into a container name conflict.
+   * Brings an archived bot back into its environment, talking again to the peers still active: in its previous slot if
+   * free, otherwise the lowest free one. It is installed at once when its environment runs; a bot alone in a stopped
+   * environment brings the environment back with it. The bot leaves `archived` before any await, so a second request
+   * fails instead of racing the first.
    */
   restore(id: string): FleetBot {
     const bot = this.requireArchived(id)
-    const talksTo = bot.talksTo.filter((peerId) => {
-      const peer = this.store.getBot(peerId)
-      return !!peer && peer.lifecycle !== 'archived'
-    })
-    const restored = this.store.transaction(() => {
-      const next = this.update(id, {
-        lifecycle: 'creating',
-        setup: { step: 'container', error: null, errorMessage: null },
-        talksTo,
-      })
+    const environmentId = this.store.botPlacement(id)!.environmentId
+    const environment = this.store.getEnvironment(environmentId)
+    if (!environment || environment.archivedAt || this.deletingEnvironments.has(environmentId))
+      throw new GatewayError('CONFLICT', RESTORE_ENVIRONMENT_FIRST)
+    this.requireSingleBotRoom(environmentId, id)
+    const talksTo = this.activePeers(bot)
+    this.store.transaction(() => {
+      this.store.restoreBot(id)
+      this.update(id, { talksTo })
       this.syncPeers(id, talksTo)
-      return next
     })
     for (const peerId of talksTo) this.emitBot(peerId)
     this.activity(id, 'bot_restored')
-    queueMicrotask(() => {
-      void (async () => {
-        // An archive interrupted after stopping the container may have left it behind.
-        const leftover = await this.container(id)
-        if (leftover) await this.docker.remove(leftover.id, true)
-        await this.provision(id)
-      })().catch((error) => this.fail(id, error))
-    })
-    return restored
+    const bringUp =
+      (environment.lifecycle === 'stopped' || environment.lifecycle === 'failed') &&
+      this.store.botsOfEnvironment(environmentId).length === 1
+    if (bringUp)
+      this.updateEnvironment(environmentId, {
+        lifecycle: 'creating',
+        ...(environment.setup.step === 'failed' ? { setup: environmentSetup('container') } : {}),
+      })
+    else this.emitEnvironment(environmentId, false)
+    this.queueInstall(environmentId, [id], bringUp)
+    return this.get(id)!
   }
-  /** Irreversible: removes an archived bot's container if any, its home volume, and every gateway record of it. */
+  /**
+   * Irreversible: its running environment's instance deletes the bot's conversation, memory space and folders, then
+   * every gateway record of the bot goes. A bot from before environments, alone in its environment's files, goes
+   * with those files, as it did when it was its own container.
+   */
   async purge(id: string): Promise<void> {
     const bot = this.requireArchived(id)
+    const environmentId = this.store.botPlacement(id)!.environmentId
+    const environment = this.store.getEnvironment(environmentId)
+    if (!environment || environment.archivedAt || this.deletingEnvironments.has(environmentId))
+      throw new GatewayError('CONFLICT', RESTORE_ENVIRONMENT_FIRST)
     this.deleting.add(id)
+    let whole: boolean
     try {
-      const leftover = await this.container(id)
-      if (leftover) await this.docker.remove(leftover.id, true)
-      try {
-        await this.docker.volumeRemove(homeVolume(id))
-      } catch (error) {
-        if (error instanceof DockerError)
-          throw new GatewayError(
-            error.status === 409 ? 'CONFLICT' : 'DOCKER_UNAVAILABLE',
-            error.status === 409 ? 'The bot files are still in use' : 'Docker could not remove the bot files'
-          )
-        throw error
-      }
-      // Files first: if this fails, the record remains and deleting again finishes the job.
-      this.store.deleteBot(id)
+      whole = await this.exclusive(environmentId, async () => {
+        const current = this.store.getEnvironment(environmentId)
+        if (!current || current.archivedAt) throw new GatewayError('CONFLICT', RESTORE_ENVIRONMENT_FIRST)
+        if (current.lifecycle === 'running' && this.capable(environmentId)) {
+          await this.uninstall(this.client(environmentId), id, true)
+          this.store.purgeBot(id)
+          return false
+        }
+        if (
+          this.environmentCapable(environmentId) === false &&
+          this.store.botsOfEnvironment(environmentId, true).length === 1
+        ) {
+          await this.removeFiles(current, 'bot')
+          this.store.deleteBot(id)
+          return true
+        }
+        throw new GatewayError('CONFLICT', START_ENVIRONMENT_FIRST)
+      })
     } finally {
       this.deleting.delete(id)
     }
     this.pendingSeen.delete(id)
-    this.recordActivity(null, 'bot_deleted', bot.name)
+    if (whole) {
+      this.forgetEnvironment(environmentId)
+      this.recordActivity(null, 'bot_deleted', bot.name)
+      this.onEvent({ type: 'environment.removed', at: now(), environmentId })
+    } else {
+      const entry = this.store.addActivity(null, 'bot_deleted', bot.name, {}, environmentId)
+      this.onEvent({ type: 'activity', at: entry.at, entry })
+      this.emitEnvironment(environmentId, false)
+    }
   }
   async pause(id: string): Promise<FleetBot> {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (bot.lifecycle === 'running') {
-      const hold = await this.client(id).hold({ reason: 'paused' })
+      const hold = await this.botClient(id).hold({ reason: 'paused' })
       const status = this.statuses.get(id)
       if (status) this.statuses.set(id, { ...status, hold })
     }
@@ -560,7 +1251,7 @@ export class Lifecycle {
     if (this.takeovers.get(id)?.state && this.takeovers.get(id)?.state !== 'none')
       throw new GatewayError('CONFLICT', 'Give back the screen before resuming the bot')
     if (bot.lifecycle === 'running') {
-      const hold = await this.client(id).release({ note: null, durationMs: null, continue: true })
+      const hold = await this.botClient(id).release({ note: null, durationMs: null, continue: true })
       const status = this.statuses.get(id)
       if (status) this.statuses.set(id, { ...status, hold })
     }
@@ -572,18 +1263,21 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (input.talksTo) this.validatePeers(id, input.talksTo)
-    const next = { ...bot, ...input }
-    if (next.lifecycle === 'running') {
-      const status = await this.client(id).putProfile({
-        botId: id,
-        name: next.name,
-        instructions: next.instructions,
-        ceiling: next.ceiling,
-        selection: next.selection,
-        compaction: next.compaction,
-        gateway: { peersEnabled: next.talksTo.length > 0 },
+    if (bot.lifecycle === 'running') {
+      const environmentId = bot.environmentId!
+      await this.exclusive(environmentId, async () => {
+        const current = this.get(id)
+        if (current?.lifecycle !== 'running') return
+        const next = this.profile({ ...current, ...input })
+        const status = this.capable(environmentId)
+          ? await this.client(environmentId).botInstall(id, {
+              profile: next,
+              slot: this.store.botPlacement(id)!.slot,
+              gatewayToken: this.store.botGatewaySecrets(id)!.gatewayToken,
+            })
+          : await this.botClient(id).putProfile(next)
+        this.updateStatus(id, status)
       })
-      this.updateStatus(id, status)
     }
     this.store.transaction(() => {
       this.update(id, input)
@@ -596,6 +1290,12 @@ export class Lifecycle {
     const bot = this.get(id)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')
+    return this.botClient(id)
+  }
+  /** The environment's own API (accounts, skills, MCP servers, sign-ins, its settings window) while it runs. */
+  environmentInstance(id: string): InstanceClient {
+    const environment = this.requireEnvironment(id)
+    if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
     return this.client(id)
   }
   private clearTakeover(id: string, code: number) {
@@ -619,7 +1319,7 @@ export class Lifecycle {
     }
   }
   async takeover(id: string, deviceId: string, deviceName: string): Promise<FleetTakeoverState> {
-    this.instanceFor(id)
+    const client = this.instanceFor(id)
     const current = this.takeovers.get(id)
     if (current && current.state !== 'none') {
       if (current.deviceId !== deviceId) throw new GatewayError('CONFLICT', 'Bot controlled by another device')
@@ -630,9 +1330,9 @@ export class Lifecycle {
     this.takeovers.set(id, acquiring)
     this.emitBot(id)
     try {
-      const hold = await this.client(id).hold({ reason: 'takeover' })
+      const hold = await client.hold({ reason: 'takeover' })
       if (this.store.deviceRevoked(deviceId)) {
-        await this.client(id).release({ note: null, durationMs: null, continue: true })
+        await client.release({ note: null, durationMs: null, continue: true })
         throw new GatewayError('CONFLICT', 'Device revoked during takeover')
       }
       const status = this.statuses.get(id)
@@ -681,96 +1381,94 @@ export class Lifecycle {
       throw error
     }
   }
+  /**
+   * Matches the recorded environments with their containers, found by their environment label or, for containers
+   * from before environments, their bot label; running ones get their bots installed again.
+   */
   async reconcile() {
     const containers = await this.docker.list(managed + '=true')
-    const byId = new Map(containers.map((container) => [container.labels[botLabel], container]))
+    const found = new Map<string, ContainerInfo>()
+    for (const container of containers) {
+      const id = container.labels[environmentLabel] ?? container.labels[legacyBotLabel]
+      if (!id) continue
+      // Two containers for one environment: the one with its recorded name wins.
+      if (!found.has(id) || container.name === this.store.getEnvironment(id)?.containerName) found.set(id, container)
+    }
     const currentImage = await this.docker.imageInspect(this.config.botImage)
-    for (const bot of this.store.listBots()) {
-      const container = byId.get(bot.id)
+    for (const environment of this.store.listEnvironments()) {
+      const id = environment.id,
+        container = found.get(id)
       if (!container) {
-        this.imageOutdated.delete(bot.id)
-        this.update(bot.id, { lifecycle: bot.lifecycle === 'creating' ? 'failed' : 'stopped' })
+        this.imageOutdated.delete(id)
+        this.updateEnvironment(id, { lifecycle: environment.lifecycle === 'creating' ? 'failed' : 'stopped' })
         continue
       }
-      this.imageOutdated.set(bot.id, Boolean(currentImage && container.imageId !== currentImage.id))
-      if (this.imageOutdated.get(bot.id))
-        this.logger.info('Bot container uses an older image; restart to update', { botId: bot.id })
+      this.imageOutdated.set(id, Boolean(currentImage && container.imageId !== currentImage.id))
+      if (this.imageOutdated.get(id))
+        this.logger.info('Environment container uses an older image; restart to update', { environmentId: id })
       if (container.state === 'running') {
         try {
-          await this.reconcileOne(bot.id)
+          await this.exclusive(id, () => this.reconcileEnvironment(id))
         } catch {
-          this.update(bot.id, { lifecycle: 'starting' })
-          this.scheduleReconcile(bot.id, 1000)
+          this.updateEnvironment(id, { lifecycle: 'starting' })
+          this.scheduleReconcile(id, 1000)
         }
-      } else this.update(bot.id, { lifecycle: 'stopped' })
+      } else this.updateEnvironment(id, { lifecycle: 'stopped' })
     }
   }
-  private async reconcileOne(id: string) {
+  private async reconcileEnvironment(id: string) {
     const client = this.client(id)
     const health = await client.health()
     if (!health.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
-    const bot = this.store.getBot(id)!
-    let status = await client.putProfile({
-      botId: id,
-      name: bot.name,
-      instructions: bot.instructions,
-      ceiling: bot.ceiling,
-      selection: bot.selection,
-      compaction: bot.compaction,
-      gateway: { peersEnabled: bot.talksTo.length > 0 },
-    })
-    if (!status.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
-    if (status.hold.reason === 'takeover') {
-      const hold = await client.release({ note: null, durationMs: null, continue: true })
-      status = { ...status, hold }
-    }
-    if (bot.paused && status.hold.reason !== 'paused') {
-      const hold = await client.hold({ reason: 'paused' })
-      status = { ...status, hold }
-    }
-    this.updateStatus(id, status)
-    this.update(id, { lifecycle: 'running', setup: { step: 'ready', error: null, errorMessage: null } })
-    this.onReady(id)
+    this.instances.set(id, { appVersion: health.appVersion, capabilities: health.capabilities })
+    await this.installMembers(id, client, null, true)
+    this.updateEnvironment(id, { lifecycle: 'running', setup: environmentSetup('ready') })
+    for (const bot of this.store.botsOfEnvironment(id))
+      if (this.get(bot.id)?.lifecycle === 'running') this.onReady(bot.id)
     this.startLink(id)
   }
-  private cancelReconcile(id: string) {
-    const timer = this.reconcileTimers.get(id)
+  private cancelReconcile(environmentId: string) {
+    const timer = this.reconcileTimers.get(environmentId)
     if (timer) clearTimeout(timer)
-    this.reconcileTimers.delete(id)
+    this.reconcileTimers.delete(environmentId)
   }
-  private scheduleReconcile(id: string, delay: number) {
-    if (this.reconcileTimers.has(id)) return
-    const timer = setTimeout(async () => {
-      this.reconcileTimers.delete(id)
-      try {
-        const container = await this.container(id)
+  private scheduleReconcile(environmentId: string, delay: number) {
+    if (this.reconcileTimers.has(environmentId)) return
+    const timer = setTimeout(() => {
+      this.reconcileTimers.delete(environmentId)
+      void this.exclusive(environmentId, async () => {
+        const environment = this.store.getEnvironment(environmentId)
+        if (!environment || environment.archivedAt) return
+        const container = await this.container(environment)
         if (container?.state !== 'running') {
-          this.update(id, { lifecycle: 'stopped' })
+          this.updateEnvironment(environmentId, { lifecycle: 'stopped' })
           return
         }
-        await this.reconcileOne(id)
-      } catch {
-        this.scheduleReconcile(id, Math.min(delay * 2, 30000))
-      }
+        await this.reconcileEnvironment(environmentId)
+      }).catch(() => this.scheduleReconcile(environmentId, Math.min(delay * 2, 30000)))
     }, delay)
     timer.unref()
-    this.reconcileTimers.set(id, timer)
+    this.reconcileTimers.set(environmentId, timer)
   }
   close() {
     for (const timer of this.reconcileTimers.values()) clearTimeout(timer)
     this.reconcileTimers.clear()
-    for (const id of this.links.keys()) this.stopLink(id)
+    for (const id of [...this.links.keys()]) this.stopLink(id)
     for (const timer of this.controllerTimers.values()) clearTimeout(timer)
     this.controllerTimers.clear()
   }
+  /** Measures each running environment's container; a bot alone in its environment reports the figures too. */
   async refreshStats() {
-    for (const bot of this.store.listBots()) {
-      if (bot.lifecycle !== 'running') continue
-      const container = await this.container(bot.id)
-      if (!container) continue
+    for (const environment of this.store.listEnvironments()) {
+      if (environment.lifecycle !== 'running') continue
       try {
-        this.resources.set(bot.id, { ...(await this.docker.statsOnce(container.id)), startedAt: container.startedAt })
-        this.emitBot(bot.id)
+        const container = await this.container(environment)
+        if (!container) continue
+        this.resources.set(environment.id, {
+          ...(await this.docker.statsOnce(container.id)),
+          startedAt: container.startedAt,
+        })
+        this.emitEnvironment(environment.id, this.store.botsOfEnvironment(environment.id).length === 1)
       } catch {}
     }
   }

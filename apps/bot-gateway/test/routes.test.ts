@@ -392,7 +392,7 @@ it('routes takeover, tickets and routine CRUD with protocol validation', async (
     expect((await post('/v1/bots/test/archive', afterStop.token)).status).toBe(200)
     expect((await remove('bad')).status).toBe(401)
     expect((await remove(afterStop.token)).status).toBe(204)
-    expect(docker.volumes.has('maestrly-bot-test-home')).toBe(false)
+    expect(docker.volumes.has('maestrly-env-test-home')).toBe(false)
     expect(await list()).toEqual([])
     expect((await remove(afterStop.token)).status).toBe(404)
   } finally {

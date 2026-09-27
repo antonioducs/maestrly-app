@@ -39,6 +39,8 @@ export interface DockerDriver {
   stop(id: string, timeoutSec?: number): Promise<void>
   restart(id: string): Promise<void>
   remove(id: string, force?: boolean): Promise<void>
+  /** Changes a container's memory limit (and its swap, twice the limit as Docker sets by default) in place. */
+  updateMemory(id: string, bytes: number): Promise<void>
   inspect(id: string): Promise<ContainerInfo>
   list(label?: string): Promise<ContainerInfo[]>
   statsOnce(id: string): Promise<ContainerStats>
@@ -199,6 +201,13 @@ export class DockerEngineDriver implements DockerDriver {
   async remove(id: string, force = false) {
     await this.request('DELETE', await this.route('/containers/' + encodeURIComponent(id) + '?force=' + force))
   }
+  async updateMemory(id: string, bytes: number) {
+    // Docker refuses a memory limit above the swap limit already set, so both change together.
+    await this.request('POST', await this.route('/containers/' + encodeURIComponent(id) + '/update'), {
+      Memory: bytes,
+      MemorySwap: bytes * 2,
+    })
+  }
   async inspect(id: string): Promise<ContainerInfo> {
     const raw = await this.request('GET', await this.route('/containers/' + encodeURIComponent(id) + '/json'))
     return {
@@ -237,6 +246,8 @@ export class FakeDockerDriver implements DockerDriver {
   readonly containers = new Map<string, ContainerInfo & { spec: ContainerSpec }>()
   readonly volumes = new Set<string>()
   readonly networks = new Set<string>()
+  readonly memoryUpdates: Array<{ id: string; memory: number }> = []
+  memoryUpdateFailure: DockerError | null = null
   startLatencyMs = 0
   stats: ContainerStats = { memoryBytes: 0, memoryLimitBytes: 0, cpuPercent: 0 }
   async version() {
@@ -304,7 +315,13 @@ export class FakeDockerDriver implements DockerDriver {
   async remove(id: string, force = false) {
     const item = await this.lookup(id)
     if (item.state === 'running' && !force) throw new DockerError(409, 'Container is running')
-    this.containers.delete(id)
+    this.containers.delete(item.id)
+  }
+  async updateMemory(id: string, bytes: number) {
+    const item = await this.lookup(id)
+    if (this.memoryUpdateFailure) throw this.memoryUpdateFailure
+    item.spec = { ...item.spec, memory: bytes }
+    this.memoryUpdates.push({ id: item.id, memory: bytes })
   }
   async inspect(id: string) {
     const { spec, ...item } = await this.lookup(id)

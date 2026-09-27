@@ -28,14 +28,28 @@ export class EventHub {
   }
   emit(event: FleetGatewayEvent) {
     if (!this.subscribers.size) return
-    if (event.type === 'bot.removed') {
-      const pending = this.pendingBots.get(event.botId)
+    // Bot and environment updates are coalesced per bot and per environment (their keys cannot collide, although an
+    // environment may share its id with a bot); a removal drops the update still waiting.
+    const removed =
+      event.type === 'bot.removed'
+        ? 'bot:' + event.botId
+        : event.type === 'environment.removed'
+          ? 'environment:' + event.environmentId
+          : null
+    if (removed) {
+      const pending = this.pendingBots.get(removed)
       if (pending) clearTimeout(pending.timer)
-      this.pendingBots.delete(event.botId)
-      this.lastBotSent.delete(event.botId)
+      this.pendingBots.delete(removed)
+      this.lastBotSent.delete(removed)
     }
-    if (event.type === 'bot.updated') {
-      const id = event.bot.id
+    const updated =
+      event.type === 'bot.updated'
+        ? 'bot:' + event.bot.id
+        : event.type === 'environment.updated'
+          ? 'environment:' + event.environment.id
+          : null
+    if (updated) {
+      const id = updated
       const delay = 250 - (Date.now() - (this.lastBotSent.get(id) ?? 0))
       if (delay > 0) {
         const pending = this.pendingBots.get(id)

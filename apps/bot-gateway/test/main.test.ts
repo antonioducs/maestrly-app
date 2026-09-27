@@ -239,11 +239,11 @@ describe('lifecycle', () => {
     expect(lifecycle.get(second.id)?.talksTo).toContain(bot.id)
     await lifecycle.patch(bot.id, { talksTo: [] })
     expect(lifecycle.get(second.id)?.talksTo).toEqual([])
-    expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain('MAESTRLY_BOT_MODE=1')
-    expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain(
+    expect(docker.containers.get('fake-maestrly-env-test')?.spec.env).toContain('MAESTRLY_BOT_MODE=1')
+    expect(docker.containers.get('fake-maestrly-env-test')?.spec.env).toContain(
       'MAESTRLY_BOT_KEYRING_PASSWORD=' + store.botSecrets(bot.id)?.keyringPassword
     )
-    expect(docker.containers.get('fake-maestrly-bot-test')?.spec.env).toContain('TZ=' + cfg.timezone)
+    expect(docker.containers.get('fake-maestrly-env-test')?.spec.env).toContain('TZ=' + cfg.timezone)
     expect((await lifecycle.stop(bot.id)).lifecycle).toBe('stopped')
     expect((await lifecycle.start(bot.id)).lifecycle).toBe('running')
     expect((await lifecycle.restart(bot.id)).lifecycle).toBe('running')
@@ -263,7 +263,7 @@ describe('lifecycle', () => {
     docker.setImage(cfg.botImage, 'sha256:old-image')
     const bot = lifecycle.create(input())
     await until(() => lifecycle.get(bot.id)?.lifecycle === 'running')
-    const name = 'maestrly-bot-' + bot.id
+    const name = 'maestrly-env-' + bot.id
     const original = docker.containers.get('fake-' + name)!
     const secrets = store.botSecrets(bot.id)
     const volume = name + '-home'
@@ -305,7 +305,7 @@ describe('lifecycle', () => {
     docker.setImage(cfg.botImage, 'sha256:old-image')
     const bot = lifecycle.create(input())
     await until(() => lifecycle.get(bot.id)?.lifecycle === 'running')
-    const original = docker.containers.get('fake-maestrly-bot-' + bot.id)!
+    const original = docker.containers.get('fake-maestrly-env-' + bot.id)!
     docker.images.delete(cfg.botImage)
     expect((await lifecycle.restart(bot.id)).lifecycle).toBe('running')
     expect(docker.containers.get(original.id)).toBe(original)

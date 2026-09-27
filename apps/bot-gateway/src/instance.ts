@@ -7,7 +7,10 @@ import {
   buildPath,
   fleetInstanceEventSchema,
   type FleetBotMemoryPatchRequest,
+  type FleetInstanceBotInstall,
+  type FleetInstanceEnvironmentStatus,
   type FleetInstanceInput,
+  type FleetInstanceStatus,
   type FleetInstanceProfile,
   type FleetInteractionResolution,
   type FleetAddApiKeyAccountRequest,
@@ -24,13 +27,47 @@ import {
 import { GatewayError } from './errors.js'
 
 type Routes = typeof FLEET_INSTANCE_ROUTES
+/**
+ * The bot a client speaks for. An instance with the `environments` capability serves each bot under
+ * `/v1/bots/:botId`; an older one runs a single bot on the unprefixed routes.
+ */
+export type InstanceBotScope = { botId: string; environments: boolean }
+/**
+ * The control API of an environment's Maestrly. Accounts, subscriptions, sign-ins, skills, MCP servers, the settings
+ * window and the event stream belong to the environment; `forBot` gives a client whose conversation, queue, hold and
+ * memory calls address one of its bots.
+ */
 export class InstanceClient {
   constructor(
-    readonly botId: string,
+    readonly environmentId: string,
     readonly controlToken: string,
-    readonly origin = 'http://maestrly-bot-' + botId + ':7680',
-    readonly timeoutMs = 15000
+    readonly origin = 'http://maestrly-env-' + environmentId + ':7680',
+    readonly timeoutMs = 15000,
+    readonly scope: InstanceBotScope | null = null
   ) {}
+  /** The same instance, addressing one bot: through its own routes when the instance has environments. */
+  forBot(botId: string, environments: boolean): InstanceClient {
+    return new InstanceClient(this.environmentId, this.controlToken, this.origin, this.timeoutMs, {
+      botId,
+      environments,
+    })
+  }
+  /**
+   * A bot call: the prefixed route of an environment instance, or the route an older instance (whose one bot needs no
+   * name) has always had.
+   */
+  private botCall<L extends keyof Routes, P extends keyof Routes>(
+    legacy: L,
+    prefixed: P,
+    params: Record<string, string> = {},
+    query?: Record<string, string | number | undefined>,
+    body?: unknown,
+    timeoutMs?: number
+  ): Promise<any> {
+    return this.scope?.environments
+      ? this.call(prefixed, { ...params, botId: this.scope.botId }, query, body, timeoutMs)
+      : this.call(legacy, params, query, body, timeoutMs)
+  }
   private async call<K extends keyof Routes>(
     key: K,
     params: Record<string, string> = {},
@@ -83,26 +120,38 @@ export class InstanceClient {
   }
   // instance.ts
   memoriesList(status: 'active' | 'archived' | 'superseded' | 'all' = 'active') {
-    return this.call('memoriesList', {}, { status })
+    return this.botCall('memoriesList', 'botMemoriesList', {}, { status })
   }
   memoryPatch(id: string, body: FleetBotMemoryPatchRequest) {
-    return this.call('memoryPatch', { id }, undefined, body)
+    return this.botCall('memoryPatch', 'botMemoryPatch', { id }, undefined, body)
   }
   memoryDelete(id: string) {
-    return this.call('memoryDelete', { id })
+    return this.botCall('memoryDelete', 'botMemoryDelete', { id })
   }
 
   health() {
     return this.call('health')
   }
-  status() {
-    return this.call('status')
+  status(): Promise<FleetInstanceStatus> {
+    return this.botCall('status', 'botStatus')
   }
-  putProfile(body: FleetInstanceProfile) {
+  /** Installs a bot on an instance that predates environments, which runs a single bot. */
+  putProfile(body: FleetInstanceProfile): Promise<FleetInstanceStatus> {
     return this.call('profile', {}, undefined, body)
   }
+  environmentStatus(): Promise<FleetInstanceEnvironmentStatus> {
+    return this.call('environmentStatus')
+  }
+  /** Installs a bot in the environment, or updates it: its profile, display slot and gateway token. */
+  botInstall(botId: string, body: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {
+    return this.call('botInstall', { botId }, undefined, body)
+  }
+  /** Uninstalls a bot and keeps its data, or with `purge` deletes its conversation, memory space and folders too. */
+  botUninstall(botId: string, purge: boolean): Promise<void> {
+    return this.call('botUninstall', { botId }, purge ? { purge: 1 } : undefined)
+  }
   selections() {
-    return this.call('selections')
+    return this.botCall('selections', 'botSelections')
   }
   addApiKeyAccount(body: FleetAddApiKeyAccountRequest) {
     return this.call('apiKeyAccountAdd', {}, undefined, body)
@@ -153,11 +202,14 @@ export class InstanceClient {
     return this.call('accountRemove', { providerId })
   }
   transcript(before?: string, limit = 200) {
-    return this.call('transcript', {}, { before, limit })
+    return this.botCall('transcript', 'botTranscript', {}, { before, limit })
   }
   async image(imageId: string): Promise<Response> {
+    const path = this.scope?.environments
+      ? buildPath(FLEET_INSTANCE_ROUTES.botImage.path, { botId: this.scope.botId, imageId })
+      : buildPath(FLEET_INSTANCE_ROUTES.image.path, { imageId })
     try {
-      const response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.image.path, { imageId }), {
+      const response = await fetch(this.origin + path, {
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
           Authorization: 'Bearer ' + this.controlToken,
@@ -182,25 +234,25 @@ export class InstanceClient {
     }
   }
   postInput(body: FleetInstanceInput) {
-    return this.call('inputSend', {}, undefined, body)
+    return this.botCall('inputSend', 'botInputSend', {}, undefined, body)
   }
   deleteInput(inputId: string) {
-    return this.call('inputDelete', { inputId })
+    return this.botCall('inputDelete', 'botInputDelete', { inputId })
   }
   cancelTurn() {
-    return this.call('turnCancel')
+    return this.botCall('turnCancel', 'botTurnCancel')
   }
   resolveInteraction(id: string, body: FleetInteractionResolution) {
-    return this.call('interactionResolve', { id }, undefined, body)
+    return this.botCall('interactionResolve', 'botInteractionResolve', { id }, undefined, body)
   }
   hold(body: { reason: 'takeover' | 'paused' }) {
-    return this.call('hold', {}, undefined, body)
+    return this.botCall('hold', 'botHold', {}, undefined, body)
   }
   release(body: { note: string | null; durationMs: number | null; continue: boolean }) {
-    return this.call('holdRelease', {}, undefined, body)
+    return this.botCall('holdRelease', 'botHoldRelease', {}, undefined, body)
   }
   conversationCall(body: FleetConversationCallRequest) {
-    return this.call('conversationCall', {}, undefined, body)
+    return this.botCall('conversationCall', 'botConversationCall', {}, undefined, body)
   }
   uiOpen(body: FleetUiOpenRequest) {
     return this.call('uiOpen', {}, undefined, body)

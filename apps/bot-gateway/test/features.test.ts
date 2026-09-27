@@ -457,7 +457,8 @@ describe('instance link and takeover', () => {
   })
 })
 describe('archived bots', () => {
-  const home = (id: string) => 'maestrly-bot-' + id + '-home'
+  // Each bot here has an environment of its own, named after it, whose home volume holds its files.
+  const home = (id: string) => 'maestrly-env-' + id + '-home'
   it('lists, restores on the same home and secrets, and reconnects only surviving peers', async () => {
     const fake = await fakeInstance(),
       f = fixture(fake.origin)
@@ -468,7 +469,12 @@ describe('archived bots', () => {
     const secrets = f.store.botSecrets(dev.id)
     await f.lifecycle.archive(scout.id)
     await f.lifecycle.archive(dev.id)
-    expect([...f.docker.containers.values()].map((item) => item.name)).toEqual(['maestrly-bot-ads'])
+    // Archiving a bot uninstalls it from its environment, whose container stays.
+    expect([...f.docker.containers.values()].map((item) => item.name)).toEqual([
+      'maestrly-env-ads',
+      'maestrly-env-scout',
+      'maestrly-env-dev',
+    ])
     expect(f.docker.volumes.has(home(dev.id))).toBe(true)
     expect(f.lifecycle.list().map((bot) => bot.id)).toEqual([ads.id])
     const archived = await f.lifecycle.archivedList()
@@ -483,7 +489,7 @@ describe('archived bots', () => {
     // A second request while the first is provisioning must not race it into a container name conflict.
     expect(() => f.lifecycle.restore(dev.id)).toThrow('Archived bot not found')
     await until(() => f.lifecycle.get(dev.id)?.lifecycle === 'running')
-    const container = [...f.docker.containers.values()].find((item) => item.name === 'maestrly-bot-' + dev.id)!
+    const container = [...f.docker.containers.values()].find((item) => item.name === 'maestrly-env-' + dev.id)!
     expect(container.spec.volume).toBe(home(dev.id))
     expect(f.store.botSecrets(dev.id)).toEqual(secrets)
     expect(container.spec.env).toContain('MAESTRLY_BOT_KEYRING_PASSWORD=' + secrets!.keyringPassword)
@@ -565,7 +571,7 @@ describe('archived bots', () => {
     const bot = f.lifecycle.create(botInput())
     await until(() => f.lifecycle.get(bot.id)?.lifecycle === 'running')
     await expect(f.docker.volumeRemove(home(bot.id))).rejects.toMatchObject({ status: 409 })
-    await f.lifecycle.archive(bot.id)
+    await f.lifecycle.archiveEnvironment(bot.environmentId!)
     await f.docker.volumeRemove(home(bot.id))
     // Removing a volume that is already gone is not an error.
     await f.docker.volumeRemove(home(bot.id))
