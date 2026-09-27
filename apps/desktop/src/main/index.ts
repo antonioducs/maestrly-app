@@ -4,8 +4,7 @@ import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { clampToArea } from './fleet/instance/window-bounds'
-import { fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
+import { environmentScreenBounds } from './fleet/instance/window-bounds'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -213,7 +212,7 @@ async function stopConversationLive(convId: string): Promise<void> {
  */
 function placeEnvironmentScreen(window: BrowserWindow): void {
   if (window.isDestroyed()) return
-  window.setBounds(clampToArea(fleetEnvironmentTile(0), screen.getPrimaryDisplay().bounds))
+  window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
 async function stopAllLiveWork(): Promise<void> {

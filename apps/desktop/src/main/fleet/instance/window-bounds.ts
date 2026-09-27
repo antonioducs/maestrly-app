@@ -1,4 +1,5 @@
 import type { ScreenArea } from '../../conversation-screen'
+import { fleetEnvironmentTile } from '@maestrly/bot-fleet-protocol'
 
 /** A bot's primary browser is the one floating window that fills its whole screen area. */
 export function fillsScreenArea(tab: string, botMode: boolean): boolean {
@@ -30,6 +31,11 @@ export function insideWindowFrame(area: ScreenArea, frame = ENVIRONMENT_WINDOW_F
     width: Math.max(1, area.width - frame.left - frame.right),
     height: Math.max(1, area.height - frame.top - frame.bottom),
   }
+}
+
+/** Keep the environment settings window's native decorations inside tile zero as well. */
+export function environmentScreenBounds(display: ScreenArea): ScreenArea {
+  return insideWindowFrame(clampToArea(fleetEnvironmentTile(0), display))
 }
 
 /** A side length that fits the area; an unusable length takes the whole side. */

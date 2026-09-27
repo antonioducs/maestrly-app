@@ -160,7 +160,7 @@ import {
   setConversationScreen,
   type ConversationScreen,
 } from '../../src/main/conversation-screen'
-import { centerInArea, clampToArea } from '../../src/main/fleet/instance/window-bounds'
+import { centerInArea, clampToArea, environmentScreenBounds } from '../../src/main/fleet/instance/window-bounds'
 import { detach, disposeAll, getFloatWin, initFloatingManager, setFloatBounds } from '../../src/main/floating-manager'
 import { getConvUiPrefs, type FloatTab } from '../../src/main/store'
 import { isBotMode } from '../../src/main/fleet/instance/config'
@@ -175,6 +175,17 @@ const botA: ConversationScreen = {
   windowArea: { x: 1280, y: 800, width: 1280, height: 800 },
 }
 const conversations = ['bot-a', 'bot-late', 'plain', 'popup-bot', 'popup-plain']
+
+it('keeps the environment settings window and its native frame inside tile zero', () => {
+  const bounds = environmentScreenBounds({ x: 0, y: 0, width: 3840, height: 2400 })
+  expect(bounds).toEqual({ x: 1, y: 20, width: 1278, height: 775 })
+  expect({
+    x: bounds.x - 1,
+    y: bounds.y - 20,
+    width: bounds.width + 2,
+    height: bounds.height + 25,
+  }).toEqual({ x: 0, y: 0, width: 1280, height: 800 })
+})
 
 /** The fake native window behind a floating tab, with the options it was created with. */
 function nativeWindow(convId: string, tab: FloatTab): InstanceType<typeof h.FakeWindow> {
