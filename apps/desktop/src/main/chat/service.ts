@@ -218,6 +218,8 @@ import {
   getMessageSeq,
   lastConversationContextMessage,
   listConversationContextMessages,
+  listActiveConversationContextMessages,
+  hasConversationContextMessages,
   listExecutionContextMessages,
   listPublicChatMessagesPage,
   recordChatUsageAttempt,
@@ -3187,7 +3189,7 @@ async function preflightContext(
     const nativeTransfer =
       isCodexSubscriptionProvider(selection.providerId) &&
       projection?.source === 'portable-transcript' &&
-      listConversationContextMessages(conversationId).length > 0
+      hasConversationContextMessages(conversationId)
     if (nativeTransfer) {
       chatDiag({
         kind: 'preflight-context-window-unknown',
@@ -3208,7 +3210,7 @@ async function preflightContext(
   const exceedsTransport = (projectionSource: string): boolean =>
     isCodexSubscriptionProvider(selection.providerId) &&
     codexTransferCharacters(
-      projectionSource === 'runtime-usage' ? [] : listConversationContextMessages(conversationId),
+      projectionSource === 'runtime-usage' ? [] : listActiveConversationContextMessages(conversationId),
       pendingParts
     ) > CODEX_TRANSFER_MAX_CHARACTERS
   if (!load.shouldCompact && !exceedsTransport(source)) return { ok: true, compacted: false }
@@ -3319,8 +3321,8 @@ async function currentChatHistoryStats(
 ): Promise<StoredChatHistoryStats> {
   const selection = selectionOverride ?? selectionFor(conversationId)
   // Binding lastMessageId / portable projection: MAIN context only (isolated rounds do not invalidate resume
-  // or inflate the reseed/preflight projection).
-  const history = listConversationContextMessages(conversationId)
+  // or inflate the reseed/preflight projection), from the last portable marker on: only estimates read it.
+  const history = listActiveConversationContextMessages(conversationId)
   const latestMessage = lastConversationContextMessage(conversationId)
   let stats: StoredChatHistoryStats
   let runtimeReusable = false
@@ -7429,7 +7431,8 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
       const conv = getConversation(id)
       return conv ? { id, archived: Boolean(conv.archived) } : null
     },
-    getMessages: listConversationContextMessages,
+    // Candidates hash and summarize only what follows the last portable marker.
+    getMessages: listActiveConversationContextMessages,
     resolveSelection: async (id, profile, signal) => {
       const result = await resolveReviewLoopSelection(id, profile)
       signal.throwIfAborted()

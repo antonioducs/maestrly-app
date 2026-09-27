@@ -42,7 +42,7 @@ import { getApiKey, hasApiKey } from './credentials'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
 import { catalogProviderForBaseURL, getProviderModelMeta } from './model-meta'
-import { getChatMessage, listConversationContextMessages, updateChatMessageParts } from './chat-store'
+import { getChatMessage, listActiveConversationContextMessages, updateChatMessageParts } from './chat-store'
 import { getOpenAIInferenceState, updateChatMessageWithOpenAIInferenceState } from './openai/inference-store'
 import { patchOpenAILedgerToolOutputs } from './openai/ledger'
 import { patchOpenAIToolExecutionOutputs } from './openai/execution'
@@ -548,7 +548,7 @@ function decodeImage(part: Extract<MessagePart, { type: 'file' }>, conversationI
 export function hasImagesToDescribe(conversationId: string, pendingParts: readonly MessagePart[]): boolean {
   if (pendingParts.some(needsDescription)) return true
   // Only MAIN context the model will SEE: isolated-round images never return to it.
-  return activeChatContext(listConversationContextMessages(conversationId)).messages.some((message) =>
+  return activeChatContext(listActiveConversationContextMessages(conversationId)).messages.some((message) =>
     message.parts.some(needsDescription)
   )
 }
@@ -915,7 +915,7 @@ async function describeConversationImagesInner(args: DescribeImagesArgs): Promis
   const targets: { part: Extract<MessagePart, { type: 'file' }>; message?: ChatMessage }[] = []
   for (const part of args.pendingParts) if (needsDescription(part)) targets.push({ part })
   if (!args.pendingOnly) {
-    const active = activeChatContext(listConversationContextMessages(args.conversationId)).messages
+    const active = activeChatContext(listActiveConversationContextMessages(args.conversationId)).messages
     for (let i = active.length - 1; i >= 0; i--) {
       for (const part of active[i].parts) if (needsDescription(part)) targets.push({ part, message: active[i] })
     }

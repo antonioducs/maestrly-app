@@ -711,6 +711,7 @@ export function upsertChatMessage(m: StoredChatMessage): void {
       seq,
       createdAt: m.createdAt,
     })
+  noteContextWrite(m.conversationId, m.parts)
 }
 
 /** Reads ONE message by ID + conversation; null if absent (clear/delete/truncate). */
@@ -731,6 +732,7 @@ export function updateChatMessageParts(conversationId: string, messageId: string
     .prepare('UPDATE chat_messages SET parts_json = ? WHERE id = ? AND conversation_id = ?')
     .run(JSON.stringify(persistedParts(parts)), messageId, conversationId)
   if (result.changes <= 0) return false
+  noteContextWrite(conversationId, parts)
   invalidateBackgroundCompaction(conversationId)
   return true
 }
@@ -958,8 +960,8 @@ export function listExecutionContextMessages(conversationId: string, executionId
 /**
  * SINGLE source of model-bound turn context (ALL runners, BYOK and native): isolated
  * review-loop → only that execution's messages; normal/main turn → main context
- * (legacy + kind=conversation, WITHOUT isolated rounds). UI/audit/billing still use
- * `listChatMessages` — nothing here changes renderer visibility or billing.
+ * (legacy + kind=conversation, WITHOUT isolated rounds), from its last portable compaction marker on.
+ * UI/audit/billing still use `listChatMessages` — nothing here changes renderer visibility or billing.
  */
 export function runnerContextHistory(
   conversationId: string,
@@ -968,7 +970,82 @@ export function runnerContextHistory(
   if (opts.ephemeralSession && opts.executionScope?.kind === 'review-loop') {
     return listExecutionContextMessages(conversationId, opts.executionScope.executionId)
   }
-  return listConversationContextMessages(conversationId)
+  return listActiveConversationContextMessages(conversationId)
+}
+
+/** Whether the conversation has any main-context message. */
+export function hasConversationContextMessages(conversationId: string): boolean {
+  return !!getDb()
+    .prepare(`SELECT 1 FROM chat_messages WHERE conversation_id = ? AND ${CONVERSATION_CONTEXT_SQL} LIMIT 1`)
+    .get(conversationId)
+}
+
+/**
+ * Where each conversation's model context starts: its newest main-context message holding a portable compaction
+ * marker (null without one), and the highest seq checked for a newer one. A hint only: the marker is checked again
+ * before each use, so a stale entry can never cut the context short.
+ */
+const contextStarts = new Map<string, { markerId: string | null; markerSeq: number; checkedThrough: number }>()
+
+/** A write whose parts hold a compaction may move where the context starts, even in an older message. */
+function noteContextWrite(conversationId: string, parts: readonly MessagePart[]): void {
+  if (parts.some((part) => part.type === 'compaction')) contextStarts.delete(conversationId)
+}
+
+/** The newest main-context message above `aboveSeq` holding a portable compaction marker. */
+function newestPortableMarker(conversationId: string, aboveSeq: number): { id: string; seq: number } | null {
+  const candidate = getDb().prepare(
+    `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? AND seq < ? AND ${CONVERSATION_CONTEXT_SQL}
+       AND parts_json LIKE '%"type":"compaction"%' ORDER BY seq DESC LIMIT 1`
+  )
+  let before = Number.MAX_SAFE_INTEGER
+  for (;;) {
+    const row = candidate.get(conversationId, aboveSeq, before) as any
+    if (!row) return null
+    if (rowToMessage(row).parts.some(isPortableCompactionMarker)) return { id: row.id, seq: Number(row.seq) }
+    before = Number(row.seq)
+  }
+}
+
+/**
+ * The main context a model sees, read from the message holding the last portable compaction marker on (that message
+ * whole, like `activeChatContext` needs it): everything before was summarized, so `activeChatContext` of this is
+ * that of `listConversationContextMessages`. Without a marker, every main-context message.
+ */
+export function listActiveConversationContextMessages(conversationId: string): StoredChatMessage[] {
+  const db = getDb()
+  const top = newestChatSeq(conversationId)
+  if (top === null) return []
+  let start = contextStarts.get(conversationId)
+  if (start?.markerId) {
+    const marker = db
+      .prepare(`SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ? AND ${CONVERSATION_CONTEXT_SQL}`)
+      .get(start.markerId, conversationId) as any
+    if (
+      !marker ||
+      Number(marker.seq) !== start.markerSeq ||
+      !rowToMessage(marker).parts.some(isPortableCompactionMarker)
+    )
+      start = undefined
+  }
+  if (!start) {
+    const marker = newestPortableMarker(conversationId, Number.MIN_SAFE_INTEGER)
+    start = { markerId: marker?.id ?? null, markerSeq: marker?.seq ?? Number.MIN_SAFE_INTEGER, checkedThrough: top }
+  } else if (top > start.checkedThrough) {
+    const marker = newestPortableMarker(conversationId, start.checkedThrough)
+    start = marker
+      ? { markerId: marker.id, markerSeq: marker.seq, checkedThrough: top }
+      : { ...start, checkedThrough: top }
+  }
+  contextStarts.set(conversationId, start)
+  if (!start.markerId) return listConversationContextMessages(conversationId)
+  return (
+    db
+      .prepare(
+        `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq >= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ASC`
+      )
+      .all(conversationId, start.markerSeq) as any[]
+  ).map(rowToMessage)
 }
 
 /** Last main-context message (bindings/resume use this, NOT the full transcript). */
@@ -1670,6 +1747,7 @@ export function findGeneratedImagePart(
  */
 export async function clearChatMessages(conversationId: string): Promise<void> {
   invalidateBackgroundCompaction(conversationId)
+  contextStarts.delete(conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ?',
     conversationId
