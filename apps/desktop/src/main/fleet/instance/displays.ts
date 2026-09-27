@@ -53,7 +53,7 @@ export interface DisplayProcess {
   /** Resolves with the exit code, or `null` when a signal ended the process. */
   exited: Promise<number | null>
   /** Asks the process to exit. */
-  kill(): void
+  kill(signal?: 'SIGTERM' | 'SIGKILL'): void
 }
 
 export interface DisplayManagerDeps {
@@ -259,6 +259,19 @@ export class DisplayManager {
       this.assertOpen()
       if (surface.kind === 'apps') {
         const stack = this.bots.get(surface.botId)
+        if (stack?.state === 'failed') {
+          await stack.teardown
+          this.assertOpen()
+          if (this.bots.get(surface.botId) !== stack || this.bots.get(surface.botId)?.state === 'stopping')
+            throw new Error(`The apps display of bot ${surface.botId} was stopped.`)
+          if (stack.state === 'failed') {
+            stack.state = 'starting'
+            stack.teardown = null
+            stack.recentRestarts = 0
+            stack.started = this.start(stack)
+            stack.started.catch(() => undefined)
+          }
+        }
         if (stack?.state === 'starting') await stack.started
         this.assertOpen()
       }
@@ -339,9 +352,10 @@ export class DisplayManager {
       return stack.display
     } catch (error) {
       if (stack.state === 'starting') {
-        stack.state = 'stopping'
+        stack.state = 'failed'
         this.deps.log(`Could not start the apps display ${display} of bot ${botId}: ${describeError(error)}`)
-        stack.teardown = this.teardown(stack).then(() => this.forget(stack))
+        // Its Browser lives on :0 and remains usable. Keep the slot until uninstall or an explicit Apps retry.
+        stack.teardown = this.teardown(stack)
         await stack.teardown
       }
       throw error
@@ -429,6 +443,7 @@ export class DisplayManager {
         `The apps display ${display} of bot ${botId} restarted ${RESTART_BUDGET} times within a minute; giving up until it is started again.`
       )
       stack.teardown = this.teardown(stack)
+      void stack.teardown.catch((error: unknown) => this.deps.log(describeError(error)))
       return
     }
     stack.recentRestarts++
@@ -594,9 +609,10 @@ export class DisplayManager {
     if (!server.closing) {
       if (server.idle) this.deps.clearTimeout(server.idle)
       server.idle = null
-      server.closing = this.terminate(server.child, `The VNC server on port ${server.port}`).finally(() => {
+      server.closing = this.terminate(server.child, `The VNC server on port ${server.port}`).then(() => {
         if (this.servers.get(server.port) === server) this.servers.delete(server.port)
       })
+      void server.closing.catch((error: unknown) => this.deps.log(describeError(error)))
     }
     return server.closing
   }
@@ -663,9 +679,16 @@ export class DisplayManager {
     return timer
   }
 
-  /** Asks the process to exit and waits for it, for at most a few seconds. */
+  /** A slot or VNC port cannot be reused while its previous process still owns it. */
   private async terminate(child: Child, label: string): Promise<void> {
     this.kill(child.handle, label)
+    if (await this.waitForExit(child)) return
+    this.deps.log(`${label} did not exit within ${EXIT_WAIT_MS / 1_000} s; sending SIGKILL.`)
+    this.kill(child.handle, label, 'SIGKILL')
+    if (!(await this.waitForExit(child))) throw new Error(`${label} did not exit after SIGKILL.`)
+  }
+
+  private async waitForExit(child: Child): Promise<boolean> {
     let expire = (): void => undefined
     const expired = new Promise<boolean>((resolve) => {
       expire = () => resolve(true)
@@ -673,12 +696,12 @@ export class DisplayManager {
     const timer = this.timer(EXIT_WAIT_MS, () => expire())
     const timedOut = await Promise.race([child.exited.then(() => false), expired])
     this.deps.clearTimeout(timer)
-    if (timedOut) this.deps.log(`${label} did not exit within ${EXIT_WAIT_MS / 1_000} s after it was asked to stop.`)
+    return !timedOut
   }
 
-  private kill(handle: DisplayProcess, label: string): void {
+  private kill(handle: DisplayProcess, label: string, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): void {
     try {
-      handle.kill()
+      handle.kill(signal)
     } catch (error) {
       this.deps.log(`Could not stop ${label}: ${describeError(error)}`)
     }

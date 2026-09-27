@@ -76,6 +76,7 @@ interface FakeProcess {
   env: Record<string, string>
   running: boolean
   killed: boolean
+  signals: string[]
   exit(code: number | null): void
 }
 
@@ -83,6 +84,7 @@ interface FakeProcess {
 class FakeSpawner {
   readonly processes: FakeProcess[] = []
   exitOnKill = true
+  exitOnForceKill = true
   respond: (command: string, args: string[]) => number | 'run' = (command) => (PROBES.has(command) ? 0 : 'run')
   readonly spawn: DisplayManagerDeps['spawn'] = (command, args, options) => {
     let resolveExit: (code: number | null) => void = () => undefined
@@ -95,6 +97,7 @@ class FakeSpawner {
       env: { ...options.env },
       running: true,
       killed: false,
+      signals: [],
       exit: (code) => {
         if (!child.running) return
         child.running = false
@@ -106,9 +109,10 @@ class FakeSpawner {
     if (response !== 'run') child.exit(response)
     return {
       exited,
-      kill: () => {
+      kill: (signal = 'SIGTERM') => {
         child.killed = true
-        if (this.exitOnKill) child.exit(null)
+        child.signals.push(signal)
+        if (this.exitOnKill || (signal === 'SIGKILL' && this.exitOnForceKill)) child.exit(null)
       },
     }
   }
@@ -215,7 +219,7 @@ describe('DisplayManager apps displays', () => {
     await expect(crashed).rejects.toThrow(/:2/)
     expect(spawner.servers().filter((child) => child.running)).toEqual([])
     expect(spawner.named('openbox')).toHaveLength(0)
-    expect(manager.bot('alpha')).toBeNull()
+    expect(manager.bot('alpha')).toMatchObject({ botId: 'alpha', slot: 2 })
     expect(clock.pending.size).toBe(0)
 
     const silent = manager.startBot('alpha', 2)
@@ -236,6 +240,70 @@ describe('DisplayManager apps displays', () => {
     expect(spawner.named('Xvfb')).toHaveLength(0)
     expect(spawner.servers().filter((child) => child.running)).toEqual([])
     expect(clock.pending.size).toBe(0)
+  })
+
+  it('keeps Browser available after initial Apps failure and retries Apps on demand', async () => {
+    const { manager, spawner } = setup()
+    spawner.respond = (command) => (command === 'prepare-xvfb-display' ? 1 : PROBES.has(command) ? 0 : 'run')
+    await expect(manager.startBot('alpha', 2)).rejects.toThrow(/already in use/)
+    await expect(manager.startBot('beta', 2)).rejects.toThrow(/already used by bot alpha/)
+    const browser = await manager.acquireVnc({ kind: 'browser', botId: 'alpha' }, 'control')
+    expect(browser.port).toBe(5904)
+    expect(spawner.vnc(5904)[0].args).toContain(':0')
+    spawner.respond = (command) => (PROBES.has(command) ? 0 : 'run')
+    const apps = await Promise.all([
+      manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'view'),
+      manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'control'),
+    ])
+    expect(apps.map((lease) => lease.port)).toEqual([5955, 5954])
+    expect(spawner.named('Xvfb')).toHaveLength(1)
+    expect(spawner.vnc(5904)[0].running).toBe(true)
+    await manager.stopBot('alpha')
+    expect(manager.bot('alpha')).toBeNull()
+    expect(spawner.servers().filter((child) => child.running)).toEqual([])
+  })
+
+  it('kills processes that ignore SIGTERM before making the slot reusable', async () => {
+    const { manager, spawner, clock } = setup()
+    await manager.startBot('alpha', 2)
+    spawner.exitOnKill = false
+    const old = spawner.servers()
+    const stopped = manager.stopBot('alpha')
+    const replacement = manager.startBot('beta', 2)
+    await clock.advance(4_999)
+    expect(spawner.named('Xvfb')).toHaveLength(1)
+    expect(old.every((child) => child.running)).toBe(true)
+    await clock.advance(1)
+    await stopped
+    await replacement
+    expect(old.every((child) => !child.running)).toBe(true)
+    expect(old.every((child) => child.signals.join(',') === 'SIGTERM,SIGKILL')).toBe(true)
+    expect(manager.bot('beta')?.slot).toBe(2)
+  })
+
+  it('does not restart Apps after an uninstall overtakes its retry', async () => {
+    const { manager, spawner } = setup()
+    spawner.respond = (command) => (command === 'prepare-xvfb-display' ? 1 : PROBES.has(command) ? 0 : 'run')
+    await expect(manager.startBot('alpha', 2)).rejects.toThrow(/already in use/)
+    spawner.respond = (command) => (PROBES.has(command) ? 0 : 'run')
+    const retry = manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'view').catch((error: unknown) => error)
+    await manager.stopBot('alpha')
+    expect(await retry).toBeInstanceOf(Error)
+    expect(manager.bot('alpha')).toBeNull()
+    expect(spawner.named('Xvfb')).toHaveLength(0)
+    await expect(manager.startBot('beta', 2)).resolves.toMatchObject({ botId: 'beta', slot: 2 })
+  })
+
+  it('does not release a slot when processes survive SIGKILL', async () => {
+    const { manager, spawner, clock } = setup()
+    await manager.startBot('alpha', 2)
+    spawner.exitOnKill = spawner.exitOnForceKill = false
+    const stopped = manager.stopBot('alpha').catch((error: unknown) => error)
+    await clock.advance(10_000)
+    expect(await stopped).toBeInstanceOf(Error)
+    await expect(manager.startBot('beta', 2)).rejects.toThrow(/SIGKILL/)
+    expect(spawner.named('Xvfb')).toHaveLength(1)
+    for (const child of spawner.servers()) child.exit(null)
   })
 
   it('starts each bot once and refuses invalid bots, slots and slot collisions', async () => {
@@ -314,7 +382,9 @@ describe('DisplayManager apps displays', () => {
     expect(spawner.servers().filter((child) => child.running)).toEqual([])
     expect(clock.pending.size).toBe(0)
 
-    await manager.startBot('alpha', 2)
+    const browser = await manager.acquireVnc({ kind: 'browser', botId: 'alpha' }, 'view')
+    expect(browser.port).toBe(5905)
+    await manager.acquireVnc({ kind: 'apps', botId: 'alpha' }, 'view')
     expect(spawner.named('Xvfb')).toHaveLength(2)
     expect(spawner.running('tint2')).toHaveLength(1)
   })
@@ -527,6 +597,17 @@ describe('DisplayManager VNC', () => {
     expect((await lease).port).toBe(5955)
     const commands = spawner.processes.map((child) => child.command)
     expect(commands.indexOf('x11vnc')).toBeGreaterThan(commands.lastIndexOf('xdpyinfo'))
+  })
+
+  it('does not hand out a VNC port whose previous server survived both signals', async () => {
+    const { manager, spawner, clock } = setup()
+    spawner.exitOnKill = spawner.exitOnForceKill = false
+    ;(await manager.acquireVnc(environment, 'view')).release()
+    await clock.advance(70_000)
+    expect(spawner.vnc(5901)[0].signals).toEqual(['SIGTERM', 'SIGKILL'])
+    await expect(manager.acquireVnc(environment, 'view')).rejects.toThrow(/SIGKILL/)
+    expect(spawner.vnc(5901)).toHaveLength(1)
+    spawner.vnc(5901)[0].exit(null)
   })
 
   it('closes the servers of a stopped bot and ignores its old leases', async () => {

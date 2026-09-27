@@ -1,5 +1,6 @@
 import { app, type BrowserWindow } from 'electron'
 import { broadcast } from '../../window-ipc'
+import { holdScreenFocus, setScreenFocusOwner, showWindow } from '../../screen-focus'
 import { createInstanceControlServer } from './server'
 import { parseBotInstanceConfig } from './config'
 import { DisplayManager } from './displays'
@@ -23,7 +24,10 @@ export async function requestOwnerHelp(conversationId: string, reason: string): 
 
 /** What bot mode needs from the main process. */
 export interface BotInstanceHooks {
-  /** Shows a conversation's browser as a pinned floating window (in the bot's area once its screen is registered). */
+  /**
+   * Shows a conversation's browser as a pinned floating window (in the bot's area once its screen is registered),
+   * without taking the keyboard: the bot's tools drive it through CDP.
+   */
   floatBrowser(conversationId: string): void
   /** Stops a conversation's turn and closes its windows, terminals and browser views. */
   closeConversation(conversationId: string): Promise<void>
@@ -31,6 +35,8 @@ export interface BotInstanceHooks {
   purgeConversation(conversationId: string): Promise<void>
   /** Places the environment screen (the main window) in its tile of the environment display. */
   placeSettingsWindow(): void
+  /** Gives the keyboard to a conversation's browser: its newest popup, otherwise its floating window. */
+  focusBrowser(conversationId: string): void
 }
 
 function log(message: string): void {
@@ -58,6 +64,8 @@ export async function startBotInstanceMode(
       log(`Bots run without their own apps displays: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  // The environment screen shares the environment display, and its keyboard focus, with the bots' browsers.
+  setScreenFocusOwner(window, { kind: 'environment' })
   const environment = new EnvironmentRuntime({
     config,
     userData: app.getPath('userData'),
@@ -68,10 +76,14 @@ export async function startBotInstanceMode(
     purgeConversation: hooks.purgeConversation,
     openSettings: (target) => {
       hooks.placeSettingsWindow()
-      window.show()
-      window.focus()
+      showWindow(window)
       if (target !== 'main') broadcast('fleet:instance:open-settings', target)
     },
+    holdScreenFocus: (owner) =>
+      holdScreenFocus(owner, () => {
+        if (owner?.kind === 'conversation') hooks.focusBrowser(owner.conversationId)
+        else if (owner && !window.isDestroyed() && window.isVisible()) window.focus()
+      }),
   })
   try {
     await environment.start()

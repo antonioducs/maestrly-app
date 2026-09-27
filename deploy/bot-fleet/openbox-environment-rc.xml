@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <!--
+    The environment display :0 holds the environment screen in tile 0 and each bot's browser, with its popups, in the
+    bot's own tile; the person controlling one tile types into whichever window has this display's focus. Maestrly
+    decides which window that is, so openbox never focuses a window just because it appeared, and there is no window
+    cycling, moving, resizing, maximizing or window menu: nothing leaves its tile. Clicking a window still focuses it and
+    a popup's close button still closes it. The apps displays use openbox-rc.xml.
+  -->
+  <focus><focusNew>no</focusNew><followMouse>no</followMouse></focus>
+  <!-- Same theme and frame size as openbox-rc.xml: Maestrly keeps framed windows inside their tiles by that size. -->
+  <theme><name>Clearlooks</name><titleLayout>LC</titleLayout></theme>
+  <desktops><number>1</number></desktops>
+  <keyboard>
+    <keybind key="A-F4"><action name="Close"/></keybind>
+  </keyboard>
+  <!-- A configuration file replaces Openbox's built-in bindings entirely, so only what is listed here happens. -->
+  <mouse>
+    <dragThreshold>3</dragThreshold>
+    <doubleClickTime>400</doubleClickTime>
+    <screenEdgeWarpTime>0</screenEdgeWarpTime>
+    <context name="Titlebar Top Right Bottom Left TLCorner TRCorner BRCorner BLCorner">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Middle" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Right" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Left" action="Click"><action name="Close"/></mousebind>
+    </context>
+  </mouse>
+</openbox_config>

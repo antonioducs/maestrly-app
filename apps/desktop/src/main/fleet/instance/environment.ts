@@ -48,6 +48,7 @@ import type { PermissionRequest } from '../../chat/permission'
 import { invalidateProvider } from '../../chat/provider'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { botMemorySpaceId } from '../../memory/spaces'
+import type { ScreenFocusOwner } from '../../screen-focus'
 import { deleteLocalMemorySpace, getAppSetting, setAppSetting } from '../../store'
 import { adoptLegacyBot } from './adoption'
 import type { EnvironmentInstanceConfig } from './config'
@@ -102,6 +103,11 @@ export interface EnvironmentRuntimeDeps {
   purgeConversation(conversationId: string): Promise<void>
   /** Shows the environment screen (Maestrly's settings), optionally on one of its pages. */
   openSettings(target: FleetUiOpenRequest['target']): void | Promise<void>
+  /**
+   * Keeps the focus of the environment display on the windows of one screen (on none with `null`) and gives that screen
+   * the keyboard, until the returned function is called.
+   */
+  holdScreenFocus(owner: ScreenFocusOwner | null): () => void
 }
 
 function log(level: 'info' | 'error', message: string): void {
@@ -261,8 +267,8 @@ export class EnvironmentRuntime {
   async installBot(value: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {
     const parsed = fleetInstanceBotInstallSchema.safeParse(value)
     if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid bot installation.')
-    const { profile, slot, gatewayToken } = parsed.data
-    const bot = await this.serialize(() => this.install(profile, slot, gatewayToken))
+    const { profile, slot, gatewayToken, paused } = parsed.data
+    const bot = await this.serialize(() => this.install(profile, slot, gatewayToken, paused))
     return bot.status()
   }
   /**
@@ -302,7 +308,9 @@ export class EnvironmentRuntime {
 
   /**
    * A VNC server for a screen: the environment screen, or the browser area or apps display of an installed bot.
-   * The caller releases the lease when its connection ends.
+   * The caller releases the lease when its connection ends. The environment screen and the bots' browsers share the
+   * environment display and its keyboard focus: until a control of one of them is released, that focus stays on the
+   * controlled screen's windows, so the owner's typing never reaches another screen.
    */
   async acquireScreen(surface: DisplaySurface, mode: VncMode): Promise<VncLease> {
     this.assertOpen()
@@ -311,7 +319,31 @@ export class EnvironmentRuntime {
       this.bot(surface.botId)
     }
     if (!this.displays) throw new InstanceHttpError(503, 'INSTANCE_UNAVAILABLE', 'Screen unavailable.')
-    return this.displays.acquireVnc(surface, mode)
+    const lease = await this.displays.acquireVnc(surface, mode)
+    if (mode !== 'control' || surface.kind === 'apps') return lease
+    let endFocus: () => void
+    try {
+      endFocus = this.deps.holdScreenFocus(this.focusOwner(surface))
+    } catch (error) {
+      lease.release()
+      throw error
+    }
+    let released = false
+    return {
+      port: lease.port,
+      release: () => {
+        if (released) return
+        released = true
+        endFocus()
+        lease.release()
+      },
+    }
+  }
+  /** Whose windows a control of the environment display types into: the environment screen's, or a bot browser's. */
+  private focusOwner(surface: Exclude<DisplaySurface, { kind: 'apps' }>): ScreenFocusOwner | null {
+    if (surface.kind === 'environment') return { kind: 'environment' }
+    const conversationId = this.registry.get(surface.botId)?.primaryConversationId
+    return conversationId ? { kind: 'conversation', conversationId } : null
   }
 
   private serialize<T>(action: () => Promise<T>): Promise<T> {
@@ -322,7 +354,12 @@ export class EnvironmentRuntime {
   private assertOpen(): void {
     if (this.disposed) throw new InstanceHttpError(409, 'CONFLICT', 'The environment is shutting down.')
   }
-  private async install(profile: FleetInstanceProfile, slot: number, token: string | null): Promise<BotRuntime> {
+  private async install(
+    profile: FleetInstanceProfile,
+    slot: number,
+    token: string | null,
+    paused?: boolean
+  ): Promise<BotRuntime> {
     this.assertOpen()
     const botId = profile.botId
     const members = readInstalledBots()
@@ -340,7 +377,9 @@ export class EnvironmentRuntime {
         existing.attachScreen(await this.startDisplay(botId, slot))
         writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
       }
+      if (paused) await existing.hold('paused')
       await existing.profile(profile)
+      existing.activate()
       return existing
     }
     if (members.filter((member) => member.botId !== botId).length >= FLEET_ENVIRONMENT_LIMITS.botsMax)
@@ -351,6 +390,7 @@ export class EnvironmentRuntime {
     try {
       bot.attachScreen(await this.startDisplay(botId, slot))
       await bot.start()
+      if (paused) await bot.hold('paused')
       await bot.profile(profile)
       writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
     } catch (error) {
@@ -360,6 +400,7 @@ export class EnvironmentRuntime {
       throw error
     }
     this.registry.set(botId, bot)
+    bot.activate()
     return bot
   }
   private async recreate(member: InstalledBot): Promise<void> {
@@ -589,8 +630,8 @@ export function productionDisplayDeps(home: string): DisplayManagerDeps {
       })
       return {
         exited,
-        kill: () => {
-          if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+        kill: (signal = 'SIGTERM') => {
+          if (child.exitCode === null && child.signalCode === null) child.kill(signal)
         },
       }
     },

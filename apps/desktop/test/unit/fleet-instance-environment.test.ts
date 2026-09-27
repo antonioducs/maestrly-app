@@ -32,12 +32,14 @@ import {
 } from '../../src/main/fleet/instance/environment'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
+import { writeBotPaused } from '../../src/main/fleet/instance/registry'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
 import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
 import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { conversationScreen } from '../../src/main/conversation-screen'
+import type { ScreenFocusOwner } from '../../src/main/screen-focus'
 import { conversationShellEnv } from '../../src/main/chat/conversation-env'
 import { memorySpaceForConversation } from '../../src/main/memory/spaces'
 import { createLocalMemory, listLocalMemories } from '../../src/main/memory/local-memory-service'
@@ -115,6 +117,7 @@ function environment(displays = fakeDisplays(home)) {
       deleteConversation(conversationId)
     }),
     openSettings: vi.fn(),
+    holdScreenFocus: vi.fn((_owner: ScreenFocusOwner | null) => vi.fn()),
   } satisfies EnvironmentRuntimeDeps
   const runtime = new EnvironmentRuntime(deps)
   environments.push(runtime)
@@ -159,6 +162,55 @@ afterEach(async () => {
 })
 
 describe('bot environment registry', () => {
+  it('waits for gateway membership before dispatching a restored queue and applies an offline pause first', async () => {
+    const first = environment()
+    await first.runtime.start()
+    const configured = profile('alpha', 'Alpha', {
+      compaction: {
+        providerId: model.providerId,
+        modelId: model.modelId,
+        reasoning: null,
+        fastMode: false,
+        intervalTokens: 100_000,
+      },
+    })
+    const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
+      input.slot?.release()
+      return {
+        executionId: input.conversationId,
+        conversationId: input.conversationId,
+        assistantMessageId: () => null,
+        cancel: () => {},
+        done: Promise.resolve({ status: 'success', assistantMessageId: null }),
+      } as never
+    })
+    await first.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    const alpha = first.runtime.bot('alpha')
+    await alpha.hold('paused')
+    await alpha.input({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: 'Keep queued over restart',
+      attachments: [],
+    })
+    await first.runtime.dispose()
+    // The gateway can archive or pause a bot while the environment is stopped; its persisted membership is stale.
+    writeBotPaused('alpha', false)
+    const restarted = environment()
+    await restarted.runtime.start()
+    await settle(100)
+    expect(start).not.toHaveBeenCalled()
+    expect((await restarted.runtime.bot('alpha').status()).ready).toBe(false)
+    expect((await restarted.runtime.bot('alpha').status()).queue).toHaveLength(1)
+    // If still a member, its current gateway pause is installed before any work is allowed.
+    await restarted.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA, paused: true })
+    await settle(100)
+    expect(start).not.toHaveBeenCalled()
+    expect((await restarted.runtime.bot('alpha').status()).hold.reason).toBe('paused')
+    await restarted.runtime.bot('alpha').release({ note: null, durationMs: null, continue: false })
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+  })
+
   it('keeps two bots apart: conversations, storage, memory spaces, screens, events and tokens', async () => {
     const { runtime, a, b, convA, convB, displays } = await twoBots()
     expect(runtime.bots().map((bot) => bot.botId)).toEqual(['alpha', 'beta'])
@@ -363,10 +415,11 @@ describe('bot environment registry', () => {
     expect(globalConfig).not.toHaveBeenCalled()
     expect(getAppSetting('chat.backgroundCompaction')).toBeNull()
 
-    // Uninstalling returns the conversation to the global setting; stopping the process keeps a prepared compaction.
+    // Uninstalling turns the conversation's compaction off, never back to the global setting; stopping the process
+    // keeps a prepared compaction.
     override.mockClear()
     await setup.runtime.uninstallBot('beta', { purge: false })
-    expect(override.mock.calls).toEqual([[convB, null]])
+    expect(override.mock.calls).toEqual([[convB, { enabled: false, intervalTokens: 100_000, selection: null }]])
     override.mockClear()
     await setup.runtime.dispose()
     expect(override).not.toHaveBeenCalled()
@@ -606,6 +659,50 @@ describe('bot environment registry', () => {
       status: 503,
       code: 'INSTANCE_UNAVAILABLE',
     })
+  })
+
+  it('keeps the environment display focus on the controlled screen until its lease is released', async () => {
+    const { runtime, displays, deps, convA } = await twoBots()
+    const holds: Array<{ owner: ScreenFocusOwner | null; end: ReturnType<typeof vi.fn> }> = []
+    deps.holdScreenFocus.mockImplementation((owner: ScreenFocusOwner | null) => {
+      const end = vi.fn()
+      holds.push({ owner, end })
+      return end
+    })
+
+    const browser = await runtime.acquireScreen({ kind: 'browser', botId: 'alpha' }, 'control')
+    expect(holds.map((hold) => hold.owner)).toEqual([{ kind: 'conversation', conversationId: convA }])
+    // Viewers, and each bot's own apps display, leave the environment display's focus alone.
+    await runtime.acquireScreen({ kind: 'browser', botId: 'beta' }, 'view')
+    await runtime.acquireScreen({ kind: 'environment' }, 'view')
+    await runtime.acquireScreen({ kind: 'apps', botId: 'beta' }, 'control')
+    expect(holds).toHaveLength(1)
+
+    // Releasing the control, once or again, ends the hold and gives the VNC server back.
+    const vnc = await displays.acquireVnc.mock.results[0].value
+    browser.release()
+    browser.release()
+    expect(holds[0].end).toHaveBeenCalledOnce()
+    expect(vnc.release).toHaveBeenCalledOnce()
+    expect(browser.port).toBe(vnc.port)
+
+    const settings = await runtime.acquireScreen({ kind: 'environment' }, 'control')
+    expect(holds[1].owner).toEqual({ kind: 'environment' })
+    settings.release()
+    expect(holds[1].end).toHaveBeenCalledOnce()
+
+    // A screen that cannot start holds nothing; a bot removed while its screen starts has no windows to type into.
+    displays.acquireVnc.mockRejectedValueOnce(new Error('The VNC server on port 5904 did not start.'))
+    await expect(runtime.acquireScreen({ kind: 'browser', botId: 'beta' }, 'control')).rejects.toThrow('did not start')
+    expect(holds).toHaveLength(2)
+    displays.acquireVnc.mockImplementationOnce(async () => {
+      await runtime.uninstallBot('beta', { purge: false })
+      return { port: 5904, release: vi.fn() }
+    })
+    const removed = await runtime.acquireScreen({ kind: 'browser', botId: 'beta' }, 'control')
+    expect(holds[2].owner).toBeNull()
+    removed.release()
+    expect(holds[2].end).toHaveBeenCalledOnce()
   })
 
   it('serves its bots through the control API, each by its own id', async () => {

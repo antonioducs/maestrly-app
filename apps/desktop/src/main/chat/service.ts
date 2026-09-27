@@ -7693,8 +7693,37 @@ export function setConversationCompactionOverride(
   getBackgroundCoordinator().configureChanged(conversationId)
 }
 
+/**
+ * Suspends one conversation's background compaction until `resumeConversationBackgroundCompaction`, whatever its
+ * settings, and waits at most `timeoutMs` for a running round to return; a result that arrives later is discarded.
+ * The suspension is stored with the conversation. A fleet bot suspends its conversation when it is uninstalled.
+ */
+export async function suspendConversationBackgroundCompaction(
+  conversationId: string,
+  timeoutMs = 3_000
+): Promise<void> {
+  // A notification still waiting for model metadata must not schedule a round afterwards.
+  backgroundNotificationEpochs.set(conversationId, (backgroundNotificationEpochs.get(conversationId) ?? 0) + 1)
+  const coordinator = getBackgroundCoordinator()
+  coordinator.suspend(conversationId)
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([
+    coordinator.roundSettled(conversationId),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+}
+
+/** Lifts `suspendConversationBackgroundCompaction`; the conversation's next turn schedules work again. */
+export function resumeConversationBackgroundCompaction(conversationId: string): void {
+  getBackgroundCoordinator().resume(conversationId)
+}
+
 export async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
   if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
+  if (getBackgroundCoordinator().isSuspended(conversationId)) return { ok: false, error: 'suspended' }
   if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return { ok: false, error: 'not-configured' }
   const selection = selectionFor(conversationId)
   const window = selection

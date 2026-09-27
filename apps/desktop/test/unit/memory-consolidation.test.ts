@@ -2,7 +2,7 @@ import { getDb } from '../../src/main/store/db'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { maybeConsolidate } from '../../src/main/memory/extraction/consolidation'
+import { CONSOLIDATION_LIMITS, maybeConsolidate } from '../../src/main/memory/extraction/consolidation'
 import {
   createLocalMemory,
   getLocalMemory,
@@ -10,6 +10,7 @@ import {
   updateLocalMemory,
 } from '../../src/main/memory/local-memory-service'
 import { incrementAutoCreated, getConsolidationState } from '../../src/main/store/memory-extraction-state'
+import { deleteLocalMemorySpace } from '../../src/main/store/local-memories'
 vi.mock('../../src/main/local-ml/embedding-service', () => ({
   embedTexts: vi.fn(async () => null),
   trackEmbeddingWrite: <T>(p: Promise<T>) => p,
@@ -144,6 +145,77 @@ it('rejects ids excluded from the full-content budget', async () => {
   incrementAutoCreated(f.space.id, 15)
   expect(await maybeConsolidate(f)).toEqual({ merges: 0 })
   for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+})
+
+it('writes nothing when it is cancelled while the model runs, even after its space was deleted', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  const controller = new AbortController()
+  let signal: AbortSignal | undefined
+  const oneShot = vi.fn(async (input: { signal: AbortSignal }) => {
+    signal = input.signal
+    // The bot is purged while the provider, ignoring the abort, still answers.
+    controller.abort()
+    deleteLocalMemorySpace(f.space.id)
+    return f.oneShot()
+  })
+  expect(await maybeConsolidate({ ...f, oneShot, signal: controller.signal })).toEqual({ merges: 0 })
+  expect(signal?.aborted).toBe(true)
+  expect(listLocalMemories(f.space.id)).toEqual([])
+  expect(getConsolidationState(f.space.id)).toBeUndefined()
+})
+
+it('frees the space for a new run once a run is cancelled, and the late answer never frees the new one', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  const merged = JSON.stringify({
+    merges: [{ ids: f.ids, type: 'decision', title: 'Combined', content: 'One and two.' }],
+  })
+  /** A provider call that ignores its abort signal and answers only when the test says so. */
+  const late = () => {
+    let answer: (() => void) | null = null
+    let signal: AbortSignal | undefined
+    const oneShot = vi.fn(
+      (input: { signal: AbortSignal }) =>
+        new Promise<{ text: string; usage: { input: number; output: number; cacheRead: number; cacheCreate: number } }>(
+          (resolve) => {
+            signal = input.signal
+            answer = () => resolve({ text: merged, usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 } })
+          }
+        )
+    )
+    return { oneShot, answer: () => answer?.(), signal: () => signal }
+  }
+  const controller = new AbortController()
+  const old = late()
+  const first = maybeConsolidate({ ...f, oneShot: old.oneShot, signal: controller.signal })
+  await vi.waitFor(() => expect(old.oneShot).toHaveBeenCalledOnce())
+  // The bot is removed while its provider runs, then created again: its next run starts before the old one answers.
+  controller.abort()
+  expect(old.signal()?.aborted).toBe(true)
+  const next = late()
+  const second = maybeConsolidate({ ...f, oneShot: next.oneShot })
+  await vi.waitFor(() => expect(next.oneShot).toHaveBeenCalledOnce())
+
+  // The old answer arrives late: it writes nothing and leaves the new run's place taken.
+  old.answer()
+  expect(await first).toEqual({ merges: 0 })
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+  expect(await maybeConsolidate(f)).toEqual({ merges: 0 })
+  expect(f.oneShot).not.toHaveBeenCalled()
+
+  next.answer()
+  expect(await second).toEqual({ merges: 1 })
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('superseded')
+  expect(getConsolidationState(f.space.id)).toMatchObject({ autoCreatedSince: 0, lastRunAt: f.now })
+  // Both provider calls are billed, the late one included.
+  expect(
+    getDb().prepare("SELECT * FROM chat_usage_ledger WHERE message_id LIKE 'memory-consolidation:%'").all()
+  ).toHaveLength(2)
+  // Once the new run ends, the space is free again.
+  incrementAutoCreated(f.space.id, 15)
+  await maybeConsolidate({ ...f, now: f.now + CONSOLIDATION_LIMITS.intervalMs })
+  expect(f.oneShot).toHaveBeenCalledOnce()
 })
 
 it('skips targets edited while the model is running', async () => {

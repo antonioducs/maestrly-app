@@ -322,6 +322,7 @@ describe('legacy single-bot adoption', () => {
       closeConversation: vi.fn(async () => {}),
       purgeConversation: vi.fn(async () => {}),
       openSettings: vi.fn(),
+      holdScreenFocus: vi.fn(() => () => {}),
     })
     try {
       await runtime.start()

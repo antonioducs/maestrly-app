@@ -23,7 +23,11 @@ const merge = z.object({
   content: z.string().trim().min(1).max(1_500),
 })
 
-const running = new Set<string>()
+/**
+ * The running consolidation of each space. A cancelled run writes nothing more, so it frees its space at once: a new
+ * run may start before the old provider call returns, and the old run's end never frees the new run's place.
+ */
+const running = new Map<string, symbol>()
 
 export async function maybeConsolidate(input: {
   space: MemorySpace
@@ -32,9 +36,16 @@ export async function maybeConsolidate(input: {
   cwd: string
   oneShot: typeof runOneShotText
   now: number
+  /** Once aborted (the extraction was cancelled), the answer is discarded and nothing is written. */
+  signal?: AbortSignal
 }): Promise<{ merges: number }> {
-  if (running.has(input.space.id)) return { merges: 0 }
-  running.add(input.space.id)
+  if (running.has(input.space.id) || input.signal?.aborted) return { merges: 0 }
+  const run = Symbol(input.space.id)
+  running.set(input.space.id, run)
+  const release = () => {
+    if (running.get(input.space.id) === run) running.delete(input.space.id)
+  }
+  input.signal?.addEventListener('abort', release, { once: true })
   try {
     const state = getConsolidationState(input.space.id)
     if (!state || state.autoCreatedSince < CONSOLIDATION_LIMITS.minNew) return { merges: 0 }
@@ -64,7 +75,7 @@ export async function maybeConsolidate(input: {
       selection: input.selection,
       system,
       prompt,
-      signal: AbortSignal.timeout(600_000),
+      signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(input.signal ? [input.signal] : [])]),
       conversationId: input.conversationId,
       cwd: input.cwd,
       agent: 'memory-consolidation',
@@ -75,6 +86,7 @@ export async function maybeConsolidate(input: {
       model: { providerId: input.selection.providerId, modelId: input.selection.modelId },
       usage: result.usage,
     })
+    if (input.signal?.aborted) return { merges: 0 }
     let merges = 0
     const text = result.text.replace(/```(?:json)?/gi, '')
     let raw: unknown = null
@@ -118,6 +130,7 @@ export async function maybeConsolidate(input: {
     saveConsolidationState({ spaceId: input.space.id, autoCreatedSince: 0, lastRunAt: input.now, updatedAt: input.now })
     return { merges }
   } finally {
-    running.delete(input.space.id)
+    input.signal?.removeEventListener('abort', release)
+    release()
   }
 }

@@ -12,8 +12,11 @@ export async function applyExtraction(input: {
   originMessageId: string
   delay?: (ms: number) => Promise<void>
   owner?: OwnerMemoryWriter
+  /** Once aborted (the extraction was cancelled), nothing more is written. */
+  signal?: AbortSignal
 }): Promise<{ created: number; superseded: number; owner: number; rejected: number }> {
   const result = { created: 0, superseded: 0, owner: 0, rejected: 0 }
+  if (input.signal?.aborted) return result
   for (const item of input.output.memories) {
     const title = normalizeMemoryText(item.title)
     const content = normalizeMemoryText(item.content)
@@ -55,6 +58,7 @@ export async function applyExtraction(input: {
         continue
       }
       for (let attempt = 0; attempt < 2; attempt++) {
+        if (input.signal?.aborted) return result
         try {
           await input.owner.save({
             content,

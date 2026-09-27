@@ -37,11 +37,13 @@ import { addProvider } from '../../src/main/chat/catalog'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import {
   chatRuntimeState,
+  resumeConversationBackgroundCompaction,
   retryBackgroundCompaction,
   setConversationCompactionOverride,
+  suspendConversationBackgroundCompaction,
 } from '../../src/main/chat/service'
-import { getAppSetting, patchConvUiPrefs } from '../../src/main/store'
-import { closeDb, freshDb } from '../helpers/db'
+import { deleteConversation, getAppSetting, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
+import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 const frozen: FrozenChatSelection = {
@@ -235,6 +237,95 @@ describe('background compaction configuration per conversation', () => {
     await test.coordinator.settled()
     expect(test.coordinator.getCandidate(a)).toBeNull()
   })
+
+  it('suspends one conversation until it resumes, across a restart, and discards its late summary', async () => {
+    const a = conversation()
+    const b = conversation()
+    const configs = new Map([
+      [a, enabled()],
+      [b, enabled()],
+    ])
+    const overridden = new Set([a, b])
+    const calls = new Map<string, number>()
+    let late: { signal: AbortSignal; answer: () => void } | null = null
+    const test = harness(configs, overridden, async (input) => {
+      const call = (calls.get(input.conversationId) ?? 0) + 1
+      calls.set(input.conversationId, call)
+      input.onAttempt('chunk').settle({ outcome: 'success' })
+      // The second round of `a` reaches a provider that ignores the abort and answers later.
+      if (input.conversationId === a && call === 2)
+        return new Promise<{ summary: string }>((resolve) => {
+          late = { signal: input.signal, answer: () => resolve({ summary: 'late summary' }) }
+        })
+      return { summary: `summary:${input.conversationId}:${call}` }
+    })
+    test.messages.set(a, [assistant(a, 'a-1')])
+    test.coordinator.notify(a, { conversationWindow: 128_000 })
+    await test.coordinator.settled()
+    const prepared = test.coordinator.getCandidate(a)!
+    expect(prepared.summary).toBe(`summary:${a}:1`)
+
+    test.messages.set(a, [assistant(a, 'a-1'), assistant(a, 'a-2')])
+    test.coordinator.notify(a, { conversationWindow: 128_000 })
+    await vi.waitFor(() => expect(late).not.toBeNull())
+    test.messages.set(b, [assistant(b, 'b-1')])
+    test.coordinator.notify(b, { conversationWindow: 128_000 })
+
+    test.coordinator.suspend(a)
+    expect(late!.signal.aborted).toBe(true)
+    expect(test.coordinator.record(a)).toMatchObject({ pauseReason: 'suspended', state: { status: 'paused' } })
+    let settled = false
+    const round = test.coordinator.roundSettled(a).then(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(settled).toBe(false)
+    late!.answer()
+    await round
+    await test.coordinator.settled()
+
+    // The late answer wrote nothing, and the other conversation went on.
+    expect(test.coordinator.record(a)).toMatchObject({
+      pauseReason: 'suspended',
+      ready: { id: prepared.id, summary: prepared.summary },
+    })
+    expect(test.coordinator.getCandidate(b)?.summary).toBe(`summary:${b}:1`)
+    expect(test.coordinator.isSuspended(b)).toBe(false)
+
+    // Nothing starts, retries or activates while it is suspended, whatever its configuration.
+    expect(test.coordinator.getCandidate(a)).toBeNull()
+    test.coordinator.notify(a, { conversationWindow: 128_000 })
+    expect(test.coordinator.retry(a, { conversationWindow: 128_000 })).toBe(false)
+    configs.set(a, disabled)
+    test.coordinator.configureChanged(a)
+    overridden.delete(a)
+    configs.set(a, enabled(5))
+    test.coordinator.configureChanged()
+    test.coordinator.stop(a)
+    await test.coordinator.settled()
+    expect(calls.get(a)).toBe(2)
+    expect(test.coordinator.record(a)).toMatchObject({ pauseReason: 'suspended', ready: { id: prepared.id } })
+
+    // The suspension outlives a restart.
+    restartDb()
+    const restarted = new ChatBackgroundCompactionCoordinator(test.deps)
+    expect(restarted.isSuspended(a)).toBe(true)
+    restarted.notify(a, { conversationWindow: 128_000 })
+    await restarted.settled()
+    expect(calls.get(a)).toBe(2)
+
+    // Its owner resumes it with the same configuration: the prepared summary is still there.
+    overridden.add(a)
+    configs.set(a, enabled())
+    restarted.configureChanged(a)
+    restarted.resume(a)
+    expect(restarted.isSuspended(a)).toBe(false)
+    expect(restarted.getCandidate(a)).toMatchObject({ id: prepared.id, summary: prepared.summary })
+    restarted.notify(a, { conversationWindow: 128_000 })
+    await restarted.settled()
+    expect(calls.get(a)).toBe(3)
+    expect(restarted.getCandidate(a)?.summary).toBe(`summary:${a}:3`)
+  })
 })
 
 describe('conversation compaction override in the chat service', () => {
@@ -283,6 +374,7 @@ describe('conversation compaction override in the chat service', () => {
 
   afterEach(() => {
     setConversationCompactionOverride(a, null)
+    setConversationCompactionOverride(b, null)
     closeDb()
   })
 
@@ -317,6 +409,76 @@ describe('conversation compaction override in the chat service', () => {
     chatRuntimeState(a)
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(h.generateText).toHaveBeenCalledTimes(calls)
+  })
+
+  it('keeps a suspended conversation idle under an enabled global setting until it resumes', async () => {
+    const override: BackgroundCompactionConfig = {
+      enabled: true,
+      intervalTokens: 10_000,
+      selection: { providerId: model.providerId, modelId: 'synthetic-helper', effort: 'off', fastMode: false },
+    }
+    setConversationCompactionOverride(a, override)
+    chatRuntimeState(a)
+    await vi.waitFor(() => expect(chatRuntimeState(a).backgroundCompaction?.status).toBe('ready'))
+    const prepared = new BackgroundCompactionStore().get(a)!.ready!
+
+    // The environment's global setting is enabled with another summarizer, as a single-bot container left it.
+    setAppSetting(
+      'chat.backgroundCompaction',
+      JSON.stringify({ ...override, selection: { ...override.selection, modelId: 'synthetic-global' } })
+    )
+    await suspendConversationBackgroundCompaction(a)
+    // Without its override (a restart ends it), the conversation would follow the global setting.
+    setConversationCompactionOverride(a, null)
+    const calls = h.generateText.mock.calls.length
+    chatRuntimeState(a)
+    expect(await retryBackgroundCompaction(a)).toEqual({ ok: false, error: 'suspended' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(h.generateText).toHaveBeenCalledTimes(calls)
+    expect(new BackgroundCompactionStore().get(a)).toMatchObject({
+      pauseReason: 'suspended',
+      ready: { id: prepared.id },
+    })
+
+    setConversationCompactionOverride(a, override)
+    resumeConversationBackgroundCompaction(a)
+    expect(chatRuntimeState(a).backgroundCompaction?.status).toBe('ready')
+    expect(new BackgroundCompactionStore().get(a)?.ready?.id).toBe(prepared.id)
+  })
+
+  it('stops waiting for a summarizer that ignores the suspension and discards what it returns', async () => {
+    const override: BackgroundCompactionConfig = {
+      enabled: true,
+      intervalTokens: 10_000,
+      selection: { providerId: model.providerId, modelId: 'synthetic-helper', effort: 'off', fastMode: false },
+    }
+    let answer: (() => void) | null = null
+    let signal: AbortSignal | undefined
+    h.generateText.mockImplementationOnce(
+      (input: { abortSignal?: AbortSignal }) =>
+        new Promise((resolve) => {
+          signal = input.abortSignal
+          answer = () => resolve({ text: 'Late portable summary', totalUsage: { inputTokens: 80, outputTokens: 16 } })
+        })
+    )
+    setConversationCompactionOverride(b, override)
+    chatRuntimeState(b)
+    await vi.waitFor(() => expect(answer).not.toBeNull())
+
+    const started = Date.now()
+    await suspendConversationBackgroundCompaction(b, 50)
+    expect(Date.now() - started).toBeLessThan(1_000)
+    expect(signal?.aborted).toBe(true)
+    // The bot is deleted before the provider answers.
+    deleteConversation(b)
+    answer!()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(new BackgroundCompactionStore().get(b)).toBeNull()
+
+    // The service goes on preparing other conversations.
+    setConversationCompactionOverride(a, override)
+    chatRuntimeState(a)
+    await vi.waitFor(() => expect(chatRuntimeState(a).backgroundCompaction?.status).toBe('ready'))
   })
 
   it('rejects a structurally invalid override without changing the conversation', () => {

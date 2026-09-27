@@ -87,6 +87,7 @@ COPY --from=build /app/apps/desktop/resources /opt/maestrly/apps/desktop/resourc
 COPY --from=build /app/packages /opt/maestrly/packages
 COPY --from=build /app/config /opt/maestrly/config
 COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
+COPY deploy/bot-fleet/openbox-environment-rc.xml /opt/maestrly/openbox-environment-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display

@@ -18,8 +18,8 @@ export function initialFloatingBounds<T>(
 
 /**
  * What the environment display's window manager draws around a framed window, as its `_NET_FRAME_EXTENTS` report:
- * openbox with the Clearlooks theme (deploy/bot-fleet/openbox-rc.xml) adds a 20 px title bar, 1 px side borders and
- * a 5 px bottom edge. The frame goes around the bounds the window asks for, so it lies outside them.
+ * openbox with the Clearlooks theme (deploy/bot-fleet/openbox-environment-rc.xml) adds a 20 px title bar, 1 px side
+ * borders and a 5 px bottom edge. The frame goes around the bounds the window asks for, so it lies outside them.
  */
 export const ENVIRONMENT_WINDOW_FRAME = Object.freeze({ left: 1, right: 1, top: 20, bottom: 5 })
 

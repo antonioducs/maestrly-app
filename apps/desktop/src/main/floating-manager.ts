@@ -35,6 +35,7 @@ import {
   type ConversationScreen,
   type ScreenArea,
 } from './conversation-screen'
+import { mayTakeScreenFocus, setScreenFocusOwner, showWindow } from './screen-focus'
 
 function tabTitle(tab: FloatTab): string {
   return tMain('main')(`floating.${tab}`)
@@ -222,6 +223,9 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
     },
   })
   win.setMenuBarVisibility(false)
+  // In a bot environment the conversation's windows share one display with other bots' windows and the environment
+  // screen; while someone controls one of those, the others must not take the focus.
+  setScreenFocusOwner(win, { kind: 'conversation', conversationId: convId })
   // Register the strip preload as a trusted sender so guardOn accepts float:set-pinned (#264); registration
   // is removed on destroy. The container receives global events, while reparented content retains its panel
   // metadata.
@@ -241,6 +245,14 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     if (!win.isDestroyed() && win.isFocused()) focusFloatingContent(convId, tab)
   })
+  // On Linux and Windows Electron gives the keyboard to the strip whenever the window is activated, also when the
+  // window manager hands it the focus after one of its popups closed. Send it on to the tool content, unless a click
+  // already put it somewhere else, such as the browser's address bar.
+  win.on('focus', () => {
+    setImmediate(() => {
+      if (!win.isDestroyed() && win.webContents.isFocused()) focusFloatingContent(convId, tab)
+    })
+  })
 
   win.on('resize', () => {
     layoutFloatingTab(convId, tab, win)
@@ -259,17 +271,27 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   return win
 }
 
-/** Detach a tab into its own window, or focus an existing one. drawer-manager reparents the view. */
-export function detach(convId: string, tab: FloatTab): void {
+/**
+ * Detach a tab into its own window, or focus an existing one. drawer-manager reparents the view. With `focus: false`
+ * the window is only shown, as a bot's browser is each time its browser tools run: it must not take the keyboard, nor
+ * rise above the sign-in popups of its own pages.
+ */
+export function detach(convId: string, tab: FloatTab, options: { focus?: boolean } = {}): void {
   if (!conversationTabAllowed(convId, tab)) return
   if (!mainWindow) return
+  const present = (win: BrowserWindow): void => {
+    if (options.focus === false) {
+      if (!win.isVisible()) win.showInactive()
+      return
+    }
+    showWindow(win)
+    // Send keyboard focus to tool content: the views were reparented while the window was hidden, and OS activation
+    // would otherwise focus the strip.
+    if (mayTakeScreenFocus(win)) focusContentSoon(win, convId, tab)
+  }
   const existing = entry(convId, tab)
   if (existing) {
-    if (!existing.win.isDestroyed()) {
-      existing.win.show()
-      existing.win.focus()
-      focusContentSoon(existing.win, convId, tab) // send keyboard focus to tool content
-    }
+    if (!existing.win.isDestroyed()) present(existing.win)
     syncFloatingPerformance(convId, tab)
     return
   }
@@ -286,13 +308,7 @@ export function detach(convId: string, tab: FloatTab): void {
     return
   }
   // reparent drawer views into this window
-  if (convId === visibleConvId) {
-    win.show()
-    win.focus()
-    // Refocus content after showing the window; floatView ran while hidden and OS activation would
-    // otherwise focus the strip.
-    focusContentSoon(win, convId, tab)
-  }
+  if (convId === visibleConvId) present(win)
   syncFloatingPerformance(convId, tab)
   emitFloatingState(convId)
 }
@@ -379,6 +395,7 @@ export function focusFloatIfAny(convId: string, tab: FloatTab): boolean {
   if (!en || en.win.isDestroyed()) return false
   if (!en.win.isVisible()) en.win.showInactive()
   syncFloatingPerformance(convId, tab)
+  if (!mayTakeScreenFocus(en.win)) return true
   en.win.focus()
   focusContentSoon(en.win, convId, tab) // send keyboard focus to tool content
   return true

@@ -50,7 +50,8 @@ export interface BackgroundCompactionWork {
   updatedAt: number
 }
 
-export type BackgroundCompactionPauseReason = 'stopped' | 'archived' | 'selection' | 'disabled'
+/** `suspended` is set by the conversation's owner (a fleet bot that is not installed) and only `resume` lifts it. */
+export type BackgroundCompactionPauseReason = 'stopped' | 'archived' | 'selection' | 'disabled' | 'suspended'
 
 export interface BackgroundCompactionRecord {
   conversationId: string

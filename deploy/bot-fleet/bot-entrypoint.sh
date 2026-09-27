@@ -85,7 +85,7 @@ for _ in {1..50}; do
   sleep 0.1
 done
 xdpyinfo -display :0 >/dev/null
-openbox --config-file /opt/maestrly/openbox-rc.xml & children+=("$!")
+openbox --config-file /opt/maestrly/openbox-environment-rc.xml & children+=("$!")
 
 export MAESTRLY_BOT_MODE=1
 export BROWSER=/usr/bin/chromium

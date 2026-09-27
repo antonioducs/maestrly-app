@@ -31,6 +31,7 @@ import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '
 import { botMemorySpaceId, registerConversationMemorySpace, clearConversationMemorySpace } from '../../memory/spaces'
 import { setMemoryCoreExtras, clearMemoryCoreExtras } from '../../memory/core'
 import { setOwnerMemoryWriter, clearOwnerMemoryWriter } from '../../memory/extraction/owner-writer'
+import { cancelMemoryExtraction } from '../../memory/extraction/scheduler'
 import {
   listLocalMemories,
   getLocalMemory,
@@ -60,6 +61,8 @@ import {
   fleetChatCommands,
   backgroundCompactionStatus,
   setConversationCompactionOverride,
+  suspendConversationBackgroundCompaction,
+  resumeConversationBackgroundCompaction,
   retryBackgroundCompaction,
   startManualCompaction,
 } from '../../chat/service'
@@ -250,6 +253,8 @@ export class BotRuntime {
   private screen: BotScreen | null = null
   private accountOptions: FleetSelectionOption[] = []
   private accountCheckedAt = 0
+  /** Whether the environment's accounts were read once: until then, a compaction model cannot be checked. */
+  private accountsLoaded = false
   private ready = false
   private turning = false
   private cancelling = false
@@ -277,6 +282,8 @@ export class BotRuntime {
   private compactionProblem: FleetCompactionState['problem'] = 'missing'
   private compactionChecked: { key: string; valid: boolean } | null = null
   private compactionApplied: string | null = null
+  /** Set by an install: the conversation resumes (an uninstall suspended it) once the bot's own settings apply. */
+  private resumePending = false
   private manualCompacting = false
   private disposed = false
   /** The conversation whose hooks (memory, identity, gate, screen) this runtime registered. */
@@ -318,9 +325,14 @@ export class BotRuntime {
   get gatewayConfigured(): boolean {
     return !!this.host.gatewayUrl
   }
-  /** The bot's own gateway access, or null until the gateway installs the bot with its token. */
+  /**
+   * The bot's own gateway access, or null until the gateway installs the bot with its token. Null as well from the
+   * moment the runtime is disposed, so a writer or client still held elsewhere reaches nothing.
+   */
   get gatewayConfig(): GatewayConfig | null {
-    return this.host.gatewayUrl && this.gatewayToken ? { url: this.host.gatewayUrl, token: this.gatewayToken } : null
+    return !this.disposed && this.host.gatewayUrl && this.gatewayToken
+      ? { url: this.host.gatewayUrl, token: this.gatewayToken }
+      : null
   }
   setGatewayToken(token: string): void {
     if (token === this.gatewayToken) return
@@ -377,12 +389,15 @@ export class BotRuntime {
     }
     const hadConversation = !!this.stored?.primaryConversationId
     if (readBotPaused(this.botId)) await this.holdManager.hold('paused', false, async () => {})
+    // Read before the conversation takes its compaction settings: a bot whose compaction model is valid gets them at
+    // once and never passes through "off", which would discard the compaction it prepared before a restart.
+    await this.loadAccounts(false)
     if (this.stored) await this.ensureConversation()
     if (this.primaryConversationId) await this.queue.reconcile(this.nativeUsers())
     await this.queue.sweepAttachments()
     if (hadConversation) await this.system('restarted', null, null)
-    this.ready = true
-    await this.refreshAccounts()
+    // Persisted membership may be stale: the gateway can archive or pause this bot while the environment is stopped.
+    // Loading its data does not authorize queued work; a fresh profile installation below does.
     void this.refreshUsage()
     this.pollTimer = setInterval(() => {
       void this.tick()
@@ -393,8 +408,11 @@ export class BotRuntime {
   /**
    * Stops the bot's timers and removes everything it registered for its conversation (memory space, owner memory,
    * summarizer, identity, hold gate, screen and shell environment). Persisted data stays. Callbacks still in flight
-   * find the runtime disposed and do nothing. With `uninstall`, the conversation also returns to the global compaction
-   * settings; otherwise its override just ends with the process, so a prepared compaction survives a restart.
+   * find the runtime disposed and do nothing. With `uninstall`, the conversation's background work stops as well: its
+   * compaction is turned off and suspended (never handed to the global settings) until the bot is installed again,
+   * and its memory extraction is cancelled. Both are awaited briefly, and whatever they return later is discarded, so
+   * nothing is written after a purge. Otherwise the override just ends with the process, so a prepared compaction
+   * survives a restart.
    */
   async dispose(options: { uninstall?: boolean } = {}): Promise<void> {
     if (this.disposed) return
@@ -406,11 +424,28 @@ export class BotRuntime {
     this.floatTimers.clear()
     this.pollTimer = this.statusTimer = this.transcriptTimer = null
     this.turnAbort?.abort()
+    // Stopped before the hooks go, so no gap lets its work fall back to the environment's settings.
+    const background = options.uninstall ? this.stopBackgroundWork() : Promise.resolve()
     this.unregisterConversation(options.uninstall === true)
+    // Owner memory goes through the bot's token; an uninstalled bot keeps none, even for a caller holding its writer.
+    if (options.uninstall) this.gatewayToken = null
     await this.turnSettled.catch(() => undefined)
-    await Promise.all([this.queue.idle(), this.extras.idle(), this.images.idle(), this.usageTask]).catch(
+    await Promise.all([this.queue.idle(), this.extras.idle(), this.images.idle(), this.usageTask, background]).catch(
       () => undefined
     )
+  }
+  /** Suspends the compaction of the bot's conversation and cancels its memory extraction, waiting briefly for both. */
+  private async stopBackgroundWork(): Promise<void> {
+    const id = this.registeredConversation?.id ?? this.primaryConversationId
+    if (!id) return
+    await Promise.all([
+      suspendConversationBackgroundCompaction(id).catch(() => {
+        console.error(
+          JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Compaction suspension failed' })
+        )
+      }),
+      cancelMemoryExtraction(id),
+    ])
   }
   private unregisterConversation(releaseCompaction: boolean): void {
     this.stopObserving?.()
@@ -427,12 +462,13 @@ export class BotRuntime {
     setConversationScreen(id, null)
     setConversationShellEnv(id, null)
     if (registered.cwd) clearBotIdentity(registered.cwd, this.botId)
-    if (releaseCompaction && this.compactionApplied !== null) {
+    if (releaseCompaction) {
       this.compactionApplied = null
       try {
-        setConversationCompactionOverride(id, null)
+        // Off, never back to the global settings: those belong to the environment screen, not to this bot.
+        setConversationCompactionOverride(id, COMPACTION_DISABLED)
       } catch {
-        // The conversation may be gone already; its override went with it.
+        // The chat service may be shutting down; the suspension still keeps the conversation idle.
       }
     }
   }
@@ -532,28 +568,43 @@ export class BotRuntime {
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'The profile names another bot.')
     this.stored = { profile, primaryConversationId: this.stored?.primaryConversationId ?? null }
     writeStoredProfile(this.botId, this.stored)
+    // An install carries the bot's final settings: once they apply, a conversation an uninstall suspended resumes.
+    this.resumePending = true
     await this.ensureConversation()
     await this.refreshAccounts(true)
     this.changed()
     void this.tick()
     return this.status()
   }
+  /** The gateway confirmed membership and pause, and the environment registered this bot before any work starts. */
+  activate(): void {
+    if (this.disposed || this.ready) return
+    this.ready = true
+    this.changed()
+    void this.tick()
+  }
   private async refreshAccounts(force = false): Promise<void> {
     if (!force && Date.now() - this.accountCheckedAt < 10_000) return
-    this.accountCheckedAt = Date.now()
     const previous = JSON.stringify(this.accountOptions.map((option) => option.id))
+    const loaded = await this.loadAccounts(force)
+    if (this.disposed) return
+    if (loaded) this.applyProfile()
+    await this.syncCompaction()
+    if (JSON.stringify(this.accountOptions.map((option) => option.id)) !== previous) this.changed()
+  }
+  /** Reads the models of the environment's accounts; none, and false, when they cannot be read. */
+  private async loadAccounts(force: boolean): Promise<boolean> {
+    this.accountCheckedAt = Date.now()
     try {
       const options = await this.host.accountOptions(force)
-      if (this.disposed) return
+      if (this.disposed) return false
       this.accountOptions = options
-      this.applyProfile()
-      await this.syncCompaction()
+      this.accountsLoaded = true
+      return true
     } catch {
-      if (this.disposed) return
-      this.accountOptions = []
-      await this.syncCompaction()
+      if (!this.disposed) this.accountOptions = []
+      return false
     }
-    if (JSON.stringify(this.accountOptions.map((option) => option.id)) !== previous) this.changed()
   }
   /** Whether the environment's model metadata accepts the compaction model's effort and Fast mode. */
   private async compactionSelectionValid(selection: NonNullable<BackgroundCompactionConfig['selection']>) {
@@ -569,7 +620,10 @@ export class BotRuntime {
   }
   /**
    * Gives the bot's conversation its own compaction settings: the model from its profile, or compaction off while it
-   * has none. The global setting belongs to the environment screen and is never written here.
+   * has none. The global setting belongs to the environment screen and is never written here. Until the environment's
+   * accounts were read once, a configured model only looks unavailable: the conversation keeps the settings it has,
+   * since turning compaction off would discard what it prepared. After an install, a suspended conversation resumes
+   * once the bot's own settings are in place, never before, so it never runs on the global setting.
    */
   private async syncCompaction(): Promise<void> {
     const id = this.primaryConversationId
@@ -592,8 +646,9 @@ export class BotRuntime {
       else problem = 'invalid'
     }
     if (this.disposed) return
+    const waiting = problem === 'unavailable' && !this.accountsLoaded
     const key = JSON.stringify(desired)
-    if (this.compactionApplied !== key) {
+    if (!waiting && this.compactionApplied !== key) {
       try {
         setConversationCompactionOverride(id, desired)
         this.compactionApplied = key
@@ -602,6 +657,10 @@ export class BotRuntime {
         setConversationCompactionOverride(id, COMPACTION_DISABLED)
         this.compactionApplied = JSON.stringify(COMPACTION_DISABLED)
       }
+    }
+    if (this.resumePending && this.compactionApplied !== null) {
+      this.resumePending = false
+      resumeConversationBackgroundCompaction(id)
     }
     const previous = this.compactionProblem
     this.compactionProblem = problem

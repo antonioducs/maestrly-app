@@ -86,6 +86,7 @@ import {
   disposeConversation,
   setFloatFocuser,
   ensureViewFor,
+  focusBrowserPopup,
 } from './drawer-manager'
 import {
   startVSCodeServer,
@@ -835,12 +836,15 @@ app.whenReady().then(async () => {
       placeEnvironmentScreen(environmentScreen)
       await startBotInstanceMode(environmentScreen, {
         floatBrowser: (id) => {
-          floatingManager.detach(id, 'browser')
+          floatingManager.detach(id, 'browser', { focus: false })
           floatingManager.setPinned(id, 'browser', true)
         },
         closeConversation: (id) => stopConversationLive(id),
         purgeConversation: (id) => deleteConversation(id),
         placeSettingsWindow: () => placeEnvironmentScreen(environmentScreen),
+        focusBrowser: (id) => {
+          if (!focusBrowserPopup(id)) floatingManager.focusFloatIfAny(id, 'browser')
+        },
       })
     } catch (error) {
       console.error(

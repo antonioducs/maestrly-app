@@ -11,6 +11,7 @@ import {
   upsertChatMessage,
 } from '../../src/main/chat/chat-store'
 import {
+  cancelMemoryExtraction,
   runMemoryExtraction,
   scheduleMemoryExtraction,
   disposeMemoryExtraction,
@@ -21,8 +22,13 @@ import { applyExtraction } from '../../src/main/memory/extraction/apply'
 import { clearOwnerMemoryWriter, setOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { clearConversationMemorySpace, registerConversationMemorySpace } from '../../src/main/memory/spaces'
 import { createLocalMemory, listLocalMemories } from '../../src/main/memory/local-memory-service'
-import { getExtractionState, saveExtractionState } from '../../src/main/store/memory-extraction-state'
+import {
+  getConsolidationState,
+  getExtractionState,
+  saveExtractionState,
+} from '../../src/main/store/memory-extraction-state'
 import { setAppSetting } from '../../src/main/store/app-settings'
+import { deleteConversation, deleteLocalMemorySpace } from '../../src/main/store'
 vi.mock('../../src/main/chat/one-shot-text', () => ({ runOneShotText: vi.fn() }))
 vi.mock('../../src/main/local-ml/embedding-service', () => ({
   embedTexts: vi.fn(async () => null),
@@ -291,6 +297,77 @@ it('does not overlap extraction runs and cancels pending schedules on disposal',
   disposeMemoryExtraction()
   await vi.advanceTimersByTimeAsync(180_000)
   expect(run).not.toHaveBeenCalled()
+})
+
+type OneShotResult = { text: string; usage: { input: number; output: number; cacheRead: number; cacheCreate: number } }
+/** A provider call that ignores its abort signal and answers only when the test says so. */
+function lateOneShot(text: string) {
+  let answer: (() => void) | null = null
+  let signal: AbortSignal | undefined
+  const call = vi.fn(
+    (input: { signal: AbortSignal }) =>
+      new Promise<OneShotResult>((resolve) => {
+        signal = input.signal
+        answer = () => resolve({ text, usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 } })
+      })
+  )
+  return { call, answer: () => answer?.(), signal: () => signal }
+}
+
+it('discards a cancelled extraction that answers after its bot was purged', async () => {
+  registerConversationMemorySpace(conversationId, { id: 'bot-self:alpha', kind: 'bot' })
+  const save = vi.fn(async () => {})
+  setOwnerMemoryWriter(conversationId, { list: async () => [], save })
+  const late = lateOneShot(JSON.stringify(output))
+  const run = runMemoryExtraction(conversationId, undefined, { oneShot: late.call, selection })
+  await vi.waitFor(() => expect(late.call).toHaveBeenCalledOnce())
+
+  await cancelMemoryExtraction(conversationId, 0)
+  expect(late.signal()?.aborted).toBe(true)
+  // The bot is purged before the provider answers.
+  clearOwnerMemoryWriter(conversationId)
+  clearConversationMemorySpace(conversationId)
+  deleteConversation(conversationId)
+  deleteLocalMemorySpace('bot-self:alpha')
+  late.answer()
+
+  expect(await run).toBe('cancelled')
+  expect(listLocalMemories('bot-self:alpha')).toEqual([])
+  expect(getConsolidationState('bot-self:alpha')).toBeUndefined()
+  expect(getExtractionState(conversationId)).toBeUndefined()
+  expect(save).not.toHaveBeenCalled()
+})
+
+it('lets a reinstalled bot extract at once while its cancelled run still waits, and keeps only the new result', async () => {
+  registerConversationMemorySpace(conversationId, { id: 'bot-self:alpha', kind: 'bot' })
+  const save = vi.fn(async () => {})
+  setOwnerMemoryWriter(conversationId, { list: async () => [], save })
+  const stale = lateOneShot(
+    JSON.stringify({
+      memories: [{ action: 'create', type: 'decision', title: 'Stale fact', content: 'From the cancelled run.' }],
+      owner: [{ content: 'Stale owner fact.' }],
+    })
+  )
+  const first = runMemoryExtraction(conversationId, undefined, { oneShot: stale.call, selection })
+  await vi.waitFor(() => expect(stale.call).toHaveBeenCalledOnce())
+  let settled = false
+  const cancelled = cancelMemoryExtraction(conversationId, 5_000).then(() => {
+    settled = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  expect(settled).toBe(false)
+
+  expect(await runMemoryExtraction(conversationId, undefined, { oneShot, selection })).toBe('done')
+  stale.answer()
+  await cancelled
+  expect(await first).toBe('cancelled')
+  expect(listLocalMemories('bot-self:alpha').map((memory) => memory.title)).toEqual(['Blue-green deploy'])
+  expect(save.mock.calls).toEqual([[{ content: 'Prefer short answers.', origin: 'auto' }]])
+  expect(getExtractionState(conversationId)).toMatchObject({
+    status: 'idle',
+    attempts: 0,
+    lastSeq: maxChatSeq(conversationId),
+  })
 })
 
 it('keeps both ends of oversized blocks', () => {

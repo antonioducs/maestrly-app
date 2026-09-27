@@ -14,7 +14,7 @@ import { getOwnerMemoryWriter } from './owner-writer'
 import { EXTRACTION_LIMITS, extractionSystemPrompt, extractionUserPrompt, parseExtractionOutput } from './prompt'
 import { chunkExtractionBlocks, renderExtractionTranscript, type ExtractionBlock } from './transcript'
 
-export type ExtractionOutcome = 'done' | 'busy' | 'idle' | 'too-little' | 'backoff' | 'failed'
+export type ExtractionOutcome = 'done' | 'busy' | 'idle' | 'too-little' | 'backoff' | 'failed' | 'cancelled'
 export interface ExtractionDeps {
   oneShot: typeof runOneShotText
   now: () => number
@@ -31,7 +31,8 @@ export function resolveExtractionSelection(conversationId: string): OneShotSelec
 }
 
 const pending = new Map<string, { timer: NodeJS.Timeout; firstAt: number; upToSeq: number }>()
-const running = new Set<string>()
+/** The running extraction of each conversation; `settled` resolves when it has returned. */
+const running = new Map<string, { controller: AbortController; settled: Promise<void> }>()
 
 export function scheduleMemoryExtraction(
   conversationId: string,
@@ -68,13 +69,49 @@ export function disposeMemoryExtraction(): void {
   pending.clear()
 }
 
+/**
+ * Stops a conversation's memory extraction: a scheduled run is dropped and a running one is aborted. What its provider
+ * returns anyway is discarded, so nothing more is written to the conversation's memory space, its owner memory or its
+ * extraction state. Resolves once the run has returned, or after `timeoutMs`; the conversation can extract again at
+ * once. A fleet bot cancels its extraction when it is uninstalled.
+ */
+export async function cancelMemoryExtraction(conversationId: string, timeoutMs = 3_000): Promise<void> {
+  const scheduled = pending.get(conversationId)
+  if (scheduled) {
+    clearTimeout(scheduled.timer)
+    pending.delete(conversationId)
+  }
+  const run = running.get(conversationId)
+  if (!run) return
+  running.delete(conversationId)
+  run.controller.abort(new DOMException('Memory extraction cancelled', 'AbortError'))
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([
+    run.settled,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+}
+
 export async function runMemoryExtraction(
   conversationId: string,
   upToSeq: number | undefined = undefined,
   overrides: Partial<ExtractionDeps> = {}
 ): Promise<ExtractionOutcome> {
   if (running.has(conversationId)) return 'busy'
-  running.add(conversationId)
+  const controller = new AbortController()
+  let settle!: () => void
+  const run = {
+    controller,
+    settled: new Promise<void>((resolve) => {
+      settle = resolve
+    }),
+  }
+  running.set(conversationId, run)
+  // Checked after every wait: once cancelled, the run writes nothing more.
+  const signal = controller.signal
   const deps = { ...defaultDeps, ...overrides }
   try {
     const now = deps.now()
@@ -155,6 +192,7 @@ export async function runMemoryExtraction(
         const ownerEntries = chunkOwner
           ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
           : null
+        if (signal.aborted) return 'cancelled'
         const last = chunk[chunk.length - 1]
         let output = null
         for (let retry = 0; retry < 2; retry++) {
@@ -166,17 +204,19 @@ export async function runMemoryExtraction(
               owner: ownerEntries,
               transcript: chunk.map((block) => block.text).join('\n\n'),
             }),
-            signal: AbortSignal.timeout(600_000),
+            signal: AbortSignal.any([AbortSignal.timeout(600_000), signal]),
             conversationId,
             cwd: conversation.cwd,
             agent: 'memory-extraction',
           })
+          // The call is billed even when its answer comes after a cancellation; the answer itself is discarded.
           recordChatUsageAttempt({
             id: `memory-extraction:${randomUUID()}`,
             conversationId,
             model: { providerId: selection.providerId, modelId: selection.modelId },
             usage: result.usage,
           })
+          if (signal.aborted) return 'cancelled'
           output = parseExtractionOutput(result.text)
           if (output !== null) break
         }
@@ -188,7 +228,9 @@ export async function runMemoryExtraction(
             conversationId,
             originMessageId: last.messageId,
             ...(chunkOwner ? { owner: chunkOwner } : {}),
+            signal,
           })
+        if (signal.aborted) return 'cancelled'
         attempts = 0
         lastSeq = last.seq
         saveExtractionState({
@@ -203,6 +245,7 @@ export async function runMemoryExtraction(
         })
       }
     } catch (error) {
+      if (signal.aborted) return 'cancelled'
       saveExtractionState({
         ...state,
         spaceId: space.id,
@@ -223,12 +266,15 @@ export async function runMemoryExtraction(
       cwd: conversation.cwd,
       oneShot: deps.oneShot,
       now,
+      signal,
     }).catch(() => console.warn('[memory-extraction] Consolidation failed'))
-    return 'done'
+    return signal.aborted ? 'cancelled' : 'done'
   } catch {
+    if (signal.aborted) return 'cancelled'
     console.warn('[memory-extraction] Run failed')
     return 'failed'
   } finally {
-    running.delete(conversationId)
+    if (running.get(conversationId) === run) running.delete(conversationId)
+    settle()
   }
 }

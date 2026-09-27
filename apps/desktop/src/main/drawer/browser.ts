@@ -16,7 +16,9 @@ import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationScreen } from '../conversation-screen'
-import { centerInArea, insideWindowFrame } from '../fleet/instance/window-bounds'
+import { isBotMode } from '../fleet/instance/config'
+import { centerInArea, clampToArea, insideWindowFrame } from '../fleet/instance/window-bounds'
+import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
   OFFSCREEN,
   activeConvId,
@@ -458,10 +460,22 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   // compositing. did-create-window handles presentation.
   const buildWindowOpenHandler = (): WindowOpenHandler => (details) => {
     if (isPopupDisposition(details)) {
+      const popupOptions = oauthChildWindowOptions(BROWSER_PARTITION)
       return {
         action: 'allow',
         outlivesOpener: false, // close login windows when their opener tab closes
-        overrideBrowserWindowOptions: oauthChildWindowOptions(BROWSER_PARTITION),
+        // Hidden until did-create-window places and shows it: a window shown while it is constructed would take the
+        // focus before anything could decide whether it may (another bot's screen may be under control).
+        overrideBrowserWindowOptions: {
+          ...popupOptions,
+          show: false,
+          webPreferences: {
+            ...popupOptions.webPreferences,
+            // Electron's native dialogs are separate GTK windows and bypass the popup's disabled input. They must
+            // never block another bot's controlled screen. Native confirmations in bot popups are canceled.
+            ...(isBotMode() ? { disableDialogs: true } : {}),
+          },
+        },
       }
     }
     if (tab.ownerScopeId) {
@@ -472,6 +486,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     return { action: 'deny' }
   }
   const registerOAuthWindow = (child: BrowserWindow): void => {
+    setScreenFocusOwner(child, { kind: 'conversation', conversationId: convId })
     d.oauthWindows.add(child)
     if (tab.ownerScopeId) oauthOwnerScopeByWindow.set(child, tab.ownerScopeId)
     // Show top-level OAuth windows above the app, including macOS fullscreen Spaces through
@@ -489,11 +504,17 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       const area = conversationScreen(convId)?.windowArea
       if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
       else child.center()
-      child.show()
-      child.focus()
+      showWindow(child)
     } catch {
       /* The window may already be closed. */
     }
+    // A page may move or resize its popup (window.moveTo, window.resizeTo); inside a screen area it stays there.
+    child.webContents.on('content-bounds-updated', (event, bounds) => {
+      const area = conversationScreen(convId)?.windowArea
+      if (!area) return
+      event.preventDefault()
+      if (!child.isDestroyed()) child.setBounds(clampToArea(bounds, insideWindowFrame(area)))
+    })
     // Apply the same hardened options, shared partition, and conversation ownership recursively to popups
     // opened from OAuth windows.
     child.webContents.setWindowOpenHandler(buildWindowOpenHandler())
@@ -502,6 +523,8 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       d.oauthWindows.delete(child)
       oauthOwnerScopeByWindow.delete(child)
       if (isBrowserVisibleInSlot(convId)) focusViewInMain(convId, 'browser')
+      // While someone controls this conversation's screen, its next popup or its browser gets the keyboard back.
+      else refocusScreen({ kind: 'conversation', conversationId: convId })
     })
   }
   wc.setWindowOpenHandler(buildWindowOpenHandler())
@@ -529,6 +552,18 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   wc.on('did-stop-loading', emit)
   wc.on('page-title-updated', emit)
   return v
+}
+
+/**
+ * Focuses the newest visible popup of a conversation's browser, such as a sign-in window, which lies above its
+ * browser; false when it has none.
+ */
+export function focusBrowserPopup(convId: string): boolean {
+  const popups = [...(drawers.get(convId)?.oauthWindows ?? [])].reverse()
+  const popup = popups.find((child) => !child.isDestroyed() && child.isVisible())
+  if (!popup) return false
+  popup.focus()
+  return true
 }
 
 // Debounce per-conversation tab URL/order/active-state persistence rather than writing on every navigation.

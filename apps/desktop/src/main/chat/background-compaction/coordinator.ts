@@ -38,6 +38,8 @@ class BackgroundCompactionInvariantError extends Error {
 interface ActiveRound {
   conversationId: string
   controller: AbortController
+  /** Resolves when the round has returned, even after an abort its summarizer ignored. */
+  settled: Promise<void>
 }
 
 export interface BackgroundCompactionConsumeResult<T> {
@@ -98,7 +100,7 @@ export class ChatBackgroundCompactionCoordinator {
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     const record = this.store.get(conversationId)
     const candidate = record?.ready
-    if (!config?.enabled || !candidate || !record) return null
+    if (!config?.enabled || !candidate || !record || record.pauseReason === 'suspended') return null
     const configIdentity = backgroundCompactionConfigIdentity(config)
     if (
       record.generation !== candidate.generation ||
@@ -117,6 +119,8 @@ export class ChatBackgroundCompactionCoordinator {
       return
     const conversation = this.deps.getConversation(conversationId)
     if (!conversation) return
+    const record = this.store.get(conversationId)
+    if (record?.pauseReason === 'suspended') return
     const boundary =
       notification.boundary ??
       (typeof notification.messageId === 'string' && typeof notification.partId === 'string'
@@ -132,7 +136,6 @@ export class ChatBackgroundCompactionCoordinator {
     }
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!config?.enabled) return
-    const record = this.store.get(conversationId)
     if (
       record?.state.status === 'failed' ||
       record?.pauseReason === 'selection' ||
@@ -152,6 +155,7 @@ export class ChatBackgroundCompactionCoordinator {
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!config?.enabled) return false
     const record = this.store.get(conversationId)
+    if (record?.pauseReason === 'suspended') return false
     const use = notification ?? this.notifications.get(conversationId)
     const recoveredUse =
       use ??
@@ -201,7 +205,8 @@ export class ChatBackgroundCompactionCoordinator {
             : config
               ? { configIdentity: backgroundCompactionConfigIdentity(config) }
               : {}),
-          pauseReason: reason,
+          // A suspension outlasts every other pause: only `resume` lifts it.
+          pauseReason: record?.pauseReason === 'suspended' ? 'suspended' : reason,
           status: 'paused',
           ready: record?.ready ?? null,
           work: record?.work ?? null,
@@ -215,8 +220,44 @@ export class ChatBackgroundCompactionCoordinator {
     }
   }
 
+  /**
+   * Suspends the conversation's background work until `resume`, whatever its configuration: queued work is dropped,
+   * a running round is aborted and its late result discarded, and nothing is scheduled, retried or activated. The
+   * suspension is stored with the conversation, so it outlives a restart. A prepared summary is kept, and a
+   * configuration change waits for `resume`; both are validated as usual once work starts again. A fleet bot's
+   * conversation is suspended while the bot is not installed.
+   */
   suspend(conversationId: string): void {
-    this.stop(conversationId, 'archived')
+    this.stop(conversationId, 'suspended')
+  }
+
+  /** Lifts a suspension; the conversation's next notification schedules work again. */
+  resume(conversationId: string): void {
+    const record = this.store.get(conversationId)
+    if (record?.pauseReason !== 'suspended' || !this.deps.getConversation(conversationId)) return
+    const next = this.store.write(
+      conversationId,
+      {
+        generation: record.generation,
+        ...(record.configIdentity ? { configIdentity: record.configIdentity } : {}),
+        // Interrupted work continues as after a stop; a prepared summary is ready again.
+        ...(record.work ? { pauseReason: 'stopped' as const } : {}),
+        status: record.work ? 'paused' : record.ready ? 'ready' : 'idle',
+        ready: record.ready,
+        work: record.work,
+      },
+      this.now()
+    )
+    this.deps.publish(conversationId, next.state)
+  }
+
+  isSuspended(conversationId: string): boolean {
+    return this.store.get(conversationId)?.pauseReason === 'suspended'
+  }
+
+  /** Resolves once no round of this conversation is running; an aborted round may still wait for its summarizer. */
+  async roundSettled(conversationId: string): Promise<void> {
+    while (this.active?.conversationId === conversationId) await this.active.settled
   }
 
   invalidate(conversationId: string): void {
@@ -225,13 +266,18 @@ export class ChatBackgroundCompactionCoordinator {
     const record = this.store.get(conversationId)
     if (!record || !this.deps.getConversation(conversationId)) return
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
+    const suspended = record.pauseReason === 'suspended'
     const next = this.store.write(
       conversationId,
       {
         generation: record.generation + 1,
         ...(config ? { configIdentity: backgroundCompactionConfigIdentity(config) } : {}),
-        ...(config?.enabled ? {} : { pauseReason: 'disabled' as const }),
-        status: 'idle',
+        ...(suspended
+          ? { pauseReason: 'suspended' as const }
+          : config?.enabled
+            ? {}
+            : { pauseReason: 'disabled' as const }),
+        status: suspended ? 'paused' : 'idle',
         ready: null,
         work: null,
       },
@@ -275,7 +321,12 @@ export class ChatBackgroundCompactionCoordinator {
       this.active.controller.abort(abortError('Background compaction configuration changed'))
     }
     for (const record of this.store.list()) {
-      if (!followsGlobal(record.conversationId) || !this.deps.getConversation(record.conversationId)) continue
+      if (
+        !followsGlobal(record.conversationId) ||
+        record.pauseReason === 'suspended' ||
+        !this.deps.getConversation(record.conversationId)
+      )
+        continue
       this.resetForConfig(record)
     }
   }
@@ -283,6 +334,12 @@ export class ChatBackgroundCompactionCoordinator {
   private configureConversationChanged(conversationId: string): void {
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     const record = this.store.get(conversationId)
+    if (record?.pauseReason === 'suspended') {
+      // Nothing runs while suspended; prepared work is checked against the configuration once it runs again.
+      this.removeQueued(conversationId)
+      this.notifications.delete(conversationId)
+      return
+    }
     if (config && record?.configIdentity === backgroundCompactionConfigIdentity(config)) return
     this.removeQueued(conversationId)
     this.notifications.delete(conversationId)
@@ -319,7 +376,14 @@ export class ChatBackgroundCompactionCoordinator {
       const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       const record = this.store.get(conversationId)
       const candidate = record?.ready
-      if (!config?.enabled || !record || !candidate || candidate.id !== candidateId) return null
+      if (
+        !config?.enabled ||
+        !record ||
+        !candidate ||
+        candidate.id !== candidateId ||
+        record.pauseReason === 'suspended'
+      )
+        return null
       const configIdentity = backgroundCompactionConfigIdentity(config)
       if (
         record.generation !== candidate.generation ||
@@ -441,6 +505,7 @@ export class ChatBackgroundCompactionCoordinator {
     const conversation = this.deps.getConversation(conversationId)
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!notification || !conversation || !config?.enabled || !config.selection) return false
+    if (this.isSuspended(conversationId)) return false
     if (conversation.archived) {
       this.stop(conversationId, 'archived')
       return false
@@ -527,8 +592,7 @@ export class ChatBackgroundCompactionCoordinator {
       return false
     }
 
-    const controller = new AbortController()
-    this.active = { conversationId, controller }
+    const { controller, end } = this.begin(conversationId)
     try {
       const resolved = await this.deps.resolveSelection(conversationId, config.selection, controller.signal)
       controller.signal.throwIfAborted()
@@ -605,7 +669,7 @@ export class ChatBackgroundCompactionCoordinator {
       if (!controller.signal.aborted) this.failUnexpected(conversationId, error)
       return false
     } finally {
-      if (this.active?.controller === controller) this.active = null
+      end()
     }
   }
 
@@ -614,12 +678,28 @@ export class ChatBackgroundCompactionCoordinator {
     record: BackgroundCompactionRecord,
     work: BackgroundCompactionWork
   ): Promise<boolean> {
-    const controller = new AbortController()
-    this.active = { conversationId, controller }
+    const { controller, end } = this.begin(conversationId)
     try {
       return await this.executeWithActive(conversationId, record, work, controller)
     } finally {
-      if (this.active?.controller === controller) this.active = null
+      end()
+    }
+  }
+
+  /** Makes a round of this conversation the active one; `end` clears it once the round has returned. */
+  private begin(conversationId: string): { controller: AbortController; end: () => void } {
+    const controller = new AbortController()
+    let settle!: () => void
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    this.active = { conversationId, controller, settled }
+    return {
+      controller,
+      end: () => {
+        if (this.active?.controller === controller) this.active = null
+        settle()
+      },
     }
   }
 
