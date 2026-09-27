@@ -13,7 +13,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
-import { promptForInput, type QueuedInput } from './queue'
+import { appendSettledLog, promptForInput, readSettledLog, settledLog, type QueuedInput } from './queue'
 import { imageId } from './images'
 import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
 
@@ -335,36 +335,58 @@ export function transcriptPage(items: FleetTranscriptItem[], before?: string | n
   return { items: sorted.slice(start, end), before: start ? sorted[start].id : null }
 }
 
+/** An interaction that was answered or resolved, or a system note: its item does not change any more. */
+const settledExtra = (item: FleetTranscriptItem) => !('state' in item) || item.state !== 'pending'
+
+/**
+ * The transcript items a bot's conversation does not hold: system notes and interactions. Those that settled live in
+ * the settled log, so that the file each change rewrites holds only the pending ones, however many a bot recorded.
+ */
 export class InstanceTranscriptExtras {
-  private items: FleetTranscriptItem[] = []
+  /** Settled items, in the order they first settled: the settled log. */
+  private settled: FleetTranscriptItem[] = []
+  /** Pending items: the file. */
+  private pending: FleetTranscriptItem[] = []
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
     private readonly file: string,
     private readonly onUpsert: (item: FleetTranscriptItem) => void
   ) {}
   async load(): Promise<void> {
+    const settled = await readSettledLog(settledLog(this.file), (value) => fleetTranscriptItemSchema.parse(value))
+    let items: FleetTranscriptItem[] = []
     try {
       const data: unknown = JSON.parse(await fs.readFile(this.file, 'utf8'))
       if (!Array.isArray(data)) throw new Error('Invalid instance transcript extras')
-      this.items = data.map((item) => fleetTranscriptItemSchema.parse(item))
+      items = data.map((item) => fleetTranscriptItemSchema.parse(item))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
+    // The file is rewritten after the log: an item in both is as the file has it.
+    for (const item of items) settled.delete(item.id)
+    this.settled = [...settled.values()]
+    this.pending = items
+    // A file from before the log still holds settled items: they move now, or with the next change.
+    const done = items.filter(settledExtra)
+    if (done.length) {
+      this.pending = items.filter((item) => !settledExtra(item))
+      this.settled.push(...done)
+      await this.write(done, true).catch(() => undefined)
+    }
   }
   list(): FleetTranscriptItem[] {
-    return [...this.items]
+    return [...this.settled, ...this.pending]
   }
   /** Resolves once every write started so far has finished. */
   async idle(): Promise<void> {
     await this.writeTail
   }
-  async upsert(item: FleetTranscriptItem): Promise<void> {
-    const valid = fleetTranscriptItemSchema.parse(item)
-    const index = this.items.findIndex((existing) => existing.id === item.id)
-    if (index < 0) this.items.push(valid)
-    else this.items[index] = valid
-    const contents = JSON.stringify(this.items)
+  /** Logs settled items, then rewrites the file of pending ones when it changed. */
+  private write(logged: FleetTranscriptItem[], rewrite: boolean): Promise<void> {
+    const contents = rewrite ? JSON.stringify(this.pending) : null
     const write = this.writeTail.then(async () => {
+      await appendSettledLog(settledLog(this.file), logged)
+      if (contents === null) return
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
       const temporary = this.file + '.' + randomUUID() + '.tmp'
       try {
@@ -375,7 +397,23 @@ export class InstanceTranscriptExtras {
       }
     })
     this.writeTail = write.catch(() => undefined)
-    await write
+    return write
+  }
+  async upsert(item: FleetTranscriptItem): Promise<void> {
+    const valid = fleetTranscriptItemSchema.parse(item)
+    const wasPending = this.pending.findIndex((existing) => existing.id === valid.id)
+    const wasSettled = this.settled.findIndex((existing) => existing.id === valid.id)
+    const done = settledExtra(valid)
+    if (done) {
+      if (wasSettled < 0) this.settled.push(valid)
+      else this.settled[wasSettled] = valid
+      if (wasPending >= 0) this.pending.splice(wasPending, 1)
+    } else {
+      if (wasSettled >= 0) this.settled.splice(wasSettled, 1)
+      if (wasPending < 0) this.pending.push(valid)
+      else this.pending[wasPending] = valid
+    }
+    await this.write(done ? [valid] : [], !done || wasPending >= 0)
     this.onUpsert(valid)
   }
 }

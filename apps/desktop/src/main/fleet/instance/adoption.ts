@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { LEGACY_BOT_MEMORY_SPACE_ID, botMemorySpaceId } from '../../memory/spaces'
 import { getAppSetting, rekeyLocalMemorySpace, setAppSetting, transaction } from '../../store'
+import { settledLog } from './queue'
 import {
   LEGACY_PAUSED_KEY,
   LEGACY_PROFILE_KEY,
@@ -23,6 +24,8 @@ function legacyLayout(userData: string) {
   return {
     inputs: path.join(userData, 'fleet-instance', 'inputs.json'),
     transcript: path.join(userData, 'fleet-instance', 'transcript.json'),
+    inputsLog: settledLog(path.join(userData, 'fleet-instance', 'inputs.json')),
+    transcriptLog: settledLog(path.join(userData, 'fleet-instance', 'transcript.json')),
     attachments: path.join(userData, 'fleet-inputs'),
     images: path.join(userData, 'fleet-images'),
   }
@@ -32,6 +35,8 @@ function adoptedLayout(userData: string, botId: string) {
   return {
     inputs: path.join(folder, 'inputs.json'),
     transcript: path.join(folder, 'transcript.json'),
+    inputsLog: settledLog(path.join(folder, 'inputs.json')),
+    transcriptLog: settledLog(path.join(folder, 'transcript.json')),
     attachments: path.join(userData, 'fleet-inputs', botId),
     images: path.join(userData, 'fleet-images', botId),
   }
@@ -62,7 +67,8 @@ async function isFile(file: string): Promise<boolean> {
 /**
  * Makes `to` an exact copy of the legacy file `from`, or removes `to` when there is no legacy file. The copy is a hard
  * link when the file system allows it (the legacy file is never written in place afterwards: every store replaces its
- * files by renaming), and replaces whatever an interrupted attempt left there.
+ * files by renaming, and a settled log, which grows in place, is removed with the legacy files once adopted), and
+ * replaces whatever an interrupted attempt left there.
  */
 async function mirrorFile(from: string, to: string): Promise<void> {
   if (!(await isFile(from))) {
@@ -117,6 +123,8 @@ async function removeLegacyFiles(userData: string): Promise<void> {
   const legacy = legacyLayout(userData)
   await fs.rm(legacy.inputs, { force: true })
   await fs.rm(legacy.transcript, { force: true })
+  await fs.rm(legacy.inputsLog, { force: true })
+  await fs.rm(legacy.transcriptLog, { force: true })
   for (const entry of await entries(legacy.attachments))
     if (INPUT_FOLDER.test(entry.name))
       await fs.rm(path.join(legacy.attachments, entry.name), { recursive: true, force: true })
@@ -152,6 +160,8 @@ export async function adoptLegacyBot(options: { userData: string }): Promise<Ado
 
   await mirrorFile(legacy.inputs, target.inputs)
   await mirrorFile(legacy.transcript, target.transcript)
+  await mirrorFile(legacy.inputsLog, target.inputsLog)
+  await mirrorFile(legacy.transcriptLog, target.transcriptLog)
   await mirrorEntries(legacy.attachments, target.attachments, INPUT_FOLDER, 'folder')
   await mirrorEntries(legacy.images, target.images, IMAGE_FILE, 'file')
   await mirrorFile(path.join(legacy.images, 'index.json'), path.join(target.images, 'index.json'))

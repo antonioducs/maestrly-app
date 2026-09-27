@@ -63,11 +63,60 @@ const recordSchema = z.object({
 const stateSchema = z.object({ items: z.array(recordSchema) })
 
 /**
+ * The append-only log beside a store file: what can no longer change leaves the file, which is rewritten whole on
+ * every change, for this log, which only grows at its end.
+ */
+export function settledLog(file: string): string {
+  return path.join(path.dirname(file), path.basename(file, path.extname(file)) + '.settled.jsonl')
+}
+/**
+ * Reads a settled log: one JSON value per line, the last line of an id wins and keeps the place of its first. A line a
+ * crash cut short is skipped: what it held is still in the store file, which is only rewritten after the log.
+ */
+export async function readSettledLog<T extends { id: string }>(
+  file: string,
+  parse: (value: unknown) => T
+): Promise<Map<string, T>> {
+  const values = new Map<string, T>()
+  let text: string
+  try {
+    text = await fs.readFile(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return values
+    throw error
+  }
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const value = parse(JSON.parse(line))
+      values.set(value.id, value)
+    } catch {
+      // Cut short by a crash; the next append starts on a new line.
+    }
+  }
+  return values
+}
+/** Appends values to a settled log, each on its own line, even after a line a crash cut short. */
+export async function appendSettledLog(file: string, values: readonly unknown[]): Promise<void> {
+  if (!values.length) return
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+  await fs.appendFile(file, values.map((value) => '\n' + JSON.stringify(value)).join(''), { mode: 0o600 })
+}
+/** An input that started and whose native message is known: nothing about it changes any more. */
+const settledInput = (item: QueuedInput) => item.started && !!item.nativeMessageId
+
+/**
  * A bot's durable input queue. Owner images wait as files in `attachmentRoot/<inputId>/`, a folder only this queue
  * uses: its sweep removes every input folder there that no queued input owns.
+ *
+ * Inputs that settled (started, their native message known) move from the queue file to its settled log, so that the
+ * file every change rewrites holds only the inputs that can still change, however many a bot received.
  */
 export class InstanceInputQueue {
+  /** Inputs that can still change, in queue order: the queue file. */
   private items: QueuedInput[] = []
+  /** Settled inputs, in the order they settled: the settled log. */
+  private settled: QueuedInput[] = []
   /** Lookups over `items`, rebuilt after they change. */
   private index: { byNative: Map<string, QueuedInput>; byItem: Map<string, QueuedInput> } | null = null
   private writeTail: Promise<void> = Promise.resolve()
@@ -77,6 +126,9 @@ export class InstanceInputQueue {
     private readonly writer: (file: string, contents: string) => Promise<void> = (file, contents) =>
       fs.writeFile(file, contents, { mode: 0o600 })
   ) {}
+  private get log(): string {
+    return settledLog(this.file)
+  }
   /** Resolves once every write started so far has finished. */
   async idle(): Promise<void> {
     await this.writeTail
@@ -153,26 +205,34 @@ export class InstanceInputQueue {
   }
 
   async load(): Promise<void> {
+    const settled = await readSettledLog(this.log, (value) => recordSchema.parse(value))
+    let items: QueuedInput[] = []
     try {
-      this.items = stateSchema.parse(JSON.parse(await fs.readFile(this.file, 'utf8'))).items
-      this.index = null
+      items = stateSchema.parse(JSON.parse(await fs.readFile(this.file, 'utf8'))).items
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-      throw error
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
+    // The queue file is rewritten after the log: an input in both is as the file has it.
+    for (const item of items) settled.delete(item.id)
+    this.items = items
+    this.settled = [...settled.values()]
+    this.index = null
+    // A queue file from before the log still holds settled inputs: they move now, or with the next change.
+    if (items.some(settledInput)) await this.update(() => ({ result: undefined, changed: true })).catch(() => undefined)
   }
 
   list(): QueuedInput[] {
     return this.items.filter((item) => !item.started)
   }
+  /** Every input: the settled ones, then those that can still change in queue order. */
   all(): QueuedInput[] {
-    return [...this.items]
+    return [...this.settled, ...this.items]
   }
   private lookups(): NonNullable<InstanceInputQueue['index']> {
     if (!this.index) {
       const byNative = new Map<string, QueuedInput>()
       const byItem = new Map<string, QueuedInput>()
-      for (const item of this.items) {
+      for (const item of [...this.settled, ...this.items]) {
         if (item.nativeMessageId) byNative.set(item.nativeMessageId, item)
         byItem.set(item.itemId, item)
       }
@@ -198,7 +258,11 @@ export class InstanceInputQueue {
       const next = this.items.map((item) => ({ ...item }))
       const { result, changed } = change(next)
       if (!changed) return result
-      const contents = JSON.stringify({ items: next })
+      const settled = next.filter(settledInput)
+      const items = next.filter((item) => !settledInput(item))
+      // Logged before the queue file drops them: a crash in between leaves them in both, as the file has them.
+      await appendSettledLog(this.log, settled)
+      const contents = JSON.stringify({ items })
       await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 })
       const temp = this.file + '.' + randomUUID() + '.tmp'
       try {
@@ -207,7 +271,8 @@ export class InstanceInputQueue {
       } finally {
         await fs.rm(temp, { force: true }).catch(() => undefined)
       }
-      this.items = next
+      this.items = items
+      this.settled.push(...settled)
       this.index = null
       return result
     })
@@ -224,7 +289,7 @@ export class InstanceInputQueue {
     const input = fleetInstanceInputSchema.parse(raw)
     if (input.source === 'routine' && !input.routine) throw new Error('Routine source requires routine metadata.')
     if (input.source === 'peer' && !input.peer) throw new Error('Peer source requires peer metadata.')
-    const existing = this.items.find(
+    const existing = this.all().find(
       (item) => item.input.idempotencyKey === input.idempotencyKey && Date.now() - Date.parse(item.at) < 86_400_000
     )
     if (existing) return { inputId: existing.id, itemId: existing.itemId, queued: !existing.started }
@@ -252,7 +317,7 @@ export class InstanceInputQueue {
       }
       const result = await this.update((items) => {
         const now = Date.now()
-        const existing = [...items]
+        const existing = [...this.settled, ...items]
           .reverse()
           .find(
             (item) =>
@@ -287,7 +352,11 @@ export class InstanceInputQueue {
   async delete(id: string): Promise<'deleted' | 'started' | 'missing'> {
     return this.update((items) => {
       const index = items.findIndex((item) => item.id === id)
-      if (index < 0) return { result: 'missing' as const, changed: false }
+      if (index < 0)
+        return {
+          result: this.settled.some((item) => item.id === id) ? ('started' as const) : ('missing' as const),
+          changed: false,
+        }
       if (items[index].started) return { result: 'started' as const, changed: false }
       items.splice(index, 1)
       return { result: 'deleted' as const, changed: true }
@@ -314,7 +383,9 @@ export class InstanceInputQueue {
 
   async reconcile(nativeUsers: Array<{ id: string; at: number; text: string }>): Promise<void> {
     await this.update((items) => {
-      const claimed = new Set(items.map((item) => item.nativeMessageId).filter((id): id is string => !!id))
+      const claimed = new Set(
+        [...this.settled, ...items].map((item) => item.nativeMessageId).filter((id): id is string => !!id)
+      )
       let changed = false
       for (const item of items) {
         if (!item.started || item.nativeMessageId) continue
