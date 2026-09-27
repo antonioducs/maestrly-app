@@ -88,7 +88,7 @@ npm run bot-fleet:dev -- seed
 
 `up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, each in a new environment named after it, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file.
 
-When finished, run `npm run bot-fleet:dev -- down`. It removes the gateway and its data volume, the fake model, and containers and home volumes named `maestrly-bot-<id>` for the bots it finds. It does not yet remove containers and volumes named `maestrly-env-<id>`, which the seeded environments and environments created in the app use: remove those with `docker rm -f maestrly-env-<id>` and `docker volume rm maestrly-env-<id>-home`, then run `down` again to remove the helper's network.
+When finished, run `npm run bot-fleet:dev -- down`. It stops the dev gateway, reads a copy of its database, and removes this fleet's environment containers and home volumes, including archived environments and the legacy `maestrly-bot-<id>` names. It removes the fake model, gateway data, network and helper state last. Resources whose ownership is ambiguous stay in place. If records cannot be read or resources remain, it reports them and exits with an error, keeping the gateway data and helper state for another attempt; the gateway stays stopped.
 
 ## Set up the server
 

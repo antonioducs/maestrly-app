@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -99,6 +101,219 @@ async function request(state, method, route, body) {
   if (!response.ok) throw new Error(`${method} ${route}: HTTP ${response.status} ${JSON.stringify(value)}`)
   return value
 }
+// Every fleet on a Docker host labels and names its environments alike (apps/bot-gateway/src/lifecycle.ts), so `down`
+// never goes by those alone: this dev fleet's environments are the managed containers on its own network and the
+// environments its own gateway recorded, archived ones included.
+const managedLabel = 'org.maestrly.fleet.managed'
+const environmentLabel = 'org.maestrly.fleet.environment-id'
+const legacyBotLabel = 'org.maestrly.fleet.bot-id'
+const projectLabel = 'com.docker.compose.project'
+const words = (text) => text.split(/\s+/).filter(Boolean)
+const ownerOf = (labels) => labels?.[environmentLabel] ?? labels?.[legacyBotLabel] ?? null
+const nameOf = (container) => String(container.Name).replace(/^\//, '')
+const onFleetNetwork = (container) =>
+  container.HostConfig?.NetworkMode === network || Object.hasOwn(container.NetworkSettings?.Networks ?? {}, network)
+/** Inspects containers, volumes or networks by name, leaving out the ones that do not exist. */
+async function inspect(kind, names) {
+  if (!names.length) return []
+  const result = await docker([kind, 'inspect', ...names], { allowFailure: true })
+  // Docker still prints the ones it found when another is missing.
+  try {
+    return JSON.parse(result.stdout) ?? []
+  } catch {
+    throw new Error(`docker ${kind} inspect: ${result.stderr.trim()}`)
+  }
+}
+async function containerIds(filters) {
+  const args = filters.flatMap((filter) => ['--filter', filter])
+  return words((await docker(['ps', '-a', '-q', '--no-trunc', ...args])).stdout)
+}
+const composeVolumes = async () =>
+  words((await docker(['volume', 'ls', '-q', '--filter', `label=${projectLabel}=${project}`])).stdout)
+/** Only this fleet's gateway attaches managed containers to its network; stopped ones stay attached. */
+async function fleetContainers() {
+  return (await inspect('container', await containerIds([`label=${managedLabel}=true`]))).filter(onFleetNetwork)
+}
+/**
+ * The environments the dev gateway recorded, read from a copy of its database: the only record of the home volume of
+ * an archived environment. The gateway stops first so that it creates nothing more, and stays stopped. `records` is
+ * null when they cannot be read.
+ */
+async function gatewayRecords() {
+  const [gateway] = await containerIds([
+    `label=${projectLabel}=${project}`,
+    'label=com.docker.compose.service=maestrly-bot-gateway',
+  ])
+  if (!gateway) {
+    const data = await composeVolumes()
+    if (!data.length) return { records: [] }
+    const retry = 'Run `npm run bot-fleet:dev -- up`, then `down` again'
+    return { records: null, reason: `its container is gone but ${data.join(', ')} remains. ${retry}` }
+  }
+  const copy = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-dev-'))
+  let stopped = false
+  try {
+    await docker(['stop', gateway])
+    stopped = true
+    await docker(['cp', gateway + ':/data/.', copy])
+    return { records: await readRecords(path.join(copy, 'gateway.sqlite')), stopped }
+  } catch (error) {
+    return { records: null, reason: error.message, stopped }
+  } finally {
+    // The copy holds the gateway's secrets.
+    await rm(copy, { recursive: true, force: true })
+  }
+}
+async function readRecords(file) {
+  // A gateway that never started has recorded nothing.
+  if (!existsSync(file)) return []
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(file)
+  try {
+    const version = Number(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value)
+    const record = (row, container, volume) => ({ id: String(row.id), container, volume, createdAt: row.created_at })
+    if (version === 6)
+      return db
+        .prepare('SELECT id, container_name, volume_name, created_at FROM environments')
+        .all()
+        .map((row) => record(row, String(row.container_name), String(row.volume_name)))
+    // Before environments, the gateway named each bot's container and home volume after the bot.
+    if (version >= 1 && version <= 5)
+      return db
+        .prepare('SELECT id, created_at FROM bots')
+        .all()
+        .map((row) => record(row, 'maestrly-bot-' + row.id, 'maestrly-bot-' + row.id + '-home'))
+    throw new Error('unknown gateway database schema ' + version)
+  } finally {
+    db.close()
+  }
+}
+/**
+ * Docker hands an existing volume to anyone who creates one with its name, so a recorded home volume is this fleet's
+ * only when its labels and creation time match the record. A name reused by another fleet later is ambiguous too.
+ */
+function ownsVolume(volume, record) {
+  const labels = volume.Labels ?? {}
+  const age = Math.abs(Date.parse(volume.CreatedAt) - Date.parse(record.createdAt))
+  return labels[managedLabel] === 'true' && ownerOf(labels) === record.id && Number.isFinite(age) && age <= 60000
+}
+/**
+ * Removes this dev fleet and nothing else, and says so only once Docker no longer has any of it. Whatever cannot be
+ * removed or attributed is reported with Docker's errors, and the gateway's records, network and the helper state stay
+ * so that `down` can finish later. Returns whether the fleet is gone.
+ */
+async function down() {
+  let state
+  try {
+    state = await readState()
+  } catch {
+    state = { port: 7443 }
+  }
+  const info = await docker(['info', '--format', '{{.ServerVersion}}'], { allowFailure: true }).catch((error) => ({
+    code: 1,
+    stderr: error.message,
+  }))
+  if (info.code !== 0) {
+    console.error('Docker is unavailable, so nothing was removed: ' + info.stderr.trim())
+    return false
+  }
+  const { records, reason, stopped } = await gatewayRecords()
+  const containers = new Set(),
+    volumes = new Set(),
+    foreign = [],
+    errors = []
+  for (const container of await fleetContainers()) {
+    containers.add(nameOf(container))
+    const home = container.Mounts?.find((mount) => mount.Type === 'volume' && mount.Destination === '/home/bot')
+    if (home?.Name) volumes.add(home.Name)
+  }
+  const recorded = records ?? []
+  const found = await inspect('container', [fakeName, ...recorded.map((record) => record.container)])
+  const byName = new Map(found.map((container) => [nameOf(container), container]))
+  const recordedHomes = await inspect(
+    'volume',
+    recorded.map((record) => record.volume)
+  )
+  const homes = new Map(recordedHomes.map((volume) => [volume.Name, volume]))
+  const model = byName.get(fakeName)
+  if (model && onFleetNetwork(model)) containers.add(fakeName)
+  else if (model) foreign.push(`container ${fakeName}: not on ${network}`)
+  for (const record of recorded) {
+    const container = byName.get(record.container)
+    if (container && onFleetNetwork(container) && ownerOf(container.Config?.Labels) === record.id)
+      containers.add(record.container)
+    else if (container)
+      foreign.push(`container ${record.container}: not a managed container of environment ${record.id} on ${network}`)
+    const volume = homes.get(record.volume)
+    if (volume && (!container || containers.has(record.container)) && ownsVolume(volume, record))
+      volumes.add(record.volume)
+    else if (volume) {
+      volumes.delete(record.volume)
+      foreign.push(`volume ${record.volume}: its labels or creation time do not match environment ${record.id}`)
+    }
+  }
+  const remove = async (args) => {
+    const result = await docker(args, { allowFailure: true })
+    if (result.code !== 0) errors.push(`docker ${args.join(' ')}: ${result.stderr.trim()}`)
+  }
+  for (const name of containers) await remove(['rm', '-f', name])
+  for (const name of volumes) await remove(['volume', 'rm', name])
+  const present = async () => [
+    ...new Set([
+      ...(await inspect('container', [...containers])).map((item) => 'container ' + nameOf(item)),
+      ...(await fleetContainers()).map((item) => 'container ' + nameOf(item)),
+      ...(await inspect('volume', [...volumes])).map((item) => 'volume ' + item.Name),
+    ]),
+  ]
+  let remaining = await present()
+  // The gateway's records, the network and the helper state go last, once nothing depends on them any more.
+  const settled = records !== null && !foreign.length && !remaining.length
+  if (settled) {
+    const result = await compose(state.port ?? 7443, ['down', '-v', '--remove-orphans'], { allowFailure: true })
+    if (result.code !== 0) errors.push('docker compose down: ' + result.stderr.trim())
+    if ((await inspect('network', [network])).length) await remove(['network', 'rm', network])
+    const composed = await inspect('container', await containerIds([`label=${projectLabel}=${project}`]))
+    remaining = [
+      ...new Set([
+        ...(await present()),
+        ...composed.map((item) => 'container ' + nameOf(item)),
+        ...(await composeVolumes()).map((name) => 'volume ' + name),
+        ...(await inspect('network', [network])).map((item) => 'network ' + item.Name),
+      ]),
+    ]
+  }
+  const gone = (kind, names) => [...names].filter((name) => !remaining.includes(kind + ' ' + name))
+  for (const [label, names] of [
+    ['containers', gone('container', containers)],
+    ['volumes', gone('volume', volumes)],
+  ])
+    if (names.length) console.log(`Removed ${label}: ${names.join(', ')}`)
+  const kept = path.relative(root, stateFile)
+  if (settled && !remaining.length) {
+    await rm(stateFile, { force: true })
+    console.log(`Removed the dev fleet: its gateway, gateway data, network ${network} and ${kept}.`)
+    return true
+  }
+  const report = ['The dev fleet was not completely removed.']
+  if (records === null)
+    report.push(`Could not read the dev gateway's records of its environments: ${reason.replace(/\.?$/, '.')}`)
+  if (foreign.length)
+    report.push(
+      'Left in place because another fleet may own them:',
+      ...foreign.map((line) => '  ' + line),
+      'If one is a leftover of an earlier dev fleet, remove it yourself, for example with `docker volume rm`, and run `down` again.'
+    )
+  if (remaining.length) report.push('Still present:', ...remaining.map((line) => '  ' + line))
+  if (errors.length) report.push('Docker errors:', ...errors.map((line) => '  ' + line))
+  const gateway = stopped ? 'the stopped dev gateway, its data' : "the dev gateway's data"
+  report.push(
+    settled
+      ? `Kept ${kept}.`
+      : `Kept ${gateway}, network ${network} and ${kept}, so that \`down\` can finish once this is resolved.`
+  )
+  console.error(report.join('\n'))
+  return false
+}
 async function main() {
   if (command === 'up') {
     let state
@@ -114,27 +329,7 @@ async function main() {
     return
   }
   if (command === 'down') {
-    let state
-    try {
-      state = await readState()
-    } catch {
-      state = { port: 7443, bots: [] }
-    }
-    let botIds = state.bots ?? []
-    if (state.token) {
-      try {
-        botIds = (await request(state, 'GET', '/v1/bots')).bots.map((bot) => bot.id)
-      } catch {
-        /* Gateway may already be down. */
-      }
-    }
-    for (const id of botIds) await docker(['rm', '-f', 'maestrly-bot-' + id], { allowFailure: true })
-    await docker(['rm', '-f', fakeName], { allowFailure: true })
-    for (const id of botIds) await docker(['volume', 'rm', 'maestrly-bot-' + id + '-home'], { allowFailure: true })
-    await compose(state.port, ['down', '-v', '--remove-orphans'], { allowFailure: true })
-    await docker(['network', 'rm', network], { allowFailure: true })
-    await rm(stateFile, { force: true })
-    console.log('Removed dev fleet containers, volumes, and network.')
+    if (!(await down())) process.exitCode = 1
     return
   }
   const state = await readState()
