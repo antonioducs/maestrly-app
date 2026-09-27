@@ -103,6 +103,7 @@ beforeEach(() => {
       if (path === '/v1/pair') return response({ deviceId: 'device-1', token: 'secret' })
       if (path === '/v1/host') return response(host)
       if (path === '/v1/bots') return response({ bots: [] })
+      if (path === '/v1/environments') return response({ environments: [] })
       if (path === '/v1/inbox') return response({ items: [] })
       if (path === '/v1/peer-messages') return response({ messages: [] })
       if (path === '/v1/activity') {
@@ -177,6 +178,23 @@ describe('fleet client service', () => {
     await service.disconnect()
     expect(service.getConnection().deviceId).toBeNull()
     expect(readFleetSettings().token).toBeNull()
+  })
+
+  it('asks for the activity of environments only from a gateway that has them', async () => {
+    state.features = ['provisioning']
+    const service = new FleetClientService()
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    await state.events[0].onConnected()
+    state.features = ['provisioning', 'environments']
+    await state.events[0].onConnected()
+    const asked = vi
+      .mocked(fetch)
+      .mock.calls.map(([url]) => new URL(String(url)))
+      .filter((url) => url.pathname === '/v1/activity')
+      .map((url) => url.searchParams.get('includeEnvironmentActivity'))
+    // Gateways leave the kinds older Macs cannot read out of the history unless asked.
+    expect(asked).toEqual([null, '1'])
+    service.stop()
   })
 
   it('drops an archived bot from the snapshot whatever the event order', async () => {

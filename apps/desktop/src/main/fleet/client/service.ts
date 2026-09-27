@@ -231,8 +231,10 @@ export class FleetClientService {
     let after = baseline ?? 0
     let latest = after
     const entries: FleetActivityEntry[] = []
+    // Gateways leave environment entries out of the history for Macs that cannot read them, unless asked.
+    const environments = this.hasFeature(FLEET_ENVIRONMENTS_FEATURE) ? { includeEnvironmentActivity: 1 } : {}
     for (;;) {
-      const page = await api.call('activity', { query: { after, limit: 500 } })
+      const page = await api.call('activity', { query: { after, limit: 500, ...environments } })
       if (generation !== this.generation) return
       entries.push(...page.entries)
       latest = Math.max(latest, page.lastSeq)
