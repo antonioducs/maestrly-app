@@ -11,6 +11,7 @@ import {
 import { z } from 'zod'
 import type { ChatAttachmentInput } from '../../../shared/chat'
 import { imageMediaType } from './images'
+import type { TranscriptInputs } from './transcript'
 
 type StoredInput = Omit<FleetInstanceInput, 'attachments'>
 const previousRunSchema = z.object({
@@ -67,6 +68,8 @@ const stateSchema = z.object({ items: z.array(recordSchema) })
  */
 export class InstanceInputQueue {
   private items: QueuedInput[] = []
+  /** Lookups over `items`, rebuilt after they change. */
+  private index: { byNative: Map<string, QueuedInput>; byItem: Map<string, QueuedInput> } | null = null
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
     private readonly file: string,
@@ -152,6 +155,7 @@ export class InstanceInputQueue {
   async load(): Promise<void> {
     try {
       this.items = stateSchema.parse(JSON.parse(await fs.readFile(this.file, 'utf8'))).items
+      this.index = null
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
       throw error
@@ -163,6 +167,30 @@ export class InstanceInputQueue {
   }
   all(): QueuedInput[] {
     return [...this.items]
+  }
+  private lookups(): NonNullable<InstanceInputQueue['index']> {
+    if (!this.index) {
+      const byNative = new Map<string, QueuedInput>()
+      const byItem = new Map<string, QueuedInput>()
+      for (const item of this.items) {
+        if (item.nativeMessageId) byNative.set(item.nativeMessageId, item)
+        byItem.set(item.itemId, item)
+      }
+      this.index = { byNative, byItem }
+    }
+    return this.index
+  }
+  /** The input whose transcript item has this id. */
+  byItemId(itemId: string): QueuedInput | undefined {
+    return this.lookups().byItem.get(itemId)
+  }
+  /** What a transcript projection links native user messages to. */
+  transcriptInputs(): TranscriptInputs {
+    const { byNative } = this.lookups()
+    return {
+      forMessage: (messageId) => byNative.get(messageId),
+      unmapped: this.items.filter((item) => item.started && !item.nativeMessageId),
+    }
   }
 
   private async update<T>(change: (items: QueuedInput[]) => { result: T; changed: boolean }): Promise<T> {
@@ -180,6 +208,7 @@ export class InstanceInputQueue {
         await fs.rm(temp, { force: true }).catch(() => undefined)
       }
       this.items = next
+      this.index = null
       return result
     })
     this.writeTail = write.then(

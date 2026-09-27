@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetOwnerMemory } from '@maestrly/bot-fleet-protocol'
 import { OwnerMemoryClient } from '../../src/main/fleet/instance/owner-memory'
 import { BotRuntime } from '../../src/main/fleet/instance/runtime'
+import { LiveTranscript } from '../../src/main/fleet/instance/live-transcript'
 import { InstanceHoldManager } from '../../src/main/fleet/instance/gate'
 import { InstanceHttpError } from '../../src/main/fleet/instance/server'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
@@ -258,6 +259,18 @@ describe('runtime turn memory integration', () => {
         },
       }
       const events = new InstanceEvents()
+      const queue = {
+        list: () => (item.started ? [] : [item]),
+        all: () => [item],
+        transcriptInputs: () => ({ forMessage: () => undefined, unmapped: item.started ? [item] : [] }),
+        byItemId: () => undefined,
+        readAttachments: async () => [],
+        markStarted: async () => {
+          item.started = true
+        },
+        cleanup: async () => {},
+        reconcile: async () => {},
+      }
       const bot = Object.create(BotRuntime.prototype) as BotRuntime
       Object.assign(bot, {
         botId: 'scout',
@@ -275,18 +288,15 @@ describe('runtime turn memory integration', () => {
         holdManager: { state: { state: 'none' } },
         events,
         images: { toolRefs: () => [] },
-        transcript: async () => ({ items: [] }),
+        live: new LiveTranscript({
+          conversationId: () => conversation.id,
+          queue: queue as never,
+          extras: { list: () => [] } as never,
+          images: { captureMessages: async () => {}, toolRefs: () => [] } as never,
+          publish: () => {},
+        }),
         system: async () => {},
-        queue: {
-          list: () => (item.started ? [] : [item]),
-          all: () => [item],
-          readAttachments: async () => [],
-          markStarted: async () => {
-            item.started = true
-          },
-          cleanup: async () => {},
-          reconcile: async () => {},
-        },
+        queue,
       })
       const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(async (input) => {
         expect(bot.currentInput()?.source).toBe(source)

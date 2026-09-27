@@ -56,7 +56,12 @@ const ref = (entry: Entry): FleetImageRef => ({
 
 export class FleetImageStore {
   private entries = new Map<string, Entry>()
+  /** The entry of each captured tool image, by the chat image id it was captured from (the first one recorded). */
+  private bySource = new Map<string, Entry>()
   private writing = Promise.resolve()
+  private indexSources(entry: Entry): void {
+    for (const sourceId of entry.sourceIds) if (!this.bySource.has(sourceId)) this.bySource.set(sourceId, entry)
+  }
   constructor(private readonly root: string) {}
   /** Resolves once every capture started so far has finished. */
   async idle(): Promise<void> {
@@ -78,8 +83,10 @@ export class FleetImageStore {
           Number.isSafeInteger(item.byteSize) &&
           item.byteSize > 0 &&
           Number.isFinite(item.createdAt)
-        )
+        ) {
           this.entries.set(item.id, item as Entry)
+          this.indexSources(item as Entry)
+        }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
@@ -96,6 +103,9 @@ export class FleetImageStore {
     }
   }
   async capture(image: ChatToolImage): Promise<FleetImageRef | null> {
+    // Captured already: the same chat image always has the same bytes, so it is not read and hashed again.
+    const known = this.bySource.get(image.id)
+    if (known) return known.evicted ? null : ref(known)
     const cached = getEphemeralToolImage(image)
     if (!cached || cached.byteSize > FLEET_IMAGE_LIMITS.imageReadMaxBytes) return null
     const mediaType = imageMediaType(cached.bytes)
@@ -106,6 +116,7 @@ export class FleetImageStore {
       if (existing) {
         if (!existing.sourceIds.includes(image.id)) {
           existing.sourceIds.push(image.id)
+          this.indexSources(existing)
           await this.persist()
         }
         return ref(existing)
@@ -127,6 +138,7 @@ export class FleetImageStore {
         createdAt: Date.now(),
       }
       this.entries.set(id, entry)
+      this.indexSources(entry)
       let total = [...this.entries.values()]
         .filter((item) => !item.evicted)
         .reduce((sum, item) => sum + item.byteSize, 0)
@@ -154,7 +166,7 @@ export class FleetImageStore {
     return toolOutputImages(part.state.output)
       .slice(0, FLEET_IMAGE_LIMITS.imagesPerItemMax)
       .flatMap((image) => {
-        const entry = [...this.entries.values()].find((candidate) => candidate.sourceIds.includes(image.id))
+        const entry = this.bySource.get(image.id)
         return entry ? [ref(entry)] : []
       })
   }

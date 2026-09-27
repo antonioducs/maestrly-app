@@ -39,7 +39,12 @@ import {
   forgetLocalMemory,
 } from '../../memory/local-memory-service'
 import { OwnerMemoryClient } from './owner-memory'
-import { estimatedCostOfUsage, usageMetaForModel, type ChatStreamEvent } from '../../../shared/chat'
+import {
+  estimatedCostOfUsage,
+  usageMetaForModel,
+  type ChatContextSnapshot,
+  type ChatStreamEvent,
+} from '../../../shared/chat'
 import { selectContextObservation } from '../../../shared/context-observation'
 import type { PermissionRequest } from '../../chat/permission'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs } from '../../store'
@@ -67,7 +72,7 @@ import {
   startManualCompaction,
 } from '../../chat/service'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
-import { listChatMessages, listChatMessagesPage, chatHistoryStats } from '../../chat/chat-store'
+import { chatHistoryStats, findLatestChatMessage, getChatMessage, listChatMessagesPage } from '../../chat/chat-store'
 import { listProviders } from '../../chat/catalog'
 import { hasApiKey } from '../../chat/credentials'
 import { observeChatHost } from '../../chat/host-events'
@@ -76,14 +81,8 @@ import { setConversationScreen, type ScreenArea } from '../../conversation-scree
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents } from './server'
 import { InstanceInputQueue, promptForInput } from './queue'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
-import {
-  InstanceTranscriptExtras,
-  projectChatMessages,
-  transcriptPage,
-  fleetQuestions,
-  toolTarget,
-  permissionTool,
-} from './transcript'
+import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
+import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { clearBotIdentity, setBotIdentity, type BotIdentityPeer } from './identity'
 import type { GatewayConfig } from './gateway-client'
@@ -177,7 +176,7 @@ export async function loadFleetAccountOptions(): Promise<FleetSelectionOption[]>
 
 function assistantText(conversationId: string, messageId: string | null): string | null {
   if (!messageId) return null
-  const message = listChatMessages(conversationId).find((message) => message.id === messageId)
+  const message = getChatMessage(conversationId, messageId)
   if (message?.role !== 'assistant') return null
   return message.parts
     .filter((part) => part.type === 'text')
@@ -246,6 +245,7 @@ export class BotRuntime {
   readonly help: InstanceHelpStore
   readonly holdManager: InstanceHoldManager
   readonly images: FleetImageStore
+  readonly live: LiveTranscript
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -276,7 +276,8 @@ export class BotRuntime {
   private floatTimers = new Set<NodeJS.Timeout>()
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
-  private lastEmitted = new Map<string, string>()
+  /** The tool of each pending permission request, once its call was found: it never changes. */
+  private permissionTools = new Map<string, ReturnType<typeof permissionTool>>()
   private usage: FleetUsage | null = null
   private usageTask: Promise<void> = Promise.resolve()
   private compactionProblem: FleetCompactionState['problem'] = 'missing'
@@ -305,6 +306,13 @@ export class BotRuntime {
       this.publish({ type: 'transcript.upsert', item })
     )
     this.help = new InstanceHelpStore(this.extras, () => this.changed())
+    this.live = new LiveTranscript({
+      conversationId: () => this.primaryConversationId,
+      queue: this.queue,
+      extras: this.extras,
+      images: this.images,
+      publish: (item) => this.publish({ type: 'transcript.upsert', item }),
+    })
     this.holdManager = new InstanceHoldManager(
       () => {
         if (this.disposed) return
@@ -394,7 +402,8 @@ export class BotRuntime {
     // once and never passes through "off", which would discard the compaction it prepared before a restart.
     await this.loadAccounts(false)
     if (this.stored) await this.ensureConversation()
-    if (this.primaryConversationId) await this.queue.reconcile(this.nativeUsers())
+    this.live.anchor()
+    if (this.primaryConversationId) await this.queue.reconcile(this.nativeUsersForQueue())
     await this.queue.sweepAttachments()
     if (hadConversation) await this.system('restarted', null, null)
     // Persisted membership may be stale: the gateway can archive or pause this bot while the environment is stopped.
@@ -715,7 +724,7 @@ export class BotRuntime {
         at: this.permissionAt.get(request.id) ?? new Date().toISOString(),
         title: request.title,
         detail: request.resources.join(', ') || null,
-        tool: permissionTool(request, listChatMessages(id)),
+        tool: this.permissionToolFor(request),
         itemId: 'perm:' + request.id,
       }))
     const questions: FleetPendingInteraction[] = getChatQuestionBroker()
@@ -735,19 +744,18 @@ export class BotRuntime {
     const task = this.usageTask
       .then(async () => {
         if (this.disposed) return
-        const messages = listChatMessages(id)
-        const snapshot = [...messages]
-          .reverse()
-          .filter((message) => message.role === 'assistant' && !message.internal)
-          .map((message) => message.contextSnapshot)
-          .find(
-            (value) =>
-              value &&
-              Number.isFinite(value.usedTokens) &&
-              value.usedTokens >= 0 &&
-              Number.isFinite(value.modelContextWindow) &&
-              (value.modelContextWindow ?? 0) > 0
-          )
+        const measured = (value: ChatContextSnapshot | undefined) =>
+          !!value &&
+          Number.isFinite(value.usedTokens) &&
+          value.usedTokens >= 0 &&
+          Number.isFinite(value.modelContextWindow) &&
+          (value.modelContextWindow ?? 0) > 0
+        // The newest measured assistant, found without reading the whole conversation.
+        const snapshot = findLatestChatMessage(
+          id,
+          (message) => message.role === 'assistant' && !message.internal && measured(message.contextSnapshot),
+          { role: 'assistant', metaContaining: '"contextSnapshot"' }
+        )?.message.contextSnapshot
         const history = chatHistoryStats(id)
         const fallback = history.lastUsage
         const contextUsedTokens = snapshot
@@ -961,53 +969,39 @@ export class BotRuntime {
     this.changed()
   }
   async transcript(before: string | null, limit: number) {
-    if (this.primaryConversationId) await this.images.captureMessages(listChatMessages(this.primaryConversationId))
-    const native = this.primaryConversationId
-      ? projectChatMessages(listChatMessages(this.primaryConversationId), this.queue.all(), (part) =>
-          this.images.toolRefs(part)
-        )
-      : []
-    const queued: FleetTranscriptItem[] = this.queue.list().map((entry) => ({
-      kind: 'user',
-      id: entry.itemId,
-      at: entry.at,
-      text: entry.input.text,
-      source: entry.input.source,
-      routine: entry.input.routine,
-      peer: entry.input.peer,
-      queued: true,
-      memories: [],
-      images: this.queue.refs(entry),
-    }))
-    const extra = this.extras.list()
-    const questions = new Set(
-      extra.filter((item) => item.kind === 'question').map((item) => (item.kind === 'question' ? item.toolCallId : ''))
-    )
-    return transcriptPage(
-      [...native.filter((item) => item.kind !== 'question' || !questions.has(item.toolCallId)), ...queued, ...extra],
-      before,
-      limit
-    )
+    return this.live.page(before, limit)
   }
   async image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }> {
     const id = this.primaryConversationId
     if (!id) throw new InstanceHttpError(404, 'NOT_FOUND', 'Image not found.')
-    const result = (await this.queue.readImage(imageId)) ?? (await this.images.read(imageId, id, listChatMessages(id)))
+    const result =
+      (await this.queue.readImage(imageId)) ?? (await this.images.read(imageId, id, this.live.imageMessages(imageId)))
     if (!result) throw new InstanceHttpError(404, 'NOT_FOUND', 'Image not found.')
     return result
   }
-  private nativeUsers(): Array<{ id: string; at: number; text: string }> {
-    if (!this.primaryConversationId) return []
-    return listChatMessages(this.primaryConversationId)
-      .filter((message) => message.role === 'user')
-      .map((message) => ({
-        id: message.id,
-        at: message.createdAt,
-        text: message.parts
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join(''),
-      }))
+  /**
+   * The user messages the queue may map its started inputs to: every one created since the oldest input still
+   * unmapped (a second before it), none when every input is mapped.
+   */
+  private nativeUsersForQueue(): Array<{ id: string; at: number; text: string }> {
+    const unmapped = this.queue.transcriptInputs().unmapped
+    if (!unmapped.length) return []
+    return this.live.userMessagesSince(Math.min(...unmapped.map((item) => Date.parse(item.at))) - 1_000)
+  }
+  /** The tool a permission request is for, from its call once found (then kept) or else from its resources. */
+  private permissionToolFor(request: PermissionRequest): ReturnType<typeof permissionTool> {
+    const known = this.permissionTools.get(request.id)
+    if (known !== undefined) return known
+    const call = request.toolCallId ? this.live.messageWithToolCall(request.toolCallId) : null
+    const tool = permissionTool(request, call ? [call] : [])
+    if (call || !request.toolCallId) {
+      this.permissionTools.set(request.id, tool)
+      for (const oldest of this.permissionTools.keys()) {
+        if (this.permissionTools.size <= 200) break
+        this.permissionTools.delete(oldest)
+      }
+    }
+    return tool
   }
   private async tick(): Promise<void> {
     if (this.disposed || !this.primaryConversationId || Date.now() < this.retryAt) return
@@ -1052,6 +1046,7 @@ export class BotRuntime {
       this.turnAbort.signal.throwIfAborted()
       await this.queue.markStarted(item.id)
       this.turnAbort.signal.throwIfAborted()
+      this.live.turnStarted()
       const handle = await startExecutorChatTurn({
         conversationId: id,
         prompt: promptForInput(item.input),
@@ -1064,13 +1059,21 @@ export class BotRuntime {
       await this.queue.cleanup(item.id)
       release = null
       try {
-        const nativeUser = [...this.nativeUsers()]
+        // The turn's own user message: the newest one with its prompt, created since it was queued.
+        const nativeUser = this.live
+          .turnMessages()
+          .filter((message) => message.role === 'user')
           .reverse()
-          .find((user) => user.at >= Date.parse(item.at) - 1_000 && user.text === promptForInput(item.input))
+          .find(
+            (message) =>
+              message.createdAt >= Date.parse(item.at) - 1_000 &&
+              message.parts
+                .filter((part) => part.type === 'text')
+                .map((part) => part.text)
+                .join('') === promptForInput(item.input)
+          )
         if (nativeUser) await this.queue.mapNativeMessage(item.id, nativeUser.id)
-        const visibleUser = projectChatMessages(listChatMessages(id), this.queue.all(), (part) =>
-          this.images.toolRefs(part)
-        ).find((entry) => entry.id === item.itemId)
+        const visibleUser = this.live.turnItem(item.itemId)
         if (visibleUser) this.publish({ type: 'transcript.upsert', item: visibleUser })
         this.changed()
       } catch (error) {
@@ -1079,11 +1082,9 @@ export class BotRuntime {
       }
       const outcome = await handle.done
       const finalText = assistantText(id, outcome.assistantMessageId)
-      const page = await this.transcript(null, 500)
-      const last = [...page.items]
-        .reverse()
-        .find((entry) => entry.kind === 'assistant' && entry.id.startsWith((outcome.assistantMessageId ?? '') + ':'))
-      const summary = last?.kind === 'assistant' ? last.text.slice(0, 280) : null
+      const summary = this.live.lastAssistantText(outcome.assistantMessageId)?.slice(0, 280) ?? null
+      // The turn's last state, even when its final events came before its final save.
+      this.scheduleTranscriptRefresh()
       this.lastSummary = summary
       this.lastTurnAt = new Date().toISOString()
       this.retryAt = 0
@@ -1103,7 +1104,7 @@ export class BotRuntime {
       void this.refreshUsage()
     } catch (error) {
       this.retryAt = Date.now() + 5_000
-      await this.queue.reconcile(this.nativeUsers()).catch(() => {
+      await this.queue.reconcile(this.nativeUsersForQueue()).catch(() => {
         console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
       })
       const cancelled = this.turnAbort?.signal.aborted === true
@@ -1306,7 +1307,7 @@ export class BotRuntime {
         requestId: request.id,
         title: request.title,
         detail: request.resources.join(', ') || null,
-        tool: permissionTool(request, listChatMessages(request.conversationId)),
+        tool: this.permissionToolFor(request),
         state: 'pending',
         resolvedAt: null,
       })
@@ -1314,6 +1315,7 @@ export class BotRuntime {
   }
   permissionResolved(event: { requestId: string; conversationId: string; decision: 'allow' | 'deny' }): void {
     if (this.disposed || event.conversationId !== this.primaryConversationId) return
+    this.permissionTools.delete(event.requestId)
     const item = this.extras.list().find((entry) => entry.kind === 'permission' && entry.requestId === event.requestId)
     if (item?.kind === 'permission')
       void this.extras
@@ -1366,31 +1368,22 @@ export class BotRuntime {
       event.kind === 'tool-call' ||
       event.kind === 'finish' ||
       event.kind === 'aborted' ||
+      event.kind === 'error' ||
       event.kind === 'compaction' ||
       event.kind === 'compaction-finished'
     ) {
-      if (!this.transcriptTimer)
-        this.transcriptTimer = setTimeout(() => {
-          this.transcriptTimer = null
-          const id = this.primaryConversationId
-          if (!id || this.disposed) return
-          void this.images
-            .captureMessages(listChatMessages(id))
-            .then(() => {
-              if (this.disposed) return
-              const items = projectChatMessages(listChatMessages(id), this.queue.all(), (part) =>
-                this.images.toolRefs(part)
-              )
-              for (const item of items) {
-                const serialized = JSON.stringify(item)
-                if (this.lastEmitted.get(item.id) === serialized) continue
-                this.lastEmitted.set(item.id, serialized)
-                this.publish({ type: 'transcript.upsert', item })
-              }
-            })
-            .catch(() => undefined)
-        }, 250)
+      if ('messageId' in event && event.messageId) this.live.touched(event.messageId)
+      this.scheduleTranscriptRefresh()
     }
     this.changed()
+  }
+  /** Sends the transcript items that changed, at most every 250 ms. */
+  private scheduleTranscriptRefresh(): void {
+    if (this.transcriptTimer || this.disposed) return
+    this.transcriptTimer = setTimeout(() => {
+      this.transcriptTimer = null
+      if (this.disposed) return
+      void this.live.refresh().catch(() => undefined)
+    }, 250)
   }
 }

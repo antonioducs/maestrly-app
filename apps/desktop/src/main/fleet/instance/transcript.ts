@@ -161,25 +161,56 @@ function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
       name: entry.name,
     }))
 }
+/** The queued inputs a projection links native user messages to. */
+export interface TranscriptInputs {
+  /** The input whose native user message this is. */
+  forMessage(messageId: string): QueuedInput | undefined
+  /** Started inputs whose native message is not known yet, in queue order: matched by text and time. */
+  unmapped: QueuedInput[]
+}
+export function transcriptInputs(inputs: QueuedInput[]): TranscriptInputs {
+  const byMessage = new Map(inputs.filter((item) => item.nativeMessageId).map((item) => [item.nativeMessageId, item]))
+  return {
+    forMessage: (messageId) => byMessage.get(messageId),
+    unmapped: inputs.filter((item) => item.started && !item.nativeMessageId),
+  }
+}
+/** A transcript item and the chat message it comes from. */
+export interface ProjectedItem {
+  messageId: string
+  item: FleetTranscriptItem
+}
 export function projectChatMessages(
   messages: ChatMessage[],
-  inputs: QueuedInput[] = [],
+  inputs: QueuedInput[] | TranscriptInputs = [],
   toolImages: (part: Extract<MessagePart, { type: 'tool' }>) => FleetImageRef[] = () => []
 ): FleetTranscriptItem[] {
-  const mappedInputs = inputs.filter((item) => item.started && !item.nativeMessageId)
-  const byMessage = new Map(inputs.filter((item) => item.nativeMessageId).map((item) => [item.nativeMessageId, item]))
+  return projectMessages(messages, Array.isArray(inputs) ? transcriptInputs(inputs) : inputs, toolImages).map(
+    (entry) => entry.item
+  )
+}
+/**
+ * The transcript items of chat messages, each with its message. Any run of messages projects the same items as it
+ * does within the whole conversation: an item depends on its own message, and on the queue for a user message.
+ */
+export function projectMessages(
+  messages: ChatMessage[],
+  inputs: TranscriptInputs,
+  toolImages: (part: Extract<MessagePart, { type: 'tool' }>) => FleetImageRef[] = () => []
+): ProjectedItem[] {
   const claimed = new Set<string>()
-  const items: FleetTranscriptItem[] = []
+  const projected: ProjectedItem[] = []
   for (const message of messages) {
     if (message.internal) continue
+    const items: FleetTranscriptItem[] = []
     const nativeText = message.parts
       .filter((part) => part.type === 'text')
       .map((part) => part.text)
       .join('')
     const linked =
       message.role === 'user'
-        ? (byMessage.get(message.id) ??
-          mappedInputs.find(
+        ? (inputs.forMessage(message.id) ??
+          inputs.unmapped.find(
             (item) =>
               !claimed.has(item.id) &&
               message.createdAt >= Date.parse(item.at) - 1_000 &&
@@ -292,8 +323,9 @@ export function projectChatMessages(
           images,
         })
     }
+    for (const item of items) projected.push({ messageId: message.id, item })
   }
-  return items.filter((item) => fleetTranscriptItemSchema.safeParse(item).success)
+  return projected.filter((entry) => fleetTranscriptItemSchema.safeParse(entry.item).success)
 }
 export function transcriptPage(items: FleetTranscriptItem[], before?: string | null, limit = 200): FleetTranscriptPage {
   const sorted = [...items].sort(compareFleetTranscriptItems)

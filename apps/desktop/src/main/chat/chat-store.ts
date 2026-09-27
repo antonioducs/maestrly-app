@@ -26,7 +26,7 @@ import type {
 import { totalTokensOf, toolOutputImages } from '../../shared/chat'
 import { deleteConversationGeneratedImages, deleteGeneratedImages } from './generated-images'
 import { deleteAttachmentImages, deleteConversationAttachmentImages } from './attachment-artifacts'
-import { clipPersistedToolOutput, parseParts } from './message'
+import { clipPersistedToolOutput, isPortableCompactionMarker, parseParts } from './message'
 import { parseCompactionProgress, parseContextSnapshot } from './context-metadata'
 import {
   clearConversationToolImageMetadata,
@@ -1870,4 +1870,161 @@ export function listChatMessagesRange(
       )
       .all(conversationId, afterSeq, upToSeq, options.limit ?? -1) as any[]
   ).map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
+}
+
+// ----------------------------------------------------------------------------
+// Bounded reads for conversations that never end (a bot's): what changed, what a page needs, one message by content.
+// Main and isolated context alike, like `listChatMessages`.
+// ----------------------------------------------------------------------------
+
+export interface SequencedChatMessage {
+  seq: number
+  message: StoredChatMessage
+}
+const sequenced = (rows: any[]): SequencedChatMessage[] =>
+  rows.map((row) => ({ seq: Number(row.seq), message: rowToMessage(row) }))
+
+/** The highest seq of the conversation, or null without messages. */
+export function newestChatSeq(conversationId: string): number | null {
+  const row = getDb()
+    .prepare('SELECT MAX(seq) AS seq FROM chat_messages WHERE conversation_id = ?')
+    .get(conversationId) as { seq: number | null } | undefined
+  return row?.seq == null ? null : Number(row.seq)
+}
+
+/** The messages with seq above `afterSeq`, oldest first. */
+export function listChatMessagesAfter(conversationId: string, afterSeq: number): SequencedChatMessage[] {
+  return sequenced(
+    getDb()
+      .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC')
+      .all(conversationId, afterSeq) as any[]
+  )
+}
+
+/** Up to `limit` messages with seq at or below `throughSeq`, newest first. */
+export function listChatMessagesThrough(
+  conversationId: string,
+  throughSeq: number,
+  limit: number
+): SequencedChatMessage[] {
+  return sequenced(
+    getDb()
+      .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND seq <= ? ORDER BY seq DESC LIMIT ?')
+      .all(conversationId, throughSeq, limit) as any[]
+  )
+}
+
+/** The named messages of the conversation that still exist, with their seq. */
+export function getChatMessagesWithSeq(conversationId: string, ids: readonly string[]): SequencedChatMessage[] {
+  if (!ids.length) return []
+  const statement = getDb().prepare('SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ?')
+  const rows: any[] = []
+  for (const id of ids) {
+    const row = statement.get(id, conversationId)
+    if (row) rows.push(row)
+  }
+  return sequenced(rows)
+}
+
+/**
+ * The newest message holding a portable compaction marker, with the length of its parts. A prepared compaction goes
+ * into an older message, after the last portable marker, and changes these without any other trace. Scans back only
+ * to that message.
+ */
+export function latestPortableCompactionMessage(
+  conversationId: string
+): { id: string; seq: number; size: number } | null {
+  const candidate = getDb().prepare(
+    `SELECT id, seq, length(parts_json) AS size, parts_json FROM chat_messages
+     WHERE conversation_id = ? AND seq < ? AND parts_json LIKE '%"type":"compaction"%' ORDER BY seq DESC LIMIT 1`
+  )
+  let before = Number.MAX_SAFE_INTEGER
+  for (;;) {
+    const row = candidate.get(conversationId, before) as
+      | { id: string; seq: number; size: number; parts_json: string | null }
+      | undefined
+    if (!row) return null
+    if (parseParts(row.parts_json ?? '[]').some(isPortableCompactionMarker))
+      return { id: row.id, seq: Number(row.seq), size: Number(row.size) }
+    before = Number(row.seq)
+  }
+}
+
+/**
+ * The newest message for which `matches` holds, scanning back from the newest message in pages. The literal
+ * substrings `partsContaining` / `metaContaining` and `role` skip rows before they are parsed; `withinNewest` bounds
+ * the scan to that many newest messages.
+ */
+export function findLatestChatMessage(
+  conversationId: string,
+  matches: (message: StoredChatMessage) => boolean,
+  options: {
+    partsContaining?: string
+    metaContaining?: string
+    role?: 'user' | 'assistant'
+    withinNewest?: number
+  } = {}
+): SequencedChatMessage | null {
+  const db = getDb()
+  let floor = Number.MIN_SAFE_INTEGER
+  if (options.withinNewest !== undefined) {
+    const oldest = db
+      .prepare('SELECT seq FROM chat_messages WHERE conversation_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?')
+      .get(conversationId, Math.max(0, options.withinNewest - 1)) as { seq: number } | undefined
+    if (oldest) floor = Number(oldest.seq)
+  }
+  const filters = [
+    options.partsContaining !== undefined ? 'instr(parts_json, @parts) > 0' : null,
+    options.metaContaining !== undefined ? "instr(COALESCE(meta_json, ''), @meta) > 0" : null,
+    options.role ? 'role = @role' : null,
+  ].filter(Boolean)
+  const page = db.prepare(
+    `SELECT * FROM chat_messages WHERE conversation_id = @conversationId AND seq < @before AND seq >= @floor
+     ${filters.map((filter) => 'AND ' + filter).join(' ')} ORDER BY seq DESC LIMIT 50`
+  )
+  let before = Number.MAX_SAFE_INTEGER
+  for (;;) {
+    const rows = page.all({
+      conversationId,
+      before,
+      floor,
+      ...(options.partsContaining !== undefined ? { parts: options.partsContaining } : {}),
+      ...(options.metaContaining !== undefined ? { meta: options.metaContaining } : {}),
+      ...(options.role ? { role: options.role } : {}),
+    }) as any[]
+    if (!rows.length) return null
+    for (const row of rows) {
+      const message = rowToMessage(row)
+      if (matches(message)) return { seq: Number(row.seq), message }
+    }
+    before = Number(rows[rows.length - 1].seq)
+  }
+}
+
+/**
+ * Where `time` falls in the conversation's seq order: the seq of a message created at or before `time` whose next
+ * message was created after it (the newest message when there is none), one below the first seq when the first message
+ * was created after `time`, or null without messages. Creation times follow seq closely but not exactly (an assistant
+ * row may be stamped before its user row), so callers leave a slack around `time`.
+ */
+export function chatSeqAtTime(conversationId: string, time: number): number | null {
+  const db = getDb()
+  const bounds = db
+    .prepare('SELECT MIN(seq) AS lo, MAX(seq) AS hi FROM chat_messages WHERE conversation_id = ?')
+    .get(conversationId) as { lo: number | null; hi: number | null }
+  if (bounds.lo === null || bounds.hi === null) return null
+  const at = db.prepare(
+    'SELECT seq, created_at FROM chat_messages WHERE conversation_id = ? AND seq >= ? ORDER BY seq ASC LIMIT 1'
+  )
+  const first = at.get(conversationId, bounds.lo) as { seq: number; created_at: number }
+  if (Number(first.created_at) > time) return Number(bounds.lo) - 1
+  let lo = Number(first.seq)
+  let hi = Number(bounds.hi)
+  while (lo < hi) {
+    const mid = lo + Math.ceil((hi - lo) / 2)
+    const row = at.get(conversationId, mid) as { seq: number; created_at: number }
+    if (Number(row.created_at) <= time) lo = Number(row.seq)
+    else hi = mid - 1
+  }
+  return lo
 }
