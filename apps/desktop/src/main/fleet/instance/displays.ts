@@ -521,6 +521,10 @@ export class DisplayManager {
       ...(clip ? ['-clip', `${clip.width}x${clip.height}+${clip.x}+${clip.y}`] : []),
       '-rfbport',
       String(port),
+      // LibVNCServer listens on IPv6 loopback too, on 5900 unless told otherwise: the first server of the environment
+      // would take the environment screen's port there.
+      '-rfbportv6',
+      String(port),
       ...VNC_OPTIONS,
       ...(mode === 'view' ? ['-viewonly'] : []),
       ...VNC_CURSOR,

@@ -398,13 +398,26 @@ describe('DisplayManager VNC', () => {
     const view = [...VNC_FLAGS, '-viewonly', ...VNC_CURSOR]
     const control = [...VNC_FLAGS, ...VNC_CURSOR]
     expect(spawner.named('x11vnc').map((child) => ({ args: child.args, env: child.env }))).toEqual([
-      { args: ['-display', ':0', '-clip', '1280x800+0+0', '-rfbport', '5900', ...control], env: {} },
-      { args: ['-display', ':0', '-clip', '1280x800+0+0', '-rfbport', '5901', ...view], env: {} },
-      { args: ['-display', ':0', '-clip', '1280x800+2560+0', '-rfbport', '5904', ...control], env: {} },
-      { args: ['-display', ':0', '-clip', '1280x800+1280+800', '-rfbport', '5909', ...view], env: {} },
-      { args: ['-display', ':2', '-rfbport', '5954', ...control], env: {} },
-      { args: ['-display', ':4', '-rfbport', '5959', ...view], env: {} },
+      {
+        args: ['-display', ':0', '-clip', '1280x800+0+0', '-rfbport', '5900', '-rfbportv6', '5900', ...control],
+        env: {},
+      },
+      { args: ['-display', ':0', '-clip', '1280x800+0+0', '-rfbport', '5901', '-rfbportv6', '5901', ...view], env: {} },
+      {
+        args: ['-display', ':0', '-clip', '1280x800+2560+0', '-rfbport', '5904', '-rfbportv6', '5904', ...control],
+        env: {},
+      },
+      {
+        args: ['-display', ':0', '-clip', '1280x800+1280+800', '-rfbport', '5909', '-rfbportv6', '5909', ...view],
+        env: {},
+      },
+      { args: ['-display', ':2', '-rfbport', '5954', '-rfbportv6', '5954', ...control], env: {} },
+      { args: ['-display', ':4', '-rfbport', '5959', '-rfbportv6', '5959', ...view], env: {} },
     ])
+    // LibVNCServer listens on IPv6 loopback too, on 5900 unless told otherwise: a bot's server would take the
+    // environment screen's port. Each server keeps to its own port there as well.
+    for (const child of spawner.named('x11vnc'))
+      expect(child.args[child.args.indexOf('-rfbportv6') + 1]).toBe(child.args[child.args.indexOf('-rfbport') + 1])
     expect(spawner.named('bash').map((child) => child.args)).toEqual(
       [5900, 5901, 5904, 5909, 5954, 5959].map((port) => [
         '-c',
