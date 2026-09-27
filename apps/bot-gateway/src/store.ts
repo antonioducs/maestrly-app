@@ -11,6 +11,7 @@ import {
   type FleetActivityKind,
   type FleetBot,
   type FleetBotSetup,
+  type FleetCompactionConfig,
   type FleetEnvironmentSetup,
   type FleetLifecycle,
   type FleetPeerMessage,
@@ -38,11 +39,15 @@ export type StoredEnvironment = {
   volumeName: string
   /** The limit the owner set for the container; null uses the gateway's default. */
   memoryLimitBytes: number | null
+  /** The compaction model of its bots that have none of their own; null when the owner has not chosen one. */
+  compaction: FleetCompactionConfig | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null
 }
-export type EnvironmentChanges = Partial<Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes'>>
+export type EnvironmentChanges = Partial<
+  Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes' | 'compaction'>
+>
 /** What an environment's container is started with: the token of its control API and the password of its keyring. */
 export type EnvironmentSecrets = { controlToken: string; keyringPassword: string }
 /** The token a bot calls the gateway with, and its digest. */
@@ -78,6 +83,20 @@ function environmentSetupOf(setup: unknown, lifecycle: string): FleetEnvironment
     error: error.success ? error.data : null,
     errorMessage: typeof fields.errorMessage === 'string' ? fields.errorMessage : null,
   }
+}
+/** Whether two parsed JSON values are equal, whatever the order of their object keys. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const canonical = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : typeof value === 'object' && value !== null
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map((key) => [key, canonical((value as Record<string, unknown>)[key])])
+          )
+        : value
+  return JSON.stringify(canonical(a)) === JSON.stringify(canonical(b))
 }
 const environmentCreating: FleetEnvironmentSetup = { step: 'container', error: null, errorMessage: null }
 const botCreating: FleetBotSetup = { step: 'container', error: null, errorMessage: null }
@@ -131,7 +150,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 6) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 7) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -187,6 +206,7 @@ export class Store {
       this.db.prepare("UPDATE meta SET value='5' WHERE key='schema_version'").run()
     }
     if (version <= 5) this.migrateToEnvironments()
+    if (version <= 6) this.migrateEnvironmentCompaction()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -246,6 +266,33 @@ export class Store {
       CREATE INDEX idx_activity_environment ON activity(environment_id);
     `)
     this.db.prepare("UPDATE meta SET value='6' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 7: environments get a default compaction model. Each one takes the model of its migrated bot (the bot with
+   * its id), or else of its oldest bot with one, active bots first; its bots with that same model then inherit it.
+   */
+  private migrateEnvironmentCompaction() {
+    this.db.exec('ALTER TABLE environments ADD COLUMN compaction_json TEXT')
+    const bots = this.db.prepare(
+      'SELECT id, compaction_json FROM bots WHERE environment_id=? AND compaction_json IS NOT NULL ORDER BY (archived_at IS NOT NULL), created_at, id'
+    )
+    for (const environment of this.db.prepare('SELECT id FROM environments').all() as Row[]) {
+      const id = String(environment.id)
+      const models = (bots.all(id) as Row[]).map((bot) => {
+        try {
+          return { id: String(bot.id), compaction: JSON.parse(String(bot.compaction_json)) as unknown }
+        } catch {
+          throw new Error(`Gateway migration failed: bot ${String(bot.id)} has an unreadable compaction`)
+        }
+      })
+      const source = models.find((bot) => bot.id === id) ?? models[0]
+      if (!source) continue
+      this.db.prepare('UPDATE environments SET compaction_json=? WHERE id=?').run(JSON.stringify(source.compaction), id)
+      for (const bot of models)
+        if (sameJson(bot.compaction, source.compaction))
+          this.db.prepare('UPDATE bots SET compaction_json=NULL WHERE id=?').run(bot.id)
+    }
+    this.db.prepare("UPDATE meta SET value='7' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -462,6 +509,7 @@ export class Store {
       containerName: String(row.container_name),
       volumeName: String(row.volume_name),
       memoryLimitBytes: row.memory_limit_bytes === null ? null : Number(row.memory_limit_bytes),
+      compaction: row.compaction_json ? (JSON.parse(String(row.compaction_json)) as FleetCompactionConfig) : null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       archivedAt: (row.archived_at as string | null) ?? null,
@@ -482,7 +530,7 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           environment.id,
@@ -492,6 +540,7 @@ export class Store {
           environment.containerName,
           environment.volumeName,
           environment.memoryLimitBytes,
+          environment.compaction ? JSON.stringify(environment.compaction) : null,
           environment.createdAt,
           environment.updatedAt,
           environment.lifecycle === 'archived' ? (environment.archivedAt ?? environment.updatedAt) : null
@@ -518,7 +567,10 @@ export class Store {
         .all() as Row[]
     ).map((row) => this.environment(row))
   }
-  /** Changes an active environment's name, lifecycle, setup or memory limit (null: the gateway's default). */
+  /**
+   * Changes an active environment's name, lifecycle, setup, memory limit (null: the gateway's default) or default
+   * compaction model (null: none).
+   */
   updateEnvironment(id: string, changes: EnvironmentChanges, at = now()): StoredEnvironment {
     if (changes.lifecycle === 'archived') throw new Error('Archive an environment with archiveEnvironment')
     if (changes.memoryLimitBytes !== undefined) this.checkMemoryLimit(changes.memoryLimitBytes)
@@ -530,11 +582,22 @@ export class Store {
         lifecycle: changes.lifecycle ?? current.lifecycle,
         setup: changes.setup ?? current.setup,
         memoryLimitBytes: changes.memoryLimitBytes === undefined ? current.memoryLimitBytes : changes.memoryLimitBytes,
+        compaction: changes.compaction === undefined ? current.compaction : changes.compaction,
         updatedAt: at,
       }
       this.db
-        .prepare('UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,updated_at=? WHERE id=?')
-        .run(next.name, next.lifecycle, JSON.stringify(next.setup), next.memoryLimitBytes, next.updatedAt, id)
+        .prepare(
+          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,compaction_json=?,updated_at=? WHERE id=?'
+        )
+        .run(
+          next.name,
+          next.lifecycle,
+          JSON.stringify(next.setup),
+          next.memoryLimitBytes,
+          next.compaction ? JSON.stringify(next.compaction) : null,
+          next.updatedAt,
+          id
+        )
       return next
     })
   }
@@ -712,6 +775,7 @@ export class Store {
             containerName: legacyContainerName(bot.id),
             volumeName: legacyVolumeName(bot.id),
             memoryLimitBytes: null,
+            compaction: null,
             createdAt: bot.createdAt,
             updatedAt: bot.updatedAt,
             archivedAt: null,
@@ -818,7 +882,9 @@ export class Store {
       tint: String(row.tint),
       ceiling: row.ceiling as FleetBot['ceiling'],
       selection: JSON.parse(String(row.selection_json)),
+      // The bot's own model; the lifecycle resolves the one it uses with its environment's default.
       compaction: row.compaction_json ? JSON.parse(String(row.compaction_json)) : null,
+      compactionSource: row.compaction_json ? 'bot' : null,
       compactionState: null,
       talksTo: JSON.parse(String(row.talks_to_json)),
       paused: Boolean(row.paused),

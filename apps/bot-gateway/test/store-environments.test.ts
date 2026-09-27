@@ -14,7 +14,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 import { GatewayError } from '../src/errors.js'
 import { Store, type StoredEnvironment } from '../src/store.js'
-import { createSchema5Database, dumpTables } from './store-fixtures.js'
+import { createSchema5Database, createSchema6Database, dumpTables } from './store-fixtures.js'
 
 const dirs: string[] = []
 const stores: Store[] = []
@@ -70,6 +70,7 @@ function botRecord(id: string, overrides: Partial<FleetBot> = {}): FleetBot {
     ceiling: 'ask',
     selection: null,
     compaction: null,
+    compactionSource: null,
     compactionState: null,
     talksTo: [],
     paused: false,
@@ -100,6 +101,7 @@ function environmentRecord(id: string, overrides: Partial<StoredEnvironment> = {
     containerName: 'maestrly-env-' + id,
     volumeName: 'maestrly-env-' + id + '-home',
     memoryLimitBytes: null,
+    compaction: null,
     createdAt: at(20),
     updatedAt: at(20),
     archivedAt: null,
@@ -220,9 +222,9 @@ function seedSchema5(db: DatabaseSync) {
 }
 
 describe('schema 6 migration', () => {
-  it('creates schema 6 with environments in an empty data directory', () => {
+  it('creates schema 7 with environments in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('6')
+    expect(version(store.db)).toBe('7')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -239,6 +241,7 @@ describe('schema 6 migration', () => {
       ['created_at', 1],
       ['updated_at', 1],
       ['archived_at', 0],
+      ['compaction_json', 0],
     ])
     expect(columns('environment_secrets')).toEqual([
       ['environment_id', 0],
@@ -270,7 +273,7 @@ describe('schema 6 migration', () => {
     expect(store.archivedEnvironments()).toEqual([])
   })
 
-  it('turns each schema 5 bot into an environment of one, keeping its data and moving its secrets', () => {
+  it('turns each schema 5 bot into an environment of one, keeping its data and moving its secrets and its model', () => {
     const dir = temp()
     const db = createSchema5Database(dir)
     seedSchema5(db)
@@ -299,7 +302,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('6')
+    expect(version(store.db)).toBe('7')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -312,6 +315,7 @@ describe('schema 6 migration', () => {
         containerName: 'maestrly-bot-alpha',
         volumeName: 'maestrly-bot-alpha-home',
         memoryLimitBytes: null,
+        compaction,
         createdAt: at(20),
         updatedAt: at(21),
         archivedAt: null,
@@ -326,6 +330,7 @@ describe('schema 6 migration', () => {
         containerName: 'maestrly-bot-beta',
         volumeName: 'maestrly-bot-beta-home',
         memoryLimitBytes: null,
+        compaction: null,
         createdAt: at(18),
         updatedAt: at(22),
         archivedAt: at(22),
@@ -335,6 +340,8 @@ describe('schema 6 migration', () => {
     expect(store.db.prepare('SELECT * FROM bots ORDER BY id').all()).toEqual(
       botsBefore.map((row) => ({
         ...row,
+        // The migrated bot's model became its environment's default, which it now inherits.
+        compaction_json: null,
         environment_id: row.id,
         slot: 1,
         archived_with_environment: row.id === 'beta' ? 1 : 0,
@@ -347,7 +354,6 @@ describe('schema 6 migration', () => {
         instructions: 'Collect synthetic facts',
         ceiling: 'auto',
         selection,
-        compaction,
         paused: true,
         environmentId: 'alpha',
         createdAt: at(20),
@@ -399,7 +405,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('6')
+    expect(version(reopened.db)).toBe('7')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -475,7 +481,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('6')
+    expect(version(store.db)).toBe('7')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -483,17 +489,209 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='7' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('7')
+    expect(version(after)).toBe('8')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
+  })
+})
+
+describe('schema 7 migration', () => {
+  const model = (modelId: string, intervalTokens = 60000) => ({
+    providerId: 'openai',
+    modelId,
+    reasoning: null,
+    fastMode: false,
+    intervalTokens,
+  })
+  /** An environment and its bots as a version 6 gateway stored them; a string compaction is stored verbatim. */
+  function seedSchema6Environment(
+    db: DatabaseSync,
+    id: string,
+    bots: { id: string; compaction: unknown; createdAt: string; archived?: boolean }[]
+  ) {
+    db.prepare(
+      'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,NULL,?,?,NULL)'
+    ).run(
+      id,
+      'Environment ' + id,
+      'running',
+      JSON.stringify(setup('ready')),
+      'maestrly-env-' + id,
+      'maestrly-env-' + id + '-home',
+      at(10),
+      at(10)
+    )
+    db.prepare('INSERT INTO environment_secrets(environment_id,control_token,keyring_password) VALUES(?,?,?)').run(
+      id,
+      'synthetic-control-' + id,
+      'synthetic-keyring-' + id
+    )
+    bots.forEach((bot, index) => {
+      db.prepare(
+        "INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at,archived_at,compaction_json,environment_id,slot,archived_with_environment) VALUES(?,?,'','Synthetic instructions','#4978c6','ask','null','[]',0,?,?,?,?,?,?,?,?,0)"
+      ).run(
+        bot.id,
+        'Bot ' + bot.id,
+        bot.archived ? 'archived' : 'running',
+        JSON.stringify(botSetup('ready')),
+        bot.createdAt,
+        bot.createdAt,
+        bot.archived ? bot.createdAt : null,
+        bot.compaction === null
+          ? null
+          : typeof bot.compaction === 'string'
+            ? bot.compaction
+            : JSON.stringify(bot.compaction),
+        id,
+        index + 1
+      )
+      db.prepare('INSERT INTO bot_secrets(bot_id,gateway_token,gateway_token_sha256) VALUES(?,?,?)').run(
+        bot.id,
+        'synthetic-gateway-' + bot.id,
+        hash('synthetic-gateway-' + bot.id)
+      )
+    })
+  }
+  const storedCompaction = (db: DatabaseSync, id: string) => {
+    const row = db.prepare('SELECT compaction_json FROM bots WHERE id=?').get(id) as { compaction_json: unknown }
+    return row.compaction_json === null ? null : JSON.parse(String(row.compaction_json))
+  }
+  const checked = (db: DatabaseSync) => {
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  }
+
+  it('seeds each environment default from its bots and makes the bots with that model inherit it', () => {
+    const dir = temp()
+    const db = createSchema6Database(dir)
+    // A migrated environment: its migrated bot wins over an older sibling.
+    seedSchema6Environment(db, 'alpha', [
+      { id: 'early', compaction: model('model-y'), createdAt: at(19) },
+      { id: 'alpha', compaction: model('model-x'), createdAt: at(20) },
+    ])
+    // A shared environment: the oldest active bot wins over an older archived one; the same model written with its
+    // keys in another order still counts as the same.
+    const x = model('model-x')
+    seedSchema6Environment(db, 'shared', [
+      { id: 'theta', compaction: model('model-w'), createdAt: at(17), archived: true },
+      { id: 'beta', compaction: x, createdAt: at(18) },
+      { id: 'gamma', compaction: model('model-y'), createdAt: at(19) },
+      {
+        id: 'delta',
+        compaction: JSON.stringify({
+          intervalTokens: x.intervalTokens,
+          fastMode: x.fastMode,
+          reasoning: x.reasoning,
+          modelId: x.modelId,
+          providerId: x.providerId,
+        }),
+        createdAt: at(20),
+      },
+    ])
+    seedSchema6Environment(db, 'empty', [{ id: 'epsilon', compaction: null, createdAt: at(18) }])
+    // Only an archived bot has a model: it still seeds the default.
+    seedSchema6Environment(db, 'quiet', [
+      { id: 'zeta', compaction: model('model-z'), createdAt: at(18), archived: true },
+      { id: 'eta', compaction: null, createdAt: at(19) },
+    ])
+    const untouched = (database: DatabaseSync) => ({
+      secrets: database.prepare('SELECT * FROM environment_secrets ORDER BY environment_id').all(),
+      botSecrets: database.prepare('SELECT * FROM bot_secrets ORDER BY bot_id').all(),
+      bots: database
+        .prepare('SELECT * FROM bots ORDER BY id')
+        .all()
+        .map(({ compaction_json: _, ...row }) => row),
+    })
+    const before = untouched(db)
+    checked(db)
+    db.close()
+
+    const store = open(dir)
+    expect(version(store.db)).toBe('7')
+    checked(store.db)
+    expect(untouched(store.db)).toEqual(before)
+    expect(
+      Object.fromEntries(
+        [...store.listEnvironments()].map((environment) => [environment.id, environment.compaction?.modelId ?? null])
+      )
+    ).toEqual({ alpha: 'model-x', shared: 'model-x', empty: null, quiet: 'model-z' })
+    expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
+    expect(
+      Object.fromEntries(
+        ['alpha', 'early', 'theta', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'].map((id) => [
+          id,
+          storedCompaction(store.db, id)?.modelId ?? null,
+        ])
+      )
+    ).toEqual({
+      alpha: null,
+      early: 'model-y',
+      theta: 'model-w',
+      beta: null,
+      gamma: 'model-y',
+      delta: null,
+      epsilon: null,
+      zeta: null,
+      eta: null,
+    })
+    expect(store.getBot('gamma')?.compaction).toEqual(model('model-y'))
+    expect(store.getBot('beta')?.compaction).toBeNull()
+
+    const schema = schemaOf(store.db)
+    const data = dumpTables(store.db)
+    store.close()
+    const reopened = open(dir)
+    expect(version(reopened.db)).toBe('7')
+    expect(schemaOf(reopened.db)).toEqual(schema)
+    expect(dumpTables(reopened.db)).toEqual(data)
+    expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
+  })
+
+  it('rolls back the whole migration on an unreadable compaction and leaves schema 6 intact', () => {
+    const dir = temp()
+    const db = createSchema6Database(dir)
+    seedSchema6Environment(db, 'alpha', [
+      { id: 'alpha', compaction: model('model-x'), createdAt: at(18) },
+      { id: 'broken', compaction: '{not json', createdAt: at(19) },
+    ])
+    const schema = schemaOf(db)
+    const data = dumpTables(db)
+    db.close()
+
+    expect(() => new Store(dir)).toThrow('Gateway migration failed: bot broken has an unreadable compaction')
+    const raw = new DatabaseSync(file(dir))
+    expect(version(raw)).toBe('6')
+    expect(schemaOf(raw)).toEqual(schema)
+    expect(dumpTables(raw)).toEqual(data)
+    checked(raw)
+    raw.prepare("UPDATE bots SET compaction_json=NULL WHERE id='broken'").run()
+    raw.close()
+
+    const store = open(dir)
+    expect(version(store.db)).toBe('7')
+    expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
+  })
+
+  it('stores, changes and removes the default compaction model of an environment', () => {
+    const store = open()
+    store.insertEnvironment(environmentRecord('work', { compaction: model('model-x') }), environmentSecrets('work'))
+    expect(store.getEnvironment('work')?.compaction).toEqual(model('model-x'))
+    const changed = store.updateEnvironment('work', { compaction: model('model-y', 120000) }, at(23))
+    expect(changed).toEqual(environmentRecord('work', { compaction: model('model-y', 120000), updatedAt: at(23) }))
+    expect(store.getEnvironment('work')).toEqual(changed)
+    // Other changes keep it.
+    expect(store.updateEnvironment('work', { name: 'Work 2' }, at(24)).compaction).toEqual(model('model-y', 120000))
+    expect(store.updateEnvironment('work', { compaction: null }, at(25)).compaction).toBeNull()
+    expect(store.getEnvironment('work')?.compaction).toBeNull()
+    checked(store.db)
   })
 })
 
@@ -827,6 +1025,7 @@ describe('environments and their bots', () => {
       containerName: 'maestrly-bot-legacy',
       volumeName: 'maestrly-bot-legacy-home',
       memoryLimitBytes: null,
+      compaction: null,
       createdAt: at(20),
       updatedAt: at(20),
       archivedAt: null,

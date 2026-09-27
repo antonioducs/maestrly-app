@@ -44,10 +44,17 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   const meta = db.prepare("SELECT * FROM meta WHERE key!='schema_version' ORDER BY key").all()
   db.close()
   // Schema 6 gives every bot an environment of one: bots and activity gain environment columns and the control token
-  // and keyring password move from bot_secrets to environment_secrets. Every other v4 value stays as it was.
+  // and keyring password move from bot_secrets to environment_secrets. Schema 7 makes the bot's compaction model its
+  // environment's default, which the bot then inherits. Every other v4 value stays as it was.
   const migrated = {
     ...before,
-    bots: before.bots.map((row) => ({ ...row, environment_id: row.id, slot: 1, archived_with_environment: 0 })),
+    bots: before.bots.map((row) => ({
+      ...row,
+      compaction_json: null,
+      environment_id: row.id,
+      slot: 1,
+      archived_with_environment: 0,
+    })),
     bot_secrets: before.bot_secrets.map((row) => ({
       bot_id: row.bot_id,
       gateway_token: row.gateway_token,
@@ -57,8 +64,9 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   }
   let store = new Store(dir)
   const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
-  expect(version()).toEqual({ value: '6' })
+  expect(version()).toEqual({ value: '7' })
   expect(snapshot(store.db)).toEqual(migrated)
+  expect(store.getEnvironment('bot-1')?.compaction).toEqual({ enabled: true })
   expect(store.environmentSecrets('bot-1')).toEqual({
     controlToken: 'synthetic-control',
     keyringPassword: 'synthetic-keyring',
@@ -77,7 +85,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   const migratedMeta = store.db.prepare('SELECT * FROM meta ORDER BY key').all()
   store.close()
   store = new Store(dir)
-  expect(version()).toEqual({ value: '6' })
+  expect(version()).toEqual({ value: '7' })
   expect(snapshot(store.db)).toEqual(migrated)
   expect(store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(schema)
   expect(store.db.prepare('SELECT * FROM meta ORDER BY key').all()).toEqual(migratedMeta)
