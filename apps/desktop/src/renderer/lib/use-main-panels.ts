@@ -13,6 +13,7 @@ import type { SettingsSection } from '@/components/settings/nav'
 
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
+  | { kind: 'environment'; environmentId: string; tab: 'overview' | 'screen' }
   | { kind: 'server' }
   | { kind: 'inbox' }
   | { kind: 'memory' }
@@ -34,6 +35,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fleetView, setFleetView] = useState<FleetView | null>(null)
   const [createBot, setCreateBot] = useState(false)
+  // The environment a new bot joins when created from its environment view; null offers a new environment.
+  const [createBotEnvironmentId, setCreateBotEnvironmentId] = useState<string | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('chat')
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingChecked, setOnboardingChecked] = useState(false)
@@ -168,6 +171,11 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     [setActive]
   )
 
+  const openCreateBot = useCallback((environmentId: string | null = null) => {
+    setCreateBotEnvironmentId(environmentId)
+    setCreateBot(true)
+  }, [])
+
   const openFleetView = useCallback(
     (view: FleetView) => {
       setProjectNotesWs(null)
@@ -186,6 +194,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setFleetView,
     createBot,
     setCreateBot,
+    createBotEnvironmentId,
+    openCreateBot,
     openFleetView,
     projectNotesWs,
     setProjectNotesWs,

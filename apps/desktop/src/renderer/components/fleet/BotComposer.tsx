@@ -18,6 +18,7 @@ import { botChatComposerSource } from '@/components/chat/chat-composer-source'
 import { backgroundCompactionState, compactionProgress } from '@/lib/fleet/compaction'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { formatFleetUsage, selectionPatch, validateAttachments } from '@/lib/fleet/composer'
+import { hasEnvironments } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 type PendingImage = { file: File; attachment: UIAttachment }
@@ -27,11 +28,14 @@ export function BotComposer({
   fleet,
   onOpenScreen,
   onOpenSettings,
+  onOpenEnvironmentScreen,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenScreen: () => void
   onOpenSettings: () => void
+  /** A bot of an environment manages skills, accounts and MCP servers on its environment's screen. */
+  onOpenEnvironmentScreen?: () => void
 }) {
   const { t } = useTranslation('fleet')
   const [draft, setDraft] = useState('')
@@ -45,10 +49,13 @@ export function BotComposer({
   const [error, setError] = useState<string | null>(null)
   const onOpenScreenRef = useRef(onOpenScreen)
   onOpenScreenRef.current = onOpenScreen
+  const onOpenEnvironmentScreenRef = useRef(onOpenEnvironmentScreen)
+  onOpenEnvironmentScreenRef.current = onOpenEnvironmentScreen
+  const environmentId = hasEnvironments(fleet.state.connection) ? bot.environmentId : null
   const takeoverStateRef = useRef(bot.takeover.state)
   takeoverStateRef.current = bot.takeover.state
   // `bot` changes on every status/usage event; keep the source (and the command reload it drives) stable.
-  const source = useMemo(
+  const botSource = useMemo(
     () =>
       botChatComposerSource(
         { id: bot.id, ceiling: bot.ceiling },
@@ -56,6 +63,24 @@ export function BotComposer({
         () => takeoverStateRef.current
       ),
     [bot.id, bot.ceiling]
+  )
+  // Skills, accounts and MCP servers belong to the bot's environment. Its Maestrly shows its settings on the
+  // environment screen, never in the bot's browser area, and that screen needs no takeover of the bot.
+  const source = useMemo(
+    () =>
+      environmentId && botSource.bot
+        ? {
+            ...botSource,
+            bot: {
+              ...botSource.bot,
+              manage: async (target: 'skills' | 'mcp') => {
+                await window.api.fleetEnvironmentUiOpen(environmentId, target)
+                onOpenEnvironmentScreenRef.current?.()
+              },
+            },
+          }
+        : botSource,
+    [botSource, environmentId]
   )
   const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
 
@@ -269,13 +294,13 @@ export function BotComposer({
               fontScale={1}
               onFontScale={() => {}}
               source={source}
-              manageMcpLabel={t('composer.manageMcp')}
+              manageMcpLabel={environmentId ? t('composer.manageMcpEnvironment') : t('composer.manageMcp')}
             />
             <ChatSkillsMenu
               conversationId={bot.id}
               onChanged={reloadCommands}
               source={source}
-              manageSkillsLabel={t('composer.manageSkills')}
+              manageSkillsLabel={environmentId ? t('composer.manageSkillsEnvironment') : t('composer.manageSkills')}
               emptySkillsLabel={t('composer.noSkills')}
             />
             {option && option.efforts.length > 0 && (

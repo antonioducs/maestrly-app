@@ -36,12 +36,15 @@ describe('noVNC loader', () => {
   })
 
   it('never imports noVNC statically, so app startup never runs its hardware decoder probe', () => {
-    const screen = readFileSync(
-      fileURLToPath(new URL('../../src/renderer/components/fleet/BotScreen.tsx', import.meta.url)),
-      'utf8'
-    )
-    expect(screen).toMatch(/import type RFB from '@novnc\/novnc'/)
-    expect(screen).not.toMatch(/^import (?!type )[^\n]*from '@novnc\/novnc'/m)
-    expect(screen).toContain('loadNoVnc()')
+    const read = (name: string) =>
+      readFileSync(fileURLToPath(new URL(`../../src/renderer/components/fleet/${name}.tsx`, import.meta.url)), 'utf8')
+    // Bot and environment screens stream through the shared screen hook, which loads the viewer on demand.
+    const frame = read('ScreenFrame')
+    expect(frame).toMatch(/import type RFB from '@novnc\/novnc'/)
+    expect(frame).toContain('loadNoVnc()')
+    for (const name of ['ScreenFrame', 'BotScreen', 'EnvironmentScreen'])
+      expect(read(name), name).not.toMatch(/^import (?!type )[^\n]*from '@novnc\/novnc'/m)
+    expect(read('BotScreen')).toContain('useFleetScreen(')
+    expect(read('EnvironmentScreen')).toContain('useFleetScreen(')
   })
 })

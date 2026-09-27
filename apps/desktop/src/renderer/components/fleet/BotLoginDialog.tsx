@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetLoginAttempt, FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
+import type { FleetLoginAttempt, FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -13,17 +13,19 @@ import {
 } from '@/components/ui/dialog'
 import { closeBotLogin, createLoginOwnership, provisioningErrorText } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { targetFromParts, targetParts, type ProvisioningSubject } from '@/lib/fleet/environments'
 
 type LoginResult = 'completed' | 'cancelled' | 'failed'
+/** Signs an environment (shared by its bots) or, before environments, a bot in to a provider on the server. */
 export function BotLoginDialog({
-  bot,
+  subject,
   kind,
   slot = 'auto',
   hint,
   open,
   onClose,
 }: {
-  bot: FleetBot
+  subject: ProvisioningSubject
   kind: FleetLoginKind
   slot?: FleetLoginStartRequest['slot']
   hint?: string | null
@@ -31,6 +33,9 @@ export function BotLoginDialog({
   onClose: (result: LoginResult) => void
 }) {
   const { t } = useTranslation('fleet')
+  // Primitives: a subject rebuilt on every render must not restart the sign-in.
+  const { scope, id } = targetParts(subject.target)
+  const target = targetFromParts(scope, id)
   const [attempt, setAttempt] = useState<FleetLoginAttempt | null>(null)
   const [method, setMethod] = useState<'browser' | 'device'>(kind === 'grok' ? 'device' : 'browser')
   const [revision, setRevision] = useState(0)
@@ -62,7 +67,7 @@ export function BotLoginDialog({
     const poll = async () => {
       if (!owned || !active()) return
       try {
-        const value = await window.api.fleetLoginStatus(bot.id, owned.loginId)
+        const value = await window.api.fleetLoginStatus(target, owned.loginId)
         if (!active()) return
         update(value)
         setError('')
@@ -72,9 +77,9 @@ export function BotLoginDialog({
       if (active() && owned?.state === 'pending') timer = setTimeout(() => void poll(), 2000)
     }
     const lease = ownership.current.acquire(
-      JSON.stringify([bot.id, kind, slot, method, revision]),
-      () => window.api.fleetLoginStart(bot.id, { kind, slot, method }),
-      (loginId) => window.api.fleetLoginCancel(bot.id, loginId)
+      JSON.stringify([scope, id, kind, slot, method, revision]),
+      () => window.api.fleetLoginStart(target, { kind, slot, method }),
+      (loginId) => window.api.fleetLoginCancel(target, loginId)
     )
     void lease.result
       .then((result) => {
@@ -92,7 +97,7 @@ export function BotLoginDialog({
       liveAttempt.current = null
       lease.release()
     }
-  }, [open, bot.id, kind, slot, method, revision])
+  }, [open, scope, id, kind, slot, method, revision])
   useEffect(() => {
     primary.current?.focus()
   }, [attempt?.loginId, attempt?.state, error])
@@ -147,7 +152,7 @@ export function BotLoginDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('login.title', { provider, bot: bot.name })}</DialogTitle>
+          <DialogTitle>{t('login.title', { provider, bot: subject.name })}</DialogTitle>
           <DialogDescription>{hint ? t('provisioning.signInAs', { email: hint }) : provider}</DialogDescription>
         </DialogHeader>
         {!attempt && !error && <p role="status">{t('login.starting')}</p>}
@@ -159,7 +164,7 @@ export function BotLoginDialog({
                 <Button
                   ref={primary}
                   disabled={busy}
-                  onClick={() => void action(() => window.api.fleetLoginOpen(bot.id, attempt.loginId, 'auth'))}
+                  onClick={() => void action(() => window.api.fleetLoginOpen(target, attempt.loginId, 'auth'))}
                 >
                   {t('login.openAgain')}
                 </Button>
@@ -169,7 +174,7 @@ export function BotLoginDialog({
                     disabled={busy}
                     onClick={() =>
                       void action(async () => {
-                        await window.api.fleetLoginCancel(bot.id, attempt.loginId)
+                        await window.api.fleetLoginCancel(target, attempt.loginId)
                         setMethod('device')
                       })
                     }
@@ -190,7 +195,7 @@ export function BotLoginDialog({
                     <Button
                       variant="outline"
                       disabled={busy}
-                      onClick={() => void action(() => window.api.fleetLoginOpen(bot.id, attempt.loginId, 'manual'))}
+                      onClick={() => void action(() => window.api.fleetLoginOpen(target, attempt.loginId, 'manual'))}
                     >
                       {t('login.openLink')}
                     </Button>
@@ -203,7 +208,7 @@ export function BotLoginDialog({
                       onClick={() =>
                         void action(async () => {
                           const current = generation.current
-                          const value = await window.api.fleetLoginSubmitCode(bot.id, attempt.loginId, code.trim())
+                          const value = await window.api.fleetLoginSubmitCode(target, attempt.loginId, code.trim())
                           if (current === generation.current) {
                             ownership.current.update(value)
                             liveAttempt.current = value
@@ -234,7 +239,7 @@ export function BotLoginDialog({
                   <Button
                     ref={primary}
                     disabled={busy}
-                    onClick={() => void action(() => window.api.fleetLoginOpen(bot.id, attempt.loginId, 'device'))}
+                    onClick={() => void action(() => window.api.fleetLoginOpen(target, attempt.loginId, 'device'))}
                   >
                     {t('login.openPage')}
                   </Button>

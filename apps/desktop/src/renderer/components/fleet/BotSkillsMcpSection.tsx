@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import { isEnvironmentTarget, provisioningHintKey, type ProvisioningSubject } from '@/lib/fleet/environments'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { BotProvisioning, ImportGroup } from '@/lib/fleet/provisioning'
@@ -8,16 +8,18 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { MacImportDialog } from './MacImportDialog'
 
 const groups: ImportGroup[] = ['skills', 'mcp']
+/** The skills and MCP servers of an environment (shared by its bots) or, before environments, of a bot. */
 export function BotSkillsMcpSection({
-  bot,
+  subject,
   lists,
   availability,
 }: {
-  bot: FleetBot
+  subject: ProvisioningSubject
   lists: BotProvisioning
-  availability: 'ready' | 'update-server' | 'restart-bot'
+  availability: 'ready' | 'update-server' | 'restart-bot' | 'restart-environment'
 }) {
   const { t } = useTranslation('fleet')
+  const shared = isEnvironmentTarget(subject.target)
   const [importing, setImporting] = useState(false)
   const [confirm, setConfirm] = useState<{ name: string; remove: () => Promise<void> } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -40,14 +42,14 @@ export function BotSkillsMcpSection({
     <section className="space-y-3" aria-label={t('botSkillsMcp.title')}>
       <h2 className="font-semibold">{t('botSkillsMcp.title')}</h2>
       {availability !== 'ready' ? (
-        <p className="text-xs text-muted-foreground">
-          {t(availability === 'update-server' ? 'provisioning.updateServer' : 'provisioning.restartBot')}
-        </p>
+        <p className="text-xs text-muted-foreground">{t(provisioningHintKey(availability))}</p>
       ) : (
         <>
           <h3 className="text-sm font-medium">{t('provisioning.groups.skills')}</h3>
           {lists.skills?.length === 0 && (
-            <p className="text-xs text-muted-foreground">{t('botSkillsMcp.emptySkills')}</p>
+            <p className="text-xs text-muted-foreground">
+              {shared ? t('environment.emptySkills') : t('botSkillsMcp.emptySkills')}
+            </p>
           )}
           <ul className="space-y-2">
             {lists.skills?.map((item) => (
@@ -63,7 +65,10 @@ export function BotSkillsMcpSection({
                   size="sm"
                   variant="ghost"
                   onClick={() =>
-                    setConfirm({ name: item.name, remove: () => window.api.fleetRemoveBotSkill(bot.id, item.name) })
+                    setConfirm({
+                      name: item.name,
+                      remove: () => window.api.fleetRemoveBotSkill(subject.target, item.name),
+                    })
                   }
                 >
                   {t('botAccounts.remove')}
@@ -73,7 +78,9 @@ export function BotSkillsMcpSection({
           </ul>
           <h3 className="text-sm font-medium">{t('provisioning.groups.mcp')}</h3>
           {lists.mcpServers?.length === 0 && (
-            <p className="text-xs text-muted-foreground">{t('botSkillsMcp.emptyMcp')}</p>
+            <p className="text-xs text-muted-foreground">
+              {shared ? t('environment.emptyMcp') : t('botSkillsMcp.emptyMcp')}
+            </p>
           )}
           <ul className="space-y-2">
             {lists.mcpServers?.map((item) => (
@@ -87,7 +94,10 @@ export function BotSkillsMcpSection({
                   size="sm"
                   variant="ghost"
                   onClick={() =>
-                    setConfirm({ name: item.name, remove: () => window.api.fleetRemoveBotMcpServer(bot.id, item.id) })
+                    setConfirm({
+                      name: item.name,
+                      remove: () => window.api.fleetRemoveBotMcpServer(subject.target, item.id),
+                    })
                   }
                 >
                   {t('botAccounts.remove')}
@@ -95,7 +105,7 @@ export function BotSkillsMcpSection({
               </li>
             ))}
           </ul>
-          <Button size="sm" variant="outline" disabled={bot.lifecycle !== 'running'} onClick={() => setImporting(true)}>
+          <Button size="sm" variant="outline" disabled={!subject.running} onClick={() => setImporting(true)}>
             {t('provisioning.fromMacButton')}
           </Button>
         </>
@@ -105,11 +115,21 @@ export function BotSkillsMcpSection({
           {error || lists.error}
         </p>
       )}
-      {importing && <MacImportDialog bot={bot} groups={groups} lists={lists} onClose={() => setImporting(false)} />}
+      {importing && (
+        <MacImportDialog subject={subject} groups={groups} lists={lists} onClose={() => setImporting(false)} />
+      )}
       {confirm && (
         <ConfirmDialog
-          title={t('botAccounts.removeConfirm', { name: confirm.name })}
-          message={t('botAccounts.removeConfirm', { name: confirm.name })}
+          title={
+            shared
+              ? t('environment.removeConfirm', { name: confirm.name })
+              : t('botAccounts.removeConfirm', { name: confirm.name })
+          }
+          message={
+            shared
+              ? t('environment.removeConfirm', { name: confirm.name })
+              : t('botAccounts.removeConfirm', { name: confirm.name })
+          }
           confirmLabel={t('botAccounts.remove')}
           destructive
           busy={busy}

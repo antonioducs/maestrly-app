@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { version as desktopVersion } from '../../../../package.json'
 import { useTranslation } from 'react-i18next'
-import type { FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetEnvironment, FleetPeerMessage } from '@maestrly/bot-fleet-protocol'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { gb, memorySegments } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
-import { botsWithDifferentVersion } from '@/lib/fleet/selectors'
+import { botsWithDifferentVersion, groupBotsByEnvironment } from '@/lib/fleet/selectors'
+import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { ArchivedBots } from './ArchivedBots'
+import { ArchivedEnvironments } from './ArchivedEnvironments'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -28,9 +31,149 @@ function ResourceBar({ label, fraction, value }: { label: string; fraction: numb
   )
 }
 
-export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
+function Uptime({ startedAt }: { startedAt: string | null }) {
+  const { t } = useTranslation('fleet')
+  if (!startedAt) return '—'
+  const duration = formatUptime(Date.now() - Date.parse(startedAt))
+  return t(duration.long ? 'server.uptimeDays' : 'server.uptimeValue', duration)
+}
+
+function BotRow({
+  bot,
+  onOpenBot,
+  onAction,
+}: {
+  bot: FleetBot
+  onOpenBot: (id: string) => void
+  onAction: (action: 'restart' | 'stop' | 'start') => void
+}) {
+  const { t } = useTranslation('fleet')
+  return (
+    <tr className="border-t border-border">
+      <td className="p-3">
+        <button type="button" className="text-primary hover:underline" onClick={() => onOpenBot(bot.id)}>
+          {bot.name}
+        </button>
+      </td>
+      <td className="p-3">{t(`status.${bot.status}`)}</td>
+      <td className="p-3">{bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`}</td>
+      <td className="p-3">{bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`}</td>
+      <td className="p-3">
+        <Uptime startedAt={bot.resources.startedAt} />
+      </td>
+      <td className="p-3">
+        <div className="flex flex-nowrap gap-2 whitespace-nowrap">
+          {(['restart', 'stop', 'start'] as const).map((action) => (
+            <button
+              key={action}
+              type="button"
+              disabled={
+                action === 'start' ? bot.status !== 'offline' : bot.status === 'offline' || bot.status === 'human'
+              }
+              onClick={() => onAction(action)}
+              className="text-primary disabled:opacity-40"
+            >
+              {t(`action.${action}`)}
+            </button>
+          ))}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+/** An environment's row, with its resources and lifecycle, and its bots under it (their resources are its own). */
+function EnvironmentRows({
+  environment,
+  bots,
+  onOpenEnvironment,
+  onOpenBot,
+  onAction,
+}: {
+  environment: FleetEnvironment
+  bots: FleetBot[]
+  onOpenEnvironment: (id: string) => void
+  onOpenBot: (id: string) => void
+  onAction: (action: 'restart' | 'stop' | 'start') => void
+}) {
+  const { t } = useTranslation('fleet')
+  const { memoryBytes, cpuPercent, startedAt } = environment.resources
+  const running = environment.lifecycle === 'running'
+  const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
+  return (
+    <>
+      <tr className="border-t border-border">
+        <td className="p-3">
+          <button
+            type="button"
+            className="font-medium text-primary hover:underline"
+            onClick={() => onOpenEnvironment(environment.id)}
+          >
+            {environment.name}
+          </button>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {t('environment.botCount', { count: environment.botIds.length })}
+          </span>
+        </td>
+        <td className="p-3">{t(`environment.lifecycle.${environment.lifecycle}`)}</td>
+        <td className="p-3">{memoryBytes === null ? '—' : `${gb(memoryBytes)} GB`}</td>
+        <td className="p-3">{cpuPercent === null ? '—' : `${Math.round(cpuPercent)}%`}</td>
+        <td className="p-3">
+          <Uptime startedAt={startedAt} />
+        </td>
+        <td className="p-3">
+          <div className="flex flex-nowrap gap-2 whitespace-nowrap">
+            {(['restart', 'stop', 'start'] as const).map((action) => (
+              <button
+                key={action}
+                type="button"
+                disabled={action === 'start' ? !stopped : !running}
+                onClick={() => onAction(action)}
+                className="text-primary disabled:opacity-40"
+              >
+                {t(`action.${action}`)}
+              </button>
+            ))}
+          </div>
+        </td>
+      </tr>
+      {bots.map((bot) => (
+        <tr key={bot.id} className="border-t border-border/60 text-muted-foreground">
+          <td className="p-3 pl-8">
+            <button type="button" className="text-primary hover:underline" onClick={() => onOpenBot(bot.id)}>
+              {bot.name}
+            </button>
+          </td>
+          <td className="p-3">{t(`status.${bot.status}`)}</td>
+          {[0, 1, 2].map((cell) => (
+            <td key={cell} className="p-3" title={t('server.measuredByEnvironment')}>
+              —
+            </td>
+          ))}
+          <td className="p-3" />
+        </tr>
+      ))}
+    </>
+  )
+}
+
+export function ServerView({
+  fleet,
+  onOpenBot,
+  onOpenEnvironment,
+}: {
+  fleet: FleetController
+  onOpenBot: (id: string) => void
+  onOpenEnvironment: (id: string) => void
+}) {
   const { t, i18n } = useTranslation('fleet')
-  const { host, bots } = fleet.state.snapshot
+  const { host, bots, environments } = fleet.state.snapshot
+  // With environments, rows are environments (their resources counted once) with their bots under them.
+  const grouped = hasEnvironments(fleet.state.connection) ? groupBotsByEnvironment(environments, bots) : null
+  const [confirm, setConfirm] = useState<{ environment: FleetEnvironment; action: 'restart' | 'stop' } | null>(null)
+  const [confirmBusy, setConfirmBusy] = useState(false)
+  // Stable: the dialog refocuses on a new callback, and this view re-renders with every resource sample.
+  const cancelConfirm = useCallback(() => setConfirm(null), [])
   const [version, setVersion] = useState(desktopVersion)
   const [messages, setMessages] = useState<FleetPeerMessage[]>(fleet.state.snapshot.peerMessages)
   const [error, setError] = useState('')
@@ -47,7 +190,20 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
       .then((result) => setMessages(result.messages))
       .catch((cause) => setError(fleetErrorMessage(cause)))
   }, [])
-  const memory = memorySegments(host, bots)
+  const memory = memorySegments(host, bots, environments)
+  const confirmNames = confirm
+    ? formatNames(
+        environmentBots(confirm.environment, bots).map((bot) => bot.name),
+        i18n.language
+      ) || t('environment.noBotsNamed')
+    : ''
+  async function confirmAction() {
+    if (!confirm || confirmBusy) return
+    setConfirmBusy(true)
+    await fleet.environmentAction(confirm.environment.id, confirm.action)
+    setConfirmBusy(false)
+    setConfirm(null)
+  }
   const uptime = formatUptime((host?.uptimeSeconds ?? 0) * 1000)
   const differentVersions = botsWithDifferentVersion(bots, version)
   return (
@@ -114,7 +270,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                   >
                     {memory.map((segment) => (
                       <span
-                        key={segment.id}
+                        key={`${segment.kind}:${segment.id}`}
                         style={{
                           width: `${segment.fraction * 100}%`,
                           background: segment.tint,
@@ -128,9 +284,9 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                 </div>
                 <p className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                   {memory.map((segment) => (
-                    <span key={segment.id}>
+                    <span key={`${segment.kind}:${segment.id}`}>
                       <i className="mr-1 inline-block size-2 rounded-full" style={{ background: segment.tint }} />
-                      {segment.id === 'system' ? t('server.system') : bots.find((bot) => bot.id === segment.id)?.name}
+                      {segment.kind === 'system' ? t('server.system') : segment.name}
                     </span>
                   ))}
                 </p>
@@ -149,7 +305,7 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
           </>
         )}
         <section>
-          <h2 className="mb-3 font-semibold">{t('server.bots')}</h2>
+          <h2 className="mb-3 font-semibold">{grouped ? t('server.environments') : t('server.bots')}</h2>
           <div className="overflow-x-auto rounded-lg border border-border bg-surface-elevated">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="bg-surface-elevated text-xs text-muted-foreground">
@@ -162,53 +318,33 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
                 </tr>
               </thead>
               <tbody>
-                {bots.map((bot) => (
-                  <tr key={bot.id} className="border-t border-border">
-                    <td className="p-3">
-                      <button type="button" className="text-primary hover:underline" onClick={() => onOpenBot(bot.id)}>
-                        {bot.name}
-                      </button>
-                    </td>
-                    <td className="p-3">{t(`status.${bot.status}`)}</td>
-                    <td className="p-3">
-                      {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`}
-                    </td>
-                    <td className="p-3">
-                      {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`}
-                    </td>
-                    <td className="p-3">
-                      {bot.resources.startedAt
-                        ? (() => {
-                            const duration = formatUptime(Date.now() - Date.parse(bot.resources.startedAt))
-                            return t(duration.long ? 'server.uptimeDays' : 'server.uptimeValue', duration)
-                          })()
-                        : '—'}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex flex-nowrap gap-2 whitespace-nowrap">
-                        {(['restart', 'stop', 'start'] as const).map((action) => (
-                          <button
-                            key={action}
-                            type="button"
-                            disabled={
-                              action === 'start'
-                                ? bot.status !== 'offline'
-                                : bot.status === 'offline' || bot.status === 'human'
-                            }
-                            onClick={() => void fleet.botAction(bot.id, action)}
-                            className="text-primary disabled:opacity-40"
-                          >
-                            {t(`action.${action}`)}
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
+                {grouped?.groups.map((group) => (
+                  <EnvironmentRows
+                    key={group.environment.id}
+                    environment={group.environment}
+                    bots={group.bots}
+                    onOpenEnvironment={onOpenEnvironment}
+                    onOpenBot={onOpenBot}
+                    onAction={(action) =>
+                      action === 'start'
+                        ? void fleet.environmentAction(group.environment.id, 'start')
+                        : setConfirm({ environment: group.environment, action })
+                    }
+                  />
+                ))}
+                {(grouped ? grouped.ungrouped : bots).map((bot) => (
+                  <BotRow
+                    key={bot.id}
+                    bot={bot}
+                    onOpenBot={onOpenBot}
+                    onAction={(action) => void fleet.botAction(bot.id, action)}
+                  />
                 ))}
               </tbody>
             </table>
           </div>
         </section>
+        {grouped && <ArchivedEnvironments fleet={fleet} />}
         <ArchivedBots fleet={fleet} />
         <section>
           <h2 className="mb-3 font-semibold">{t('server.peerMessages')}</h2>
@@ -244,6 +380,25 @@ export function ServerView({ fleet, onOpenBot }: { fleet: FleetController; onOpe
           </p>
         )}
       </div>
+      {confirm && (
+        <ConfirmDialog
+          title={
+            confirm.action === 'restart'
+              ? t('environment.confirmRestartTitle', { name: confirm.environment.name })
+              : t('environment.confirmStopTitle', { name: confirm.environment.name })
+          }
+          message={
+            confirm.action === 'restart'
+              ? t('environment.confirmRestart', { bots: confirmNames })
+              : t('environment.confirmStop', { bots: confirmNames })
+          }
+          confirmLabel={confirm.action === 'restart' ? t('environment.restartButton') : t('environment.stopButton')}
+          destructive={confirm.action === 'stop'}
+          busy={confirmBusy}
+          onCancel={cancelConfirm}
+          onConfirm={() => void confirmAction()}
+        />
+      )}
     </section>
   )
 }

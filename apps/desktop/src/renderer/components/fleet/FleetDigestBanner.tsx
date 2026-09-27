@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { digestKey, formatDuration } from '@/lib/fleet/forms'
+import { activitySubject } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 
@@ -9,11 +10,13 @@ export function FleetDigestBanner({
   fleet,
   onOpenBot,
   onOpenServer,
+  onOpenEnvironment,
   compact = false,
 }: {
   fleet: FleetController
   onOpenBot: (id: string) => void
   onOpenServer: () => void
+  onOpenEnvironment?: (id: string) => void
   compact?: boolean
 }) {
   const { t, i18n } = useTranslation('fleet')
@@ -45,13 +48,22 @@ export function FleetDigestBanner({
       </div>
       <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto">
         {digest.entries.map((entry) => {
-          const bot = fleet.state.snapshot.bots.find((item) => item.id === entry.botId)
+          // Environment entries (lifecycle, configuration) are named after their environment.
+          const subject = activitySubject(entry, fleet.state.snapshot.bots, fleet.state.snapshot.environments)
+          const bot = subject?.kind === 'bot' ? subject : undefined
+          const environment = subject?.kind === 'environment' ? subject : undefined
           return (
             <li key={entry.seq}>
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded p-1 text-left hover:bg-accent"
-                onClick={() => (entry.botId ? onOpenBot(entry.botId) : onOpenServer())}
+                onClick={() =>
+                  entry.botId
+                    ? onOpenBot(entry.botId)
+                    : environment?.id && onOpenEnvironment
+                      ? onOpenEnvironment(environment.id)
+                      : onOpenServer()
+                }
               >
                 <time className="shrink-0 text-muted-foreground">
                   {new Date(entry.at).toLocaleTimeString(i18n.language, { hour: '2-digit', minute: '2-digit' })}
@@ -63,7 +75,7 @@ export function FleetDigestBanner({
                   {bot?.name.charAt(0) ?? '⌘'}
                 </span>
                 <span>
-                  {bot && <strong>{bot.name} · </strong>}
+                  {(bot ?? environment) && <strong>{(bot ?? environment)?.name} · </strong>}
                   {t(digestKey(entry), { summary: entry.summary ?? '' })}
                 </span>
               </button>

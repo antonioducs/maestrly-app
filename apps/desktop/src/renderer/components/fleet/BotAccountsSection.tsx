@@ -1,28 +1,31 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
+import type { FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { accountHost, type BotProvisioning } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { isEnvironmentTarget, provisioningHintKey, type ProvisioningSubject } from '@/lib/fleet/environments'
 import { MacImportDialog } from './MacImportDialog'
 import { BotLoginDialog } from './BotLoginDialog'
 
 const groups = ['accounts'] as Array<'accounts'>
+/** The accounts of an environment (shared by its bots) or, before environments, of a bot. */
 export function BotAccountsSection({
-  bot,
+  subject,
   lists,
   availability,
   children,
   onChanged,
 }: {
-  bot: FleetBot
+  subject: ProvisioningSubject
   lists: BotProvisioning
-  availability: 'ready' | 'update-server' | 'restart-bot'
+  availability: 'ready' | 'update-server' | 'restart-bot' | 'restart-environment'
   children: ReactNode
   onChanged: () => Promise<void>
 }) {
   const { t } = useTranslation('fleet')
+  const shared = isEnvironmentTarget(subject.target)
   const [importing, setImporting] = useState(false)
   const [login, setLogin] = useState<{ kind: FleetLoginKind; slot: FleetLoginStartRequest['slot'] } | null>(null)
   const [confirm, setConfirm] = useState<{ name: string; remove: () => Promise<void> } | null>(null)
@@ -51,16 +54,16 @@ export function BotAccountsSection({
     }
   }
   return (
-    <section className="space-y-3" aria-label={t('botAccounts.title')}>
-      <h2 className="font-semibold">{t('botAccounts.title')}</h2>
+    <section className="space-y-3" aria-label={shared ? t('environment.accounts') : t('botAccounts.title')}>
+      <h2 className="font-semibold">{shared ? t('environment.accounts') : t('botAccounts.title')}</h2>
       {availability !== 'ready' ? (
-        <p className="text-xs text-muted-foreground">
-          {t(availability === 'update-server' ? 'provisioning.updateServer' : 'provisioning.restartBot')}
-        </p>
+        <p className="text-xs text-muted-foreground">{t(provisioningHintKey(availability))}</p>
       ) : (
         <>
           {lists.accounts && !lists.accounts.apiKeys.length && !lists.accounts.subscriptions.length && (
-            <p className="text-xs text-muted-foreground">{t('botAccounts.empty')}</p>
+            <p className="text-xs text-muted-foreground">
+              {shared ? t('environment.accountsEmpty') : t('botAccounts.empty')}
+            </p>
           )}
           <ul className="space-y-2">
             {lists.accounts?.apiKeys.map((item) => (
@@ -81,7 +84,7 @@ export function BotAccountsSection({
                   onClick={() =>
                     setConfirm({
                       name: item.name,
-                      remove: () => window.api.fleetRemoveAccount(bot.id, item.providerId),
+                      remove: () => window.api.fleetRemoveAccount(subject.target, item.providerId),
                     })
                   }
                 >
@@ -116,7 +119,7 @@ export function BotAccountsSection({
                     setConfirm({
                       name: item.label,
                       remove: () =>
-                        window.api.fleetRemoveBotSubscription(bot.id, item.kind, item.accountId ?? 'default'),
+                        window.api.fleetRemoveBotSubscription(subject.target, item.kind, item.accountId ?? 'default'),
                     })
                   }
                 >
@@ -126,12 +129,7 @@ export function BotAccountsSection({
             ))}
           </ul>
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={bot.lifecycle !== 'running'}
-              onClick={() => setImporting(true)}
-            >
+            <Button size="sm" variant="outline" disabled={!subject.running} onClick={() => setImporting(true)}>
               {t('provisioning.fromMacButton')}
             </Button>
             {(['codex', 'claude', 'grok'] as const).map((kind) => (
@@ -139,7 +137,7 @@ export function BotAccountsSection({
                 key={kind}
                 size="sm"
                 variant="outline"
-                disabled={bot.lifecycle !== 'running'}
+                disabled={!subject.running}
                 onClick={() => setLogin({ kind, slot: 'auto' })}
               >
                 {t('login.signInWith', { provider: t(`login.provider.${kind}`) })}
@@ -156,7 +154,7 @@ export function BotAccountsSection({
       )}
       {importing && (
         <MacImportDialog
-          bot={bot}
+          subject={subject}
           lists={lists}
           groups={groups}
           onClose={() => {
@@ -167,7 +165,7 @@ export function BotAccountsSection({
       )}
       {login && (
         <BotLoginDialog
-          bot={bot}
+          subject={subject}
           {...login}
           open
           onClose={() => {
@@ -179,7 +177,11 @@ export function BotAccountsSection({
       {confirm && (
         <ConfirmDialog
           title={t('botSettings.removeAccountTitle')}
-          message={t('botAccounts.removeConfirm', { name: confirm.name })}
+          message={
+            shared
+              ? t('environment.removeConfirm', { name: confirm.name })
+              : t('botAccounts.removeConfirm', { name: confirm.name })
+          }
           confirmLabel={t('botAccounts.remove')}
           destructive
           busy={busy}

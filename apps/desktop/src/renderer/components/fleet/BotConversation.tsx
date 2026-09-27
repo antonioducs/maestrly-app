@@ -5,6 +5,7 @@ import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { startBot } from '@/lib/fleet/environments'
 import { visibleTranscriptItems } from '@/lib/fleet/forms'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
@@ -187,12 +188,14 @@ export function BotConversation({
   onOpenBot,
   onOpenScreen,
   onOpenSettings,
+  onOpenEnvironmentScreen,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenBot: (id: string) => void
   onOpenScreen: () => void
   onOpenSettings: () => void
+  onOpenEnvironmentScreen?: () => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -282,7 +285,7 @@ export function BotConversation({
                   : t(`composer.${bot.status}`)}
               </span>
               {bot.status === 'offline' && (
-                <button type="button" className="text-primary" onClick={() => void fleet.botAction(bot.id, 'start')}>
+                <button type="button" className="text-primary" onClick={() => void startBot(fleet, bot)}>
                   {t('action.start')}
                 </button>
               )}
@@ -316,7 +319,13 @@ export function BotConversation({
                 ))}
             </div>
           )}
-          <BotComposer bot={bot} fleet={fleet} onOpenScreen={onOpenScreen} onOpenSettings={onOpenSettings} />
+          <BotComposer
+            bot={bot}
+            fleet={fleet}
+            onOpenScreen={onOpenScreen}
+            onOpenSettings={onOpenSettings}
+            onOpenEnvironmentScreen={onOpenEnvironmentScreen}
+          />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">
               {error}

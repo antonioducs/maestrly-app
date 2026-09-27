@@ -32,6 +32,7 @@ import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
 import { useFleet } from '@/lib/fleet/use-fleet'
 import { BotView } from '@/components/fleet/BotView'
+import { EnvironmentView } from '@/components/fleet/EnvironmentView'
 import { ServerView } from '@/components/fleet/ServerView'
 import { InboxView } from '@/components/fleet/InboxView'
 import { OwnerMemoryView } from '@/components/fleet/OwnerMemoryView'
@@ -221,6 +222,10 @@ export function DesktopApp() {
     },
     [openFleetView]
   )
+  const openFleetEnvironment = useCallback(
+    (environmentId: string) => openFleetView({ kind: 'environment', environmentId, tab: 'overview' }),
+    [openFleetView]
+  )
   const {
     projectNotesWs,
     setProjectNotesWs,
@@ -238,6 +243,8 @@ export function DesktopApp() {
     fleetView,
     createBot,
     setCreateBot,
+    createBotEnvironmentId,
+    openCreateBot,
     openSettings,
     openOnboarding,
     handleSelect,
@@ -594,15 +601,22 @@ export function DesktopApp() {
                 selectedConversation={active}
                 requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
                 fleet={fleet}
-                selectedFleet={fleetView?.kind === 'bot' ? fleetView.botId : (fleetView?.kind ?? null)}
+                selectedFleet={
+                  fleetView?.kind === 'bot'
+                    ? fleetView.botId
+                    : fleetView?.kind === 'environment'
+                      ? `environment:${fleetView.environmentId}`
+                      : (fleetView?.kind ?? null)
+                }
                 onOpenFleetBot={openFleetBot}
+                onOpenFleetEnvironment={openFleetEnvironment}
                 onOpenFleetServer={() => openFleetView({ kind: 'server' })}
                 onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
                 onOpenFleetOwnerMemory={() => openFleetView({ kind: 'memory' })}
                 botServerConnected={fleet.state.connection.state === 'connected'}
                 botPendingCount={fleet.state.snapshot.inbox.length}
                 onCreateBot={() => {
-                  setCreateBot(true)
+                  openCreateBot(null)
                   setFleetTabRequest((value) => value + 1)
                 }}
                 onOpenBotSettings={() => openSettings('fleet')}
@@ -696,6 +710,7 @@ export function DesktopApp() {
                 <FleetDigestBanner
                   fleet={fleet}
                   onOpenBot={openFleetBot}
+                  onOpenEnvironment={openFleetEnvironment}
                   onOpenServer={() => openFleetView({ kind: 'server' })}
                 />
               )}
@@ -708,13 +723,31 @@ export function DesktopApp() {
                   onOpenBot={openFleetBot}
                 />
               )}
-              {fleetView?.kind === 'server' && <ServerView fleet={fleet} onOpenBot={openFleetBot} />}
+              {fleetView?.kind === 'environment' &&
+                fleet.state.snapshot.environments.some((environment) => environment.id === fleetView.environmentId) && (
+                  <EnvironmentView
+                    environment={
+                      fleet.state.snapshot.environments.find(
+                        (environment) => environment.id === fleetView.environmentId
+                      )!
+                    }
+                    view={fleetView}
+                    fleet={fleet}
+                    onView={openFleetView}
+                    onOpenBot={openFleetBot}
+                    onCreateBot={(environmentId) => openCreateBot(environmentId)}
+                  />
+                )}
+              {fleetView?.kind === 'server' && (
+                <ServerView fleet={fleet} onOpenBot={openFleetBot} onOpenEnvironment={openFleetEnvironment} />
+              )}
               {fleetView?.kind === 'inbox' && <InboxView fleet={fleet} onOpenBot={openFleetBot} />}
               {fleetView?.kind === 'memory' && <OwnerMemoryView fleet={fleet} onOpenBot={openFleetBot} />}
               <CreateBotDialog
                 open={createBot}
                 onClose={() => setCreateBot(false)}
                 fleet={fleet}
+                initialEnvironmentId={createBotEnvironmentId}
                 onCreated={(id) => {
                   setCreateBot(false)
                   openFleetBot(id)

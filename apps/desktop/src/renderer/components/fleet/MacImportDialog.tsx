@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportReport } from '../../../shared/fleet-provisioning'
+import type { ProvisioningSubject } from '@/lib/fleet/environments'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -20,13 +20,13 @@ import { MacImportPicker } from './MacImportPicker'
 import { BotLoginDialog } from './BotLoginDialog'
 
 export function MacImportFlow({
-  bot,
+  subject,
   inventory,
   choice,
   autoStart = false,
   onDone,
 }: {
-  bot: FleetBot
+  subject: ProvisioningSubject
   inventory: MacInventory
   choice: ImportChoice
   autoStart?: boolean
@@ -54,7 +54,7 @@ export function MacImportFlow({
     setError('')
     const { loginIds: _, ...selection } = choice
     await settleMacImport(
-      () => window.api.fleetImportFromMac(bot.id, selection),
+      () => window.api.fleetImportFromMac(subject.target, selection),
       (result) => {
         if (alive.current) setReport(result)
       },
@@ -103,7 +103,7 @@ export function MacImportFlow({
       {login && (
         <BotLoginDialog
           key={login.id}
-          bot={bot}
+          subject={subject}
           kind={login.kind}
           hint={login.email}
           open
@@ -116,12 +116,12 @@ export function MacImportFlow({
 }
 
 export function MacImportDialog({
-  bot,
+  subject,
   groups = importGroups,
   lists,
   onClose,
 }: {
-  bot: FleetBot
+  subject: ProvisioningSubject
   groups?: ImportGroup[]
   lists: BotProvisioning
   onClose: () => void
@@ -154,7 +154,7 @@ export function MacImportDialog({
         )}
         {inventory &&
           (sending ? (
-            <MacImportFlow bot={bot} inventory={inventory} choice={choice} autoStart onDone={close} />
+            <MacImportFlow subject={subject} inventory={inventory} choice={choice} autoStart onDone={close} />
           ) : (
             <>
               <MacImportPicker

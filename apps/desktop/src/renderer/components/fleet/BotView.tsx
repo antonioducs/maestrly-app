@@ -3,7 +3,8 @@ import type { KeyboardEvent } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
-import { takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { environmentOf, takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
 import { BotSettings } from './BotSettings'
@@ -24,6 +25,11 @@ export function BotView({
 }) {
   const { t } = useTranslation('fleet')
   const tab = view.tab
+  const environment = hasEnvironments(fleet.state.connection)
+    ? environmentOf(fleet.state.snapshot.environments, bot)
+    : undefined
+  const openEnvironment = (next: 'overview' | 'screen') =>
+    environment && onView({ kind: 'environment', environmentId: environment.id, tab: next })
   const setTab = (next: typeof tab) => onView({ kind: 'bot', botId: bot.id, tab: next })
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = tabs.indexOf(tab)
@@ -64,6 +70,17 @@ export function BotView({
           >
             {fleet.state.snapshot.host?.hostname ?? t('view.server')}
           </button>
+          {environment && (
+            <button
+              type="button"
+              onClick={() => openEnvironment('overview')}
+              aria-label={t('environment.link', { name: environment.name })}
+              title={t('environment.link', { name: environment.name })}
+              className="max-w-36 truncate rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {environment.name}
+            </button>
+          )}
           <div
             role="tablist"
             aria-label={t('view.botTabs')}
@@ -91,7 +108,7 @@ export function BotView({
           {bot.status === 'offline' ? (
             <button
               type="button"
-              onClick={() => void fleet.botAction(bot.id, 'start')}
+              onClick={() => void startBot(fleet, bot)}
               className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground"
             >
               {t('action.start')}
@@ -119,11 +136,13 @@ export function BotView({
           )}
         </div>
       </header>
-      {fleet.actionError?.botId === bot.id && (
-        <p role="alert" className="px-5 py-2 text-xs text-destructive">
-          {fleet.actionError.message}
-        </p>
-      )}
+      {fleet.actionError &&
+        (fleet.actionError.botId === bot.id ||
+          (bot.environmentId !== null && fleet.actionError.environmentId === bot.environmentId)) && (
+          <p role="alert" className="px-5 py-2 text-xs text-destructive">
+            {fleet.actionError.message}
+          </p>
+        )}
       <div
         id={`fleet-panel-${tab}`}
         role="tabpanel"
@@ -138,15 +157,24 @@ export function BotView({
             onOpenBot={onOpenBot}
             onOpenScreen={() => setTab('screen')}
             onOpenSettings={() => setTab('settings')}
+            onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
           />
         ) : tab === 'screen' ? (
-          <BotScreen key={bot.id} bot={bot} fleet={fleet} onOpenSettings={() => setTab('settings')} />
+          <BotScreen
+            key={bot.id}
+            bot={bot}
+            fleet={fleet}
+            onOpenSettings={() => setTab('settings')}
+            onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+            onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+          />
         ) : (
           <BotSettings
             key={bot.id}
             bot={bot}
             fleet={fleet}
             onOpenScreen={() => setTab('screen')}
+            onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
             onArchived={() => onView({ kind: 'server' })}
           />
         )}

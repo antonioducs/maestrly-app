@@ -1,40 +1,56 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
-import type RFB from '@novnc/novnc'
-import { loadNoVnc } from '@/lib/fleet/load-novnc'
+import type { FleetBot, FleetScreenSurface, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
-import { FleetScreenChannel } from '@/lib/fleet/screen-channel'
 import { fleetErrorMessage, isTakeoverConflict } from '@/lib/fleet/errors'
-import { formatTimer } from '@/lib/fleet/forms'
-import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { hasEnvironments, startBot } from '@/lib/fleet/environments'
+import { formatTimer, nextRadioIndex } from '@/lib/fleet/forms'
+import { environmentOf, ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { ScreenFrame, useFleetScreen } from './ScreenFrame'
+
+const surfaces = ['browser', 'apps'] as const
 
 export function BotScreen({
   bot,
   fleet,
   onOpenSettings,
+  onOpenEnvironment,
+  onOpenEnvironmentScreen,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenSettings: () => void
+  onOpenEnvironment?: () => void
+  onOpenEnvironmentScreen?: () => void
 }) {
   const { t } = useTranslation('fleet')
   const target = useRef<HTMLDivElement>(null)
+  const surfaceRadios = useRef<Array<HTMLButtonElement | null>>([])
   const [takeover, setTakeover] = useState<FleetTakeoverState>(bot.takeover)
-  const [phase, setPhase] = useState<'connecting' | 'live' | 'offline' | 'error'>('connecting')
+  const [surface, setSurface] = useState<FleetScreenSurface>('browser')
   const [popover, setPopover] = useState<'take' | 'give' | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [hint, setHint] = useState(false)
   const [now, setNow] = useState(Date.now())
-  const retryRef = useRef(0)
-  const [attempt, setAttempt] = useState(0)
+  // With environments a bot has a browser area and an apps screen; before them, its browser area only.
+  const environments = hasEnvironments(fleet.state.connection)
+  const environment = environments ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
   const human = ownsTakeover(takeover, fleet.state.connection.deviceId)
   const otherHuman = takeover.state === 'human' && !human
   const mode = human ? 'control' : 'view'
   const shaded = bot.status === 'offline' || bot.status === 'starting'
+  const screen = useFleetScreen({
+    container: target,
+    kind: 'bot',
+    id: bot.id,
+    surface: environments ? surface : null,
+    mode,
+    disabled: shaded,
+    onControlLost: () => setTakeover((value) => ({ ...value, state: 'none', since: null })),
+  })
+  const phase = screen.phase
   const pendingHelp = fleet.state.snapshot.inbox.some(
     (item) => item.botId === bot.id && item.interaction.kind === 'help'
   )
@@ -47,71 +63,14 @@ export function BotScreen({
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [mode])
-  useEffect(() => {
-    if (shaded || !target.current) return
-    let disposed = false
-    let channel: FleetScreenChannel | null = null
-    let rfb: RFB | null = null
-    setPhase('connecting')
-    const openScreen = async () => {
-      // Load the viewer before opening the channel so a failed load never leaves a channel open.
-      const { default: NoVncClient } = await loadNoVnc()
-      if (disposed) return null
-      const opened = await FleetScreenChannel.open(window.api, bot.id, mode, (state) => {
-        if (disposed) return
-        if (state.state === 'open') setPhase('live')
-        if (state.state === 'error') setPhase('error')
-        if (state.state === 'closed') {
-          if (state.code === 4001) {
-            setTakeover((value) => ({ ...value, state: 'none', since: null }))
-            setPhase('connecting')
-          } else if (state.code === 4002) setPhase('offline')
-          else if (state.code === 4003 && retryRef.current < 1) {
-            retryRef.current++
-            setAttempt((value) => value + 1)
-          } else setPhase('error')
-        }
-      })
-      return { opened, NoVncClient }
-    }
-    void openScreen()
-      .then((result) => {
-        if (!result) return
-        const { opened, NoVncClient } = result
-        if (disposed || !target.current) {
-          opened.close()
-          return
-        }
-        channel = opened
-        if (Number(opened.readyState) === WebSocket.OPEN) setPhase('live')
-        const remote = new NoVncClient(target.current, opened, { shared: true })
-        remote.viewOnly = mode === 'view'
-        remote.scaleViewport = true
-        remote.resizeSession = false
-        remote.qualityLevel = 6
-        remote.compressionLevel = 4
-        remote.addEventListener('connect', () => {
-          setPhase('live')
-          if (mode === 'control') remote.focus({ preventScroll: true })
-        })
-        remote.addEventListener('disconnect', () => {
-          if (!disposed) setPhase((value) => (value === 'offline' ? value : 'error'))
-        })
-        rfb = remote
-      })
-      .catch((cause) => {
-        if (!disposed) {
-          setError(fleetErrorMessage(cause))
-          setPhase('error')
-        }
-      })
-    return () => {
-      disposed = true
-      rfb?.disconnect()
-      channel?.close()
-    }
-  }, [bot.id, mode, shaded, attempt])
 
+  function onSurfaceKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const next = nextRadioIndex(index, event.key, surfaces.length)
+    if (next === null) return
+    event.preventDefault()
+    setSurface(surfaces[next])
+    surfaceRadios.current[next]?.focus()
+  }
   async function take(openAccounts = false) {
     setBusy(true)
     setError('')
@@ -119,10 +78,24 @@ export function BotScreen({
     try {
       const state = await window.api.fleetTakeover(bot.id)
       setTakeover(state)
-      retryRef.current = 0
+      screen.resetRetries()
+      screen.retryControl()
       if (openAccounts) await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
     } catch (cause) {
       setError(isTakeoverConflict(cause) ? t('screen.takeConflict') : fleetErrorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  // Accounts belong to the environment: sign in on its screen, which needs no takeover of any bot.
+  async function openEnvironmentAccounts(environmentId: string) {
+    setBusy(true)
+    setError('')
+    try {
+      await window.api.fleetEnvironmentUiOpen(environmentId, 'accounts')
+      onOpenEnvironmentScreen?.()
+    } catch {
+      setError(t('environment.screenLoginFailed'))
     } finally {
       setBusy(false)
     }
@@ -138,7 +111,7 @@ export function BotScreen({
       setTakeover(state)
       setPopover(null)
       setNote('')
-      retryRef.current = 0
+      screen.resetRetries()
     } catch (cause) {
       setError(fleetErrorMessage(cause))
     } finally {
@@ -160,6 +133,7 @@ export function BotScreen({
             name: bot.name,
             host: fleet.state.snapshot.host?.hostname ?? '',
           })
+  const alert = error || screen.error
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="relative flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
@@ -189,6 +163,31 @@ export function BotScreen({
             className={`absolute inset-y-1 left-1 w-[calc(50%-4px)] rounded-full bg-surface-elevated transition-transform motion-reduce:transition-none ${takeover.state === 'human' ? 'translate-x-full' : ''}`}
           />
         </div>
+        {environments && (
+          <div
+            role="radiogroup"
+            aria-label={t('screen.surface')}
+            className="flex items-center gap-1 rounded-lg border border-border p-0.5"
+          >
+            {surfaces.map((name, index) => (
+              <button
+                key={name}
+                ref={(node) => {
+                  surfaceRadios.current[index] = node
+                }}
+                type="button"
+                role="radio"
+                aria-checked={surface === name}
+                tabIndex={surface === name ? 0 : -1}
+                onClick={() => setSurface(name)}
+                onKeyDown={(event) => onSurfaceKey(event, index)}
+                className={`rounded-md px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${surface === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {name === 'browser' ? t('screen.browser') : t('screen.apps')}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {human ? (
             <>
@@ -254,33 +253,11 @@ export function BotScreen({
           </div>
         )}
       </div>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/85 p-4">
-        <div
-          ref={target}
-          role="region"
-          aria-label={t('screen.region', { name: bot.name })}
-          onClick={() => {
-            if (!human) {
-              setHint(true)
-              window.setTimeout(() => setHint(false), 2200)
-            }
-          }}
-          className={`relative h-full w-full [&_canvas]:mx-auto ${human ? 'cursor-default [&_canvas]:cursor-default' : 'cursor-not-allowed [&_canvas]:cursor-not-allowed'}`}
-        />
-        {hint && !human && (
-          <p
-            role="status"
-            className="pointer-events-none absolute bottom-8 rounded-full bg-popover px-3 py-2 text-xs shadow"
-          >
-            {t('screen.viewHint')}
-          </p>
-        )}
+      <ScreenFrame container={target} label={t('screen.region', { name: bot.name })} interactive={human}>
         {shaded && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 text-white">
             <p>{bot.status === 'offline' ? t('screen.stopped') : t('screen.starting')}</p>
-            {bot.status === 'offline' && (
-              <Button onClick={() => void fleet.botAction(bot.id, 'start')}>{t('action.start')}</Button>
-            )}
+            {bot.status === 'offline' && <Button onClick={() => void startBot(fleet, bot)}>{t('action.start')}</Button>}
           </div>
         )}
         {!shaded && phase === 'offline' && (
@@ -295,12 +272,24 @@ export function BotScreen({
           !takeoverBlocksResume(takeover) && (
             <div className="absolute inset-x-4 top-4 mx-auto max-w-md rounded-xl border border-border bg-card p-5 shadow-xl">
               <h2 className="font-semibold">{t('screen.connectAccount')}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">{t('screen.accountDescription', { name: bot.name })}</p>
-              <Button className="mt-4" disabled={busy} onClick={() => void take(true)}>
-                {t('screen.useScreen')}
+              <p className="mt-2 text-sm text-muted-foreground">
+                {environment
+                  ? t('screen.environmentAccountDescription', { name: bot.name, environment: environment.name })
+                  : t('screen.accountDescription', { name: bot.name })}
+              </p>
+              <Button
+                className="mt-4"
+                disabled={busy}
+                onClick={() => void (environment ? openEnvironmentAccounts(environment.id) : take(true))}
+              >
+                {environment ? t('screen.useEnvironmentScreen') : t('screen.useScreen')}
               </Button>
               <p className="mt-2 text-xs text-muted-foreground">
-                <button type="button" className="text-primary underline" onClick={onOpenSettings}>
+                <button
+                  type="button"
+                  className="text-primary underline"
+                  onClick={environment && onOpenEnvironment ? onOpenEnvironment : onOpenSettings}
+                >
                   {t('screen.addApiKeyInSettings')}
                 </button>
               </p>
@@ -314,10 +303,18 @@ export function BotScreen({
             {t(`screen.phase.${phase}`)}
           </div>
         )}
-      </div>
-      {error && (
+      </ScreenFrame>
+      {screen.conflict && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 px-5 py-2 text-xs text-destructive">
+          {t('screen.conflict')}
+          <Button size="sm" variant="outline" onClick={screen.retryControl}>
+            {t('screen.retryControl')}
+          </Button>
+        </div>
+      )}
+      {alert && (
         <p role="alert" className="px-5 py-2 text-xs text-destructive">
-          {error}
+          {alert}
         </p>
       )}
       {bot.status === 'paused' && <p className="px-5 py-1 text-xs text-muted-foreground">{t('screen.paused')}</p>}

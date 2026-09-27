@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
-import type { FleetArchivedBot } from '@maestrly/bot-fleet-protocol'
+import type { FleetArchivedEnvironment } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -13,47 +13,43 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { hasEnvironments } from '@/lib/fleet/environments'
+import { formatNames } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
-/**
- * Archived bots of the connected server: restore one on its kept files, or delete it forever. With environments,
- * this lists the bots archived from an active environment; an archived environment lists its bots itself.
- */
-export function ArchivedBots({ fleet }: { fleet: FleetController }) {
+/** Archived environments: restore one with its bots on its kept files, or delete it and its bots forever. */
+export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
   const { t, i18n } = useTranslation('fleet')
-  const environments = hasEnvironments(fleet.state.connection)
-  const [archived, setBots] = useState<FleetArchivedBot[] | null>(null)
-  const active = new Set(fleet.state.snapshot.environments.map((environment) => environment.id))
-  const bots =
-    archived && environments
-      ? archived.filter((bot) => bot.environmentId === null || active.has(bot.environmentId))
-      : archived
+  const [environments, setEnvironments] = useState<FleetArchivedEnvironment[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState<FleetArchivedBot | null>(null)
+  const [deleting, setDeleting] = useState<FleetArchivedEnvironment | null>(null)
   const [typedName, setTypedName] = useState('')
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
-  // Another Mac may archive or restore a bot: a change in the active list is the cue to reload this one.
-  const activeCount = fleet.state.snapshot.bots.length + fleet.state.snapshot.environments.length
+  // Another Mac may archive or restore an environment: a change in the active list is the cue to reload this one.
+  const activeCount = fleet.state.snapshot.environments.length
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListArchivedBots()
-      .then((result) => alive && setBots(result.bots))
+      .fleetListArchivedEnvironments()
+      .then((result) => alive && setEnvironments(result.environments))
       .catch((cause) => alive && setError(fleetErrorMessage(cause)))
     return () => {
       alive = false
     }
   }, [activeCount, revision])
   const reload = () => setRevision((value) => value + 1)
-  async function restore(bot: FleetArchivedBot) {
-    setBusy(bot.id)
+  async function restore(environment: FleetArchivedEnvironment) {
+    setBusy(environment.id)
     setError('')
     try {
-      const restored = await window.api.fleetRestoreArchivedBot(bot.id)
-      fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: restored } })
-      setBots((current) => current?.filter((item) => item.id !== bot.id) ?? null)
+      const restored = await window.api.fleetRestoreArchivedEnvironment(environment.id)
+      fleet.dispatch({
+        type: 'event',
+        value: { type: 'environment.updated', at: new Date().toISOString(), environment: restored },
+      })
+      setEnvironments((current) => current?.filter((item) => item.id !== environment.id) ?? null)
+      // Its bots come back with it: list them without waiting for their events.
+      await fleet.refresh()
     } catch (cause) {
       setError(fleetErrorMessage(cause))
       reload()
@@ -66,8 +62,8 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
     setBusy(deleting.id)
     setError('')
     try {
-      await window.api.fleetDeleteArchivedBot(deleting.id)
-      setBots((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
+      await window.api.fleetDeleteArchivedEnvironment(deleting.id)
+      setEnvironments((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
       setDeleting(null)
     } catch (cause) {
       setError(fleetErrorMessage(cause))
@@ -77,37 +73,41 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
     }
   }
   return (
-    <section aria-labelledby="fleet-archived-heading">
-      <h2 id="fleet-archived-heading" className="font-semibold">
-        {environments ? t('server.archived.botsTitle') : t('server.archived.title')}
+    <section aria-labelledby="fleet-archived-environments-heading">
+      <h2 id="fleet-archived-environments-heading" className="font-semibold">
+        {t('server.archivedEnvironments.title')}
       </h2>
-      <p className="mb-3 mt-1 text-xs text-muted-foreground">
-        {environments ? t('server.archived.botsDescription') : t('server.archived.description')}
-      </p>
-      {bots === null ? (
+      <p className="mb-3 mt-1 text-xs text-muted-foreground">{t('server.archivedEnvironments.description')}</p>
+      {environments === null ? (
         !error && <p className="text-xs text-muted-foreground">{t('server.archived.loading')}</p>
-      ) : bots.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{t('server.archived.empty')}</p>
+      ) : environments.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{t('server.archivedEnvironments.empty')}</p>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border bg-surface-elevated">
-          {bots.map((bot) => (
-            <li key={bot.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
-              <span aria-hidden="true" className="size-2.5 shrink-0 rounded-full" style={{ background: bot.tint }} />
+          {environments.map((environment) => (
+            <li key={environment.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
               <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">
-                  {bot.name}
-                  {bot.role && <span className="font-normal text-muted-foreground"> · {bot.role}</span>}
-                </div>
+                <div className="truncate font-medium">{environment.name}</div>
+                {environment.bots.length > 0 && (
+                  <div className="truncate text-xs text-muted-foreground">
+                    {t('server.archivedEnvironments.bots', {
+                      bots: formatNames(
+                        environment.bots.map((bot) => bot.name),
+                        i18n.language
+                      ),
+                    })}
+                  </div>
+                )}
                 <div className="text-xs text-muted-foreground">
                   {t('server.archived.archivedAt', {
-                    date: new Date(bot.archivedAt).toLocaleDateString(i18n.language, {
+                    date: new Date(environment.archivedAt).toLocaleDateString(i18n.language, {
                       day: 'numeric',
                       month: 'short',
                       year: 'numeric',
                     }),
                   })}{' '}
                   ·{' '}
-                  {bot.files === 'kept' ? (
+                  {environment.files === 'kept' ? (
                     t('server.archived.filesKept')
                   ) : (
                     <span className="text-amber-500">{t('server.archived.filesMissing')}</span>
@@ -119,10 +119,10 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
                   size="sm"
                   variant="outline"
                   disabled={busy !== null}
-                  aria-label={t('server.archived.restoreLabel', { name: bot.name })}
-                  onClick={() => void restore(bot)}
+                  aria-label={t('server.archived.restoreLabel', { name: environment.name })}
+                  onClick={() => void restore(environment)}
                 >
-                  {busy === bot.id && !deleting && <Loader2 className="animate-spin" />}
+                  {busy === environment.id && !deleting && <Loader2 className="animate-spin" />}
                   {t('server.archived.restore')}
                 </Button>
                 <Button
@@ -130,10 +130,10 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
                   variant="ghost"
                   className="text-destructive hover:text-destructive"
                   disabled={busy !== null}
-                  aria-label={t('server.archived.deleteLabel', { name: bot.name })}
+                  aria-label={t('server.archived.deleteLabel', { name: environment.name })}
                   onClick={() => {
                     setTypedName('')
-                    setDeleting(bot)
+                    setDeleting(environment)
                   }}
                 >
                   {t('server.archived.delete')}
@@ -158,7 +158,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
           <DialogHeader>
             <DialogTitle>{t('server.archived.deleteTitle', { name: deleting?.name ?? '' })}</DialogTitle>
             <DialogDescription>
-              {t('server.archived.deleteDescription', { name: deleting?.name ?? '' })}
+              {t('server.archivedEnvironments.deleteDescription', { name: deleting?.name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {/* Typing the name keeps an irreversible delete from being one Enter away. */}

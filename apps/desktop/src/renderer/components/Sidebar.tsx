@@ -40,6 +40,7 @@ import { SidebarHeader } from '@/components/sidebar/SidebarHeader'
 import { SidebarFooter } from '@/components/sidebar/SidebarFooter'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { fleetSearchCount } from '@/lib/fleet/environments'
 import {
   conversationSidebarTab,
   crossTabMatches,
@@ -66,6 +67,7 @@ interface Props {
   fleet: FleetController
   selectedFleet: string | null
   onOpenFleetBot: (id: string) => void
+  onOpenFleetEnvironment: (id: string) => void
   onOpenFleetServer: () => void
   onOpenFleetInbox: () => void
   onOpenFleetOwnerMemory: () => void
@@ -140,6 +142,7 @@ export function Sidebar({
   fleet,
   selectedFleet,
   onOpenFleetBot,
+  onOpenFleetEnvironment,
   onOpenFleetServer,
   onOpenFleetInbox,
   onOpenFleetOwnerMemory,
@@ -244,11 +247,7 @@ export function Sidebar({
   const filterCounts = {
     chats: q ? filterStandaloneConversations(standaloneConversations, q).length : 0,
     workspaces: workspaceFilterCount(workspaces, q),
-    bots: q
-      ? fleet.state.snapshot.bots.filter(
-          (bot) => bot.name.toLowerCase().includes(q) || bot.role.toLowerCase().includes(q)
-        ).length
-      : 0,
+    bots: q ? fleetSearchCount(fleet.state.connection, fleet.state.snapshot, q) : 0,
   }
   const crossMatches = q && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
   const pinnedChats = standaloneConversations
@@ -758,6 +757,7 @@ export function Sidebar({
           selected={selectedFleet}
           onOpenBotSettings={onOpenBotSettings}
           onOpenBot={onOpenFleetBot}
+          onOpenEnvironment={onOpenFleetEnvironment}
           onOpenServer={onOpenFleetServer}
           onOpenInbox={onOpenFleetInbox}
           onOpenOwnerMemory={onOpenFleetOwnerMemory}

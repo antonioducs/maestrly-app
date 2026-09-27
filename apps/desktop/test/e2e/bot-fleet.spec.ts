@@ -9,7 +9,9 @@ import { expect, test, _electron as electron, type Locator } from '@playwright/t
 import {
   FLEET_GATEWAY_ROUTES,
   fleetArchivedBotSchema,
+  fleetArchivedEnvironmentSchema,
   fleetBotSchema,
+  fleetEnvironmentSchema,
   fleetGatewayEventSchema,
   fleetHostInfoSchema,
   fleetPendingInteractionSchema,
@@ -21,7 +23,9 @@ import {
   fleetSendMessageRequestSchema,
   fleetConversationCallRequestSchema,
   type FleetArchivedBot,
+  type FleetArchivedEnvironment,
   type FleetBotAccounts,
+  type FleetEnvironment,
   type FleetBotSkills,
   type FleetBotMcpServers,
   type FleetLoginAttempt,
@@ -1158,8 +1162,11 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
 
     await page.getByRole('tab', { name: 'Bots' }).click()
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
+    // A gateway without environments keeps the flat list and the views from before them.
+    await expect(page.getByRole('button', { name: /^Ambiente / })).toHaveCount(0)
     await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Memória sobre você' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Quem vê' })).toHaveCount(0)
     await expect(page.getByText('Prefers morning updates.')).toBeVisible()
     await page.getByRole('textbox', { name: 'Adicionar' }).fill('Prefiro respostas curtas.')
     await page.getByRole('button', { name: 'Adicionar', exact: true }).click()
@@ -1451,6 +1458,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('button', { name: 'Criar bot' }).first().click()
     // The selected choice stands out (3:1) and carries a check mark; the others recede.
     const createDialog = page.getByRole('dialog', { name: 'Criar bot' })
+    await expect(createDialog.getByRole('radiogroup', { name: 'Onde ele roda' })).toHaveCount(0)
     const selectedCeiling = createDialog.getByRole('radio', { name: /Aprovar por mim/ })
     const otherCeiling = createDialog.getByRole('radio', { name: /Pedir aprovação/ })
     await expect(selectedCeiling).toHaveAttribute('aria-checked', 'true')
@@ -1494,6 +1502,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible()
     await page.getByRole('tab', { name: 'Tela' }).click()
     await expect(page.getByRole('region', { name: 'Tela do Orders' })).toBeVisible()
+    await expect(page.getByRole('radiogroup', { name: 'Área da tela' })).toHaveCount(0)
     await expect(page.getByRole('status').filter({ hasText: 'Tela indisponível' })).toBeVisible()
     await page.getByRole('button', { name: 'Assumir controle' }).click()
     await page
@@ -1545,9 +1554,10 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByText('Office Mac está controlando a tela.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Assumir controle' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Devolver ao Orders' })).toHaveCount(0)
+    // Parsed as the gateway reads it: a Mac without environments gets the browser area.
     await expect
       .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
-      .toEqual({ mode: 'view' })
+      .toEqual({ mode: 'view', surface: 'browser' })
     expect(requests.filter((item) => item.key === 'botTakeoverRelease')).toHaveLength(1)
     await page.getByRole('tab', { name: 'Ajustes' }).click()
     const accountsSection = page.getByRole('region', { name: 'Contas do bot', exact: true })
@@ -1807,6 +1817,750 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(archivedSection.getByText('Nenhum bot arquivado.')).toBeVisible()
   } finally {
     if (occupiedPort) await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
+    await app?.close()
+    for (const stream of streams) stream.end()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('fleet UI organizes bots in environments that share accounts, screens and lifecycle', async () => {
+  test.setTimeout(240_000)
+  const GB = 1024 ** 3
+  const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-env-e2e-'))
+  const requests: Array<{ key: string; body: unknown; path: string; method: string | undefined }> = []
+  const streams = new Set<ServerResponse>()
+  function emit(event: unknown) {
+    const valid = fleetGatewayEventSchema.parse(event)
+    for (const stream of streams) stream.write(`event: fleet\ndata: ${JSON.stringify(valid)}\n\n`)
+  }
+  const slug = (name: string) =>
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+  const host = fleetHostInfoSchema.parse({
+    hostname: 'fleet-env-host',
+    os: 'Linux',
+    kernel: '6.8',
+    arch: 'x64',
+    cpus: 4,
+    cpuPercent: 12,
+    memory: { totalBytes: 16 * GB, usedBytes: 4 * GB, botsBytes: 2 * GB },
+    disk: { totalBytes: 100 * GB, usedBytes: 20 * GB },
+    uptimeSeconds: 7200,
+    gatewayVersion: '0.9.3',
+    botImage: 'test-image',
+    botImageVersion: '0.9.3',
+    dockerVersion: '28',
+  })
+  const capabilities = ['provisioning', 'environments']
+  const botBase = {
+    capabilities,
+    role: '',
+    instructions: 'Synthetic environment bot',
+    tint: '#6688aa',
+    ceiling: 'auto',
+    selection: null,
+    talksTo: [],
+    paused: false,
+    lifecycle: 'running',
+    setup: { step: 'ready', error: null, errorMessage: null },
+    status: 'idle',
+    activity: null,
+    pendingCount: 0,
+    accounts: { connected: true, providers: [] },
+    takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
+    resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
+    screen: { width: 1280, height: 800, display: ':1' },
+    appVersion: '0.9.3',
+    createdAt: now(),
+    updatedAt: now(),
+  }
+  const makeBot = (id: string, name: string, environmentId: string, patch: Record<string, unknown> = {}) =>
+    fleetBotSchema.parse({ ...botBase, id, name, environmentId, ...patch })
+  const makeEnvironment = (id: string, name: string, botIds: string[], patch: Record<string, unknown> = {}) =>
+    fleetEnvironmentSchema.parse({
+      id,
+      name,
+      lifecycle: 'running',
+      setup: { step: 'ready', error: null, errorMessage: null },
+      resources: { memoryBytes: GB, memoryLimitBytes: 4 * GB, cpuPercent: 6, startedAt: now() },
+      memoryLimitBytes: null,
+      appVersion: '0.9.3',
+      capabilities,
+      botIds,
+      createdAt: now(),
+      updatedAt: now(),
+      ...patch,
+    })
+  const environments: FleetEnvironment[] = [
+    makeEnvironment('acme', 'Acme', ['scout']),
+    makeEnvironment('home', 'Home', ['diary']),
+  ]
+  const bots: FleetBot[] = [
+    makeBot('scout', 'Scout', 'acme', { role: 'Finds orders' }),
+    makeBot('diary', 'Diary', 'home'),
+  ]
+  const archivedEnvironments = new Map<
+    string,
+    { summary: FleetArchivedEnvironment; environment: FleetEnvironment; bots: FleetBot[] }
+  >([
+    [
+      'old-lab',
+      {
+        summary: fleetArchivedEnvironmentSchema.parse({
+          id: 'old-lab',
+          name: 'Old lab',
+          createdAt: now(),
+          archivedAt: now(),
+          files: 'kept',
+          bots: [{ id: 'lab-bot', name: 'Lab bot', role: '', tint: '#aa6644' }],
+        }),
+        environment: makeEnvironment('old-lab', 'Old lab', ['lab-bot']),
+        bots: [makeBot('lab-bot', 'Lab bot', 'old-lab')],
+      },
+    ],
+  ])
+  const archivedBots = new Map<string, { summary: FleetArchivedBot; record: FleetBot }>()
+  const accounts = new Map<string, FleetBotAccounts>()
+  const accountsOf = (id: string) => {
+    let value = accounts.get(id)
+    if (!value) {
+      value = { apiKeys: [], subscriptions: [] }
+      accounts.set(id, value)
+    }
+    return value
+  }
+  const ownerMemory = fleetOwnerMemorySchema.parse({
+    revision: 1,
+    activeChars: 28,
+    entries: [
+      {
+        id: 'acme-note',
+        content: 'Acme invoices go to finance.',
+        status: 'active',
+        author: { kind: 'owner' },
+        origin: null,
+        replacesId: null,
+        replacedById: null,
+        environmentId: 'acme',
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    ],
+  })
+  // The first control request on an environment display finds another session holding it.
+  let screenConflicts = 1
+  const ticket = () => ({ ticket: 'ticket-env-e2e', path: '/v1/screen?ticket=ticket-env-e2e', expiresAt: now() })
+  const upsertEnvironment = (environment: FleetEnvironment) => {
+    const index = environments.findIndex((item) => item.id === environment.id)
+    if (index >= 0) environments[index] = environment
+    else environments.push(environment)
+    emit({ type: 'environment.updated', at: now(), environment })
+  }
+  const conversationResult = (op: string): unknown => {
+    switch (op) {
+      case 'chatConfig':
+        return { mcpServers: [], appToolsEnabled: true, imageGenEnabled: true }
+      case 'chatGetConvTools':
+        return { app: true, imageGen: true, mcpDisabled: [] }
+      case 'chatSubagentProfilesGetConversation':
+        return { rules: null, diagnostics: [], enabled: true, subagentsEnabled: true }
+      case 'chatSkillsState':
+        return { skills: [], groups: [], selection: { kind: 'all' }, selectedGroupMissing: false, hasOverrides: false }
+      case 'chatCommands':
+        return { prompts: [], project: [], skills: [] }
+      default:
+        return { ok: true }
+    }
+  }
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const entry = Object.entries(FLEET_GATEWAY_ROUTES).find(
+      ([, route]) =>
+        route.method === request.method && new RegExp(`^${route.path.replace(/:[^/]+/g, '[^/]+')}$`).test(url.pathname)
+    )
+    const send = (status: number, value: unknown) => {
+      response.writeHead(status, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(value))
+    }
+    if (!entry) {
+      send(404, { code: 'NOT_FOUND', message: 'Unknown route' })
+      return
+    }
+    const [key, route] = entry
+    if (request.headers['x-maestrly-fleet-protocol'] !== '1') {
+      send(426, { code: 'PROTOCOL_INCOMPATIBLE', message: 'Bad protocol' })
+      return
+    }
+    if (!['meta', 'pair'].includes(key) && request.headers.authorization !== 'Bearer fixture-token') {
+      send(401, { code: 'UNAUTHORIZED', message: 'Bad token' })
+      return
+    }
+    let body: unknown
+    if (route.body) {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      try {
+        body = route.body.parse(JSON.parse(Buffer.concat(chunks).toString()))
+      } catch {
+        send(400, { code: 'INVALID_REQUEST', message: 'Bad body' })
+        return
+      }
+    }
+    requests.push({ key, body, path: url.pathname, method: request.method })
+    if (key === 'events') {
+      response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+      streams.add(response)
+      response.write(': connected\n\n')
+      request.on('close', () => streams.delete(response))
+      return
+    }
+    const botId = url.pathname.match(/^\/v1\/bots\/([^/]+)/)?.[1] ?? ''
+    const bot = bots.find((item) => item.id === botId)
+    const environmentId = decodeURIComponent(
+      url.pathname.match(/^\/v1\/(?:archived-)?environments\/([^/]+)/)?.[1] ?? ''
+    )
+    const environment = environments.find((item) => item.id === environmentId)
+    const notFound = () => send(404, { code: 'NOT_FOUND', message: 'Not found' })
+    let value: unknown
+    switch (key) {
+      case 'meta':
+        value = {
+          protocol: 1,
+          features: ['provisioning', 'environments'],
+          gatewayVersion: '0.9.3',
+          botImage: 'test-image',
+          botImageVersion: '0.9.3',
+        }
+        break
+      case 'pair':
+        value = { deviceId: 'device-env-e2e', token: 'fixture-token' }
+        break
+      case 'host':
+        value = host
+        break
+      case 'botsList':
+        value = { bots }
+        break
+      case 'environmentsList':
+        value = { environments }
+        break
+      case 'inbox':
+        value = { items: [] }
+        break
+      case 'peerMessages':
+        value = { messages: [] }
+        break
+      case 'activity':
+        value = { entries: [], lastSeq: 0 }
+        break
+      case 'botGet':
+        if (!bot) return notFound()
+        value = bot
+        break
+      case 'botTranscript':
+        value = { items: [], before: null }
+        break
+      case 'botSelections':
+        value = { options: [], current: null }
+        break
+      case 'botRoutinesList':
+        value = { routines: [] }
+        break
+      case 'botMemoriesList':
+        value = { memories: [] }
+        break
+      case 'botConversationCall':
+        value = { result: conversationResult(fleetConversationCallRequestSchema.parse(body).op) }
+        break
+      case 'environmentAccountsList':
+        value = accountsOf(environmentId)
+        break
+      case 'environmentSkillsList':
+        value = { skills: [] }
+        break
+      case 'environmentMcpServersList':
+        value = { servers: [] }
+        break
+      case 'environmentApiKeyAccountAdd': {
+        const input = body as { name: string; kind: 'openai'; baseURL: string | null; key: string }
+        accountsOf(environmentId).apiKeys.push({
+          providerId: 'prov_env',
+          name: input.name,
+          kind: input.kind,
+          baseURL: input.baseURL,
+          keyHint: input.key.slice(-4),
+        })
+        value = { providerId: 'prov_env' }
+        break
+      }
+      case 'environmentUiOpen':
+        if (!environment) return notFound()
+        break
+      case 'environmentPatch': {
+        if (!environment) return notFound()
+        const updated = fleetEnvironmentSchema.parse({ ...environment, ...(body as object), updatedAt: now() })
+        upsertEnvironment(updated)
+        value = updated
+        break
+      }
+      case 'environmentRestart': {
+        if (!environment) return notFound()
+        const restarted = fleetEnvironmentSchema.parse({ ...environment, lifecycle: 'running', updatedAt: now() })
+        upsertEnvironment(restarted)
+        value = restarted
+        break
+      }
+      case 'environmentArchive': {
+        if (!environment) return notFound()
+        const members = bots.filter((item) => item.environmentId === environment.id)
+        const record = fleetEnvironmentSchema.parse({ ...environment, lifecycle: 'archived' })
+        environments.splice(environments.indexOf(environment), 1)
+        for (const member of members) bots.splice(bots.indexOf(member), 1)
+        archivedEnvironments.set(environment.id, {
+          summary: fleetArchivedEnvironmentSchema.parse({
+            id: environment.id,
+            name: environment.name,
+            createdAt: environment.createdAt,
+            archivedAt: now(),
+            files: 'kept',
+            bots: members.map((member) => ({ id: member.id, name: member.name, role: member.role, tint: member.tint })),
+          }),
+          environment,
+          bots: members,
+        })
+        // Same order as the gateway: the archived environment, its removal, then the reply.
+        emit({ type: 'environment.updated', at: now(), environment: record })
+        emit({ type: 'environment.removed', at: now(), environmentId: environment.id })
+        value = record
+        break
+      }
+      case 'archivedEnvironmentsList':
+        value = { environments: [...archivedEnvironments.values()].map((item) => item.summary) }
+        break
+      case 'archivedEnvironmentRestore': {
+        const archived = archivedEnvironments.get(environmentId)
+        if (!archived) return notFound()
+        archivedEnvironments.delete(environmentId)
+        const restored = fleetEnvironmentSchema.parse({
+          ...archived.environment,
+          lifecycle: 'running',
+          updatedAt: now(),
+        })
+        bots.push(...archived.bots)
+        upsertEnvironment(restored)
+        for (const member of archived.bots) emit({ type: 'bot.updated', at: now(), bot: member })
+        value = restored
+        break
+      }
+      case 'archivedEnvironmentDelete':
+        if (!archivedEnvironments.delete(environmentId)) return notFound()
+        break
+      case 'archivedBotsList':
+        value = { bots: [...archivedBots.values()].map((item) => item.summary) }
+        break
+      case 'botArchive': {
+        if (!bot) return notFound()
+        const record = fleetBotSchema.parse({ ...bot, lifecycle: 'archived', status: 'offline' })
+        bots.splice(bots.indexOf(bot), 1)
+        archivedBots.set(bot.id, {
+          summary: fleetArchivedBotSchema.parse({
+            id: bot.id,
+            name: bot.name,
+            role: bot.role,
+            tint: bot.tint,
+            createdAt: bot.createdAt,
+            archivedAt: now(),
+            files: 'kept',
+            environmentId: bot.environmentId,
+          }),
+          record,
+        })
+        const owner = environments.find((item) => item.id === bot.environmentId)
+        if (owner)
+          upsertEnvironment(
+            fleetEnvironmentSchema.parse({ ...owner, botIds: owner.botIds.filter((id) => id !== bot.id) })
+          )
+        emit({ type: 'bot.updated', at: now(), bot: record })
+        emit({ type: 'bot.removed', at: now(), botId: bot.id })
+        value = record
+        break
+      }
+      case 'botsCreate': {
+        const input = body as {
+          name: string
+          instructions: string
+          ceiling: string
+          talksTo: string[]
+          environmentId?: string
+          environment?: { name: string }
+        }
+        const id = slug(input.name)
+        const joined = input.environmentId ? environments.find((item) => item.id === input.environmentId) : undefined
+        if (input.environmentId && !joined) return notFound()
+        const target = joined
+          ? fleetEnvironmentSchema.parse({ ...joined, botIds: [...joined.botIds, id] })
+          : makeEnvironment(slug(input.environment?.name ?? input.name), input.environment?.name ?? input.name, [id], {
+              lifecycle: 'creating',
+              setup: { step: 'container', error: null, errorMessage: null },
+            })
+        upsertEnvironment(target)
+        const created = makeBot(id, input.name, target.id, {
+          instructions: input.instructions,
+          ceiling: input.ceiling,
+          talksTo: input.talksTo,
+          status: 'starting',
+          lifecycle: joined ? 'running' : 'creating',
+          setup: { step: joined ? 'profile' : 'container', error: null, errorMessage: null },
+        })
+        bots.push(created)
+        value = created
+        setTimeout(() => {
+          if (!joined)
+            upsertEnvironment(
+              fleetEnvironmentSchema.parse({
+                ...environments.find((item) => item.id === target.id),
+                lifecycle: 'running',
+                setup: { step: 'ready', error: null, errorMessage: null },
+              })
+            )
+          const ready = fleetBotSchema.parse({
+            ...created,
+            status: 'idle',
+            lifecycle: 'running',
+            setup: { step: 'ready', error: null, errorMessage: null },
+          })
+          bots[bots.findIndex((item) => item.id === id)] = ready
+          emit({ type: 'bot.updated', at: now(), bot: ready })
+        }, 1500)
+        break
+      }
+      case 'botScreenTicket':
+        if (!bot) return notFound()
+        value = ticket()
+        break
+      case 'environmentScreenTicket':
+        if (!environment) return notFound()
+        if ((body as { mode: string }).mode === 'control' && screenConflicts-- > 0) {
+          send(409, { code: 'CONFLICT', message: 'Another control session holds the environment display' })
+          return
+        }
+        value = ticket()
+        break
+      case 'screen':
+        send(404, { code: 'NOT_FOUND', message: 'No websocket in fixture' })
+        return
+      case 'ownerMemoryList':
+        value = ownerMemory
+        break
+      case 'ownerMemoryCreate': {
+        const input = body as { content: string; environmentId: string | null }
+        const created = fleetOwnerMemoryEntrySchema.parse({
+          id: randomUUID(),
+          content: input.content,
+          status: 'active',
+          author: { kind: 'owner' },
+          origin: null,
+          replacesId: null,
+          replacedById: null,
+          environmentId: input.environmentId,
+          createdAt: now(),
+          updatedAt: now(),
+        })
+        ownerMemory.entries.push(created)
+        value = created
+        break
+      }
+      case 'ownerMemoryPatch': {
+        const index = ownerMemory.entries.findIndex((item) => item.id === url.pathname.split('/').at(-1))
+        if (index < 0) return notFound()
+        ownerMemory.entries[index] = fleetOwnerMemoryEntrySchema.parse({
+          ...ownerMemory.entries[index],
+          ...(body as object),
+          updatedAt: now(),
+        })
+        value = ownerMemory.entries[index]
+        break
+      }
+      default:
+        return notFound()
+    }
+    try {
+      if (route.response) value = route.response.parse(value)
+      if (!route.response) {
+        response.writeHead(204)
+        response.end()
+      } else send(200, value)
+    } catch (error) {
+      send(500, { code: 'INTERNAL', message: String(error) })
+    }
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('No address')
+  const url = `http://127.0.0.1:${address.port}`
+  let app: Awaited<ReturnType<typeof electron.launch>> | undefined
+  try {
+    app = await electron.launch({
+      args: [path.join(desktop, 'out/main/index.js')],
+      env: {
+        ...process.env,
+        AGENTS_E2E: '1',
+        AGENTS_E2E_SKILLS_HOME: root,
+        AGENTS_CHANNEL: 'dev',
+        AGENTS_INSTANCE: 'fleet-env-e2e',
+        AGENTS_USERDATA: path.join(root, 'profile'),
+        AGENTS_LOCALE: 'pt-BR',
+        ELECTRON_RENDERER_URL: '',
+      },
+    })
+    const page = await app.firstWindow()
+    await page.waitForFunction(() => Boolean((window as any).api))
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
+    await page.getByRole('button', { name: 'Configurações', exact: true }).click()
+    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByLabel('Endereço do servidor').fill(url)
+    await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
+    await page.getByRole('button', { name: 'Conectar', exact: true }).click()
+    await expect(page.getByRole('main').getByRole('status').filter({ hasText: 'Conectado' })).toContainText(
+      'fleet-env-host'
+    )
+    await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
+
+    // Bots are grouped under their environment; each header names it, its state and its bots.
+    await page.getByRole('tab', { name: 'Bots' }).click()
+    const group = (name: string) => page.getByRole('group', { name, exact: true })
+    const header = (name: string) => group(name).getByRole('button', { name: new RegExp(`^Ambiente ${name} · `) })
+    await expect(group('Acme').getByRole('button', { name: 'Ambiente Acme · rodando · 1 bot' })).toBeVisible()
+    await expect(group('Acme').getByRole('button', { name: /Scout/ })).toBeVisible()
+    await expect(group('Home').getByRole('button', { name: /Diary/ })).toBeVisible()
+    await expect(group('Acme').getByRole('button', { name: /Diary/ })).toHaveCount(0)
+
+    // A new environment is named after the bot until the owner names it; its bot can bring accounts from the Mac.
+    await page.getByRole('button', { name: 'Criar bot' }).first().click()
+    const createDialog = page.getByRole('dialog', { name: 'Criar bot' })
+    const where = createDialog.getByRole('radiogroup', { name: 'Onde ele roda' })
+    await expect(where.getByRole('radio', { name: /Novo ambiente/ })).toHaveAttribute('aria-checked', 'true')
+    await expect(where.getByRole('radio', { name: /Novo ambiente/ }).locator('svg')).toHaveCount(1)
+    await expect(createDialog.getByRole('button', { name: 'Trazer do seu Mac', exact: true })).toBeVisible()
+    const botName = createDialog.getByLabel('Nome', { exact: true })
+    const environmentName = createDialog.getByLabel('Nome do ambiente')
+    await botName.fill('Orders')
+    await expect(environmentName).toHaveValue('Orders')
+    await environmentName.fill('Company X')
+    await botName.fill('Orders bot')
+    await expect(environmentName).toHaveValue('Company X')
+    await createDialog.getByRole('button', { name: 'Criar bot' }).click()
+    await expect(createDialog.getByText('Criando contêiner')).toBeVisible()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'botsCreate')?.body)
+      .toMatchObject({ name: 'Orders bot', environment: { name: 'Company X' } })
+    expect(requests.find((item) => item.key === 'botsCreate')?.body).not.toHaveProperty('environmentId')
+    await expect(page.getByRole('heading', { name: 'Orders bot', exact: true })).toBeVisible()
+    await expect(group('Company X').getByRole('button', { name: /Orders bot/ })).toBeVisible()
+
+    // A sibling joins Acme from its environment view: no container, no Mac import, the environment id in the request.
+    await header('Acme').click()
+    await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Novo bot neste ambiente' }).click()
+    await expect(where.getByRole('radio', { name: /Ambiente existente/ })).toHaveAttribute('aria-checked', 'true')
+    await expect(
+      createDialog.getByText('Usa as contas, skills, servidores MCP e logins de sites de Acme.')
+    ).toBeVisible()
+    await expect(
+      createDialog.getByText('Bots no mesmo ambiente podem ver os arquivos e as telas uns dos outros.')
+    ).toBeVisible()
+    await expect(createDialog.getByRole('button', { name: 'Trazer do seu Mac', exact: true })).toHaveCount(0)
+    await botName.fill('Partner')
+    const provisioningBefore = requests.filter((item) => /Import|LoginStart|SkillInstall/.test(item.key)).length
+    await createDialog.getByRole('button', { name: 'Criar bot' }).click()
+    await expect(createDialog.getByText('Configurando perfil')).toBeVisible()
+    await expect(createDialog.getByText('Criando contêiner')).toHaveCount(0)
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botsCreate').at(-1)?.body)
+      .toMatchObject({ name: 'Partner', environmentId: 'acme' })
+    expect(requests.filter((item) => item.key === 'botsCreate').at(-1)?.body).not.toHaveProperty('environment')
+    await expect(page.getByRole('heading', { name: 'Partner', exact: true })).toBeVisible()
+    expect(requests.filter((item) => /Import|LoginStart|SkillInstall/.test(item.key))).toHaveLength(provisioningBefore)
+    await expect(group('Acme').getByRole('button', { name: 'Ambiente Acme · rodando · 2 bots' })).toBeVisible()
+    await expect(group('Acme').getByRole('button', { name: /Partner/ })).toBeVisible()
+
+    // Searching an environment's name shows all its bots; searching a bot keeps only it under its environment.
+    const search = page.getByRole('textbox', { name: 'Filtrar bots…' })
+    await search.fill('partner')
+    await expect(group('Acme').getByRole('button', { name: /Partner/ })).toBeVisible()
+    await expect(group('Acme').getByRole('button', { name: /Scout/ })).toHaveCount(0)
+    await expect(group('Home')).toHaveCount(0)
+    await search.fill('home')
+    await expect(group('Home').getByRole('button', { name: /Diary/ })).toBeVisible()
+    await expect(group('Acme')).toHaveCount(0)
+    await search.fill('')
+
+    // Restarting an environment names every bot it restarts.
+    await header('Acme').click()
+    await page.getByRole('button', { name: 'Reiniciar ambiente' }).click()
+    const restartDialog = page.getByRole('dialog', { name: 'Reiniciar Acme?' })
+    await expect(restartDialog).toContainText('Todos os bots deste ambiente reiniciam: Partner e Scout.')
+    await restartDialog.getByRole('button', { name: 'Reiniciar', exact: true }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentRestart').map((item) => item.path))
+      .toEqual(['/v1/environments/acme/restart'])
+    await expect(restartDialog).toHaveCount(0)
+    await page.getByRole('combobox', { name: 'Limite de memória' }).click()
+    await page.getByRole('option', { name: '8 GB', exact: true }).click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'environmentPatch')?.body)
+      .toEqual({ memoryLimitBytes: 8 * GB })
+    await expect(page.getByRole('combobox', { name: 'Limite de memória' })).toContainText('8 GB')
+
+    // Accounts are added to the environment; its key never comes back to the renderer.
+    const environmentKey = 'fleet-env-e2e-secret-key-456'
+    const environmentAccounts = page.getByRole('region', { name: 'Contas do ambiente', exact: true })
+    await expect(environmentAccounts.getByText('Nenhuma conta neste ambiente ainda.')).toBeVisible()
+    await page.getByLabel('Nome da conta').fill('Shared model')
+    await page.getByLabel('Chave de API').fill(environmentKey)
+    await page.getByRole('button', { name: 'Adicionar conta' }).click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'environmentApiKeyAccountAdd')?.path)
+      .toBe('/v1/environments/acme/accounts/api-key')
+    await expect(environmentAccounts.getByText(/Shared model.*…-456/)).toBeVisible()
+    expect(
+      JSON.stringify(await page.evaluate(() => window.api.fleetBotAccounts({ environmentId: 'acme' })))
+    ).not.toContain(environmentKey)
+    expect(await page.content()).not.toContain(environmentKey)
+    expect(requests.filter((item) => item.key === 'botApiKeyAccountAdd')).toHaveLength(0)
+
+    // The composer manages skills on the environment screen, without taking over the bot.
+    await group('Acme').getByRole('button', { name: /Scout/ }).click()
+    await expect(page.getByRole('heading', { name: 'Scout', exact: true })).toBeVisible()
+    await page.getByTitle('Skills', { exact: true }).click()
+    // The menu names both its settings icon and its link after the environment screen.
+    await page.getByRole('button', { name: 'Gerenciar skills na tela do ambiente' }).last().click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'environmentUiOpen'))
+      .toMatchObject({ path: '/v1/environments/acme/ui/open', body: { target: 'skills' } })
+    await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'Tela', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view' })
+    // Its screen needs no takeover; a second control session on the shared display is refused and explained.
+    await page.getByRole('button', { name: 'Assumir controle' }).click()
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'Outra tela deste ambiente está sendo controlada.' })
+    ).toBeVisible()
+    expect(requests.filter((item) => item.key === 'environmentScreenTicket').map((item) => item.body)).toContainEqual({
+      mode: 'control',
+    })
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view' })
+    await page.getByRole('button', { name: 'Assumir controle' }).click()
+    await expect(page.getByRole('button', { name: 'Parar de controlar' })).toBeVisible()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'control' })
+    expect(requests.filter((item) => ['botTakeover', 'botUiOpen'].includes(item.key))).toHaveLength(0)
+
+    // A bot's screen switches between its browser area and its apps screen.
+    await group('Acme').getByRole('button', { name: /Scout/ }).click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    const surfaces = page.getByRole('radiogroup', { name: 'Área da tela' })
+    await expect(surfaces.getByRole('radio', { name: 'Navegador' })).toHaveAttribute('aria-checked', 'true')
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1))
+      .toMatchObject({ path: '/v1/bots/scout/screen-tickets', body: { mode: 'view', surface: 'browser' } })
+    await surfaces.getByRole('radio', { name: 'Apps' }).click()
+    await expect(surfaces.getByRole('radio', { name: 'Apps' })).toHaveAttribute('aria-checked', 'true')
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botScreenTicket').at(-1)?.body)
+      .toEqual({ mode: 'view', surface: 'apps' })
+
+    // Archiving a bot of a shared environment archives only it.
+    await group('Acme')
+      .getByRole('button', { name: /Partner/ })
+      .click()
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await expect(
+      page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Ambiente: Acme' })
+    ).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Contas do bot', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Skills e MCP', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Arquivar Partner' }).click()
+    const archiveBot = page.getByRole('dialog', { name: 'Arquivar bot?' })
+    await expect(archiveBot).toContainText('Este bot sai do ambiente')
+    await archiveBot.getByRole('button', { name: 'Arquivar' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botArchive').map((item) => item.path))
+      .toEqual(['/v1/bots/partner/archive'])
+    await expect(group('Acme').getByRole('button', { name: /Partner/ })).toHaveCount(0)
+    await expect(group('Acme').getByRole('button', { name: /Scout/ })).toBeVisible()
+    expect(requests.filter((item) => item.key === 'environmentArchive')).toHaveLength(0)
+    const archivedBotsSection = page.getByRole('region', { name: 'Bots arquivados' })
+    await expect(archivedBotsSection.getByRole('listitem').filter({ hasText: 'Partner' })).toBeVisible()
+    // The server lists each environment once with its resources, and its bots under it without counting them again.
+    await expect(page.getByRole('row').filter({ hasText: 'Acme' }).first()).toContainText('1.0 GB')
+    await expect(page.getByRole('row').filter({ hasText: 'Scout' })).toContainText('—')
+
+    // Archiving an environment archives its bots with it; restoring brings them back.
+    await header('Home').click()
+    await page.getByRole('button', { name: 'Arquivar Home' }).click()
+    const archiveEnvironment = page.getByRole('dialog', { name: 'Arquivar ambiente?' })
+    await expect(archiveEnvironment).toContainText('Diary')
+    await archiveEnvironment.getByRole('button', { name: 'Arquivar' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentArchive').map((item) => item.path))
+      .toEqual(['/v1/environments/home/archive'])
+    await expect(group('Home')).toHaveCount(0)
+    const archivedEnvironmentsSection = page.getByRole('region', { name: 'Ambientes arquivados' })
+    const archivedHome = archivedEnvironmentsSection.getByRole('listitem').filter({ hasText: 'Home' })
+    await expect(archivedHome).toContainText('Bots: Diary')
+    await expect(archivedBotsSection.getByRole('listitem').filter({ hasText: 'Diary' })).toHaveCount(0)
+    await archivedEnvironmentsSection.getByRole('button', { name: 'Restaurar Home' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'archivedEnvironmentRestore').map((item) => item.path))
+      .toEqual(['/v1/archived-environments/home/restore'])
+    await expect(group('Home').getByRole('button', { name: /Diary/ })).toBeVisible()
+    await expect(archivedHome).toHaveCount(0)
+    await archivedEnvironmentsSection.getByRole('button', { name: 'Apagar Old lab de vez' }).click()
+    const deleteDialog = page.getByRole('dialog', { name: 'Apagar Old lab de vez?' })
+    const deleteForever = deleteDialog.getByRole('button', { name: 'Apagar de vez' })
+    await expect(deleteForever).toBeDisabled()
+    await deleteDialog.getByLabel('Digite Old lab para confirmar').fill('Old lab')
+    await deleteForever.click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'archivedEnvironmentDelete').map((item) => item.path))
+      .toEqual(['/v1/archived-environments/old-lab'])
+    await expect(archivedEnvironmentsSection.getByText('Nenhum ambiente arquivado.')).toBeVisible()
+
+    // Owner memory: an environment entry can become global, and a new entry can be scoped to one environment.
+    await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
+    const acmeNote = page.getByRole('listitem').filter({ hasText: 'Acme invoices go to finance.' })
+    await expect(acmeNote.getByText('Acme', { exact: true })).toBeVisible()
+    await acmeNote.getByRole('button', { name: 'Tornar global' }).click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'ownerMemoryPatch')?.body)
+      .toEqual({ environmentId: null })
+    await expect(acmeNote.getByText('Todos os bots', { exact: true })).toBeVisible()
+    await expect(acmeNote.getByRole('button', { name: 'Tornar global' })).toHaveCount(0)
+    await expect(page.getByRole('combobox', { name: 'Quem vê' })).toContainText('Todos os bots')
+    await page.getByRole('combobox', { name: 'Quem vê' }).click()
+    await page.getByRole('option', { name: 'Acme', exact: true }).click()
+    await page.getByRole('textbox', { name: 'Adicionar' }).fill('Prefers PDF invoices.')
+    await page.getByRole('button', { name: 'Adicionar', exact: true }).click()
+    await expect
+      .poll(() => requests.find((item) => item.key === 'ownerMemoryCreate')?.body)
+      .toMatchObject({ content: 'Prefers PDF invoices.', environmentId: 'acme' })
+    await expect(
+      page.getByRole('listitem').filter({ hasText: 'Prefers PDF invoices.' }).getByText('Acme', { exact: true })
+    ).toBeVisible()
+  } finally {
     await app?.close()
     for (const stream of streams) stream.end()
     await new Promise<void>((resolve) => server.close(() => resolve()))

@@ -1,15 +1,13 @@
+import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
+import { hasEnvironments } from '@/lib/fleet/environments'
+import { environmentOf } from '@/lib/fleet/selectors'
 import { botProvisioningKey, provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type {
-  FleetApiKeyProviderKind,
-  FleetBot,
-  FleetRoutine,
-  FleetSelectionOption,
-} from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetRoutine, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -61,15 +59,21 @@ export function BotSettings({
   fleet,
   onArchived,
   onOpenScreen,
+  onOpenEnvironment,
 }: {
   bot: FleetBot
   fleet: FleetController
   onArchived: () => void
   onOpenScreen: () => void
+  onOpenEnvironment?: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
+  // With environments, accounts, skills, MCP servers and resources belong to the bot's environment and are managed
+  // there; without them, a bot keeps every section it had.
+  const shared = hasEnvironments(fleet.state.connection) && bot.environmentId !== null
+  const environment = shared ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
   const availability = provisioningAvailability(fleet, bot)
-  const provisioning = useBotProvisioning(bot.id, availability === 'ready' && bot.lifecycle === 'running')
+  const provisioning = useBotProvisioning(bot.id, !shared && availability === 'ready' && bot.lifecycle === 'running')
   const provisioningKey = botProvisioningKey(bot)
   useEffect(() => {
     provisioning.refresh()
@@ -95,12 +99,8 @@ export function BotSettings({
   const [routine, setRoutine] = useState<RoutineForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<{ kind: 'archive' | 'delete' | 'account'; id?: string } | null>(null)
-  const [accountKind, setAccountKind] = useState<FleetApiKeyProviderKind>('openai')
-  const [accountName, setAccountName] = useState('')
-  const [baseURL, setBaseURL] = useState('')
-  const [accountBusy, setAccountBusy] = useState(false)
-  const [accountError, setAccountError] = useState('')
-  const keyRef = useRef<HTMLInputElement>(null)
+  const [screenBusy, setScreenBusy] = useState(false)
+  const [screenError, setScreenError] = useState('')
   const compactionRef = useRef<HTMLElement>(null)
   const needsCompaction = bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
   const [busy, setBusy] = useState(false)
@@ -266,46 +266,17 @@ export function BotSettings({
     const models = await window.api.fleetListSelections(bot.id)
     setOptions(models.options)
   }
-  async function addAccount() {
-    const key = keyRef.current?.value ?? ''
-    const name = accountName.trim()
-    const url = baseURL.trim()
-    if (accountBusy) return
-    if (
-      !name ||
-      name.length > 40 ||
-      !key.trim() ||
-      key.length > 512 ||
-      (url && (url.length > 300 || !/^https?:\/\//i.test(url) || !URL.canParse(url)))
-    ) {
-      setAccountError(t('botSettings.accountInvalid'))
-      return
-    }
-    setAccountBusy(true)
-    setAccountError('')
-    try {
-      await window.api.fleetAddApiKeyAccount(bot.id, { kind: accountKind, name, key, baseURL: url || null })
-      if (keyRef.current) keyRef.current.value = ''
-      setAccountName('')
-      setBaseURL('')
-      await refreshBot()
-    } catch {
-      setAccountError(t('botSettings.accountAddFailed'))
-    } finally {
-      setAccountBusy(false)
-    }
-  }
   async function logInOnScreen() {
-    setAccountBusy(true)
-    setAccountError('')
+    setScreenBusy(true)
+    setScreenError('')
     try {
       if (bot.takeover.state !== 'human') await window.api.fleetTakeover(bot.id)
       await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
       onOpenScreen()
     } catch {
-      setAccountError(t('botSettings.screenLoginFailed'))
+      setScreenError(t('botSettings.screenLoginFailed'))
     } finally {
-      setAccountBusy(false)
+      setScreenBusy(false)
     }
   }
   async function actionRoutine(action: 'toggle' | 'run', item: FleetRoutine) {
@@ -359,82 +330,54 @@ export function BotSettings({
             setSaved(false)
           }}
         />
-        <BotAccountsSection
-          key={bot.id}
-          bot={bot}
-          lists={provisioning}
-          availability={availability}
-          onChanged={refreshBot}
-        >
-          <div className="space-y-3 rounded-lg border border-border bg-surface-elevated p-4">
-            <h3 className="text-sm font-medium">{t('botSettings.addApiKey')}</h3>
-            <label className="block text-xs" htmlFor="fleet-account-kind">
-              {t('botSettings.providerKind')}
-            </label>
-            <Select value={accountKind} onValueChange={(value) => setAccountKind(value as FleetApiKeyProviderKind)}>
-              <SelectTrigger id="fleet-account-kind" aria-label={t('botSettings.providerKind')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai">{t('botSettings.kindOpenAI')}</SelectItem>
-                <SelectItem value="openai-responses">{t('botSettings.kindResponses')}</SelectItem>
-                <SelectItem value="anthropic">{t('botSettings.kindAnthropic')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <label className="block text-xs" htmlFor="fleet-account-name">
-              {t('botSettings.accountName')}
-            </label>
-            <Input
-              className="bg-surface-elevated"
-              id="fleet-account-name"
-              value={accountName}
-              maxLength={40}
-              onChange={(event) => setAccountName(event.target.value)}
+        {shared ? (
+          <section className="space-y-2" aria-labelledby="fleet-bot-environment-heading">
+            <h2 id="fleet-bot-environment-heading" className="font-semibold">
+              {t('environment.label')}
+            </h2>
+            <div className="rounded-lg border border-border p-4 text-sm">
+              <button
+                type="button"
+                className="text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={onOpenEnvironment}
+              >
+                {t('environment.link', { name: environment?.name ?? bot.environmentId })}
+              </button>
+              <p className="mt-1 text-xs text-muted-foreground">{t('environment.linkNote')}</p>
+            </div>
+          </section>
+        ) : (
+          <>
+            <BotAccountsSection
+              key={bot.id}
+              subject={{ target: bot.id, name: bot.name, running: bot.lifecycle === 'running' }}
+              lists={provisioning}
+              availability={availability}
+              onChanged={refreshBot}
+            >
+              <ApiKeyAccountForm target={bot.id} onAdded={refreshBot} />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={screenBusy || bot.lifecycle !== 'running'}
+                onClick={() => void logInOnScreen()}
+              >
+                {t('botSettings.loginOnScreen')}
+              </Button>
+              {screenError && (
+                <p role="alert" className="text-xs text-destructive">
+                  {screenError}
+                </p>
+              )}
+            </BotAccountsSection>
+            <BotSkillsMcpSection
+              key={bot.id}
+              subject={{ target: bot.id, name: bot.name, running: bot.lifecycle === 'running' }}
+              lists={provisioning}
+              availability={availability}
             />
-            <label className="block text-xs" htmlFor="fleet-account-key">
-              {t('botSettings.apiKey')}
-            </label>
-            <Input
-              className="bg-surface-elevated"
-              id="fleet-account-key"
-              ref={keyRef}
-              type="password"
-              autoComplete="off"
-              maxLength={512}
-            />
-            <details>
-              <summary className="cursor-pointer text-xs text-muted-foreground">{t('botSettings.advanced')}</summary>
-              <label className="mt-3 block text-xs" htmlFor="fleet-account-url">
-                {t('botSettings.baseURL')}
-              </label>
-              <Input
-                className="bg-surface-elevated"
-                id="fleet-account-url"
-                value={baseURL}
-                maxLength={300}
-                placeholder="https://api.example.com/v1"
-                onChange={(event) => setBaseURL(event.target.value)}
-              />
-            </details>
-            {accountError && (
-              <p role="alert" className="text-xs text-destructive">
-                {accountError}
-              </p>
-            )}
-            <Button size="sm" disabled={accountBusy} onClick={() => void addAccount()}>
-              {t('botSettings.addAccount')}
-            </Button>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={accountBusy || bot.lifecycle !== 'running'}
-            onClick={() => void logInOnScreen()}
-          >
-            {t('botSettings.loginOnScreen')}
-          </Button>
-        </BotAccountsSection>
-        <BotSkillsMcpSection key={bot.id} bot={bot} lists={provisioning} availability={availability} />
+          </>
+        )}
         <div>
           <label className="mb-2 block text-sm font-medium">{t('botSettings.model')}</label>
           <SearchSelect
@@ -667,18 +610,22 @@ export function BotSettings({
           </div>
         </section>
         <BotMemorySection key={bot.id} bot={bot} />
-        <section>
-          <h2 className="font-semibold">{t('botSettings.where')}</h2>
-          <p className="mt-2 rounded-lg border border-border p-4 text-sm">
-            {t('botSettings.container')} <code>maestrly-bot-{bot.id}</code> · {t('server.memory')}{' '}
-            {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`} · {t('server.cpu')}{' '}
-            {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`} ·{' '}
-            {t('botSettings.started')}{' '}
-            {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString(i18n.language) : '—'}
-          </p>
-        </section>
+        {!shared && (
+          <section>
+            <h2 className="font-semibold">{t('botSettings.where')}</h2>
+            <p className="mt-2 rounded-lg border border-border p-4 text-sm">
+              {t('botSettings.container')} <code>maestrly-bot-{bot.id}</code> · {t('server.memory')}{' '}
+              {bot.resources.memoryBytes === null ? '—' : `${gb(bot.resources.memoryBytes)} GB`} · {t('server.cpu')}{' '}
+              {bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`} ·{' '}
+              {t('botSettings.started')}{' '}
+              {bot.resources.startedAt ? new Date(bot.resources.startedAt).toLocaleString(i18n.language) : '—'}
+            </p>
+          </section>
+        )}
         <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
-          <p className="text-xs text-muted-foreground">{t('botSettings.archiveNote')}</p>
+          <p className="text-xs text-muted-foreground">
+            {shared ? t('botSettings.archiveOnlyNote') : t('botSettings.archiveNote')}
+          </p>
           <Button variant="destructive" size="sm" onClick={() => setConfirm({ kind: 'archive' })}>
             {t('botSettings.archive', { name: bot.name })}
           </Button>
@@ -850,7 +797,9 @@ export function BotSettings({
           )}
           message={t(
             confirm.kind === 'archive'
-              ? 'botSettings.archiveConfirm'
+              ? shared
+                ? 'botSettings.archiveOnlyConfirm'
+                : 'botSettings.archiveConfirm'
               : confirm.kind === 'account'
                 ? 'botSettings.removeAccountConfirm'
                 : 'routine.deleteConfirm'

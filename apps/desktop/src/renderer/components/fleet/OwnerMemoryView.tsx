@@ -7,7 +7,9 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fleetErrorMessage, isOwnerMemoryFull } from '@/lib/fleet/errors'
+import { hasEnvironments, ownerMemoryScope } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
@@ -20,6 +22,11 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  // With environments an entry reaches every bot (global, the default) or the bots of one environment.
+  const scoped = hasEnvironments(fleet.state.connection)
+  const environments = fleet.state.snapshot.environments
+  const [scope, setScope] = useState('global')
+  const scopeValue = scope !== 'global' && !environments.some((item) => item.id === scope) ? 'global' : scope
   const editTextarea = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
   const returnFocus = useRef<string | null>(null)
@@ -77,6 +84,12 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
   const history = memory?.entries.filter((entry) => entry.status !== 'active') ?? []
   function row(entry: FleetOwnerMemoryEntry) {
     const author = entry.author
+    const reach = scoped ? ownerMemoryScope(entry, environments) : null
+    const reachLabel = !reach
+      ? ''
+      : reach.kind === 'global'
+        ? t('ownerMemory.global')
+        : (reach.name ?? t('ownerMemory.unknownEnvironment'))
     return (
       <li key={entry.id} className="space-y-2 rounded-lg border border-border bg-surface-elevated p-4 text-sm">
         {editing?.id === entry.id ? (
@@ -109,6 +122,14 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
           <p className="whitespace-pre-wrap break-words">{entry.content}</p>
         )}
         <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          {reach && (
+            <span
+              title={t('ownerMemory.scopeLabel', { scope: reachLabel })}
+              className="mr-1 rounded border border-border px-1.5 py-0.5 text-[11px]"
+            >
+              {reachLabel}
+            </span>
+          )}
           {author.kind === 'owner' ? (
             t('ownerMemory.authorOwner')
           ) : (
@@ -145,6 +166,18 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
               >
                 {t('ownerMemory.archive')}
               </Button>
+              {reach?.kind === 'environment' && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(() => window.api.fleetOwnerMemoryUpdate(entry.id, { environmentId: null }))
+                  }
+                >
+                  {t('ownerMemory.makeGlobal')}
+                </Button>
+              )}
             </>
           ) : (
             <Button
@@ -202,7 +235,11 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
               onSubmit={(event) => {
                 event.preventDefault()
                 void mutate(async () => {
-                  await window.api.fleetOwnerMemoryCreate({ content: content.trim() })
+                  await window.api.fleetOwnerMemoryCreate(
+                    scoped
+                      ? { content: content.trim(), environmentId: scopeValue === 'global' ? null : scopeValue }
+                      : { content: content.trim() }
+                  )
                   setContent('')
                 })
               }}
@@ -215,9 +252,31 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
                 value={content}
                 onChange={(event) => setContent(event.target.value)}
               />
-              <Button type="submit" disabled={busy || !content.trim()}>
-                {t('ownerMemory.add')}
-              </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                {scoped && (
+                  <>
+                    <label className="text-xs text-muted-foreground" htmlFor="fleet-owner-memory-scope">
+                      {t('ownerMemory.scope')}
+                    </label>
+                    <Select value={scopeValue} onValueChange={setScope}>
+                      <SelectTrigger id="fleet-owner-memory-scope" aria-label={t('ownerMemory.scope')} className="w-56">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="global">{t('ownerMemory.global')}</SelectItem>
+                        {environments.map((environment) => (
+                          <SelectItem key={environment.id} value={environment.id}>
+                            {environment.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+                <Button type="submit" disabled={busy || !content.trim()}>
+                  {t('ownerMemory.add')}
+                </Button>
+              </div>
             </form>
             <ul className="space-y-3">{active.map(row)}</ul>
             {memory && !active.length && <p className="text-sm text-muted-foreground">{t('ownerMemory.empty')}</p>}
