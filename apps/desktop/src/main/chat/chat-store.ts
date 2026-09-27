@@ -2247,11 +2247,16 @@ export function listChatMessagesByTime(
 
 /** Every message created at or after `time`, in seq order. */
 export function listChatMessagesSince(conversationId: string, time: number): StoredChatMessage[] {
+  // Read in the creation-time index's order, which keeps the planner on it, then put in seq order.
   return (
     getDb()
-      .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND created_at >= ? ORDER BY seq ASC')
+      .prepare(
+        'SELECT * FROM chat_messages WHERE conversation_id = ? AND created_at >= ? ORDER BY created_at ASC, seq ASC'
+      )
       .all(conversationId, time) as any[]
-  ).map(rowToMessage)
+  )
+    .sort((a, b) => Number(a.seq) - Number(b.seq))
+    .map(rowToMessage)
 }
 
 /** The named messages of the conversation that still exist, with their seq. */
