@@ -124,12 +124,12 @@ describe('input queue settled log', () => {
 })
 
 describe('transcript extras settled log', () => {
-  const system = (id: string): FleetTranscriptItem => ({
+  const system = (id: string, text: string | null = null): Extract<FleetTranscriptItem, { kind: 'system' }> => ({
     kind: 'system',
     id,
     at: new Date().toISOString(),
     code: 'restarted',
-    text: null,
+    text,
     durationMs: null,
   })
   const permission = (id: string, state: 'pending' | 'approved'): FleetTranscriptItem => ({
@@ -163,7 +163,7 @@ describe('transcript extras settled log', () => {
     expect(reopened.list()).toEqual(extras.list())
     expect(reopened.list().find((item) => item.id === 'perm:a')).toMatchObject({ state: 'approved' })
     // A settled item written again keeps its place; the last version wins.
-    await reopened.upsert({ ...system('system:3'), text: 'Updated' })
+    await reopened.upsert(system('system:3', 'Updated'))
     const again = new InstanceTranscriptExtras(file, () => {})
     await again.load()
     expect(again.list()).toEqual(reopened.list())
