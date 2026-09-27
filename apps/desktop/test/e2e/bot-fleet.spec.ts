@@ -3130,6 +3130,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     makeEnvironment('home', 'Home', ['diary']),
     makeEnvironment('lab', 'Lab', ['tinker'], { lifecycle: 'stopped', compaction: model('model-a') }),
     makeEnvironment('old', 'Old', ['relic'], { capabilities: ['provisioning', 'environments'] }),
+    makeEnvironment('boot', 'Boot', ['booter'], { lifecycle: 'starting', compaction: model('model-a') }),
   ]
   const bots: FleetBot[] = [
     makeBot('scout', 'Scout', 'acme', { compaction: model('model-a'), compactionSource: 'environment' }),
@@ -3141,7 +3142,13 @@ test('fleet UI gives environments a default compaction model that their bots inh
       lifecycle: 'stopped',
       status: 'offline',
     }),
-    makeBot('relic', 'Relic', 'old'),
+    makeBot('relic', 'Relic', 'old', { compaction: model('model-a'), compactionSource: 'bot' }),
+    makeBot('booter', 'Booter', 'boot', {
+      compaction: model('model-a'),
+      compactionSource: 'environment',
+      lifecycle: 'starting',
+      status: 'starting',
+    }),
   ]
   const upsertEnvironment = (environment: FleetEnvironment) => {
     environments[environments.findIndex((item) => item.id === environment.id)] = environment
@@ -3284,6 +3291,10 @@ test('fleet UI gives environments a default compaction model that their bots inh
         if (!bot) return notFound()
         const { compaction } = body as { compaction?: FleetBot['compaction'] }
         const owner = environments.find((item) => item.id === bot.environmentId)
+        // As the gateway does: in an environment without a default, a model becomes it and the bot inherits it.
+        const adopted = Boolean(compaction && owner && !owner.compaction)
+        if (compaction && owner && adopted)
+          upsertEnvironment(fleetEnvironmentSchema.parse({ ...owner, compaction, updatedAt: now() }))
         const updated = fleetBotSchema.parse(
           compaction === undefined
             ? { ...bot, ...(body as object) }
@@ -3293,7 +3304,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
                   compaction: owner?.compaction ?? null,
                   compactionSource: owner?.compaction ? 'environment' : null,
                 }
-              : { ...bot, compaction, compactionSource: 'bot' }
+              : { ...bot, compaction, compactionSource: adopted ? 'environment' : 'bot' }
         )
         upsertBot(updated)
         value = updated
@@ -3386,6 +3397,17 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect
       .poll(() => requests.filter((item) => item.key === 'environmentSelections').map((item) => item.path))
       .toContain('/v1/environments/acme/selections')
+    // A resource sample does not load the models again.
+    const acmeLoads = () => requests.filter((item) => item.path === '/v1/environments/acme/selections').length
+    const loaded = acmeLoads()
+    upsertEnvironment(
+      fleetEnvironmentSchema.parse({
+        ...environments[0],
+        resources: { ...environments[0].resources, memoryBytes: 3 * GB, cpuPercent: 40 },
+      })
+    )
+    await expect(page.getByText(/3\.0 GB/).first()).toBeVisible()
+    expect(acmeLoads()).toBe(loaded)
 
     // Changing the default sends the model exactly, and the bots that inherit it follow.
     await modelPicker(section()).click()
@@ -3444,6 +3466,23 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await expect(
       botCompaction.getByText('Também vira o padrão de Home; os outros bots dele passam a usá-lo.')
     ).toBeVisible()
+    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a') })
+    await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · Shared · Model A')
+    await expect(botCompaction.getByText(/Também vira o padrão/)).toHaveCount(0)
+    await header('Home').click()
+    await expect(modelPicker(section())).toContainText('Shared · Model A')
+    await expect(section().getByText('Usado por: Diary', { exact: true })).toBeVisible()
+
+    // A bot with its own model is never offered an environment default that does not exist.
+    await group('Old').getByRole('button', { name: /Relic/ }).click()
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
+    await modelPicker(botCompaction).click()
+    await expect(page.getByRole('option', { name: 'Shared · Model B', exact: true })).toBeVisible()
+    await expect(page.getByRole('option', { name: /Padrão do ambiente/ })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
 
     // A stopped environment shows its default without changing it; an older image asks for a restart.
     await header('Lab').click()
@@ -3456,6 +3495,9 @@ test('fleet UI gives environments a default compaction model that their bots inh
         exact: true,
       })
     ).toBeVisible()
+    await expect(section().getByRole('button', { name: 'Salvar padrão' })).toHaveCount(0)
+    await header('Boot').click()
+    await expect(section().getByText('Disponível quando o ambiente estiver rodando.', { exact: true })).toBeVisible()
     await expect(section().getByRole('button', { name: 'Salvar padrão' })).toHaveCount(0)
     expect(new Set(requests.filter((item) => item.key === 'environmentSelections').map((item) => item.path))).toEqual(
       new Set(['/v1/environments/acme/selections', '/v1/environments/home/selections'])

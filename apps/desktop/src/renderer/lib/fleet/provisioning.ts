@@ -124,17 +124,24 @@ export function environmentScreenAvailability(
 ): EnvironmentScreenAvailability {
   return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
 }
-export type EnvironmentCompactionAvailability = 'unsupported' | 'stopped' | 'restart-environment' | 'ready'
+export type EnvironmentCompactionAvailability =
+  | 'unsupported'
+  | 'stopped'
+  | 'not-running'
+  | 'restart-environment'
+  | 'ready'
 /**
  * Whether the owner can choose an environment's default compaction model: the gateway must know defaults, and the
- * environment's running Maestrly must list its models (an older image needs the environment restarted first).
+ * environment's running Maestrly must list its models (an older image needs the environment restarted first). A
+ * stopped or failed environment must be started; one on its way waits.
  */
 export function environmentCompactionAvailability(
   fleet: FleetController,
   environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
 ): EnvironmentCompactionAvailability {
   if (!fleet.state.connection.features.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE)) return 'unsupported'
-  if (environment.lifecycle !== 'running') return 'stopped'
+  if (environment.lifecycle === 'stopped' || environment.lifecycle === 'failed') return 'stopped'
+  if (environment.lifecycle !== 'running') return 'not-running'
   return environment.capabilities.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE) ? 'ready' : 'restart-environment'
 }
 /** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */

@@ -342,7 +342,7 @@ function EnvironmentOverview({
           environment={environment}
           bots={bots}
           fleet={fleet}
-          optionsKey={listsKey}
+          optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
         />
         <section className="space-y-2" aria-labelledby="fleet-environment-screen">
           <h2 id="fleet-environment-screen" className="font-semibold">
@@ -507,7 +507,8 @@ function EnvironmentCompaction({
   const availability = environmentCompactionAvailability(fleet, environment)
   const ready = availability === 'ready'
   const current = environment.compaction
-  const [options, setOptions] = useState<FleetSelectionOption[]>([])
+  // Null until the models of this environment are listed.
+  const [options, setOptions] = useState<FleetSelectionOption[] | null>(null)
   const [form, setForm] = useState(() => compactionFormFrom(current))
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -520,7 +521,9 @@ function EnvironmentCompaction({
     let alive = true
     window.api.fleetEnvironmentSelections(environment.id).then(
       (value) => {
-        if (alive) setOptions(value.options)
+        if (!alive) return
+        setOptions(value.options)
+        setError('')
       },
       (cause: unknown) => {
         if (alive) setError(fleetErrorText(cause, t))
@@ -567,10 +570,12 @@ function EnvironmentCompaction({
               setForm(next)
               setSaved(false)
             }}
-            options={options}
+            options={options ?? []}
             idPrefix="fleet-environment-compaction"
           />
-          {!options.length && <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>}
+          {options?.length === 0 && (
+            <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>
+          )}
           <div className="flex items-center gap-3">
             <Button size="sm" disabled={!value || !dirty || busy} onClick={() => void save()}>
               {t('environment.compaction.save')}
@@ -586,13 +591,15 @@ function EnvironmentCompaction({
         <>
           {current && (
             <p className="rounded-lg border border-border p-4 text-sm">
-              {t('environment.compaction.current', { model: compactionModelLabel(current, options) })}
+              {t('environment.compaction.current', { model: compactionModelLabel(current, options ?? []) })}
             </p>
           )}
           <p className="text-xs text-muted-foreground">
             {availability === 'stopped'
               ? t('environment.compaction.startToChange')
-              : t('environment.compaction.restart')}
+              : availability === 'not-running'
+                ? t('environment.compaction.waitToChange')
+                : t('environment.compaction.restart')}
           </p>
         </>
       )}

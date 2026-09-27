@@ -298,6 +298,7 @@ export default {
       unset: 'Ainda não definido. O primeiro modelo escolhido para um dos bots dele vira o padrão.',
       current: 'Atual: {{model}}',
       startToChange: 'Inicie o ambiente para trocar.',
+      waitToChange: 'Disponível quando o ambiente estiver rodando.',
       restart: 'Reinicie este ambiente para atualizá-lo antes de escolher o modelo de compactação.',
       noModels: 'Nenhum modelo ainda: adicione uma conta a este ambiente.',
       save: 'Salvar padrão',

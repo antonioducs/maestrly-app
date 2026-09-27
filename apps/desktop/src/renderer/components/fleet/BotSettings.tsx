@@ -222,16 +222,18 @@ export function BotSettings({
       ? compactionSource === 'bot'
       : compactionSource !== 'bot' || JSON.stringify(compactionValue) !== JSON.stringify(bot.compaction)
   const environmentCompaction = environment?.compaction ?? (compactionSource === 'environment' ? bot.compaction : null)
-  const compactionLeading = inheritable
-    ? {
-        id: ENVIRONMENT_COMPACTION_CHOICE,
-        label: environmentCompaction
-          ? t('botSettings.compaction.environmentDefault', {
-              model: compactionModelLabel(environmentCompaction, options),
-            })
-          : t('botSettings.compaction.environmentDefaultUnset'),
-      }
-    : undefined
+  // A bot with a model of its own is not offered a default its environment does not have: it would be left without.
+  const compactionLeading =
+    inheritable && (environmentCompaction || compactionSource !== 'bot')
+      ? {
+          id: ENVIRONMENT_COMPACTION_CHOICE,
+          label: environmentCompaction
+            ? t('botSettings.compaction.environmentDefault', {
+                model: compactionModelLabel(environmentCompaction, options),
+              })
+            : t('botSettings.compaction.environmentDefaultUnset'),
+        }
+      : undefined
   const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))
   async function save() {
     if (!dirty || invalid || busy) return
@@ -483,7 +485,7 @@ export function BotSettings({
               {t('botSettings.compaction.editEnvironmentDefault')}
             </button>
           )}
-          {inheritable && !inherits && compaction.modelId && !environmentCompaction && (
+          {inheritable && !inherits && compactionDirty && compaction.modelId && !environmentCompaction && (
             <p className="text-xs text-muted-foreground">
               {t('botSettings.compaction.becomesDefault', { environment: environment?.name ?? bot.environmentId })}
             </p>

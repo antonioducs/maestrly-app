@@ -318,8 +318,10 @@ describe('environment helpers', () => {
     expect(environmentCompactionAvailability(controller(['provisioning', 'environments']), capable)).toBe('unsupported')
     expect(environmentCompactionAvailability(fleet, capable)).toBe('ready')
     expect(environmentCompactionAvailability(fleet, acme)).toBe('restart-environment')
-    for (const lifecycle of ['stopped', 'failed', 'starting', 'restarting'] as const)
+    for (const lifecycle of ['stopped', 'failed'] as const)
       expect(environmentCompactionAvailability(fleet, { ...capable, lifecycle }), lifecycle).toBe('stopped')
+    for (const lifecycle of ['creating', 'starting', 'restarting', 'stopping'] as const)
+      expect(environmentCompactionAvailability(fleet, { ...capable, lifecycle }), lifecycle).toBe('not-running')
   })
 
   it('tells whether a bot compacts with its own model or its environment default, also from older gateways', () => {
@@ -436,6 +438,8 @@ describe('environment UI wiring', () => {
     expect(view).toContain('fleetEnvironmentSelections(')
     expect(view).toContain('<CompactionFields')
     expect(view).toContain('compaction: value')
+    // Its models follow the environment's accounts, including an account added while it has no bots.
+    expect(view).toMatch(/optionsKey=\{JSON\.stringify\(\[listsKey, lists\.accounts \?\? null\]\)\}/)
     const settings = source('components/fleet/BotSettings.tsx')
     expect(settings).toContain('<CompactionFields')
     expect(settings).toContain('ENVIRONMENT_COMPACTION_CHOICE')

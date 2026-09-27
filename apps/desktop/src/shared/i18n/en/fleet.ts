@@ -297,6 +297,7 @@ export default {
       unset: 'Not set yet. The first model chosen for one of its bots becomes the default.',
       current: 'Current: {{model}}',
       startToChange: 'Start this environment to change it.',
+      waitToChange: 'Available once this environment is running.',
       restart: 'Restart this environment to update it before choosing its compaction model.',
       noModels: 'No models yet: add an account to this environment.',
       save: 'Save default',
