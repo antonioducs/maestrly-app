@@ -291,7 +291,7 @@ describe('runtime turn memory integration', () => {
         live: new LiveTranscript({
           conversationId: () => conversation.id,
           queue: queue as never,
-          extras: { list: () => [] } as never,
+          extras: { list: () => [], questionToolCallIds: () => new Set() } as never,
           images: { captureMessages: async () => {}, toolRefs: () => [] } as never,
           publish: () => {},
         }),

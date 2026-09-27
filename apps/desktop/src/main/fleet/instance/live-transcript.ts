@@ -5,12 +5,12 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../../shared/chat'
 import {
-  chatSeqAtTime,
   findLatestChatMessage,
   getChatMessagesWithSeq,
   latestPortableCompactionMessage,
   listChatMessagesAfter,
-  listChatMessagesThrough,
+  listChatMessagesByTime,
+  listChatMessagesSince,
   newestChatSeq,
   type SequencedChatMessage,
   type StoredChatMessage,
@@ -25,22 +25,17 @@ import {
   type TranscriptInputs,
 } from './transcript'
 
-/**
- * How far a message's creation time may lag behind the messages after it in seq order: a turn stamps its assistant
- * row a moment before its user row. Reads that stop at a time go this much further, so that no item is left out.
- */
-export const TRANSCRIPT_CLOCK_SLACK_MS = 15 * 60_000
 const PAGE_ROWS = 100
 /** Messages whose emitted items are remembered; an older message that changes again is simply sent in full. */
 const REMEMBERED_MESSAGES = 256
+/**
+ * The most messages read again on each refresh outside a bot's turns (messages that came without one): older ones are
+ * read again when an event names them. Below the messages remembered, so that those read again are not sent again.
+ */
+const FLOOR_ROWS = 128
 const REMEMBERED_IMAGES = 4_096
 /** How far back a permission request's tool call is looked for: it belongs to the turn that is running. */
 const TOOL_CALL_ROWS = 500
-
-/** Native questions an interaction item stands for: the interaction item is the one shown. */
-function supersededQuestions(extras: FleetTranscriptItem[]): Set<string> {
-  return new Set(extras.flatMap((item) => (item.kind === 'question' ? [item.toolCallId] : [])))
-}
 
 /**
  * A bot's transcript as the Mac sees it, read from its conversation a bounded amount at a time however long the
@@ -103,9 +98,13 @@ export class LiveTranscript {
     const dirty = [...this.dirty]
     this.dirty.clear()
     const previousMarker = this.marker
+    // Where the floor may move once this refresh has read what is above it now: a turn that starts meanwhile moves it
+    // only once a later refresh read the one before it, final save included.
+    const advance = this.nextFloor
     try {
       const rows = new Map<string, SequencedChatMessage>()
-      for (const row of listChatMessagesAfter(id, this.floor)) rows.set(row.message.id, row)
+      const above = listChatMessagesAfter(id, this.floor)
+      for (const row of above) rows.set(row.message.id, row)
       const wanted = dirty.filter((messageId) => !rows.has(messageId))
       const marker = latestPortableCompactionMessage(id)
       if (marker && (marker.id !== previousMarker?.id || marker.size !== previousMarker.size) && !rows.has(marker.id))
@@ -114,7 +113,7 @@ export class LiveTranscript {
       const messages = [...rows.values()].sort((a, b) => a.seq - b.seq).map((row) => row.message)
       if (messages.length) {
         await this.options.images.captureMessages(messages)
-        const superseded = supersededQuestions(this.options.extras.list())
+        const superseded = this.options.extras.questionToolCallIds()
         for (const { messageId, item } of this.project(messages, this.options.queue.transcriptInputs(), superseded)) {
           const serialized = JSON.stringify(item)
           const seen = this.emittedFor(messageId)
@@ -124,10 +123,10 @@ export class LiveTranscript {
         }
       }
       this.marker = marker ? { id: marker.id, size: marker.size } : null
-      if (this.nextFloor !== null) {
-        this.floor = this.nextFloor
-        this.nextFloor = null
-      }
+      if (advance !== null) {
+        this.floor = advance
+        if (this.nextFloor === advance) this.nextFloor = null
+      } else if (above.length > FLOOR_ROWS) this.floor = above[above.length - FLOOR_ROWS - 1].seq
     } catch (error) {
       for (const messageId of dirty) this.dirty.add(messageId)
       this.marker = previousMarker
@@ -145,7 +144,7 @@ export class LiveTranscript {
     return seen
   }
   /** Projects messages without the native questions an interaction item stands for, noting their image owners. */
-  private project(messages: ChatMessage[], inputs: TranscriptInputs, superseded: Set<string>): ProjectedItem[] {
+  private project(messages: ChatMessage[], inputs: TranscriptInputs, superseded: ReadonlySet<string>): ProjectedItem[] {
     const projected = projectMessages(messages, inputs, (part) => this.options.images.toolRefs(part)).filter(
       ({ item }) => item.kind !== 'question' || !superseded.has(item.toolCallId)
     )
@@ -181,14 +180,14 @@ export class LiveTranscript {
 
   /**
    * The `limit` items (1 to 500) just before the item `before`, or the newest ones, and the cursor to the items before
-   * them: the page `transcriptPage` would cut from the whole transcript. Messages are read newest first until the
-   * page cannot change, which holds once the page starts more than the clock slack after every message read.
+   * them: the page `transcriptPage` would cut from the whole transcript. Every item of a message carries its creation
+   * time, so messages are read newest first by that time until the page cannot change: once it starts after the last
+   * message read, whatever order the stamps took against seq.
    */
   async page(before: string | null, requested: number): Promise<FleetTranscriptPage> {
     const limit = Math.max(1, Math.min(500, requested))
-    const extras = this.options.extras.list()
-    const superseded = supersededQuestions(extras)
-    const outside = [...this.queuedItems(), ...extras]
+    const superseded = this.options.extras.questionToolCallIds()
+    const outside = [...this.queuedItems(), ...this.options.extras.list()]
     const id = this.options.conversationId()
     if (!id) return transcriptPage(outside, before, limit)
     const inputs = this.options.queue.transcriptInputs()
@@ -196,29 +195,28 @@ export class LiveTranscript {
     const cursor = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
     const accept = (item: FleetTranscriptItem) => !cursor || compareFleetTranscriptItems(item, cursor) < 0
     const collected = outside.filter(accept)
-    // Every message above `through` sorts after the cursor: created after it, even with the slack.
-    let through = cursor
-      ? (chatSeqAtTime(id, Date.parse(cursor.at) + TRANSCRIPT_CLOCK_SLACK_MS) ?? Number.MIN_SAFE_INTEGER)
-      : Number.MAX_SAFE_INTEGER
-    let oldest = Number.POSITIVE_INFINITY
+    // Messages created after the cursor hold only items after it.
+    const atOrBefore = cursor ? Date.parse(cursor.at) : Number.MAX_SAFE_INTEGER
+    let after: { createdAt: number; seq: number } | null = null
     let exhausted = false
     const read = async (): Promise<ProjectedItem[]> => {
-      const rows = listChatMessagesThrough(id, through, PAGE_ROWS)
+      const rows = listChatMessagesByTime(id, atOrBefore, after, PAGE_ROWS)
       if (!rows.length) {
         exhausted = true
         return []
       }
-      through = rows[rows.length - 1].seq - 1
-      for (const row of rows) oldest = Math.min(oldest, row.message.createdAt)
-      const messages = rows.map((row) => row.message).reverse()
+      const last = rows[rows.length - 1]
+      after = { createdAt: last.message.createdAt, seq: last.seq }
+      // Projected in seq order, as the whole conversation is.
+      const messages = [...rows].sort((a, b) => a.seq - b.seq).map((row) => row.message)
       await this.options.images.captureMessages(messages)
       return this.project(messages, inputs, superseded)
     }
-    // Messages not read yet were created before `oldest` plus the slack: they sort before a page that starts later.
+    // Messages not read yet were created at or before the last one read: they sort before a page that starts later.
     const settled = () => {
-      if (collected.length < limit) return false
+      if (collected.length < limit || !after) return false
       collected.sort(compareFleetTranscriptItems)
-      return Date.parse(collected[collected.length - limit].at) > oldest + TRANSCRIPT_CLOCK_SLACK_MS
+      return Date.parse(collected[collected.length - limit].at) > after.createdAt
     }
     while (!exhausted && !settled()) for (const { item } of await read()) if (accept(item)) collected.push(item)
     collected.sort(compareFleetTranscriptItems)
@@ -235,7 +233,7 @@ export class LiveTranscript {
     before: string,
     outside: FleetTranscriptItem[],
     inputs: TranscriptInputs,
-    superseded: Set<string>
+    superseded: ReadonlySet<string>
   ): FleetTranscriptItem | null {
     const known = outside.find((item) => item.id === before)
     if (known) return known
@@ -246,31 +244,17 @@ export class LiveTranscript {
       if (!record?.started) return null
       if (record.nativeMessageId)
         return find(getChatMessagesWithSeq(id, [record.nativeMessageId]).map((row) => row.message))
-      // Linked by its text until it is mapped: its message is among the newest.
-      return find(this.readSince(id, Date.parse(record.at) - 1_000))
+      // Linked by its text until it is mapped: its message came since the input.
+      return find(listChatMessagesSince(id, Date.parse(record.at) - 1_000))
     }
     const part = /^(.*):(\d+)$/.exec(before)
     return part ? find(getChatMessagesWithSeq(id, [part[1]]).map((row) => row.message)) : null
-  }
-  /** The newest messages back to (at least) every one created at or after `time`, oldest first. */
-  private readSince(id: string, time: number): StoredChatMessage[] {
-    const rows: SequencedChatMessage[] = []
-    let through = Number.MAX_SAFE_INTEGER
-    let oldest = Number.POSITIVE_INFINITY
-    while (oldest >= time - TRANSCRIPT_CLOCK_SLACK_MS) {
-      const page = listChatMessagesThrough(id, through, PAGE_ROWS)
-      if (!page.length) break
-      rows.push(...page)
-      for (const row of page) oldest = Math.min(oldest, row.message.createdAt)
-      through = page[page.length - 1].seq - 1
-    }
-    return rows.reverse().map((row) => row.message)
   }
   /** The user messages the queue may still map its started inputs to: every one created at or after `time`. */
   userMessagesSince(time: number): Array<{ id: string; at: number; text: string }> {
     const id = this.options.conversationId()
     if (!id) return []
-    return this.readSince(id, time)
+    return listChatMessagesSince(id, time)
       .filter((message) => message.role === 'user')
       .map((message) => ({
         id: message.id,
@@ -289,7 +273,7 @@ export class LiveTranscript {
   }
   /** The item with this id among the current turn's messages. */
   turnItem(itemId: string): FleetTranscriptItem | null {
-    const superseded = supersededQuestions(this.options.extras.list())
+    const superseded = this.options.extras.questionToolCallIds()
     return (
       this.project(this.turnMessages(), this.options.queue.transcriptInputs(), superseded).find(
         ({ item }) => item.id === itemId

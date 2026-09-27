@@ -5,8 +5,10 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getDb } from '../../src/main/store'
 import {
   deleteChatMessage,
+  forgetChatStoreCaches,
   getChatMessage,
   hasConversationContextMessages,
+  latestPortableCompactionMessage,
   listActiveConversationContextMessages,
   listConversationContextMessages,
   runnerContextHistory,
@@ -14,7 +16,13 @@ import {
   upsertChatMessage,
   type StoredChatMessage,
 } from '../../src/main/chat/chat-store'
-import { activeChatContext, isPortableCompactionMarker, toModelMessages } from '../../src/main/chat/message'
+import {
+  activeChatContext,
+  isPortableCompactionMarker,
+  parseParts,
+  renderNativeSeedTranscript,
+  toModelMessages,
+} from '../../src/main/chat/message'
 import { buildOpenAIModelMessages } from '../../src/main/chat/openai/history'
 import { estimateNativeSeedContextTokens, estimatePortableContextTokens } from '../../src/main/chat/portable-context'
 import { codexTransferCharacters } from '../../src/main/chat/native-transfer'
@@ -115,7 +123,12 @@ function expectSameContext(conversationId: string) {
   expect(estimateNativeSeedContextTokens(window)).toBe(estimateNativeSeedContextTokens(full))
   expect(codexTransferCharacters(window, [])).toBe(codexTransferCharacters(full, []))
   expect(window.at(-1)).toEqual(full.at(-1))
-  if (full.length > 1 && full.at(-1)?.role === 'user') expect(window.at(-2)).toEqual(full.at(-2))
+  // Runners set the turn's own message apart: what comes before it is the same too.
+  if (full.length > 1) {
+    expect(window.at(-2)).toEqual(full.at(-2))
+    expect(activeChatContext(window.slice(0, -1))).toEqual(activeChatContext(full.slice(0, -1)))
+    expect(renderNativeSeedTranscript(window.slice(0, -1))).toBe(renderNativeSeedTranscript(full.slice(0, -1)))
+  }
   return { full, window }
 }
 
@@ -175,12 +188,13 @@ describe('model context window', () => {
     // A marker put into an older message without any hook: a longer window, never a shorter one.
     raw(full[full.length - 5].id, [portable('Hidden')])
     expectSameContext(conversationId)
-    // A new message with a marker, inserted directly.
-    getDb()
-      .prepare(
-        "INSERT INTO chat_messages (id, conversation_id, role, parts_json, meta_json, seq, created_at) VALUES (?, ?, 'assistant', ?, '{}', ?, ?)"
-      )
-      .run('direct', conversationId, JSON.stringify([portable('Direct')]), 10_000, 10_000_000)
+    // A new message with a marker, inserted directly: the newest, it does not start the context until one follows.
+    const insert = getDb().prepare(
+      "INSERT INTO chat_messages (id, conversation_id, role, parts_json, meta_json, seq, created_at) VALUES (?, ?, ?, ?, '{}', ?, ?)"
+    )
+    insert.run('direct', conversationId, 'assistant', JSON.stringify([portable('Direct')]), 10_000, 10_000_000)
+    expect(expectSameContext(conversationId).window.at(-1)?.id).toBe('direct')
+    insert.run('after', conversationId, 'user', '[]', 10_001, 10_000_001)
     expect(expectSameContext(conversationId).window[0].id).toBe('direct')
   })
 
@@ -230,5 +244,95 @@ describe('model context window', () => {
       parts: [{ type: 'text', id: 't', text: 'Main' }],
     } satisfies StoredChatMessage)
     expect(hasConversationContextMessages(conversationId)).toBe(true)
+  })
+})
+
+describe('model context window around the newest message', () => {
+  it('never starts at the newest message, so that what comes before it stays the same', () => {
+    const conversationId = newConversation()
+    generate(conversationId, 17, 200)
+    const say = (id: string, role: 'user' | 'assistant', parts: MessagePart[], at: number) =>
+      upsertChatMessage({ id, conversationId, role, createdAt: at, parts })
+    // A compaction lands in the newest message: it holds the newest marker.
+    say('compacted', 'assistant', [portable('Newest summary')], 10_000_000)
+    const { window } = expectSameContext(conversationId)
+    expect(window.at(-1)?.id).toBe('compacted')
+    expect(window.length).toBeGreaterThan(1)
+    // The next message makes it the start.
+    say('next', 'user', [{ type: 'text', id: 't', text: 'Go on' }], 10_000_001)
+    expect(expectSameContext(conversationId).window[0].id).toBe('compacted')
+    // The newest message deleted again: back to the one before.
+    deleteChatMessage('next')
+    expect(expectSameContext(conversationId).window.at(-1)?.id).toBe('compacted')
+  })
+})
+
+describe('newest portable marker of a conversation', () => {
+  /** Every row, newest first: the first holding a portable marker. */
+  const reference = (conversationId: string) => {
+    const rows = getDb()
+      .prepare(
+        'SELECT id, seq, length(parts_json) AS size, parts_json FROM chat_messages WHERE conversation_id = ? ORDER BY seq DESC'
+      )
+      .all(conversationId) as Array<{ id: string; seq: number; size: number; parts_json: string | null }>
+    const row = rows.find((candidate) => parseParts(candidate.parts_json ?? '[]').some(isPortableCompactionMarker))
+    return row ? { id: row.id, seq: Number(row.seq), size: Number(row.size) } : null
+  }
+  const expectNewest = (conversationId: string) => {
+    const kept = latestPortableCompactionMessage(conversationId)
+    expect(kept).toEqual(reference(conversationId))
+    forgetChatStoreCaches()
+    expect(latestPortableCompactionMessage(conversationId)).toEqual(kept)
+    return kept
+  }
+
+  it('finds what a read of every row finds, through markers that come, move, change and go', () => {
+    for (const seed of [5, 6, 7]) {
+      const conversationId = newConversation()
+      generate(conversationId, seed, 150)
+      expectNewest(conversationId)
+      const say = (id: string, parts: MessagePart[], at: number) =>
+        upsertChatMessage({ id: id + seed, conversationId, role: 'assistant', createdAt: at, parts })
+      for (let index = 0; index < 5; index++) say('plain' + index, [{ type: 'text', id: 't', text: 'x' }], 9e6 + index)
+      expectNewest(conversationId)
+      // Into an older message, then longer, then removed, then its message deleted.
+      // Into an older message after every marker so far.
+      const older = getChatMessage(conversationId, 'plain2' + seed)!
+      upsertChatMessage({ ...older, parts: [...older.parts, portable('Prepared')] })
+      expect(expectNewest(conversationId)?.id).toBe(older.id)
+      upsertChatMessage({ ...older, parts: [...older.parts, portable('Prepared, and more of it')] })
+      expectNewest(conversationId)
+      expect(updateChatMessageParts(conversationId, older.id, older.parts)).toBe(true)
+      expectNewest(conversationId)
+      say('marker', [portable('Newest')], 9.1e6)
+      expect(expectNewest(conversationId)?.id).toBe('marker' + seed)
+      deleteChatMessage('marker' + seed)
+      expectNewest(conversationId)
+      // Isolated rounds count here: every row does.
+      upsertChatMessage({
+        id: 'round' + seed,
+        conversationId,
+        role: 'assistant',
+        createdAt: 9.2e6,
+        parts: [portable('Round')],
+        executionScope: reviewLoop,
+      })
+      expect(expectNewest(conversationId)?.id).toBe('round' + seed)
+    }
+  })
+
+  it('finds none, reading only new rows, when no marker is portable', () => {
+    const conversationId = newConversation()
+    for (let index = 0; index < 50; index++)
+      upsertChatMessage({
+        id: 'n' + index,
+        conversationId,
+        role: 'assistant',
+        createdAt: index,
+        parts: [{ type: 'compaction', id: 'c', text: '', strategy: 'codex-native' }],
+      })
+    expect(expectNewest(conversationId)).toBeNull()
+    upsertChatMessage({ id: 'later', conversationId, role: 'user', createdAt: 100, parts: [] })
+    expect(expectNewest(conversationId)).toBeNull()
   })
 })

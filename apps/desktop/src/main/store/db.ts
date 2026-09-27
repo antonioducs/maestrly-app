@@ -370,6 +370,8 @@ function initializeSchema(): void {
       created_at      INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, seq);
+    -- Reads by creation time (a bot transcript's pages), whatever order the stamps took against seq.
+    CREATE INDEX IF NOT EXISTS idx_chat_msg_conv_created ON chat_messages(conversation_id, created_at, seq);
 
     -- Optional incremental compaction keeps one activation-ready candidate alongside one resumable job.
     -- The candidate may outlive a cancelled job, while conversation deletion cleans both atomically.

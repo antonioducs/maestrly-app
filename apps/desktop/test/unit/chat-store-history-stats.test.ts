@@ -7,6 +7,7 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getDb, transaction } from '../../src/main/store'
 import {
   chatHistoryStats,
+  clearChatMessages,
   deleteChatMessage,
   deleteChatMessagesFrom,
   forgetChatStoreCaches,
@@ -243,6 +244,80 @@ describe('conversation history stats', () => {
     billed('a10', second, 55_555)
     expect(getChatMessage(first, 'a10')?.usage?.input).toBe(55_555)
     expectCurrent(first)
+  })
+
+  it('follows a billed id that comes back elsewhere and goes again', () => {
+    const first = newConversation()
+    const second = newConversation()
+    const random = prng(53)
+    for (let index = 0; index < 150; index++) write(first, random, `f${index}`, index * 1_000)
+    upsertChatMessage({
+      id: 'moving',
+      conversationId: first,
+      role: 'assistant',
+      createdAt: 500_000,
+      parts: [{ type: 'text', id: 't', text: 'Billed' }],
+      model: models[1],
+      usage: { usageVersion: 2, input: 4_321, output: 5 },
+    })
+    deleteChatMessage('moving')
+    expectCurrent(first)
+    // Back in another conversation without usage: the ledger row still bills the first one.
+    upsertChatMessage({ id: 'moving', conversationId: second, role: 'user', createdAt: 500_001, parts: [] })
+    expectCurrent(first)
+    chatHistoryStats(first)
+    // Gone from there: the first one's ledger row is without a message again.
+    deleteChatMessage('moving')
+    expectCurrent(first)
+    upsertChatMessage({ id: 'moving', conversationId: second, role: 'user', createdAt: 500_002, parts: [] })
+    chatHistoryStats(first)
+    deleteChatMessagesFrom(second, getMessageSeq('moving')!)
+    expectCurrent(first)
+    upsertChatMessage({ id: 'moving', conversationId: second, role: 'user', createdAt: 500_003, parts: [] })
+    chatHistoryStats(first)
+    return clearChatMessages(second).then(() => expectCurrent(first))
+  })
+
+  it('takes billed attempts as a full read does, in its order', () => {
+    const conversationId = newConversation()
+    const random = prng(59)
+    for (let index = 0; index < 150; index++) write(conversationId, random, `m${index}`, index * 1_000)
+    deleteChatMessage('m7')
+    chatHistoryStats(conversationId)
+    const attempt = (id: string, cost?: number) =>
+      recordChatUsageAttempt({
+        id,
+        conversationId,
+        model: models[Math.floor(random() * 3)],
+        usage: {
+          input: Math.floor(random() * 5_000),
+          output: Math.floor(random() * 500),
+          cacheRead: Math.floor(random() * 100),
+          cacheCreate: 0,
+        },
+        ...(cost !== undefined ? { runtimeEstimatedCostUsd: cost } : {}),
+      })
+    for (let index = 0; index < 20; index++) attempt('attempt' + index, index % 3 ? random() / 7 : undefined)
+    expectCurrent(conversationId)
+    chatHistoryStats(conversationId)
+    // Again under an id already billed: nothing changes.
+    attempt('attempt3', 1)
+    expectCurrent(conversationId)
+    chatHistoryStats(conversationId)
+    // Under the id of a message that billed nothing: its ledger row has a message.
+    upsertChatMessage({ id: 'unbilled', conversationId, role: 'user', createdAt: 900_000, parts: [] })
+    chatHistoryStats(conversationId)
+    attempt('unbilled', 0.5)
+    expectCurrent(conversationId)
+    chatHistoryStats(conversationId)
+    // In a transaction that rolls back: nothing to keep.
+    expect(() =>
+      transaction(() => {
+        attempt('rolled-back', 2)
+        throw new Error('rolled back')
+      })
+    ).toThrow('rolled back')
+    expectCurrent(conversationId)
   })
 
   it('never keeps totals of a row that was deleted and whose seq came back', () => {

@@ -100,6 +100,37 @@ describe('input queue settled log', () => {
     expect(reopened.all().map((item) => item.input.text)).toEqual(['First', 'Second'])
   })
 
+  it('throws on a whole line the schema rejects, as on an invalid queue file', async () => {
+    const file = path.join(dir, 'inputs.json')
+    const queue = await queueAt(file)
+    await settle(queue, 'First', 'native-1')
+    await appendFile(settledLog(file), '\n' + JSON.stringify({ id: 'not an input' }))
+    await expect(queueAt(file)).rejects.toThrow()
+  })
+
+  it('links transcript items and native messages to settled and pending inputs, after a reload too', async () => {
+    const file = path.join(dir, 'inputs.json')
+    const queue = await queueAt(file)
+    for (let index = 0; index < 30; index++) await settle(queue, 'Done ' + index, 'native-' + index)
+    const started = await queue.enqueue({ idempotencyKey: key(), source: 'owner', text: 'Running' })
+    await queue.markStarted(started.inputId)
+    const waiting = await queue.enqueue({ idempotencyKey: key(), source: 'owner', text: 'Waiting' })
+    for (const current of [queue, await queueAt(file)]) {
+      for (const item of current.all()) {
+        expect(current.byItemId(item.itemId)).toEqual(item)
+        if (item.nativeMessageId) expect(current.transcriptInputs().forMessage(item.nativeMessageId)).toEqual(item)
+      }
+      expect(current.transcriptInputs().unmapped.map((item) => item.id)).toEqual([started.inputId])
+      expect(current.byItemId(waiting.itemId)?.input.text).toBe('Waiting')
+      expect(current.byItemId('input:missing')).toBeUndefined()
+      expect(current.transcriptInputs().forMessage('native-missing')).toBeUndefined()
+    }
+    // Mapped now: settled, and still found.
+    await queue.mapNativeMessage(started.inputId, 'native-running')
+    expect(queue.transcriptInputs().forMessage('native-running')?.id).toBe(started.inputId)
+    expect(queue.byItemId(started.itemId)?.nativeMessageId).toBe('native-running')
+  })
+
   it('answers retries, deletions and matching as before for inputs in the log', async () => {
     const file = path.join(dir, 'inputs.json')
     const queue = await queueAt(file)

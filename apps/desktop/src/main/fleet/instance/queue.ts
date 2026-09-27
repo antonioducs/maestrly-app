@@ -71,7 +71,8 @@ export function settledLog(file: string): string {
 }
 /**
  * Reads a settled log: one JSON value per line, the last line of an id wins and keeps the place of its first. A line a
- * crash cut short is skipped: what it held is still in the store file, which is only rewritten after the log.
+ * crash cut short (never valid JSON: every line holds an object) is skipped: what it held is still in the store file,
+ * which is only rewritten after the log. A whole line `parse` rejects throws, as an invalid store file does.
  */
 export async function readSettledLog<T extends { id: string }>(
   file: string,
@@ -87,12 +88,15 @@ export async function readSettledLog<T extends { id: string }>(
   }
   for (const line of text.split('\n')) {
     if (!line.trim()) continue
+    let raw: unknown
     try {
-      const value = parse(JSON.parse(line))
-      values.set(value.id, value)
+      raw = JSON.parse(line)
     } catch {
       // Cut short by a crash; the next append starts on a new line.
+      continue
     }
+    const value = parse(raw)
+    values.set(value.id, value)
   }
   return values
 }
@@ -117,7 +121,9 @@ export class InstanceInputQueue {
   private items: QueuedInput[] = []
   /** Settled inputs, in the order they settled: the settled log. */
   private settled: QueuedInput[] = []
-  /** Lookups over `items`, rebuilt after they change. */
+  /** Lookups over settled inputs, which never change: extended as inputs settle. */
+  private settledBy = { native: new Map<string, QueuedInput>(), item: new Map<string, QueuedInput>() }
+  /** Lookups over `items`, rebuilt after they change; they take precedence over the settled ones. */
   private index: { byNative: Map<string, QueuedInput>; byItem: Map<string, QueuedInput> } | null = null
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
@@ -215,7 +221,9 @@ export class InstanceInputQueue {
     // The queue file is rewritten after the log: an input in both is as the file has it.
     for (const item of items) settled.delete(item.id)
     this.items = items
-    this.settled = [...settled.values()]
+    this.settled = []
+    this.settledBy = { native: new Map(), item: new Map() }
+    this.settle([...settled.values()])
     this.index = null
     // A queue file from before the log still holds settled inputs: they move now, or with the next change.
     if (items.some(settledInput)) await this.update(() => ({ result: undefined, changed: true })).catch(() => undefined)
@@ -228,11 +236,18 @@ export class InstanceInputQueue {
   all(): QueuedInput[] {
     return [...this.settled, ...this.items]
   }
+  private settle(entries: QueuedInput[]): void {
+    for (const item of entries) {
+      this.settled.push(item)
+      if (item.nativeMessageId) this.settledBy.native.set(item.nativeMessageId, item)
+      this.settledBy.item.set(item.itemId, item)
+    }
+  }
   private lookups(): NonNullable<InstanceInputQueue['index']> {
     if (!this.index) {
       const byNative = new Map<string, QueuedInput>()
       const byItem = new Map<string, QueuedInput>()
-      for (const item of [...this.settled, ...this.items]) {
+      for (const item of this.items) {
         if (item.nativeMessageId) byNative.set(item.nativeMessageId, item)
         byItem.set(item.itemId, item)
       }
@@ -242,13 +257,14 @@ export class InstanceInputQueue {
   }
   /** The input whose transcript item has this id. */
   byItemId(itemId: string): QueuedInput | undefined {
-    return this.lookups().byItem.get(itemId)
+    return this.lookups().byItem.get(itemId) ?? this.settledBy.item.get(itemId)
   }
   /** What a transcript projection links native user messages to. */
   transcriptInputs(): TranscriptInputs {
     const { byNative } = this.lookups()
+    const settled = this.settledBy.native
     return {
-      forMessage: (messageId) => byNative.get(messageId),
+      forMessage: (messageId) => byNative.get(messageId) ?? settled.get(messageId),
       unmapped: this.items.filter((item) => item.started && !item.nativeMessageId),
     }
   }
@@ -272,7 +288,7 @@ export class InstanceInputQueue {
         await fs.rm(temp, { force: true }).catch(() => undefined)
       }
       this.items = items
-      this.settled.push(...settled)
+      this.settle(settled)
       this.index = null
       return result
     })

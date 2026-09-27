@@ -994,11 +994,19 @@ export function hasConversationContextMessages(conversationId: string): boolean 
 }
 
 /**
- * Where each conversation's model context starts: its newest main-context message holding a portable compaction
- * marker (null without one), and the highest seq checked for a newer one. A hint only: the marker is checked again
- * before each use, so a stale entry can never cut the context short.
+ * Per conversation, where its newest portable compaction marker was last found: the message holding it (null without
+ * one), every row below `checkedBelow` checked. A hint only: the message is checked again before each use, and a write
+ * holding a compaction drops it.
  */
-const contextStarts = new Map<string, { markerId: string | null; markerSeq: number; checkedThrough: number }>()
+interface MarkerHint {
+  markerId: string | null
+  markerSeq: number
+  checkedBelow: number
+}
+/** Where each conversation's model context starts: main-context rows, its newest message set apart. */
+const contextStarts = new Map<string, MarkerHint>()
+/** The newest marker among every row of each conversation. */
+const newestMarkers = new Map<string, MarkerHint>()
 
 /** Conversations whose read shortcuts are kept: the least recently kept go first. */
 const KEPT_CONVERSATIONS = 256
@@ -1008,64 +1016,101 @@ function keep<V>(map: Map<string, V>, conversationId: string, value: V): void {
   if (map.size > KEPT_CONVERSATIONS) map.delete(map.keys().next().value as string)
 }
 
-/** A write whose parts hold a compaction may move where the context starts, even in an older message. */
+/** A write whose parts hold a compaction may move where the newest marker is, even into an older message. */
 function noteContextWrite(conversationId: string, parts: readonly MessagePart[]): void {
-  if (parts.some((part) => part.type === 'compaction')) contextStarts.delete(conversationId)
+  if (!parts.some((part) => part.type === 'compaction')) return
+  contextStarts.delete(conversationId)
+  newestMarkers.delete(conversationId)
 }
 
-/** The newest main-context message above `aboveSeq` holding a portable compaction marker. */
-function newestPortableMarker(conversationId: string, aboveSeq: number): { id: string; seq: number } | null {
+type MarkerRow = { id: string; seq: number; size: number; parts_json: string | null }
+const markerFound = (row: MarkerRow | undefined) =>
+  row && parseParts(row.parts_json ?? '[]').some(isPortableCompactionMarker)
+    ? { id: row.id, seq: Number(row.seq), size: Number(row.size) }
+    : null
+
+/** The newest message of `scope` from `fromSeq` to below `belowSeq` holding a portable compaction marker. */
+function scanPortableMarker(conversationId: string, scope: string, fromSeq: number, belowSeq: number) {
   const candidate = getDb().prepare(
-    `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq > ? AND seq < ? AND ${CONVERSATION_CONTEXT_SQL}
-       AND parts_json LIKE '%"type":"compaction"%' ORDER BY seq DESC LIMIT 1`
+    `SELECT id, seq, length(parts_json) AS size, parts_json FROM chat_messages
+     WHERE conversation_id = ? AND seq >= ? AND seq < ? ${scope} AND parts_json LIKE '%"type":"compaction"%'
+     ORDER BY seq DESC LIMIT 1`
   )
-  let before = Number.MAX_SAFE_INTEGER
+  let before = belowSeq
   for (;;) {
-    const row = candidate.get(conversationId, aboveSeq, before) as any
+    const row = candidate.get(conversationId, fromSeq, before) as MarkerRow | undefined
     if (!row) return null
-    if (rowToMessage(row).parts.some(isPortableCompactionMarker)) return { id: row.id, seq: Number(row.seq) }
+    const found = markerFound(row)
+    if (found) return found
     before = Number(row.seq)
   }
 }
 
 /**
+ * The newest message of `scope` below `belowSeq` holding a portable compaction marker, and the length of its parts:
+ * from the conversation's hint, reading only the rows it has not checked.
+ */
+function portableMarkerBelow(hints: Map<string, MarkerHint>, conversationId: string, scope: string, belowSeq: number) {
+  let hint = hints.get(conversationId)
+  let found: ReturnType<typeof markerFound> = null
+  if (hint?.markerId) {
+    found = markerFound(
+      getDb()
+        .prepare(
+          `SELECT id, seq, length(parts_json) AS size, parts_json FROM chat_messages
+           WHERE id = ? AND conversation_id = ? ${scope}`
+        )
+        .get(hint.markerId, conversationId) as MarkerRow | undefined
+    )
+    if (!found || found.seq !== hint.markerSeq || found.seq >= belowSeq) {
+      found = null
+      hint = undefined
+    }
+  }
+  if (!hint) {
+    found = scanPortableMarker(conversationId, scope, Number.MIN_SAFE_INTEGER, belowSeq)
+    hint = { markerId: found?.id ?? null, markerSeq: found?.seq ?? Number.MIN_SAFE_INTEGER, checkedBelow: belowSeq }
+  } else if (belowSeq > hint.checkedBelow) {
+    const newer = scanPortableMarker(conversationId, scope, hint.checkedBelow, belowSeq)
+    if (newer) found = newer
+    hint = { markerId: found?.id ?? null, markerSeq: found?.seq ?? Number.MIN_SAFE_INTEGER, checkedBelow: belowSeq }
+  } else if (belowSeq < hint.checkedBelow) {
+    // Rows above went: those that take their seqs are checked when they come.
+    hint = { ...hint, checkedBelow: belowSeq }
+  }
+  keep(hints, conversationId, hint)
+  return found
+}
+
+/**
  * The main context a model sees, read from the message holding the last portable compaction marker on (that message
  * whole, like `activeChatContext` needs it): everything before was summarized, so `activeChatContext` of this is
- * that of `listConversationContextMessages`. Without a marker, every main-context message.
+ * that of `listConversationContextMessages`. The newest message never starts it: a caller that sets that message
+ * apart (a turn's own message) still finds, in the rest, what it found in the whole context. Without a marker, every
+ * main-context message.
  */
 export function listActiveConversationContextMessages(conversationId: string): StoredChatMessage[] {
+  chatStoreCachesCurrent()
   const db = getDb()
-  const top = newestChatSeq(conversationId)
-  if (top === null) return []
-  let start = contextStarts.get(conversationId)
-  if (start?.markerId) {
-    const marker = db
-      .prepare(`SELECT * FROM chat_messages WHERE id = ? AND conversation_id = ? AND ${CONVERSATION_CONTEXT_SQL}`)
-      .get(start.markerId, conversationId) as any
-    if (
-      !marker ||
-      Number(marker.seq) !== start.markerSeq ||
-      !rowToMessage(marker).parts.some(isPortableCompactionMarker)
+  const newest = db
+    .prepare(
+      `SELECT seq FROM chat_messages WHERE conversation_id = ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq DESC LIMIT 1`
     )
-      start = undefined
-  }
-  if (!start) {
-    const marker = newestPortableMarker(conversationId, Number.MIN_SAFE_INTEGER)
-    start = { markerId: marker?.id ?? null, markerSeq: marker?.seq ?? Number.MIN_SAFE_INTEGER, checkedThrough: top }
-  } else if (top > start.checkedThrough) {
-    const marker = newestPortableMarker(conversationId, start.checkedThrough)
-    start = marker
-      ? { markerId: marker.id, markerSeq: marker.seq, checkedThrough: top }
-      : { ...start, checkedThrough: top }
-  }
-  keep(contextStarts, conversationId, start)
-  if (!start.markerId) return listConversationContextMessages(conversationId)
+    .get(conversationId) as { seq: number } | undefined
+  if (!newest) return []
+  const marker = portableMarkerBelow(
+    contextStarts,
+    conversationId,
+    `AND ${CONVERSATION_CONTEXT_SQL}`,
+    Number(newest.seq)
+  )
+  if (!marker) return listConversationContextMessages(conversationId)
   return (
     db
       .prepare(
         `SELECT * FROM chat_messages WHERE conversation_id = ? AND seq >= ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq ASC`
       )
-      .all(conversationId, start.markerSeq) as any[]
+      .all(conversationId, marker.seq) as any[]
   ).map(rowToMessage)
 }
 
@@ -1406,41 +1451,58 @@ function addHistoryStatsRow(totals: HistoryStatsTotals, r: HistoryStatsRow): voi
 /**
  * Per conversation: the totals of its rows through `throughSeq` (`rows` of them), kept while those rows stay as they
  * are; the newer rows are read on every call. Writes through this module drop an entry whose rows they touch, and a
- * write by another connection or another database handle clears them all: on this connection, only this module
- * writes messages and the ledger once the store is open (startup imports aside, whose insertions a changed row count
- * catches).
+ * write by another connection or another database handle clears them all. On this connection, rows are otherwise
+ * only written at startup (imports) and removed with their conversation (cascades) or by a local data reset (which
+ * clears them all): a changed count of kept rows catches the first two.
  */
 const historyStatsPrefixes = new Map<string, { throughSeq: number; rows: number; totals: HistoryStatsTotals }>()
 /** Ledger rows of messages that no longer exist (or never did: auxiliary attempts), per conversation. */
 const historyStatsOrphans = new Map<string, Array<{ usage: StoredChatUsage; model: ChatModelRef }>>()
 /** Rows always read again: a turn changes its newest messages while they stream. */
 const HISTORY_STATS_FRESH_ROWS = 64
-let historyStatsSource: { db: unknown; dataVersion: number } | null = null
-function historyStatsCachesCurrent(): boolean {
+let chatStoreSource: { db: unknown; dataVersion: number } | null = null
+/**
+ * Drops every read shortcut once another connection committed or the database handle changed, and tells whether what
+ * is read now may be kept: totals seen inside a transaction may still be rolled back.
+ */
+function chatStoreCachesCurrent(): boolean {
   const db = getDb()
   const dataVersion = Number((db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version)
-  if (historyStatsSource?.db !== db || historyStatsSource.dataVersion !== dataVersion) {
-    historyStatsPrefixes.clear()
-    historyStatsOrphans.clear()
-    historyStatsSource = { db, dataVersion }
+  if (chatStoreSource?.db !== db || chatStoreSource.dataVersion !== dataVersion) {
+    forgetChatStoreCaches()
+    chatStoreSource = { db, dataVersion }
   }
-  // Totals seen inside a transaction may still be rolled back.
   return !inTransaction()
 }
-/** Drops every kept total and context start: for a database changed behind the store's back (a reset, tests). */
+/** Drops every read shortcut: for a database changed behind the store's back (a reset, tests). */
 export function forgetChatStoreCaches(): void {
   historyStatsPrefixes.clear()
   historyStatsOrphans.clear()
   contextStarts.clear()
+  newestMarkers.clear()
 }
 /** A row of the conversation is written: the totals that include it no longer hold. */
 function noteHistoryStatsWrite(conversationId: string, seq: number | null): void {
   const prefix = historyStatsPrefixes.get(conversationId)
   if (prefix && (seq === null || seq <= prefix.throughSeq)) historyStatsPrefixes.delete(conversationId)
 }
-/** Messages were deleted, or an attempt billed without a message: the ledger rows without a message changed. */
+/** The ledger rows without a message of this conversation changed. */
 function noteHistoryStatsLedger(conversationId: string): void {
   historyStatsOrphans.delete(conversationId)
+}
+/**
+ * Messages matching `where` are about to be deleted: their ledger rows lose their message in the conversations they
+ * bill, which need not be theirs (a ledger row follows the last message that billed under its id).
+ */
+function noteDeletedMessages(where: string, ...params: Array<string | number>): void {
+  if (!historyStatsOrphans.size) return
+  const billed = getDb()
+    .prepare(
+      `SELECT DISTINCT l.conversation_id FROM chat_messages m JOIN chat_usage_ledger l ON l.message_id = m.id
+       WHERE ${where} AND l.conversation_id IS NOT NULL`
+    )
+    .all(...params) as Array<{ conversation_id: string }>
+  for (const row of billed) noteHistoryStatsLedger(row.conversation_id)
 }
 
 /**
@@ -1449,7 +1511,7 @@ function noteHistoryStatsLedger(conversationId: string): void {
  */
 function historyTotals(conversationId: string): { totals: HistoryStatsTotals; cacheable: boolean } {
   const db = getDb()
-  const cacheable = historyStatsCachesCurrent()
+  const cacheable = chatStoreCachesCurrent()
   let prefix = historyStatsPrefixes.get(conversationId)
   if (prefix) {
     const count = db
@@ -1512,7 +1574,8 @@ export function chatHistoryStats(
         `SELECT l.provider_id, l.model_id, l.usage_json
          FROM chat_usage_ledger l
          LEFT JOIN chat_messages m ON m.id = l.message_id
-         WHERE l.conversation_id = ? AND m.id IS NULL`
+         WHERE l.conversation_id = ? AND m.id IS NULL
+         ORDER BY l.rowid`
       )
       .all(conversationId) as Array<{ provider_id: string; model_id: string; usage_json: string }>
     for (const row of orphanLedgerRows) {
@@ -1688,7 +1751,8 @@ export function recordChatUsageAttempt(args: {
     billingOnly: true,
     ...(runtimeEstimatedCostUsd !== undefined ? { runtimeEstimatedCostUsd } : {}),
   }
-  getDb()
+  const usageJson = JSON.stringify(usage)
+  const inserted = getDb()
     .prepare(
       `INSERT OR IGNORE INTO chat_usage_ledger
          (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
@@ -1699,10 +1763,22 @@ export function recordChatUsageAttempt(args: {
       args.conversationId,
       args.model.providerId,
       args.model.modelId,
-      JSON.stringify(usage),
+      usageJson,
       args.createdAt ?? Date.now()
     )
-  noteHistoryStatsLedger(args.conversationId)
+  if (!Number(inserted.changes)) return
+  // A new ledger row without a message is read last among the conversation's (by rowid): kept totals take it as a
+  // full read would, unless a transaction may still roll it back.
+  const orphans = historyStatsOrphans.get(args.conversationId)
+  const stored = parseStoredUsage(JSON.parse(usageJson))
+  if (
+    orphans &&
+    stored &&
+    !inTransaction() &&
+    !getDb().prepare('SELECT 1 FROM chat_messages WHERE id = ?').get(args.id)
+  )
+    orphans.push({ usage: stored, model: { providerId: args.model.providerId, modelId: args.model.modelId } })
+  else noteHistoryStatsLedger(args.conversationId)
 }
 
 /**
@@ -1903,8 +1979,9 @@ export function findGeneratedImagePart(
 export async function clearChatMessages(conversationId: string): Promise<void> {
   invalidateBackgroundCompaction(conversationId)
   contextStarts.delete(conversationId)
+  newestMarkers.delete(conversationId)
   noteHistoryStatsWrite(conversationId, null)
-  noteHistoryStatsLedger(conversationId)
+  noteDeletedMessages('m.conversation_id = ?', conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ?',
     conversationId
@@ -1921,10 +1998,10 @@ export async function clearChatMessages(conversationId: string): Promise<void> {
 export function deleteChatMessage(id: string): void {
   const pending = chatDeletionArtifacts('SELECT id, conversation_id, parts_json FROM chat_messages WHERE id = ?', id)
   const seq = getMessageSeq(id)
+  noteDeletedMessages('m.id = ?', id)
   getDb().prepare('DELETE FROM chat_messages WHERE id = ?').run(id)
   if (!pending) return
   noteHistoryStatsWrite(pending.conversationId, seq)
-  noteHistoryStatsLedger(pending.conversationId)
   invalidateBackgroundCompaction(pending.conversationId)
   releaseRemovedToolImageRefs(pending.toolImageRefs)
   releaseConversationToolImageMetadata(pending.conversationId, deletionDescriptionIds(pending))
@@ -1942,7 +2019,7 @@ export function getMessageSeq(id: string): number | null {
 export function deleteChatMessagesFrom(conversationId: string, fromSeq: number): void {
   invalidateBackgroundCompaction(conversationId)
   noteHistoryStatsWrite(conversationId, fromSeq)
-  noteHistoryStatsLedger(conversationId)
+  noteDeletedMessages('m.conversation_id = ? AND m.seq >= ?', conversationId, fromSeq)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ? AND seq >= ?',
     conversationId,
@@ -2141,17 +2218,40 @@ export function listChatMessagesAfter(conversationId: string, afterSeq: number):
   )
 }
 
-/** Up to `limit` messages with seq at or below `throughSeq`, newest first. */
-export function listChatMessagesThrough(
+/**
+ * Up to `limit` messages created at or before `atOrBefore`, newest first by creation time then seq, after `after` in
+ * that order when given: however their stamps and seqs disagree, the rows not read yet were created at or before the
+ * last one read.
+ */
+export function listChatMessagesByTime(
   conversationId: string,
-  throughSeq: number,
+  atOrBefore: number,
+  after: { createdAt: number; seq: number } | null,
   limit: number
 ): SequencedChatMessage[] {
-  return sequenced(
+  const rows = after
+    ? getDb()
+        .prepare(
+          `SELECT * FROM chat_messages WHERE conversation_id = ? AND created_at <= ? AND (created_at, seq) < (?, ?)
+           ORDER BY created_at DESC, seq DESC LIMIT ?`
+        )
+        .all(conversationId, atOrBefore, after.createdAt, after.seq, limit)
+    : getDb()
+        .prepare(
+          `SELECT * FROM chat_messages WHERE conversation_id = ? AND created_at <= ?
+           ORDER BY created_at DESC, seq DESC LIMIT ?`
+        )
+        .all(conversationId, atOrBefore, limit)
+  return sequenced(rows as any[])
+}
+
+/** Every message created at or after `time`, in seq order. */
+export function listChatMessagesSince(conversationId: string, time: number): StoredChatMessage[] {
+  return (
     getDb()
-      .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND seq <= ? ORDER BY seq DESC LIMIT ?')
-      .all(conversationId, throughSeq, limit) as any[]
-  )
+      .prepare('SELECT * FROM chat_messages WHERE conversation_id = ? AND created_at >= ? ORDER BY seq ASC')
+      .all(conversationId, time) as any[]
+  ).map(rowToMessage)
 }
 
 /** The named messages of the conversation that still exist, with their seq. */
@@ -2174,20 +2274,9 @@ export function getChatMessagesWithSeq(conversationId: string, ids: readonly str
 export function latestPortableCompactionMessage(
   conversationId: string
 ): { id: string; seq: number; size: number } | null {
-  const candidate = getDb().prepare(
-    `SELECT id, seq, length(parts_json) AS size, parts_json FROM chat_messages
-     WHERE conversation_id = ? AND seq < ? AND parts_json LIKE '%"type":"compaction"%' ORDER BY seq DESC LIMIT 1`
-  )
-  let before = Number.MAX_SAFE_INTEGER
-  for (;;) {
-    const row = candidate.get(conversationId, before) as
-      | { id: string; seq: number; size: number; parts_json: string | null }
-      | undefined
-    if (!row) return null
-    if (parseParts(row.parts_json ?? '[]').some(isPortableCompactionMarker))
-      return { id: row.id, seq: Number(row.seq), size: Number(row.size) }
-    before = Number(row.seq)
-  }
+  chatStoreCachesCurrent()
+  const top = newestChatSeq(conversationId)
+  return top === null ? null : portableMarkerBelow(newestMarkers, conversationId, '', top + 1)
 }
 
 /**
@@ -2239,32 +2328,4 @@ export function findLatestChatMessage(
     }
     before = Number(rows[rows.length - 1].seq)
   }
-}
-
-/**
- * Where `time` falls in the conversation's seq order: the seq of a message created at or before `time` whose next
- * message was created after it (the newest message when there is none), one below the first seq when the first message
- * was created after `time`, or null without messages. Creation times follow seq closely but not exactly (an assistant
- * row may be stamped before its user row), so callers leave a slack around `time`.
- */
-export function chatSeqAtTime(conversationId: string, time: number): number | null {
-  const db = getDb()
-  const bounds = db
-    .prepare('SELECT MIN(seq) AS lo, MAX(seq) AS hi FROM chat_messages WHERE conversation_id = ?')
-    .get(conversationId) as { lo: number | null; hi: number | null }
-  if (bounds.lo === null || bounds.hi === null) return null
-  const at = db.prepare(
-    'SELECT seq, created_at FROM chat_messages WHERE conversation_id = ? AND seq >= ? ORDER BY seq ASC LIMIT 1'
-  )
-  const first = at.get(conversationId, bounds.lo) as { seq: number; created_at: number }
-  if (Number(first.created_at) > time) return Number(bounds.lo) - 1
-  let lo = Number(first.seq)
-  let hi = Number(bounds.hi)
-  while (lo < hi) {
-    const mid = lo + Math.ceil((hi - lo) / 2)
-    const row = at.get(conversationId, mid) as { seq: number; created_at: number }
-    if (Number(row.created_at) <= time) lo = Number(row.seq)
-    else hi = mid - 1
-  }
-  return lo
 }

@@ -9,7 +9,8 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import * as chatStore from '../../src/main/chat/chat-store'
 import {
-  chatSeqAtTime,
+  listChatMessagesByTime,
+  listChatMessagesSince,
   deleteChatMessage,
   findLatestChatMessage,
   getChatMessage,
@@ -359,7 +360,7 @@ describe('bot transcript pages', () => {
     const conversationId = newConversation()
     generate(conversationId, 31, 1_500)
     const { live, reference } = await fixture(conversationId)
-    const reads = vi.spyOn(chatStore, 'listChatMessagesThrough')
+    const reads = vi.spyOn(chatStore, 'listChatMessagesByTime')
     const page = await live.page(null, 200)
     const rows = reads.mock.results.reduce((total, result) => total + (result.value as unknown[]).length, 0)
     expect(page).toEqual(reference(null, 200))
@@ -540,6 +541,95 @@ describe('bot transcript refresh', () => {
     expect(published.map((item) => item.kind)).toEqual(['assistant'])
   })
 
+  it('moves past a turn only once a refresh read it after the next one started', async () => {
+    const conversationId = newConversation()
+    const { live, published, images } = await fixture(conversationId)
+    live.anchor()
+    const at = Date.UTC(2026, 9, 5)
+    live.turnStarted()
+    assistant(conversationId, 'first', at, [{ type: 'text', id: 't', text: 'Part' }])
+    live.touched('first')
+    // A refresh still capturing images while the turn saves its end and the next one starts.
+    let release: (() => void) | undefined
+    const capture = images.captureMessages.bind(images)
+    vi.spyOn(images, 'captureMessages').mockImplementationOnce(async (messages) => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return capture(messages)
+    })
+    const inFlight = live.refresh()
+    await vi.waitFor(() => expect(release).toBeDefined())
+    assistant(conversationId, 'first', at, [{ type: 'text', id: 't', text: 'Part and the rest' }], true)
+    live.turnStarted()
+    release!()
+    await inFlight
+    published.length = 0
+    await live.refresh()
+    expect(published).toMatchObject([{ id: 'first:0', text: 'Part and the rest', streaming: false }])
+  })
+
+  it('reads again at most the newest messages that came without a turn, and sends none twice', async () => {
+    const conversationId = newConversation()
+    const { live, published } = await fixture(conversationId)
+    live.anchor()
+    const at = Date.UTC(2026, 9, 6)
+    // Written without a bot turn, as when the owner chats in the app.
+    for (let index = 0; index < 300; index++)
+      assistant(conversationId, 'm' + index, at + index, [{ type: 'text', id: 't', text: 'Hi ' + index }], true)
+    await live.refresh()
+    expect(published).toHaveLength(300)
+    published.length = 0
+    const reads = vi.spyOn(chatStore, 'listChatMessagesAfter')
+    await live.refresh()
+    expect(published).toEqual([])
+    const rows = reads.mock.results.reduce((total, result) => total + (result.value as unknown[]).length, 0)
+    expect(rows).toBeLessThanOrEqual(128)
+    // One still read again changes without an event: sent.
+    assistant(conversationId, 'm299', at + 299, [{ type: 'text', id: 't', text: 'Changed' }], true)
+    await live.refresh()
+    expect(published).toMatchObject([{ id: 'm299:0', text: 'Changed' }])
+  })
+
+  it('stops showing a native question once an interaction item stands for it', async () => {
+    const conversationId = newConversation()
+    const { live, published, extras } = await fixture(conversationId)
+    live.anchor()
+    live.turnStarted()
+    const at = Date.UTC(2026, 9, 8)
+    const asks = (text: string) =>
+      assistant(conversationId, 'asks', at, [
+        {
+          type: 'tool',
+          id: 'q2',
+          toolCallId: 'q2',
+          toolName: 'ask_question',
+          input: { questions: [{ question: 'Which one?', header: 'Pick', options: [{ label: 'A' }] }] },
+          state: { status: 'running' },
+        },
+        { type: 'text', id: 't', text },
+      ])
+    asks('Waiting')
+    live.touched('asks')
+    await live.refresh()
+    expect(published.map((item) => item.kind)).toEqual(['question', 'assistant'])
+    await extras.upsert({
+      kind: 'question',
+      id: 'question:q2',
+      at: iso(at),
+      toolCallId: 'q2',
+      questions: [question()],
+      state: 'pending',
+      answers: null,
+    })
+    published.length = 0
+    asks('Still waiting')
+    live.touched('asks')
+    await live.refresh()
+    expect(published.map((item) => item.kind)).toEqual(['assistant'])
+    expect((await live.page(null, 50)).items.map((item) => item.id)).toEqual(['asks:1', 'question:q2'])
+  })
+
   it('keeps the memory of sent items bounded', async () => {
     const conversationId = newConversation()
     const { live, published } = await fixture(conversationId)
@@ -594,34 +684,49 @@ describe('bot transcript lookups', () => {
 })
 
 describe('bounded chat reads', () => {
-  it('locates a time in seq order across gaps, shared times and lagging stamps', () => {
+  it('reads messages by creation time, a page at a time, whatever order the stamps took against seq', () => {
     const conversationId = newConversation()
-    expect(chatSeqAtTime(conversationId, Date.now())).toBeNull()
+    expect(listChatMessagesByTime(conversationId, Number.MAX_SAFE_INTEGER, null, 10)).toEqual([])
     const random = prng(61)
-    const times: number[] = []
     let clock = 1_000_000
     for (let index = 0; index < 200; index++) {
       clock += random() < 0.1 ? 0 : Math.floor(random() * 1_000)
-      const lag = random() < 0.3 ? Math.floor(random() * 50) : 0
-      times.push(clock - lag)
-      upsertChatMessage({ id: 'm' + index, conversationId, role: 'user', createdAt: clock - lag, parts: [] })
+      // Lagging stamps, shared times, and once a clock that stepped back an hour.
+      const back = index === 120 ? 3_600_000 : random() < 0.3 ? Math.floor(random() * 50) : 0
+      if (index === 120) clock -= back
+      upsertChatMessage({
+        id: 'm' + index,
+        conversationId,
+        role: 'user',
+        createdAt: clock - (index === 120 ? 0 : back),
+        parts: [],
+      })
     }
     for (let index = 0; index < 200; index += 7) deleteChatMessage('m' + index)
     const rows = listChatMessages(conversationId).map((message) => ({
+      id: message.id,
       seq: chatStore.getMessageSeq(message.id)!,
       at: message.createdAt,
     }))
-    for (const time of [0, rows[0].at - 1, rows[0].at, ...rows.map((row) => row.at + 25), rows.at(-1)!.at + 5_000]) {
-      const seq = chatSeqAtTime(conversationId, time)!
-      const index = rows.findIndex((row) => row.seq === seq)
-      if (index < 0) {
-        expect(seq).toBe(rows[0].seq - 1)
-        expect(rows[0].at).toBeGreaterThan(time)
-      } else {
-        expect(rows[index].at).toBeLessThanOrEqual(time)
-        if (index + 1 < rows.length) expect(rows[index + 1].at).toBeGreaterThan(time)
+    const byTime = [...rows].sort((a, b) => b.at - a.at || b.seq - a.seq)
+    for (const bound of [Number.MAX_SAFE_INTEGER, rows[50].at, rows[130].at, rows[0].at - 1])
+      for (const size of [1, 7, 100]) {
+        const read: string[] = []
+        let after: { createdAt: number; seq: number } | null = null
+        for (;;) {
+          const page = listChatMessagesByTime(conversationId, bound, after, size)
+          if (!page.length) break
+          expect(page.length).toBeLessThanOrEqual(size)
+          read.push(...page.map((row) => row.message.id))
+          const last = page[page.length - 1]
+          after = { createdAt: last.message.createdAt, seq: last.seq }
+        }
+        expect(read).toEqual(byTime.filter((row) => row.at <= bound).map((row) => row.id))
       }
-    }
+    for (const time of [0, rows[60].at, rows[125].at, clock + 1])
+      expect(listChatMessagesSince(conversationId, time).map((message) => message.id)).toEqual(
+        rows.filter((row) => row.at >= time).map((row) => row.id)
+      )
   })
 
   it('finds the newest matching message, skipping rows by content and within a bound', () => {
@@ -722,5 +827,116 @@ describe('bot instance reads', () => {
       const source = readFileSync(new URL(file, folder), 'utf8')
       expect(source, file).not.toMatch(/\blistChatMessages\(|listConversationContextMessages\(/)
     }
+  })
+
+  it('never reads a whole conversation in the live transcript, running it', async () => {
+    const conversationId = newConversation()
+    const data = generate(conversationId, 73, 300)
+    const { live, extras } = await fixture(conversationId, data)
+    const whole = vi.spyOn(chatStore, 'listChatMessages')
+    live.anchor()
+    let page = await live.page(null, 50)
+    while (page.before) page = await live.page(page.before, 50)
+    live.turnStarted()
+    const at = Date.UTC(2026, 9, 7)
+    upsertChatMessage({ id: 'now', conversationId, role: 'assistant', createdAt: at, parts: [] })
+    live.touched('now')
+    await live.refresh()
+    await extras.upsert({
+      kind: 'system',
+      id: 'system:read',
+      at: iso(at),
+      code: 'restarted',
+      text: null,
+      durationMs: null,
+    })
+    live.userMessagesSince(at - 60 * 60_000)
+    live.turnItem('input:' + randomUUID())
+    live.lastAssistantText('now')
+    live.messageWithToolCall('call_missing')
+    await live.page(page.items[0]?.id ?? null, 20)
+    expect(whole).not.toHaveBeenCalled()
+  })
+})
+
+describe('bot transcript pages at their edges', () => {
+  it('reads every message of a time shared by more messages than one read holds', async () => {
+    const conversationId = newConversation()
+    const at = Date.UTC(2026, 9, 9)
+    // Their ids, not their seqs, order the items of a shared time.
+    for (let index = 0; index < 150; index++)
+      upsertChatMessage({
+        id: randomUUID(),
+        conversationId,
+        role: 'user',
+        createdAt: at,
+        parts: [{ type: 'text', id: 't', text: 'Same time ' + index }],
+      })
+    const { live, reference } = await fixture(conversationId)
+    for (const limit of [1, 20, 120]) {
+      let before: string | null = null
+      do {
+        const actual = await live.page(before, limit)
+        expect(actual, `limit ${limit}, before ${before}`).toEqual(reference(before, limit))
+        before = actual.before
+      } while (before)
+    }
+  })
+
+  it('links a started input to the oldest message it matches, as the whole transcript does', async () => {
+    const conversationId = newConversation()
+    const at = Date.UTC(2026, 9, 10)
+    const id = randomUUID()
+    const record: QueuedInput = {
+      id,
+      at: iso(at),
+      input: { idempotencyKey: randomUUID(), text: 'Same words', source: 'owner' },
+      attachments: [],
+      itemId: 'input:' + id,
+      started: true,
+    }
+    for (let index = 0; index < 3; index++)
+      upsertChatMessage({
+        id: 'same' + index,
+        conversationId,
+        role: 'user',
+        createdAt: at + 1_000 * (index + 1),
+        parts: [{ type: 'text', id: 't', text: 'Same words' }],
+      })
+    const { live, reference } = await fixture(conversationId, { records: [record] })
+    expect(await live.page(null, 10)).toEqual(reference(null, 10))
+  })
+})
+
+describe('bot transcript under a clock that went back', () => {
+  it('cuts every page the whole transcript would, whatever order the stamps took', async () => {
+    const conversationId = newConversation()
+    const data = generate(conversationId, 71, 60)
+    // The clock stepped back an hour: the messages after carry times before those they follow.
+    const last = listChatMessages(conversationId).at(-1)!.createdAt
+    for (let index = 0; index < 20; index++)
+      upsertChatMessage({
+        id: 'after-' + index,
+        conversationId,
+        role: index % 2 ? 'assistant' : 'user',
+        createdAt: last - 60 * 60_000 + index * 60_000,
+        parts: [{ type: 'text', id: 't', text: 'After the step ' + index }],
+      })
+    const { live, reference } = await fixture(conversationId, data)
+    for (const limit of [1, 7, 50, 500]) {
+      let before: string | null = null
+      do {
+        const actual = await live.page(before, limit)
+        expect(actual, `limit ${limit}, before ${before}`).toEqual(reference(before, limit))
+        before = actual.before
+      } while (before)
+    }
+    // The messages the queue may map inputs to: every user message created since, wherever it sits.
+    const since = last - 30 * 60_000
+    const expected = listChatMessages(conversationId)
+      .filter((message) => message.role === 'user' && message.createdAt >= since)
+      .map((message) => message.id)
+    const users = live.userMessagesSince(since).map((user) => user.id)
+    expect(users.filter((id) => expected.includes(id))).toEqual(expected)
   })
 })

@@ -347,6 +347,8 @@ export class InstanceTranscriptExtras {
   private settled: FleetTranscriptItem[] = []
   /** Pending items: the file. */
   private pending: FleetTranscriptItem[] = []
+  /** The tool calls of the native questions an interaction item stands for, rebuilt after a change. */
+  private questions: Set<string> | null = null
   private writeTail: Promise<void> = Promise.resolve()
   constructor(
     private readonly file: string,
@@ -366,6 +368,7 @@ export class InstanceTranscriptExtras {
     for (const item of items) settled.delete(item.id)
     this.settled = [...settled.values()]
     this.pending = items
+    this.questions = null
     // A file from before the log still holds settled items: they move now, or with the next change.
     const done = items.filter(settledExtra)
     if (done.length) {
@@ -376,6 +379,11 @@ export class InstanceTranscriptExtras {
   }
   list(): FleetTranscriptItem[] {
     return [...this.settled, ...this.pending]
+  }
+  /** Native questions an interaction item stands for: the interaction item is the one shown. */
+  questionToolCallIds(): ReadonlySet<string> {
+    this.questions ??= new Set(this.list().flatMap((item) => (item.kind === 'question' ? [item.toolCallId] : [])))
+    return this.questions
   }
   /** Resolves once every write started so far has finished. */
   async idle(): Promise<void> {
@@ -413,6 +421,7 @@ export class InstanceTranscriptExtras {
       if (wasPending < 0) this.pending.push(valid)
       else this.pending[wasPending] = valid
     }
+    this.questions = null
     await this.write(done ? [valid] : [], !done || wasPending >= 0)
     this.onUpsert(valid)
   }
