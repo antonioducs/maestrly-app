@@ -3902,6 +3902,8 @@ export async function runCodexSubscriptionChat(
                         approvalPolicy: childApproval.approvalPolicy,
                         sandboxPolicy: sandboxPolicyFor(childApproval.sandbox, args.cwd),
                         dynamicTools: childDynamicTools,
+                        // A bot's child opens programs on the bot's own screen, like this root thread.
+                        shellEnvironment: conversationShellEnv(args.conversationId),
                         physicalProviderId: target.providerId,
                         accountId: target.accountId,
                         registerThread: useSharedRootClient

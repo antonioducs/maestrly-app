@@ -1,5 +1,5 @@
-import {autonomousPolicy} from '../autonomous'
-import {remoteChatPolicy} from '../remote-policy'
+import { autonomousPolicy } from '../autonomous'
+import { remoteChatPolicy } from '../remote-policy'
 import { randomUUID } from 'node:crypto'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
@@ -9,12 +9,14 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { isSubagentToolAllowed } from '../tools'
+import { allowedConversationShellEnv, type ConversationShellEnv } from '../conversation-env'
 import type { CodexAppServerClient } from './client'
 import {
   dynamicToolRegistrations,
   type DynamicToolFunctionSpec,
   type DynamicToolRegistrationSpec,
 } from './dynamic-tools'
+import { codexShellEnvironmentConfig } from './host-mcp'
 import { nativeSubagentSuppressionConfig } from './model-catalog-override'
 import {
   codexTextInput,
@@ -109,6 +111,11 @@ export interface RunCodexSubagentArgs {
   /** Reopen this thread instead of starting one. A rejected resume falls back to a fresh thread + fallbackTask. */
   resume?: { threadId: string; fallbackTask: string }
   onThreadStarted?: (info: { threadId: string; resumed: boolean }) => void
+  /**
+   * Shell environment of the parent conversation: a fleet bot's apps display, session bus and browser, so the
+   * programs the child starts open on that bot's screen. Absent or empty keeps the app-server environment.
+   */
+  shellEnvironment?: ConversationShellEnv
 }
 
 export interface CodexSubagentResult {
@@ -438,9 +445,24 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
         cwd: args.cwd,
         approvalPolicy: args.readOnly ? 'untrusted' : args.approvalPolicy,
         sandbox: 'read-only',
-        ...(args.conversationScope === 'standalone' ? { baseInstructions: 'You are a general assistant running a delegated task in a standalone conversation. Use only the tools supplied under inherited permissions. No project or repository context is available.' } : {}),
+        ...(args.conversationScope === 'standalone'
+          ? {
+              baseInstructions:
+                'You are a general assistant running a delegated task in a standalone conversation. Use only the tools supplied under inherited permissions. No project or repository context is available.',
+            }
+          : {}),
         config: {
-          ...(args.conversationScope === 'standalone' ? { project_doc_max_bytes: 0, 'features.skill_search': false, 'skills.include_instructions': false, 'features.skill_mcp_dependency_install': false } : {}),
+          // Sent on start AND resume, like the parent thread's. Only the screen keys pass, and they come first so
+          // no host policy flag below can be replaced.
+          ...codexShellEnvironmentConfig(allowedConversationShellEnv(args.shellEnvironment)),
+          ...(args.conversationScope === 'standalone'
+            ? {
+                project_doc_max_bytes: 0,
+                'features.skill_search': false,
+                'skills.include_instructions': false,
+                'features.skill_mcp_dependency_install': false,
+              }
+            : {}),
           // Flags cover only legacy multi-agent; the effective gate is the app-server process
           // `model_catalog_json` flag (manager.ts). Only the per-thread hint inherited by the child remains here.
           'features.multi_agent': false,
@@ -449,14 +471,28 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
           // visible in the parent message, so they must disable it explicitly.
           'features.image_generation': false,
           ...nativeSubagentSuppressionConfig(),
-          ...(autonomousPolicy('')||remoteChatPolicy('')?{'features.shell_tool':false,web_search:'disabled','features.default_mode_request_user_input':false,'features.apps':false,'features.plugins':false,'skills.include_instructions':false,'features.skill_mcp_dependency_install':false}:{}),
+          ...(autonomousPolicy('') || remoteChatPolicy('')
+            ? {
+                'features.shell_tool': false,
+                web_search: 'disabled',
+                'features.default_mode_request_user_input': false,
+                'features.apps': false,
+                'features.plugins': false,
+                'skills.include_instructions': false,
+                'features.skill_mcp_dependency_install': false,
+              }
+            : {}),
           ...(args.readOnly ? { 'features.shell_tool': false, web_search: 'disabled' } : {}),
         },
         developerInstructions: [
           args.definition.prompt,
           `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-          args.conversationScope === 'standalone' ? 'This is a standalone conversation without project or workspace memory.' : MEMORY_TOOL_GUIDANCE,
-          autonomousPolicy('')?'This is unattended work. Never ask for a plan approval or an answer from a person. Resolve ordinary technical choices; return concrete blockers to the parent. Use only the provided Maestrly tools under the inherited permissions.':'',
+          args.conversationScope === 'standalone'
+            ? 'This is a standalone conversation without project or workspace memory.'
+            : MEMORY_TOOL_GUIDANCE,
+          autonomousPolicy('')
+            ? 'This is unattended work. Never ask for a plan approval or an answer from a person. Resolve ordinary technical choices; return concrete blockers to the parent. Use only the provided Maestrly tools under the inherited permissions.'
+            : '',
           args.readOnly
             ? 'This delegated run is strictly read-only. Do not modify files, execute commands, or spawn subagents.'
             : 'Do not spawn subagents. Return a concise result to the parent when the task is complete.',

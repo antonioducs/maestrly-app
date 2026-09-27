@@ -19,6 +19,7 @@ import type {
   GitHubCopilotSubscriptionManager,
 } from '../../src/main/chat/github-copilot/manager'
 import { runGitHubCopilotChat } from '../../src/main/chat/github-copilot/runner'
+import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -268,107 +269,161 @@ describe('GitHub Copilot host-managed task orchestration', () => {
     ['builtin_codex_subscription', 'gpt-5.6', 'codex'],
     ['builtin_claude_subscription', 'opus[1m]', 'claude'],
     ['openai', 'gpt-5.5', 'byok'],
-  ] as const)('dispatches %s through executor %s and persists snapshot/accounting', async (providerId, modelId, route) => {
+  ] as const)(
+    'dispatches %s through executor %s and persists snapshot/accounting',
+    async (providerId, modelId, route) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd })
+      persistUser(conversation.id)
+      const manager = new FakeManager()
+      const emitted: ChatStreamEvent[] = []
+      const resolvedProfile = profile(providerId, modelId)
+      const definition = {
+        name: 'reviewer',
+        description: 'Reviews code',
+        prompt: 'Review carefully.',
+        source: '.claude/agents/reviewer.md',
+        tools: ['read', 'grep'],
+      }
+      resolveProfileMock.mockResolvedValue({ definition, profile: resolvedProfile })
+      const childResult = {
+        text: `${route} result`,
+        model: { providerId, modelId },
+        usage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
+        ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
+      }
+      runCopilotMock.mockResolvedValue(childResult)
+      runCodexMock.mockResolvedValue(childResult)
+      runClaudeMock.mockResolvedValue(childResult)
+      runByokMock.mockResolvedValue(childResult)
+
+      await runGitHubCopilotChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd,
+        selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'gpt-5.6-sol' },
+        mode: 'agent',
+        permMode: 'ask',
+        reasoningEffort: 'xhigh',
+        manager: manager as unknown as GitHubCopilotSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(async () => {}), assertDecision: vi.fn(async () => 'once') } as never,
+        questionBroker: { ask: vi.fn(async () => []) } as never,
+        emit: (streamEvent) => emitted.push(streamEvent),
+        signal: new AbortController().signal,
+      })
+
+      expect(resolveProfileMock).toHaveBeenCalledOnce()
+      expect(runCopilotMock).toHaveBeenCalledTimes(route === 'copilot' ? 1 : 0)
+      expect(runCodexMock).toHaveBeenCalledTimes(route === 'codex' ? 1 : 0)
+      expect(runClaudeMock).toHaveBeenCalledTimes(route === 'claude' ? 1 : 0)
+      expect(runByokMock).toHaveBeenCalledTimes(route === 'byok' ? 1 : 0)
+      expect(manager.createCalls[0].customAgents).toBeUndefined()
+      expect(manager.createCalls[0].availableTools).toContain('custom:task')
+      expect(manager.createCalls[0].availableTools).not.toContain('builtin:task')
+
+      const completed = emitted.find(
+        (streamEvent) =>
+          streamEvent.kind === 'tool-state' &&
+          streamEvent.toolCallId === 'managed-task-1' &&
+          streamEvent.state.status === 'completed'
+      )
+      expect(completed).toMatchObject({
+        state: {
+          status: 'completed',
+          output: `${route} result`,
+          sub: {
+            profile: resolvedProfile,
+            usage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1 },
+            ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
+            durationMs: expect.any(Number),
+          },
+        },
+      })
+      expect(emitted.find((streamEvent) => streamEvent.kind === 'finish')).toMatchObject({
+        usage: {
+          usageVersion: 2,
+          input: 40,
+          output: 8,
+          cachedInput: 10,
+          subInput: 7,
+          subOutput: 3,
+          subCachedInput: 2,
+          subCacheCreate: 1,
+          subagentUsage: [
+            {
+              providerId,
+              modelId,
+              input: 7,
+              output: 3,
+              cachedInput: 2,
+              cacheCreate: 1,
+              ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
+            },
+          ],
+        },
+      })
+      const persistedTask = listChatMessages(conversation.id)
+        .flatMap((message) => message.parts)
+        .find((part) => part.type === 'tool' && part.toolCallId === 'managed-task-1')
+      expect(persistedTask).toMatchObject({
+        state: { status: 'completed', sub: { profile: resolvedProfile, durationMs: expect.any(Number) } },
+      })
+      if (route === 'codex') {
+        expect(toolSetRuntimesMock).toHaveBeenCalledOnce()
+        expect(registerCodexRouteMock).toHaveBeenCalledOnce()
+      }
+    }
+  )
+
+  it('passes the screen of the parent bot conversation to a native Codex child', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })
     persistUser(conversation.id)
-    const manager = new FakeManager()
-    const emitted: ChatStreamEvent[] = []
-    const resolvedProfile = profile(providerId, modelId)
-    const definition = {
-      name: 'reviewer',
-      description: 'Reviews code',
-      prompt: 'Review carefully.',
-      source: '.claude/agents/reviewer.md',
-      tools: ['read', 'grep'],
-    }
-    resolveProfileMock.mockResolvedValue({ definition, profile: resolvedProfile })
-    const childResult = {
-      text: `${route} result`,
-      model: { providerId, modelId },
-      usage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
-      ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
-    }
-    runCopilotMock.mockResolvedValue(childResult)
-    runCodexMock.mockResolvedValue(childResult)
-    runClaudeMock.mockResolvedValue(childResult)
-    runByokMock.mockResolvedValue(childResult)
-
-    await runGitHubCopilotChat({
-      conversationId: conversation.id,
-      projectId: workspace.id,
-      cwd,
-      selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'gpt-5.6-sol' },
-      mode: 'agent',
-      permMode: 'ask',
-      reasoningEffort: 'xhigh',
-      manager: manager as unknown as GitHubCopilotSubscriptionManager,
-      accountIdentity: identity,
-      broker: { assert: vi.fn(async () => {}), assertDecision: vi.fn(async () => 'once') } as never,
-      questionBroker: { ask: vi.fn(async () => []) } as never,
-      emit: (streamEvent) => emitted.push(streamEvent),
-      signal: new AbortController().signal,
-    })
-
-    expect(resolveProfileMock).toHaveBeenCalledOnce()
-    expect(runCopilotMock).toHaveBeenCalledTimes(route === 'copilot' ? 1 : 0)
-    expect(runCodexMock).toHaveBeenCalledTimes(route === 'codex' ? 1 : 0)
-    expect(runClaudeMock).toHaveBeenCalledTimes(route === 'claude' ? 1 : 0)
-    expect(runByokMock).toHaveBeenCalledTimes(route === 'byok' ? 1 : 0)
-    expect(manager.createCalls[0].customAgents).toBeUndefined()
-    expect(manager.createCalls[0].availableTools).toContain('custom:task')
-    expect(manager.createCalls[0].availableTools).not.toContain('builtin:task')
-
-    const completed = emitted.find(
-      (streamEvent) =>
-        streamEvent.kind === 'tool-state' &&
-        streamEvent.toolCallId === 'managed-task-1' &&
-        streamEvent.state.status === 'completed'
-    )
-    expect(completed).toMatchObject({
-      state: {
-        status: 'completed',
-        output: `${route} result`,
-        sub: {
-          profile: resolvedProfile,
-          usage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1 },
-          ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
-          durationMs: expect.any(Number),
+    setConversationShellEnv(conversation.id, {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    try {
+      resolveProfileMock.mockResolvedValue({
+        definition: {
+          name: 'reviewer',
+          description: 'Reviews code',
+          prompt: 'Review carefully.',
+          source: '.claude/agents/reviewer.md',
+          tools: ['read', 'grep'],
         },
-      },
-    })
-    expect(emitted.find((streamEvent) => streamEvent.kind === 'finish')).toMatchObject({
-      usage: {
-        usageVersion: 2,
-        input: 40,
-        output: 8,
-        cachedInput: 10,
-        subInput: 7,
-        subOutput: 3,
-        subCachedInput: 2,
-        subCacheCreate: 1,
-        subagentUsage: [
-          {
-            providerId,
-            modelId,
-            input: 7,
-            output: 3,
-            cachedInput: 2,
-            cacheCreate: 1,
-            ...(route === 'claude' ? { runtimeEstimatedCostUsd: 0.005 } : {}),
-          },
-        ],
-      },
-    })
-    const persistedTask = listChatMessages(conversation.id)
-      .flatMap((message) => message.parts)
-      .find((part) => part.type === 'tool' && part.toolCallId === 'managed-task-1')
-    expect(persistedTask).toMatchObject({
-      state: { status: 'completed', sub: { profile: resolvedProfile, durationMs: expect.any(Number) } },
-    })
-    if (route === 'codex') {
-      expect(toolSetRuntimesMock).toHaveBeenCalledOnce()
-      expect(registerCodexRouteMock).toHaveBeenCalledOnce()
+        profile: profile('builtin_codex_subscription', 'gpt-5.6'),
+      })
+      runCodexMock.mockResolvedValue({
+        text: 'codex result',
+        model: { providerId: 'builtin_codex_subscription', modelId: 'gpt-5.6' },
+      })
+
+      await runGitHubCopilotChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd,
+        selection: { providerId: 'builtin_github_copilot_subscription', modelId: 'gpt-5.6-sol' },
+        mode: 'agent',
+        permMode: 'ask',
+        reasoningEffort: 'xhigh',
+        manager: new FakeManager() as unknown as GitHubCopilotSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(async () => {}), assertDecision: vi.fn(async () => 'once') } as never,
+        questionBroker: { ask: vi.fn(async () => []) } as never,
+        emit: () => {},
+        signal: new AbortController().signal,
+      })
+
+      expect(runCodexMock).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          shellEnvironment: { DISPLAY: ':3', BROWSER: '/tmp/synthetic-bot-a/browser' },
+        })
+      )
+    } finally {
+      setConversationShellEnv(conversation.id, null)
     }
   })
 

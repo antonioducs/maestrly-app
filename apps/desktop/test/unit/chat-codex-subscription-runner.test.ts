@@ -3896,6 +3896,84 @@ describe('Codex subscription runner', () => {
     }
   })
 
+  it('starts the native Codex subagent of a bot on that bot screen', async () => {
+    const workspace = makeWorkspace()
+    const botA = makeConversation(workspace.id, {})
+    const plain = makeConversation(workspace.id, {})
+    setConversationShellEnv(botA.id, {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    const delegatedChildConfig = async (conversationId: string, cwd: string): Promise<Record<string, unknown>> => {
+      persistUser(conversationId, `user_screen_${conversationId}`, 'Delegate the investigation', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_root_screen', notifications: [] })
+      client.queueTurn({
+        turnId: 'turn_child_screen',
+        notifications: [
+          {
+            method: 'item/agentMessage/delta',
+            params: { threadId: 'thread_2', turnId: 'turn_child_screen', itemId: 'child_answer', delta: 'result' },
+          },
+          completedNotification('thread_2', 'turn_child_screen'),
+        ],
+      })
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: { name: 'explore', description: 'Explore', prompt: 'Inspect read-only.', source: 'built-in' },
+        profile: {
+          version: 1,
+          agentName: 'explore',
+          effective: {
+            providerId: 'builtin_codex_subscription',
+            modelId: 'gpt-5.6-mini',
+            configuredEffort: 'high',
+            sentEffort: 'high',
+            source: 'conversation-agent',
+            candidateIndex: 0,
+          },
+          attempts: [],
+        },
+      })
+      const args = runArgs(conversationId, workspace.id, cwd, client)
+      args.mode = 'agent'
+      const running = runCodexSubscriptionChat(args)
+
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      await expect(
+        client.serverRequest({
+          id: 'task_screen',
+          method: 'item/tool/call',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_root_screen',
+            itemId: 'task_screen',
+            callId: 'task_screen',
+            tool: 'task',
+            arguments: { agent: 'explore', prompt: 'Map the authentication flow.' },
+          },
+        })
+      ).resolves.toMatchObject({ success: true })
+      client.emit(completedNotification('thread_1', 'turn_root_screen'))
+      await running
+      expect(client.startThreadCalls).toHaveLength(2)
+      const child = client.startThreadCalls[1] as { ephemeral?: boolean; config: Record<string, unknown> }
+      expect(child.ephemeral).toBe(true)
+      return child.config
+    }
+    const shellPolicy = (config: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(config).filter(([key]) => key.startsWith('shell_environment_policy.')))
+    try {
+      expect(shellPolicy(await delegatedChildConfig(botA.id, botA.cwd))).toEqual({
+        'shell_environment_policy.set.DISPLAY': ':3',
+        'shell_environment_policy.set.BROWSER': '/tmp/synthetic-bot-a/browser',
+      })
+      expect(shellPolicy(await delegatedChildConfig(plain.id, plain.cwd))).toEqual({})
+    } finally {
+      setConversationShellEnv(botA.id, null)
+    }
+  })
+
   it('resumes the bound thread and calculates new turn usage against the cumulative baseline', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
