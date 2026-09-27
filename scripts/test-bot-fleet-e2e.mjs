@@ -1953,7 +1953,7 @@ async function main() {
     containers[1],
     'node',
     '-e',
-    "process.kill(Number(process.argv[1]), 'SIGTERM')",
+    "process.kill(Number(process.argv[1]), 'SIGKILL')",
     String(beforePid),
   ])
   const recovered = await poll(
