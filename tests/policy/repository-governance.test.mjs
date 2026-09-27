@@ -190,6 +190,7 @@ test('Gitleaks uses only constrained current-tree exceptions', () => {
   assert.equal((source.match(/condition = "AND"/g) ?? []).length, 7)
   assert.equal((source.match(/regexTarget = "line"/g) ?? []).length, 7)
   assert.ok(source.includes('^apps/desktop/test/unit/fleet-instance-server\\.test\\.ts$'))
+  assert.ok(source.includes('^tests/policy/repository-governance\\.test\\.mjs$'))
   assert.ok(source.includes("idempotencyKey: '8e0f3c5a-2b6d-4c1e-9f7a-3d5b1c2e4f60',"))
   assert.match(source, /chat-chatgpt-web-\(\?:bridge\|router\)/)
   assert.doesNotMatch(source, /paths\s*=\s*\[\s*'''\^test\/\.\*'''/)

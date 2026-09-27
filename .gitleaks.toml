@@ -63,9 +63,12 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Exact non-secret UUID asserting instance input idempotency routing"
+description = "Exact non-secret UUID asserting instance input routing and its constrained scan policy"
 targetRules = ["generic-api-key"]
 condition = "AND"
-paths = ['''^apps/desktop/test/unit/fleet-instance-server\.test\.ts$''']
+paths = [
+  '''^apps/desktop/test/unit/fleet-instance-server\.test\.ts$''',
+  '''^tests/policy/repository-governance\.test\.mjs$''',
+]
 regexTarget = "line"
 regexes = ['''idempotencyKey: '8e0f3c5a-2b6d-4c1e-9f7a-3d5b1c2e4f60',''']
