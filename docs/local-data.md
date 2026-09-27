@@ -23,8 +23,11 @@ recovery against the only copy of real data.
 ## Memory storage
 
 Desktop durable entries remain in `local_memories`. Its `workspace_id` now names
-a memory space: a workspace or the bot's `bot-self` space. The migration removes
-the workspace foreign key and preserves workspace deletion cleanup through a
+a memory space: a workspace or a fleet bot's own `bot-self:<botId>` space. Bot
+profiles from before environments used a single `bot-self` space, which is
+re-keyed when the bot is adopted (see
+[bot environment data](#bot-environment-data)). The migration removes the
+workspace foreign key and preserves workspace deletion cleanup through a
 trigger. Entries can have source `auto` for automatic extraction. Conversation
 provenance does not make saved entries disappear when a transcript is deleted.
 
@@ -34,13 +37,20 @@ Both are deleted with their conversation. `memory_consolidation_state` tracks
 new automatic entries and the last consolidation per space. Search indexes and
 embeddings remain rebuildable caches; back up the profile for authoritative data.
 
-The [bot gateway](bot-fleet.md#security-and-data) moves to schema v5, adding
-`owner_memories`, `routine_runs` and `meta.owner_memory_revision`. Owner memory
-is shared across bots and survives bot deletion. Routine runs are deleted with
-their routine or bot. The bot's own memory lives in its desktop profile inside
-its persistent home volume. Back up both gateway data and bot homes. A gateway
-binary refuses a database newer than its supported schema; an older gateway
-cannot open v5 unless it supports v5. Downgrade by restoring a matching backup.
+The [bot gateway](bot-fleet.md#security-and-data) database is at schema v6.
+Schema v5 added `owner_memories`, `routine_runs` and
+`meta.owner_memory_revision`. Schema v6 adds `environments` and
+`environment_secrets`, gives each bot an `environment_id` and display `slot`,
+and adds a nullable `environment_id` to owner memory (null for global entries)
+and activity. The migration turns every bot into an environment of one, in one
+transaction with integrity and foreign-key checks. Owner memory survives bot
+deletion; entries that belong to an environment are deleted with that
+environment. Routine runs are deleted with their routine or bot. Each bot's own
+memory lives in its environment's desktop profile inside the environment's
+persistent home volume. Back up both gateway data and environment homes. A
+gateway binary refuses a database newer than its supported schema; an older
+gateway cannot open v6 unless it supports v6. Downgrade by restoring a matching
+backup.
 
 ## MCP configuration
 
@@ -57,19 +67,76 @@ details cannot be read remains listed as needing reconfiguration and never
 connects. Removing a server also removes its secure-store entry. Bot provisioning
 requires secure storage before accepting MCP imports.
 
-## Configuration brought to a bot
+## Configuration brought to an environment
 
 Global skills sent from a Mac are installed atomically in
-`~/.agents/skills/<name>` on the bot, with provenance `fleet` (shown as
-**From a Mac**). They live in the bot's persistent home volume; changing or
-removing the Mac's source does not update that copy automatically.
+`~/.agents/skills/<name>` in the bot environment, with provenance `fleet` (shown
+as **From a Mac**). They live in the environment's persistent home volume and
+are shared by its bots; changing or removing the Mac's source does not update
+that copy automatically.
 
-Subscription slots created for remote sign-in are ordinary bot subscription
-slots, kept in the bot's profile with credentials managed by the corresponding
-provider integration. They survive container replacement with the home volume.
-New slots are removed when their sign-in fails, expires or is cancelled;
-successful slots remain until removed. Back up bot homes together with gateway
-data as described in the [fleet guide](bot-fleet.md#updates-backups-and-removal).
+Subscription slots created for remote sign-in are ordinary subscription slots,
+kept in the environment's profile with credentials managed by the corresponding
+provider integration, and every bot of the environment can use them. They
+survive container replacement with the home volume. New slots are removed when
+their sign-in fails, expires or is cancelled; successful slots remain until
+removed. Back up environment homes together with gateway data as described in
+the [fleet guide](bot-fleet.md#updates-backups-and-removal).
+
+## Bot environment data
+
+A fleet environment's home volume holds one Maestrly profile for all of its
+bots. The environment's model providers and API keys, subscription slots,
+skills, MCP servers and settings are shared, and so are the cookies and site
+data of the browser that bots drive with `browser_*`. Each bot keeps its own
+data under its bot id:
+
+| Bot data | Where it is kept |
+| --- | --- |
+| Membership and display slot | The `fleet.instance.bots` setting |
+| Profile and pause state | The `fleet.instance.bots.<botId>.profile` and `fleet.instance.bots.<botId>.paused` settings |
+| Gateway token | `fleet.instance.bots.<botId>.gatewayToken` in the secure store; only in memory when secure storage is unavailable |
+| Conversation | A standalone conversation of the profile, with working files in `standalone-chats/<conversationId>` |
+| Queue and transcript extras | `fleet-instance/bots/<botId>/inputs.json` and `transcript.json` in the profile |
+| Queued attachments and tool images | `fleet-inputs/<botId>/` and `fleet-images/<botId>/` in the profile |
+| Durable memory | The `bot-self:<botId>` memory space in `local_memories` |
+| Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
+| Session bus of its apps screen | `~/.cache/maestrly-bots/<botId>/` |
+
+Two browsers keep separate data. The browser that a bot drives with `browser_*`
+runs in the environment's Maestrly process, so all bots of the environment share
+its cookies and site logins. Programs on a bot's apps screen open Chromium
+through the `BROWSER` wrapper with that bot's own profile, which shares nothing
+with the `browser_*` browser or other bots' profiles. That profile uses
+Chromium's basic password store rather than the environment's keyring, so treat
+passwords and cookies saved there as unencrypted. Bots of the same environment
+can read all of these files; see the
+[fleet security boundary](bot-fleet.md#security-and-data).
+
+Archiving a bot uninstalls it and keeps its data; only its gateway token is
+removed from the environment until the bot is restored. Deleting it forever
+removes its conversation and working files, its memory space, its folders under
+`fleet-instance`, `fleet-inputs`, `fleet-images`, `~/.config/maestrly-bots` and
+`~/.cache/maestrly-bots`, and its settings. It never removes the environment's
+accounts, skills, MCP servers or other files in the shared home folder.
+
+The first start of a bot image with environments on the home volume of a
+single-bot container from before environments adopts that bot, found by its
+`fleet.instance.profile` setting, as the bot in slot 1:
+
+1. The queue, transcript extras, attachments and images are copied (hard-linked
+   when possible) into the bot's own folders; the legacy files stay
+   authoritative until the next step succeeds.
+2. One database transaction writes the bot's profile and pause settings, re-keys
+   its memories from `bot-self` to `bot-self:<botId>`, records it in slot 1 and
+   removes the legacy settings.
+3. The legacy files are removed. Leftovers are removed at a later start.
+
+A failure before the transaction leaves the legacy bot unchanged, and the next
+start tries again; the adoption can run again safely. It copies no secrets: the
+bot gets its gateway token again when the gateway installs it, and the
+environment keeps the control token and keyring password the container already
+had.
 
 ## Temporary tool output
 

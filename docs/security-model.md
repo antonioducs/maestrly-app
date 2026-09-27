@@ -50,6 +50,7 @@ that isolation is required.
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
 | Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
+| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; loopback-only VNC; screen tickets and takeover |
 
 ## Renderer and IPC boundary
 
@@ -96,23 +97,25 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
-### Configuring bots from a paired device
+### Configuring bot environments from a paired device
 
-Every paired device can configure every bot on its gateway. Selected stored
-credentials flow from the Mac main process through the gateway to the bot;
-provisioning does not retrieve stored bot secrets. The picker receives names,
-IDs, hosts and warnings, and bot account lists include only a last-four-character
-API-key hint. Stored secrets are not exposed to the renderer or recorded in logs,
-activity or gateway idempotency records. Import requests are not stored in the
-idempotency table.
+Every paired device can configure every environment and bot on its gateway.
+Selected stored credentials flow from the Mac main process through the gateway
+to the environment, whose bots all use them; provisioning does not retrieve
+stored secrets. The picker receives names, IDs, hosts and warnings, and account
+lists include only a last-four-character API-key hint. Stored secrets are not
+exposed to the renderer or recorded in logs, activity or gateway idempotency
+records. Import requests are not stored in the idempotency table.
 
 Successful additions and updates through provisioning, and subscription, skill
-and MCP removals, record `bot_configured` activity with the paired device's name
-and counts only. Unchanged imports and interactive logins do not create this
-activity; the existing API-key removal route does not create it either. Copilot
-and Cursor imports share the same credential between Mac and bot. Codex, Claude
-and Grok sign in to separate bot sessions. Accounts and MCP imports are refused
-when secure storage is unavailable on the bot.
+and MCP removals, record `bot_configured` activity on the environment with the
+paired device's name and counts only, also when a Mac from before environments
+configures one of its bots. Unchanged imports and interactive logins do not
+create this activity; the existing API-key removal route does not create it
+either. Copilot and Cursor imports share the same credential between Mac and
+environment. Codex, Claude and Grok sign in to separate sessions in the
+environment. Accounts and MCP imports are refused when secure storage is
+unavailable in the environment.
 
 Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
 `claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
@@ -120,14 +123,14 @@ subdomains for Grok. The Mac's callback relay binds only to loopback, accepts th
 attempt's exact callback path and closes on completion, cancellation or expiry.
 It never renders bot-provided content and redirects only to allowed provider
 origins; other responses use the Mac's own completion or failure page. Codex
-local success redirects are followed inside the bot, keeping tokens in those
-URLs on the bot.
+local success redirects are followed inside the environment, keeping tokens in
+those URLs there.
 
 MCP URLs, headers, commands, arguments and environment values are encrypted at
-rest when secure storage is available, on both Mac and bot. General desktop MCP
-configuration retains an inline fallback when secure storage is unavailable or
-a secure write fails; unreadable encrypted entries are never connected. See
-[MCP storage](local-data.md#mcp-configuration) and the
+rest when secure storage is available, on both Mac and bot environment. General
+desktop MCP configuration retains an inline fallback when secure storage is
+unavailable or a secure write fails; unreadable encrypted entries are never
+connected. See [MCP storage](local-data.md#mcp-configuration) and the
 [fleet security boundary](bot-fleet.md#security-and-data).
 
 ## Commands, files, and Git
@@ -160,6 +163,48 @@ random tokens. The editor token file receives best-effort owner-only permissions
 The ChatGPT bridge uses a random per-session path and validates loopback hosts.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
+
+## Bot environments
+
+A fleet environment is one Linux container running one Maestrly process for up
+to eight bots. The environment, not the bot, is the fleet's isolation boundary.
+See [environments](bot-fleet.md#environments) for what its bots share.
+
+- **Inside an environment, bots trust each other.** They run as the same Linux
+  user with one home folder, one credential store and keyring, one set of
+  accounts, skills and MCP servers, and one browser session for `browser_*`. A
+  bot that runs commands can read and modify its neighbours' files,
+  conversations, memories, queued inputs, browser profiles and stored
+  credentials, operate their displays and programs, and use their gateway
+  tokens to call the gateway as them, for example to message a peer or save the
+  environment's owner memory. Approval ceilings, **Can talk to** grants, per-bot
+  memory spaces and per-bot displays limit each bot's own tools; they are not a
+  security boundary between bots of one environment.
+- **Environments are separated** by their own container, home volume, keyring
+  and control token, and each bot calls the gateway with its own gateway token.
+  The gateway derives a bot's environment from that token, never from the
+  request. This separates ordinary activity but is not a hostile-code boundary
+  against the Docker host.
+- **The network is shared.** Environment containers and the gateway share one
+  Docker bridge network, and Maestrly does not filter traffic between
+  containers: a service a bot starts on a network port can be reached from other
+  environments. The gateway's public API refuses fleet-network clients, every
+  control-server request needs the environment's control token, and VNC servers
+  start on demand and listen only on each container's loopback.
+- **Screens.** Takeover holds exactly one bot, and control of a bot's browser
+  area or apps screen requires that device's takeover. The environment screen
+  shows only Maestrly's settings, so a paired device can control it without a
+  takeover. The browser areas and the environment screen share one display, and
+  the gateway allows one control session on it per environment at a time; each
+  apps screen is a separate display with its own input.
+- **Browsers.** The browser that bots drive with `browser_*` keeps one set of
+  cookies and site logins for the whole environment. Programs on a bot's apps
+  screen open Chromium with a separate per-bot profile that uses Chromium's
+  basic password store, which the keyring does not protect.
+- **Secrets** flow only from the Mac through the gateway to the environment and
+  are never returned. The gateway keeps each environment's control token and
+  keyring password and each bot's gateway token in plaintext in its database;
+  host root and anyone who controls the Docker socket can read them.
 
 ## MCP, skills, and memory
 
@@ -194,15 +239,18 @@ rules.
 
 ## Agent and bot memory
 
-Fleet owner memory lives in the gateway and is included in every bot's context;
-it is not private to the authoring bot. Under the owner's direct-write policy,
-`memory_upsert`, `memory_archive`, `memory_restore`, `owner_memory_save`,
-`owner_memory_forget` and `routine_report` run without approval prompts in bot
-conversations. The owner reviews changes on the Mac. Owner-memory writes carry
-author and origin information; replacement and archival preserve history.
-`owner_memory_forget` archives, while permanent local deletion with
-`memory_forget` retains the normal approval gate. Read-only memory and history
-tools and host recall never prompt.
+Fleet owner memory lives in the gateway. Global entries are included in every
+bot's context and an environment's entries in the context of that environment's
+bots; no entry is private to the authoring bot. A bot's saves belong to its
+environment, which the gateway derives from the bot's gateway token, and a bot
+can replace or archive only entries of its own environment. Under the owner's
+direct-write policy, `memory_upsert`, `memory_archive`, `memory_restore`,
+`owner_memory_save`, `owner_memory_forget` and `routine_report` run without
+approval prompts in bot conversations. The owner reviews changes on the Mac.
+Owner-memory writes carry author and origin information; replacement and
+archival preserve history. `owner_memory_forget` archives, while permanent local
+deletion with `memory_forget` retains the normal approval gate. Read-only memory
+and history tools and host recall never prompt.
 
 The gateway checks saved owner-memory content for invisible or bidirectional
 control characters and recognized prompt-injection phrases. Extracted memories
@@ -214,12 +262,14 @@ memory is correct or safe. Recalled blocks are framed as evidence to check, not
 instructions overriding system or repository rules.
 
 History tools read only their calling conversation; the bot-memory proxy exposes
-only that bot's own space. Hidden memory blocks are excluded from history tool
-output and extraction. Automatic extraction and consolidation send condensed
-history or stored memories to the selected memory model (the compaction model
-for bots), consume its quota and record usage. Review shared owner memory in
-**Bots → Memory about you**, and each bot's memory in **Settings → Bot memory**.
-See [chat memory](chat-context.md#automatic-memory-saving) and
+only that bot's own space. These are tool scopes, not isolation from another bot
+of the same environment that runs commands. Hidden memory blocks are excluded
+from history tool output and extraction. Automatic extraction and consolidation
+send condensed history or stored memories to the selected memory model (the
+compaction model for bots), consume its quota and record usage. Review shared
+owner memory in **Bots → Memory about you**, and each bot's memory in
+**Settings → Bot memory**. See
+[chat memory](chat-context.md#automatic-memory-saving) and
 [storage and retention](local-data.md#memory-storage).
 
 ## AI providers and data egress
@@ -274,6 +324,8 @@ secrets.
   user's authority.
 - Projects are logical scopes within one user profile, not isolation for hostile
   tenants.
+- Bots of one fleet environment are not isolated from each other, and fleet
+  environments share a Docker network without traffic filtering.
 - External MCP servers, skills, provider CLIs, Git helpers, browser pages, and
   downloaded editor/runtime components have independent security behavior.
 - Independently updated Codex releases are trusted through the npm registry's

@@ -1,6 +1,6 @@
 # Remote bots (bot fleet)
 
-A remote bot is a full Maestrly desktop running in its own container on an always-on Linux server. Each bot has its own screen, browser, model accounts, and files. The bots continue working when your Mac is off; you install and update one Mac app to control them. Unlike [an external agent connected to chats on your desktop](grok-connector.md), a fleet bot runs its own desktop on the server and does not depend on your Mac staying open.
+A remote bot is a Maestrly agent that runs on an always-on Linux server and keeps working when your Mac is off. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one Mac app to control them all. Unlike [an external agent connected to chats on your desktop](grok-connector.md), a fleet bot runs on the server and does not depend on your Mac staying open.
 
 ## How it connects
 
@@ -8,24 +8,72 @@ A remote bot is a full Maestrly desktop running in its own container on an alway
 flowchart LR
   Mac[Maestrly on your Mac] <-->|HTTPS over tailnet| Tailnet[Tailscale tailnet]
   Tailnet <-->|public API and screen proxy :7443| Gateway[Bot gateway]
-  Gateway <-->|internal API :7444| Bots[Bot containers on private Docker network]
-  Bots <-->|authenticated screen and control :7680| Gateway
+  Gateway <-->|internal API :7444| Environments[Environment containers on private Docker network]
+  Environments <-->|authenticated screen and control :7680| Gateway
 ```
 
-Compose publishes only the gateway's public listener on server loopback. The internal listener and each bot's control port stay on the Docker network. VNC listens only on loopback inside each bot container. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the bot control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
+Compose publishes only the gateway's public listener on server loopback. The internal listener and each environment's control port stay on the Docker network. VNC listens only on loopback inside each environment container and starts only while a screen is open. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the environment's control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
+
+### Listeners and screens
+
+| Listener or display | Where | Reachable from |
+| --- | --- | --- |
+| Public API and screen proxy, port `7443` | Gateway container | Published by Compose on the server's `127.0.0.1:7443` (`MAESTRLY_GATEWAY_BIND`). Expose it privately, for example with Tailscale Serve. Clients on the fleet network are refused. |
+| Internal API, port `7444` | Gateway container | Fleet Docker network and loopback only. Each bot authenticates with its own gateway token. |
+| Control server, port `7680` | Each environment container | Fleet Docker network. Every request needs that environment's control token, which only the gateway holds. |
+| Environment display `:0`, 3840×2400 | Each environment container | Inside the container. A 3×3 grid of 1280×800 tiles: tile 0 shows the environment screen (Maestrly's settings) and tile *k* the browser of the bot in slot *k*. |
+| Apps displays `:1` to `:8`, 1280×800 | Each environment container, one per bot slot | Inside the container. Each has its own window manager, taskbar, and session bus. |
+| VNC servers, ports `5900` to `5917` and `5952` to `5967` | Each environment container | Container loopback only (`127.0.0.1` and `::1`), without a password. |
+
+The environment screen uses VNC ports 5900 (control) and 5901 (view). The browser area of the bot in slot *k* uses 5900 + 2*k* and 5901 + 2*k*; its apps display uses 5950 + 2*k* and 5951 + 2*k*. A VNC server starts when the gateway opens a screen tunnel for its area and mode, is shared by that area's clients, and stops 60 seconds after its last client leaves. Do not publish any of these ports on the host.
+
+## Environments
+
+An environment is the unit of sharing, isolation, and resources. When you create a bot, choose **New environment** to give it its own container, accounts, files, and site logins, or **Existing environment** to add it to one that is already set up and signed in. A bot joining an existing environment needs no new container and no new sign-ins.
+
+| Shared by the bots of an environment | Each bot's own |
+| --- | --- |
+| The container, its one Maestrly process, and its memory limit | Name, role, instructions, tint, approval ceiling, and **Can talk to** peers |
+| The home folder (`/home/bot`), its files, and the tools installed there | Conversation, queue, pause, and screen takeover |
+| Model accounts: API keys and subscription sign-ins | Model selection and compaction model |
+| Skills and MCP servers | Bot memory, routines, and requests in **Awaiting you** |
+| Site logins: the cookies of the browser the bots drive with `browser_*` | A **Browser** area and an **Apps** screen |
+| The environment screen (Maestrly's settings) | Its gateway token and peer message budget |
+| Start, stop, restart, update, archive, and delete forever | Archive, restore, and delete forever of the bot alone |
+
+An environment holds at most **8 active bots**, one in each display slot from 1 to 8; archiving a bot frees its slot. Its memory limit applies to the whole container. It is the server default (`MAESTRLY_GATEWAY_BOT_MEMORY`, 4 GiB in the supplied Compose file) unless you choose another limit in the environment view. The Mac offers the server default and 2, 4, 8, 12, or 16 GB, which are binary gigabytes (GiB); the gateway API accepts any whole number of bytes from 2 GiB to 64 GiB. A new limit applies to the running container at once, with a swap limit of twice the memory limit. If Docker refuses the change, the container and the setting both keep the previous limit.
+
+**Bots in one environment trust each other.** They run as the same Linux user in the same container, so a bot that can run commands can read the other bots' files and conversations, operate their screens, and act as them toward the gateway. Use separate environments for work that must stay apart, for example one per company or client. See [Security and data](#security-and-data).
+
+Each bot is told which other bots share its environment and that its home folder, files, accounts, skills, MCP servers, and site logins are shared with them, while its conversation, memory, and screens stay its own.
+
+### Screens of a bot
+
+Each bot has two screen areas, shown on the Mac with a **Browser** | **Apps** switch:
+
+- **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Popups and dialogs of a bot's browser, such as a sign-in window, open inside its own area.
+- **Apps** is the bot's own Linux desktop. Its `computer_*` tools, its shells, and the programs it starts use this display. Its `BROWSER` opens Chromium with a separate profile for that bot, so these windows open on the right screen; that Chromium profile does not share the cookies of the **Browser** area.
+
+MCP `stdio` servers belong to the environment and do not receive a bot's display, session bus, or `BROWSER`; neither do GitHub Copilot and Cursor runtimes.
+
+### Existing bots
+
+When the gateway is updated, it moves its database to schema 6 and turns every existing bot into an environment of one, with the bot's id and name. That environment keeps the bot's container (`maestrly-bot-<id>`), home volume (`maestrly-bot-<id>-home`), secrets, conversation, and data; the bot takes slot 1, and existing owner memory stays visible to every bot. An archived bot becomes an archived environment with that bot. Environments created afterwards use `maestrly-env-<id>` and `maestrly-env-<id>-home`.
+
+Until you restart an environment onto the updated bot image, its one bot keeps running as before. Adding a bot, the **Apps** screen, and the environment screen ask you to restart (update) the environment first. On its first start with the updated image, Maestrly adopts the existing bot's data as the bot in slot 1; see [bot environment data](local-data.md#bot-environment-data).
 
 ## Bot conversation controls
 
-The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the bot's installed skills and expand when the bot sends the turn.
+The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the skills installed in the bot's environment and expand when the bot sends the turn.
 
-Use the bot's **Settings → Skills and MCP** on your Mac to bring over global skills and MCP servers or remove them. You can also take control of the **Screen** tab and open Settings in the bot's own Maestrly window. Changes affect the bot's environment; your Mac's local configuration remains separate.
+Skills and MCP servers belong to the environment. Manage them in the environment view's **Skills and MCP** section, or take control of the environment's **Screen** tab and change them in its Maestrly window; the composer's manage actions open that screen. Changes affect every bot in the environment; your Mac's local configuration remains separate.
 
-The bot's own Maestrly window shows only its **Maestrly Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with the bot goes through your Mac. Closing the window hides it; the bot keeps working in its browser window.
+The environment screen shows only Maestrly's **Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with a bot goes through your Mac. It stays within tile 0 of the environment display, so it never covers a bot's browser area. Closing the window hides it; the bots keep working in their browser windows.
 
 ## Requirements
 
-- A Linux server with Docker Engine, enough disk for images and one persistent home volume per bot, and outbound access to your model providers. The included desktop uses CPU rendering; no GPU is required.
-- Budget memory for each bot and its Chromium tabs and apps. The supplied Compose default is a **4 GiB limit per bot** and **1 GiB shared memory**. Actual use varies and rises when browsers or other apps open; monitor the **Server** page before increasing the fleet.
+- A Linux server with Docker Engine, enough disk for images and one persistent home volume per environment, and outbound access to your model providers. The included desktop uses CPU rendering; no GPU is required.
+- Budget memory for each environment and its bots' pages and programs. The supplied Compose default is a **4 GiB limit per environment** and **1 GiB shared memory per environment**. A bot added to an existing environment shares that environment's limit. Actual use varies and rises when browsers or other apps open; see the [measurements](#verify-the-installation) and monitor the **Server** page before adding bots or environments.
 - Tailscale on the server and Mac is recommended. Use a private HTTPS entry point to the gateway; do not expose it directly to the public internet.
 
 ## Trying it locally
@@ -38,7 +86,9 @@ npm run bot-fleet:dev -- pair
 npm run bot-fleet:dev -- seed
 ```
 
-`up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file. When finished, run `npm run bot-fleet:dev -- down` to remove its containers, volumes, and network, including bots created in the app during the session.
+`up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, each in a new environment named after it, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file.
+
+When finished, run `npm run bot-fleet:dev -- down`. It removes the gateway and its data volume, the fake model, and containers and home volumes named `maestrly-bot-<id>` for the bots it finds. It does not yet remove containers and volumes named `maestrly-env-<id>`, which the seeded environments and environments created in the app use: remove those with `docker rm -f maestrly-env-<id>` and `docker volume rm maestrly-env-<id>-home`, then run `down` again to remove the helper's network.
 
 ## Set up the server
 
@@ -50,7 +100,7 @@ npm run bot-fleet:dev -- seed
 
    Use `linux/arm64` on an ARM server; without `--platform` it builds for the machine running it. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`. It installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
 
-2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the bot memory limit, and shared memory if needed. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` to the VPS name shown on the Mac's Server page. Start Compose:
+2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the default environment memory limit, and shared memory if needed. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` to the VPS name shown on the Mac's Server page. Start Compose:
 
    ```sh
    docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d
@@ -59,8 +109,8 @@ npm run bot-fleet:dev -- seed
    | `.env` setting | Purpose | Default |
    | --- | --- | --- |
    | `MAESTRLY_GATEWAY_DISPLAY_NAME` | Name shown on the Mac's Server page (up to 64 characters) | Gateway container hostname |
-   | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit per bot | `4g` |
-   | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per bot | `1g` |
+   | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit of each environment that has no limit of its own | `4g` |
+   | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per environment | `1g` |
 
 3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
 
@@ -68,7 +118,7 @@ npm run bot-fleet:dev -- seed
    tailscale serve --bg https / http://127.0.0.1:7443
    ```
 
-   Check the resulting Tailscale HTTPS address and current `tailscale serve` syntax. Keep host port 7443 on loopback; do not publish 7444, 7680, 5900, or 5901.
+   Check the resulting Tailscale HTTPS address and current `tailscale serve` syntax. Keep host port 7443 on loopback; do not publish 7444, 7680, or any VNC port from 5900 to 5967.
 
 4. Run diagnostics, then create a one-use pairing code (valid for ten minutes):
 
@@ -77,76 +127,115 @@ npm run bot-fleet:dev -- seed
    docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
    ```
 
-5. On the Mac, open **Settings → Bot server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
+5. On the Mac, open **Settings → Bot server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every environment and bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
 
 ### Updates, backups, and removal
 
-Build both images from the target release and set both image tags in `.env`. Recreate the gateway with `docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d --force-recreate` (`--force-recreate` also covers rebuilding the same `:local` tag). Then restart each bot from the Mac's **Server** page or its menu to move it to the new image. Restart replaces the bot container and keeps its existing home volume, including accounts, logins, files, and conversation. Running bots stay on their current image until you restart them. The **Server** page compares the gateway-reported version with the Mac version; a mismatch is a compatibility warning, not proof of the bot image version. A separate protocol incompatibility prevents the client from connecting.
+Build both images from the target release and set both image tags in `.env`. Recreate the gateway with `docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d --force-recreate` (`--force-recreate` also covers rebuilding the same `:local` tag). Then restart each environment from the Mac's **Server** page or with **Restart environment** in its environment view to move it to the new image. A restart acts on every bot in the environment, and the Mac names them before you confirm. When the configured image changed, the restart replaces the container; otherwise it restarts the same one. Either way the home volume keeps accounts, site logins, files, and every bot's conversation. Running environments stay on their current image until you restart them. The **Server** page compares the version each bot reports with the Mac version; a mismatch is a compatibility warning, not proof of the bot image version. A separate protocol incompatibility prevents the client from connecting.
 
-Back up the Compose `gateway-data` volume and **every** Docker volume named `maestrly-bot-<bot-id>-home`. The former contains pairing records, bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains each bot's desktop profile, accounts, browser state, conversation, and files. Preserve volume contents and permissions, and restore the gateway data and matching bot homes together before starting the service. Keep backups private. Archived bots retain their home volume and server history.
+Back up the Compose `gateway-data` volume and **every** environment home volume: `maestrly-env-<environment-id>-home`, and `maestrly-bot-<bot-id>-home` for environments that were single bots before the update. The former contains pairing records, environment and bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains the environment's desktop profile, accounts, site logins, browser profiles, files, and each of its bots' conversation, queue, and memory. Preserve volume contents and permissions, and restore the gateway data and matching home volumes together before starting the service. Keep backups private. Archived environments keep their home volume and server history; a bot archived on its own keeps its data in its environment's home volume.
 
-To remove a Mac's access, revoke its device or **Disconnect** it in Settings. To retire a bot, **Archive** it in its **Settings** tab; this stops and removes the container while preserving its files and history. Archived bots use no memory and do not run their routines.
+To remove a Mac's access, revoke its device or **Disconnect** it in Settings.
 
-**Bot server → Archived** lists archived bots:
+**Archive a bot** from its **Settings** tab. This archives only that bot: its environment's Maestrly uninstalls it and stops its screens, and its slot becomes free. Its conversation, memory, and files stay in the environment's home volume, and its routines no longer run. The environment and its other bots keep running. An environment keeps running, and using memory, even after its last bot is archived; stop or archive the environment to free that memory.
 
-- **Restore** recreates the container on the kept home volume, with the bot's accounts, conversation, and files. It reconnects the bot to peers that are still active, and its routines resume from the next scheduled time; runs missed while it was archived are not replayed.
-- **Delete forever** asks you to type the bot's name. It then removes the home volume and its gateway routines, routine runs, peer messages, and activity. Shared owner memory survives bot deletion. This cannot be undone, and a new bot with the same name can reuse its id.
+**Archive an environment** from its environment view. This stops and removes its container, keeps its home volume, and archives every bot in it. An archived environment uses no memory, and its bots' routines do not run.
 
-If a bot's home volume was removed outside Maestrly, the list says so, and a restored bot starts empty.
+**Bot server → Archived environments** lists archived environments with their bots:
 
-To remove the installation, stop Compose and explicitly delete the gateway and bot home volumes only after exporting anything you need.
+- **Restore** recreates the container on the kept home volume and brings back the bots archived with it, in their slots. Bots that had been archived on their own before stay archived. Restored bots reconnect to peers that are still active, and their routines resume from the next scheduled time; runs missed while archived are not replayed.
+- **Delete forever** asks you to type the environment's name. It then removes the container, if any, the home volume, and every gateway record of the environment and its bots: routines, routine runs, peer messages, activity, secrets, and owner memory entries scoped to that environment. Global owner memory survives. This cannot be undone.
+
+**Bot server → Archived bots** lists bots archived on their own from an active environment:
+
+- **Restore** puts the bot back in its environment, in its previous slot when free, otherwise in the lowest free slot. Its environment must not be archived (restore the environment first) and must have a free slot. The bot is installed at once when the environment runs; in a stopped environment it is installed when the environment starts, and a bot that is the only one in its stopped environment starts that environment. It reconnects to peers that are still active.
+- **Delete forever** asks you to type the bot's name and needs its environment running. The environment's Maestrly deletes the bot's conversation, memory, own folders, **Apps** browser profile, and settings; the gateway then deletes its routines, routine runs, peer messages, activity, and gateway token. Files the bot left in the shared home folder, the environment's accounts, skills, and MCP servers, and owner memory stay. A new bot with the same name can reuse its id. When the environment still runs an image from before environments and holds no other bot, deletion removes the whole environment and its home volume, as it did for single-bot containers.
+
+If a home volume was removed outside Maestrly, the lists say so, and a restored environment or bot starts without those files.
+
+To remove the installation, stop Compose and explicitly delete the gateway and environment home volumes only after exporting anything you need.
+
+### Compatibility
+
+The fleet protocol stays at version 1; environments add fields and routes with defaults. The Mac shows environments only when the gateway advertises the `environments` feature.
+
+| Combination | Behavior |
+| --- | --- |
+| Current Mac and gateway, environment on an image from before environments | The environment runs its single bot through its original routes. Adding a bot, the **Apps** screen, and the environment screen ask you to restart the environment first. Archiving that bot holds it until the environment restarts; the restart then uninstalls it and keeps its data. |
+| Mac from before environments, current gateway | Bots list, chat, and configure as before; configuring a bot changes its environment, which its other bots share. **Start**, **Stop**, and **Restart** of a bot act on its environment when the bot is alone in it; otherwise the gateway refuses with "This bot shares its environment. Restart the environment instead." **Screen** shows the bot's browser area only. In an environment on the current bot image, **Log in on the bot's screen** opens Maestrly's settings on the environment screen, which that Mac cannot show; add an API key or bring accounts from the Mac instead. Activity history omits environment entries, and memory figures appear only for bots alone in their environment. That Mac cannot stop or archive environments, so an environment whose bots it archived keeps running. |
+| Current Mac, gateway from before environments | The Mac keeps the interface from before environments: one container per bot, with accounts, skills, and MCP servers in each bot's **Settings**. |
+
+The gateway migrates schema 5 to 6 in place and refuses databases with a newer schema. Older gateways cannot open schema 6; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 ## Use bots on your Mac
 
-The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, bot statuses, and **Awaiting you** requests. Create a bot with **+**; give it a **Name**, **Role**, **What it does**, an approval ceiling, and any peers it **Can talk to**. Container creation continues on the server if you close the dialog.
+The sidebar has **Chats**, **Workspaces**, and **Bots** tabs. **Bots** shows the server, **Memory about you**, **Awaiting you** requests, and your environments, each with its bots listed under it. An environment header shows its name, status, memory, and bot count; select it to open the environment view. Search matches environment names as well as bot names and roles.
 
-Open the bot's **Settings** tab to choose an **Account and model**. Each bot needs its own model account. Use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint. Or choose **Log in on the bot’s screen** and authenticate inside that bot's desktop. Use **Bring from your Mac…** to copy selected API keys, Copilot and Cursor credentials, or sign in to subscriptions as described below. Adding an API key requires secure credential storage inside the bot; otherwise the request is refused.
+Create a bot with **+**. Give it a **Name**, **What it does**, an approval ceiling, and any peers it **Can talk to**, then choose **Where it runs**:
 
-Choose a **Compaction model** in the bot's Settings too. The bot remains in setup and queues messages until this model and its account are available. The chosen model prepares conversation summaries in the background at the configured token interval. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Background compaction settings inside the bot's own Maestrly window are locked and managed from the Mac. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
+- **New environment** creates a container for this bot. The environment's name follows the bot's name until you edit it. Progress shows **Creating container**, **Starting desktop**, **Setting up profile**, and **Ready**. Only a new environment offers **Bring from your Mac**.
+- **Existing environment** adds the bot to an environment you pick from a searchable list. The bot uses that environment's accounts, skills, MCP servers, and site logins. Full environments, and environments on an image from before environments, cannot be picked. Progress shows **Setting up profile** and **Ready**.
+
+**New bot in this environment** in an environment view opens the same dialog with that environment chosen. Creation continues on the server if you close the dialog. Set the bot's **Role** later in its **Settings**.
+
+The environment view has **Overview** and **Screen** tabs:
+
+- **Overview** lists its bots, with **New bot in this environment**; **Environment accounts**; **Skills and MCP**; a link to the environment screen; **Resources**, with memory, CPU, uptime, version, and **Memory limit**; **Start and stop**; and **Archive**. **Restart environment**, **Stop environment**, and **Archive** each ask for confirmation and name every bot they affect.
+- **Screen** shows the environment screen. **Take control** operates it without holding or pausing any bot; **Stop controlling** returns to watching.
+
+A bot's view has **Conversation**, **Screen**, and **Settings** tabs. Its **Settings** keep what belongs to the bot: name, role, instructions, ceiling, peers, **Account and model**, **Compaction**, **Routines**, and **Bot memory**. Its **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
+
+Model accounts belong to the environment. Add them under **Environment accounts** in the environment view: use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from your Mac…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Account and model** among the environment's accounts in its **Settings**.
+
+Choose a **Compaction model** in the bot's Settings too. The bot remains in setup and queues messages until this model and its account are available. The chosen model prepares conversation summaries in the background at the configured token interval. At 90% context use, if no prepared summary fits, the same model summarizes immediately. Its account pays for each summary; the bot's conversation model is not used for portable compaction. The Conversation transcript marks prepared, immediate, and manual compactions and shows their summaries. Use `/compact` in the bot composer to request a manual summary. Compaction settings apply to that bot's conversation only; background compaction settings on the environment screen are locked and managed from the Mac. A runtime's own native in-turn compaction can still use the conversation model and appears as a runtime checkpoint in the transcript.
 
 | View or action | What happens |
 | --- | --- |
 | **Conversation** | Send text or up to eight images, follow the transcript and tool activity, view screenshots and generated images returned by tools, answer questions, and handle approval requests. Messages sent while paused wait. |
 | **Awaiting you** | Collects permission requests, questions, and help requests across bots. You decide; the bot cannot approve for you. |
-| **Screen** | Watch the bot's live desktop without sending input. **Take control** pauses the bot at the next safe step; its active turn may be interrupted. Your keyboard and mouse then operate that server desktop. **Give back** accepts an optional note; the bot is told how long you controlled it, reads the note, takes a fresh screenshot, and continues. If the controller disconnects, control releases automatically after five minutes without a control connection. |
-| **Pause / Resume** | Pause holds the bot and its queued work; resume permits it to continue. Paused routines are skipped. |
-| **Stop / Start / Restart** | Manage the bot's container from its card or the **Server** page. Its home volume remains. |
-| **Archive** | Removes the container and the bot from the active list while retaining its server record and home volume. |
+| **Screen** | Watch the bot's **Browser** area or **Apps** screen without sending input. **Take control** pauses the bot at the next safe step; its active turn may be interrupted. Your keyboard and mouse then operate the area you select. Only one control session at a time can use an environment's browser areas and environment screen, which share one display; a second one shows "Another screen in this environment is being controlled." **Apps** screens have their own pointer and keyboard. **Give back** accepts an optional note; the bot is told how long you controlled it, reads the note, takes a fresh screenshot, and continues. If the controller disconnects, control releases automatically after five minutes without a control connection. |
+| **Pause / Resume** | Pause holds the bot and its queued work; resume permits it to continue. Paused routines are skipped. Other bots in the environment are not affected. |
+| **Start / Stop / Restart** | Act on the whole environment and every bot in it, from the environment view or the **Server** page. The home volume remains. |
+| **Archive** | In a bot's **Settings**, archives that bot only. In the environment view, removes the environment's container and archives every bot in it. Records and the home volume are kept. |
 
 In **Settings → Routines**, give a routine a title and self-contained prompt. Choose a fixed local time, days, and **Time zone** (no selected days means every day), or an interval of 15 minutes to 24 hours. Runs are scheduled on the server even while your Mac is off. A run is skipped if the bot is paused or offline, if the scheduled time was missed by more than 15 minutes, or while the previous run of that routine is still queued or running. Only the first skip of a streak is logged; skipped runs are not replayed later. You can disable, edit, delete, or **Run now**.
 
 Bots can create up to 10 of their own routines through tools, subject to their access ceiling and owner approval. Settings marks routines created by a bot. The owner can edit or delete any routine; a bot can change or delete only routines it created. Each run uses a full model turn and the owner's model quota, so choose the longest useful interval.
 
-**Can talk to** grants a bot access to named peers. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
+**Can talk to** grants a bot access to named peers, in its own or another environment. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
 
-The **Server** page shows versions, CPU, memory, disk, bot resource use, and peer messages. After your Mac reconnects, **While your Mac was off** summarizes activity recorded by the gateway; open a bot to inspect its full conversation.
+The **Server** page shows versions, CPU, memory, disk, and peer messages. With environments, it lists one row per environment, with memory, CPU, uptime, **Restart**, **Stop**, and **Start**, and its bots under it; memory and CPU are measured for the whole environment, and the memory bar has one segment per environment. **Restart** and **Stop** ask for confirmation and name the environment's bots. After your Mac reconnects, **While your Mac was off** summarizes activity recorded by the gateway; open a bot to inspect its full conversation.
 
-The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in that bot's own desktop settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
+The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in the environment's settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
 
 ## Bring from your Mac
 
-In **Create bot**, expand **Bring from your Mac** and select what to send. For an
-existing bot, open **Settings → Bot accounts** or **Settings → Skills and MCP**
-and choose **Bring from your Mac…**. API keys (including their provider format
-and base URL), GitHub Copilot and Cursor credentials, global skills and MCP
-servers are copied. ChatGPT (Codex), Claude and Grok instead start a separate
-sign-in on the bot. Mac model selections and other settings are not imported.
+In **Create bot**, choose **New environment**, expand **Bring from your Mac**,
+and select what to send. For an existing environment, open its environment view
+and choose **Bring from your Mac…** under **Environment accounts** or
+**Skills and MCP**. On a gateway from before environments, use the bot's
+**Settings → Bot accounts** or **Settings → Skills and MCP** instead. API keys
+(including their provider format and base URL), GitHub Copilot and Cursor
+credentials, global skills and MCP servers are copied. ChatGPT (Codex), Claude
+and Grok instead start a separate sign-in in the environment. Mac model
+selections and other settings are not imported. Everything brought over is
+shared by the environment's bots.
 
 After the bot is ready, imports run in order: accounts, each skill, then MCP
 servers, followed by selected sign-ins one at a time. Each imported item reports
-**Added**, **Updated**, **Already there**, or **Failed**. Closing the dialog leaves
-the bot in place; finish configuration from its Settings. Older gateways require
-an update; older bot instances require a restart onto the updated image before
-these controls work.
+**Added**, **Updated**, **Already there**, or **Failed**. Closing the dialog
+leaves the bot in place; finish configuration from the environment view. Older
+gateways require an update; environments on an older bot image require a restart
+onto the updated image before these controls work.
 
 Review warnings before sending. Local API endpoints, localhost or `.local` MCP
 URLs, Mac home paths in arguments or environment values, other absolute command
 paths, and commands needing Docker, Podman, Bun or Deno are not selected by
-default. They may need a reachable endpoint or a Linux installation on the bot.
-Recognized runtime commands such as an absolute path to `npx` or `uvx` are sent
-as their command name. This does not copy their dependencies or rewrite paths in
-arguments. MCP servers with unreadable details must be configured again on the
-Mac before sending.
+default. They may need a reachable endpoint or a Linux installation in the
+environment. Recognized runtime commands such as an absolute path to `npx` or
+`uvx` are sent as their command name. This does not copy their dependencies or
+rewrite paths in arguments. MCP servers with unreadable details must be
+configured again on the Mac before sending.
 
 Each request allows up to 50 accounts or 50 MCP servers. Each skill allows
 400 files and 8 MiB of raw content (the picker labels this “8 MB”), with at most
@@ -162,28 +251,30 @@ otherwise a new account is added. Copilot and Cursor credentials are validated,
 with identical credentials reused, an empty default slot used first, and an
 extra slot created otherwise. Skills replace the same name atomically; MCP
 servers match names without regard to case and update changed configuration.
-Account and MCP imports require secure storage on the bot.
+Account and MCP imports require secure storage in the environment.
 
-Use **Remove** beside an account, skill or MCP server to remove it from the bot.
-Removing a subscription signs it out and removes an extra account slot if it has
-one. The Mac's local copies remain separate; copied credentials can still be
-revoked or expire at the provider. Skills brought over appear as **From a Mac**.
+Use **Remove** beside an account, skill or MCP server to remove it from the
+environment, and so from every bot in it. Removing a subscription signs it out
+and removes an extra account slot if it has one. The Mac's local copies remain
+separate; copied credentials can still be revoked or expire at the provider.
+Skills brought over appear as **From a Mac**.
 
 ## Sign in to subscriptions
 
-In **Settings → Bot accounts**, choose **Sign in with ChatGPT (Codex)**,
-**Sign in with Claude**, or **Sign in with Grok**. The bot gets its own session;
-Maestrly never copies the Mac's Codex, Claude or Grok session. These sessions
-still use the owner's subscription quota. The provider's terms apply to using a
-subscription on a server; a separate bot session does not create another quota.
+Under **Environment accounts**, choose **Sign in with ChatGPT (Codex)**,
+**Sign in with Claude**, or **Sign in with Grok**. The environment gets its own
+session, which its bots share; Maestrly never copies the Mac's Codex, Claude or
+Grok session. These sessions still use the owner's subscription quota. The
+provider's terms apply to using a subscription on a server; a separate session
+does not create another quota.
 
 For Codex and Claude, the Mac opens the provider in your browser and relays the
-loopback callback through the gateway to the bot. The relay redirects only to
-allowlisted provider origins and otherwise shows its own **Done** or failure
-page, never content returned by the bot. If Codex ends on its local
-`http://localhost:1455/success` page while the ChatGPT account still needs setup,
-the bot loads that page itself to finish signing in; tokens in that URL never
-leave the bot.
+loopback callback through the gateway to the environment. The relay redirects
+only to allowlisted provider origins and otherwise shows its own **Done** or
+failure page, never content returned by the environment. If Codex ends on its
+local `http://localhost:1455/success` page while the ChatGPT account still needs
+setup, the environment loads that page itself to finish signing in; tokens in
+that URL never leave the environment.
 
 For Codex, choose **Use a code instead** for device sign-in. This also happens
 automatically if port 1455 is busy on the Mac. If ChatGPT refuses the code, the
@@ -194,74 +285,92 @@ the code and choose **Send code**. This fallback opens automatically when its
 callback port is busy. Grok always uses a device code and opens the pre-filled
 verification page.
 
-Each bot allows one pending sign-in per provider, three in total, lasting up to
-15 minutes. Sign-in uses the default slot when disconnected, or creates an extra
-slot when it is already connected. A slot created for the attempt is removed on
-failure, expiry or cancellation. **Reconnect** signs in to the selected existing
-slot. Wait for the account to show **Connected**, then choose the bot's
-**Account and model** and **Compaction model**.
+Each environment allows one pending sign-in per provider, three in total,
+lasting up to 15 minutes. Sign-in uses the default slot when disconnected, or
+creates an extra slot when it is already connected. A slot created for the
+attempt is removed on failure, expiry or cancellation. **Reconnect** signs in to
+the selected existing slot. Wait for the account to show **Connected**, then
+choose each bot's **Account and model** and **Compaction model**.
 
 ## Toolchain
 
 The bot image includes Node.js 22.22.0 with npm, npx, corepack, pnpm and yarn;
 Python 3.11 with `python`, pip and venv; uv/uvx 0.12.15; mise 2026.9.10; git;
 OpenSSH client; build-essential; ripgrep; fd; jq; sqlite3; zip/unzip; less;
-procps; file; and xz. There is no Docker or sudo inside a bot.
+procps; file; and xz. There is no Docker or sudo inside an environment.
 
-Image tools live outside `/home/bot` and change with image updates. Installs made
-with `npm -g`, `uv tool install`, `pip install --user` or mise live in the bot's
-persistent home and survive container replacement. `NPM_CONFIG_PREFIX` is
-`/home/bot/.local`; `/etc/profile.d/maestrly-toolchain.sh` gives login shells the
-same toolchain paths and npm prefix as the app's non-login shells. Use
-`mise use node@20` for another Node version; once installed, a project's `.nvmrc`
-is honored. Mise also supports installing other Python versions. The bot's
-identity prompt describes these tools and persistence rules. See the
-[operator quick start](../deploy/bot-fleet/README.md#toolchain) for image details.
+Image tools live outside `/home/bot` and change with image updates. Installs
+made with `npm -g`, `uv tool install`, `pip install --user` or mise live in the
+environment's persistent home, are shared by its bots, and survive container
+replacement. `NPM_CONFIG_PREFIX` is `/home/bot/.local`;
+`/etc/profile.d/maestrly-toolchain.sh` gives login shells the same toolchain
+paths and npm prefix as the app's non-login shells. Use `mise use node@20` for
+another Node version; once installed, a project's `.nvmrc` is honored. Mise also
+supports installing other Python versions. The bot's identity prompt describes
+these tools and persistence rules. See the
+[operator quick start](../deploy/bot-fleet/README.md#toolchain) for image
+details.
 
 ## Verify provisioning from your Mac
 
-1. Bring one API key, one global skill and one MCP server to a bot. Check the
-   per-item results and their entries under **Bot accounts** and **Skills and
-   MCP**. Repeat the import to check **Already there** for unchanged items.
+1. Bring one API key, one global skill and one MCP server to an environment.
+   Check the per-item results and their entries under **Environment accounts**
+   and **Skills and MCP**. Repeat the import to check **Already there** for
+   unchanged items.
 2. Sign in with each subscription you use. Check **Connected**, exercise Codex's
    **Use a code instead** and Claude's paste-code fallback, and confirm Grok
-   opens its verification page. Choose the conversation and compaction models,
-   then send a message using the new account.
-3. Ask the bot to list its tool versions, use the imported skill and call the
+   opens its verification page. Choose each bot's conversation and compaction
+   models, then send a message using the new account.
+3. Ask a bot to list its tool versions, use the imported skill and call the
    imported MCP server. Review its tool output; an imported configuration alone
    does not prove that an external server or dependency works.
-4. Restart the bot, then confirm its accounts, skills, MCP servers and a test
-   installation in its home remain. Remove a test item from Settings and confirm
-   it disappears from the bot while the Mac's copy remains.
+4. Restart the environment, then confirm its accounts, skills, MCP servers and a
+   test installation in its home remain. Remove a test item from the environment
+   view and confirm it disappears from the environment while the Mac's copy
+   remains.
 
 ## Bot memory
 
 Each bot has its own durable memory, separate from project memory on your Mac
-and from other bots. Its context includes pinned entries, a title catalog and
-relevant recall, using the [chat memory budgets](chat-context.md#memory-core-and-catalog).
-Background extraction uses the bot's compaction model and records its usage.
-In the bot's **Settings → Bot memory**, inspect entries, pin, archive, restore or
-delete them, and include archived entries in the list. The view returns at most
-200 entries and shows up to 4,000 characters per entry, marking shortened content.
-User messages in the bot conversation show **Recalled: …** when memory was recalled.
+and from the memory of other bots, including bots in the same environment. Its
+context includes pinned entries, a title catalog and relevant recall, using the
+[chat memory budgets](chat-context.md#memory-core-and-catalog). Background
+extraction uses the bot's compaction model and records its usage. In the bot's
+**Settings → Bot memory**, inspect entries, pin, archive, restore or delete
+them, and include archived entries in the list. The view returns at most 200
+entries and shows up to 4,000 characters per entry, marking shortened content.
+User messages in the bot conversation show **Recalled: …** when memory was
+recalled. Memory tools reach only the bot's own memory; this is not a barrier
+against another bot in the same environment that runs commands.
 
 ## Memory about you
 
-Open **Bots → Memory about you** on the Mac to review facts and preferences shared
-by every bot on that gateway. Entries show their author, origin and date. Add or
-edit an entry, archive it, or restore or permanently delete an entry from history.
-The meter tracks a maximum of 4,000 active characters, with 500 characters per
-entry. A save or restore that exceeds the budget fails; replace or archive stale
-entries first. These entries survive deletion of the bot that wrote them.
+Open **Bots → Memory about you** on the Mac to review facts and preferences
+about you. An entry is **All bots** (global) or belongs to one environment,
+whose bots alone see it. Entries you add are global unless you choose an
+environment in **Who sees it**; entries a bot saves belong to that bot's
+environment. Use **Make global** to share an environment's entry with every bot.
+Entries from before environments stay global. Entries show who sees them, their
+author, origin and date. Add or edit an entry, archive it, or restore or
+permanently delete an entry from history.
+
+Each bot's context holds the global entries and those of its environment, up to
+4,000 characters in total, with 500 characters per entry. The meter shows the
+largest such total across your environments. A save, restore, or change of scope
+that would exceed it fails; replace or archive stale entries first. Entries
+survive deletion of the bot that wrote them; deleting an environment forever
+deletes the entries that belong to it.
 
 Bots can save or replace entries with `owner_memory_save`; `owner_memory_forget`
-archives an entry with a reason of up to 300 characters. Both accept the short id
-a bot sees in its memory (a unique prefix of at least eight characters). Saving
-text that is already active returns the existing entry; replacing an entry with
-another entry's text retires it in favor of that entry. Bot changes appear in
-activity. Before a turn, the bot fetches owner memory with a 1,000 ms timeout
-inside the 1,500 ms turn-memory budget, falling back to its last good copy on
-failure. Changes reach the context through memory updates or a rebuilt core.
+archives an entry with a reason of up to 300 characters. A bot can replace or
+archive only entries of its own environment, never global entries or other
+environments' entries. Both tools accept the short id a bot sees in its memory
+(a unique prefix of at least eight characters). Saving text that is already
+active returns the existing entry; replacing an entry with another entry's text
+retires it in favor of that entry. Bot changes appear in activity. Before a
+turn, the bot fetches owner memory with a 1,000 ms timeout inside the 1,500 ms
+turn-memory budget, falling back to its last good copy on failure. Changes reach
+the context through memory updates or a rebuilt core.
 
 ## Routine history
 
@@ -282,50 +391,61 @@ input; completed and cancelled are final.
 
 | Tool | Scope |
 | --- | --- |
-| `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own Linux screen. |
-| `browser_*` | Use the browser in its own container. |
-| Terminal, files, and Maestrly chat tools | Work inside its own container and home, subject to permissions and the selected model's capabilities. |
+| `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own **Apps** screen. |
+| `browser_*` | Use its own browser window in its **Browser** area. Cookies and site logins are shared with the other bots of its environment. |
+| Terminal, files, and Maestrly chat tools | Work in its environment's container and shared home, with its **Apps** screen as the display, subject to permissions and the selected model's capabilities. |
 | `memory_search`, `memory_list`, `memory_read`, `history_search`, `history_read` | Read its memory and its own conversation history without approval prompts. |
 | `memory_upsert`, `memory_archive`, `memory_restore` | Save, archive and restore its own memory without approval prompts. |
-| `owner_memory_save`, `owner_memory_forget`, `routine_report` | Update shared owner memory and report a routine run without approval prompts. |
+| `owner_memory_save`, `owner_memory_forget`, `routine_report` | Update its environment's owner memory and report a routine run without approval prompts. |
 | `memory_forget` | Permanently delete its own memory, subject to the normal approval gate. |
 | `request_owner_help` | Ask you to help with its screen or a blocking issue. |
 | `bot_peers_list`, `bot_peers_send` | List and message only peers granted through **Can talk to**, within gateway budgets. |
 
-A bot cannot directly use your Mac's screen, browser, terminal, accounts, or local files. It can use credentials and files you explicitly bring to its own environment. Its approval ceiling bounds how far it may run without you:
+A bot cannot directly use your Mac's screen, browser, terminal, accounts, or local files. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
 
 | Ceiling | Automatic work | Waits for you |
 | --- | --- | --- |
 | **Ask for approval** | Unprotected reading. | Other edits, commands, and new sites. |
 | **Approve for me** | Reads and edits its own folder. | Commands and work outside that folder. |
-| **Full access** | Commands and edits in its container. | Plan approval still remains yours. |
+| **Full access** | Commands and edits in its environment's container, including files other bots use. | Plan approval still remains yours. |
 
 The memory writes listed above are explicit bot exemptions. Permanent deletion with
 `memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
-The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**.
+The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Can talk to** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
 
 ## Security and data
 
-Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the Mac stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. Tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
+Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the Mac stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. Tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
 
-The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores bot profiles, routines and prompts, routine runs, shared owner memory, activity, peer messages, device token hashes, and **plaintext** per-bot control tokens, gateway tokens, and keyring passwords needed to restart containers. Host root can read them. Bot API keys pass through the gateway when added but are **not stored** there; the bot stores them in its own encrypted credential store inside its home volume. The per-bot keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot names or error text.
+The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores environment and bot profiles, routines and prompts, routine runs, owner memory, activity, peer messages, device token hashes, and **plaintext** secrets needed to restart containers: a control token and keyring password per environment and a gateway token per bot. Host root can read them. API keys pass through the gateway when added but are **not stored** there; the environment stores them in its own encrypted credential store inside its home volume. Each environment's keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Secrets flow only from the Mac through the gateway to the environment and are never returned. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot or environment names or error text.
 
-The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. Each bot has its own container and home volume; this separates ordinary bot activity from other bots and your Mac, but is not a hostile-code security boundary against the Docker host. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the bot desktop runs with `sandbox: false`: a compromised page in that renderer can control that bot's container, though its normal container boundary does not give it your Mac or direct access to the server host. No bot control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the bot control server authenticates screen tunnels, and control tunnels require a takeover hold. Bots cannot use the gateway's public API, while the internal API accepts only fleet network and loopback clients. Device revocation closes active screen and event streams and gives back any screen held by that device. See the broader [security model](security-model.md).
+**Inside an environment, bots trust each other.** Its bots run in one container as the same Linux user, with one home folder and one unlocked keyring. A bot that can run commands, because of **Full access** or a command you approved, can read and change the other bots' files, conversations, memories, browser profiles, and stored credentials; operate their screens and programs; and use their gateway tokens to act as them toward the gateway, for example to send a peer message or save owner memory as another bot. The approval ceiling and **Can talk to** limit each bot's own tools and messages but are not a security boundary inside an environment. Put bots that must not share data or credentials in separate environments.
 
-Memory upgrades move the gateway database to schema v5. Older gateways that do
-not support v5 refuse to open it; back up the gateway volume before upgrading and
+**Environments are separated from each other** as bots were before environments: each has its own container, home volume, keyring, and control token. This separates ordinary activity, but it is not a hostile-code security boundary against the Docker host. All environment containers share the fleet Docker bridge network, and Maestrly does not filter traffic between them: a program that a bot starts and that listens on a network port can be reached from other environments. The gateway protects its own services on that network: its public API refuses fleet-network clients, the internal API accepts only fleet-network and loopback clients and identifies each bot by its gateway token, every control-server request needs the environment's control token, and VNC listens only on each container's loopback.
+
+The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the environment runs with `sandbox: false`: a compromised page in that renderer can control the environment's container and every bot in it, though its normal container boundary does not give it your Mac or direct access to the server host. No control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the control server authenticates screen tunnels. Control of a bot's **Browser** or **Apps** screen requires your takeover of that bot. Control of the environment screen needs no takeover, because it shows only Maestrly's settings, but it shares a display with the bots' browser areas: the gateway allows one control session on that display per environment at a time. Takeover holds exactly one bot. Device revocation closes active screen and event streams and gives back any screen held by that device. Configuration from the Mac is recorded in activity on the environment, with the device name and counts only. See the broader [security model](security-model.md#bot-environments).
+
+Environments move the gateway database to schema v6. Older gateways that do
+not support v6 refuse to open it; back up the gateway volume before upgrading and
 restore a matching backup to downgrade. Keep the Mac, gateway and bot images
-compatible. See [memory storage](local-data.md#memory-storage) and the
+compatible. See [memory storage](local-data.md#memory-storage),
+[bot environment data](local-data.md#bot-environment-data) and the
 [memory security model](security-model.md#agent-and-bot-memory).
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| **setup needed** / **Needs a model account** | Add an API key in the bot's **Settings** tab, or use **Screen** to log in. Choose an account and model. |
-| **Needs a compaction model** | Choose an available compaction model in the bot's **Settings** tab; reconnect its account if it became unavailable. Queued messages resume when setup is complete. |
-| **offline** or **starting** | Check the bot container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart**. |
+| **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Account and model**. |
+| **Needs a compaction model** | Choose an available compaction model in the bot's **Settings** tab; reconnect the environment's account if it became unavailable. Queued messages resume when setup is complete. |
+| **offline** or **starting** | Check the environment's container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart** on the environment. |
+| "This bot shares its environment. Restart the environment instead." | A Mac from before environments, or the API, tried to start, stop, or restart one bot of a shared environment. Use the environment's actions on a current Mac. |
+| "Restart this environment to update it before adding bots." (or before opening a screen or configuring it from the Mac) | The environment still runs a bot image from before environments. Restart it from its environment view or the **Server** page. |
+| **Full (8 bots)** or "This environment already has 8 bots." | Archive a bot of that environment, or choose another environment. |
+| "Another screen in this environment is being controlled." | Another session controls a browser area or the environment screen of that environment. Give back or stop controlling it, then **Try again**. |
+| "Restore its environment first" / "Start its environment first" | An archived bot's environment is archived, or stopped when deleting the bot forever. Restore or start the environment. |
+| "Docker could not change the memory limit" | Docker refused the new limit; the previous one stays. Check the host's memory and the Docker daemon. |
 | **Pairing expired or access was revoked** | Run `pair` again for a fresh code, verify the server address, and check `devices list`. A code can be used only once. |
 | **The server uses an incompatible protocol** | Update the Mac app and both server images to compatible versions. |
 | Screen remains under your control after disconnect | Reconnect and **Give back**, or wait five minutes for automatic release after the control connection is lost. |
@@ -343,7 +463,16 @@ it can refer to the earlier report. Archive the sample owner entry afterward.
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
 - `npm run test:unit --workspace @maestrly/desktop` checks desktop units.
 - `npm run test:e2e --workspace @maestrly/desktop` runs the Electron E2E suite, including `apps/desktop/test/e2e/bot-fleet.spec.ts`, with its usual build and display prerequisites.
-- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real bot containers, and a deterministic local model; it checks pairing, protocol guards, SSE, accounts, model tool calls, approvals, peer delivery, RFB view and control, takeover, pause, a scheduled routine, restart, archive, restore, and permanent deletion. It saves a screen capture under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging.
-- `node scripts/bot-fleet-vnc-probe.mjs <running-bot-container>` checks that the view-only VNC port cannot move the pointer and the control port can. It requires a running bot container and Docker access.
+- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real environments, and a deterministic local model. It checks pairing, protocol guards, SSE, accounts, model tool calls on the apps screen, approvals, peer delivery, RFB view and control, takeover, pause, scheduled and bot-created routines, owner and bot memory, and compaction. It then adds a second bot to one environment and checks that no container is created; that both bots run turns at the same time with their own models, type on their own apps screens at the same time, and share site cookies; the placement of the environment screen; that a second control session on the shared display is refused; archiving and restoring one bot; an environment restart; the separation of the two environments; and archiving and permanently deleting bots and environments. It saves screen captures under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging.
+- `node scripts/bot-fleet-vnc-probe.mjs <running-bot-container>` checks that the view-only VNC port cannot move the pointer and the control port can, in a container running a bot image from before environments, whose two VNC servers are always on. Current images start VNC servers only while a screen is open; the end-to-end test checks their view and control instead.
 
-In a local Docker 29.4 Linux/arm64 VM (10 CPUs, about 16 GiB RAM), the end-to-end run measured **763.7 MiB for inactive Dev** (no model account) and **635.7 MiB for idle Scout** (model account connected) with `docker stats --no-stream` after Scout finished a turn. Both containers had a 4 GiB memory limit. A later Scout sample was 451.3 MiB; memory varies as the desktop settles and browser tabs or apps open.
+In a run of that end-to-end test on a local Linux/arm64 Docker host, with bot images built from this source, synthetic data, the deterministic local model, the default 4 GiB limit, and no screen open, the test measured after memory stopped changing:
+
+| Environment state | cgroup memory | Summed PSS | `docker stats` |
+| --- | --- | --- | --- |
+| One bot, idle after its turns | 587.9 MiB | 479.9 MiB | 472.3 MiB |
+| Two bots, idle, the second before its first turn | 1,044.9 MiB | 792.8 MiB | 727.6 MiB |
+| Two bots, idle after turns that used browser pages and apps windows | 748.7 MiB | 647.4 MiB | 636.6 MiB |
+| No bots, after its only bot was deleted forever | 375.7 MiB | 461.7 MiB | 362.4 MiB |
+
+The first three rows are one environment at different times; the last row is the test's other environment. Readings moved while settling (the one-bot reading fell from about 668 MiB to about 588 MiB), and open pages and programs add memory, so treat these figures as one sample rather than a budget.
