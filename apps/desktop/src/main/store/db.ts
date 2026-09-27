@@ -1239,11 +1239,13 @@ function sanitizeChatUsageLedger(): void {
 }
 
 let transactionSequence = 0
+let transactionDepth = 0
 
 /** Savepoints preserve atomicity for both independent operations and nested migration steps. */
 export function transaction(fn: () => void): void {
   const savepoint = `maestrly_transaction_${++transactionSequence}`
   db.exec(`SAVEPOINT ${savepoint}`)
+  transactionDepth++
   try {
     fn()
     db.exec(`RELEASE SAVEPOINT ${savepoint}`)
@@ -1251,7 +1253,14 @@ export function transaction(fn: () => void): void {
     db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     db.exec(`RELEASE SAVEPOINT ${savepoint}`)
     throw error
+  } finally {
+    transactionDepth--
   }
+}
+
+/** Whether a `transaction` is running: what the connection reads meanwhile may still be rolled back. */
+export function inTransaction(): boolean {
+  return transactionDepth > 0
 }
 
 /** Expose DatabaseSync to focused persistence modules. */

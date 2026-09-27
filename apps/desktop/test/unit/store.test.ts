@@ -11,6 +11,7 @@ import { makeWorkspace, makeConversation } from '../helpers/factories'
 import {
   getDb,
   transaction,
+  inTransaction,
   initStore,
   closeStore,
   insertWorkspace,
@@ -149,7 +150,6 @@ describe('schema and migrations', () => {
     const nomesUnicos = new Set(names)
     expect(names.length).toBe(nomesUnicos.size)
   })
-
 })
 
 describe('conversations.pinned_at migration', () => {
@@ -311,19 +311,7 @@ describe('transaction()', () => {
         .prepare(
           'INSERT INTO conversations (id, workspace_id, name, branch, mode, cwd, status, created_at, archived, last_activity_at, is_multi) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
         )
-        .run(
-          randomUUID(),
-          ws.id,
-          'tx-conv',
-          'main',
-          'local',
-          '/tmp/tx',
-          'idle',
-          Date.now(),
-          0,
-          Date.now(),
-          0
-        )
+        .run(randomUUID(), ws.id, 'tx-conv', 'main', 'local', '/tmp/tx', 'idle', Date.now(), 0, Date.now(), 0)
     })
     const row = getDb().prepare("SELECT COUNT(*) AS n FROM conversations WHERE name = 'tx-conv'").get() as { n: number }
     expect(row.n).toBe(1)
@@ -340,19 +328,7 @@ describe('transaction()', () => {
           .prepare(
             'INSERT INTO conversations (id, workspace_id, name, branch, mode, cwd, status, created_at, archived, last_activity_at, is_multi) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
           )
-          .run(
-            idUnico,
-            ws.id,
-            'rollback-conv',
-            'main',
-            'local',
-            '/tmp/rb',
-            'idle',
-            Date.now(),
-            0,
-            Date.now(),
-            0
-          )
+          .run(idUnico, ws.id, 'rollback-conv', 'main', 'local', '/tmp/rb', 'idle', Date.now(), 0, Date.now(), 0)
         throw new Error('intentional failure during transaction')
       })
     } catch (e) {
@@ -377,19 +353,7 @@ describe('transaction()', () => {
             .prepare(
               'INSERT INTO conversations (id, workspace_id, name, branch, mode, cwd, status, created_at, archived, last_activity_at, is_multi) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
             )
-            .run(
-              id,
-              ws.id,
-              `conv-${id}`,
-              'main',
-              'local',
-              `/tmp/${id}`,
-              'idle',
-              Date.now(),
-              0,
-              Date.now(),
-              0
-            )
+            .run(id, ws.id, `conv-${id}`, 'main', 'local', `/tmp/${id}`, 'idle', Date.now(), 0, Date.now(), 0)
         }
         throw new Error('batch rollback')
       })
@@ -401,6 +365,30 @@ describe('transaction()', () => {
       const row = getDb().prepare('SELECT COUNT(*) AS n FROM conversations WHERE id = ?').get(id) as { n: number }
       expect(row.n).toBe(0)
     }
+  })
+
+  it('tells whether a transaction is running, nested or not, until it ends either way', () => {
+    expect(inTransaction()).toBe(false)
+    const seen: boolean[] = []
+    transaction(() => {
+      seen.push(inTransaction())
+      transaction(() => seen.push(inTransaction()))
+      seen.push(inTransaction())
+      expect(() =>
+        transaction(() => {
+          throw new Error('inner rollback')
+        })
+      ).toThrow('inner rollback')
+      seen.push(inTransaction())
+    })
+    expect(seen).toEqual([true, true, true, true])
+    expect(inTransaction()).toBe(false)
+    expect(() =>
+      transaction(() => {
+        throw new Error('outer rollback')
+      })
+    ).toThrow('outer rollback')
+    expect(inTransaction()).toBe(false)
   })
 })
 
@@ -684,7 +672,7 @@ describe('conversations — CRUD and helpers', () => {
     expect(getConversation('missing-id')).toBeUndefined()
   })
 
-  it('listConversations returns only this workspace\'s conversations and excludes archived entries by default', () => {
+  it("listConversations returns only this workspace's conversations and excludes archived entries by default", () => {
     const ws1 = makeWorkspace()
     const ws2 = makeWorkspace()
 

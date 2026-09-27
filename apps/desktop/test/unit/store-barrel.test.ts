@@ -44,6 +44,7 @@ const STORE_VALUE_EXPORTS = [
   'getSoundSettings',
   'getWorkspace',
   'getWorkspaceByPath',
+  'inTransaction',
   'initLocaleOnFirstRun',
   'initOnboardingFlag',
   'initStore',

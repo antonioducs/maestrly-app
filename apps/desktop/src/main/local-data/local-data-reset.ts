@@ -18,6 +18,7 @@ import { clearAllCursorAgentCleanup } from '../chat/cursor-subscription/session-
 import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
+import { forgetChatStoreCaches } from '../chat/chat-store'
 
 export interface LocalDataResetDeps {
   stopConversation: (id: string) => void | Promise<void>
@@ -146,6 +147,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         db.prepare(`DELETE FROM ${table}`).run()
       }
     })
+    forgetChatStoreCaches()
     databaseCleared = true
   })
   if (!databaseCleared) assertComplete('Local data cleanup was incomplete.')

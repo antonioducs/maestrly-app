@@ -8,7 +8,7 @@ import { normalizeForSearch } from '../memory/relevance'
  * goes in `meta_json`. Idempotent upserts persist the assistant under construction at every checkpoint.
  */
 
-import { getDb } from '../store'
+import { getDb, inTransaction } from '../store'
 import type {
   ChatExecutionScope,
   ChatHistoryPage,
@@ -692,10 +692,21 @@ export function hasChatToolImageOwner(
  * checkpoint without reordering history.
  */
 export function upsertChatMessage(m: StoredChatMessage): void {
-  const existing = getDb().prepare('SELECT seq FROM chat_messages WHERE id = ?').get(m.id) as
-    | { seq: number }
+  const existing = getDb().prepare('SELECT seq, conversation_id FROM chat_messages WHERE id = ?').get(m.id) as
+    | { seq: number; conversation_id: string }
     | undefined
   const seq = existing ? existing.seq : nextSeq(m.conversationId)
+  // An update never moves a row: the conversation that owns it is the one whose row changes.
+  const owner = existing ? existing.conversation_id : m.conversationId
+  noteHistoryStatsWrite(owner, seq)
+  // A message back under the id of a billed, deleted one: the ledger row has a message again, in whichever
+  // conversation it bills.
+  if (!existing && historyStatsOrphans.size) {
+    const billed = getDb().prepare('SELECT conversation_id FROM chat_usage_ledger WHERE message_id = ?').get(m.id) as
+      | { conversation_id: string | null }
+      | undefined
+    if (billed?.conversation_id) noteHistoryStatsLedger(billed.conversation_id)
+  }
   getDb()
     .prepare(
       `INSERT INTO chat_messages (id, conversation_id, role, parts_json, meta_json, seq, created_at)
@@ -711,7 +722,7 @@ export function upsertChatMessage(m: StoredChatMessage): void {
       seq,
       createdAt: m.createdAt,
     })
-  noteContextWrite(m.conversationId, m.parts)
+  noteContextWrite(owner, m.parts)
 }
 
 /** Reads ONE message by ID + conversation; null if absent (clear/delete/truncate). */
@@ -733,6 +744,7 @@ export function updateChatMessageParts(conversationId: string, messageId: string
     .run(JSON.stringify(persistedParts(parts)), messageId, conversationId)
   if (result.changes <= 0) return false
   noteContextWrite(conversationId, parts)
+  noteHistoryStatsWrite(conversationId, getMessageSeq(messageId))
   invalidateBackgroundCompaction(conversationId)
   return true
 }
@@ -987,6 +999,14 @@ export function hasConversationContextMessages(conversationId: string): boolean 
  */
 const contextStarts = new Map<string, { markerId: string | null; markerSeq: number; checkedThrough: number }>()
 
+/** Conversations whose read shortcuts are kept: the least recently kept go first. */
+const KEPT_CONVERSATIONS = 256
+function keep<V>(map: Map<string, V>, conversationId: string, value: V): void {
+  map.delete(conversationId)
+  map.set(conversationId, value)
+  if (map.size > KEPT_CONVERSATIONS) map.delete(map.keys().next().value as string)
+}
+
 /** A write whose parts hold a compaction may move where the context starts, even in an older message. */
 function noteContextWrite(conversationId: string, parts: readonly MessagePart[]): void {
   if (parts.some((part) => part.type === 'compaction')) contextStarts.delete(conversationId)
@@ -1037,7 +1057,7 @@ export function listActiveConversationContextMessages(conversationId: string): S
       ? { markerId: marker.id, markerSeq: marker.seq, checkedThrough: top }
       : { ...start, checkedThrough: top }
   }
-  contextStarts.set(conversationId, start)
+  keep(contextStarts, conversationId, start)
   if (!start.markerId) return listConversationContextMessages(conversationId)
   return (
     db
@@ -1291,111 +1311,205 @@ function textOfParts(partsJson: string): string {
   return out.join('\n')
 }
 
+type HistoryStatsRow = {
+  id: string
+  seq: number
+  meta_json: string | null
+  is_comp: number
+  is_native_comp: number
+  is_main_ctx: number
+}
+// is_comp via raw JSON LIKE (cheap — does NOT parse parts_json, potentially MBs of tool output).
+// Patterns occur only as part keys (user-quoted text is ESCAPED \" by JSON.stringify
+// and cannot match). New native checkpoint deliberately uses `text`: older versions preserve it without treating
+// it as a compaction boundary.
+// is_main_ctx: legacy without executionScope OR kind=conversation — only these affect lastUsage/compaction.
+const HISTORY_STATS_ROWS = `SELECT id, seq, meta_json,
+        CASE WHEN parts_json LIKE '%"type":"compaction"%'
+               OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_comp,
+        CASE WHEN parts_json LIKE '%"strategy":"openai-native"%'
+               OR parts_json LIKE '%"strategy":"claude-native"%'
+               OR parts_json LIKE '%"strategy":"codex-native"%'
+               OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_native_comp,
+        CASE WHEN json_valid(meta_json) <> 1
+               OR json_extract(meta_json, '$.executionScope.kind') IS NULL
+               OR json_extract(meta_json, '$.executionScope.kind') = 'conversation' THEN 1 ELSE 0 END AS is_main_ctx
+ FROM chat_messages WHERE conversation_id = ? AND seq > ? ORDER BY seq ASC`
+
+/** What the rows of a conversation add up to, in seq order. */
+interface HistoryStatsTotals {
+  /** Billing: main + isolated review (each round counts as a real turn). */
+  byModel: Map<string, ChatPerModelUsage>
+  /** The newest main-context usage that measured the context (helper calls do not replace it). */
+  last: { usage: StoredChatUsage; model: ChatModelRef | null; seq: number } | null
+  /**
+   * Main-context compaction milestones from the newest portable one (always effective) on. A provider-bound native
+   * one counts only if the caller confirms its sidecar against the current identity, at the time of the call.
+   */
+  milestones: Array<{ id: string; seq: number; native: boolean; summaryTokens: number; contextWindow: number }>
+}
+const emptyHistoryTotals = (): HistoryStatsTotals => ({ byModel: new Map(), last: null, milestones: [] })
+const copyHistoryTotals = (totals: HistoryStatsTotals): HistoryStatsTotals => ({
+  byModel: new Map([...totals.byModel].map(([key, usage]) => [key, { ...usage }])),
+  last: totals.last,
+  milestones: [...totals.milestones],
+})
+function addHistoryStatsRow(totals: HistoryStatsTotals, r: HistoryStatsRow): void {
+  let meta: MetaJson = {}
+  try {
+    meta = r.meta_json ? JSON.parse(r.meta_json) : {}
+  } catch {
+    meta = {}
+  }
+  const isMainCtx = r.is_main_ctx === 1
+  // Isolated-round compaction does NOT affect main-context occupancy.
+  if (isMainCtx && r.is_comp) {
+    const milestone = {
+      id: r.id,
+      seq: Number(r.seq),
+      native: r.is_native_comp === 1,
+      // Compaction-call output ≈ summary tokens.
+      summaryTokens: meta.usage?.contextInput ?? meta.usage?.output ?? 0,
+      contextWindow: meta.usage?.modelContextWindow ?? 0,
+    }
+    if (milestone.native) totals.milestones.push(milestone)
+    else totals.milestones = [milestone]
+  }
+  const u = parseStoredUsage(meta.usage)
+  if (!u) return
+  // lastUsage / context meter: MAIN context only (isolated rounds do not contaminate percentages).
+  if (isMainCtx && !u.billingOnly) totals.last = { usage: u, model: meta.model ?? null, seq: Number(r.seq) }
+  addHistoryUsage(totals.byModel, u, meta.model ?? { providerId: '', modelId: '' })
+}
+
+/**
+ * Per conversation: the totals of its rows through `throughSeq` (`rows` of them), kept while those rows stay as they
+ * are; the newer rows are read on every call. Writes through this module drop an entry whose rows they touch, and a
+ * write by another connection or another database handle clears them all: on this connection, only this module
+ * writes messages and the ledger once the store is open (startup imports aside, whose insertions a changed row count
+ * catches).
+ */
+const historyStatsPrefixes = new Map<string, { throughSeq: number; rows: number; totals: HistoryStatsTotals }>()
+/** Ledger rows of messages that no longer exist (or never did: auxiliary attempts), per conversation. */
+const historyStatsOrphans = new Map<string, Array<{ usage: StoredChatUsage; model: ChatModelRef }>>()
+/** Rows always read again: a turn changes its newest messages while they stream. */
+const HISTORY_STATS_FRESH_ROWS = 64
+let historyStatsSource: { db: unknown; dataVersion: number } | null = null
+function historyStatsCachesCurrent(): boolean {
+  const db = getDb()
+  const dataVersion = Number((db.prepare('PRAGMA data_version').get() as { data_version: number }).data_version)
+  if (historyStatsSource?.db !== db || historyStatsSource.dataVersion !== dataVersion) {
+    historyStatsPrefixes.clear()
+    historyStatsOrphans.clear()
+    historyStatsSource = { db, dataVersion }
+  }
+  // Totals seen inside a transaction may still be rolled back.
+  return !inTransaction()
+}
+/** Drops every kept total and context start: for a database changed behind the store's back (a reset, tests). */
+export function forgetChatStoreCaches(): void {
+  historyStatsPrefixes.clear()
+  historyStatsOrphans.clear()
+  contextStarts.clear()
+}
+/** A row of the conversation is written: the totals that include it no longer hold. */
+function noteHistoryStatsWrite(conversationId: string, seq: number | null): void {
+  const prefix = historyStatsPrefixes.get(conversationId)
+  if (prefix && (seq === null || seq <= prefix.throughSeq)) historyStatsPrefixes.delete(conversationId)
+}
+/** Messages were deleted, or an attempt billed without a message: the ledger rows without a message changed. */
+function noteHistoryStatsLedger(conversationId: string): void {
+  historyStatsOrphans.delete(conversationId)
+}
+
 /**
  * FULL history summary for context/cost meter (#559). Reads only `meta_json` (no
- * `parts_json`), cheap even in huge conversations. Aggregates usage by provider+model — linear cost means
- * sum tokens per pair and price once == price each turn and sum.
+ * `parts_json`), cheap even in huge conversations: the totals of older rows are kept, so each call reads only the
+ * newest ones. Aggregates usage by provider+model — linear cost means sum tokens per pair and price once == price
+ * each turn and sum.
  */
 export function chatHistoryStats(
   conversationId: string,
   opts: { isNativeCompactionActive?: (messageId: string) => boolean } = {}
 ): StoredChatHistoryStats {
-  // is_comp via raw JSON LIKE (cheap — does NOT parse parts_json, potentially MBs of tool output).
-  // Patterns occur only as part keys (user-quoted text is ESCAPED \" by JSON.stringify
-  // and cannot match). New native checkpoint deliberately uses `text`: older versions preserve it without treating
-  // it as a compaction boundary.
-  // is_main_ctx: legacy without executionScope OR kind=conversation — only these affect lastUsage/compaction.
-  // Billing (perModel) aggregates ALL messages (main + isolated review).
-  const rows = getDb()
-    .prepare(
-      `SELECT id, seq, meta_json,
-              CASE WHEN parts_json LIKE '%"type":"compaction"%'
-                     OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_comp,
-              CASE WHEN parts_json LIKE '%"strategy":"openai-native"%'
-                     OR parts_json LIKE '%"strategy":"claude-native"%'
-                     OR parts_json LIKE '%"strategy":"codex-native"%'
-                     OR parts_json LIKE '%"checkpoint":"openai-native"%' THEN 1 ELSE 0 END AS is_native_comp,
-              CASE WHEN json_valid(meta_json) <> 1
-                     OR json_extract(meta_json, '$.executionScope.kind') IS NULL
-                     OR json_extract(meta_json, '$.executionScope.kind') = 'conversation' THEN 1 ELSE 0 END AS is_main_ctx
-       FROM chat_messages WHERE conversation_id = ? ORDER BY seq ASC`
-    )
-    .all(conversationId) as Array<{
-    id: string
-    seq: number
-    meta_json: string | null
-    is_comp: number
-    is_native_comp: number
-    is_main_ctx: number
-  }>
-  const byModel = new Map<string, ChatPerModelUsage>()
-  let lastUsage: StoredChatUsage | null = null
-  let lastModel: ChatModelRef | null = null
-  let lastUsageSeq = -1
-  let compSeq = -1 // LAST compaction milestone seq (main context only).
-  let compSummaryTokens = 0 // Compaction-call output ≈ summary tokens.
-  let compContextWindow = 0
-  for (const r of rows) {
-    let meta: MetaJson = {}
-    try {
-      meta = r.meta_json ? JSON.parse(r.meta_json) : {}
-    } catch {
-      meta = {}
+  const db = getDb()
+  const cacheable = historyStatsCachesCurrent()
+  let prefix = historyStatsPrefixes.get(conversationId)
+  if (prefix) {
+    const count = db
+      .prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE conversation_id = ? AND seq <= ?')
+      .get(conversationId, prefix.throughSeq) as { n: number }
+    if (Number(count.n) !== prefix.rows) {
+      // Rows came or went behind the store's back: billed messages may have gone with them.
+      historyStatsPrefixes.delete(conversationId)
+      historyStatsOrphans.delete(conversationId)
+      prefix = undefined
     }
-    const isMainCtx = r.is_main_ctx === 1
-    // Provider-bound native markers reduce the window only after caller confirms sidecar against current
-    // identity. Conservative default prevents stats/auto-compact underestimating context after account/model changes.
-    // Isolated-round compaction does NOT affect main-context occupancy.
-    const effectiveCompaction =
-      isMainCtx && r.is_comp && (!r.is_native_comp || opts.isNativeCompactionActive?.(r.id) === true)
-    if (effectiveCompaction) {
-      compSeq = r.seq
-      compSummaryTokens = meta.usage?.contextInput ?? meta.usage?.output ?? 0
-      compContextWindow = meta.usage?.modelContextWindow ?? 0
-    }
-    const u = parseStoredUsage(meta.usage)
-    if (!u) continue
-    // lastUsage / context meter: MAIN context only (isolated rounds do not contaminate percentages).
-    if (isMainCtx && !u.billingOnly) {
-      lastUsage = u // Helper calls do not replace the latest actual context measurement.
-      lastModel = meta.model ?? null
-      lastUsageSeq = r.seq
-    }
-    // Billing: main + isolated review (each round counts as a real turn).
-    addHistoryUsage(byModel, u, meta.model ?? { providerId: '', modelId: '' })
   }
+  const totals = prefix ? copyHistoryTotals(prefix.totals) : emptyHistoryTotals()
+  const rows = db
+    .prepare(HISTORY_STATS_ROWS)
+    .all(conversationId, prefix?.throughSeq ?? Number.MIN_SAFE_INTEGER) as HistoryStatsRow[]
+  // All but the newest rows join the kept totals: they are summed in the same order either way.
+  const settled = rows.length - HISTORY_STATS_FRESH_ROWS
+  rows.forEach((row, index) => {
+    if (index === settled && settled > 0 && cacheable)
+      keep(historyStatsPrefixes, conversationId, {
+        throughSeq: Number(rows[index - 1].seq),
+        rows: (prefix?.rows ?? 0) + settled,
+        totals: copyHistoryTotals(totals),
+      })
+    addHistoryStatsRow(totals, row)
+  })
 
   // Host-managed transcript anchors are intentionally deleted after execution. Their ledger rows retain the
   // conversation key (without an FK), so billing remains visible in this conversation's historical cost summary.
-  const orphanLedgerRows = getDb()
-    .prepare(
-      `SELECT l.provider_id, l.model_id, l.usage_json
-       FROM chat_usage_ledger l
-       LEFT JOIN chat_messages m ON m.id = l.message_id
-       WHERE l.conversation_id = ? AND m.id IS NULL`
-    )
-    .all(conversationId) as Array<{ provider_id: string; model_id: string; usage_json: string }>
-  for (const row of orphanLedgerRows) {
-    let rawUsage: unknown
-    try {
-      rawUsage = JSON.parse(row.usage_json)
-    } catch {
-      continue
+  let orphans = historyStatsOrphans.get(conversationId)
+  if (!orphans) {
+    orphans = []
+    const orphanLedgerRows = db
+      .prepare(
+        `SELECT l.provider_id, l.model_id, l.usage_json
+         FROM chat_usage_ledger l
+         LEFT JOIN chat_messages m ON m.id = l.message_id
+         WHERE l.conversation_id = ? AND m.id IS NULL`
+      )
+      .all(conversationId) as Array<{ provider_id: string; model_id: string; usage_json: string }>
+    for (const row of orphanLedgerRows) {
+      let rawUsage: unknown
+      try {
+        rawUsage = JSON.parse(row.usage_json)
+      } catch {
+        continue
+      }
+      const usage = parseStoredUsage(rawUsage)
+      if (usage) orphans.push({ usage, model: { providerId: row.provider_id, modelId: row.model_id } })
     }
-    const usage = parseStoredUsage(rawUsage)
-    if (usage) addHistoryUsage(byModel, usage, { providerId: row.provider_id, modelId: row.model_id })
+    if (cacheable) keep(historyStatsOrphans, conversationId, orphans)
   }
+  for (const orphan of orphans) addHistoryUsage(totals.byModel, orphan.usage, orphan.model)
+
+  // Provider-bound native markers reduce the window only after caller confirms sidecar against current
+  // identity. Conservative default prevents stats/auto-compact underestimating context after account/model changes.
+  let milestone: HistoryStatsTotals['milestones'][number] | undefined
+  for (let index = totals.milestones.length - 1; index >= 0 && !milestone; index--) {
+    const candidate = totals.milestones[index]
+    if (!candidate.native || opts.isNativeCompactionActive?.(candidate.id) === true) milestone = candidate
+  }
+  // Copies: the kept totals share these, and every call used to return objects of its own.
+  let lastUsage: StoredChatUsage | null = totals.last ? structuredClone(totals.last.usage) : null
+  let lastModel: ChatModelRef | null = totals.last?.model ? structuredClone(totals.last.model) : null
   // Compaction is the NEWEST milestone (no real turn afterward): meter must reflect post-compaction context
   // IMMEDIATELY — otherwise it stayed at "100%" until the next turn, making compaction appear ineffective.
   // Estimate: SUMMARY tokens (compaction-call output ≈ next-turn summary input;
   // remaining history ends at the milestone). Without usage → ~4 text chars/token.
-  if (compSeq > lastUsageSeq) {
-    let est = compSummaryTokens
+  if (milestone && milestone.seq > (totals.last?.seq ?? -1)) {
+    let est = milestone.summaryTokens
     if (!est) {
       try {
-        const row = getDb()
+        const row = db
           .prepare('SELECT parts_json FROM chat_messages WHERE conversation_id = ? AND seq = ?')
-          .get(conversationId, compSeq) as { parts_json?: string } | undefined
+          .get(conversationId, milestone.seq) as { parts_json?: string } | undefined
         const parts = row?.parts_json ? (JSON.parse(row.parts_json) as Array<{ type?: string; text?: string }>) : []
         est = Math.ceil((parts.find((p) => p?.type === 'compaction')?.text?.length ?? 0) / 4)
       } catch {
@@ -1408,15 +1522,15 @@ export function chatHistoryStats(
       output: 0,
       contextInput: est,
       contextOutput: 0,
-      ...(compContextWindow ? { modelContextWindow: compContextWindow } : {}),
+      ...(milestone.contextWindow ? { modelContextWindow: milestone.contextWindow } : {}),
     }
     lastModel = null
   }
   return {
     lastUsage,
     ...(lastModel ? { lastModel } : {}),
-    perModel: [...byModel.values()].map(persistedAggregate),
-    modelIds: [...new Set([...byModel.values()].map((u) => u.modelId).filter((id): id is string => !!id))],
+    perModel: [...totals.byModel.values()].map(persistedAggregate),
+    modelIds: [...new Set([...totals.byModel.values()].map((u) => u.modelId).filter((id): id is string => !!id))],
     bytesSaved: getChatBytesSaved(conversationId),
   }
 }
@@ -1548,6 +1662,7 @@ export function recordChatUsageAttempt(args: {
       JSON.stringify(usage),
       args.createdAt ?? Date.now()
     )
+  noteHistoryStatsLedger(args.conversationId)
 }
 
 /**
@@ -1748,6 +1863,8 @@ export function findGeneratedImagePart(
 export async function clearChatMessages(conversationId: string): Promise<void> {
   invalidateBackgroundCompaction(conversationId)
   contextStarts.delete(conversationId)
+  noteHistoryStatsWrite(conversationId, null)
+  noteHistoryStatsLedger(conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ?',
     conversationId
@@ -1763,8 +1880,11 @@ export async function clearChatMessages(conversationId: string): Promise<void> {
 /** Deletes one message. */
 export function deleteChatMessage(id: string): void {
   const pending = chatDeletionArtifacts('SELECT id, conversation_id, parts_json FROM chat_messages WHERE id = ?', id)
+  const seq = getMessageSeq(id)
   getDb().prepare('DELETE FROM chat_messages WHERE id = ?').run(id)
   if (!pending) return
+  noteHistoryStatsWrite(pending.conversationId, seq)
+  noteHistoryStatsLedger(pending.conversationId)
   invalidateBackgroundCompaction(pending.conversationId)
   releaseRemovedToolImageRefs(pending.toolImageRefs)
   releaseConversationToolImageMetadata(pending.conversationId, deletionDescriptionIds(pending))
@@ -1781,6 +1901,8 @@ export function getMessageSeq(id: string): number | null {
 /** Deletes conversation messages with seq >= `fromSeq` (edit last message → rewrite from there). */
 export function deleteChatMessagesFrom(conversationId: string, fromSeq: number): void {
   invalidateBackgroundCompaction(conversationId)
+  noteHistoryStatsWrite(conversationId, fromSeq)
+  noteHistoryStatsLedger(conversationId)
   const pending = chatDeletionArtifacts(
     'SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ? AND seq >= ?',
     conversationId,
