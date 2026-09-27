@@ -1,4 +1,4 @@
-import type { FleetScreenData, FleetScreenState } from '../../../preload/api-fleet'
+import type { FleetScreenData, FleetScreenState, FleetScreenTargetInput } from '../../../preload/api-fleet'
 
 export type ScreenApi = Pick<
   typeof window.api,
@@ -40,9 +40,10 @@ export class FleetScreenChannel {
     }
   }
 
+  /** Opens a bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
   static async open(
     api: ScreenApi,
-    botId: string,
+    target: FleetScreenTargetInput,
     mode: 'view' | 'control',
     onState?: (state: FleetScreenState) => void
   ): Promise<FleetScreenChannel> {
@@ -62,7 +63,7 @@ export class FleetScreenChannel {
       } else earlyStates.push(state)
     })
     try {
-      const { channelId } = await api.fleetScreenOpen(botId, mode)
+      const { channelId } = await api.fleetScreenOpen(target, mode)
       channel = new FleetScreenChannel(channelId, api, offData, offState)
       for (const state of earlyStates) {
         if (state.channelId === channelId) {

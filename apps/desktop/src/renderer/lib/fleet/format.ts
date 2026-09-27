@@ -1,4 +1,5 @@
-import type { FleetActivity, FleetBot, FleetHostInfo } from '@maestrly/bot-fleet-protocol'
+import type { FleetActivity, FleetBot, FleetEnvironment, FleetHostInfo } from '@maestrly/bot-fleet-protocol'
+import { compareByName } from './selectors'
 
 export function formatPairingCode(value: string): string {
   const characters = value
@@ -35,20 +36,50 @@ export function activityLabel(
   return { key: `status.${status}` }
 }
 
+export type FleetMemorySegment = {
+  kind: 'environment' | 'bot' | 'system'
+  id: string
+  name: string
+  fraction: number
+  tint: string
+}
+/**
+ * The host memory bar: one segment per environment (its bots share its container, so their memory counts once, with
+ * the tint of its first bot), one per bot of no listed environment (gateways without environments), and the rest.
+ */
 export function memorySegments(
   host: FleetHostInfo | null,
-  bots: FleetBot[]
-): { id: string; fraction: number; tint: string }[] {
+  bots: FleetBot[],
+  environments: FleetEnvironment[] = []
+): FleetMemorySegment[] {
   const total = host?.memory.totalBytes ?? 0
   if (!total) return []
-  const active = bots
-    .map((bot) => ({ id: bot.id, bytes: bot.resources.memoryBytes ?? 0, tint: bot.tint }))
-    .filter((item) => item.bytes > 0)
-  const botBytes = active.reduce((sum, item) => sum + item.bytes, 0)
-  const system = Math.max(0, (host?.memory.usedBytes ?? 0) - botBytes)
+  const listed = new Set(environments.map((environment) => environment.id))
+  const tintOf = (environment: FleetEnvironment) =>
+    bots.filter((bot) => bot.environmentId === environment.id).sort(compareByName)[0]?.tint ?? 'var(--primary)'
+  const active = [
+    ...environments.map((environment) => ({
+      kind: 'environment' as const,
+      id: environment.id,
+      name: environment.name,
+      bytes: environment.resources.memoryBytes ?? 0,
+      tint: tintOf(environment),
+    })),
+    ...bots
+      .filter((bot) => !bot.environmentId || !listed.has(bot.environmentId))
+      .map((bot) => ({
+        kind: 'bot' as const,
+        id: bot.id,
+        name: bot.name,
+        bytes: bot.resources.memoryBytes ?? 0,
+        tint: bot.tint,
+      })),
+  ].filter((item) => item.bytes > 0)
+  const counted = active.reduce((sum, item) => sum + item.bytes, 0)
+  const system = Math.max(0, (host?.memory.usedBytes ?? 0) - counted)
   return [
-    ...active.map((item) => ({ id: item.id, fraction: item.bytes / total, tint: item.tint })),
-    { id: 'system', fraction: system / total, tint: 'var(--muted-foreground)' },
+    ...active.map(({ bytes, ...item }) => ({ ...item, fraction: bytes / total })),
+    { kind: 'system', id: 'system', name: '', fraction: system / total, tint: 'var(--muted-foreground)' },
   ]
 }
 

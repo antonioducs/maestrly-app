@@ -1,3 +1,5 @@
+import { FLEET_ENVIRONMENTS_UNSUPPORTED, FLEET_SCREEN_CONFLICT } from '../../../shared/fleet-targets'
+
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
 // Main-process errors arrive as "<Class>: message"; gateway failures are FleetClientError instances.
 const IPC_PREFIX = /^(?:Error:\s*)?Error invoking remote method '[^']*':\s*(?:[A-Za-z]*Error:\s*)?/
@@ -21,6 +23,16 @@ export function isImageNotFound(cause: unknown): boolean {
 export function isTakeoverConflict(cause: unknown): boolean {
   if (typeof cause === 'object' && cause !== null && 'status' in cause && cause.status === 409) return true
   return fleetErrorMessage(cause).includes(TAKEOVER_CONFLICT_MARKER)
+}
+
+/** The server predates environments and must be updated before this action. */
+export function isEnvironmentsUnsupported(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_ENVIRONMENTS_UNSUPPORTED)
+}
+
+/** Another control session holds the environment display that its browser areas and its screen share. */
+export function isScreenConflict(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_SCREEN_CONFLICT)
 }
 
 export function isOwnerMemoryFull(cause: unknown): boolean {

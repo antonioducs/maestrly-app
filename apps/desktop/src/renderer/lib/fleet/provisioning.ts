@@ -1,9 +1,24 @@
 import { macProvisioningErrorCodes } from '../../../shared/fleet-provisioning'
+import {
+  fleetTargetKey,
+  type FleetProvisioningTarget,
+  type FleetProvisioningTargetInput,
+} from '../../../shared/fleet-targets'
 import { useCallback, useEffect, useState } from 'react'
-import type { FleetBot, FleetBotAccounts, FleetBotSkills, FleetBotMcpServers } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ENVIRONMENT_LIMITS,
+  FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_PROVISIONING_FEATURE,
+  type FleetBot,
+  type FleetBotAccounts,
+  type FleetBotSkills,
+  type FleetBotMcpServers,
+  type FleetEnvironment,
+} from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection } from '../../../shared/fleet-provisioning'
 import type { FleetController } from './use-fleet'
 import { fleetErrorMessage } from './errors'
+import { environmentOf } from './selectors'
 
 export type ImportGroup = 'accounts' | 'skills' | 'mcp'
 export const importGroups: ImportGroup[] = ['accounts', 'skills', 'mcp']
@@ -33,13 +48,51 @@ export function recommendedImportChoice(inventory: MacInventory, groups: ImportG
       : [],
   }
 }
+export type BotProvisioningAvailability = 'ready' | 'update-server' | 'restart-bot'
+export type EnvironmentProvisioningAvailability = 'ready' | 'update-server' | 'restart-environment'
+/** A running Maestrly without a capability predates it; restarting brings it the gateway's current image. */
+function needsRestart(runtime: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>, capability: string): boolean {
+  return runtime.lifecycle === 'running' && !runtime.capabilities.includes(capability)
+}
+/**
+ * Whether the Mac can provision an environment or a bot. A bot's accounts, skills and MCP servers are those of its
+ * environment, so the Maestrly that must support them is its listed environment's, else the bot's own.
+ */
+export function provisioningAvailability(fleet: FleetController, bot: FleetBot): BotProvisioningAvailability
 export function provisioningAvailability(
   fleet: FleetController,
-  bot: FleetBot
-): 'ready' | 'update-server' | 'restart-bot' {
-  if (!fleet.state.connection.features.includes('provisioning')) return 'update-server'
-  if (bot.lifecycle === 'running' && !bot.capabilities.includes('provisioning')) return 'restart-bot'
-  return 'ready'
+  environment: FleetEnvironment
+): EnvironmentProvisioningAvailability
+export function provisioningAvailability(
+  fleet: FleetController,
+  target: FleetBot | FleetEnvironment
+): BotProvisioningAvailability | EnvironmentProvisioningAvailability {
+  if (!fleet.state.connection.features.includes(FLEET_PROVISIONING_FEATURE)) return 'update-server'
+  if ('botIds' in target) return needsRestart(target, FLEET_PROVISIONING_FEATURE) ? 'restart-environment' : 'ready'
+  const runtime = (target.environmentId && environmentOf(fleet.state.snapshot.environments, target)) || target
+  return needsRestart(runtime, FLEET_PROVISIONING_FEATURE) ? 'restart-bot' : 'ready'
+}
+export type EnvironmentJoinAvailability = 'ready' | 'update-server' | 'restart-environment' | 'full'
+/**
+ * Whether a new bot can join an environment: the gateway must have environments, the environment must have room,
+ * and its running Maestrly must host several bots (an older image needs the environment restarted first).
+ */
+export function environmentJoinAvailability(
+  fleet: FleetController,
+  environment: FleetEnvironment
+): EnvironmentJoinAvailability {
+  if (!fleet.state.connection.features.includes(FLEET_ENVIRONMENTS_FEATURE)) return 'update-server'
+  if (environment.botIds.length >= FLEET_ENVIRONMENT_LIMITS.botsMax) return 'full'
+  return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
+}
+/** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */
+export function provisioningTargetForBot(
+  fleet: FleetController,
+  bot: Pick<FleetBot, 'id' | 'environmentId'>
+): FleetProvisioningTarget {
+  return bot.environmentId && fleet.state.connection.features.includes(FLEET_ENVIRONMENTS_FEATURE)
+    ? { environmentId: bot.environmentId }
+    : { botId: bot.id }
 }
 export function accountHost(kind: string, baseURL: string | null) {
   try {
@@ -70,9 +123,13 @@ export function useMacInventory(enabled = true) {
   }, [enabled])
   return { inventory, error }
 }
-export function useBotProvisioning(botId: string, enabled = true) {
+/** The accounts, skills and MCP servers of an environment (shared by its bots) or a bot; a bare string is a bot. */
+export function useFleetProvisioning(target: FleetProvisioningTargetInput, enabled = true) {
+  // Primitive dependencies: a target object rebuilt on every render must not refetch.
+  const scope = typeof target === 'object' && 'environmentId' in target ? 'environment' : 'bot'
+  const id = typeof target === 'string' ? target : 'environmentId' in target ? target.environmentId : target.botId
   const [value, setValue] = useState<{
-    botId: string
+    key: string
     accounts: FleetBotAccounts
     skills: FleetBotSkills['skills']
     mcpServers: FleetBotMcpServers['servers']
@@ -83,14 +140,15 @@ export function useBotProvisioning(botId: string, enabled = true) {
   useEffect(() => {
     if (!enabled) return
     let alive = true
+    const request: FleetProvisioningTarget = scope === 'environment' ? { environmentId: id } : { botId: id }
     setError('')
     void Promise.all([
-      window.api.fleetBotAccounts(botId),
-      window.api.fleetBotSkills(botId),
-      window.api.fleetBotMcpServers(botId),
+      window.api.fleetBotAccounts(request),
+      window.api.fleetBotSkills(request),
+      window.api.fleetBotMcpServers(request),
     ])
       .then(([accounts, skills, mcp]) => {
-        if (alive) setValue({ botId, accounts, skills: skills.skills, mcpServers: mcp.servers })
+        if (alive) setValue({ key: fleetTargetKey(request), accounts, skills: skills.skills, mcpServers: mcp.servers })
       })
       .catch((cause) => {
         if (alive) setError(fleetErrorMessage(cause))
@@ -98,9 +156,12 @@ export function useBotProvisioning(botId: string, enabled = true) {
     return () => {
       alive = false
     }
-  }, [botId, enabled, revision])
-  const current = value?.botId === botId && enabled ? value : null
+  }, [scope, id, enabled, revision])
+  const current = value?.key === fleetTargetKey(target) && enabled ? value : null
   return { accounts: current?.accounts, skills: current?.skills, mcpServers: current?.mcpServers, error, refresh }
+}
+export function useBotProvisioning(botId: string, enabled = true) {
+  return useFleetProvisioning(botId, enabled)
 }
 export type BotProvisioning = ReturnType<typeof useBotProvisioning>
 
@@ -194,6 +255,26 @@ export function botProvisioningKey(bot: Pick<FleetBot, 'accounts' | 'status'>): 
     bot.accounts.connected,
     bot.accounts.providers.map((provider) => provider.id).sort(),
     bot.status,
+  ])
+}
+
+/**
+ * Refreshes an environment's shared lists when its Maestrly or the accounts its bots see change, never on resource
+ * samples or on its bots' turns.
+ */
+export function environmentProvisioningKey(
+  environment: Pick<FleetEnvironment, 'id' | 'lifecycle' | 'setup' | 'capabilities'>,
+  bots: Pick<FleetBot, 'id' | 'environmentId' | 'accounts'>[]
+): string {
+  return JSON.stringify([
+    environment.id,
+    environment.lifecycle,
+    environment.setup.step,
+    [...environment.capabilities].sort(),
+    bots
+      .filter((bot) => bot.environmentId === environment.id)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      .map((bot) => [bot.id, bot.accounts.connected, bot.accounts.providers.map((provider) => provider.id).sort()]),
   ])
 }
 

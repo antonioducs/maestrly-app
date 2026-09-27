@@ -23,6 +23,13 @@ export class FleetClientError extends Error {
 type Routes = typeof FLEET_GATEWAY_ROUTES
 type RouteKey = keyof Routes
 type RouteResponse<K extends RouteKey> = Routes[K]['response'] extends { _output: infer T } ? T : void
+/** The gateway waits up to 30 s for sign-in pages and 60 s for a skill installation, for bots and environments. */
+const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
+  botLoginStart: 35_000,
+  environmentLoginStart: 35_000,
+  botSkillInstall: 65_000,
+  environmentSkillInstall: 65_000,
+}
 
 export class FleetApiClient {
   constructor(
@@ -126,8 +133,7 @@ export class FleetApiClient {
         method: route.method,
         headers,
         body,
-        // The gateway waits up to 30s for login URLs and 60s for skill installation.
-        signal: AbortSignal.timeout(key === 'botLoginStart' ? 35_000 : key === 'botSkillInstall' ? 65_000 : 15_000),
+        signal: AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000),
       })
     } catch (error) {
       throw new FleetClientError(

@@ -2,11 +2,13 @@ import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   isAllowedFleetUrl,
   normalizePairingCode,
   type FleetActivityEntry,
   type FleetBot,
+  type FleetEnvironment,
   type FleetGatewayEvent,
   type FleetHostInfo,
   type FleetInboxItem,
@@ -37,9 +39,12 @@ export type FleetConnectionView = {
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]
+  /** Empty for gateways without environments; archived ones are listed on demand. */
+  environments: FleetEnvironment[]
   inbox: FleetInboxItem[]
   peerMessages: FleetPeerMessage[]
 }
+const emptySnapshot = (): FleetSnapshot => ({ host: null, bots: [], environments: [], inbox: [], peerMessages: [] })
 export type FleetDigest = {
   entries: FleetActivityEntry[]
   since: number
@@ -59,12 +64,7 @@ export class FleetClientService {
     error: null,
     tokenPersistence: 'secure',
   }
-  private snapshot: FleetSnapshot = {
-    host: null,
-    bots: [],
-    inbox: [],
-    peerMessages: [],
-  }
+  private snapshot: FleetSnapshot = emptySnapshot()
   private digest: FleetDigest = null
   private generation = 0
 
@@ -108,6 +108,10 @@ export class FleetClientService {
   getDigest(): FleetDigest {
     return this.digest
   }
+  /** Whether the connected gateway advertises a feature (`/v1/meta`), refreshed on every reconnect. */
+  hasFeature(feature: string): boolean {
+    return this.connection.features.includes(feature)
+  }
 
   private requireApi(): FleetApiClient {
     if (!this.api) throw new FleetClientError('UNAUTHORIZED', 401, 'Fleet is not connected')
@@ -120,7 +124,7 @@ export class FleetClientService {
   private useCredentials(url: string, token: string, tokenPersistence: TokenPersistence): void {
     this.stop()
     this.api = new FleetApiClient(url, token)
-    this.snapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
+    this.snapshot = emptySnapshot()
     this.digest = null
     this.setConnection({
       features: [],
@@ -181,7 +185,7 @@ export class FleetClientService {
       /* Local disconnect still takes effect. */
     }
     clearFleetCredentials()
-    this.snapshot = { host: null, bots: [], inbox: [], peerMessages: [] }
+    this.snapshot = emptySnapshot()
     this.digest = null
     broadcast('fleet:digest', null)
     this.setConnection({
@@ -198,9 +202,13 @@ export class FleetClientService {
   async refresh(): Promise<FleetSnapshot> {
     const api = this.requireApi()
     const generation = this.generation
-    const [host, bots, inbox, peers] = await Promise.all([
+    const [host, bots, environments, inbox, peers] = await Promise.all([
       api.call('host'),
       api.call('botsList'),
+      // Older gateways have no environments: their bots stay ungrouped.
+      this.hasFeature(FLEET_ENVIRONMENTS_FEATURE)
+        ? api.call('environmentsList')
+        : Promise.resolve({ environments: [] as FleetEnvironment[] }),
       api.call('inbox'),
       api.call('peerMessages', { query: { limit: 200 } }),
     ])
@@ -208,6 +216,7 @@ export class FleetClientService {
     this.snapshot = {
       host,
       bots: bots.bots,
+      environments: environments.environments.filter((environment) => environment.lifecycle !== 'archived'),
       inbox: inbox.items,
       peerMessages: peers.messages,
     }
@@ -273,6 +282,18 @@ export class FleetClientService {
       case 'bot.removed':
         this.snapshot.bots = this.snapshot.bots.filter((bot) => bot.id !== event.botId)
         break
+      case 'environment.updated':
+        // Like bots, an archived environment is never listed whatever the event order, and neither are its bots.
+        if (event.environment.lifecycle === 'archived') this.dropEnvironment(event.environment.id)
+        else
+          this.snapshot.environments = [
+            ...this.snapshot.environments.filter((environment) => environment.id !== event.environment.id),
+            event.environment,
+          ]
+        break
+      case 'environment.removed':
+        this.dropEnvironment(event.environmentId)
+        break
       case 'host.updated':
         this.snapshot.host = event.host
         this.setConnection({ hostname: event.host.hostname })
@@ -288,6 +309,13 @@ export class FleetClientService {
         break
     }
     broadcast('fleet:event', event)
+  }
+
+  private dropEnvironment(environmentId: string): void {
+    const bots = new Set(this.snapshot.bots.filter((bot) => bot.environmentId === environmentId).map((bot) => bot.id))
+    this.snapshot.environments = this.snapshot.environments.filter((environment) => environment.id !== environmentId)
+    this.snapshot.bots = this.snapshot.bots.filter((bot) => !bots.has(bot.id))
+    this.snapshot.inbox = this.snapshot.inbox.filter((item) => !bots.has(item.botId))
   }
 
   async call<K extends Parameters<FleetApiClient['call']>[0]>(

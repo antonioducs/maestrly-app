@@ -369,3 +369,55 @@ it('tags Mac-generated import failures while preserving provider diagnostics', a
   expect(report.skills[0]).toMatchObject({ errorCode: 'skill-missing' })
   expect(report.mcpServers[0]).toMatchObject({ errorCode: 'mcp-unavailable' })
 })
+
+describe('Mac import into an environment', () => {
+  const environments = (enabled: boolean) => (feature: string) => enabled && feature === 'environments'
+  it('sends the shared accounts, skills and MCP servers through the environment routes, hiding echoed secrets', async () => {
+    const call = vi.fn(async (key: string, _request: { params: Record<string, string> }) =>
+      key === 'environmentSkillInstall'
+        ? { name: 'review', outcome: 'added' }
+        : {
+            results: Array.from({ length: key === 'environmentAccountsImport' ? 3 : 1 }, (_, index) => ({
+              index,
+              target: 'remote',
+              outcome: 'failed',
+              error: 'Rejected synthetic-api-secret',
+            })),
+          }
+    )
+    const fleet = { call, hasFeature: environments(true) } as unknown as FleetClientService
+    const report = await importFromMac(fleet, { environmentId: 'work' }, selection)
+    expect(call.mock.calls.map(([key, request]) => [key, request.params])).toEqual([
+      ['environmentAccountsImport', { eid: 'work' }],
+      ['environmentSkillInstall', { eid: 'work' }],
+      ['environmentMcpServersImport', { eid: 'work' }],
+    ])
+    expect(report.accounts.map((result) => result.errorCode)).toEqual([
+      'import-failed',
+      'import-failed',
+      'import-failed',
+    ])
+    expect(report.skills[0].outcome).toBe('added')
+    expect(JSON.stringify(report)).not.toContain('secret')
+  })
+  it('keeps a bot target on the bot routes and refuses an environment on a gateway without environments', async () => {
+    const call = vi.fn(async (_key: string, _request: { params: Record<string, string> }) => ({ results: [] }))
+    const mcpOnly = { apiKeyIds: [], copyIds: [], skillNames: [], mcpServerIds: ['m1'] }
+    await importFromMac(
+      { call, hasFeature: environments(true) } as unknown as FleetClientService,
+      { botId: 'scout' },
+      mcpOnly
+    )
+    expect(call.mock.calls.map(([key, request]) => [key, request.params])).toEqual([
+      ['botMcpServersImport', { id: 'scout' }],
+    ])
+    await expect(
+      importFromMac(
+        { call, hasFeature: environments(false) } as unknown as FleetClientService,
+        { environmentId: 'work' },
+        mcpOnly
+      )
+    ).rejects.toThrow('FLEET_ENVIRONMENTS_UNSUPPORTED')
+    expect(call).toHaveBeenCalledOnce()
+  })
+})

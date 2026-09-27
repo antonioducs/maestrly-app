@@ -2,7 +2,10 @@ import { app } from 'electron'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
+  FLEET_ENVIRONMENTS_FEATURE,
   fleetBotIdSchema,
+  fleetEnvironmentIdSchema,
+  fleetPatchEnvironmentRequestSchema,
   fleetOwnerMemoryCreateRequestSchema,
   fleetOwnerMemoryPatchRequestSchema,
   fleetBotMemoryPatchRequestSchema,
@@ -21,11 +24,14 @@ import {
   FLEET_IMAGE_LIMITS,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
+import { FLEET_SCREEN_CONFLICT } from '../../../shared/fleet-targets'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
+import { provisioningRoute, requireEnvironments, resolveProvisioningTarget, resolveScreenTarget } from './targets'
 
 const id = fleetBotIdSchema
+const environmentId = fleetEnvironmentIdSchema
 const opaqueId = z.string().min(1).max(256)
 const optionalLimit = z.number().int().min(1).max(500).optional()
 const outgoingAttachments = z
@@ -65,6 +71,14 @@ const actionRoute = {
   resume: 'botResume',
   cancel: 'botCancel',
 } as const
+// Lifecycle actions act on every bot of the environment; archiving keeps its files and bots on the server.
+const environmentAction = z.enum(['start', 'stop', 'restart', 'archive'])
+const environmentActionRoute = {
+  start: 'environmentStart',
+  stop: 'environmentStop',
+  restart: 'environmentRestart',
+  archive: 'environmentArchive',
+} as const
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, fleet)
@@ -80,14 +94,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:getHost', () => fleet.call('host'))
   reg.handle('fleet:listBots', () => fleet.call('botsList'))
   reg.handle('fleet:getBot', (_event, botId: unknown) => fleet.call('botGet', { params: { id: id.parse(botId) } }))
-  reg.mhandle('fleet:createBot', (_event, input: unknown) =>
-    fleet.call('botsCreate', {
-      body: fleetCreateBotRequestSchema.parse({
-        ...createBotInput.parse(input),
-        idempotencyKey: fleet.idempotencyKey(),
-      }),
+  reg.mhandle('fleet:createBot', (_event, input: unknown) => {
+    const body = fleetCreateBotRequestSchema.parse({
+      ...createBotInput.parse(input),
+      idempotencyKey: fleet.idempotencyKey(),
     })
-  )
+    // An older gateway drops both fields and gives the bot its own container: never let a join silently do that.
+    if (body.environmentId !== undefined || body.environment !== undefined) requireEnvironments(fleet)
+    return fleet.call('botsCreate', { body })
+  })
   reg.mhandle('fleet:updateBot', (_event, botId: unknown, patch: unknown) =>
     fleet.call('botPatch', { params: { id: id.parse(botId) }, body: fleetPatchBotRequestSchema.parse(patch) })
   )
@@ -101,18 +116,51 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:deleteArchivedBot', (_event, botId: unknown) =>
     fleet.call('archivedBotDelete', { params: { id: id.parse(botId) } })
   )
+  reg.mhandle('fleet:environmentAction', (_event, rawId: unknown, rawAction: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    const route = environmentActionRoute[environmentAction.parse(rawAction)]
+    requireEnvironments(fleet)
+    return fleet.call(route, { params })
+  })
+  reg.mhandle('fleet:patchEnvironment', (_event, rawId: unknown, patch: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    const body = fleetPatchEnvironmentRequestSchema.parse(patch)
+    requireEnvironments(fleet)
+    return fleet.call('environmentPatch', { params, body })
+  })
+  // Listed on demand, like archived bots; a gateway without environments has none.
+  reg.handle('fleet:listArchivedEnvironments', async () =>
+    fleet.hasFeature(FLEET_ENVIRONMENTS_FEATURE) ? fleet.call('archivedEnvironmentsList') : { environments: [] }
+  )
+  reg.mhandle('fleet:restoreArchivedEnvironment', (_event, rawId: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    requireEnvironments(fleet)
+    return fleet.call('archivedEnvironmentRestore', { params })
+  })
+  reg.mhandle('fleet:deleteArchivedEnvironment', (_event, rawId: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    requireEnvironments(fleet)
+    return fleet.call('archivedEnvironmentDelete', { params })
+  })
+  reg.mhandle('fleet:environmentUiOpen', (_event, rawId: unknown, target: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    const body = fleetUiOpenRequestSchema.parse({ target })
+    requireEnvironments(fleet)
+    return fleet.call('environmentUiOpen', { params, body })
+  })
   reg.handle('fleet:listSelections', (_event, botId: unknown) =>
     fleet.call('botSelections', { params: { id: id.parse(botId) } })
   )
-  reg.mhandle('fleet:add-api-key-account', (_event, botId: unknown, input: unknown) =>
-    fleet.call('botApiKeyAccountAdd', {
-      params: { id: id.parse(botId) },
-      body: fleetAddApiKeyAccountRequestSchema.parse(input),
-    })
-  )
-  reg.mhandle('fleet:remove-account', (_event, botId: unknown, providerId: unknown) =>
-    fleet.call('botAccountRemove', { params: { id: id.parse(botId), providerId: opaqueId.parse(providerId) } })
-  )
+  reg.mhandle('fleet:add-api-key-account', (_event, target: unknown, input: unknown) => {
+    const body = fleetAddApiKeyAccountRequestSchema.parse(input)
+    const route = provisioningRoute(resolveProvisioningTarget(fleet, target), 'apiKeyAccountAdd')
+    return fleet.call(route.key, { params: route.params, body })
+  })
+  reg.mhandle('fleet:remove-account', (_event, target: unknown, providerId: unknown) => {
+    const account = { providerId: opaqueId.parse(providerId) }
+    const route = provisioningRoute(resolveProvisioningTarget(fleet, target), 'accountRemove', account)
+    return fleet.call(route.key, { params: route.params })
+  })
   reg.handle('fleet:getTranscript', (_event, botId: unknown, before: unknown, limit: unknown) =>
     fleet.call('botTranscript', {
       params: { id: id.parse(botId) },
@@ -195,20 +243,18 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:ownerMemoryList', (_event, status: unknown) =>
     fleet.call('ownerMemoryList', { query: { status: status === 'active' ? 'active' : 'all' } })
   )
-  reg.mhandle('fleet:ownerMemoryCreate', (_event, input: unknown) =>
-    fleet.call('ownerMemoryCreate', {
-      body: {
-        ...fleetOwnerMemoryCreateRequestSchema.omit({ idempotencyKey: true }).parse(input),
-        idempotencyKey: fleet.idempotencyKey(),
-      },
-    })
-  )
-  reg.mhandle('fleet:ownerMemoryUpdate', (_event, entryId: unknown, patch: unknown) =>
-    fleet.call('ownerMemoryPatch', {
-      params: { mid: opaqueId.parse(entryId) },
-      body: fleetOwnerMemoryPatchRequestSchema.parse(patch),
-    })
-  )
+  // An older gateway drops the scope: an entry meant for one environment would reach every bot.
+  reg.mhandle('fleet:ownerMemoryCreate', (_event, input: unknown) => {
+    const body = fleetOwnerMemoryCreateRequestSchema.omit({ idempotencyKey: true }).parse(input)
+    if (body.environmentId !== null) requireEnvironments(fleet)
+    return fleet.call('ownerMemoryCreate', { body: { ...body, idempotencyKey: fleet.idempotencyKey() } })
+  })
+  reg.mhandle('fleet:ownerMemoryUpdate', (_event, entryId: unknown, patch: unknown) => {
+    const params = { mid: opaqueId.parse(entryId) }
+    const body = fleetOwnerMemoryPatchRequestSchema.parse(patch)
+    if (body.environmentId !== undefined) requireEnvironments(fleet)
+    return fleet.call('ownerMemoryPatch', { params, body })
+  })
   reg.mhandle('fleet:ownerMemoryDelete', (_event, entryId: unknown) =>
     fleet.call('ownerMemoryDelete', { params: { mid: opaqueId.parse(entryId) } })
   )
@@ -238,9 +284,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   reg.handle('fleet:getDigest', () => fleet.getDigest())
   reg.mhandle('fleet:ackDigest', (_event, seq: unknown) => fleet.ackDigest(fleetNonNegativeIntSchema.parse(seq)))
-  reg.mhandle('fleet:screenOpen', (event, botId: unknown, mode: unknown) =>
-    fleet.screens.openScreen(event.sender, id.parse(botId), z.enum(['view', 'control']).parse(mode))
-  )
+  reg.mhandle('fleet:screenOpen', (event, rawTarget: unknown, rawMode: unknown) => {
+    const mode = z.enum(['view', 'control']).parse(rawMode)
+    const target = resolveScreenTarget(fleet, rawTarget)
+    return fleet.screens.openScreen(event.sender, target, mode).catch((error: unknown) => {
+      // Browser areas and the environment screen share one display: one control session at a time per environment.
+      if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_SCREEN_CONFLICT)
+      throw error
+    })
+  })
   reg.mhandle('fleet:screenSend', (event, channelId: unknown, data: unknown) => {
     const bytes = z
       .instanceof(ArrayBuffer)

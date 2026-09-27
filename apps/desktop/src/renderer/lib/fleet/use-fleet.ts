@@ -5,7 +5,12 @@ import { fleetErrorMessage } from './errors'
 
 export function useFleet() {
   const [state, dispatch] = useReducer(fleetReducer, initialFleetState)
-  const [actionError, setActionError] = useState<{ botId: string; message: string } | null>(null)
+  // The bot or the environment whose lifecycle action failed.
+  const [actionError, setActionError] = useState<{
+    botId: string | null
+    environmentId: string | null
+    message: string
+  } | null>(null)
   const stateRef = useRef(state)
   stateRef.current = state
   const loadTranscript = useCallback(async (botId: string, before?: string | null) => {
@@ -77,9 +82,21 @@ export function useFleet() {
       const result = await window.api.fleetBotAction(botId, action)
       if (result) dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: result } })
     } catch (error) {
-      setActionError({ botId, message: fleetErrorMessage(error) })
+      setActionError({ botId, environmentId: null, message: fleetErrorMessage(error) })
     }
   }, [])
+  const environmentAction = useCallback(
+    async (environmentId: string, action: Parameters<typeof window.api.fleetEnvironmentAction>[1]) => {
+      setActionError(null)
+      try {
+        const environment = await window.api.fleetEnvironmentAction(environmentId, action)
+        dispatch({ type: 'event', value: { type: 'environment.updated', at: new Date().toISOString(), environment } })
+      } catch (error) {
+        setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
+      }
+    },
+    []
+  )
   const resolve = useCallback(
     async (botId: string, id: string, resolution: FleetInteractionResolution) => {
       await window.api.fleetResolveInteraction(botId, id, resolution)
@@ -90,6 +107,16 @@ export function useFleet() {
     },
     [loadTranscript]
   )
-  return { state, dispatch, refresh, loadTranscript, ensureTranscript, botAction, resolve, actionError }
+  return {
+    state,
+    dispatch,
+    refresh,
+    loadTranscript,
+    ensureTranscript,
+    botAction,
+    environmentAction,
+    resolve,
+    actionError,
+  }
 }
 export type FleetController = ReturnType<typeof useFleet>

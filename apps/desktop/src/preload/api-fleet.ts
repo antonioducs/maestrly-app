@@ -1,5 +1,6 @@
 import type { FleetLoginAttempt, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
 import type { MacInventory, MacImportSelection, MacImportReport } from '../shared/fleet-provisioning'
+import type { FleetProvisioningTargetInput, FleetScreenTargetInput } from '../shared/fleet-targets'
 import type {
   FleetBotAccounts,
   FleetBotSkills,
@@ -16,8 +17,11 @@ import type {
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
   FleetArchivedBot,
+  FleetArchivedEnvironment,
   FleetBot,
   FleetCreateBotRequest,
+  FleetEnvironment,
+  FleetPatchEnvironmentRequest,
   FleetCreateRoutineRequest,
   FleetGatewayEvent,
   FleetHostInfo,
@@ -98,9 +102,20 @@ export type FleetDigest = {
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]
+  /** Empty for gateways without environments; archived ones are listed on demand. */
+  environments: FleetEnvironment[]
   inbox: FleetInboxItem[]
   peerMessages: FleetPeerMessage[]
 }
+/**
+ * A new bot joins an existing environment (`environmentId`) or gets a new one (`environment`), never both; with
+ * neither, as before environments, it gets a new environment named after it. Both need a gateway with environments.
+ */
+export type FleetCreateBotInput = Omit<FleetCreateBotRequest, 'idempotencyKey' | 'environment'> & {
+  environment?: { name: string; memoryLimitBytes?: number | null }
+}
+/** An owner memory entry is global (`environmentId` null or absent) or seen only by the bots of one environment. */
+export type FleetOwnerMemoryCreateInput = { content: string; replacesId?: string; environmentId?: string | null }
 export type FleetScreenData = { channelId: string; data: ArrayBuffer }
 /** An image the owner attaches from the Mac; main base64-encodes it for the gateway. */
 export type FleetOutgoingAttachment = { name: string; mediaType: FleetImageMediaType; data: Uint8Array }
@@ -113,8 +128,17 @@ export type FleetScreenState = {
   reason?: string
 }
 export type {
+  FleetProvisioningTarget,
+  FleetProvisioningTargetInput,
+  FleetScreenTarget,
+  FleetScreenTargetInput,
+} from '../shared/fleet-targets'
+export type {
   FleetApiKeyProviderKind,
   FleetActivityEntry,
+  FleetArchivedEnvironment,
+  FleetEnvironment,
+  FleetScreenSurface,
   FleetOwnerMemory,
   FleetOwnerMemoryEntry,
   FleetOwnerMemoryPatchRequest,
@@ -142,33 +166,46 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
+// Provisioning and sign-ins take a target: an environment (shared by its bots), a bot, or a bare bot id as the views
+// from before environments pass it.
 export const fleetApi = {
   fleetLoginStart: (
-    botId: string,
+    target: FleetProvisioningTargetInput,
     request: FleetLoginStartRequest
   ): Promise<{ attempt: FleetLoginAttempt; relay: 'listening' | 'unavailable' | 'none' }> =>
-    ipcRenderer.invoke('fleet:login:start', botId, request),
-  fleetLoginStatus: (botId: string, loginId: string): Promise<FleetLoginAttempt> =>
-    ipcRenderer.invoke('fleet:login:status', botId, loginId),
-  fleetLoginSubmitCode: (botId: string, loginId: string, code: string): Promise<FleetLoginAttempt> =>
-    ipcRenderer.invoke('fleet:login:code', botId, loginId, code),
-  fleetLoginCancel: (botId: string, loginId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:login:cancel', botId, loginId),
-  fleetLoginOpen: (botId: string, loginId: string, target: 'auth' | 'device' | 'manual'): Promise<void> =>
-    ipcRenderer.invoke('fleet:login:open', botId, loginId, target),
+    ipcRenderer.invoke('fleet:login:start', target, request),
+  fleetLoginStatus: (target: FleetProvisioningTargetInput, loginId: string): Promise<FleetLoginAttempt> =>
+    ipcRenderer.invoke('fleet:login:status', target, loginId),
+  fleetLoginSubmitCode: (
+    target: FleetProvisioningTargetInput,
+    loginId: string,
+    code: string
+  ): Promise<FleetLoginAttempt> => ipcRenderer.invoke('fleet:login:code', target, loginId, code),
+  fleetLoginCancel: (target: FleetProvisioningTargetInput, loginId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:login:cancel', target, loginId),
+  fleetLoginOpen: (
+    target: FleetProvisioningTargetInput,
+    loginId: string,
+    page: 'auth' | 'device' | 'manual'
+  ): Promise<void> => ipcRenderer.invoke('fleet:login:open', target, loginId, page),
   fleetProvisioningInventory: (): Promise<MacInventory> => ipcRenderer.invoke('fleet:provisioning:inventory'),
-  fleetImportFromMac: (botId: string, selection: MacImportSelection): Promise<MacImportReport> =>
-    ipcRenderer.invoke('fleet:provisioning:import', botId, selection),
-  fleetBotAccounts: (botId: string): Promise<FleetBotAccounts> => ipcRenderer.invoke('fleet:bot:accounts', botId),
-  fleetRemoveBotSubscription: (botId: string, kind: FleetSubscriptionKind, slot: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:bot:subscription-remove', botId, kind, slot),
-  fleetBotSkills: (botId: string): Promise<FleetBotSkills> => ipcRenderer.invoke('fleet:bot:skills', botId),
-  fleetRemoveBotSkill: (botId: string, name: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:bot:skill-remove', botId, name),
-  fleetBotMcpServers: (botId: string): Promise<FleetBotMcpServers> =>
-    ipcRenderer.invoke('fleet:bot:mcp-servers', botId),
-  fleetRemoveBotMcpServer: (botId: string, serverId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:bot:mcp-remove', botId, serverId),
+  fleetImportFromMac: (target: FleetProvisioningTargetInput, selection: MacImportSelection): Promise<MacImportReport> =>
+    ipcRenderer.invoke('fleet:provisioning:import', target, selection),
+  fleetBotAccounts: (target: FleetProvisioningTargetInput): Promise<FleetBotAccounts> =>
+    ipcRenderer.invoke('fleet:bot:accounts', target),
+  fleetRemoveBotSubscription: (
+    target: FleetProvisioningTargetInput,
+    kind: FleetSubscriptionKind,
+    slot: string
+  ): Promise<void> => ipcRenderer.invoke('fleet:bot:subscription-remove', target, kind, slot),
+  fleetBotSkills: (target: FleetProvisioningTargetInput): Promise<FleetBotSkills> =>
+    ipcRenderer.invoke('fleet:bot:skills', target),
+  fleetRemoveBotSkill: (target: FleetProvisioningTargetInput, name: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:skill-remove', target, name),
+  fleetBotMcpServers: (target: FleetProvisioningTargetInput): Promise<FleetBotMcpServers> =>
+    ipcRenderer.invoke('fleet:bot:mcp-servers', target),
+  fleetRemoveBotMcpServer: (target: FleetProvisioningTargetInput, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:mcp-remove', target, serverId),
   fleetGetConnection: (): Promise<FleetConnectionView> => ipcRenderer.invoke('fleet:getConnection'),
   fleetConnect: (input: { url: string; code: string; deviceName?: string }): Promise<FleetConnectionView> =>
     ipcRenderer.invoke('fleet:connect', input),
@@ -178,8 +215,7 @@ export const fleetApi = {
   fleetGetHost: (): Promise<FleetHostInfo> => ipcRenderer.invoke('fleet:getHost'),
   fleetListBots: (): Promise<{ bots: FleetBot[] }> => ipcRenderer.invoke('fleet:listBots'),
   fleetGetBot: (botId: string): Promise<FleetBot> => ipcRenderer.invoke('fleet:getBot', botId),
-  fleetCreateBot: (input: Omit<FleetCreateBotRequest, 'idempotencyKey'>): Promise<FleetBot> =>
-    ipcRenderer.invoke('fleet:createBot', input),
+  fleetCreateBot: (input: FleetCreateBotInput): Promise<FleetBot> => ipcRenderer.invoke('fleet:createBot', input),
   fleetUpdateBot: (botId: string, patch: FleetPatchBotRequest): Promise<FleetBot> =>
     ipcRenderer.invoke('fleet:updateBot', botId, patch),
   fleetBotAction: (
@@ -191,16 +227,37 @@ export const fleetApi = {
   fleetRestoreArchivedBot: (botId: string): Promise<FleetBot> => ipcRenderer.invoke('fleet:restoreArchivedBot', botId),
   /** Irreversible: deletes an archived bot's files and every server record of it. */
   fleetDeleteArchivedBot: (botId: string): Promise<void> => ipcRenderer.invoke('fleet:deleteArchivedBot', botId),
+  /** Acts on every bot of the environment; archiving removes its container and keeps its files and bots. */
+  fleetEnvironmentAction: (
+    environmentId: string,
+    action: 'start' | 'stop' | 'restart' | 'archive'
+  ): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:environmentAction', environmentId, action),
+  fleetPatchEnvironment: (environmentId: string, patch: FleetPatchEnvironmentRequest): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:patchEnvironment', environmentId, patch),
+  /** Empty for gateways without environments. */
+  fleetListArchivedEnvironments: (): Promise<{ environments: FleetArchivedEnvironment[] }> =>
+    ipcRenderer.invoke('fleet:listArchivedEnvironments'),
+  /** Recreates an archived environment's container on its kept files, with its bots. */
+  fleetRestoreArchivedEnvironment: (environmentId: string): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:restoreArchivedEnvironment', environmentId),
+  /** Irreversible: deletes an archived environment's files, its bots and every server record of them. */
+  fleetDeleteArchivedEnvironment: (environmentId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:deleteArchivedEnvironment', environmentId),
+  /** Opens a section of the environment's Maestrly settings on its environment screen. */
+  fleetEnvironmentUiOpen: (environmentId: string, target: FleetUiOpenRequest['target']): Promise<void> =>
+    ipcRenderer.invoke('fleet:environmentUiOpen', environmentId, target),
   fleetListSelections: (
     botId: string
   ): Promise<{
     options: FleetSelectionOption[]
     current: FleetSelection | null
   }> => ipcRenderer.invoke('fleet:listSelections', botId),
-  fleetAddApiKeyAccount: (botId: string, input: FleetAddApiKeyAccountRequest): Promise<{ providerId: string }> =>
-    ipcRenderer.invoke('fleet:add-api-key-account', botId, input),
-  fleetRemoveAccount: (botId: string, providerId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:remove-account', botId, providerId),
+  fleetAddApiKeyAccount: (
+    target: FleetProvisioningTargetInput,
+    input: FleetAddApiKeyAccountRequest
+  ): Promise<{ providerId: string }> => ipcRenderer.invoke('fleet:add-api-key-account', target, input),
+  fleetRemoveAccount: (target: FleetProvisioningTargetInput, providerId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:remove-account', target, providerId),
   fleetGetTranscript: (botId: string, before?: string | null, limit?: number): Promise<FleetTranscriptPage> =>
     ipcRenderer.invoke('fleet:getTranscript', botId, before, limit),
   fleetSendMessage: (
@@ -242,7 +299,7 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:runRoutine', botId, routineId),
   fleetOwnerMemoryList: (status: 'active' | 'all' = 'all'): Promise<FleetOwnerMemory> =>
     ipcRenderer.invoke('fleet:ownerMemoryList', status),
-  fleetOwnerMemoryCreate: (input: { content: string; replacesId?: string }): Promise<FleetOwnerMemoryEntry> =>
+  fleetOwnerMemoryCreate: (input: FleetOwnerMemoryCreateInput): Promise<FleetOwnerMemoryEntry> =>
     ipcRenderer.invoke('fleet:ownerMemoryCreate', input),
   fleetOwnerMemoryUpdate: (entryId: string, patch: FleetOwnerMemoryPatchRequest): Promise<FleetOwnerMemoryEntry> =>
     ipcRenderer.invoke('fleet:ownerMemoryUpdate', entryId, patch),
@@ -262,8 +319,9 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:getPeerMessages', limit),
   fleetGetDigest: (): Promise<FleetDigest> => ipcRenderer.invoke('fleet:getDigest'),
   fleetAckDigest: (lastSeq: number): Promise<void> => ipcRenderer.invoke('fleet:ackDigest', lastSeq),
-  fleetScreenOpen: (botId: string, mode: 'view' | 'control'): Promise<{ channelId: string }> =>
-    ipcRenderer.invoke('fleet:screenOpen', botId, mode),
+  /** A bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
+  fleetScreenOpen: (target: FleetScreenTargetInput, mode: 'view' | 'control'): Promise<{ channelId: string }> =>
+    ipcRenderer.invoke('fleet:screenOpen', target, mode),
   fleetScreenSend: (channelId: string, data: ArrayBuffer): Promise<void> =>
     ipcRenderer.invoke('fleet:screenSend', channelId, data),
   fleetScreenClose: (channelId: string): Promise<void> => ipcRenderer.invoke('fleet:screenClose', channelId),

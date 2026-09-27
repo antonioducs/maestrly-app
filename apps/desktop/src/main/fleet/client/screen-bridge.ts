@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import type { FleetScreenTicketResponse } from '@maestrly/bot-fleet-protocol'
+import type { FleetScreenTargetInput } from '../../../shared/fleet-targets'
 import type { FleetApiClient } from './api'
 
 export type FleetScreenState = {
@@ -22,15 +23,24 @@ export class FleetScreenBridge {
     private readonly makeSocket: (url: string) => Socket = (url) => new WebSocket(url)
   ) {}
 
-  async openScreen(owner: WebContents, botId: string, mode: 'view' | 'control'): Promise<{ channelId: string }> {
+  /** Opens a bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
+  async openScreen(
+    owner: WebContents,
+    target: FleetScreenTargetInput,
+    mode: 'view' | 'control'
+  ): Promise<{ channelId: string }> {
     if (this.channels.size + this.pending >= 4) throw new Error('Too many screen channels')
+    const screen = typeof target === 'string' ? { botId: target, surface: 'browser' as const } : target
     this.pending++
     const generation = this.generation
     let api: FleetApiClient
     let ticket: FleetScreenTicketResponse
     try {
       api = this.getApi()
-      ticket = await api.call('botScreenTicket', { params: { id: botId }, body: { mode } })
+      ticket =
+        'environmentId' in screen
+          ? await api.call('environmentScreenTicket', { params: { eid: screen.environmentId }, body: { mode } })
+          : await api.call('botScreenTicket', { params: { id: screen.botId }, body: { mode, surface: screen.surface } })
     } finally {
       this.pending--
     }

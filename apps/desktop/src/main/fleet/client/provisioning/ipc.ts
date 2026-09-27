@@ -7,16 +7,15 @@ import {
 import { startBotLogin, botLoginStatus, submitBotLoginCode, cancelBotLogin, reopenBotLogin } from './logins'
 import { z } from 'zod'
 import {
-  fleetBotIdSchema,
   fleetSubscriptionKindSchema,
   fleetAccountSlotIdSchema,
   fleetSkillNameSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../../ipc-registrar'
 import type { FleetClientService } from '../service'
+import { provisioningRoute, resolveProvisioningTarget } from '../targets'
 import { buildMacInventory } from './inventory'
 import { importFromMac } from './export'
-const id = fleetBotIdSchema
 const opaqueId = z.string().min(1).max(256)
 const slot = z.union([z.literal('default'), fleetAccountSlotIdSchema])
 const selection = z
@@ -27,33 +26,39 @@ const selection = z
     mcpServerIds: z.array(opaqueId).max(200),
   })
   .strict()
+/**
+ * Every channel takes a target: an environment (`{ environmentId }`), a bot (`{ botId }`) or, from the views that
+ * predate environments, a bare bot id. It is validated before anything reaches the gateway.
+ */
 export function registerFleetProvisioningIpc(reg: IpcRegistrar, fleet: FleetClientService): void {
-  reg.mhandle('fleet:login:start', (_event, botId: unknown, request: unknown) =>
-    startBotLogin(fleet, id.parse(botId), fleetLoginStartRequestSchema.parse(request))
+  const target = (raw: unknown) => resolveProvisioningTarget(fleet, raw)
+  reg.mhandle('fleet:login:start', (_event, rawTarget: unknown, request: unknown) =>
+    startBotLogin(fleet, target(rawTarget), fleetLoginStartRequestSchema.parse(request))
   )
-  reg.handle('fleet:login:status', (_event, botId: unknown, loginId: unknown) =>
-    botLoginStatus(fleet, id.parse(botId), opaqueId.parse(loginId))
+  reg.handle('fleet:login:status', (_event, rawTarget: unknown, loginId: unknown) =>
+    botLoginStatus(fleet, target(rawTarget), opaqueId.parse(loginId))
   )
-  reg.mhandle('fleet:login:code', (_event, botId: unknown, loginId: unknown, code: unknown) =>
+  reg.mhandle('fleet:login:code', (_event, rawTarget: unknown, loginId: unknown, code: unknown) =>
     submitBotLoginCode(
       fleet,
-      id.parse(botId),
+      target(rawTarget),
       opaqueId.parse(loginId),
       fleetLoginCodeRequestSchema.parse({ code }).code
     )
   )
-  reg.mhandle('fleet:login:cancel', (_event, botId: unknown, loginId: unknown) =>
-    cancelBotLogin(fleet, id.parse(botId), opaqueId.parse(loginId))
+  reg.mhandle('fleet:login:cancel', (_event, rawTarget: unknown, loginId: unknown) =>
+    cancelBotLogin(fleet, target(rawTarget), opaqueId.parse(loginId))
   )
-  reg.mhandle('fleet:login:open', (_event, botId: unknown, loginId: unknown, target: unknown) =>
-    reopenBotLogin(fleet, id.parse(botId), opaqueId.parse(loginId), z.enum(['auth', 'device', 'manual']).parse(target))
+  reg.mhandle('fleet:login:open', (_event, rawTarget: unknown, loginId: unknown, page: unknown) =>
+    reopenBotLogin(fleet, target(rawTarget), opaqueId.parse(loginId), z.enum(['auth', 'device', 'manual']).parse(page))
   )
   reg.handle('fleet:provisioning:inventory', () => buildMacInventory())
-  reg.mhandle('fleet:provisioning:import', (_event, botId: unknown, input: unknown) =>
-    importFromMac(fleet, id.parse(botId), selection.parse(input))
+  reg.mhandle('fleet:provisioning:import', (_event, rawTarget: unknown, input: unknown) =>
+    importFromMac(fleet, target(rawTarget), selection.parse(input))
   )
-  reg.handle('fleet:bot:accounts', async (_event, botId: unknown) => {
-    const accounts: FleetBotAccounts = await fleet.call('botAccountsList', { params: { id: id.parse(botId) } })
+  reg.handle('fleet:bot:accounts', async (_event, rawTarget: unknown) => {
+    const route = provisioningRoute(target(rawTarget), 'accountsList')
+    const accounts: FleetBotAccounts = await fleet.call(route.key, { params: route.params })
     return {
       ...accounts,
       apiKeys: accounts.apiKeys.map((account) => ({
@@ -62,21 +67,25 @@ export function registerFleetProvisioningIpc(reg: IpcRegistrar, fleet: FleetClie
       })),
     }
   })
-  reg.mhandle('fleet:bot:subscription-remove', (_event, botId: unknown, kind: unknown, account: unknown) =>
-    fleet.call('botSubscriptionRemove', {
-      params: { id: id.parse(botId), kind: fleetSubscriptionKindSchema.parse(kind), slot: slot.parse(account) },
-    })
-  )
-  reg.handle('fleet:bot:skills', (_event, botId: unknown) =>
-    fleet.call('botSkillsList', { params: { id: id.parse(botId) } })
-  )
-  reg.mhandle('fleet:bot:skill-remove', (_event, botId: unknown, name: unknown) =>
-    fleet.call('botSkillRemove', { params: { id: id.parse(botId), name: fleetSkillNameSchema.parse(name) } })
-  )
-  reg.handle('fleet:bot:mcp-servers', (_event, botId: unknown) =>
-    fleet.call('botMcpServersList', { params: { id: id.parse(botId) } })
-  )
-  reg.mhandle('fleet:bot:mcp-remove', (_event, botId: unknown, serverId: unknown) =>
-    fleet.call('botMcpServerRemove', { params: { id: id.parse(botId), sid: opaqueId.parse(serverId) } })
-  )
+  reg.mhandle('fleet:bot:subscription-remove', (_event, rawTarget: unknown, kind: unknown, account: unknown) => {
+    const params = { kind: fleetSubscriptionKindSchema.parse(kind), slot: slot.parse(account) }
+    const route = provisioningRoute(target(rawTarget), 'subscriptionRemove', params)
+    return fleet.call(route.key, { params: route.params })
+  })
+  reg.handle('fleet:bot:skills', (_event, rawTarget: unknown) => {
+    const route = provisioningRoute(target(rawTarget), 'skillsList')
+    return fleet.call(route.key, { params: route.params })
+  })
+  reg.mhandle('fleet:bot:skill-remove', (_event, rawTarget: unknown, name: unknown) => {
+    const route = provisioningRoute(target(rawTarget), 'skillRemove', { name: fleetSkillNameSchema.parse(name) })
+    return fleet.call(route.key, { params: route.params })
+  })
+  reg.handle('fleet:bot:mcp-servers', (_event, rawTarget: unknown) => {
+    const route = provisioningRoute(target(rawTarget), 'mcpServersList')
+    return fleet.call(route.key, { params: route.params })
+  })
+  reg.mhandle('fleet:bot:mcp-remove', (_event, rawTarget: unknown, serverId: unknown) => {
+    const route = provisioningRoute(target(rawTarget), 'mcpServerRemove', { sid: opaqueId.parse(serverId) })
+    return fleet.call(route.key, { params: route.params })
+  })
 }

@@ -1,11 +1,13 @@
 import {
   compareFleetTranscriptItems,
   type FleetActivityEntry,
+  type FleetEnvironment,
   type FleetGatewayEvent,
   type FleetTranscriptItem,
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetConnectionView, FleetDigest, FleetSnapshot } from '../../../preload/api-fleet'
+import { compareByName } from './selectors'
 
 export type TranscriptState = FleetTranscriptPage & {
   loaded: boolean
@@ -37,7 +39,7 @@ export const initialFleetState: FleetState = {
     error: null,
     tokenPersistence: 'secure',
   },
-  snapshot: { host: null, bots: [], inbox: [], peerMessages: [] },
+  snapshot: { host: null, bots: [], environments: [], inbox: [], peerMessages: [] },
   ownerMemoryRevision: 0,
   digest: null,
   activity: [],
@@ -53,9 +55,27 @@ export function mergeTranscriptItems(
   return [...items.values()].sort(compareFleetTranscriptItems)
 }
 
+/** A snapshot without environments (a gateway that predates them, or a view resetting the list) has none. */
+export type FleetSnapshotInput = Omit<FleetSnapshot, 'environments'> & { environments?: FleetEnvironment[] }
+
+/** An archived or removed environment takes its bots along, with their inbox items and transcripts. */
+function withoutEnvironment(state: FleetState, environmentId: string): FleetState {
+  const bots = new Set(state.snapshot.bots.filter((bot) => bot.environmentId === environmentId).map((bot) => bot.id))
+  return {
+    ...state,
+    snapshot: {
+      ...state.snapshot,
+      environments: state.snapshot.environments.filter((environment) => environment.id !== environmentId),
+      bots: state.snapshot.bots.filter((bot) => !bots.has(bot.id)),
+      inbox: state.snapshot.inbox.filter((item) => !bots.has(item.botId)),
+    },
+    transcripts: Object.fromEntries(Object.entries(state.transcripts).filter(([botId]) => !bots.has(botId))),
+  }
+}
+
 export type FleetAction =
   | { type: 'connection'; value: FleetConnectionView }
-  | { type: 'snapshot'; value: FleetSnapshot }
+  | { type: 'snapshot'; value: FleetSnapshotInput }
   | { type: 'digest'; value: FleetDigest }
   | { type: 'event'; value: FleetGatewayEvent }
   | { type: 'transcript.loading'; botId: string }
@@ -72,7 +92,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
     case 'connection':
       return { ...state, connection: action.value }
     case 'snapshot':
-      return { ...state, snapshot: action.value }
+      return { ...state, snapshot: { ...action.value, environments: action.value.environments ?? [] } }
     case 'digest':
       return { ...state, digest: action.value }
     case 'transcript.loading':
@@ -200,9 +220,21 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
           }
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }
-        // The state does not keep environments yet.
         case 'environment.updated':
+          // Like bots, an archived environment is never listed, whatever the order of its events and replies.
+          if (event.environment.lifecycle === 'archived') return withoutEnvironment(state, event.environment.id)
+          return {
+            ...state,
+            snapshot: {
+              ...state.snapshot,
+              environments: [
+                ...state.snapshot.environments.filter((environment) => environment.id !== event.environment.id),
+                event.environment,
+              ].sort(compareByName),
+            },
+          }
         case 'environment.removed':
+          return withoutEnvironment(state, event.environmentId)
         case 'hello':
           return state
       }

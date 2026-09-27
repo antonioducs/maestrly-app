@@ -10,7 +10,9 @@ import {
   type FleetAccountImportItem,
 } from '@maestrly/bot-fleet-protocol'
 import type { MacImportSelection, MacImportReport, MacImportItemResult } from '../../../../shared/fleet-provisioning'
+import type { FleetProvisioningTargetInput } from '../../../../shared/fleet-targets'
 import type { FleetClientService } from '../service'
+import { provisioningRoute, resolveProvisioningTarget } from '../targets'
 import { listProviders, listAvailableChatProviders, getProviderKind } from '../../../chat/catalog'
 import { getApiKey } from '../../../chat/credentials'
 import { getGitHubCopilotSubscriptionManager } from '../../../chat/github-copilot'
@@ -25,13 +27,17 @@ const missing = 'This account is no longer stored on this Mac.'
 function item(id: string, name = id): MacImportItemResult {
   return { id, name, outcome: 'failed', error: null }
 }
+/** Sends what the owner picked on this Mac to an environment (shared by its bots) or a bot; a bare string is a bot. */
 export async function importFromMac(
   fleet: FleetClientService,
-  botId: string,
+  rawTarget: FleetProvisioningTargetInput,
   selection: MacImportSelection
 ): Promise<MacImportReport> {
+  const target = resolveProvisioningTarget(fleet, rawTarget)
   const report: MacImportReport = { accounts: [], skills: [], mcpServers: [] }
-  const params = { id: botId }
+  const accountsImport = provisioningRoute(target, 'accountsImport')
+  const skillInstall = provisioningRoute(target, 'skillInstall')
+  const mcpServersImport = provisioningRoute(target, 'mcpServersImport')
   const items: FleetAccountImportItem[] = []
   const sent: MacImportItemResult[] = []
   const secrets: string[] = []
@@ -119,8 +125,8 @@ export async function importFromMac(
     const targets = sent.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
     try {
       apply(
-        await fleet.call('botAccountsImport', {
-          params,
+        await fleet.call(accountsImport.key, {
+          params: accountsImport.params,
           body: fleetAccountImportRequestSchema.parse({ items: batch }),
         }),
         targets
@@ -155,7 +161,9 @@ export async function importFromMac(
           executable: file.executable,
         })),
       })
-      const response = fleetSkillInstallResponseSchema.parse(await fleet.call('botSkillInstall', { params, body }))
+      const response = fleetSkillInstallResponseSchema.parse(
+        await fleet.call(skillInstall.key, { params: skillInstall.params, body })
+      )
       result.outcome = response.outcome
     } catch (error) {
       result.error = safeError(error)
@@ -184,8 +192,8 @@ export async function importFromMac(
     const targets = mcpSent.slice(offset, offset + FLEET_PROVISIONING_LIMITS.importItemsMax)
     try {
       apply(
-        await fleet.call('botMcpServersImport', {
-          params,
+        await fleet.call(mcpServersImport.key, {
+          params: mcpServersImport.params,
           body: fleetMcpImportRequestSchema.parse({ servers: batch }),
         }),
         targets
