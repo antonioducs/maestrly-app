@@ -212,11 +212,13 @@ it('uses per-call timeouts without changing the default for subsequent calls', a
   const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(null, { status: 204 }))
   try {
     const client = new InstanceClient('test', 'control')
-    await client.loginStart({ kind: 'claude', method: 'browser', slot: 'auto' })
+    // An empty answer is no login, skill or account list: each call fails, after waiting its own time.
+    const empty = { code: 'INSTANCE_UNAVAILABLE', message: 'Invalid bot instance response' }
+    await expect(client.loginStart({ kind: 'claude', method: 'browser', slot: 'auto' })).rejects.toMatchObject(empty)
     expect(timer.mock.calls.at(-1)?.[1]).toBe(30000)
-    await client.skillInstall(skill)
+    await expect(client.skillInstall(skill)).rejects.toMatchObject(empty)
     expect(timer.mock.calls.at(-1)?.[1]).toBe(60000)
-    await client.accountsList()
+    await expect(client.accountsList()).rejects.toMatchObject(empty)
     expect(timer.mock.calls.at(-1)?.[1]).toBe(15000)
   } finally {
     timer.mockRestore()

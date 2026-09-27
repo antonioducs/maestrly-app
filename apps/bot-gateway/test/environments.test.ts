@@ -90,11 +90,16 @@ async function environmentInstance(environmentId: string, capable = true) {
   const streams = new Set<ServerResponse>()
   const subscriptions: number[] = []
   const upgrades: string[] = []
-  const failures: Array<{ method: string; path: string; status: number; code: string }> = []
+  /** Synthetic failures by method and path: an error answer, or none (`drop` closes the connection, `hang` waits). */
+  const failures: Array<{ method: string; path: string; status: number; code: string; transport?: 'drop' | 'hang' }> =
+    []
   const capabilities = capable ? ['provisioning', 'environments'] : ['provisioning']
   let seq = 0
   // Screens connect with the environment's real control token, which the gateway keeps.
   let tunnelToken = 'control'
+  // An instance from before environments names no capability in its health check.
+  let healthCapabilities = true
+  let reportedEnvironmentId = environmentId
   const statusOf = (botId: string) => instanceStatus(botId, capabilities, seq, installed.get(botId)?.hold ?? noHold)
   const emit = (event: Record<string, unknown>) => {
     seq++
@@ -123,6 +128,8 @@ async function environmentInstance(environmentId: string, capable = true) {
     const route = url.pathname + url.search
     requests.push({ method: req.method ?? '', path: route, body })
     const failure = failures.find((item) => item.method === req.method && item.path === route)
+    if (failure?.transport === 'drop') return req.socket.destroy()
+    if (failure?.transport === 'hang') return
     if (failure) return send(failure.status, { code: failure.code, message: 'Synthetic failure' })
     if (url.pathname === '/v1/events') {
       subscriptions.push(Number(url.searchParams.get('since') ?? 0))
@@ -132,12 +139,18 @@ async function environmentInstance(environmentId: string, capable = true) {
       return
     }
     if (url.pathname === '/v1/health')
-      return send(200, { ok: true, appVersion: '2.0.0', protocol: 1, ready: true, capabilities })
+      return send(200, {
+        ok: true,
+        appVersion: '2.0.0',
+        protocol: 1,
+        ready: true,
+        ...(healthCapabilities ? { capabilities } : {}),
+      })
     try {
       if (capable) {
         if (url.pathname === '/v1/environment/status')
           return send(200, {
-            environmentId,
+            environmentId: reportedEnvironmentId,
             capabilities,
             appVersion: '2.0.0',
             protocol: 1,
@@ -252,6 +265,15 @@ async function environmentInstance(environmentId: string, capable = true) {
     setTunnelToken(value: string) {
       tunnelToken = value
     },
+    setHealthCapabilities(value: boolean) {
+      healthCapabilities = value
+    },
+    /** Makes the instance say it belongs to another environment. */
+    reportAs(id: string) {
+      reportedEnvironmentId = id
+    },
+    /** How long the gateway waits for each answer. */
+    timeoutMs: 15000,
     /** The bot installations requested so far, in order. */
     installs: () =>
       requests
@@ -284,7 +306,7 @@ function fixture() {
   const factory = (id: string) => {
     const fake = fakes.get(id)
     if (!fake) throw new Error('No synthetic instance for ' + id)
-    return new InstanceClient(id, 'control', fake.origin)
+    return new InstanceClient(id, 'control', fake.origin, fake.timeoutMs)
   }
   const lifecycle = new Lifecycle(store, docker, cfg, factory, 400)
   const events: FleetGatewayEvent[] = []
@@ -357,9 +379,13 @@ describe('environments', () => {
       labels: { 'org.maestrly.fleet.managed': 'true', 'org.maestrly.fleet.environment-id': 'work' },
       memory: f.cfg.botMemory,
     })
-    // The container carries the environment, never a bot: bots arrive through the control API with their own token.
+    // The container carries the environment: bots arrive through the control API with their own token. Its one bot is
+    // also named in the variables an image from before environments reads.
     expect([...created.spec.env].sort()).toEqual(
       [
+        'MAESTRLY_BOT_ID=' + ads.id,
+        'MAESTRLY_BOT_NAME=Ads',
+        'MAESTRLY_BOT_GATEWAY_TOKEN=' + f.store.botGatewaySecrets(ads.id)!.gatewayToken,
         'MAESTRLY_BOT_MODE=1',
         'MAESTRLY_ENVIRONMENT_ID=work',
         'MAESTRLY_BOT_CONTROL_HOST=0.0.0.0',
@@ -591,7 +617,12 @@ describe('environments', () => {
     const updated = container(f, 'maestrly-env-work')!
     expect(updated).not.toBe(original)
     expect(updated.imageId).toBe('sha256:synthetic-new-image')
-    expect(updated.spec).toEqual(original.spec)
+    // Shared now, the environment's container no longer names a bot for an older image.
+    expect(original.spec.env).toContain('MAESTRLY_BOT_ID=' + ads)
+    expect(updated.spec).toEqual({
+      ...original.spec,
+      env: original.spec.env.filter((item) => !/^MAESTRLY_BOT_(ID|NAME|GATEWAY_TOKEN)=/.test(item)),
+    })
     expect(f.store.environmentSecrets('work')).toEqual(secrets)
     expect(
       work
@@ -898,6 +929,13 @@ describe('environments', () => {
       },
     })
     expect([...solo.installed.keys()]).toEqual([bot])
+    // Archiving the bot that waits leaves the environment, and the bot its instance runs, alone.
+    const holds = solo.requests.filter((item) => item.path === '/v1/hold').length
+    await next.archive(pal.id)
+    expect(next.environment('solo')?.lifecycle).toBe('running')
+    expect(next.get(bot)?.lifecycle).toBe('running')
+    expect(solo.installed.get(bot)?.hold).toEqual(noHold)
+    expect(solo.requests.filter((item) => item.path === '/v1/hold').length).toBe(holds)
   })
 
   it('drives Docker to change a live memory limit', async () => {
@@ -927,6 +965,359 @@ describe('environments', () => {
       body: { Memory: 6 * GiB, MemorySwap: 12 * GiB },
     })
     await expect(docker.updateMemory('refused', 2 * GiB)).rejects.toMatchObject({ status: 409 })
+  })
+})
+
+describe('installation failures', () => {
+  it('fails only the bot whose installation its instance refuses, at start and after a gateway restart', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha, beta],
+    } = await environment(f, 'Work', ['Alpha', 'Beta'])
+    // Beta's own files are corrupt: the instance answers its installation with an internal error.
+    work.failures.push({ method: 'PUT', path: '/v1/bots/' + beta, status: 500, code: 'INTERNAL' })
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('running')
+    expect(f.lifecycle.statuses.has(alpha)).toBe(true)
+    expect(f.lifecycle.get(beta)).toMatchObject({
+      lifecycle: 'failed',
+      status: 'offline',
+      setup: { step: 'failed', error: 'INSTANCE_UNAVAILABLE', errorMessage: 'Bot startup failed' },
+    })
+    expect(container(f, 'maestrly-env-work')?.state).toBe('running')
+    // After a gateway restart, the environment runs at once instead of retrying forever.
+    f.lifecycle.close()
+    const next = new Lifecycle(f.store, f.docker, f.cfg, f.factory, 400)
+    closers.push(async () => next.close())
+    await next.reconcile()
+    expect(next.environment('work')?.lifecycle).toBe('running')
+    expect(next.get(alpha)?.lifecycle).toBe('running')
+    expect(next.get(beta)?.lifecycle).toBe('failed')
+  })
+
+  it('fails the whole environment when its instance cannot be reached or does not answer in time', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha, beta],
+    } = await environment(f, 'Work', ['Alpha', 'Beta'])
+    work.failures.push({ method: 'PUT', path: '/v1/bots/' + beta, status: 0, code: '', transport: 'drop' })
+    expect((await f.lifecycle.restartEnvironment('work')).setup).toMatchObject({
+      step: 'failed',
+      error: 'INSTANCE_UNAVAILABLE',
+    })
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('failed')
+    expect(f.lifecycle.get(beta)?.lifecycle).toBe('failed')
+    work.failures[0].transport = 'hang'
+    work.timeoutMs = 150
+    expect((await f.lifecycle.restartEnvironment('work')).setup).toMatchObject({
+      step: 'failed',
+      error: 'INSTANCE_UNAVAILABLE',
+    })
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('failed')
+  })
+
+  it('fails an environment whose instance reports another environment or a malformed status', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    work.reportAs('home')
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('failed')
+    work.reportAs('work')
+    work.failures.push({ method: 'GET', path: '/v1/environment/status', status: 200, code: 'MALFORMED' })
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('failed')
+    work.failures.length = 0
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    await running(f, ads)
+  })
+
+  it('keeps unrelated bots running when a bot that should leave cannot, and never gives away its slot meanwhile', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha, beta, cleo],
+    } = await environment(f, 'Work', ['Alpha', 'Beta', 'Cleo'])
+    await f.lifecycle.stopEnvironment('work')
+    await f.lifecycle.archive(beta)
+    const dana = f.lifecycle.create({ ...botInput('Dana'), environmentId: 'work' })
+    expect(f.store.botPlacement(dana.id)?.slot).toBe(2)
+    // The instance still runs Beta in slot 2, and fails to uninstall it.
+    work.failures.push({ method: 'DELETE', path: '/v1/bots/' + beta, status: 500, code: 'INTERNAL' })
+    expect((await f.lifecycle.startEnvironment('work')).lifecycle).toBe('running')
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('running')
+    expect(f.lifecycle.get(cleo)?.lifecycle).toBe('running')
+    expect(f.lifecycle.get(dana.id)).toMatchObject({
+      lifecycle: 'failed',
+      setup: {
+        step: 'failed',
+        error: 'CONFLICT',
+        errorMessage: 'Its display slot is still in use. Start the bot again to retry.',
+      },
+    })
+    expect(work.firstInstall(dana.id)).toBe(-1)
+    expect(work.installed.get(beta)?.slot).toBe(2)
+    // Once Beta can leave, starting Dana installs it in the freed slot, without touching its siblings.
+    work.failures.length = 0
+    const before = work.requests.length
+    expect((await f.lifecycle.start(dana.id)).lifecycle).toBe('running')
+    expect(
+      work.requests
+        .slice(before)
+        .filter((item) => item.method !== 'GET')
+        .map((item) => item.method + ' ' + item.path)
+    ).toEqual(['DELETE /v1/bots/' + beta, 'PUT /v1/bots/' + dana.id])
+    expect(work.installed.get(dana.id)?.slot).toBe(2)
+    expect(work.installed.has(beta)).toBe(false)
+  })
+
+  it('tries again later to remove a bot that could not leave, quietly, then installs the bot waiting for its slot', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha, beta],
+    } = await environment(f, 'Work', ['Alpha', 'Beta'])
+    await f.lifecycle.stopEnvironment('work')
+    await f.lifecycle.archive(beta)
+    const cleo = f.lifecycle.create({ ...botInput('Cleo'), environmentId: 'work' })
+    work.failures.push({ method: 'DELETE', path: '/v1/bots/' + beta, status: 500, code: 'INTERNAL' })
+    await f.lifecycle.startEnvironment('work')
+    const leaving = () => work.requests.filter((item) => item.method === 'DELETE' && item.path === '/v1/bots/' + beta)
+    const failed = () => f.store.activity().filter((entry) => entry.botId === cleo.id && entry.kind === 'bot_failed')
+    expect(leaving()).toHaveLength(1)
+    expect(f.lifecycle.get(cleo.id)?.lifecycle).toBe('failed')
+    await until(() => leaving().length === 2)
+    // Still refused: Cleo stays failed, without a new failure recorded for each attempt.
+    expect(f.lifecycle.get(cleo.id)?.lifecycle).toBe('failed')
+    expect(failed()).toHaveLength(1)
+    work.failures.length = 0
+    await running(f, cleo.id)
+    expect(work.installed.get(cleo.id)?.slot).toBe(2)
+    expect(work.installed.has(beta)).toBe(false)
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('running')
+    expect(f.lifecycle.environment('work')?.lifecycle).toBe('running')
+  })
+
+  it('retries the installation of a failed bot on start, without restarting its environment or its siblings', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const home = await f.instance('home')
+    const {
+      ids: [alpha, beta],
+    } = await environment(f, 'Work', ['Alpha', 'Beta'])
+    const {
+      ids: [solo],
+    } = await environment(f, 'Home', ['Solo'])
+    work.failures.push({ method: 'PUT', path: '/v1/bots/' + beta, status: 409, code: 'CONFLICT' })
+    home.failures.push({ method: 'PUT', path: '/v1/bots/' + solo, status: 500, code: 'INTERNAL' })
+    await f.lifecycle.restartEnvironment('work')
+    await f.lifecycle.restartEnvironment('home')
+    expect(f.lifecycle.get(beta)?.lifecycle).toBe('failed')
+    expect(f.lifecycle.get(solo)?.lifecycle).toBe('failed')
+    work.failures.length = 0
+    home.failures.length = 0
+    const docker: string[] = []
+    for (const method of ['start', 'stop', 'restart'] as const) {
+      const original = f.docker[method].bind(f.docker)
+      f.docker[method] = async (id: string) => {
+        docker.push(method + ' ' + id)
+        return original(id)
+      }
+    }
+    const changes = (fake: Fake, before: number) =>
+      fake.requests
+        .slice(before)
+        .filter((item) => item.method !== 'GET')
+        .map((item) => item.method + ' ' + item.path)
+    const workBefore = work.requests.length,
+      homeBefore = home.requests.length
+    // In a shared environment, a failed bot's own start is allowed: it installs that bot again, and only it.
+    expect((await f.lifecycle.start(beta)).lifecycle).toBe('running')
+    expect(changes(work, workBefore)).toEqual(['PUT /v1/bots/' + beta])
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('running')
+    // So does a bot alone in its running environment.
+    expect((await f.lifecycle.start(solo)).lifecycle).toBe('running')
+    expect(changes(home, homeBefore)).toEqual(['PUT /v1/bots/' + solo])
+    expect(
+      f.store
+        .activity()
+        .filter((entry) => (entry.botId === beta || entry.botId === solo) && entry.kind === 'bot_started')
+    ).toHaveLength(4)
+    // Starting a running bot is still a no-op for a bot alone, and still refused for a bot that shares.
+    expect((await f.lifecycle.start(solo)).lifecycle).toBe('running')
+    for (const command of ['start', 'stop', 'restart'] as const)
+      await expect(f.lifecycle[command](alpha)).rejects.toMatchObject({ code: 'CONFLICT' })
+    for (const command of ['stop', 'restart'] as const)
+      await expect(f.lifecycle[command](beta)).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(docker).toEqual([])
+    // A bot of a stopped shared environment cannot start it on its own.
+    await f.lifecycle.stopEnvironment('work')
+    await expect(f.lifecycle.start(beta)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This bot shares its environment. Restart the environment instead.',
+    })
+  })
+})
+
+describe('older images', () => {
+  it('shows the configuration that an environment from before environments takes through its bot', async () => {
+    const f = fixture()
+    const solo = await f.instance('solo', false)
+    // Its health check names no capability, as before environments.
+    solo.setHealthCapabilities(false)
+    const {
+      ids: [bot],
+    } = await environment(f, 'Solo', ['Solo'])
+    expect(f.lifecycle.environmentCapable('solo')).toBe(false)
+    expect(f.lifecycle.environment('solo')?.capabilities).toEqual(['provisioning'])
+    // Its bot's status never makes it claim to host several bots.
+    await until(() => solo.subscriptions.length > 0)
+    solo.emit({ type: 'status', status: { ...solo.statusOf(bot), capabilities: ['provisioning', 'environments'] } })
+    await until(() => f.lifecycle.get(bot)?.capabilities.includes('environments') === true)
+    expect(f.lifecycle.environment('solo')?.capabilities).toEqual(['provisioning'])
+    expect(f.lifecycle.environmentCapable('solo')).toBe(false)
+    // An environment instance speaks for itself.
+    const work = await f.instance('work')
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    await until(() => work.subscriptions.length > 0)
+    work.emit({
+      type: 'status',
+      botId: ads,
+      status: { ...work.statusOf(ads), capabilities: ['provisioning', 'environments', 'synthetic'] },
+    })
+    await until(() => f.lifecycle.get(ads)?.capabilities.includes('synthetic') === true)
+    expect(f.lifecycle.environment('work')?.capabilities).toEqual(['provisioning', 'environments'])
+  })
+
+  it('names the one bot of an environment in the variables an older image reads, and no bot otherwise', async () => {
+    const f = fixture()
+    const solo = await f.instance('solo', false)
+    const legacy = (name: string) =>
+      container(f, name)!
+        .spec.env.filter((item) => /^MAESTRLY_BOT_(ID|NAME|GATEWAY_TOKEN)=/.test(item))
+        .sort()
+    const {
+      ids: [bot],
+    } = await environment(f, 'Solo', ['Solo'])
+    expect(legacy('maestrly-env-solo')).toEqual([
+      'MAESTRLY_BOT_GATEWAY_TOKEN=' + f.store.botGatewaySecrets(bot)!.gatewayToken,
+      'MAESTRLY_BOT_ID=' + bot,
+      'MAESTRLY_BOT_NAME=Solo',
+    ])
+    expect(solo.requests.filter((item) => item.method === 'PUT').map((item) => item.path)).toEqual(['/v1/profile'])
+    // An environment with no bot yet names none.
+    await f.instance('empty')
+    f.lifecycle.createEnvironment({ name: 'Empty', memoryLimitBytes: null })
+    await until(() => f.lifecycle.environment('empty')?.lifecycle === 'running')
+    expect(legacy('maestrly-env-empty')).toEqual([])
+    // Nor does one whose older instance would still run an archived bot: Ads was the first bot of Work.
+    await f.instance('work')
+    const {
+      ids: [ads, scout],
+    } = await environment(f, 'Work', ['Ads', 'Scout'])
+    await f.lifecycle.archive(ads)
+    f.docker.setImage(f.cfg.botImage, 'sha256:synthetic-new-image')
+    await f.lifecycle.restartEnvironment('work')
+    await running(f, scout)
+    expect(container(f, 'maestrly-env-work')?.imageId).toBe('sha256:synthetic-new-image')
+    expect(legacy('maestrly-env-work')).toEqual([])
+  })
+
+  it('stops an environment from before environments once its bot is archived, even when the hold fails', async () => {
+    const f = fixture()
+    const solo = await f.instance('solo', false)
+    const {
+      ids: [bot],
+    } = await environment(f, 'Solo', ['Solo'])
+    const profiles = () => solo.requests.filter((item) => item.path === '/v1/profile').length
+    solo.failures.push({ method: 'POST', path: '/v1/hold', status: 500, code: 'INTERNAL' })
+    expect((await f.lifecycle.archive(bot)).lifecycle).toBe('archived')
+    expect(f.lifecycle.environment('solo')).toMatchObject({ lifecycle: 'stopped', botIds: [] })
+    expect(container(f, 'maestrly-env-solo')?.state).toBe('exited')
+    expect(f.docker.volumes.has('maestrly-env-solo-home')).toBe(true)
+    expect((await f.lifecycle.archivedList()).map((item) => item.id)).toEqual([bot])
+    // Started again, its instance still has the archived bot: it is held before the environment runs.
+    solo.failures.length = 0
+    const installed = profiles()
+    expect((await f.lifecycle.startEnvironment('solo')).lifecycle).toBe('running')
+    expect(solo.installed.get(bot)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    expect(profiles()).toBe(installed)
+    expect(f.lifecycle.get(bot)?.lifecycle).toBe('archived')
+    // When the hold cannot be confirmed at a start, its container stops again.
+    await f.lifecycle.stopEnvironment('solo')
+    solo.installed.get(bot)!.hold = noHold
+    solo.failures.push({ method: 'POST', path: '/v1/hold', status: 500, code: 'INTERNAL' })
+    expect((await f.lifecycle.startEnvironment('solo')).lifecycle).toBe('failed')
+    expect(container(f, 'maestrly-env-solo')?.state).toBe('exited')
+    expect(profiles()).toBe(installed)
+    // Restored, the bot works again.
+    solo.failures.length = 0
+    f.lifecycle.restore(bot)
+    await running(f, bot)
+    expect(f.lifecycle.environment('solo')?.lifecycle).toBe('running')
+    expect(profiles()).toBe(installed + 1)
+  })
+
+  it('holds a bot from before environments archived while its environment was stopped, at every start', async () => {
+    const f = fixture()
+    const solo = await f.instance('solo', false)
+    const {
+      ids: [bot],
+    } = await environment(f, 'Solo', ['Solo'])
+    const profiles = () => solo.requests.filter((item) => item.path === '/v1/profile').length
+    const installed = profiles()
+    await f.lifecycle.stopEnvironment('solo')
+    await f.lifecycle.archive(bot)
+    expect(solo.requests.some((item) => item.path === '/v1/hold')).toBe(false)
+    expect((await f.lifecycle.startEnvironment('solo')).lifecycle).toBe('running')
+    expect(solo.installed.get(bot)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    // Restarted, or found running after a gateway restart, it is held again if it lost its hold.
+    solo.installed.get(bot)!.hold = noHold
+    expect((await f.lifecycle.restartEnvironment('solo')).lifecycle).toBe('running')
+    expect(solo.installed.get(bot)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    solo.installed.get(bot)!.hold = noHold
+    f.lifecycle.close()
+    const next = new Lifecycle(f.store, f.docker, f.cfg, f.factory, 400)
+    closers.push(async () => next.close())
+    await next.reconcile()
+    expect(next.environment('solo')?.lifecycle).toBe('running')
+    expect(solo.installed.get(bot)?.hold).toMatchObject({ state: 'held', reason: 'paused' })
+    expect(profiles()).toBe(installed)
+  })
+
+  it('keeps a modern environment and its files when its last bot is archived', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    await f.lifecycle.archive(ads)
+    expect(f.lifecycle.environment('work')).toMatchObject({ lifecycle: 'running', botIds: [] })
+    expect(container(f, 'maestrly-env-work')?.state).toBe('running')
+    expect(f.docker.volumes.has('maestrly-env-work-home')).toBe(true)
+    expect(work.lastUninstall(ads)).toBeGreaterThan(-1)
+    expect(await f.lifecycle.archivedEnvironments()).toEqual([])
+  })
+})
+
+describe('instance answers', () => {
+  it('never takes an empty answer for a hold', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha],
+    } = await environment(f, 'Work', ['Alpha'])
+    work.failures.push({ method: 'POST', path: '/v1/bots/' + alpha + '/hold', status: 204, code: '' })
+    await expect(f.lifecycle.pause(alpha)).rejects.toMatchObject({ code: 'INSTANCE_UNAVAILABLE' })
+    expect(f.lifecycle.get(alpha)).toMatchObject({ paused: false, lifecycle: 'running' })
+    expect(f.lifecycle.statuses.get(alpha)?.hold).toEqual(noHold)
+    expect(f.lifecycle.list()).toHaveLength(1)
+    await expect(f.lifecycle.takeover(alpha, 'one', 'Mac')).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(f.lifecycle.get(alpha)?.takeover.state).toBe('none')
   })
 })
 

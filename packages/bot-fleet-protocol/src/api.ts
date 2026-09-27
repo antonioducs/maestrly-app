@@ -542,6 +542,8 @@ export const fleetInstanceBotInstallSchema = z.object({
   profile: fleetInstanceProfileSchema,
   slot: z.number().int().min(1).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   gatewayToken: z.string().min(16).max(200),
+  /** Applied before queued work starts, including a pause recorded while the environment was stopped. */
+  paused: z.boolean().optional(),
 })
 export type FleetInstanceBotInstall = z.infer<typeof fleetInstanceBotInstallSchema>
 export const fleetInstanceHoldSchema = z.object({
@@ -710,6 +712,7 @@ export const FLEET_GATEWAY_ROUTES = {
   botRestart: { method: 'POST', path: '/v1/bots/:id/restart', body: null, response: fleetBotSchema },
   botArchive: { method: 'POST', path: '/v1/bots/:id/archive', body: null, response: fleetBotSchema },
   // A separate collection: `/v1/bots/archived` would collide with a bot whose id is `archived`.
+  // `separateEnvironments=1` lists only individually archived bots. Older clients also see archived environments of one.
   archivedBotsList: {
     method: 'GET',
     path: '/v1/archived-bots',

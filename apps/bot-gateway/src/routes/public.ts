@@ -43,6 +43,15 @@ function requireBot(ctx: GatewayContext, id: string) {
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
 }
+/** Older Macs address an archived environment of one through its bot; shared environments need their own routes. */
+function archivedSingleEnvironment(ctx: GatewayContext, id: string): string | null {
+  const bot = ctx.store.getBot(id)
+  if (bot?.lifecycle !== 'archived' || !bot.environmentId) return null
+  const environment = ctx.store.getEnvironment(bot.environmentId)
+  return environment?.archivedAt && ctx.store.botsOfEnvironment(environment.id, true).length === 1
+    ? environment.id
+    : null
+}
 function requireEnvironment(ctx: GatewayContext, id: string) {
   const environment = ctx.lifecycle.environment(id)
   if (!environment) throw new GatewayError('NOT_FOUND', 'Environment not found')
@@ -320,16 +329,46 @@ export async function publicRoute(
       return { body: await ctx.lifecycle.restart(id) }
     case 'botArchive':
       return { body: await ctx.lifecycle.archive(id) }
-    case 'archivedBotsList':
-      return { body: { bots: await ctx.lifecycle.archivedList() } }
+    case 'archivedBotsList': {
+      const bots = await ctx.lifecycle.archivedList()
+      if (url.searchParams.get('separateEnvironments') !== '1') {
+        const records = new Map(ctx.store.archivedBots().map((record) => [record.bot.id, record]))
+        for (const environment of await ctx.lifecycle.archivedEnvironments()) {
+          if (environment.bots.length !== 1) continue
+          const record = records.get(environment.bots[0].id)
+          if (!record) continue
+          const { bot, archivedAt } = record
+          bots.push({
+            id: bot.id,
+            name: bot.name,
+            role: bot.role,
+            tint: bot.tint,
+            createdAt: bot.createdAt,
+            archivedAt,
+            files: environment.files,
+            environmentId: environment.id,
+          })
+        }
+      }
+      return { body: { bots } }
+    }
     case 'archivedBotRestore': {
-      const bot = ctx.lifecycle.restore(id)
+      const environmentId = archivedSingleEnvironment(ctx, id)
+      if (environmentId) ctx.lifecycle.restoreEnvironment(environmentId)
+      const bot =
+        environmentId && ctx.store.getBot(id)?.lifecycle !== 'archived'
+          ? ctx.lifecycle.get(id)
+          : ctx.lifecycle.restore(id)
+      if (!bot) throw new GatewayError('NOT_FOUND', 'Archived bot not found')
       ctx.routines?.reschedule(id)
       return { body: bot }
     }
-    case 'archivedBotDelete':
-      await ctx.lifecycle.purge(id)
+    case 'archivedBotDelete': {
+      const environmentId = archivedSingleEnvironment(ctx, id)
+      if (environmentId) await ctx.lifecycle.purgeEnvironment(environmentId)
+      else await ctx.lifecycle.purge(id)
       return { status: 204 }
+    }
     case 'botPause':
       return { body: await ctx.lifecycle.pause(id) }
     case 'botResume':

@@ -32,7 +32,14 @@ function temp() {
 }
 async function listen(server: http.Server | net.Server) {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  closeFns.push(() => new Promise<void>((resolve) => server.close(() => resolve())))
+  closeFns.push(
+    () =>
+      new Promise<void>((resolve) => {
+        // An event stream opened just before the test ended must not hold the server open.
+        if (server instanceof http.Server) server.closeAllConnections()
+        server.close(() => resolve())
+      })
+  )
   return (server.address() as net.AddressInfo).port
 }
 afterEach(async () => {

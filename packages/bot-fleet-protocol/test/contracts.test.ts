@@ -1042,12 +1042,16 @@ describe('environment contracts', () => {
       profile: { ...profile, compaction: null },
     })
     expect(fleetInstanceBotInstallSchema.parse({ ...install, slot: 8, gatewayToken: 'g'.repeat(200) }).slot).toBe(8)
+    expect(fleetInstanceBotInstallSchema.parse(install).paused).toBeUndefined()
+    expect(fleetInstanceBotInstallSchema.parse({ ...install, paused: true }).paused).toBe(true)
+    expect(fleetInstanceBotInstallSchema.parse({ ...install, paused: false }).paused).toBe(false)
     for (const change of [
       { slot: 0 },
       { slot: 9 },
       { slot: 1.5 },
       { gatewayToken: 'g'.repeat(15) },
       { gatewayToken: 'g'.repeat(201) },
+      { paused: 'true' },
     ])
       expect(fleetInstanceBotInstallSchema.safeParse({ ...install, ...change }).success, JSON.stringify(change)).toBe(
         false

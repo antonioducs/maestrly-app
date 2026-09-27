@@ -28,6 +28,16 @@ import { GatewayError } from './errors.js'
 
 type Routes = typeof FLEET_INSTANCE_ROUTES
 /**
+ * An instance that could not be reached, or did not answer in time: its whole environment is unavailable. An instance
+ * that answers, even with an error or an unusable answer about one bot, is reachable.
+ */
+export class InstanceUnreachableError extends GatewayError {
+  constructor() {
+    super('INSTANCE_UNAVAILABLE', 'Bot instance unavailable')
+  }
+}
+const invalidResponse = () => new GatewayError('INSTANCE_UNAVAILABLE', 'Invalid bot instance response')
+/**
  * The bot a client speaks for. An instance with the `environments` capability serves each bot under
  * `/v1/bots/:botId`; an older one runs a single bot on the unprefixed routes.
  */
@@ -78,8 +88,9 @@ export class InstanceClient {
     const route = FLEET_INSTANCE_ROUTES[key]
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let response: Response, text: string
     try {
-      const response = await fetch(this.origin + buildPath(route.path, params, query), {
+      response = await fetch(this.origin + buildPath(route.path, params, query), {
         method: route.method,
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
@@ -89,34 +100,46 @@ export class InstanceClient {
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       })
-      if (!response.ok) {
-        let code = 'INSTANCE_UNAVAILABLE'
-        let message = 'Bot instance request failed'
-        try {
-          const value = (await response.json()) as { code?: string; message?: string }
-          if (value.code) code = value.code
-          if (typeof value.message === 'string') message = value.message
-        } catch {}
-        throw new GatewayError(
-          code === 'CONFLICT'
-            ? 'CONFLICT'
-            : code === 'INVALID_REQUEST'
-              ? 'INVALID_REQUEST'
-              : code === 'NOT_FOUND'
-                ? 'NOT_FOUND'
-                : 'INSTANCE_UNAVAILABLE',
-          message
-        )
-      }
-      if (response.status === 204) return undefined
-      const value = await response.json()
-      return route.response?.parse(value) ?? value
-    } catch (error) {
-      if (error instanceof GatewayError) throw error
-      throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot instance unavailable')
+      text = await response.text()
+    } catch {
+      throw new InstanceUnreachableError()
     } finally {
       clearTimeout(timer)
     }
+    if (!response.ok) {
+      let code = 'INSTANCE_UNAVAILABLE'
+      let message = 'Bot instance request failed'
+      try {
+        const value = JSON.parse(text) as { code?: string; message?: string }
+        if (value.code) code = value.code
+        if (typeof value.message === 'string') message = value.message
+      } catch {}
+      throw new GatewayError(
+        code === 'CONFLICT'
+          ? 'CONFLICT'
+          : code === 'INVALID_REQUEST'
+            ? 'INVALID_REQUEST'
+            : code === 'NOT_FOUND'
+              ? 'NOT_FOUND'
+              : 'INSTANCE_UNAVAILABLE',
+        message
+      )
+    }
+    // A route that answers with a body is never taken to have succeeded without one.
+    if (response.status === 204) {
+      if (route.response) throw invalidResponse()
+      return undefined
+    }
+    let value: unknown
+    try {
+      value = JSON.parse(text)
+    } catch {
+      throw invalidResponse()
+    }
+    if (!route.response) return value
+    const parsed = route.response.safeParse(value)
+    if (!parsed.success) throw invalidResponse()
+    return parsed.data
   }
   // instance.ts
   memoriesList(status: 'active' | 'archived' | 'superseded' | 'all' = 'active') {
