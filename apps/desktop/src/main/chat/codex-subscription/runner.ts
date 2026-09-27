@@ -128,6 +128,7 @@ import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
+import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools, isConversationDispatchToolName } from '../tools/conversation-dispatch'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
@@ -167,6 +168,7 @@ import {
   CODEX_HOST_MCP_TOOL_NAMES,
   codexContentItemsToHostMcpContent,
   codexHostMcpThreadConfig,
+  codexShellEnvironmentConfig,
   setCodexHostMcpCallHandler,
 } from './host-mcp'
 import {
@@ -2891,6 +2893,9 @@ export async function runCodexSubscriptionChat(
       'features.image_generation': false,
       // Applied on start AND resume: after an app restart the host MCP server listens on a new port.
       ...hostMcpConfig,
+      // Also on start AND resume: a fleet bot's commands use its own display, session bus and browser. The
+      // app-server process is shared, so the per-thread policy is the only per-conversation channel.
+      ...codexShellEnvironmentConfig(conversationShellEnv(args.conversationId)),
     } as Record<string, unknown>,
     developerInstructions,
     ...(runtimeProfile.personality ? { personality: runtimeProfile.personality } : {}),

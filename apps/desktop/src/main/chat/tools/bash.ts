@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import { z } from 'zod'
+import { conversationShellEnv } from '../conversation-env'
 import { defineTool, resolveInside, type ToolContext } from './util'
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -188,13 +189,15 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
   await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))])
 
   const isWin = process.platform === 'win32'
-  const shell = isWin ? process.env.COMSPEC ?? 'cmd.exe' : '/bin/sh'
+  const shell = isWin ? (process.env.COMSPEC ?? 'cmd.exe') : '/bin/sh'
   const timeout = args.timeout ?? DEFAULT_TIMEOUT_MS
 
   return await new Promise<BashResult>((resolve, reject) => {
     const child = spawn(args.command, [], {
       cwd,
       shell,
+      // A fleet bot's commands open programs on its own display, session bus and browser.
+      env: { ...process.env, ...conversationShellEnv(ctx.conversationId) },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: !isWin,
     })
@@ -220,7 +223,8 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext): Promise<Bash
 
     const kill = () => {
       try {
-        if (isWin && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+        if (isWin && child.pid)
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
         else if (child.pid) process.kill(-child.pid, 'SIGTERM')
       } catch {
         /* Already exited. */

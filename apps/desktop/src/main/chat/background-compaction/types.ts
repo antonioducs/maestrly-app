@@ -115,7 +115,10 @@ export interface BackgroundCompactionDiagnostic {
 }
 
 export interface BackgroundCompactionCoordinatorDeps {
-  getConfig(): BackgroundCompactionConfig | unknown
+  /** The configuration that applies to this conversation: its own override (a fleet bot's) or the global one. */
+  getConfig(conversationId: string): BackgroundCompactionConfig | unknown
+  /** True when the conversation has its own configuration, so a global change leaves it alone. */
+  hasConfigOverride?(conversationId: string): boolean
   getConversation(id: string): BackgroundCompactionConversation | null | undefined
   getMessages(id: string): ChatMessage[]
   resolveSelection(

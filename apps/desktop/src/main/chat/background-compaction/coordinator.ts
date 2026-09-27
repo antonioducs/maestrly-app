@@ -95,7 +95,7 @@ export class ChatBackgroundCompactionCoordinator {
   }
 
   getCandidate(conversationId: string): BackgroundCompactionCandidate | null {
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     const record = this.store.get(conversationId)
     const candidate = record?.ready
     if (!config?.enabled || !candidate || !record) return null
@@ -130,7 +130,7 @@ export class ChatBackgroundCompactionCoordinator {
       this.stop(conversationId, 'archived')
       return
     }
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!config?.enabled) return
     const record = this.store.get(conversationId)
     if (
@@ -149,7 +149,7 @@ export class ChatBackgroundCompactionCoordinator {
 
   retry(conversationId: string, notification?: BackgroundCompactionNotification): boolean {
     if (this.disposed || !this.deps.getConversation(conversationId)) return false
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!config?.enabled) return false
     const record = this.store.get(conversationId)
     const use = notification ?? this.notifications.get(conversationId)
@@ -191,7 +191,7 @@ export class ChatBackgroundCompactionCoordinator {
     const record = this.store.get(conversationId)
     const conversation = this.deps.getConversation(conversationId)
     if (conversation) {
-      const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+      const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       const next = this.store.write(
         conversationId,
         {
@@ -224,7 +224,7 @@ export class ChatBackgroundCompactionCoordinator {
     this.notifications.delete(conversationId)
     const record = this.store.get(conversationId)
     if (!record || !this.deps.getConversation(conversationId)) return
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     const next = this.store.write(
       conversationId,
       {
@@ -256,29 +256,57 @@ export class ChatBackgroundCompactionCoordinator {
     this.store.remove(conversationId)
   }
 
-  /** Call only after the new config has been durably saved by the owner. */
-  configureChanged(): void {
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
-    this.queue.length = 0
-    this.queued.clear()
-    this.notifications.clear()
-    this.active?.controller.abort(abortError('Background compaction configuration changed'))
-    for (const record of this.store.list()) {
-      if (!this.deps.getConversation(record.conversationId)) continue
-      const next = this.store.write(
-        record.conversationId,
-        {
-          generation: record.generation + 1,
-          ...(config ? { configIdentity: backgroundCompactionConfigIdentity(config) } : {}),
-          ...(config?.enabled ? {} : { pauseReason: 'disabled' as const }),
-          status: 'idle',
-          ready: null,
-          work: null,
-        },
-        this.now()
-      )
-      this.deps.publish(record.conversationId, next.state)
+  /**
+   * Call only after the new config has been durably saved by the owner. Without a conversation the global
+   * configuration changed: every conversation that follows it is reset, while conversations with their own
+   * configuration keep their work. With a conversation only its own configuration changed (an override was
+   * set or removed); state already prepared under the resulting configuration is kept, so applying the same
+   * override again (for example after a restart) does not discard a prepared summary.
+   */
+  configureChanged(conversationId?: string): void {
+    if (conversationId !== undefined) {
+      this.configureConversationChanged(conversationId)
+      return
     }
+    const followsGlobal = (id: string): boolean => !this.deps.hasConfigOverride?.(id)
+    for (const id of [...this.queued]) if (followsGlobal(id)) this.removeQueued(id)
+    for (const id of [...this.notifications.keys()]) if (followsGlobal(id)) this.notifications.delete(id)
+    if (this.active && followsGlobal(this.active.conversationId)) {
+      this.active.controller.abort(abortError('Background compaction configuration changed'))
+    }
+    for (const record of this.store.list()) {
+      if (!followsGlobal(record.conversationId) || !this.deps.getConversation(record.conversationId)) continue
+      this.resetForConfig(record)
+    }
+  }
+
+  private configureConversationChanged(conversationId: string): void {
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
+    const record = this.store.get(conversationId)
+    if (config && record?.configIdentity === backgroundCompactionConfigIdentity(config)) return
+    this.removeQueued(conversationId)
+    this.notifications.delete(conversationId)
+    if (this.active?.conversationId === conversationId) {
+      this.active.controller.abort(abortError('Background compaction configuration changed'))
+    }
+    if (record && this.deps.getConversation(conversationId)) this.resetForConfig(record)
+  }
+
+  private resetForConfig(record: BackgroundCompactionRecord): void {
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(record.conversationId))
+    const next = this.store.write(
+      record.conversationId,
+      {
+        generation: record.generation + 1,
+        ...(config ? { configIdentity: backgroundCompactionConfigIdentity(config) } : {}),
+        ...(config?.enabled ? {} : { pauseReason: 'disabled' as const }),
+        status: 'idle',
+        ready: null,
+        work: null,
+      },
+      this.now()
+    )
+    this.deps.publish(record.conversationId, next.state)
   }
 
   consume<T>(
@@ -288,7 +316,7 @@ export class ChatBackgroundCompactionCoordinator {
   ): BackgroundCompactionConsumeResult<T> | null {
     let committedRecord: BackgroundCompactionRecord | null = null
     const result = this.store.transaction(() => {
-      const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+      const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       const record = this.store.get(conversationId)
       const candidate = record?.ready
       if (!config?.enabled || !record || !candidate || candidate.id !== candidateId) return null
@@ -411,7 +439,7 @@ export class ChatBackgroundCompactionCoordinator {
   private async processRound(conversationId: string): Promise<boolean> {
     const notification = this.notifications.get(conversationId)
     const conversation = this.deps.getConversation(conversationId)
-    const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+    const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!notification || !conversation || !config?.enabled || !config.selection) return false
     if (conversation.archived) {
       this.stop(conversationId, 'archived')
@@ -704,7 +732,7 @@ export class ChatBackgroundCompactionCoordinator {
       if (summaryTokens > work.maxSummaryTokens) {
         throw new BackgroundCompactionInvariantError('summarizer-invalid-output')
       }
-      const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+      const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       const current = this.store.get(conversationId)
       if (
         !config?.enabled ||
@@ -859,7 +887,7 @@ export class ChatBackgroundCompactionCoordinator {
     if (!this.deps.getConversation(conversationId)) return
     let record = this.store.get(conversationId)
     if (!record) {
-      const config = parseBackgroundCompactionConfig(this.deps.getConfig())
+      const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       record = this.store.write(
         conversationId,
         {

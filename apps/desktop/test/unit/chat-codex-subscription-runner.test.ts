@@ -64,6 +64,7 @@ import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-ex
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { insertConversation, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
@@ -3832,6 +3833,67 @@ describe('Codex subscription runner', () => {
     await expect(response).resolves.toEqual({ decision: 'decline' })
     await running
     expect(broker.pendingFor(conversation.id)).toEqual([])
+  })
+
+  it('gives each conversation its own shell environment on thread start and resume', async () => {
+    const workspace = makeWorkspace()
+    const botA = makeConversation(workspace.id, {})
+    const botB = makeConversation(workspace.id, {})
+    setConversationShellEnv(botA.id, {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    try {
+      const turn = (threadId: string, turnId: string) => ({
+        turnId,
+        notifications: [
+          {
+            method: 'item/completed',
+            params: { threadId, turnId, item: { id: `answer_${turnId}`, type: 'agentMessage', text: 'done' } },
+          },
+          usageNotification(threadId, turnId, { total: breakdown(10, 0, 1, 0), last: breakdown(10, 0, 1, 0) }),
+          completedNotification(threadId, turnId),
+        ],
+      })
+      // Agent Full keeps the native Codex shell, the path where the environment matters.
+      const agentArgs = (conversationId: string, cwd: string, client: FakeCodexClient) => {
+        const args = runArgs(conversationId, workspace.id, cwd, client)
+        args.mode = 'agent'
+        args.permMode = 'full'
+        return args
+      }
+      const clientA = new FakeCodexClient()
+      persistUser(botA.id, 'user_env_1', 'first', 1)
+      clientA.queueTurn(turn('thread_1', 'turn_env_1'))
+      await runCodexSubscriptionChat(agentArgs(botA.id, botA.cwd, clientA))
+      persistUser(botA.id, 'user_env_2', 'second', 3)
+      clientA.queueTurn(turn('thread_1', 'turn_env_2'))
+      await runCodexSubscriptionChat(agentArgs(botA.id, botA.cwd, clientA))
+
+      expect(clientA.startThreadCalls).toHaveLength(1)
+      expect(clientA.resumeThreadCalls).toHaveLength(1)
+      for (const call of [clientA.startThreadCalls[0], clientA.resumeThreadCalls[0]]) {
+        const config = (call as { config: Record<string, unknown> }).config
+        expect(config).toMatchObject({
+          'shell_environment_policy.set.DISPLAY': ':3',
+          'shell_environment_policy.set.BROWSER': '/tmp/synthetic-bot-a/browser',
+          [`shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`]: '',
+        })
+        expect(config).not.toHaveProperty('shell_environment_policy.set.PATH')
+      }
+
+      const clientB = new FakeCodexClient()
+      persistUser(botB.id, 'user_env_b', 'first', 1)
+      clientB.queueTurn(turn('thread_1', 'turn_env_b'))
+      await runCodexSubscriptionChat(agentArgs(botB.id, botB.cwd, clientB))
+      const configB = (clientB.startThreadCalls[0] as { config: Record<string, unknown> }).config
+      expect(Object.keys(configB).filter((key) => key.startsWith('shell_environment_policy.set.'))).toEqual([
+        `shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`,
+      ])
+    } finally {
+      setConversationShellEnv(botA.id, null)
+    }
   })
 
   it('resumes the bound thread and calculates new turn usage against the cumulative baseline', async () => {

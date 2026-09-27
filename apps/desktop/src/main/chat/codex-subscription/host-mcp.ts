@@ -272,6 +272,18 @@ async function ensureServer(): Promise<number> {
 }
 
 /**
+ * Dotted thread-config entries that set variables for the shells Codex runs in one thread. A keyed `set` entry
+ * merges with the user's policy, unlike `exclude`/`filters` which replace or conflict with it.
+ */
+export function codexShellEnvironmentConfig(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const config: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (typeof value === 'string') config[`shell_environment_policy.set.${name}`] = value
+  }
+  return config
+}
+
+/**
  * Publishes `tools` for one conversation and returns the dotted thread-config overrides that attach the host MCP
  * server. Keys are content-addressed so a thread kept loaded by Codex keeps resolving its original catalog.
  */
@@ -282,8 +294,7 @@ export async function codexHostMcpThreadConfig(args: {
   return {
     [`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`]: await codexHostMcpServerConfig(args),
     // Codex shells inherit the app-server environment by default; blank the token for commands the model runs.
-    // A keyed `set` entry merges with user policy, unlike `exclude`/`filters` which replace or conflict.
-    [`shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`]: '',
+    ...codexShellEnvironmentConfig({ [CODEX_HOST_MCP_TOKEN_ENV]: '' }),
   }
 }
 

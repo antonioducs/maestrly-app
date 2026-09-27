@@ -437,7 +437,11 @@ import {
 } from './background-compaction/activation'
 import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '../../shared/subagent-profile-effort'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from '../../shared/background-compaction'
-import { ChatBackgroundCompactionCoordinator, parseBackgroundCompactionConfig } from './background-compaction'
+import {
+  backgroundCompactionConfigIdentity,
+  ChatBackgroundCompactionCoordinator,
+  parseBackgroundCompactionConfig,
+} from './background-compaction'
 import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
 
 type SafeSend = (channel: string, payload: unknown) => void
@@ -2036,6 +2040,19 @@ function backgroundCompactionConfig(): BackgroundCompactionConfig | undefined {
   } catch {
     return undefined
   }
+}
+
+/** Per-conversation background-compaction settings (a fleet bot's own), kept in memory by their owner. */
+const backgroundCompactionOverrides = new Map<string, BackgroundCompactionConfig>()
+const BACKGROUND_COMPACTION_DISABLED: BackgroundCompactionConfig = {
+  enabled: false,
+  intervalTokens: 100_000,
+  selection: null,
+}
+
+/** The background-compaction settings that apply to one conversation: its own override, else the global one. */
+function effectiveBackgroundCompactionConfig(conversationId: string): BackgroundCompactionConfig | undefined {
+  return backgroundCompactionOverrides.get(conversationId) ?? backgroundCompactionConfig()
 }
 
 export async function fleetChatCommands(conversationId: string) {
@@ -7405,7 +7422,9 @@ async function waitForBackgroundDispatch(providerId: string, signal?: AbortSigna
 
 function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
   return (backgroundCoordinator ??= new ChatBackgroundCompactionCoordinator({
-    getConfig: () => backgroundCompactionConfig() ?? { enabled: false, intervalTokens: 100_000, selection: null },
+    getConfig: (conversationId) =>
+      effectiveBackgroundCompactionConfig(conversationId) ?? BACKGROUND_COMPACTION_DISABLED,
+    hasConfigOverride: (conversationId) => backgroundCompactionOverrides.has(conversationId),
     getConversation: (id) => {
       const conv = getConversation(id)
       return conv ? { id, archived: Boolean(conv.archived) } : null
@@ -7509,7 +7528,11 @@ async function maybeScheduleBackgroundCompaction(
   boundary?: { messageId: string; partId: string },
   contextWindow?: number
 ): Promise<void> {
-  if (chatDisposePromise || !backgroundCompactionConfig()?.enabled || lookupReviewLoopByConversation(conversationId))
+  if (
+    chatDisposePromise ||
+    !effectiveBackgroundCompactionConfig(conversationId)?.enabled ||
+    lookupReviewLoopByConversation(conversationId)
+  )
     return
   if (active.has(conversationId) && !boundary) return
   const epoch = backgroundNotificationEpochs.get(conversationId) ?? 0
@@ -7519,7 +7542,9 @@ async function maybeScheduleBackgroundCompaction(
       contextWindow ??
       (selection ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow : undefined)
     // Unknown conversation metadata does not prevent preparation; admission still uses its own real limit.
-    const window = knownWindow ?? Math.min(backgroundCompactionConfig()?.intervalTokens ?? 100_000, 1_000_000_000) * 2
+    const window =
+      knownWindow ??
+      Math.min(effectiveBackgroundCompactionConfig(conversationId)?.intervalTokens ?? 100_000, 1_000_000_000) * 2
     if (
       !window ||
       !getConversation(conversationId) ||
@@ -7539,7 +7564,7 @@ async function activateBackgroundCompactionCandidate(
   contextWindow: number
 ): Promise<{ summary: string; prepared: PreparedMarker } | null> {
   const startedAt = Date.now()
-  if (!backgroundCompactionConfig()?.enabled) return null
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return null
   const coordinator = getBackgroundCoordinator()
   const candidate = coordinator.getCandidate(conversationId)
   if (!candidate) return null
@@ -7647,9 +7672,30 @@ export async function setBackgroundCompactionConfig(value: unknown): Promise<{ o
   return { ok: true }
 }
 
+/**
+ * Gives one conversation its own background-compaction settings (a fleet bot sets them for its conversation
+ * instead of writing the global setting), or with `null` returns it to the global setting. Only that
+ * conversation's prepared work is reset, and only when its effective settings actually change. Validation is
+ * structural; the owner validates the provider-specific effort and Fast mode before calling this.
+ */
+export function setConversationCompactionOverride(
+  conversationId: string,
+  config: BackgroundCompactionConfig | null
+): void {
+  const next = config === null ? null : parseBackgroundCompactionConfig(config)
+  if (config !== null && !next) throw new Error('invalid-input')
+  const identity = (value: BackgroundCompactionConfig | undefined): string =>
+    backgroundCompactionConfigIdentity(value ?? BACKGROUND_COMPACTION_DISABLED)
+  const previous = identity(effectiveBackgroundCompactionConfig(conversationId))
+  if (next) backgroundCompactionOverrides.set(conversationId, next)
+  else backgroundCompactionOverrides.delete(conversationId)
+  if (identity(effectiveBackgroundCompactionConfig(conversationId)) === previous) return
+  getBackgroundCoordinator().configureChanged(conversationId)
+}
+
 export async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
   if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
-  if (!backgroundCompactionConfig()?.enabled) return { ok: false, error: 'not-configured' }
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return { ok: false, error: 'not-configured' }
   const selection = selectionFor(conversationId)
   const window = selection
     ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow

@@ -107,6 +107,7 @@ import {
 } from '../../src/main/chat/chat-store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import type { ClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
 import { harnessFor } from '../../src/main/chat/harness/execution'
@@ -568,13 +569,15 @@ class StreamingTextQuery implements AsyncIterable<SDKMessage> {
 
 class StreamingTextManager {
   readonly calls: Array<{ prompt: unknown; options?: Record<string, unknown> }> = []
+  readonly runtimeOptions: unknown[] = []
   readonly assertAccountIdentity = vi.fn()
   readonly assertSubscriptionRuntimeAccount = vi.fn()
   readonly deleteManagedSession = vi.fn(async () => {})
   readonly query = new StreamingTextQuery()
 
-  createQuery(input: { prompt: unknown; options?: Record<string, unknown> }) {
+  createQuery(input: { prompt: unknown; options?: Record<string, unknown> }, runtimeOptions?: unknown) {
     this.calls.push(input)
+    this.runtimeOptions.push(runtimeOptions)
     return this.query
   }
 }
@@ -989,47 +992,85 @@ describe('Claude official chat runner', () => {
     expect(prompt.includes(toolOutput)).toBe(true)
   })
 
-  it.each([
-    'agent',
-    'design',
-    'plan',
-    'ask',
-    'maestro',
-  ] as const)('uses Opus Ultra guidance in %s mode', async (mode) => {
+  it.each(['agent', 'design', 'plan', 'ask', 'maestro'] as const)(
+    'uses Opus Ultra guidance in %s mode',
+    async (mode) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      upsertChatMessage({
+        id: 'user-opus-ultra',
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: 'text-opus-ultra', text: 'Inspect the project.' }],
+        createdAt: 1,
+      })
+      const manager = new StreamingTextManager()
+      await runClaudeChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd: '/repo',
+        selection: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus-5' },
+        mode,
+        permMode: 'ask',
+        maestrlyUltra: true,
+        reasoningEffort: 'high',
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(), on: vi.fn() } as never,
+        questionBroker: { ask: vi.fn() } as never,
+        emit: vi.fn(),
+        signal: new AbortController().signal,
+      })
+      const options = manager.calls[0].options ?? {}
+      expect(options.systemPrompt).toContain(opusUltraGuidance(mode))
+      expect(options.systemPrompt).not.toContain('integrate results, verify, and review before finishing')
+      expect(options.systemPrompt).not.toContain('Stay read-only, investigate deeply, and cross-check')
+      expect(options.effort).toBe('high')
+      expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
+      if (mode === 'design') expect(options.systemPrompt).toContain('## Design + Ultra guidance')
+      if (mode === 'maestro') expect(options.systemPrompt).toContain('Keep the frozen Strategy')
+    }
+  )
+
+  it('starts each query with the shell environment of its own conversation', async () => {
     const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
-    upsertChatMessage({
-      id: 'user-opus-ultra',
-      conversationId: conversation.id,
-      role: 'user',
-      parts: [{ type: 'text', id: 'text-opus-ultra', text: 'Inspect the project.' }],
-      createdAt: 1,
-    })
-    const manager = new StreamingTextManager()
-    await runClaudeChat({
-      conversationId: conversation.id,
-      projectId: workspace.id,
-      cwd: '/repo',
-      selection: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus-5' },
-      mode,
-      permMode: 'ask',
-      maestrlyUltra: true,
-      reasoningEffort: 'high',
-      manager: manager as unknown as ClaudeSubscriptionManager,
-      accountIdentity: identity,
-      broker: { assert: vi.fn(), on: vi.fn() } as never,
-      questionBroker: { ask: vi.fn() } as never,
-      emit: vi.fn(),
-      signal: new AbortController().signal,
-    })
-    const options = manager.calls[0].options ?? {}
-    expect(options.systemPrompt).toContain(opusUltraGuidance(mode))
-    expect(options.systemPrompt).not.toContain('integrate results, verify, and review before finishing')
-    expect(options.systemPrompt).not.toContain('Stay read-only, investigate deeply, and cross-check')
-    expect(options.effort).toBe('high')
-    expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
-    if (mode === 'design') expect(options.systemPrompt).toContain('## Design + Ultra guidance')
-    if (mode === 'maestro') expect(options.systemPrompt).toContain('Keep the frozen Strategy')
+    const botA = makeConversation(workspace.id, { cwd: '/repo' })
+    const botB = makeConversation(workspace.id, { cwd: '/repo' })
+    setConversationShellEnv(botA.id, { DISPLAY: ':3', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/synthetic-bot-a/bus' })
+    try {
+      const run = async (conversationId: string) => {
+        upsertChatMessage({
+          id: `user-${conversationId}`,
+          conversationId,
+          role: 'user',
+          parts: [{ type: 'text', id: `text-${conversationId}`, text: 'Open the app.' }],
+          createdAt: 1,
+        })
+        const manager = new StreamingTextManager()
+        await runClaudeChat({
+          conversationId,
+          projectId: workspace.id,
+          cwd: '/repo',
+          selection: { providerId: 'builtin_claude_subscription', modelId: 'claude-opus-5' },
+          mode: 'agent',
+          permMode: 'ask',
+          manager: manager as unknown as ClaudeSubscriptionManager,
+          accountIdentity: identity,
+          broker: { assert: vi.fn(), on: vi.fn() } as never,
+          questionBroker: { ask: vi.fn() } as never,
+          emit: vi.fn(),
+          signal: new AbortController().signal,
+        })
+        return manager.runtimeOptions
+      }
+
+      expect(await run(botA.id)).toEqual([
+        { shellEnvironment: { DISPLAY: ':3', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/synthetic-bot-a/bus' } },
+      ])
+      expect(await run(botB.id)).toEqual([{ shellEnvironment: {} }])
+    } finally {
+      setConversationShellEnv(botA.id, null)
+    }
   })
 
   it('gives Design the Agent tool surface, hashes its prompt once, and keeps Plan/Ask restricted', async () => {
@@ -1117,126 +1158,126 @@ describe('Claude official chat runner', () => {
     { measured: true, terminal: 'completed' },
     { measured: false, terminal: 'failed' },
     { measured: false, terminal: 'aborted' },
-  ] as const)('publishes live Claude context and flushes before $terminal (measured=$measured)', async ({
-    measured,
-    terminal,
-  }) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
-    upsertChatMessage({
-      id: 'user-live-context',
-      conversationId: conversation.id,
-      role: 'user',
-      parts: [{ type: 'text', id: 'live-context-text', text: 'Keep working' }],
-      createdAt: 1,
-    })
-    const controller = new AbortController()
-    const events: ChatStreamEvent[] = []
-    let releaseNext!: () => void
-    let releaseFinish!: () => void
-    const next = new Promise<void>((resolve) => {
-      releaseNext = resolve
-    })
-    const finish = new Promise<void>((resolve) => {
-      releaseFinish = resolve
-    })
-    let measuredTokens = 250
-    const assistantMessage = (id: string, input: number, parent: string | null = null): SDKMessage => {
-      const base = finalAssistant(id, [{ type: 'text', text: id }]) as Extract<SDKMessage, { type: 'assistant' }>
-      return {
-        ...base,
-        parent_tool_use_id: parent,
-        message: {
-          ...base.message,
-          id,
-          usage: { ...base.message.usage, input_tokens: input, cache_read_input_tokens: 80, output_tokens: 10 },
+  ] as const)(
+    'publishes live Claude context and flushes before $terminal (measured=$measured)',
+    async ({ measured, terminal }) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      upsertChatMessage({
+        id: 'user-live-context',
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: 'live-context-text', text: 'Keep working' }],
+        createdAt: 1,
+      })
+      const controller = new AbortController()
+      const events: ChatStreamEvent[] = []
+      let releaseNext!: () => void
+      let releaseFinish!: () => void
+      const next = new Promise<void>((resolve) => {
+        releaseNext = resolve
+      })
+      const finish = new Promise<void>((resolve) => {
+        releaseFinish = resolve
+      })
+      let measuredTokens = 250
+      const assistantMessage = (id: string, input: number, parent: string | null = null): SDKMessage => {
+        const base = finalAssistant(id, [{ type: 'text', text: id }]) as Extract<SDKMessage, { type: 'assistant' }>
+        return {
+          ...base,
+          parent_tool_use_id: parent,
+          message: {
+            ...base.message,
+            id,
+            usage: { ...base.message.usage, input_tokens: input, cache_read_input_tokens: 80, output_tokens: 10 },
+          },
+        }
+      }
+      const query = {
+        close: vi.fn(),
+        interrupt: vi.fn(async () => {}),
+        initializationResult: vi.fn(async () => ({ account: { apiProvider: 'firstParty' } })),
+        getContextUsage: vi.fn(async () => {
+          if (!measured) throw new Error('context control unavailable')
+          return { totalTokens: measuredTokens, maxTokens: 200_000, model: 'claude-sonnet' }
+        }),
+        async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
+          yield assistantMessage('live-first', 100)
+          await next
+          yield assistantMessage('child-usage', 99_000, 'parent-tool')
+          measuredTokens = 400
+          yield assistantMessage('live-second', 200)
+          await finish
+          measuredTokens = 450
+          yield assistantMessage('live-third', 300)
+          if (terminal === 'failed') {
+            const failure = finalAssistant('runtime-error', [{ type: 'text', text: 'Usage limit reached' }]) as Extract<
+              SDKMessage,
+              { type: 'assistant' }
+            >
+            yield {
+              ...failure,
+              error: 'rate_limit' as const,
+              message: {
+                ...failure.message,
+                usage: {
+                  ...failure.message.usage,
+                  input_tokens: 0,
+                  output_tokens: 0,
+                  cache_read_input_tokens: 0,
+                  cache_creation_input_tokens: 0,
+                },
+              },
+            }
+          }
+          if (terminal === 'aborted') controller.abort()
+          if (terminal !== 'completed') throw new Error('runtime failed')
+          yield resultMessage('claude-stream-session')
         },
       }
+      const manager = {
+        assertAccountIdentity: vi.fn(),
+        assertSubscriptionRuntimeAccount: vi.fn(),
+        deleteManagedSession: vi.fn(async () => {}),
+        createQuery: vi.fn(() => query),
+      }
+      const selection = { providerId: 'builtin_claude_subscription', modelId: 'sonnet' }
+      const running = runClaudeChat({
+        conversationId: conversation.id,
+        projectId: workspace.id,
+        cwd: '/repo',
+        selection,
+        mode: 'agent',
+        permMode: 'ask',
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        broker: { assert: vi.fn(), on: vi.fn() } as never,
+        questionBroker: { ask: vi.fn() } as never,
+        emit: (event) => events.push(event),
+        signal: controller.signal,
+        contextWindow: 200_000,
+      })
+      const assistant = () => listChatMessages(conversation.id).find((message) => message.role === 'assistant')
+      await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(190))
+      releaseNext()
+      await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(measured ? 400 : 290), {
+        timeout: 2_000,
+      })
+      expect(events.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+      releaseFinish()
+      await running
+      expect(assistant()?.contextSnapshot).toMatchObject({
+        usedTokens: measured ? 450 : 390,
+        model: selection,
+        modelContextWindow: 200_000,
+        quality: measured ? 'measured' : 'estimated',
+      })
+      const samples = events.filter((event) => event.kind === 'context-usage')
+      expect(samples.every((event) => event.snapshot.usedTokens < 1_000)).toBe(true)
+      const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
+      expect(events.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(events.indexOf(samples.at(-1)!))
     }
-    const query = {
-      close: vi.fn(),
-      interrupt: vi.fn(async () => {}),
-      initializationResult: vi.fn(async () => ({ account: { apiProvider: 'firstParty' } })),
-      getContextUsage: vi.fn(async () => {
-        if (!measured) throw new Error('context control unavailable')
-        return { totalTokens: measuredTokens, maxTokens: 200_000, model: 'claude-sonnet' }
-      }),
-      async *[Symbol.asyncIterator](): AsyncIterator<SDKMessage> {
-        yield assistantMessage('live-first', 100)
-        await next
-        yield assistantMessage('child-usage', 99_000, 'parent-tool')
-        measuredTokens = 400
-        yield assistantMessage('live-second', 200)
-        await finish
-        measuredTokens = 450
-        yield assistantMessage('live-third', 300)
-        if (terminal === 'failed') {
-          const failure = finalAssistant('runtime-error', [{ type: 'text', text: 'Usage limit reached' }]) as Extract<
-            SDKMessage,
-            { type: 'assistant' }
-          >
-          yield {
-            ...failure,
-            error: 'rate_limit' as const,
-            message: {
-              ...failure.message,
-              usage: {
-                ...failure.message.usage,
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_input_tokens: 0,
-                cache_creation_input_tokens: 0,
-              },
-            },
-          }
-        }
-        if (terminal === 'aborted') controller.abort()
-        if (terminal !== 'completed') throw new Error('runtime failed')
-        yield resultMessage('claude-stream-session')
-      },
-    }
-    const manager = {
-      assertAccountIdentity: vi.fn(),
-      assertSubscriptionRuntimeAccount: vi.fn(),
-      deleteManagedSession: vi.fn(async () => {}),
-      createQuery: vi.fn(() => query),
-    }
-    const selection = { providerId: 'builtin_claude_subscription', modelId: 'sonnet' }
-    const running = runClaudeChat({
-      conversationId: conversation.id,
-      projectId: workspace.id,
-      cwd: '/repo',
-      selection,
-      mode: 'agent',
-      permMode: 'ask',
-      manager: manager as unknown as ClaudeSubscriptionManager,
-      accountIdentity: identity,
-      broker: { assert: vi.fn(), on: vi.fn() } as never,
-      questionBroker: { ask: vi.fn() } as never,
-      emit: (event) => events.push(event),
-      signal: controller.signal,
-      contextWindow: 200_000,
-    })
-    const assistant = () => listChatMessages(conversation.id).find((message) => message.role === 'assistant')
-    await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(190))
-    releaseNext()
-    await vi.waitFor(() => expect(assistant()?.contextSnapshot?.usedTokens).toBe(measured ? 400 : 290), {
-      timeout: 2_000,
-    })
-    expect(events.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
-    releaseFinish()
-    await running
-    expect(assistant()?.contextSnapshot).toMatchObject({
-      usedTokens: measured ? 450 : 390,
-      model: selection,
-      modelContextWindow: 200_000,
-      quality: measured ? 'measured' : 'estimated',
-    })
-    const samples = events.filter((event) => event.kind === 'context-usage')
-    expect(samples.every((event) => event.snapshot.usedTokens < 1_000)).toBe(true)
-    const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
-    expect(events.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(events.indexOf(samples.at(-1)!))
-  })
+  )
 
   it('compacts at a folded tool-result boundary, continues in a fresh session and aggregates usage', async () => {
     const workspace = makeWorkspace()
@@ -1707,73 +1748,73 @@ describe('Claude official chat runner', () => {
     expect(events.some((event) => event.kind === 'finish')).toBe(true)
   })
 
-  it.each([
-    'fable',
-    'opus',
-  ] as const)('keeps the %s system/hash stable across environment changes and sends current state transiently', async (family) => {
-    const workspace = makeWorkspace()
-    const runWithGit = async (dirty: boolean) => {
-      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
-      upsertChatMessage({
-        id: `user-fable-${dirty}`,
-        conversationId: conversation.id,
-        role: 'user',
-        parts: [{ type: 'text', id: `text-fable-${dirty}`, text: 'Make a plan.' }],
-        createdAt: 1,
-      })
-      h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty })
-      const manager = new FakeManager()
-      await runClaudeChat({
-        conversationId: conversation.id,
-        projectId: workspace.id,
-        cwd: '/repo',
-        selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
-        resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
-        mode: 'plan',
-        permMode: 'ask',
-        manager: manager as unknown as ClaudeSubscriptionManager,
-        accountIdentity: identity,
-        broker: { assert: vi.fn(), on: vi.fn() } as never,
-        questionBroker: { ask: vi.fn() } as never,
-        emit: vi.fn(),
-        signal: new AbortController().signal,
-      })
-      const structured = (
-        await (
-          manager.calls[0].prompt as AsyncIterable<{
-            message: { content: Array<{ type: string; text?: string }> }
-          }>
+  it.each(['fable', 'opus'] as const)(
+    'keeps the %s system/hash stable across environment changes and sends current state transiently',
+    async (family) => {
+      const workspace = makeWorkspace()
+      const runWithGit = async (dirty: boolean) => {
+        const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+        upsertChatMessage({
+          id: `user-fable-${dirty}`,
+          conversationId: conversation.id,
+          role: 'user',
+          parts: [{ type: 'text', id: `text-fable-${dirty}`, text: 'Make a plan.' }],
+          createdAt: 1,
+        })
+        h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty })
+        const manager = new FakeManager()
+        await runClaudeChat({
+          conversationId: conversation.id,
+          projectId: workspace.id,
+          cwd: '/repo',
+          selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+          harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
+          resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
+          mode: 'plan',
+          permMode: 'ask',
+          manager: manager as unknown as ClaudeSubscriptionManager,
+          accountIdentity: identity,
+          broker: { assert: vi.fn(), on: vi.fn() } as never,
+          questionBroker: { ask: vi.fn() } as never,
+          emit: vi.fn(),
+          signal: new AbortController().signal,
+        })
+        const structured = (
+          await (
+            manager.calls[0].prompt as AsyncIterable<{
+              message: { content: Array<{ type: string; text?: string }> }
+            }>
+          )
+            [Symbol.asyncIterator]()
+            .next()
+        ).value
+        return {
+          options: manager.calls[0].options ?? {},
+          prompt: structured.message.content.map((part: { text?: string }) => part.text ?? '').join('\n'),
+          binding: getClaudeSessionBinding(conversation.id),
+        }
+      }
+
+      const clean = await runWithGit(false)
+      const dirty = await runWithGit(true)
+      expect(clean.options.systemPrompt).toBe(dirty.options.systemPrompt)
+      expect(clean.binding?.promptHash).toBe(dirty.binding?.promptHash)
+      expect(clean.options.systemPrompt).not.toContain('# Environment')
+      expect(clean.prompt).toContain('# Current environment')
+      expect(clean.prompt).toContain('Git branch: main (clean)')
+      expect(dirty.prompt).toContain('Git branch: main (uncommitted changes)')
+      if (family === 'fable') {
+        expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
+        expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
+      } else {
+        expect(clean.options.systemPrompt).toContain(
+          harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
         )
-          [Symbol.asyncIterator]()
-          .next()
-      ).value
-      return {
-        options: manager.calls[0].options ?? {},
-        prompt: structured.message.content.map((part: { text?: string }) => part.text ?? '').join('\n'),
-        binding: getClaudeSessionBinding(conversation.id),
+        expect(clean.options.thinking).toBeUndefined() // Preserve Opus's enabled SDK default.
+        expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
       }
     }
-
-    const clean = await runWithGit(false)
-    const dirty = await runWithGit(true)
-    expect(clean.options.systemPrompt).toBe(dirty.options.systemPrompt)
-    expect(clean.binding?.promptHash).toBe(dirty.binding?.promptHash)
-    expect(clean.options.systemPrompt).not.toContain('# Environment')
-    expect(clean.prompt).toContain('# Current environment')
-    expect(clean.prompt).toContain('Git branch: main (clean)')
-    expect(dirty.prompt).toContain('Git branch: main (uncommitted changes)')
-    if (family === 'fable') {
-      expect(clean.options.thinking).toEqual({ type: 'adaptive', display: 'summarized' })
-      expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toHaveLength(1)
-    } else {
-      expect(clean.options.systemPrompt).toContain(
-        harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
-      )
-      expect(clean.options.thinking).toBeUndefined() // Preserve Opus's enabled SDK default.
-      expect((clean.options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
-    }
-  })
+  )
 
   it('offers exactly the reviewer tools and waits for submit_review tool-result acknowledgement', async () => {
     const workspace = makeWorkspace()
@@ -2902,61 +2943,61 @@ describe('Claude official chat runner', () => {
     })
   })
 
-  it.each([
-    'fable',
-    'opus',
-  ] as const)('resumes %s with a stable system while appending the latest environment observation', async (family) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
-    const manager = new FakeManager()
-    const run = () =>
-      runClaudeChat({
-        conversationId: conversation.id,
-        projectId: workspace.id,
-        cwd: '/repo',
-        selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
-        harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
-        resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
-        mode: 'plan',
-        permMode: 'ask',
-        manager: manager as unknown as ClaudeSubscriptionManager,
-        accountIdentity: identity,
-        broker: { assert: vi.fn(), on: vi.fn() } as never,
-        questionBroker: { ask: vi.fn() } as never,
-        emit: vi.fn(),
-        signal: new AbortController().signal,
-      })
-    const addUser = (id: string) =>
-      upsertChatMessage({
-        id,
-        conversationId: conversation.id,
-        role: 'user',
-        parts: [{ type: 'text', id: `${id}-text`, text: 'Continue.' }],
-        createdAt: Date.now(),
-      })
+  it.each(['fable', 'opus'] as const)(
+    'resumes %s with a stable system while appending the latest environment observation',
+    async (family) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      const manager = new FakeManager()
+      const run = () =>
+        runClaudeChat({
+          conversationId: conversation.id,
+          projectId: workspace.id,
+          cwd: '/repo',
+          selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+          harness: family === 'fable' ? harnessFor('claude-subscription', 'claude-fable-5-1') : undefined,
+          resolvedModelId: family === 'opus' ? 'claude-opus-5' : undefined,
+          mode: 'plan',
+          permMode: 'ask',
+          manager: manager as unknown as ClaudeSubscriptionManager,
+          accountIdentity: identity,
+          broker: { assert: vi.fn(), on: vi.fn() } as never,
+          questionBroker: { ask: vi.fn() } as never,
+          emit: vi.fn(),
+          signal: new AbortController().signal,
+        })
+      const addUser = (id: string) =>
+        upsertChatMessage({
+          id,
+          conversationId: conversation.id,
+          role: 'user',
+          parts: [{ type: 'text', id: `${id}-text`, text: 'Continue.' }],
+          createdAt: Date.now(),
+        })
 
-    h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: false })
-    addUser('user-fable-resume-1')
-    await run()
-    h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: true })
-    addUser('user-fable-resume-2')
-    await run()
+      h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: false })
+      addUser('user-fable-resume-1')
+      await run()
+      h.gitEnvInfo.mockResolvedValueOnce({ branch: 'main', dirty: true })
+      addUser('user-fable-resume-2')
+      await run()
 
-    expect(manager.calls[1].options).toMatchObject({ resume: 'claude-session-1' })
-    expect(manager.calls[1].options?.systemPrompt).toBe(manager.calls[0].options?.systemPrompt)
-    const second = (
-      await (
-        manager.calls[1].prompt as AsyncIterable<{
-          message: { content: Array<{ type: string; text?: string }> }
-        }>
-      )
-        [Symbol.asyncIterator]()
-        .next()
-    ).value
-    const secondText = second.message.content.map((part: { text?: string }) => part.text ?? '').join('\n')
-    expect(secondText).toContain('# Current environment')
-    expect(secondText).toContain('Git branch: main (uncommitted changes)')
-  })
+      expect(manager.calls[1].options).toMatchObject({ resume: 'claude-session-1' })
+      expect(manager.calls[1].options?.systemPrompt).toBe(manager.calls[0].options?.systemPrompt)
+      const second = (
+        await (
+          manager.calls[1].prompt as AsyncIterable<{
+            message: { content: Array<{ type: string; text?: string }> }
+          }>
+        )
+          [Symbol.asyncIterator]()
+          .next()
+      ).value
+      const secondText = second.message.content.map((part: { text?: string }) => part.text ?? '').join('\n')
+      expect(secondText).toContain('# Current environment')
+      expect(secondText).toContain('Git branch: main (uncommitted changes)')
+    }
+  )
 
   it('discards a plan session when the matching tool result is never acknowledged', async () => {
     const workspace = makeWorkspace()
@@ -3536,86 +3577,86 @@ describe('Claude account rotation', () => {
     }
   })
 
-  it.each([
-    'rate-event',
-    'result',
-  ])('publishes %s exhaustion before waiting for a recovering managed child', async (failureKind) => {
-    let started!: () => void
-    const childStarted = new Promise<void>((resolve) => {
-      started = resolve
-    })
-    let childFinished!: () => void
-    const childDone = new Promise<void>((resolve) => {
-      childFinished = resolve
-    })
-    const run = await setupRotation(async function* (options) {
-      const input = { agent: 'general-purpose', prompt: 'Finish the child work.' }
-      yield {
-        ...finalAssistant('parent-a', [{ type: 'tool_use', id: 'child-task', name: 'mcp__maestrly__task', input }]),
-        session_id: 'session-a',
-      } as SDKMessage
-      await options.hooks.PreToolUse[0].hooks[0](
-        {
-          hook_event_name: 'PreToolUse',
-          tool_name: 'mcp__maestrly__task',
-          tool_input: input,
-          tool_use_id: 'child-task',
-        },
-        'child-task',
-        { signal: new AbortController().signal }
-      )
-      void options.mcpServers.maestrly.instance._registeredTools.task.handler(input, {}).catch(() => {})
-      await childStarted
-      if (failureKind === 'result') {
-        yield errorResultMessage(["You've hit your usage limit"], 'session-a')
-        await childDone
-      } else {
+  it.each(['rate-event', 'result'])(
+    'publishes %s exhaustion before waiting for a recovering managed child',
+    async (failureKind) => {
+      let started!: () => void
+      const childStarted = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      let childFinished!: () => void
+      const childDone = new Promise<void>((resolve) => {
+        childFinished = resolve
+      })
+      const run = await setupRotation(async function* (options) {
+        const input = { agent: 'general-purpose', prompt: 'Finish the child work.' }
         yield {
-          type: 'rate_limit_event',
-          uuid: '00000000-0000-4000-8000-000000000003',
+          ...finalAssistant('parent-a', [{ type: 'tool_use', id: 'child-task', name: 'mcp__maestrly__task', input }]),
           session_id: 'session-a',
-          rate_limit_info: { status: 'rejected' },
         } as SDKMessage
+        await options.hooks.PreToolUse[0].hooks[0](
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'mcp__maestrly__task',
+            tool_input: input,
+            tool_use_id: 'child-task',
+          },
+          'child-task',
+          { signal: new AbortController().signal }
+        )
+        void options.mcpServers.maestrly.instance._registeredTools.task.handler(input, {}).catch(() => {})
+        await childStarted
+        if (failureKind === 'result') {
+          yield errorResultMessage(["You've hit your usage limit"], 'session-a')
+          await childDone
+        } else {
+          yield {
+            type: 'rate_limit_event',
+            uuid: '00000000-0000-4000-8000-000000000003',
+            session_id: 'session-a',
+            rate_limit_info: { status: 'rejected' },
+          } as SDKMessage
+        }
+      })
+      const definition = {
+        name: 'general-purpose',
+        description: 'Worker',
+        prompt: 'Complete the work.',
+        source: 'built-in',
       }
-    })
-    const definition = {
-      name: 'general-purpose',
-      description: 'Worker',
-      prompt: 'Complete the work.',
-      source: 'built-in',
-    }
-    const profile = {
-      version: 1,
-      agentName: definition.name,
-      effective: {
-        providerId: run.targetA.providerId,
-        modelId: 'sonnet',
-        configuredEffort: 'off',
-        source: 'conversation-default',
-        candidateIndex: 0,
-      },
-      attempts: [],
-    }
-    h.listAgents.mockResolvedValue([definition])
-    h.resolveSubagentExecutionProfile.mockResolvedValue({ definition, profile })
-    h.runClaudeSubagent.mockImplementation(async () => {
-      started()
-      await vi.waitFor(() => expect(run.router.getHealth(run.targetA.providerId).state).toBe('exhausted'))
-      childFinished()
-      return {
-        text: 'Child recovered and completed without redispatch.',
-        model: { providerId: run.targetB.providerId, modelId: 'sonnet' },
-        usage: { input: 4, output: 2, cacheRead: 0, cacheCreate: 0, totalInput: 4 },
+      const profile = {
+        version: 1,
+        agentName: definition.name,
+        effective: {
+          providerId: run.targetA.providerId,
+          modelId: 'sonnet',
+          configuredEffort: 'off',
+          source: 'conversation-default',
+          candidateIndex: 0,
+        },
+        attempts: [],
       }
-    })
-    await runClaudeChat(run.args)
-    expect(h.runClaudeSubagent).toHaveBeenCalledTimes(1)
-    expect(run.b.received[0]).toContain('Child recovered and completed without redispatch.')
-    const assistant = listChatMessages(run.conversation.id).find((message) => message.role === 'assistant')!
-    expect(assistant.parts.filter((part) => part.type === 'tool' && part.toolCallId === 'child-task')).toHaveLength(1)
-    expect(assistant.usage).toMatchObject({ subInput: 4, subOutput: 2 })
-    expect(run.events.filter((event) => event.kind === 'finish')).toHaveLength(1)
-  })
+      h.listAgents.mockResolvedValue([definition])
+      h.resolveSubagentExecutionProfile.mockResolvedValue({ definition, profile })
+      h.runClaudeSubagent.mockImplementation(async () => {
+        started()
+        await vi.waitFor(() => expect(run.router.getHealth(run.targetA.providerId).state).toBe('exhausted'))
+        childFinished()
+        return {
+          text: 'Child recovered and completed without redispatch.',
+          model: { providerId: run.targetB.providerId, modelId: 'sonnet' },
+          usage: { input: 4, output: 2, cacheRead: 0, cacheCreate: 0, totalInput: 4 },
+        }
+      })
+      await runClaudeChat(run.args)
+      expect(h.runClaudeSubagent).toHaveBeenCalledTimes(1)
+      expect(run.b.received[0]).toContain('Child recovered and completed without redispatch.')
+      const assistant = listChatMessages(run.conversation.id).find((message) => message.role === 'assistant')!
+      expect(assistant.parts.filter((part) => part.type === 'tool' && part.toolCallId === 'child-task')).toHaveLength(1)
+      expect(assistant.usage).toMatchObject({ subInput: 4, subOutput: 2 })
+      expect(run.events.filter((event) => event.kind === 'finish')).toHaveLength(1)
+    }
+  )
 
   it('retires a quota-blocked native compact session before requesting a portable summary', async () => {
     const run = await setupRotation(async function* () {
