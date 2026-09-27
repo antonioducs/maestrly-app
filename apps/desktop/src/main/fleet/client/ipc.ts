@@ -156,6 +156,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:listSelections', (_event, botId: unknown) =>
     fleet.call('botSelections', { params: { id: id.parse(botId) } })
   )
+  // The models of an environment's accounts, for its default compaction model.
+  reg.handle('fleet:environmentSelections', (_event, rawId: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    requireEnvironments(fleet)
+    return fleet.call('environmentSelections', { params })
+  })
   reg.mhandle('fleet:add-api-key-account', (_event, target: unknown, input: unknown) => {
     const body = fleetAddApiKeyAccountRequestSchema.parse(input)
     const route = provisioningRoute(resolveProvisioningTarget(fleet, target), 'apiKeyAccountAdd')

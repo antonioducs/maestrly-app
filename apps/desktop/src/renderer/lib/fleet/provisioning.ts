@@ -6,6 +6,7 @@ import {
 } from '../../../shared/fleet-targets'
 import { useCallback, useEffect, useState } from 'react'
 import {
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROVISIONING_FEATURE,
@@ -122,6 +123,19 @@ export function environmentScreenAvailability(
   environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
 ): EnvironmentScreenAvailability {
   return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
+}
+export type EnvironmentCompactionAvailability = 'unsupported' | 'stopped' | 'restart-environment' | 'ready'
+/**
+ * Whether the owner can choose an environment's default compaction model: the gateway must know defaults, and the
+ * environment's running Maestrly must list its models (an older image needs the environment restarted first).
+ */
+export function environmentCompactionAvailability(
+  fleet: FleetController,
+  environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
+): EnvironmentCompactionAvailability {
+  if (!fleet.state.connection.features.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE)) return 'unsupported'
+  if (environment.lifecycle !== 'running') return 'stopped'
+  return environment.capabilities.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE) ? 'ready' : 'restart-environment'
 }
 /** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */
 export function provisioningTargetForBot(

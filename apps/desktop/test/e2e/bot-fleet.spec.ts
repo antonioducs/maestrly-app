@@ -1329,6 +1329,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await page.getByRole('button', { name: 'Escolher modelo de compactação' }).click()
     await expect(page.getByRole('heading', { name: 'Compactação' })).toBeInViewport()
     await page.getByRole('button', { name: 'Modelo de compactação', exact: true }).click()
+    // A gateway without environment defaults offers only the bot's own model.
+    await expect(page.getByRole('option', { name: /Padrão do ambiente/ })).toHaveCount(0)
     await page.getByRole('option', { name: 'Fake · Model' }).click()
     await page.getByLabel('Preparar um resumo a cada (mil tokens)').fill('100')
     await page.getByRole('button', { name: 'Salvar compactação' }).click()
@@ -3025,6 +3027,442 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await app?.close()
     for (const stream of streams) stream.end()
     for (const socket of sockets) socket.destroy()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('fleet UI gives environments a default compaction model that their bots inherit', async () => {
+  test.setTimeout(240_000)
+  const GB = 1024 ** 3
+  const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-compaction-e2e-'))
+  const requests: Array<{ key: string; body: unknown; path: string }> = []
+  const streams = new Set<ServerResponse>()
+  function emit(event: unknown) {
+    const valid = fleetGatewayEventSchema.parse(event)
+    for (const stream of streams) stream.write(`event: fleet\ndata: ${JSON.stringify(valid)}\n\n`)
+  }
+  const capable = ['provisioning', 'environments', 'environment-compaction']
+  const model = (modelId: string, intervalTokens = 100_000) => ({
+    providerId: 'prov_env',
+    modelId,
+    reasoning: null,
+    fastMode: false,
+    intervalTokens,
+  })
+  const options = ['a', 'b'].map((suffix) => ({
+    id: `prov_env::model-${suffix}`,
+    providerId: 'prov_env',
+    providerLabel: 'Shared',
+    modelId: `model-${suffix}`,
+    modelLabel: `Model ${suffix.toUpperCase()}`,
+    efforts: [],
+    fastMode: false,
+  }))
+  const host = fleetHostInfoSchema.parse({
+    hostname: 'fleet-compaction-host',
+    os: 'Linux',
+    kernel: '6.8',
+    arch: 'x64',
+    cpus: 4,
+    cpuPercent: 12,
+    memory: { totalBytes: 16 * GB, usedBytes: 4 * GB, botsBytes: 2 * GB },
+    disk: { totalBytes: 100 * GB, usedBytes: 20 * GB },
+    uptimeSeconds: 7200,
+    gatewayVersion: '0.9.3',
+    botImage: 'test-image',
+    botImageVersion: '0.9.3',
+    dockerVersion: '28',
+  })
+  const makeEnvironment = (id: string, name: string, botIds: string[], patch: Record<string, unknown> = {}) =>
+    fleetEnvironmentSchema.parse({
+      id,
+      name,
+      lifecycle: 'running',
+      setup: { step: 'ready', error: null, errorMessage: null },
+      resources: { memoryBytes: GB, memoryLimitBytes: 4 * GB, cpuPercent: 6, startedAt: now() },
+      memoryLimitBytes: null,
+      compaction: null,
+      appVersion: '0.9.3',
+      capabilities: capable,
+      botIds,
+      createdAt: now(),
+      updatedAt: now(),
+      ...patch,
+    })
+  const makeBot = (id: string, name: string, environmentId: string, patch: Record<string, unknown> = {}) =>
+    fleetBotSchema.parse({
+      id,
+      name,
+      environmentId,
+      capabilities: capable,
+      role: '',
+      instructions: 'Synthetic compaction bot',
+      tint: '#6688aa',
+      ceiling: 'auto',
+      selection: null,
+      compaction: null,
+      compactionSource: null,
+      compactionState: {
+        configured: true,
+        problem: null,
+        background: { status: 'idle', error: null },
+        progress: null,
+      },
+      talksTo: [],
+      paused: false,
+      lifecycle: 'running',
+      setup: { step: 'ready', error: null, errorMessage: null },
+      status: 'idle',
+      activity: null,
+      pendingCount: 0,
+      accounts: { connected: true, providers: [{ id: 'prov_env', label: 'Shared' }] },
+      takeover: { state: 'none', deviceId: null, deviceName: null, since: null },
+      resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },
+      screen: { width: 1280, height: 800, display: ':1' },
+      appVersion: '0.9.3',
+      createdAt: now(),
+      updatedAt: now(),
+      ...patch,
+    })
+  const environments: FleetEnvironment[] = [
+    makeEnvironment('acme', 'Acme', ['scout', 'partner'], { compaction: model('model-a') }),
+    makeEnvironment('home', 'Home', ['diary']),
+    makeEnvironment('lab', 'Lab', ['tinker'], { lifecycle: 'stopped', compaction: model('model-a') }),
+    makeEnvironment('old', 'Old', ['relic'], { capabilities: ['provisioning', 'environments'] }),
+  ]
+  const bots: FleetBot[] = [
+    makeBot('scout', 'Scout', 'acme', { compaction: model('model-a'), compactionSource: 'environment' }),
+    makeBot('partner', 'Partner', 'acme', { compaction: model('model-a', 80_000), compactionSource: 'bot' }),
+    makeBot('diary', 'Diary', 'home'),
+    makeBot('tinker', 'Tinker', 'lab', {
+      compaction: model('model-a'),
+      compactionSource: 'environment',
+      lifecycle: 'stopped',
+      status: 'offline',
+    }),
+    makeBot('relic', 'Relic', 'old'),
+  ]
+  const upsertEnvironment = (environment: FleetEnvironment) => {
+    environments[environments.findIndex((item) => item.id === environment.id)] = environment
+    emit({ type: 'environment.updated', at: now(), environment })
+  }
+  const upsertBot = (bot: FleetBot) => {
+    const index = bots.findIndex((item) => item.id === bot.id)
+    if (index >= 0) bots[index] = bot
+    else bots.push(bot)
+    emit({ type: 'bot.updated', at: now(), bot })
+  }
+  const conversationResult = (op: string): unknown => {
+    switch (op) {
+      case 'chatConfig':
+        return { mcpServers: [], appToolsEnabled: true, imageGenEnabled: true }
+      case 'chatGetConvTools':
+        return { app: true, imageGen: true, mcpDisabled: [] }
+      case 'chatSubagentProfilesGetConversation':
+        return { rules: null, diagnostics: [], enabled: true, subagentsEnabled: true }
+      case 'chatSkillsState':
+        return { skills: [], groups: [], selection: { kind: 'all' }, selectedGroupMissing: false, hasOverrides: false }
+      case 'chatCommands':
+        return { prompts: [], project: [], skills: [] }
+      default:
+        return { ok: true }
+    }
+  }
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    const entry = Object.entries(FLEET_GATEWAY_ROUTES).find(
+      ([, route]) =>
+        route.method === request.method && new RegExp(`^${route.path.replace(/:[^/]+/g, '[^/]+')}$`).test(url.pathname)
+    )
+    const send = (status: number, value: unknown) => {
+      response.writeHead(status, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(value))
+    }
+    if (!entry) return send(404, { code: 'NOT_FOUND', message: 'Unknown route' })
+    const [key, route] = entry
+    if (request.headers['x-maestrly-fleet-protocol'] !== '1')
+      return send(426, { code: 'PROTOCOL_INCOMPATIBLE', message: 'Bad protocol' })
+    if (!['meta', 'pair'].includes(key) && request.headers.authorization !== 'Bearer fixture-token')
+      return send(401, { code: 'UNAUTHORIZED', message: 'Bad token' })
+    let body: unknown
+    if (route.body) {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      try {
+        body = route.body.parse(JSON.parse(Buffer.concat(chunks).toString()))
+      } catch {
+        return send(400, { code: 'INVALID_REQUEST', message: 'Bad body' })
+      }
+    }
+    requests.push({ key, body, path: url.pathname })
+    if (key === 'events') {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      streams.add(response)
+      response.write(': connected\n\n')
+      request.on('close', () => streams.delete(response))
+      return
+    }
+    const bot = bots.find((item) => item.id === url.pathname.match(/^\/v1\/bots\/([^/]+)/)?.[1])
+    const environment = environments.find((item) => item.id === url.pathname.match(/^\/v1\/environments\/([^/]+)/)?.[1])
+    const notFound = () => send(404, { code: 'NOT_FOUND', message: 'Not found' })
+    let value: unknown
+    switch (key) {
+      case 'meta':
+        value = {
+          protocol: 1,
+          features: ['provisioning', 'environments', 'environment-compaction'],
+          gatewayVersion: '0.9.3',
+          botImage: 'test-image',
+          botImageVersion: '0.9.3',
+        }
+        break
+      case 'pair':
+        value = { deviceId: 'device-compaction-e2e', token: 'fixture-token' }
+        break
+      case 'host':
+        value = host
+        break
+      case 'botsList':
+        value = { bots }
+        break
+      case 'environmentsList':
+        value = { environments }
+        break
+      case 'inbox':
+        value = { items: [] }
+        break
+      case 'peerMessages':
+        value = { messages: [] }
+        break
+      case 'activity':
+        value = { entries: [], lastSeq: 0 }
+        break
+      case 'ownerMemoryList':
+        value = { revision: 0, activeChars: 0, entries: [] }
+        break
+      case 'botGet':
+        if (!bot) return notFound()
+        value = bot
+        break
+      case 'botTranscript':
+        value = { items: [], before: null }
+        break
+      case 'botSelections':
+      case 'environmentSelections':
+        value = { options, current: null }
+        break
+      case 'botRoutinesList':
+        value = { routines: [] }
+        break
+      case 'botMemoriesList':
+        value = { memories: [] }
+        break
+      case 'botConversationCall':
+        value = { result: conversationResult(fleetConversationCallRequestSchema.parse(body).op) }
+        break
+      case 'environmentAccountsList':
+        value = { apiKeys: [], subscriptions: [] }
+        break
+      case 'environmentSkillsList':
+        value = { skills: [] }
+        break
+      case 'environmentMcpServersList':
+        value = { servers: [] }
+        break
+      case 'environmentPatch': {
+        if (!environment) return notFound()
+        const updated = fleetEnvironmentSchema.parse({ ...environment, ...(body as object), updatedAt: now() })
+        upsertEnvironment(updated)
+        // Its bots without a model of their own follow the new default.
+        for (const member of bots.filter((item) => item.environmentId === updated.id))
+          if (member.compactionSource === 'environment') upsertBot({ ...member, compaction: updated.compaction })
+        value = updated
+        break
+      }
+      case 'botPatch': {
+        if (!bot) return notFound()
+        const { compaction } = body as { compaction?: FleetBot['compaction'] }
+        const owner = environments.find((item) => item.id === bot.environmentId)
+        const updated = fleetBotSchema.parse(
+          compaction === undefined
+            ? { ...bot, ...(body as object) }
+            : compaction === null
+              ? {
+                  ...bot,
+                  compaction: owner?.compaction ?? null,
+                  compactionSource: owner?.compaction ? 'environment' : null,
+                }
+              : { ...bot, compaction, compactionSource: 'bot' }
+        )
+        upsertBot(updated)
+        value = updated
+        break
+      }
+      case 'botsCreate': {
+        const input = body as { name: string; environmentId?: string }
+        const joined = environments.find((item) => item.id === input.environmentId)
+        if (!joined) return notFound()
+        const id = input.name.toLowerCase()
+        upsertEnvironment(fleetEnvironmentSchema.parse({ ...joined, botIds: [...joined.botIds, id] }))
+        // A bot joining an environment with a default compacts with it from the start.
+        const created = makeBot(id, input.name, joined.id, {
+          compaction: joined.compaction,
+          compactionSource: joined.compaction ? 'environment' : null,
+          status: 'starting',
+          setup: { step: 'profile', error: null, errorMessage: null },
+        })
+        bots.push(created)
+        value = created
+        setTimeout(
+          () =>
+            upsertBot(
+              fleetBotSchema.parse({
+                ...created,
+                status: 'idle',
+                setup: { step: 'ready', error: null, errorMessage: null },
+              })
+            ),
+          300
+        )
+        break
+      }
+      default:
+        return notFound()
+    }
+    try {
+      if (route.response) value = route.response.parse(value)
+      if (!route.response) {
+        response.writeHead(204)
+        response.end()
+      } else send(200, value)
+    } catch (error) {
+      send(500, { code: 'INTERNAL', message: String(error) })
+    }
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('No address')
+  const url = `http://127.0.0.1:${address.port}`
+  let app: Awaited<ReturnType<typeof electron.launch>> | undefined
+  try {
+    app = await electron.launch({
+      args: [path.join(desktop, 'out/main/index.js')],
+      env: {
+        ...process.env,
+        AGENTS_E2E: '1',
+        AGENTS_E2E_SKILLS_HOME: root,
+        AGENTS_CHANNEL: 'dev',
+        AGENTS_INSTANCE: 'fleet-compaction-e2e',
+        AGENTS_USERDATA: path.join(root, 'profile'),
+        AGENTS_LOCALE: 'pt-BR',
+        ELECTRON_RENDERER_URL: '',
+      },
+    })
+    const page = await app.firstWindow()
+    await page.waitForFunction(() => Boolean((window as any).api))
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
+    await page.getByRole('button', { name: 'Configurações', exact: true }).click()
+    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByLabel('Endereço do servidor').fill(url)
+    await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
+    await page.getByRole('button', { name: 'Conectar', exact: true }).click()
+    await expect(page.getByRole('main').getByRole('status').filter({ hasText: 'Conectado' })).toContainText(
+      'fleet-compaction-host'
+    )
+    await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
+    await page.getByRole('tab', { name: 'Bots' }).click()
+    const group = (name: string) => page.getByRole('group', { name, exact: true })
+    const header = (name: string) => group(name).getByRole('button', { name: new RegExp(`^Ambiente ${name} · `) })
+    const section = () => page.getByRole('region', { name: 'Modelo de compactação padrão', exact: true })
+    const modelPicker = (scope: Locator) => scope.getByRole('button', { name: 'Modelo de compactação', exact: true })
+    const botPatches = () => requests.filter((item) => item.key === 'botPatch').map((item) => item.body)
+
+    // The environment names its default and the bots that use it; a bot with its own model is not among them.
+    await header('Acme').click()
+    await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
+    await expect(modelPicker(section())).toContainText('Shared · Model A')
+    await expect(section().getByText('Usado por: Scout', { exact: true })).toBeVisible()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentSelections').map((item) => item.path))
+      .toContain('/v1/environments/acme/selections')
+
+    // Changing the default sends the model exactly, and the bots that inherit it follow.
+    await modelPicker(section()).click()
+    await page.getByRole('option', { name: 'Shared · Model B', exact: true }).click()
+    await section().getByLabel('Preparar um resumo a cada (mil tokens)').fill('120')
+    await section().getByRole('button', { name: 'Salvar padrão', exact: true }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentPatch').at(-1)?.body)
+      .toEqual({ compaction: model('model-b', 120_000) })
+    await expect(section().getByRole('status')).toHaveText('Salvo')
+    await expect(section().getByRole('button', { name: 'Salvar padrão', exact: true })).toBeDisabled()
+
+    // A new bot joins with the default: no compaction setup, the default already chosen.
+    await page.getByRole('button', { name: 'Novo bot neste ambiente' }).click()
+    const createDialog = page.getByRole('dialog', { name: 'Criar bot' })
+    await createDialog.getByLabel('Nome', { exact: true }).fill('Helper')
+    await createDialog.getByRole('button', { name: 'Criar bot' }).click()
+    await expect(page.getByRole('heading', { name: 'Helper', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Escolher modelo de compactação' })).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    const botCompaction = page.getByRole('region', { name: 'Compactação', exact: true })
+    await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · Shared · Model B')
+    await expect(botCompaction.getByLabel('Preparar um resumo a cada (mil tokens)')).toHaveCount(0)
+    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
+    await botCompaction.getByRole('button', { name: 'Editar padrão do ambiente' }).click()
+    await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
+    await expect(section().getByText('Usado por: Helper e Scout', { exact: true })).toBeVisible()
+
+    // A bot goes back to the default with null, and takes a model of its own with its whole config.
+    await group('Acme')
+      .getByRole('button', { name: /Partner/ })
+      .click()
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await expect(modelPicker(botCompaction)).toContainText('Shared · Model A')
+    await modelPicker(botCompaction).click()
+    await page.getByRole('option', { name: 'Padrão do ambiente · Shared · Model B', exact: true }).click()
+    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: null })
+    await expect(botCompaction.getByRole('button', { name: 'Salvar compactação' })).toBeDisabled()
+    await modelPicker(botCompaction).click()
+    await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
+    await botCompaction.getByLabel('Preparar um resumo a cada (mil tokens)').fill('90')
+    await botCompaction.getByRole('button', { name: 'Salvar compactação' }).click()
+    await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a', 90_000) })
+
+    // Without a default, the environment explains that a bot's first model becomes it, and so does the bot.
+    await header('Home').click()
+    await expect(
+      section().getByText('Ainda não definido. O primeiro modelo escolhido para um dos bots dele vira o padrão.')
+    ).toBeVisible()
+    await group('Home').getByRole('button', { name: /Diary/ }).click()
+    await page.getByRole('tab', { name: 'Ajustes' }).click()
+    await expect(modelPicker(botCompaction)).toContainText('Padrão do ambiente · ainda não definido')
+    await modelPicker(botCompaction).click()
+    await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
+    await expect(
+      botCompaction.getByText('Também vira o padrão de Home; os outros bots dele passam a usá-lo.')
+    ).toBeVisible()
+
+    // A stopped environment shows its default without changing it; an older image asks for a restart.
+    await header('Lab').click()
+    await expect(section().getByText('Atual: model-a', { exact: true })).toBeVisible()
+    await expect(section().getByText('Inicie o ambiente para trocar.', { exact: true })).toBeVisible()
+    await expect(section().getByRole('button', { name: 'Salvar padrão' })).toHaveCount(0)
+    await header('Old').click()
+    await expect(
+      section().getByText('Reinicie este ambiente para atualizá-lo antes de escolher o modelo de compactação.', {
+        exact: true,
+      })
+    ).toBeVisible()
+    await expect(section().getByRole('button', { name: 'Salvar padrão' })).toHaveCount(0)
+    expect(new Set(requests.filter((item) => item.key === 'environmentSelections').map((item) => item.path))).toEqual(
+      new Set(['/v1/environments/acme/selections', '/v1/environments/home/selections'])
+    )
+  } finally {
+    await app?.close()
+    for (const stream of streams) stream.end()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
   }

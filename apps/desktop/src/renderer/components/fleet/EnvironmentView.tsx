@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Boxes } from 'lucide-react'
-import { FLEET_ENVIRONMENT_LIMITS, type FleetBot, type FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ENVIRONMENT_LIMITS,
+  type FleetBot,
+  type FleetEnvironment,
+  type FleetSelectionOption,
+} from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { compactionFormFrom, compactionModelLabel, compactionPatch, compactionSourceOf } from '@/lib/fleet/compaction'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   createKeyWatcher,
@@ -19,6 +25,7 @@ import {
 import { gb } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
+  environmentCompactionAvailability,
   environmentJoinAvailability,
   environmentJoinHint,
   environmentProvisioningKey,
@@ -31,6 +38,7 @@ import type { FleetView } from '@/lib/use-main-panels'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
+import { CompactionFields } from './CompactionFields'
 import { EnvironmentScreen } from './EnvironmentScreen'
 
 const tabs = ['overview', 'screen'] as const
@@ -329,6 +337,13 @@ function EnvironmentOverview({
           )}
         </BotAccountsSection>
         <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
+        <EnvironmentCompaction
+          key={`compaction-${environment.id}`}
+          environment={environment}
+          bots={bots}
+          fleet={fleet}
+          optionsKey={listsKey}
+        />
         <section className="space-y-2" aria-labelledby="fleet-environment-screen">
           <h2 id="fleet-environment-screen" className="font-semibold">
             {t('environment.screenTitle')}
@@ -468,6 +483,130 @@ function EnvironmentOverview({
           onCancel={cancelConfirm}
           onConfirm={() => void confirmAction()}
         />
+      )}
+    </section>
+  )
+}
+
+/**
+ * The compaction model of the environment's bots without one of their own. Its models are those of the environment's
+ * accounts, read again when they change (the key of the shared lists), never on resource samples.
+ */
+function EnvironmentCompaction({
+  environment,
+  bots,
+  fleet,
+  optionsKey,
+}: {
+  environment: FleetEnvironment
+  bots: FleetBot[]
+  fleet: FleetController
+  optionsKey: string
+}) {
+  const { t, i18n } = useTranslation('fleet')
+  const availability = environmentCompactionAvailability(fleet, environment)
+  const ready = availability === 'ready'
+  const current = environment.compaction
+  const [options, setOptions] = useState<FleetSelectionOption[]>([])
+  const [form, setForm] = useState(() => compactionFormFrom(current))
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    setForm(compactionFormFrom(current))
+  }, [current?.providerId, current?.modelId, current?.reasoning, current?.fastMode, current?.intervalTokens])
+  useEffect(() => {
+    if (!ready) return
+    let alive = true
+    window.api.fleetEnvironmentSelections(environment.id).then(
+      (value) => {
+        if (alive) setOptions(value.options)
+      },
+      (cause: unknown) => {
+        if (alive) setError(fleetErrorText(cause, t))
+      }
+    )
+    return () => {
+      alive = false
+    }
+  }, [environment.id, ready, optionsKey])
+  if (availability === 'unsupported') return null
+  const value = compactionPatch(form)
+  const dirty = JSON.stringify(value) !== JSON.stringify(current)
+  const users = bots.filter((bot) => compactionSourceOf(bot) === 'environment').map((bot) => bot.name)
+  async function save() {
+    if (!value || !dirty || busy) return
+    setBusy(true)
+    setSaved(false)
+    setError('')
+    try {
+      const updated = await window.api.fleetPatchEnvironment(environment.id, { compaction: value })
+      fleet.dispatch({
+        type: 'event',
+        value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
+      })
+      setSaved(true)
+    } catch (cause) {
+      setError(fleetErrorText(cause, t))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="space-y-3" aria-labelledby="fleet-environment-compaction">
+      <h2 id="fleet-environment-compaction" className="font-semibold">
+        {t('environment.compaction.heading')}
+      </h2>
+      <p className="text-xs text-muted-foreground">{t('environment.compaction.description')}</p>
+      {!current && <p className="text-xs text-muted-foreground">{t('environment.compaction.unset')}</p>}
+      {ready ? (
+        <>
+          <CompactionFields
+            form={form}
+            onChange={(next) => {
+              setForm(next)
+              setSaved(false)
+            }}
+            options={options}
+            idPrefix="fleet-environment-compaction"
+          />
+          {!options.length && <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>}
+          <div className="flex items-center gap-3">
+            <Button size="sm" disabled={!value || !dirty || busy} onClick={() => void save()}>
+              {t('environment.compaction.save')}
+            </Button>
+            {saved && (
+              <span role="status" className="text-xs text-primary">
+                {t('environment.saved')}
+              </span>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {current && (
+            <p className="rounded-lg border border-border p-4 text-sm">
+              {t('environment.compaction.current', { model: compactionModelLabel(current, options) })}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {availability === 'stopped'
+              ? t('environment.compaction.startToChange')
+              : t('environment.compaction.restart')}
+          </p>
+        </>
+      )}
+      {current && (
+        <p className="text-xs text-muted-foreground">
+          {users.length
+            ? t('environment.compaction.usedBy', { bots: formatNames(users, i18n.language) })
+            : t('environment.compaction.usedByNone')}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
       )}
     </section>
   )

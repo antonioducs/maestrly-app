@@ -7,7 +7,12 @@ import { botProvisioningKey, provisioningAvailability, useBotProvisioning } from
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetRoutine, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  type FleetBot,
+  type FleetRoutine,
+  type FleetSelectionOption,
+} from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
@@ -20,10 +25,15 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { SearchSelect } from '@/components/ui/search-select'
-import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { gb } from '@/lib/fleet/format'
-import { compactionFormFrom, compactionPatch } from '@/lib/fleet/compaction'
+import {
+  compactionFormFrom,
+  compactionModelLabel,
+  compactionPatch,
+  compactionSourceOf,
+  ENVIRONMENT_COMPACTION_CHOICE,
+} from '@/lib/fleet/compaction'
 import { choiceClass } from '@/lib/fleet/choice'
 import {
   nextRadioIndex,
@@ -37,6 +47,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotFields, type BotFieldsValue } from './BotFields'
 import { ChoiceMark } from './ChoiceMark'
+import { CompactionFields } from './CompactionFields'
 import { RoutineRunHistory } from './RoutineRunHistory'
 import { BotMemorySection } from './BotMemorySection'
 
@@ -91,7 +102,14 @@ export function BotSettings({
     bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : ''
   )
   const [options, setOptions] = useState<FleetSelectionOption[]>([])
-  const [compaction, setCompaction] = useState(() => compactionFormFrom(bot.compaction))
+  // With environment defaults, a bot without a model of its own shows its environment's default as its choice.
+  const inheritable = shared && fleet.state.connection.features.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE)
+  const compactionSource = compactionSourceOf(bot)
+  const compactionForm = () => {
+    const form = compactionFormFrom(bot.compaction)
+    return inheritable && compactionSource !== 'bot' ? { ...form, modelId: ENVIRONMENT_COMPACTION_CHOICE } : form
+  }
+  const [compaction, setCompaction] = useState(compactionForm)
   const [compactionBusy, setCompactionBusy] = useState(false)
   const [compactionSaved, setCompactionSaved] = useState(false)
   const [compactionError, setCompactionError] = useState('')
@@ -121,7 +139,7 @@ export function BotSettings({
     setSelectionId(bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : '')
   }, [bot.id, bot.name, bot.instructions, bot.ceiling, bot.talksTo, bot.role, bot.selection])
   useEffect(() => {
-    setCompaction(compactionFormFrom(bot.compaction))
+    setCompaction(compactionForm())
   }, [
     bot.id,
     bot.compaction?.providerId,
@@ -129,6 +147,8 @@ export function BotSettings({
     bot.compaction?.reasoning,
     bot.compaction?.fastMode,
     bot.compaction?.intervalTokens,
+    compactionSource,
+    inheritable,
   ])
   // The section sits below the main form; a bot blocked on it opens scrolled straight to the fix, once per bot so a
   // status update never yanks the owner's scroll.
@@ -192,9 +212,26 @@ export function BotSettings({
   })
   const dirty = original !== edited
   const invalid = !fields.name.trim() || fields.name.length > 40 || role.length > 80
-  const compactionChoice = options.find((option) => option.id === compaction.modelId)
-  const compactionValue = compactionPatch(compaction)
-  const compactionDirty = JSON.stringify(compactionValue) !== JSON.stringify(bot.compaction)
+  const inherits = inheritable && compaction.modelId === ENVIRONMENT_COMPACTION_CHOICE
+  // Inheriting saves null: the bot then follows its environment's default, whatever it becomes.
+  const compactionValue = inherits ? null : compactionPatch(compaction)
+  const compactionValid = inherits || compactionValue !== null
+  const compactionDirty = !inheritable
+    ? JSON.stringify(compactionValue) !== JSON.stringify(bot.compaction)
+    : inherits
+      ? compactionSource === 'bot'
+      : compactionSource !== 'bot' || JSON.stringify(compactionValue) !== JSON.stringify(bot.compaction)
+  const environmentCompaction = environment?.compaction ?? (compactionSource === 'environment' ? bot.compaction : null)
+  const compactionLeading = inheritable
+    ? {
+        id: ENVIRONMENT_COMPACTION_CHOICE,
+        label: environmentCompaction
+          ? t('botSettings.compaction.environmentDefault', {
+              model: compactionModelLabel(environmentCompaction, options),
+            })
+          : t('botSettings.compaction.environmentDefaultUnset'),
+      }
+    : undefined
   const dayLabels = [1, 2, 3, 4, 5, 6, 7].map((day) => t(`routine.day.${day}`))
   async function save() {
     if (!dirty || invalid || busy) return
@@ -226,7 +263,7 @@ export function BotSettings({
     }
   }
   async function saveCompaction() {
-    if (!compactionValue || !compactionDirty || compactionBusy) return
+    if (!compactionValid || !compactionDirty || compactionBusy) return
     setCompactionBusy(true)
     setCompactionError('')
     setCompactionSaved(false)
@@ -427,80 +464,33 @@ export function BotSettings({
               })}
             </p>
           )}
-          <div>
-            <label className="mb-2 block text-sm font-medium">{t('botSettings.compaction.model')}</label>
-            <SearchSelect
-              value={compaction.modelId || undefined}
-              options={options.map((option) => ({
-                id: option.id,
-                label: `${option.providerLabel} · ${option.modelLabel}`,
-              }))}
-              onChange={(id) => {
-                setCompaction((current) => ({ ...current, modelId: id ?? '', reasoning: null, fastMode: false }))
-                setCompactionSaved(false)
-              }}
-              disabled={!options.length}
-              placeholder={t('botSettings.chooseModel')}
-              ariaLabel={t('botSettings.compaction.model')}
-            />
-          </div>
-          {compactionChoice && compactionChoice.efforts.length > 0 && (
-            <div>
-              <label className="mb-2 block text-sm font-medium" htmlFor="fleet-compaction-reasoning">
-                {t('botSettings.compaction.reasoning')}
-              </label>
-              <Select
-                value={compaction.reasoning ?? 'default'}
-                onValueChange={(value) =>
-                  setCompaction((current) => ({ ...current, reasoning: value === 'default' ? null : value }))
-                }
-              >
-                <SelectTrigger id="fleet-compaction-reasoning">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">{t('botSettings.compaction.default')}</SelectItem>
-                  {compactionChoice.efforts.map((effort) => (
-                    <SelectItem key={effort} value={effort}>
-                      {effort}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <CompactionFields
+            form={compaction}
+            onChange={(form) => {
+              setCompaction(form)
+              setCompactionSaved(false)
+            }}
+            options={options}
+            idPrefix="fleet-compaction"
+            leading={compactionLeading}
+          />
+          {inherits && onOpenEnvironment && (
+            <button
+              type="button"
+              className="text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onOpenEnvironment}
+            >
+              {t('botSettings.compaction.editEnvironmentDefault')}
+            </button>
           )}
-          {compactionChoice?.fastMode && (
-            <div className="flex">
-              <FastModeChip
-                enabled={compaction.fastMode}
-                onToggle={() => setCompaction((current) => ({ ...current, fastMode: !current.fastMode }))}
-              />
-            </div>
+          {inheritable && !inherits && compaction.modelId && !environmentCompaction && (
+            <p className="text-xs text-muted-foreground">
+              {t('botSettings.compaction.becomesDefault', { environment: environment?.name ?? bot.environmentId })}
+            </p>
           )}
-          <div>
-            <label className="mb-2 block text-sm font-medium" htmlFor="fleet-compaction-interval">
-              {t('botSettings.compaction.interval')}
-            </label>
-            <Input
-              id="fleet-compaction-interval"
-              type="number"
-              min={10}
-              max={1000}
-              step={1}
-              className="w-32 bg-surface-elevated"
-              value={compaction.intervalThousands}
-              aria-invalid={!compactionValue && Boolean(compaction.modelId)}
-              onChange={(event) => setCompaction((current) => ({ ...current, intervalThousands: event.target.value }))}
-            />
-            {!compactionValue && compaction.modelId && (
-              <p role="alert" className="mt-1 text-xs text-destructive">
-                {t('botSettings.compaction.intervalInvalid')}
-              </p>
-            )}
-          </div>
           <div className="flex items-center gap-3">
             <Button
-              disabled={!compactionValue || !compactionDirty || compactionBusy}
+              disabled={!compactionValid || !compactionDirty || compactionBusy}
               onClick={() => void saveCompaction()}
             >
               {t('botSettings.compaction.save')}

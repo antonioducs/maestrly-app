@@ -24,7 +24,7 @@ import pt from '../../src/shared/i18n/pt-BR/fleet'
 /** A message the gateway exports as a constant, read from its source so a reworded refusal fails here. */
 function gatewayMessage(file: string, name: string): string {
   const source = readFileSync(new URL(`../../../bot-gateway/src/${file}`, import.meta.url), 'utf8')
-  const found = source.match(new RegExp(`export const ${name} = '([^']+)'`))
+  const found = source.match(new RegExp(`export const ${name} =\\s*'([^']+)'`))
   if (!found) throw new Error(`${name} is not a string constant of ${file}`)
   return found[1]
 }
@@ -88,6 +88,7 @@ describe('fleet renderer errors', () => {
       [gatewayMessage('lifecycle.ts', 'RESTORE_ENVIRONMENT_FIRST'), 'errors.restoreEnvironmentFirst'],
       [gatewayMessage('lifecycle.ts', 'START_ENVIRONMENT_FIRST'), 'errors.startEnvironmentFirst'],
       [gatewayMessage('lifecycle.ts', 'SLOT_IN_USE'), 'errors.slotInUse'],
+      [gatewayMessage('lifecycle.ts', 'RESTART_TO_CHOOSE_COMPACTION'), 'environment.compaction.restart'],
       [gatewayMessage('screen.ts', 'RESTART_TO_OPEN_SCREEN'), 'screen.restartEnvironment'],
       // The gateway store and the environment's own Maestrly refuse a ninth bot in their own words.
       [`This environment already has ${botsMax} bots.`, 'errors.environmentFull'],

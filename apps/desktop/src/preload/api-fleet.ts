@@ -252,6 +252,13 @@ export const fleetApi = {
     options: FleetSelectionOption[]
     current: FleetSelection | null
   }> => ipcRenderer.invoke('fleet:listSelections', botId),
+  /** The models of an environment's accounts, for its default compaction model; the environment must run. */
+  fleetEnvironmentSelections: (
+    environmentId: string
+  ): Promise<{
+    options: FleetSelectionOption[]
+    current: FleetSelection | null
+  }> => ipcRenderer.invoke('fleet:environmentSelections', environmentId),
   fleetAddApiKeyAccount: (
     target: FleetProvisioningTargetInput,
     input: FleetAddApiKeyAccountRequest

@@ -297,6 +297,10 @@ describe('environment IPC', () => {
       expect(ipc.reads.has(channel)).toBe(false)
     }
     expect(ipc.reads.has('fleet:listArchivedEnvironments')).toBe(true)
+    expect(ipc.reads.has('fleet:environmentSelections')).toBe(true)
+    expect(ipc.mutations.has('fleet:environmentSelections')).toBe(false)
+    expect(() => ipc.read('fleet:environmentSelections', '../work')).toThrow()
+    expect(() => ipc.mutate('fleet:patchEnvironment', 'work', { compaction: { modelId: 'x' } })).toThrow()
     expect(() => ipc.mutate('fleet:environmentAction', '../work', 'restart')).toThrow()
     expect(() => ipc.mutate('fleet:environmentAction', 'work', 'pause')).toThrow()
     expect(() => ipc.mutate('fleet:patchEnvironment', 'work', {})).toThrow()
@@ -314,6 +318,8 @@ describe('environment IPC', () => {
     await ipc.mutate('fleet:restoreArchivedEnvironment', 'work')
     await ipc.mutate('fleet:deleteArchivedEnvironment', 'work')
     await ipc.mutate('fleet:environmentUiOpen', 'work', 'accounts')
+    await ipc.read('fleet:environmentSelections', 'work')
+    await ipc.mutate('fleet:patchEnvironment', 'work', { compaction: null })
     expect(calls()).toEqual([
       ['environmentRestart', { params: { eid: 'work' } }],
       ['environmentArchive', { params: { eid: 'work' } }],
@@ -323,6 +329,8 @@ describe('environment IPC', () => {
       ['archivedEnvironmentRestore', { params: { eid: 'work' } }],
       ['archivedEnvironmentDelete', { params: { eid: 'work' } }],
       ['environmentUiOpen', { params: { eid: 'work' }, body: { target: 'accounts' } }],
+      ['environmentSelections', { params: { eid: 'work' } }],
+      ['environmentPatch', { params: { eid: 'work' }, body: { compaction: null } }],
     ])
   })
 
@@ -338,6 +346,7 @@ describe('environment IPC', () => {
     ]
     for (const [channel, ...args] of refused)
       expect(() => ipc.mutate(channel, ...args)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    expect(() => ipc.read('fleet:environmentSelections', 'work')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
     await expect(ipc.read('fleet:listArchivedEnvironments')).resolves.toEqual({ environments: [] })
     expect(mocks.call).not.toHaveBeenCalled()
   })
@@ -927,6 +936,7 @@ describe('environment preload API', () => {
       await fleetApi.fleetRestoreArchivedEnvironment('work')
       await fleetApi.fleetDeleteArchivedEnvironment('work')
       await fleetApi.fleetEnvironmentUiOpen('work', 'skills')
+      await fleetApi.fleetEnvironmentSelections('work')
       await fleetApi.fleetScreenOpen({ environmentId: 'work' }, 'control')
       await fleetApi.fleetBotSkills({ environmentId: 'work' })
       await fleetApi.fleetLoginCancel({ environmentId: 'work' }, 'l1')
@@ -945,6 +955,7 @@ describe('environment preload API', () => {
         ['fleet:restoreArchivedEnvironment', 'work'],
         ['fleet:deleteArchivedEnvironment', 'work'],
         ['fleet:environmentUiOpen', 'work', 'skills'],
+        ['fleet:environmentSelections', 'work'],
         ['fleet:screenOpen', { environmentId: 'work' }, 'control'],
         ['fleet:bot:skills', { environmentId: 'work' }],
         ['fleet:login:cancel', { environmentId: 'work' }, 'l1'],

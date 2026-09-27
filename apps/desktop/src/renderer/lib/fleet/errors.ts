@@ -76,6 +76,10 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
   },
   { matches: exactly('Restart this environment to update it before adding bots.'), key: 'environment.restartToJoin' },
   {
+    matches: exactly('Restart this environment to update it before choosing its compaction model.'),
+    key: 'environment.compaction.restart',
+  },
+  {
     matches: (message) => /^This environment already has (?:\d+ bots|the most bots it can hold)\.$/.test(message),
     key: 'errors.environmentFull',
     values: { max: FLEET_ENVIRONMENT_LIMITS.botsMax },

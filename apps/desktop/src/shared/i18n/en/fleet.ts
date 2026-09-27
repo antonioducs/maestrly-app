@@ -288,6 +288,19 @@ export default {
     release: 'Stop controlling',
     footerView: 'You are watching the Maestrly settings of {{name}}. No bot pauses while you use this screen.',
     footerControl: 'Your keyboard and mouse control the Maestrly settings of {{name}}. Its bots keep running.',
+    compaction: {
+      heading: 'Default compaction model',
+      description:
+        'Bots in this environment without a compaction model of their own use this one. Each summary uses its quota.',
+      usedBy: 'Used by: {{bots}}',
+      usedByNone: 'No bot uses it: each one has its own model.',
+      unset: 'Not set yet. The first model chosen for one of its bots becomes the default.',
+      current: 'Current: {{model}}',
+      startToChange: 'Start this environment to change it.',
+      restart: 'Restart this environment to update it before choosing its compaction model.',
+      noModels: 'No models yet: add an account to this environment.',
+      save: 'Save default',
+    },
   },
 
   connection: {
@@ -612,6 +625,10 @@ export default {
       intervalInvalid: 'Enter a whole number from 10 to 1000.',
       removedAccount: 'removed account',
       save: 'Save compaction',
+      environmentDefault: 'Environment default · {{model}}',
+      environmentDefaultUnset: 'Environment default · not set yet',
+      editEnvironmentDefault: 'Edit environment default',
+      becomesDefault: 'Also becomes the default of {{environment}}; its other bots start using it.',
       problem: {
         missing: 'Choose a model before this bot can start.',
         unavailable: 'The saved model ({{model}}) is unavailable. Choose another.',

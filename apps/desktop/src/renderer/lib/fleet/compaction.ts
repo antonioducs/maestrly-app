@@ -1,13 +1,31 @@
 import {
   FLEET_COMPACTION_LIMITS,
+  type FleetBot,
   type FleetCompactionConfig,
   type FleetCompactionProgress,
   type FleetCompactionState,
+  type FleetSelectionOption,
 } from '@maestrly/bot-fleet-protocol'
 import type { BackgroundCompactionStatus } from '../../../shared/background-compaction'
 import type { ChatCompactionProgress } from '../../../shared/chat'
 
 export type CompactionForm = { modelId: string; reasoning: string | null; fastMode: boolean; intervalThousands: string }
+
+/** The model choice that makes a bot use its environment's default; never a model id, which always holds `::`. */
+export const ENVIRONMENT_COMPACTION_CHOICE = '__environment__'
+
+/** Where a bot's compaction model comes from; a gateway from before environment defaults stores only the bot's own. */
+export function compactionSourceOf(
+  bot: Pick<FleetBot, 'compaction' | 'compactionSource'>
+): FleetBot['compactionSource'] {
+  return bot.compactionSource ?? (bot.compaction ? 'bot' : null)
+}
+
+/** A compaction model as the Bots UI names it: its account and model when listed, else its model id. */
+export function compactionModelLabel(config: FleetCompactionConfig, options: FleetSelectionOption[]): string {
+  const option = options.find((item) => item.providerId === config.providerId && item.modelId === config.modelId)
+  return option ? `${option.providerLabel} · ${option.modelLabel}` : config.modelId
+}
 
 export function compactionFormFrom(config: FleetCompactionConfig | null): CompactionForm {
   return {

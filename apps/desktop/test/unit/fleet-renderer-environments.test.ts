@@ -38,6 +38,13 @@ import {
   targetFromParts,
   targetParts,
 } from '../../src/renderer/lib/fleet/environments'
+import {
+  compactionModelLabel,
+  compactionSourceOf,
+  ENVIRONMENT_COMPACTION_CHOICE,
+} from '../../src/renderer/lib/fleet/compaction'
+import { environmentCompactionAvailability } from '../../src/renderer/lib/fleet/provisioning'
+import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
 const at = '2026-09-26T12:00:00.000Z'
@@ -302,6 +309,42 @@ describe('environment helpers', () => {
     expect(finishLaterKey('scout')).toBe('provisioning.finishLater')
   })
 
+  it('offers an environment default compaction model only where the gateway and the running Maestrly can', () => {
+    const controller = (features: string[]) => ({ state: { connection: { features } } }) as unknown as FleetController
+    const capable = environment('acme', 'Acme', [], {
+      capabilities: ['provisioning', 'environments', 'environment-compaction'],
+    })
+    const fleet = controller(['provisioning', 'environments', 'environment-compaction'])
+    expect(environmentCompactionAvailability(controller(['provisioning', 'environments']), capable)).toBe('unsupported')
+    expect(environmentCompactionAvailability(fleet, capable)).toBe('ready')
+    expect(environmentCompactionAvailability(fleet, acme)).toBe('restart-environment')
+    for (const lifecycle of ['stopped', 'failed', 'starting', 'restarting'] as const)
+      expect(environmentCompactionAvailability(fleet, { ...capable, lifecycle }), lifecycle).toBe('stopped')
+  })
+
+  it('tells whether a bot compacts with its own model or its environment default, also from older gateways', () => {
+    const model = { providerId: 'prov_env', modelId: 'model-a', reasoning: null, fastMode: false, intervalTokens: 1e5 }
+    expect(compactionSourceOf(bots[0])).toBeNull()
+    expect(compactionSourceOf({ ...bots[0], compaction: model, compactionSource: 'environment' })).toBe('environment')
+    expect(compactionSourceOf({ ...bots[0], compaction: model, compactionSource: 'bot' })).toBe('bot')
+    // A gateway from before environment defaults stores only a bot's own model.
+    expect(compactionSourceOf({ ...bots[0], compaction: model, compactionSource: null })).toBe('bot')
+    expect(ENVIRONMENT_COMPACTION_CHOICE).not.toContain('::')
+    const options = [
+      {
+        id: 'prov_env::model-a',
+        providerId: 'prov_env',
+        providerLabel: 'Shared',
+        modelId: 'model-a',
+        modelLabel: 'Model A',
+        efforts: [],
+        fastMode: false,
+      },
+    ]
+    expect(compactionModelLabel(model, options)).toBe('Shared · Model A')
+    expect(compactionModelLabel({ ...model, modelId: 'gone' }, options)).toBe('gone')
+  })
+
   it('refreshes on a changed key only, never on mount or on a Strict Mode re-run', () => {
     const changed = createKeyWatcher('a')
     expect(changed('a')).toBe(false)
@@ -314,6 +357,7 @@ describe('environment helpers', () => {
 
 describe('environment UI wiring', () => {
   const newComponents = [
+    'CompactionFields',
     'EnvironmentView',
     'EnvironmentScreen',
     'ScreenFrame',
@@ -386,6 +430,22 @@ describe('environment UI wiring', () => {
     expect(view).not.toMatch(/\[[^\]]*environment\.resources[^\]]*\]\)/)
   })
 
+  it('chooses the default compaction model on the environment and lets a bot inherit it', () => {
+    const view = source('components/fleet/EnvironmentView.tsx')
+    expect(view).toContain('environmentCompactionAvailability(')
+    expect(view).toContain('fleetEnvironmentSelections(')
+    expect(view).toContain('<CompactionFields')
+    expect(view).toContain('compaction: value')
+    const settings = source('components/fleet/BotSettings.tsx')
+    expect(settings).toContain('<CompactionFields')
+    expect(settings).toContain('ENVIRONMENT_COMPACTION_CHOICE')
+    expect(settings).toContain("t('botSettings.compaction.editEnvironmentDefault')")
+    expect(settings).toContain("t('botSettings.compaction.becomesDefault'")
+    const fields = source('components/fleet/CompactionFields.tsx')
+    expect(fields).toContain('<SearchSelect')
+    expect(fields).toContain('<FastModeChip')
+  })
+
   it('keeps the old bot settings without environments and links to the environment with them', () => {
     const settings = source('components/fleet/BotSettings.tsx')
     expect(settings).toContain('<BotAccountsSection')
@@ -449,6 +509,7 @@ describe('environment translations', () => {
   it('has every literal key the fleet views use, in both languages', () => {
     const files = [
       'components/fleet/EnvironmentView.tsx',
+      'components/fleet/CompactionFields.tsx',
       'components/fleet/EnvironmentScreen.tsx',
       'components/fleet/ScreenFrame.tsx',
       'components/fleet/ArchivedEnvironments.tsx',
@@ -490,6 +551,8 @@ describe('environment translations', () => {
       'Apps',
       'Tornar global',
       'Todos os bots',
+      'Modelo de compactação padrão',
+      'Editar padrão do ambiente',
     ])
       expect(values).toContain(`"${text}"`)
     expect(lookup(pt, 'environment.sharedNote')).toBe(

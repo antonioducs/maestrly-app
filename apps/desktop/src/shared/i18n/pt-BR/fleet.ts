@@ -290,6 +290,18 @@ export default {
       'Você está vendo os ajustes da Maestrly do ambiente {{name}}. Nenhum bot pausa enquanto você usa esta tela.',
     footerControl:
       'Seu teclado e mouse controlam os ajustes da Maestrly do ambiente {{name}}. Os bots dele continuam rodando.',
+    compaction: {
+      heading: 'Modelo de compactação padrão',
+      description: 'Os bots deste ambiente sem modelo de compactação próprio usam este. Cada resumo usa a cota dele.',
+      usedBy: 'Usado por: {{bots}}',
+      usedByNone: 'Nenhum bot usa: cada um tem modelo próprio.',
+      unset: 'Ainda não definido. O primeiro modelo escolhido para um dos bots dele vira o padrão.',
+      current: 'Atual: {{model}}',
+      startToChange: 'Inicie o ambiente para trocar.',
+      restart: 'Reinicie este ambiente para atualizá-lo antes de escolher o modelo de compactação.',
+      noModels: 'Nenhum modelo ainda: adicione uma conta a este ambiente.',
+      save: 'Salvar padrão',
+    },
   },
 
   connection: {
@@ -614,6 +626,10 @@ export default {
       intervalInvalid: 'Informe um número inteiro de 10 a 1000.',
       removedAccount: 'conta removida',
       save: 'Salvar compactação',
+      environmentDefault: 'Padrão do ambiente · {{model}}',
+      environmentDefaultUnset: 'Padrão do ambiente · ainda não definido',
+      editEnvironmentDefault: 'Editar padrão do ambiente',
+      becomesDefault: 'Também vira o padrão de {{environment}}; os outros bots dele passam a usá-lo.',
       problem: {
         missing: 'Escolha um modelo para o bot começar.',
         unavailable: 'O modelo salvo ({{model}}) não está disponível. Escolha outro.',
