@@ -61,7 +61,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git openssh-client build-essential python3-venv python3-pip python-is-python3 \
-    ripgrep jq fd-find zip unzip sqlite3 less procps file xz-utils \
+    ripgrep jq fd-find zip unzip sqlite3 less procps file xz-utils iptables iproute2 util-linux \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
@@ -90,9 +90,11 @@ COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
 COPY deploy/bot-fleet/openbox-environment-rc.xml /opt/maestrly/openbox-environment-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
+COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
 COPY deploy/bot-fleet/maestrly-bot-browser /usr/local/bin/maestrly-bot-browser
 RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoint && \
+    chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \
     chmod 0755 /usr/local/bin/maestrly-bot-browser && \
     mkdir -p /home/bot/.config/tint2 && chown -R bot:bot /home/bot && \

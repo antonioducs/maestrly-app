@@ -10,6 +10,8 @@ import {
 } from '../src/index.js'
 import {
   FLEET_BOT_ENV,
+  FLEET_BOT_EGRESS_MODES,
+  FLEET_GATEWAY_ENV,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_ENVIRONMENT_LIMITS,
@@ -147,6 +149,11 @@ const status = {
 }
 
 describe('domain contracts', () => {
+  it('exports the fleet egress modes and environment keys', () => {
+    expect(FLEET_BOT_EGRESS_MODES).toEqual(['open', 'public'])
+    expect(FLEET_GATEWAY_ENV.botEgress).toBe('MAESTRLY_GATEWAY_BOT_EGRESS')
+    expect(FLEET_BOT_ENV.egress).toBe('MAESTRLY_BOT_EGRESS')
+  })
   it('preserves structured permission tools in transcript, pending inbox, and events', () => {
     const tool = { name: 'computer_click', target: '(10, 20)' }
     const permission = {

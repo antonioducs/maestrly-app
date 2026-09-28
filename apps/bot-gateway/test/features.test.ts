@@ -293,6 +293,14 @@ describe('secrets and configuration', () => {
     expect(cfg.botSecurityOpt).toEqual(['seccomp={"defaultAction":"SCMP_ACT_ALLOW"}'])
     expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_SECURITY_OPT: '[1]' })).toThrow()
   })
+  it('reads the bot egress mode, open by default', () => {
+    const dir = temp()
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).botEgress).toBe('open')
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_EGRESS: 'public' }).botEgress).toBe(
+      'public'
+    )
+    expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
+  })
 })
 describe('instance link and takeover', () => {
   it('saves and forwards compaction settings and reports setup until configured', async () => {

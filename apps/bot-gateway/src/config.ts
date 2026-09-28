@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { z } from 'zod'
-import { FLEET_GATEWAY_ENV, FLEET_PORTS, isValidTimeZone } from '@maestrly/bot-fleet-protocol'
+import { FLEET_BOT_EGRESS_MODES, FLEET_GATEWAY_ENV, FLEET_PORTS, isValidTimeZone } from '@maestrly/bot-fleet-protocol'
 
 const bytes = z
   .string()
@@ -21,6 +21,7 @@ const schema = z.object({
   network: z.string().min(1),
   dockerSocket: z.string().min(1),
   botMemory: bytes,
+  botEgress: z.enum(FLEET_BOT_EGRESS_MODES),
   botShm: bytes,
   timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
@@ -52,6 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     network: env[FLEET_GATEWAY_ENV.network] ?? 'maestrly-bots',
     dockerSocket: env[FLEET_GATEWAY_ENV.dockerSocket] ?? '/var/run/docker.sock',
     botMemory: env[FLEET_GATEWAY_ENV.botMemory] ?? '4g',
+    botEgress: env[FLEET_GATEWAY_ENV.botEgress] ?? 'open',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',
     botSecurityOpt,

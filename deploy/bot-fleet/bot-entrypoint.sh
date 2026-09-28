@@ -1,6 +1,18 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+if [[ "$(id -u)" == 0 ]]; then
+  if [[ "${MAESTRLY_BOT_EGRESS:-open}" == public ]]; then
+    /usr/local/bin/maestrly-egress-guard
+    export MAESTRLY_EGRESS_GUARDED=1
+  fi
+  exec setpriv --reuid=1000 --regid=1000 --init-groups --bounding-set=-net_admin -- "$0" "$@"
+fi
+if [[ "${MAESTRLY_BOT_EGRESS:-open}" == public && "${MAESTRLY_EGRESS_GUARDED:-}" != 1 ]]; then
+  echo '[bot] MAESTRLY_BOT_EGRESS=public needs the container to start as root; refusing to start without the network guard' >&2
+  exit 1
+fi
+
 if [[ "${1:-}" == --session ]]; then
   shift
 else

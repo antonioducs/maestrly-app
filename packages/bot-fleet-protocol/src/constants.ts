@@ -62,6 +62,7 @@ export const FLEET_GATEWAY_ENV = {
   network: 'MAESTRLY_GATEWAY_NETWORK',
   dockerSocket: 'MAESTRLY_GATEWAY_DOCKER_SOCKET',
   botMemory: 'MAESTRLY_GATEWAY_BOT_MEMORY',
+  botEgress: 'MAESTRLY_GATEWAY_BOT_EGRESS',
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
   timezone: 'TZ',
 } as const
@@ -76,7 +77,11 @@ export const FLEET_BOT_ENV = {
   gatewayUrl: 'MAESTRLY_BOT_GATEWAY_URL',
   gatewayToken: 'MAESTRLY_BOT_GATEWAY_TOKEN',
   environmentId: 'MAESTRLY_ENVIRONMENT_ID',
+  egress: 'MAESTRLY_BOT_EGRESS',
 } as const
+
+export const FLEET_BOT_EGRESS_MODES = ['open', 'public'] as const
+export type FleetBotEgress = (typeof FLEET_BOT_EGRESS_MODES)[number]
 
 export const FLEET_SCREEN_CLOSE_CODES = {
   released: 4001,

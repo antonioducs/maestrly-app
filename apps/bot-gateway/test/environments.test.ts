@@ -352,10 +352,10 @@ async function environmentInstance(environmentId: string, capable = true) {
   }
 }
 type Fake = Awaited<ReturnType<typeof environmentInstance>>
-function fixture() {
+function fixture(env: Record<string, string> = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-environments-'))
   dirs.push(dir)
-  const cfg = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir })
+  const cfg = loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, ...env })
   const store = new Store(dir),
     docker = new FakeDockerDriver()
   docker.images.add(cfg.botImage)
@@ -422,6 +422,41 @@ const environmentSteps = (f: Fixture, id: string) =>
 const container = (f: Fixture, name: string) => [...f.docker.containers.values()].find((item) => item.name === name)
 
 describe('environments', () => {
+  it('guards public egress containers and recreates a container whose egress changed', async () => {
+    const f = fixture({ MAESTRLY_GATEWAY_BOT_EGRESS: 'public' })
+    await f.instance('work')
+    await environment(f, 'Work', ['Ads'])
+    const guarded = container(f, 'maestrly-env-work')!
+    expect(guarded.spec).toMatchObject({ user: '0', capAdd: ['NET_ADMIN'] })
+    expect(guarded.spec.env).toContain('MAESTRLY_BOT_EGRESS=public')
+    expect(guarded.labels['org.maestrly.fleet.egress']).toBe('public')
+    f.cfg.botEgress = 'open'
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    const open = container(f, 'maestrly-env-work')!
+    expect(open).not.toBe(guarded)
+    expect(open.spec).toMatchObject({ user: '1000', capAdd: [] })
+    expect(open.spec.env.some((item) => item.startsWith('MAESTRLY_BOT_EGRESS='))).toBe(false)
+    expect(open.labels['org.maestrly.fleet.egress']).toBe('open')
+    expect(
+      f.store
+        .activity()
+        .filter((entry) => entry.kind === 'environment_restarted')
+        .at(-1)?.data
+    ).toMatchObject({
+      updated: true,
+      egress: 'open',
+    })
+  })
+
+  it('keeps a container without an egress label when the gateway is open', async () => {
+    const f = fixture()
+    await f.instance('work')
+    await environment(f, 'Work', ['Ads'])
+    const original = container(f, 'maestrly-env-work')!
+    delete original.labels['org.maestrly.fleet.egress']
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    expect(container(f, 'maestrly-env-work')).toBe(original)
+  })
   it('creates an environment container and installs a second bot in it', async () => {
     const f = fixture()
     const work = await f.instance('work')

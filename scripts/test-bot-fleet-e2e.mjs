@@ -70,7 +70,13 @@ function run(command, args, options = {}) {
     })
   })
 }
-const docker = (args, options) => run('docker', args, options)
+const docker = (args, options) => {
+  const environmentExec =
+    args[0] === 'exec' &&
+    args.some((arg) => /^maestrly-env-/.test(arg) || /^maestrly-bot-(?!gateway(?:$|-))/.test(arg))
+  const explicitUser = args.includes('-u') || args.includes('--user')
+  return run('docker', environmentExec && !explicitUser ? ['exec', '-u', '1000', ...args.slice(1)] : args, options)
+}
 const compose = (args, options) =>
   docker(['compose', '-p', project, '-f', composeFile, ...args], { env: composeEnv, ...options })
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -613,7 +619,7 @@ async function capture(name, display = ':0', fileName = 'e2e-scout.png') {
   const target = path.join(root, '.bot-fleet-local/screens', fileName)
   mkdirSync(path.dirname(target), { recursive: true })
   await new Promise((resolve, reject) => {
-    const child = spawn('docker', ['exec', name, 'import', '-display', display, '-window', 'root', 'png:-'], {
+    const child = spawn('docker', ['exec', '-u', '1000', name, 'import', '-display', display, '-window', 'root', 'png:-'], {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -673,6 +679,7 @@ async function main() {
     MAESTRLY_GATEWAY_NETWORK: network,
     MAESTRLY_GATEWAY_PORT: String(port),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
+    MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
   }
   await compose(['up', '-d', '--no-build'])
   const meta = await poll('gateway /v1/meta', () => request('GET', '/v1/meta'), 30000)
@@ -770,6 +777,44 @@ async function main() {
     [...containers].sort()
   )
   pass('two bot containers', 'running, setup, appVersion ' + version + '; one maestrly-env-* container each, slot 1')
+  const egressContainer = containers[1]
+  assert.equal(
+    (await docker(['inspect', '-f', '{{.Config.User}} {{json .HostConfig.CapAdd}}', egressContainer])).stdout.trim(),
+    '0 ["NET_ADMIN"]'
+  )
+  const mainPid = await instanceProcess(egressContainer)
+  const status = (await docker(['exec', egressContainer, 'cat', '/proc/' + mainPid + '/status'])).stdout
+  const capBnd = /^CapBnd:\s*([0-9a-f]+)$/m.exec(status)?.[1]
+  assert.ok(capBnd, 'Maestrly process CapBnd missing')
+  assert.equal(BigInt('0x' + capBnd) & (1n << 12n), 0n, 'Maestrly still has NET_ADMIN')
+  assert.notEqual((await docker(['exec', egressContainer, 'iptables', '-S'], { allowFailure: true })).code, 0)
+  const outputRules = (await docker(['exec', '-u', '0', egressContainer, 'iptables', '-S', 'OUTPUT'])).stdout
+  assert.match(outputRules, /-P OUTPUT ACCEPT/)
+  assert.match(outputRules, /-A OUTPUT -d 169\.254\.0\.0\/16 -j REJECT/)
+  assert.equal(await canConnect(egressContainer, 'maestrly-bot-gateway', 7444), true)
+  const listener = net.createServer((socket) => socket.end())
+  await new Promise((resolve, reject) => listener.once('error', reject).listen(0, '0.0.0.0', resolve))
+  try {
+    const listenerPort = listener.address().port
+    const hostLookup = await docker(['exec', fakeName, 'getent', 'ahostsv4', 'host.docker.internal'], {
+      allowFailure: true,
+    })
+    const targetHost = hostLookup.code === 0
+      ? hostLookup.stdout.trim().split(/\s+/)[0]
+      : (await docker(['network', 'inspect', '-f', '{{(index .IPAM.Config 0).Gateway}}', network])).stdout.trim()
+    const sidecarControl = await docker(
+      ['exec', fakeName, 'node', '-e',
+        "const net=require('node:net');const s=net.connect(Number(process.argv[2]),process.argv[1]);s.setTimeout(3000);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));s.on('timeout',()=>process.exit(1))",
+        targetHost, String(listenerPort)],
+      { allowFailure: true }
+    )
+    assert.equal(sidecarControl.code, 0, 'Cannot verify host egress here: the model sidecar cannot reach the host listener')
+    assert.equal(await canConnect(egressContainer, targetHost, listenerPort), false, 'Bot reached the host listener')
+    assert.equal(await canConnect(egressContainer, '169.254.169.254', 80), false, 'Bot reached metadata address')
+    pass('egress guard', 'root container, NET_ADMIN removed from Maestrly; firewall blocks host and metadata while gateway remains reachable')
+  } finally {
+    await new Promise((resolve) => listener.close(resolve))
+  }
   const toolchainStarted = Date.now()
   const binaries =
     'node npm npx corepack pnpm python python3 pip uv uvx mise git ssh gcc make rg fd jq sqlite3 zip unzip'.split(' ')

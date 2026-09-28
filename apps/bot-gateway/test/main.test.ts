@@ -442,6 +442,8 @@ describe('Docker and host parsers', () => {
         memory: 1,
         shmSize: 1,
         securityOpt: [],
+        user: '1000',
+        capAdd: [],
       })
     ).toBe('abc')
     await docker.start('abc')
@@ -457,6 +459,7 @@ describe('Docker and host parsers', () => {
       User: '1000',
       HostConfig: { Init: true, ShmSize: 1, Mounts: [{ Type: 'volume', Source: 'home', Target: '/home/bot' }] },
     })
+    expect(created.HostConfig.CapAdd).toBeUndefined()
   })
 })
 

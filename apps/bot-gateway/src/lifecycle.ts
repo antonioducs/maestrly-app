@@ -35,6 +35,7 @@ import type { EnvironmentChanges, Store, StoredEnvironment } from './store.js'
 const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
 const environmentLabel = 'org.maestrly.fleet.environment-id'
+const egressLabel = 'org.maestrly.fleet.egress'
 /** The label of containers created before environments: their bot's id, which their environment took over. */
 const legacyBotLabel = 'org.maestrly.fleet.bot-id'
 const now = () => new Date().toISOString()
@@ -729,6 +730,7 @@ export class Lifecycle {
    * these variables; they are never set in a shared environment, whose bots must not see each other's token.
    */
   private async createContainer(environmentId: string): Promise<string> {
+    const guarded = this.config.botEgress === 'public'
     const environment = this.store.getEnvironment(environmentId)!,
       secrets = this.store.environmentSecrets(environmentId)!
     const active = this.store.botsOfEnvironment(environmentId),
@@ -742,6 +744,7 @@ export class Lifecycle {
       [FLEET_BOT_ENV.controlPort]: String(FLEET_PORTS.instanceControl),
       [FLEET_BOT_ENV.controlToken]: secrets.controlToken,
       [FLEET_BOT_ENV.gatewayUrl]: this.config.internalUrl,
+      ...(guarded ? { [FLEET_BOT_ENV.egress]: 'public' } : {}),
       ...(sole && soleToken
         ? { [FLEET_BOT_ENV.id]: sole.id, [FLEET_BOT_ENV.name]: sole.name, [FLEET_BOT_ENV.gatewayToken]: soleToken }
         : {}),
@@ -752,13 +755,15 @@ export class Lifecycle {
       name: environment.containerName,
       image: this.config.botImage,
       hostname: environmentId,
-      labels: { [managed]: 'true', [environmentLabel]: environmentId },
+      labels: { [managed]: 'true', [environmentLabel]: environmentId, [egressLabel]: this.config.botEgress },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
       network: this.config.network,
       volume: environment.volumeName,
       memory: environment.memoryLimitBytes ?? this.config.botMemory,
       shmSize: this.config.botShm,
       securityOpt: this.config.botSecurityOpt,
+      user: guarded ? '0' : '1000',
+      capAdd: guarded ? ['NET_ADMIN'] : [],
     })
   }
   private async updateImageState(environmentId: string, container: ContainerInfo): Promise<string | null> {
@@ -781,7 +786,9 @@ export class Lifecycle {
     via: Via
   ): Promise<boolean> {
     const imageId = await this.updateImageState(environmentId, container)
-    if (imageId && container.imageId !== imageId) {
+    const imageChanged = imageId !== null && container.imageId !== imageId
+    const egressChanged = (container.labels[egressLabel] ?? 'open') !== this.config.botEgress
+    if (imageId && (imageChanged || egressChanged)) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
       this.instances.delete(environmentId)
@@ -791,8 +798,16 @@ export class Lifecycle {
       this.imageOutdated.set(environmentId, false)
       const fromImage = container.imageId.replace(/^sha256:/, '').slice(0, 12)
       const toImage = imageId.replace(/^sha256:/, '').slice(0, 12)
-      this.logger.info('Environment container updated', { environmentId, fromImage, toImage })
-      this.lifecycleActivity(environmentId, via, 'restarted', { updated: true, fromImage, toImage })
+      this.logger.info('Environment container updated', {
+        environmentId,
+        ...(imageChanged ? { fromImage, toImage } : {}),
+        ...(egressChanged ? { egress: this.config.botEgress } : {}),
+      })
+      this.lifecycleActivity(environmentId, via, 'restarted', {
+        updated: true,
+        ...(imageChanged ? { fromImage, toImage } : {}),
+        ...(egressChanged ? { egress: this.config.botEgress } : {}),
+      })
       return true
     }
     if (restart) await this.docker.restart(container.id)

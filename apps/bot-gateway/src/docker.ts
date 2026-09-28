@@ -13,6 +13,8 @@ export type ContainerSpec = {
   memory: number
   shmSize: number
   securityOpt: string[]
+  user: string
+  capAdd: string[]
 }
 export type ContainerInfo = {
   id: string
@@ -170,7 +172,7 @@ export class DockerEngineDriver implements DockerDriver {
       await this.route('/containers/create?name=' + encodeURIComponent(spec.name)),
       {
         Image: spec.image,
-        User: '1000',
+        User: spec.user,
         Hostname: spec.hostname,
         Labels: spec.labels,
         Env: spec.env,
@@ -182,6 +184,7 @@ export class DockerEngineDriver implements DockerDriver {
           NetworkMode: spec.network,
           Mounts: [{ Type: 'volume', Source: spec.volume, Target: '/home/bot' }],
           SecurityOpt: spec.securityOpt,
+          ...(spec.capAdd.length ? { CapAdd: spec.capAdd } : {}),
         },
       }
     )
