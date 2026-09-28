@@ -258,7 +258,8 @@ http.createServer(async (req, res) => {
     res.write('data: [DONE]\n\n')
     res.end()
   } catch (error) {
-    if (!res.headersSent) json(res, 400, { error: { message: String(error.message ?? error) } })
+    console.error('[fake model]', error)
+    if (!res.headersSent) json(res, 400, { error: { message: 'The fake model refused this request; see its log' } })
     else res.end()
   }
 }).listen(8787, '0.0.0.0')

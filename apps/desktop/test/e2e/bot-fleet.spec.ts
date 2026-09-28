@@ -1046,7 +1046,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         response.end()
       } else send(200, value)
     } catch (error) {
-      send(500, { code: 'INTERNAL', message: String(error) })
+      console.error('[fake gateway]', error)
+      send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -2326,7 +2327,8 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         response.end()
       } else send(200, value)
     } catch (error) {
-      send(500, { code: 'INTERNAL', message: String(error) })
+      console.error('[fake gateway]', error)
+      send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -2876,7 +2878,8 @@ test('fleet UI keeps older environment images, stopped environments and refused 
         response.end()
       } else send(200, value)
     } catch (error) {
-      send(500, { code: 'INTERNAL', message: String(error) })
+      console.error('[fake gateway]', error)
+      send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
   // Like the gateway, accept a screen's WebSocket and then close it with 4003 when its ticket cannot be used.
@@ -3377,7 +3380,8 @@ test('fleet UI gives environments a default compaction model that their bots inh
         response.end()
       } else send(200, value)
     } catch (error) {
-      send(500, { code: 'INTERNAL', message: String(error) })
+      console.error('[fake gateway]', error)
+      send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomInt } from 'node:crypto'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -43,8 +43,9 @@ export class FakeGateway {
   private readonly streams = new Set<ServerResponse>()
   private readonly server = createServer((request, response) => {
     this.handle(request, response).catch((error: unknown) => {
+      console.error('[fake gateway]', error)
       if (!response.headersSent) response.writeHead(500, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({ code: 'INTERNAL', message: String(error) }))
+      response.end(JSON.stringify({ code: 'INTERNAL', message: 'The fake gateway failed; see the test output' }))
     })
   })
   private listening = false
@@ -145,7 +146,7 @@ export class FakeGateway {
 
   /** A new one-use pairing code, as `maestrly-bot-gateway pair` prints it. */
   issueCode(): string {
-    const code = [...randomBytes(8)].map((byte) => CROCKFORD[byte % CROCKFORD.length]).join('')
+    const code = Array.from({ length: 8 }, () => CROCKFORD[randomInt(CROCKFORD.length)]).join('')
     this.codes.add(code)
     return `${code.slice(0, 4)}-${code.slice(4)}`
   }

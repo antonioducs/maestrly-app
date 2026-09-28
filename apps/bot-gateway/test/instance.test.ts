@@ -15,12 +15,13 @@ afterEach(async () => {
 type Answer = (res: http.ServerResponse, req: http.IncomingMessage) => void
 /** A synthetic instance that answers each request, by method and path, as the test chooses. */
 async function instance(answers: Record<string, Answer>) {
+  const routes = new Map(Object.entries(answers))
   const server = http.createServer((req, res) => {
     if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' || req.headers.authorization !== 'Bearer control') {
       res.writeHead(401).end()
       return
     }
-    const answer = answers[req.method + ' ' + req.url]
+    const answer = routes.get(req.method + ' ' + req.url)
     if (answer) return answer(res, req)
     json(404, { code: 'NOT_FOUND', message: 'Not found' })(res, req)
   })

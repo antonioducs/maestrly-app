@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomInt } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import net from 'node:net'
@@ -796,7 +796,7 @@ export class FleetInstallerService {
 
 const RANDOM_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
 function randomId(length: number): string {
-  return [...randomBytes(length)].map((byte) => RANDOM_ALPHABET[byte % RANDOM_ALPHABET.length]).join('')
+  return Array.from({ length }, () => RANDOM_ALPHABET[randomInt(RANDOM_ALPHABET.length)]).join('')
 }
 
 function isFree(port: number): Promise<boolean> {
