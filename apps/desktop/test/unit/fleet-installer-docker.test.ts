@@ -134,7 +134,8 @@ process.stdin.on('end', () => {
 
   posix('stops the CLI when the job is cancelled', async () => {
     const dir = tempDir()
-    writeFileSync(path.join(dir, 'docker'), '#!/bin/sh\nsleep 30\n')
+    // By absolute path: with PATH holding only this directory, a bare `sleep` is not found and the CLI exits at once.
+    writeFileSync(path.join(dir, 'docker'), '#!/bin/sh\nexec /bin/sleep 30\n')
     chmodSync(path.join(dir, 'docker'), 0o755)
     const runner = new LocalRunner({ env: { PATH: dir }, home: tempDir() })
     const controller = new AbortController()
