@@ -90,6 +90,7 @@ function expectCurrent(conversationId: string, opts: Parameters<typeof chatHisto
 }
 
 describe('conversation history stats', () => {
+  // Each change commits on its own, as the caches under test need; Windows runners sync every commit to disk.
   it('keeps totals equal to a full computation through growth, rewrites, deletions and billed attempts', () => {
     for (const seed of [1, 2, 3]) {
       const random = prng(seed)
@@ -141,7 +142,7 @@ describe('conversation history stats', () => {
       const stats = expectCurrent(conversationId)
       expect(stats.perModel.length).toBeGreaterThan(1)
     }
-  })
+  }, 120_000)
 
   it('counts a native milestone only while its caller confirms it, on kept totals too', () => {
     const conversationId = newConversation()
