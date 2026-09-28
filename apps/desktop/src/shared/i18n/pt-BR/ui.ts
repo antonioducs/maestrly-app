@@ -678,7 +678,7 @@ export default {
     hideArchived: 'Ocultar arquivadas',
     showArchived: 'Mostrar arquivadas ({{count}})',
     keepAwakeTitle:
-      'Impede o Mac de dormir enquanto há agente trabalhando, para tarefas longas não congelarem. A tela bloqueada não pausa os agentes; o sleep, sim. Não força a tela acesa.',
+      'Impede o computador de dormir enquanto há agente trabalhando, para tarefas longas não congelarem. A tela bloqueada não pausa os agentes; o sleep, sim. Não força a tela acesa.',
     keepAwakeOn: 'Impedir suspensão: ligado',
     keepAwakeOff: 'Impedir suspensão: desligado',
     usage: 'Usage',

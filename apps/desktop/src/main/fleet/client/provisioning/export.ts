@@ -23,7 +23,7 @@ import { listMcpServers } from '../../../chat/mcp'
 import { transformMcpServerForBot } from './mcp-transform'
 import { skillsHome } from './inventory'
 
-const missing = 'This account is no longer stored on this Mac.'
+const missing = 'This account is no longer stored on this computer.'
 function item(id: string, name = id): MacImportItemResult {
   return { id, name, outcome: 'failed', error: null }
 }
@@ -143,7 +143,7 @@ export async function importFromMac(
       const skill = skills.find((candidate) => candidate.name === name)
       if (!skill) {
         result.errorCode = 'skill-missing'
-        throw new Error('This skill is no longer stored on this Mac.')
+        throw new Error('This skill is no longer stored on this computer.')
       }
       const files = await packageSkillDirectory(skill.dir).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : ''
@@ -178,7 +178,7 @@ export async function importFromMac(
     report.mcpServers.push(result)
     const payload = server && transformMcpServerForBot(server, os.homedir()).payload
     if (!payload) {
-      result.error = 'This MCP server is unavailable on this Mac.'
+      result.error = 'This MCP server is unavailable on this computer.'
       result.errorCode = 'mcp-unavailable'
       continue
     }

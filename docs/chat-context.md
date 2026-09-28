@@ -214,7 +214,7 @@ included pinned content arrive as an update on the next turn. Updates over
 
 ## Automatic recall
 
-On the Mac, **Settings → Chat → Memory → Recall relevant memories automatically**
+In the desktop app, **Settings → Chat → Memory → Recall relevant memories automatically**
 starts enabled. Each eligible message can recall up to three relevant memories,
 with snippets of up to 400 characters and a relevance floor of 0.6. Recall uses
 the first 1,000 characters of the message and excludes entries already in the

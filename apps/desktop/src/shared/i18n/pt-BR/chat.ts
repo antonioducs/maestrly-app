@@ -3,7 +3,7 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
-  mcp: { unavailable: 'Não deu para ler os dados de conexão neste Mac. Configure de novo.' },
+  mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
   memorySettings: {
     title: 'Memória',
     description: 'Como os agentes usam a memória durável do projeto.',
@@ -653,7 +653,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Preparar contexto em segundo plano',
-    backgroundCompactionManagedByMac: 'Definido pelo Mac, em Ajustes do bot.',
+    backgroundCompactionManagedByMac: 'Definido nos Ajustes do bot, no computador que controla os bots.',
     backgroundCompactionDescription:
       'Prepara periodicamente um checkpoint compactado com outro modelo. A conversa atual continua funcionando durante a preparação.',
     backgroundCompactionToggle: 'Usar preparação de contexto em segundo plano',

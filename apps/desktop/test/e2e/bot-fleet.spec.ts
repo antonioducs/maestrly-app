@@ -1609,12 +1609,12 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       'fixture-mcp-secret',
     ])
       expect(await page.content()).not.toContain(secret)
-    await accountsSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
-    const importDialog = page.getByRole('dialog', { name: 'Trazer do seu Mac', exact: true })
+    await accountsSection.getByRole('button', { name: 'Trazer deste computador…', exact: true }).click()
+    const importDialog = page.getByRole('dialog', { name: 'Trazer deste computador', exact: true })
     await expect(importDialog.getByText('Já no bot', { exact: true })).toBeVisible()
     await expect(importDialog.getByRole('checkbox', { name: 'e2e-notes', exact: true })).toHaveCount(0)
     await importDialog.getByRole('button', { name: 'Fechar', exact: true }).click()
-    await resourcesSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
+    await resourcesSection.getByRole('button', { name: 'Trazer deste computador…', exact: true }).click()
     // One tab per kind: skills first, then MCP servers.
     await expect(importDialog.getByText('Já no bot', { exact: true })).toHaveCount(1)
     await importDialog.getByRole('tab', { name: /^Servidores MCP/ }).click()
@@ -1673,7 +1673,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         throw new Error('Synthetic import rejection')
       })
     })
-    await accountsSection.getByRole('button', { name: 'Trazer do Mac…', exact: true }).click()
+    await accountsSection.getByRole('button', { name: 'Trazer deste computador…', exact: true }).click()
     await importDialog.getByRole('checkbox', { name: 'Grok', exact: true }).check()
     await importDialog.getByRole('button', { name: 'Enviar para o bot', exact: true }).click()
     const grokLoginDialog = page.getByRole('dialog', { name: 'Entrar em Grok no Orders', exact: true })
@@ -1723,7 +1723,7 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     })
     emit({ type: 'bot.updated', at: now(), bot: withoutProvisioning })
     await expect(accountsSection.getByText('Reinicie este bot para atualizá-lo antes.')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Trazer do Mac…', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Trazer deste computador…', exact: true })).toHaveCount(0)
     emit({ type: 'bot.updated', at: now(), bot: bots.find((item) => item.id === 'new-bot')! })
     const apiKey = 'fleet-e2e-secret-key-123'
     await page.getByLabel('Nome da conta').fill('Fake model')
@@ -2376,7 +2376,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     // A new environment starts empty and says what it can bring; this Mac has nothing to bring.
     const importSection = createDialog.getByRole('region', { name: 'Contas, skills e MCP', exact: true })
     await expect(importSection).toContainText('Um ambiente novo começa vazio')
-    await expect(importSection).toContainText('Não há nada para trazer deste Mac')
+    await expect(importSection).toContainText('Não há nada para trazer deste computador')
     const botName = createDialog.getByLabel('Nome', { exact: true })
     const environmentName = createDialog.getByLabel('Nome do ambiente')
     await botName.fill('Orders')

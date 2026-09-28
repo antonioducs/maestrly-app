@@ -100,7 +100,7 @@ connection presence and sanitized status, not credential values.
 ### Configuring bot environments from a paired device
 
 Every paired device can configure every environment and bot on its gateway.
-Selected stored credentials flow from the Mac main process through the gateway
+Selected stored credentials flow from the desktop app's main process through the gateway
 to the environment, whose bots all use them; provisioning does not retrieve
 stored secrets. The picker receives names, IDs, hosts and warnings, and account
 lists include only a last-four-character API-key hint. Stored secrets are not
@@ -109,25 +109,25 @@ records. Import requests are not stored in the idempotency table.
 
 Successful additions and updates through provisioning, and subscription, skill
 and MCP removals, record `bot_configured` activity on the environment with the
-paired device's name and counts only, also when a Mac from before environments
+paired device's name and counts only, also when a desktop app from before environments
 configures one of its bots. Unchanged imports and interactive logins do not
 create this activity; the existing API-key removal route does not create it
-either. Copilot and Cursor imports share the same credential between Mac and
-environment. Codex, Claude and Grok sign in to separate sessions in the
+either. Copilot and Cursor imports share the same credential between your computer and
+the environment. Codex, Claude and Grok sign in to separate sessions in the
 environment. Accounts and MCP imports are refused when secure storage is
 unavailable in the environment.
 
 Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
 `claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
-subdomains for Grok. The Mac's callback relay binds only to loopback, accepts the
+subdomains for Grok. The desktop app's callback relay binds only to loopback, accepts the
 attempt's exact callback path and closes on completion, cancellation or expiry.
 It never renders bot-provided content and redirects only to allowed provider
-origins; other responses use the Mac's own completion or failure page. Codex
+origins; other responses use the desktop app's own completion or failure page. Codex
 local success redirects are followed inside the environment, keeping tokens in
 those URLs there.
 
 MCP URLs, headers, commands, arguments and environment values are encrypted at
-rest when secure storage is available, on both Mac and bot environment. General
+rest when secure storage is available, on both your computer and the bot environment. General
 desktop MCP configuration retains an inline fallback when secure storage is
 unavailable or a secure write fails; unreadable encrypted entries are never
 connected. See [MCP storage](local-data.md#mcp-configuration) and the
@@ -210,7 +210,7 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   cookies and site logins for the whole environment. Programs on a bot's apps
   screen open Chromium with a separate per-bot profile that uses Chromium's
   basic password store, which the keyring does not protect.
-- **Secrets** flow only from the Mac through the gateway to the environment and
+- **Secrets** flow only from your computer through the gateway to the environment and
   are never returned. The gateway keeps each environment's control token and
   keyring password and each bot's gateway token in plaintext in its database;
   host root and anyone who controls the Docker socket can read them.
@@ -255,7 +255,7 @@ environment, which the gateway derives from the bot's gateway token, and a bot
 can replace or archive only entries of its own environment. Under the owner's
 direct-write policy, `memory_upsert`, `memory_archive`, `memory_restore`,
 `owner_memory_save`, `owner_memory_forget` and `routine_report` run without
-approval prompts in bot conversations. The owner reviews changes on the Mac.
+approval prompts in bot conversations. The owner reviews changes in the desktop app.
 Owner-memory writes carry author and origin information; replacement and
 archival preserve history. `owner_memory_forget` archives, while permanent local
 deletion with `memory_forget` retains the normal approval gate. Read-only memory

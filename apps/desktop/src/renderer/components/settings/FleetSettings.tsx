@@ -12,7 +12,9 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
   const { connection } = fleet.state
   const [url, setUrl] = useState(connection.url ?? '')
   const [code, setCode] = useState('')
-  const [deviceName, setDeviceName] = useState('Mac')
+  // A name the owner recognizes in the server's device list and on a screen they control, whatever the system.
+  const defaultDeviceName = t(`settings.deviceNameDefault.${window.api.platformInfo.os}`)
+  const [deviceName, setDeviceName] = useState(defaultDeviceName)
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -23,7 +25,11 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.fleetConnect({ url: url.trim(), code, deviceName: deviceName.trim() || 'Mac' })
+      const result = await window.api.fleetConnect({
+        url: url.trim(),
+        code,
+        deviceName: deviceName.trim() || defaultDeviceName,
+      })
       fleet.dispatch({ type: 'connection', value: result })
       setCode('')
       const snapshot = await window.api.fleetGetSnapshot()

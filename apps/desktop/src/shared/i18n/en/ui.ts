@@ -668,7 +668,7 @@ export default {
     hideArchived: 'Hide archived',
     showArchived: 'Show archived ({{count}})',
     keepAwakeTitle:
-      'Keeps the Mac from sleeping while an agent is working, so long tasks do not freeze. A locked screen does not pause the agents; sleep does. It does not force the screen to stay on.',
+      'Keeps the computer from sleeping while an agent is working, so long tasks do not freeze. A locked screen does not pause the agents; sleep does. It does not force the screen to stay on.',
     keepAwakeOn: 'Prevent sleep: on',
     keepAwakeOff: 'Prevent sleep: off',
     usage: 'Usage',

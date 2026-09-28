@@ -72,10 +72,10 @@ requires secure storage before accepting MCP imports.
 
 ## Configuration brought to an environment
 
-Global skills sent from a Mac are installed atomically in
+Global skills sent from a computer are installed atomically in
 `~/.agents/skills/<name>` in the bot environment, with provenance `fleet` (shown
-as **From a Mac**). They live in the environment's persistent home volume and
-are shared by its bots; changing or removing the Mac's source does not update
+as **From a computer**). They live in the environment's persistent home volume and
+are shared by its bots; changing or removing the source on that computer does not update
 that copy automatically.
 
 Subscription slots created for remote sign-in are ordinary subscription slots,

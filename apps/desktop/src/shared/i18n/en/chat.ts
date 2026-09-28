@@ -1,5 +1,5 @@
 export default {
-  mcp: { unavailable: 'Its connection details could not be read on this Mac. Configure it again.' },
+  mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
   memorySettings: {
     title: 'Memory',
     description: 'How agents use durable project memory.',
@@ -646,7 +646,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Prepare context in the background',
-    backgroundCompactionManagedByMac: 'Set by the Mac in the bot’s Settings.',
+    backgroundCompactionManagedByMac: 'Set in the bot’s Settings, on the computer that manages the bots.',
     backgroundCompactionDescription:
       'Periodically prepare a compacted checkpoint with a separate model. The current conversation keeps working while preparation runs.',
     backgroundCompactionToggle: 'Use background context preparation',
