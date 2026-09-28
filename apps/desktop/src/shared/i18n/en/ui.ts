@@ -605,6 +605,7 @@ export default {
     tabs: 'Sidebar',
     chats: 'Chats',
     bots: 'Bots',
+    experimental: 'Experimental',
     noBots: 'No bots yet',
     noServerConnected: 'No server connected',
     connectBotServer: 'Connect a bot server in Settings to see your bots here.',

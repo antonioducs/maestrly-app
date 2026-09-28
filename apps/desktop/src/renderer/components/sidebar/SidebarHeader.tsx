@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderPlus, Search, PanelLeft, Layers, Plus } from 'lucide-react'
+import { FlaskConical, FolderPlus, Search, PanelLeft, Layers, Plus } from 'lucide-react'
 import { instanceBadgeStyle } from '../../../shared/instance-color'
 import type { AppInfo } from '../../../preload'
 import { cn } from '@/lib/utils'
@@ -122,6 +122,13 @@ export function SidebarHeader({
               )}
             >
               {t(`sidebar.${item}`)}
+              {item === 'bots' && (
+                // The sidebar is too narrow for a text badge next to the three tabs.
+                <span title={t('sidebar.experimental')} className="inline-flex text-amber-500">
+                  <FlaskConical aria-hidden="true" className="size-3" />
+                  <span className="sr-only">{t('sidebar.experimental')}</span>
+                </span>
+              )}
               {item === 'bots' && botPendingCount > 0 && (
                 <span className="rounded-full bg-primary/15 px-1 text-[10px] tracking-normal text-primary">
                   {botPendingCount}

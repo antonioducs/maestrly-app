@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { resources } from '../../src/shared/i18n/resources'
 
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
 
@@ -19,6 +20,12 @@ describe('fleet renderer wiring', () => {
     expect(panels).toContain("(fleetView ? 'fleet' : null)")
     expect(panels).toContain('setFleetView(null)')
     expect(panels).toContain('setActive(null)')
+  })
+  it('marks the Bots tab as experimental', () => {
+    const header = source('components/sidebar/SidebarHeader.tsx')
+    expect(header).toMatch(/item === 'bots' &&[\s\S]{0,240}t\('sidebar\.experimental'\)/)
+    for (const catalog of [resources.en.ui, resources['pt-BR'].ui])
+      expect(catalog.sidebar.experimental).toBe('Experimental')
   })
   it('subscribes to all fleet state streams and disposes subscriptions', () => {
     const hook = source('lib/fleet/use-fleet.ts')

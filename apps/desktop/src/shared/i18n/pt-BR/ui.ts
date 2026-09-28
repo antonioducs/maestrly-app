@@ -615,6 +615,7 @@ export default {
     tabs: 'Barra lateral',
     chats: 'Chats',
     bots: 'Bots',
+    experimental: 'Experimental',
     noBots: 'Nenhum bot ainda',
     noServerConnected: 'Nenhum servidor conectado',
     connectBotServer: 'Conecte um servidor de bots nas Configurações para ver seus bots aqui.',
