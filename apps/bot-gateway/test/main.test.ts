@@ -21,6 +21,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { run } from '../src/main.js'
 import { createGatewayServers } from '../src/server.js'
 import { Store } from '../src/store.js'
+import { dockerSocketPath } from './docker-socket.js'
 
 const dirs: string[] = []
 const servers: http.Server[] = []
@@ -369,7 +370,7 @@ describe('Docker and host parsers', () => {
   })
   it('calls Docker Engine through a unix socket', async () => {
     const dir = temp(),
-      socket = path.join(dir, 'docker.sock'),
+      socket = dockerSocketPath(dir),
       calls: string[] = []
     let created: any
     const server = http.createServer(async (req, res) => {

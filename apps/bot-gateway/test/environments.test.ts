@@ -25,6 +25,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { ScreenProxy } from '../src/screen.js'
 import { createGatewayServers } from '../src/server.js'
 import { Store } from '../src/store.js'
+import { dockerSocketPath } from './docker-socket.js'
 import { harness } from './harness.js'
 
 const GiB = 1024 ** 3
@@ -1033,7 +1034,7 @@ describe('environments', () => {
   it('drives Docker to change a live memory limit', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-engine-'))
     dirs.push(dir)
-    const socket = path.join(dir, 'docker.sock')
+    const socket = dockerSocketPath(dir)
     const calls: Array<{ url: string; body: unknown }> = []
     const server = http.createServer(async (req, res) => {
       const chunks: Buffer[] = []

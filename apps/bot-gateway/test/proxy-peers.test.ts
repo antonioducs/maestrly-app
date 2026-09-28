@@ -333,7 +333,13 @@ describe('screen', () => {
     expect(await controlClosed).toBe(4001)
     const oversized = sockets.shift()!
     const oversizedClosed = wsClose(oversized)
-    oversized.send(Buffer.alloc(256 * 1024 + 1))
+    // Only the header of a frame one byte over the limit, which the gateway refuses by its declared length. Sending
+    // the whole frame races the refusal: Windows resets a connection closed while data still arrives (code 1006).
+    const header = Buffer.alloc(14)
+    header[0] = 0x82 // final binary frame
+    header[1] = 0xff // masked, with a 64-bit length
+    header.writeBigUInt64BE(BigInt(256 * 1024 + 1), 2)
+    ;(oversized as unknown as { _socket: net.Socket })._socket.write(header)
     expect(await oversizedClosed).toBe(1009)
     const auth = new Auth(f.store)
     const paired = auth.pair(auth.createPairing().code, 'Revoked Mac', 'test')
