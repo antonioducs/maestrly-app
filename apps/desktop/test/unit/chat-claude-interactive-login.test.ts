@@ -126,8 +126,13 @@ it('returns the cached status without I/O', async () => {
   expect(environment).not.toHaveBeenCalled()
 })
 loginIt('kills the process at the total deadline', async () => {
-  const login = await manager.startInteractiveLogin({ totalTimeoutMs: 600 })
-  expect((await login.done).ok).toBe(false)
+  // On a busy machine the deadline can pass before the sign-in URLs appear: the start then fails the same way.
+  const outcome = await manager.startInteractiveLogin({ totalTimeoutMs: 600 }).then(
+    (login) => login.done,
+    (error: Error) => ({ ok: false, error: error.message })
+  )
+  expect(outcome).toMatchObject({ ok: false, error: 'Claude login did not complete.' })
+  expect(children[0].exitCode !== null || children[0].signalCode !== null).toBe(true)
   await expect(access(capture)).rejects.toThrow()
 })
 
