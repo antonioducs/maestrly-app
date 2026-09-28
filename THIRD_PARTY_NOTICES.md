@@ -47,6 +47,29 @@ Copyright (c) 2016 Luigi Pinca and contributors
 The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE` inside the gateway image.
 
+## ssh2
+
+The desktop app includes [ssh2](https://github.com/mscdex/ssh2) 1.17.0 to install
+and reach a bot server on a VPS over SSH. It is licensed under the MIT License,
+Copyright Brian White. Its dependencies are:
+
+- [asn1](https://github.com/joyent/node-asn1) 0.2.6, MIT License, Copyright (c)
+  2011 Mark Cavage;
+- [bcrypt-pbkdf](https://github.com/joyent/node-bcrypt-pbkdf) 1.0.2, BSD-3-Clause
+  License, Copyright 1997 Niels Provos, Copyright (c) 2013 Ted Unangst, and
+  Copyright 2016 Joyent Inc;
+- [tweetnacl](https://github.com/dchest/tweetnacl-js) 0.14.5, dedicated to the
+  public domain under the Unlicense;
+- [safer-buffer](https://github.com/ChALkeR/safer-buffer) 2.1.2, MIT License,
+  Copyright (c) 2018 Nikita Skovoroda.
+
+Where they build, it also uses the optional native modules
+[cpu-features](https://github.com/mscdex/cpu-features) 0.0.10 and
+[buildcheck](https://github.com/mscdex/buildcheck) 0.0.7 (MIT License, Copyright
+Brian White) and [nan](https://github.com/nodejs/nan) 2.29.0 (MIT License,
+Copyright (c) 2018 NAN contributors). The complete licenses are distributed with
+each package under `node_modules` in the packaged app.
+
 ## OpenAI Codex-derived source
 
 Portions of the OpenAI-specific chat harness are adapted from
