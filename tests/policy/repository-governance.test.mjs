@@ -115,7 +115,7 @@ test('release workflow publishes verified native artifacts only from version tag
 
   assert.match(
     source,
-    /^ {2}publish:\n {4}name: Publish GitHub Release\n {4}needs: \[validate, linux, windows, macos\]$/m
+    /^ {2}publish:\n {4}name: Publish GitHub Release\n {4}needs: \[validate, linux, windows, macos, bot-images-publish\]$/m
   )
   assert.match(source, /^ {2}publish:\n[\s\S]*?^ {4}permissions:\n {6}contents: write$/m)
   const publishBlock = source.slice(source.indexOf('\n  publish:'))
@@ -154,6 +154,25 @@ test('release workflow publishes verified native artifacts only from version tag
   assert.match(source, /security delete-keychain/)
   assert.match(source, /developer-id\.p12/)
   assert.match(source, /AuthKey_\$\{APPLE_API_KEY_ID\}\.p8/)
+})
+
+test('release publishes both bot server images for amd64 and arm64 before the GitHub release', () => {
+  const source = read('.github/workflows/release.yml')
+  const images = source.slice(source.indexOf('\n  bot-images:'), source.indexOf('\n  bot-images-publish:'))
+  const merge = source.slice(source.indexOf('\n  bot-images-publish:'), source.indexOf('\n  publish:'))
+  assert.match(images, /needs: validate/)
+  assert.match(images, /runner: ubuntu-24\.04\n/)
+  assert.match(images, /runner: ubuntu-24\.04-arm/)
+  for (const text of ['deploy/bot-fleet/gateway.Dockerfile', 'deploy/bot-fleet/bot-instance.Dockerfile', 'repository: maestrly-bot-gateway', 'repository: maestrly-bot-instance', 'push-by-digest=true'])
+    assert.ok(images.includes(text), text)
+  assert.match(images, /MAESTRLY_VERSION=\$\{\{ needs\.validate\.outputs\.version \}\}/)
+  assert.match(images, /org\.opencontainers\.image\.version=\$\{\{ needs\.validate\.outputs\.version \}\}/)
+  for (const block of [images, merge]) assert.match(block, /permissions:\n {6}contents: read\n {6}packages: write/)
+  assert.equal((source.match(/packages: write/g) ?? []).length, 2)
+  assert.match(merge, /imagetools create/)
+  assert.match(merge, /linux\/amd64 linux\/arm64/)
+  assert.match(source, /tr '\[:upper:\]' '\[:lower:\]'/)
+  assert.doesNotMatch(source, /:latest\b/)
 })
 
 test('CI is read-only and exposes stable platform names', () => {
