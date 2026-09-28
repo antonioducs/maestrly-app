@@ -213,6 +213,31 @@ describe('fleet client service', () => {
     restarted.stop()
   })
 
+  it('moves a paired connection to another loopback port, keeping its device and token', async () => {
+    const service = new FleetClientService()
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH', deviceName: 'Mac' })
+    const before = state.events.length
+    service.retarget('http://127.0.0.1:7471')
+    expect(readFleetSettings()).toMatchObject({
+      url: 'http://127.0.0.1:7471',
+      deviceId: 'device-1',
+      token: 'secret',
+      tokenPersistence: 'secure',
+    })
+    expect(service.getConnection()).toMatchObject({ url: 'http://127.0.0.1:7471', deviceId: 'device-1' })
+    // A new event stream to the new address, with the same credentials.
+    expect(state.events.length).toBe(before + 1)
+    await state.events.at(-1)!.onConnected()
+    const hosts = vi
+      .mocked(fetch)
+      .mock.calls.map(([url]) => new URL(String(url)).host)
+      .slice(-3)
+    expect(hosts.every((host) => host === '127.0.0.1:7471')).toBe(true)
+    expect(() => service.retarget('http://example.com')).toThrow()
+    expect(readFleetSettings().url).toBe('http://127.0.0.1:7471')
+    service.stop()
+  })
+
   it('keeps token in memory when secure storage is unavailable', async () => {
     state.secureAvailable = false
     const service = new FleetClientService()

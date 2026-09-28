@@ -25,6 +25,7 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -61,6 +62,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['platformApi', platformApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
+  ['fleetInstallerApi', fleetInstallerApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -191,9 +193,42 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:login:cancel', 'bot', 'l1')
     expect(invokeSpy).toHaveBeenCalledWith('fleet:login:open', 'bot', 'l1', 'manual')
   })
+  it('forwards bot server installer calls to their channels', async () => {
+    const remote = {
+      target: { host: '203.0.113.10', port: 22, username: 'root' },
+      credentials: { kind: 'password' as const, password: 'synthetic-root-password' },
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+    }
+    await api.fleetInstallerStatus()
+    await api.fleetInstallerCheckLocal()
+    await api.fleetInstallerInstallLocal({ deviceName: 'Mac', allowPrivateNetwork: true })
+    await api.fleetInstallerInstallRemote(remote)
+    await api.fleetInstallerUpdate()
+    await api.fleetInstallerSetPrivateNetwork(true)
+    await api.fleetInstallerDisconnect()
+    await api.fleetInstallerRemove({ confirm: 'remove' })
+    await api.fleetInstallerCancel()
+    expect(invokeSpy.mock.calls).toEqual([
+      ['fleet:installer:status'],
+      ['fleet:installer:checkLocal'],
+      ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: true }],
+      ['fleet:installer:installRemote', remote],
+      ['fleet:installer:update'],
+      ['fleet:installer:setPrivateNetwork', true],
+      ['fleet:installer:disconnect'],
+      ['fleet:installer:remove', { confirm: 'remove' }],
+      ['fleet:installer:cancel'],
+    ])
+    const listener = vi.fn()
+    const off = api.onFleetInstallerStatus(listener) as () => void
+    expect(onSpy).toHaveBeenCalledWith('fleet:installer:status', expect.any(Function))
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:installer:status', onSpy.mock.calls.at(-1)?.[1])
+  })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(475)
+    expect(keys).toHaveLength(485)
     expect(keys.sort()).toMatchSnapshot()
   })
 

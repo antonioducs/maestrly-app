@@ -112,19 +112,35 @@ export class LocalRunner implements CommandRunner {
   docker(args: string[], options: RunOptions = {}): Promise<RunResult> {
     const docker = this.dockerPath
     if (!docker) return Promise.reject(new InstallerError('docker-missing'))
+    return this.run(docker, args, options)
+  }
+
+  /**
+   * Runs a program with the Docker CLI's directories first on PATH, as `docker` and scripts that call it need.
+   * Credential helpers (docker-credential-desktop, -osxkeychain) sit beside the CLI, or beside its link target.
+   */
+  run(
+    file: string,
+    args: string[],
+    options: RunOptions & { cwd?: string; env?: NodeJS.ProcessEnv } = {}
+  ): Promise<RunResult> {
     if (options.signal?.aborted) return Promise.reject(new InstallerError('cancelled'))
-    // Credential helpers (docker-credential-desktop, -osxkeychain) sit beside the CLI, or beside its link target.
-    const dirs = [path.dirname(docker)]
-    try {
-      dirs.push(path.dirname(realpathSync(docker)))
-    } catch {
-      /* A broken link still runs from its own directory. */
+    const dirs: string[] = []
+    if (this.dockerPath) {
+      dirs.push(path.dirname(this.dockerPath))
+      try {
+        dirs.push(path.dirname(realpathSync(this.dockerPath)))
+      } catch {
+        /* A broken link still runs from its own directory. */
+      }
     }
-    const key = pathKey(this.env)
-    const searchPath = [...new Set([...dirs, ...(this.env[key] ?? '').split(path.delimiter).filter(Boolean)])]
+    const env = { ...this.env, ...options.env }
+    const key = pathKey(env)
+    const searchPath = [...new Set([...dirs, ...(env[key] ?? '').split(path.delimiter).filter(Boolean)])]
     return new Promise((resolve, reject) => {
-      const child = spawn(docker, args, {
-        env: { ...this.env, [key]: searchPath.join(path.delimiter) },
+      const child = spawn(file, args, {
+        cwd: options.cwd,
+        env: { ...env, [key]: searchPath.join(path.delimiter) },
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],

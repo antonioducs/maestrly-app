@@ -112,6 +112,11 @@ export class DockerHost {
     await this.runner.writeFile(this.runner.join(this.dir, '.env'), env)
   }
 
+  /** Replaces only the environment file, keeping the Compose file the server was installed with. */
+  writeEnv(env: string): Promise<void> {
+    return this.runner.writeFile(this.runner.join(this.dir, '.env'), env)
+  }
+
   readEnv(): Promise<string | null> {
     return this.runner.readFile(this.runner.join(this.dir, '.env'))
   }

@@ -2,7 +2,11 @@ import net from 'node:net'
 import type { FleetRemoteTarget, FleetTunnelState } from '../../../shared/fleet-installer'
 import { InstallerError } from './errors'
 import { BOT_SERVER_GATEWAY_PORT } from './project'
-import { SshSession } from './ssh'
+import type { FleetSshCredentials } from '../../../shared/fleet-installer'
+import { SshSession, type SshConnectOptions } from './ssh'
+
+/** What the tunnel needs from an SSH connection. */
+export type TunnelSession = Pick<SshSession, 'forward' | 'onClose' | 'close'>
 
 export interface TunnelOptions {
   target: FleetRemoteTarget
@@ -11,7 +15,11 @@ export interface TunnelOptions {
   privateKey: () => string | null
   listenPort: number
   remotePort?: number
-  connect?: typeof SshSession.connect
+  connect?: (
+    target: FleetRemoteTarget,
+    credentials: FleetSshCredentials,
+    options: SshConnectOptions
+  ) => Promise<TunnelSession>
   delay?: (attempt: number) => number
   /** A free loopback port, used when `listenPort` is taken. */
   freePort?: () => Promise<number>
@@ -25,7 +33,7 @@ export interface TunnelOptions {
  */
 export class SshTunnel {
   private server: net.Server | null = null
-  private session: SshSession | null = null
+  private session: TunnelSession | null = null
   private readonly sockets = new Set<net.Socket>()
   private currentState: FleetTunnelState = 'off'
   private currentPort: number

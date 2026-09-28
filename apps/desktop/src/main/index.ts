@@ -165,6 +165,7 @@ import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetClientService } from './fleet/client/service'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
@@ -682,6 +683,7 @@ function registerIpc(): void {
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
+  registerFleetInstallerIpc(reg)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
 

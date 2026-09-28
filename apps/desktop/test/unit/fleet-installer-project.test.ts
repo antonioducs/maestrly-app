@@ -12,7 +12,9 @@ import {
   imageVersion,
   parseBotServerEnv,
   renderBotServerEnv,
+  splitImageRef,
   timezoneOrUtc,
+  withEnvValues,
   type BotServerEnvValues,
 } from '../../src/main/fleet/installer/project'
 
@@ -119,6 +121,34 @@ describe('bot server project files', () => {
     expect(parseBotServerEnv('MAESTRLY_GATEWAY_IMAGE="maestrly/bot-gateway:0.9.1"\n').gatewayImage).toBe(
       'maestrly/bot-gateway:0.9.1'
     )
+  })
+
+  it('changes only the values it owns in an existing environment file', () => {
+    const edited =
+      "# Written by Maestrly\nMAESTRLY_GATEWAY_IMAGE=a/b:1\nMAESTRLY_GATEWAY_DISPLAY_NAME='Custom'\nTZ=Europe/Lisbon\n"
+    expect(withEnvValues(edited, { MAESTRLY_GATEWAY_IMAGE: 'a/b:2', MAESTRLY_GATEWAY_BOT_EGRESS: 'open' })).toBe(
+      "# Written by Maestrly\nMAESTRLY_GATEWAY_IMAGE=a/b:2\nMAESTRLY_GATEWAY_DISPLAY_NAME='Custom'\nTZ=Europe/Lisbon\nMAESTRLY_GATEWAY_BOT_EGRESS=open\n"
+    )
+    expect(withEnvValues('TZ=UTC', { MAESTRLY_GATEWAY_BOT_EGRESS: 'public' })).toBe(
+      'TZ=UTC\nMAESTRLY_GATEWAY_BOT_EGRESS=public\n'
+    )
+    expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
+    expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_IMAGE: 'a b' })).toThrow()
+  })
+
+  it('splits an image reference without taking a registry port for a tag', () => {
+    expect(splitImageRef('ghcr.io/o/maestrly-bot-gateway:0.9.4')).toEqual({
+      repository: 'ghcr.io/o/maestrly-bot-gateway',
+      tag: '0.9.4',
+    })
+    expect(splitImageRef('host.orb.internal:5500/maestrly-bot-gateway:check')).toEqual({
+      repository: 'host.orb.internal:5500/maestrly-bot-gateway',
+      tag: 'check',
+    })
+    expect(splitImageRef('host.orb.internal:5500/maestrly-bot-gateway')).toEqual({
+      repository: 'host.orb.internal:5500/maestrly-bot-gateway',
+      tag: null,
+    })
   })
 
   it('names the server safely for the environment file', () => {

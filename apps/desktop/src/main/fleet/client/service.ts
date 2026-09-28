@@ -17,7 +17,13 @@ import { broadcast } from '../../window-ipc'
 import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
 import { FleetEvents, type FleetConnectionState } from './events'
-import { clearFleetCredentials, readFleetSettings, saveFleetCredentials, type TokenPersistence } from './settings'
+import {
+  clearFleetCredentials,
+  readFleetSettings,
+  saveFleetCredentials,
+  saveFleetUrl,
+  type TokenPersistence,
+} from './settings'
 import { FleetScreenBridge } from './screen-bridge'
 
 export type FleetConnectionView = {
@@ -156,6 +162,19 @@ export class FleetClientService {
     this.useCredentials(allowed.origin, paired.token, persistence)
     this.setConnection({ features: meta.features ?? [] })
     return this.connection
+  }
+
+  /**
+   * Keeps the pairing but reaches the gateway at another address, as when the local end of the SSH tunnel to a VPS
+   * moves to another port. The device, its token and where the token is kept stay the same.
+   */
+  retarget(url: string): void {
+    const allowed = isAllowedFleetUrl(url)
+    if (!allowed.ok) throw new FleetClientError('INVALID_REQUEST', 400, allowed.reason)
+    saveFleetUrl(allowed.origin)
+    const settings = readFleetSettings()
+    if (settings.token) this.useCredentials(allowed.origin, settings.token, settings.tokenPersistence)
+    else this.setConnection({ url: allowed.origin })
   }
 
   async disconnect(): Promise<void> {

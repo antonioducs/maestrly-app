@@ -77,6 +77,38 @@ export function parseBotServerEnv(text: string): {
   }
 }
 
+/** The values Maestrly changes in an installed server's `.env`: its images and what bots may reach. */
+export type BotServerEnvChanges = Partial<
+  Record<'MAESTRLY_GATEWAY_IMAGE' | 'MAESTRLY_GATEWAY_BOT_IMAGE' | 'MAESTRLY_GATEWAY_BOT_EGRESS', string>
+>
+
+/** The `.env` with these values replaced, or appended when missing; every other line stays as it was. */
+export function withEnvValues(text: string, changes: BotServerEnvChanges): string {
+  for (const [key, value] of Object.entries(changes)) {
+    const valid =
+      key === 'MAESTRLY_GATEWAY_BOT_EGRESS' ? value === 'open' || value === 'public' : imagePattern.test(value ?? '')
+    if (!valid) throw new Error(`Invalid ${key}`)
+  }
+  const pending = new Map(Object.entries(changes) as Array<[string, string]>)
+  const lines = text.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n')
+  const updated = lines.map((line) => {
+    const key = /^\s*([A-Z_][A-Z0-9_]*)=/.exec(line)?.[1]
+    if (!key || !pending.has(key)) return line
+    const value = pending.get(key)
+    pending.delete(key)
+    return `${key}=${value}`
+  })
+  for (const [key, value] of pending) updated.push(`${key}=${value}`)
+  return `${updated.filter((line, index) => line || index < updated.length - 1).join('\n')}\n`
+}
+
+/** An image reference's repository and tag; a registry port is not a tag. */
+export function splitImageRef(ref: string): { repository: string; tag: string | null } {
+  const slash = ref.lastIndexOf('/')
+  const colon = ref.lastIndexOf(':')
+  return colon > slash ? { repository: ref.slice(0, colon), tag: ref.slice(colon + 1) } : { repository: ref, tag: null }
+}
+
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
 /** The version an image's tag names; null for a digest, no tag, or a tag that is not a version (`local`). */

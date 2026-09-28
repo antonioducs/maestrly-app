@@ -42,6 +42,11 @@ export function saveFleetCredentials(
   return memoryToken ? 'memory' : 'secure'
 }
 
+/** Moves the paired gateway to another address, such as a new local end of the SSH tunnel to a VPS. */
+export function saveFleetUrl(url: string): void {
+  setAppSetting('fleet.url', url)
+}
+
 export function clearFleetCredentials(): void {
   if (!secureRemove(TOKEN_KEY)) throw new Error('Failed to clear fleet token')
   memoryToken = null
