@@ -27,6 +27,15 @@ import { floatingStripHtml } from './floating-strip-html'
 import { restoreFocusAfterFloatingClose } from './popup-manager'
 import { attachWindowNavigation } from './mouse-navigation'
 import { setDrawerPlacementPerformance } from './drawer/performance'
+import { isBotMode } from './fleet/instance/config'
+import { centerInArea, clampToArea, fillsScreenArea, initialFloatingBounds } from './fleet/instance/window-bounds'
+import {
+  conversationScreen,
+  onConversationScreenChange,
+  type ConversationScreen,
+  type ScreenArea,
+} from './conversation-screen'
+import { mayTakeScreenFocus, setScreenFocusOwner, showWindow } from './screen-focus'
 
 function tabTitle(tab: FloatTab): string {
   return tMain('main')(`floating.${tab}`)
@@ -143,8 +152,20 @@ function emitFloatingState(convId: string): void {
   })
 }
 
-/** Clamp saved bounds to a display workArea; fall back to the primary display center. */
-function clampBounds(saved?: FloatingBounds): FloatingBounds {
+/**
+ * Clamp saved bounds to a display workArea; fall back to the primary display center. A conversation with its own
+ * screen area keeps its windows inside that area instead.
+ */
+function clampBounds(saved?: FloatingBounds, area?: ScreenArea): FloatingBounds {
+  if (area) {
+    const size = {
+      width: Math.max(MIN_W, saved?.width ?? DEFAULT_W),
+      height: Math.max(MIN_H, saved?.height ?? DEFAULT_H),
+    }
+    return saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)
+      ? clampToArea({ x: saved.x, y: saved.y, ...size }, area)
+      : centerInArea(size, area)
+  }
   const primary = screen.getPrimaryDisplay().workArea
   const width = Math.min(Math.max(MIN_W, Math.round(saved?.width ?? DEFAULT_W)), primary.width)
   const height = Math.min(Math.max(MIN_H, Math.round(saved?.height ?? DEFAULT_H)), primary.height)
@@ -174,9 +195,21 @@ function clampBounds(saved?: FloatingBounds): FloatingBounds {
   }
 }
 
+/** Initial bounds of a floating window: the bot browser fills its area (or the work area), others keep theirs. */
+function floatingBounds(tab: FloatTab, saved: FloatingBounds | undefined, area: ScreenArea | undefined) {
+  return clampBounds(
+    initialFloatingBounds<FloatingBounds>(tab, isBotMode(), area ?? screen.getPrimaryDisplay().workArea, saved),
+    area
+  )
+}
+
 function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
+  // The bot browser fills its screen area exactly and has no window manager frame: openbox would draw its title bar
+  // and borders around those bounds, outside the area, and move a frame that starts above the display down.
+  const frameless = fillsScreenArea(tab, isBotMode())
   const win = new BrowserWindow({
-    ...clampBounds(getConvUiPrefs(convId).floating?.[tab]),
+    ...floatingBounds(tab, getConvUiPrefs(convId).floating?.[tab], conversationScreen(convId)?.windowArea),
+    ...(frameless ? { frame: false } : {}),
     minWidth: MIN_W,
     minHeight: MIN_H,
     show: false,
@@ -190,6 +223,9 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
     },
   })
   win.setMenuBarVisibility(false)
+  // In a bot environment the conversation's windows share one display with other bots' windows and the environment
+  // screen; while someone controls one of those, the others must not take the focus.
+  setScreenFocusOwner(win, { kind: 'conversation', conversationId: convId })
   // Register the strip preload as a trusted sender so guardOn accepts float:set-pinned (#264); registration
   // is removed on destroy. The container receives global events, while reparented content retains its panel
   // metadata.
@@ -209,6 +245,14 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     if (!win.isDestroyed() && win.isFocused()) focusFloatingContent(convId, tab)
   })
+  // On Linux and Windows Electron gives the keyboard to the strip whenever the window is activated, also when the
+  // window manager hands it the focus after one of its popups closed. Send it on to the tool content, unless a click
+  // already put it somewhere else, such as the browser's address bar.
+  win.on('focus', () => {
+    setImmediate(() => {
+      if (!win.isDestroyed() && win.webContents.isFocused()) focusFloatingContent(convId, tab)
+    })
+  })
 
   win.on('resize', () => {
     layoutFloatingTab(convId, tab, win)
@@ -227,17 +271,27 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   return win
 }
 
-/** Detach a tab into its own window, or focus an existing one. drawer-manager reparents the view. */
-export function detach(convId: string, tab: FloatTab): void {
+/**
+ * Detach a tab into its own window, or focus an existing one. drawer-manager reparents the view. With `focus: false`
+ * the window is only shown, as a bot's browser is each time its browser tools run: it must not take the keyboard, nor
+ * rise above the sign-in popups of its own pages.
+ */
+export function detach(convId: string, tab: FloatTab, options: { focus?: boolean } = {}): void {
   if (!conversationTabAllowed(convId, tab)) return
   if (!mainWindow) return
+  const present = (win: BrowserWindow): void => {
+    if (options.focus === false) {
+      if (!win.isVisible()) win.showInactive()
+      return
+    }
+    showWindow(win)
+    // Send keyboard focus to tool content: the views were reparented while the window was hidden, and OS activation
+    // would otherwise focus the strip.
+    if (mayTakeScreenFocus(win)) focusContentSoon(win, convId, tab)
+  }
   const existing = entry(convId, tab)
   if (existing) {
-    if (!existing.win.isDestroyed()) {
-      existing.win.show()
-      existing.win.focus()
-      focusContentSoon(existing.win, convId, tab) // send keyboard focus to tool content
-    }
+    if (!existing.win.isDestroyed()) present(existing.win)
     syncFloatingPerformance(convId, tab)
     return
   }
@@ -254,19 +308,16 @@ export function detach(convId: string, tab: FloatTab): void {
     return
   }
   // reparent drawer views into this window
-  if (convId === visibleConvId) {
-    win.show()
-    win.focus()
-    // Refocus content after showing the window; floatView ran while hidden and OS activation would
-    // otherwise focus the strip.
-    focusContentSoon(win, convId, tab)
-  }
+  if (convId === visibleConvId) present(win)
   syncFloatingPerformance(convId, tab)
   emitFloatingState(convId)
 }
 
 /** Reattach the tab to the drawer and close its window; idempotent. */
 export function reattach(convId: string, tab: FloatTab): void {
+  // A bot's browser has no drawer to return to: native close and app hotkeys must keep it in its screen tile.
+  // Uninstall and process shutdown destroy these windows through disposeConversation/disposeAll instead.
+  if (isBotMode() && tab === 'browser') return
   const byTab = floats.get(convId)
   const en = byTab?.get(tab)
   if (!en) return
@@ -291,8 +342,16 @@ export function reattach(convId: string, tab: FloatTab): void {
 /** Programmatically set clamped floating bounds; the resize debounce persists them. */
 export function setFloatBounds(convId: string, tab: FloatTab, bounds: FloatingBounds): void {
   const en = entry(convId, tab)
-  if (en && !en.win.isDestroyed()) en.win.setBounds(clampBounds(bounds))
+  if (en && !en.win.isDestroyed()) en.win.setBounds(clampBounds(bounds, conversationScreen(convId)?.windowArea))
 }
+
+/** A conversation's screen may be registered after its windows opened; move them into its (new) area. */
+function placeConversationWindows(convId: string, registered: ConversationScreen | null): void {
+  for (const [tab, en] of floats.get(convId) ?? []) {
+    if (!en.win.isDestroyed()) en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea))
+  }
+}
+onConversationScreenChange(placeConversationWindows)
 
 /**
  * Show the visible conversation's floating windows and pinned windows from any conversation. Hide
@@ -339,6 +398,7 @@ export function focusFloatIfAny(convId: string, tab: FloatTab): boolean {
   if (!en || en.win.isDestroyed()) return false
   if (!en.win.isVisible()) en.win.showInactive()
   syncFloatingPerformance(convId, tab)
+  if (!mayTakeScreenFocus(en.win)) return true
   en.win.focus()
   focusContentSoon(en.win, convId, tab) // send keyboard focus to tool content
   return true

@@ -69,7 +69,10 @@ export interface CursorHarnessEnvelope {
 
 function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  return `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n` + skills.map(skillCatalogLine).join('\n')
+  return (
+    `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n` +
+    skills.map(skillCatalogLine).join('\n')
+  )
 }
 
 function agentsCatalog(agents: readonly ChatAgent[]): string {
@@ -117,7 +120,7 @@ export async function buildCursorHarnessContext(
           : []
   const agentContext =
     args.mode === 'maestro' && args.maestro ? renderMaestroAgentCatalog(args.maestro) : agentsCatalog(agents)
-  const projectContext = await buildProjectContext(args.projectId, args.cwd)
+  const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
   const platform = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
   const git = await gitEnvInfo(args.cwd).catch(() => null)
   const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''

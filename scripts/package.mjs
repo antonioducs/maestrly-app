@@ -82,6 +82,8 @@ try {
     (process.platform === 'win32' ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : null)
   if (npmCli) run(process.execPath, [npmCli, ...npmArgs])
   else run('npm', npmArgs)
+  if (npmCli) run(process.execPath, [npmCli, 'run', 'build:fleet-protocol'])
+  else run('npm', ['run', 'build:fleet-protocol'])
   run(process.execPath, ['scripts/build-local-ml-runtime.mjs', ...runtimeFetchArgs])
   const manifest = JSON.parse(readFileSync(path.join(desktopRoot, 'runtime-assets/local-ml/manifest.json'), 'utf8'))
   const archive = `local-ml-runtime-${manifest.version}-${runtimeTargets[0]}.tar.gz`

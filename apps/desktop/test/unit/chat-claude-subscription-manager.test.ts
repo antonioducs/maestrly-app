@@ -96,6 +96,9 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       }
       throw new Error(`Unexpected subprocess: ${args.join(' ')}`)
     }),
+    spawnLogin: vi.fn(() => {
+      throw new Error('interactive login not expected')
+    }),
     queryFactory: vi.fn(() => {
       throw new Error('query not expected')
     }),
@@ -609,6 +612,49 @@ describe('Claude subscription manager', () => {
 
     expect((await manager.listModels()).map((model) => model.value)).toEqual(bundledIds)
     expect(queryFactory).toHaveBeenCalledTimes(3)
+  })
+
+  it('merges only the allowed conversation shell variables over the runtime environment of one query', () => {
+    const queryFactory = vi.fn((_params: { options?: { env?: Record<string, string> } }) => ({ close: vi.fn() }))
+    const { manager } = fixture({ queryFactory: queryFactory as never })
+    const configDirectory = path.join('/tmp/maestrly', 'claude-agent-sdk')
+
+    manager.createQuery(
+      { prompt: '' },
+      { shellEnvironment: { DISPLAY: ':3', BROWSER: '/tmp/synthetic-bot-a/browser' } }
+    )
+    manager.createQuery({ prompt: '' })
+    manager.createQuery(
+      { prompt: '' },
+      {
+        shellEnvironment: {
+          DISPLAY: ':4',
+          PATH: '/tmp/synthetic-evil/bin',
+          ANTHROPIC_API_KEY: 'must-not-reach-claude',
+          CLAUDE_CONFIG_DIR: '/tmp/synthetic-evil/profile',
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '0',
+        } as never,
+      }
+    )
+
+    const [a, b, c] = queryFactory.mock.calls.map(([params]) => params.options?.env ?? {})
+    expect(a).toMatchObject({
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/safe/bin',
+      CLAUDE_CONFIG_DIR: configDirectory,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    })
+    expect(b).not.toHaveProperty('DISPLAY')
+    expect(b).not.toHaveProperty('BROWSER')
+    expect(b).toMatchObject({ PATH: '/safe/bin', CLAUDE_CONFIG_DIR: configDirectory })
+    expect(c).toMatchObject({
+      DISPLAY: ':4',
+      PATH: '/safe/bin',
+      CLAUDE_CONFIG_DIR: configDirectory,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    })
+    expect(c).not.toHaveProperty('ANTHROPIC_API_KEY')
   })
 
   it('latches terminal OAuth failure until a successful explicit login', async () => {

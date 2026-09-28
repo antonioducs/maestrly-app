@@ -19,6 +19,57 @@ Maestrly applies no normalization or other transformation. The source license is
 distributed beside it as
 [`apps/desktop/resources/sounds/LICENSE.txt`](apps/desktop/resources/sounds/LICENSE.txt).
 
+## noVNC
+
+The desktop app includes the npm package [`@novnc/novnc`](https://www.npmjs.com/package/@novnc/novnc)
+1.7.0 from [noVNC](https://github.com/novnc/noVNC) for remote bot screen viewing
+and control. Its core is licensed under MPL-2.0.
+The upstream notice, authors, and license are distributed in
+[`novnc-NOTICE.txt`](apps/desktop/resources/licenses/novnc-NOTICE.txt),
+[`novnc-AUTHORS.txt`](apps/desktop/resources/licenses/novnc-AUTHORS.txt), and
+[`novnc-MPL-2.0.txt`](apps/desktop/resources/licenses/novnc-MPL-2.0.txt).
+The bundled pako code's MIT license is in
+[`novnc-pako-MIT.txt`](apps/desktop/resources/licenses/novnc-pako-MIT.txt).
+The other upstream texts are
+[`novnc-BSD-2-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-2-Clause.txt),
+[`novnc-BSD-3-Clause.txt`](apps/desktop/resources/licenses/novnc-BSD-3-Clause.txt),
+and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
+
+## ws
+
+The bot gateway includes [ws](https://github.com/websockets/ws) 8.21.3 for
+WebSocket communication. It is licensed under the MIT License.
+
+Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
+Copyright (c) 2013 Arnout Kazemier and contributors
+Copyright (c) 2016 Luigi Pinca and contributors
+
+The complete license and attribution are distributed with the `ws` package in
+`node_modules/ws/LICENSE` inside the gateway image.
+
+## ssh2
+
+The desktop app includes [ssh2](https://github.com/mscdex/ssh2) 1.17.0 to install
+and reach a bot server on a VPS over SSH. It is licensed under the MIT License,
+Copyright Brian White. Its dependencies are:
+
+- [asn1](https://github.com/joyent/node-asn1) 0.2.6, MIT License, Copyright (c)
+  2011 Mark Cavage;
+- [bcrypt-pbkdf](https://github.com/joyent/node-bcrypt-pbkdf) 1.0.2, BSD-3-Clause
+  License, Copyright 1997 Niels Provos, Copyright (c) 2013 Ted Unangst, and
+  Copyright 2016 Joyent Inc;
+- [tweetnacl](https://github.com/dchest/tweetnacl-js) 0.14.5, dedicated to the
+  public domain under the Unlicense;
+- [safer-buffer](https://github.com/ChALkeR/safer-buffer) 2.1.2, MIT License,
+  Copyright (c) 2018 Nikita Skovoroda.
+
+Where they build, it also uses the optional native modules
+[cpu-features](https://github.com/mscdex/cpu-features) 0.0.10 and
+[buildcheck](https://github.com/mscdex/buildcheck) 0.0.7 (MIT License, Copyright
+Brian White) and [nan](https://github.com/nodejs/nan) 2.29.0 (MIT License,
+Copyright (c) 2018 NAN contributors). The complete licenses are distributed with
+each package under `node_modules` in the packaged app.
+
 ## OpenAI Codex-derived source
 
 Portions of the OpenAI-specific chat harness are adapted from

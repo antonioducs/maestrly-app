@@ -15,12 +15,13 @@ describe('subagent profile conversation UI contract', () => {
 
   it('separates menu toggles from editor opening', () => {
     const menu = source('src/renderer/components/chat/ChatPlusMenu.tsx')
-    expect(menu).toContain('chatSubagentProfilesGetConversation(targetConversationId)')
-    expect(menu).toContain('chatSubagentProfilesSetConversationEnabled(targetConversationId, next)')
-    expect(menu).toContain('chatSubagentsSetConversationEnabled(targetConversationId, next)')
+    expect(menu).toContain('source.chatSubagentProfilesGetConversation()')
+    expect(menu).toContain('source.chatSubagentProfilesSetConversationEnabled(next)')
+    expect(menu).toContain('source.chatSubagentsSetConversationEnabled(next)')
     expect(menu).toContain('conversationIdRef.current !== targetConversationId')
     expect(menu).toContain('subagentProfilesRevisionRef.current !== profilesRevision')
     expect(menu).toContain("onClick={() => setActivePanel('subagents')}")
+    expect(menu).toContain("!source.bot && activePanel === 'subagents'")
     expect(menu).toContain('onClick={toggleSubagentProfiles}')
     expect(menu).toContain('onClick={toggleSubagents}')
     expect(menu).toContain('setSubagentProfilesEnabled(result.ok ? result.value.enabled : previous)')

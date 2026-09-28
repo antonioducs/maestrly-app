@@ -13,6 +13,7 @@ import {
 } from './pty-manager'
 import * as windowIpc from './window-ipc'
 import { registerIdleCwdResource, tryAcquireCwdActivity } from './cwd-activity-coordinator'
+import { conversationShellEnv } from './chat/conversation-env'
 
 /**
  * Main owns conversation-isolated drawer shell terminals for UI IPC and MCP. Push
@@ -252,6 +253,8 @@ export function createShellTerminal(
       cwd,
       cols,
       rows,
+      // Empty unless the conversation belongs to a fleet bot with its own display.
+      env: conversationShellEnv(convId),
       onData: (data, meta) => sendPtyData(id, data, meta),
       onExit: (code, isCurrent, generation) => {
         if (isCurrent !== false) exitedDuringSpawn = true

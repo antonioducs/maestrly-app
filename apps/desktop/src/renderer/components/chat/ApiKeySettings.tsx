@@ -58,8 +58,10 @@ import { SubagentProfilesSettings } from './subagent-profiles/SubagentProfilesSe
 import { SkillsSettings } from './SkillsSettings'
 import { ChatGptWebSettings } from './ChatGptWebSettings'
 import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
+import { CHAT_SETTINGS_TABS, type ChatSettingsOptions, type ChatSettingsTab } from './chat-settings-tabs'
 import { supportsSubscriptionUsage } from './subscription-usage-presentation'
 import { MaestroSettings } from './MaestroSettings'
+import { MemorySettings } from './MemorySettings'
 import { BackgroundCompactionSettings } from './BackgroundCompactionSettings'
 import { RuntimeComponentsSettings } from './RuntimeComponentsSettings'
 import { assetProgress, formatBytes } from './runtime-asset-presentation'
@@ -1262,18 +1264,6 @@ function AddSubscriptionAccountForm({
   )
 }
 
-type ChatSettingsTab = 'accounts' | 'models' | 'maestro' | 'tools' | 'skills' | 'prompts' | 'components'
-
-const CHAT_SETTINGS_TABS: Array<{ id: ChatSettingsTab; labelKey: string }> = [
-  { id: 'accounts', labelKey: 'settings.tabAccounts' },
-  { id: 'models', labelKey: 'settings.tabModelsAgents' },
-  { id: 'maestro', labelKey: 'settings.tabMaestro' },
-  { id: 'tools', labelKey: 'settings.tabTools' },
-  { id: 'skills', labelKey: 'settings.tabSkills' },
-  { id: 'prompts', labelKey: 'settings.tabPrompts' },
-  { id: 'components', labelKey: 'settings.tabComponents' },
-]
-
 function AccountsSettingsPanel({
   config,
   onChanged,
@@ -1390,10 +1380,17 @@ function AccountsSettingsPanel({
   )
 }
 
-export function ApiKeySettings() {
+export function ApiKeySettings({
+  tabs,
+  requestedTab,
+  appToolsLocked = false,
+  backgroundCompactionLocked = false,
+}: ChatSettingsOptions = {}) {
   const { t } = useTranslation('chat')
   const [config, setConfig] = useState<ChatConfig | null>(null)
-  const [activeTab, setActiveTab] = useState<ChatSettingsTab>('accounts')
+  const visibleTabs = tabs ? CHAT_SETTINGS_TABS.filter((tab) => tabs.includes(tab.id)) : CHAT_SETTINGS_TABS
+  const shown = (id: ChatSettingsTab) => visibleTabs.some((tab) => tab.id === id)
+  const [activeTab, setActiveTab] = useState<ChatSettingsTab>(() => visibleTabs[0]?.id ?? 'accounts')
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   const [modelFilterRevision, setModelFilterRevision] = useState(0)
@@ -1403,6 +1400,11 @@ export function ApiKeySettings() {
   useEffect(() => {
     refresh()
   }, [])
+  // A requested tab left out of `tabs` is ignored rather than showing a hidden panel.
+  const requestedTabId = requestedTab && (!tabs || tabs.includes(requestedTab.tab)) ? requestedTab.tab : null
+  useEffect(() => {
+    if (requestedTabId) setActiveTab(requestedTabId)
+  }, [requestedTabId, requestedTab?.seq])
 
   if (!config) return <div className="text-[12px] text-muted-foreground">{t('settings.loading')}</div>
 
@@ -1413,9 +1415,9 @@ export function ApiKeySettings() {
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? CHAT_SETTINGS_TABS.length - 1
-          : (index + (event.key === 'ArrowRight' ? 1 : -1) + CHAT_SETTINGS_TABS.length) % CHAT_SETTINGS_TABS.length
-    setActiveTab(CHAT_SETTINGS_TABS[next].id)
+          ? visibleTabs.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : -1) + visibleTabs.length) % visibleTabs.length
+    setActiveTab(visibleTabs[next].id)
     tabRefs.current[next]?.focus()
   }
 
@@ -1426,7 +1428,7 @@ export function ApiKeySettings() {
         aria-label={t('settings.tabsLabel')}
         className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-lg border border-border bg-background/95 p-1 shadow-sm backdrop-blur"
       >
-        {CHAT_SETTINGS_TABS.map((tab, index) => (
+        {visibleTabs.map((tab, index) => (
           <button
             key={tab.id}
             ref={(node) => {
@@ -1452,92 +1454,118 @@ export function ApiKeySettings() {
         ))}
       </div>
 
-      <div
-        id="chat-settings-panel-accounts"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-accounts"
-        hidden={activeTab !== 'accounts'}
-      >
-        <AccountsSettingsPanel config={config} onChanged={refresh} onModelFilterChanged={modelFilterChanged} />
-      </div>
-      <div
-        id="chat-settings-panel-models"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-models"
-        hidden={activeTab !== 'models'}
-        className={cn('flex flex-col gap-3', activeTab !== 'models' && 'hidden')}
-      >
-        {config.providers.some(isChatProviderConnected) && (
-          <DefaultModelPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
-        )}
-        {config.providers.some(isChatProviderConnected) && (
-          <ImageInterpreterPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
-        )}
-        <BackgroundCompactionSettings config={config} catalogRevision={modelFilterRevision} onChanged={refresh} />
-        <SubagentProfilesSettings config={config} />
-      </div>
-      <div
-        id="chat-settings-panel-maestro"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-maestro"
-        hidden={activeTab !== 'maestro'}
-      >
-        <MaestroSettings config={config} />
-      </div>
-      <div
-        id="chat-settings-panel-tools"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-tools"
-        hidden={activeTab !== 'tools'}
-        className={cn('flex flex-col gap-3', activeTab !== 'tools' && 'hidden')}
-      >
-        <FlagToggle
-          headingKey="settings.appToolsHeading"
-          descriptionKey="settings.appToolsDescription"
-          enabled={config.appToolsEnabled}
-          setEnabled={window.api.chatSetAppTools}
-          onChanged={refresh}
-        />
-        <FlagToggle
-          headingKey="settings.imageGenHeading"
-          descriptionKey="settings.imageGenDescription"
-          enabled={config.imageGenEnabled}
-          setEnabled={window.api.chatSetImageGen}
-          onChanged={refresh}
-        />
-        <FlagToggle
-          headingKey="settings.bashFiltersHeading"
-          descriptionKey="settings.bashFiltersDescription"
-          enabled={config.bashFiltersEnabled}
-          setEnabled={window.api.chatSetBashFilters}
-          onChanged={refresh}
-        />
-        <McpSettings servers={config.mcpServers} onChanged={refresh} />
-      </div>
-      <div
-        id="chat-settings-panel-skills"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-skills"
-        hidden={activeTab !== 'skills'}
-      >
-        <SkillsSettings />
-      </div>
-      <div
-        id="chat-settings-panel-prompts"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-prompts"
-        hidden={activeTab !== 'prompts'}
-      >
-        <PromptsSettings />
-      </div>
-      <div
-        id="chat-settings-panel-components"
-        role="tabpanel"
-        aria-labelledby="chat-settings-tab-components"
-        hidden={activeTab !== 'components'}
-      >
-        <RuntimeComponentsSettings />
-      </div>
+      {shown('accounts') && (
+        <div
+          id="chat-settings-panel-accounts"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-accounts"
+          hidden={activeTab !== 'accounts'}
+        >
+          <AccountsSettingsPanel config={config} onChanged={refresh} onModelFilterChanged={modelFilterChanged} />
+        </div>
+      )}
+      {shown('models') && (
+        <div
+          id="chat-settings-panel-models"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-models"
+          hidden={activeTab !== 'models'}
+          className={cn('flex flex-col gap-3', activeTab !== 'models' && 'hidden')}
+        >
+          {config.providers.some(isChatProviderConnected) && (
+            <DefaultModelPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
+          )}
+          {config.providers.some(isChatProviderConnected) && (
+            <ImageInterpreterPicker config={config} onChanged={refresh} modelFilterRevision={modelFilterRevision} />
+          )}
+          <BackgroundCompactionSettings
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
+          <MemorySettings
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
+          <SubagentProfilesSettings config={config} />
+        </div>
+      )}
+      {shown('maestro') && (
+        <div
+          id="chat-settings-panel-maestro"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-maestro"
+          hidden={activeTab !== 'maestro'}
+        >
+          <MaestroSettings config={config} />
+        </div>
+      )}
+      {shown('tools') && (
+        <div
+          id="chat-settings-panel-tools"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-tools"
+          hidden={activeTab !== 'tools'}
+          className={cn('flex flex-col gap-3', activeTab !== 'tools' && 'hidden')}
+        >
+          <FlagToggle
+            headingKey="settings.appToolsHeading"
+            descriptionKey="settings.appToolsDescription"
+            enabled={config.appToolsEnabled}
+            setEnabled={window.api.chatSetAppTools}
+            onChanged={refresh}
+            lockedDescriptionKey={appToolsLocked ? 'plusMenu.appToolsBotLocked' : undefined}
+          />
+          <FlagToggle
+            headingKey="settings.imageGenHeading"
+            descriptionKey="settings.imageGenDescription"
+            enabled={config.imageGenEnabled}
+            setEnabled={window.api.chatSetImageGen}
+            onChanged={refresh}
+          />
+          <FlagToggle
+            headingKey="settings.bashFiltersHeading"
+            descriptionKey="settings.bashFiltersDescription"
+            enabled={config.bashFiltersEnabled}
+            setEnabled={window.api.chatSetBashFilters}
+            onChanged={refresh}
+          />
+          <McpSettings servers={config.mcpServers} onChanged={refresh} />
+        </div>
+      )}
+      {shown('skills') && (
+        <div
+          id="chat-settings-panel-skills"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-skills"
+          hidden={activeTab !== 'skills'}
+        >
+          <SkillsSettings />
+        </div>
+      )}
+      {shown('prompts') && (
+        <div
+          id="chat-settings-panel-prompts"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-prompts"
+          hidden={activeTab !== 'prompts'}
+        >
+          <PromptsSettings />
+        </div>
+      )}
+      {shown('components') && (
+        <div
+          id="chat-settings-panel-components"
+          role="tabpanel"
+          aria-labelledby="chat-settings-tab-components"
+          hidden={activeTab !== 'components'}
+        >
+          <RuntimeComponentsSettings />
+        </div>
+      )}
     </div>
   )
 }
@@ -1722,32 +1750,39 @@ function FlagToggle({
   enabled,
   setEnabled,
   onChanged,
+  lockedDescriptionKey,
 }: {
   headingKey: string
   descriptionKey: string
   enabled: boolean
   setEnabled: (enabled: boolean) => Promise<{ ok: boolean }>
   onChanged: () => void
+  /** Shows the flag on and read-only, explaining why with this text. */
+  lockedDescriptionKey?: string
 }) {
   const { t } = useTranslation('chat')
+  const locked = Boolean(lockedDescriptionKey)
+  const on = locked || enabled
   return (
     <div className="mt-1 flex items-start justify-between gap-3 border-t border-border pt-3">
       <div className="min-w-0">
         <span className="text-[12px] font-medium text-foreground">{t(headingKey)}</span>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">{t(descriptionKey)}</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">{t(lockedDescriptionKey ?? descriptionKey)}</p>
       </div>
       <button
         type="button"
         onClick={() => setEnabled(!enabled).then(onChanged)}
+        disabled={locked}
         className={cn(
           'mt-0.5 h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
-          enabled ? 'bg-emerald-500/70' : 'bg-white/10'
+          on ? 'bg-emerald-500/70' : 'bg-white/10',
+          locked && 'cursor-not-allowed opacity-40'
         )}
-        title={enabled ? t('settings.toggleOn') : t('settings.toggleOff')}
+        title={on ? t('settings.toggleOn') : t('settings.toggleOff')}
         aria-label={t(headingKey)}
-        aria-pressed={enabled}
+        aria-pressed={on}
       >
-        <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', enabled && 'translate-x-3')} />
+        <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
       </button>
     </div>
   )
@@ -2273,6 +2308,7 @@ function McpSettings({ servers, onChanged }: { servers: McpServerInfo[]; onChang
             <div className="truncate text-[11px] text-muted-foreground">
               {s.transport === 'http' ? s.url : s.command}
             </div>
+            {s.unavailable && <p className="text-[11px] text-destructive">{t('mcp.unavailable')}</p>}
           </div>
           <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-muted-foreground">
             {s.transport}

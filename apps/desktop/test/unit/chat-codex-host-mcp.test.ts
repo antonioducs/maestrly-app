@@ -3,6 +3,8 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CODEX_HOST_MCP_SERVER_NAME,
   CODEX_HOST_MCP_TOKEN_ENV,
+  CODEX_HOST_MCP_IMAGE_TOOL_NAMES,
+  CODEX_HOST_MCP_TOOL_NAMES,
   closeCodexHostMcpServer,
   codexContentItemsToHostMcpContent,
   codexHostMcpProcessEnv,
@@ -11,14 +13,14 @@ import {
 } from '../../src/main/chat/codex-subscription/host-mcp'
 
 const token = codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]
-const taskSpec = {
-  name: 'task',
-  description: 'Delegates a subtask.',
-  inputSchema: { type: 'object', properties: { agent: { type: 'string' }, prompt: { type: 'string' } } },
+const screenshotSpec = {
+  name: 'browser_screenshot',
+  description: 'Captures a screenshot.',
+  inputSchema: { type: 'object', properties: {} },
 }
 
 async function serverUrl(conversationId = 'conversation-1'): Promise<string> {
-  const config = await codexHostMcpThreadConfig({ conversationId, tools: [taskSpec] })
+  const config = await codexHostMcpThreadConfig({ conversationId, tools: [screenshotSpec] })
   return (config[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`] as { url: string }).url
 }
 
@@ -57,8 +59,34 @@ describe('Codex host MCP server', () => {
   afterEach(() => setCodexHostMcpCallHandler(null))
   afterAll(closeCodexHostMcpServer)
 
+  it('hosts only the registered read-only app image producers', () => {
+    expect([...CODEX_HOST_MCP_IMAGE_TOOL_NAMES]).toEqual(['browser_screenshot', 'computer_screenshot'])
+    expect([...CODEX_HOST_MCP_TOOL_NAMES]).toEqual(['task', 'delegate', 'browser_screenshot', 'computer_screenshot'])
+  })
+
+  it('also routes delegation through the same server', async () => {
+    const url = await serverUrl()
+    const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'delegated' }] }))
+    setCodexHostMcpCallHandler(handler)
+    const response = await post(
+      url,
+      rpc(8, 'tools/call', {
+        name: 'task',
+        arguments: { agent: 'explore', prompt: 'Map it.' },
+        _meta: { threadId: 'thread-1', callId: 'call-2' },
+      })
+    )
+    expect(response.json).toEqual({ jsonrpc: '2.0', id: 8, result: { content: [{ type: 'text', text: 'delegated' }] } })
+    expect(handler).toHaveBeenCalledWith({
+      name: 'task',
+      arguments: { agent: 'explore', prompt: 'Map it.' },
+      threadId: 'thread-1',
+      callId: 'call-2',
+    })
+  })
+
   it('attaches a loopback, parallel-safe, pre-approved and always-visible server without leaking the token', async () => {
-    const config = await codexHostMcpThreadConfig({ conversationId: 'conversation-1', tools: [taskSpec] })
+    const config = await codexHostMcpThreadConfig({ conversationId: 'conversation-1', tools: [screenshotSpec] })
     const server = config[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`]
 
     expect(server).toEqual({
@@ -83,7 +111,7 @@ describe('Codex host MCP server', () => {
     const changed = (
       (await codexHostMcpThreadConfig({
         conversationId: 'conversation-a',
-        tools: [{ ...taskSpec, description: 'Changed.' }],
+        tools: [{ ...screenshotSpec, description: 'Changed.' }],
       })) as Record<string, { url: string }>
     )[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`].url
 
@@ -91,7 +119,7 @@ describe('Codex host MCP server', () => {
     expect(other).not.toBe(first)
     expect(changed).not.toBe(first)
     const listed = await post(first, rpc(1, 'tools/list'))
-    expect(listed.json).toEqual({ jsonrpc: '2.0', id: 1, result: { tools: [taskSpec] } })
+    expect(listed.json).toEqual({ jsonrpc: '2.0', id: 1, result: { tools: [screenshotSpec] } })
   })
 
   it('rejects foreign hosts, unknown paths, missing tokens and non-POST requests', async () => {
@@ -126,24 +154,24 @@ describe('Codex host MCP server', () => {
     expect((await post(url, rpc(3, 'resources/list'))).json).toMatchObject({ id: 3, error: { code: -32601 } })
   })
 
-  it('routes delegation calls with Codex thread and call ids, and refuses everything else', async () => {
+  it('routes screenshot calls with Codex thread and call ids, and refuses everything else', async () => {
     const url = await serverUrl()
-    const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'delegated' }] }))
+    const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'captured' }] }))
     setCodexHostMcpCallHandler(handler)
     const call = (params: Record<string, unknown>) => post(url, rpc(7, 'tools/call', params))
 
     expect(
       (
         await call({
-          name: 'task',
-          arguments: { agent: 'explore', prompt: 'Map it.' },
+          name: 'browser_screenshot',
+          arguments: {},
           _meta: { threadId: 'thread-1', callId: 'call-1' },
         })
       ).json
-    ).toEqual({ jsonrpc: '2.0', id: 7, result: { content: [{ type: 'text', text: 'delegated' }] } })
+    ).toEqual({ jsonrpc: '2.0', id: 7, result: { content: [{ type: 'text', text: 'captured' }] } })
     expect(handler).toHaveBeenCalledWith({
-      name: 'task',
-      arguments: { agent: 'explore', prompt: 'Map it.' },
+      name: 'browser_screenshot',
+      arguments: {},
       threadId: 'thread-1',
       callId: 'call-1',
     })
@@ -151,11 +179,13 @@ describe('Codex host MCP server', () => {
     expect((await call({ name: 'bash', arguments: {}, _meta: { threadId: 'thread-1' } })).json).toMatchObject({
       result: { isError: true },
     })
-    expect((await call({ name: 'task', arguments: {} })).json).toMatchObject({ result: { isError: true } })
+    expect((await call({ name: 'browser_screenshot', arguments: {} })).json).toMatchObject({
+      result: { isError: true },
+    })
     expect(handler).toHaveBeenCalledTimes(1)
 
     handler.mockRejectedValueOnce(new Error('route closed'))
-    expect((await call({ name: 'task', arguments: {}, _meta: { threadId: 'thread-1' } })).json).toEqual({
+    expect((await call({ name: 'browser_screenshot', arguments: {}, _meta: { threadId: 'thread-1' } })).json).toEqual({
       jsonrpc: '2.0',
       id: 7,
       result: { content: [{ type: 'text', text: 'route closed' }], isError: true },

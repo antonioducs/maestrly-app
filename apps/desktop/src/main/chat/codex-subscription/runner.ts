@@ -33,11 +33,13 @@ import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabiliti
 import {
   chatToolOutputToAiSdkOutput,
   codexContentItemsToChatToolOutput,
+  describeToolOutputImages,
   mcpResultToChatToolOutput,
   modelOutputToChatToolOutput,
   stripToolOutputMetadata,
   toolOutputAsText,
   toolOutputIsError,
+  viewedImageToolOutput,
   toolOutputToCodexContentItems,
   type CodexToolContentItem,
 } from '../tool-output'
@@ -127,6 +129,7 @@ import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
 import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
+import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, REVIEWER_READONLY_TOOL_NAMES, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools, isConversationDispatchToolName } from '../tools/conversation-dispatch'
 import type { GeneratedImageEmission, GeneratedImageUsage, ReviewerToolRuntime, ToolContext } from '../tools/util'
@@ -166,6 +169,7 @@ import {
   CODEX_HOST_MCP_TOOL_NAMES,
   codexContentItemsToHostMcpContent,
   codexHostMcpThreadConfig,
+  codexShellEnvironmentConfig,
   setCodexHostMcpCallHandler,
 } from './host-mcp'
 import {
@@ -1061,7 +1065,7 @@ export function currentUserInputs(message: ChatMessage, seedTranscript: string, 
   return inputs
 }
 
-/** Delegation tools served by the host MCP server keep their Maestrly name so the transcript renders a task card. */
+/** Host MCP tools keep their Maestrly name so the transcript renders the ordinary tool card. */
 function hostMcpToolName(item: Record<string, unknown>): string | null {
   return item.type === 'mcpToolCall' &&
     item.server === CODEX_HOST_MCP_SERVER_NAME &&
@@ -1183,6 +1187,7 @@ function itemOutput(item: Record<string, unknown>, progress: string): { success:
       output: messages.join('\n\n') || (status === 'completed' ? fallback : `Subagent operation failed: ${operation}`),
     }
   }
+  if (item.type === 'imageView') return { success: true, output: viewedImageToolOutput(item.path) }
   if (item.type === 'imageGeneration') {
     const status = typeof item.status === 'string' ? item.status : 'completed'
     // The generic fallback below would serialize the item WITH base64, hence the explicit case here.
@@ -1222,6 +1227,12 @@ interface RequestRoute {
   signal: AbortSignal
   mode: ChatBehavior
   subagentRuns: Map<string, SubagentRunMeta>
+  imageProjection?: {
+    dropImages: () => boolean
+    describeImage: (
+      image: import('../../../shared/chat').ChatToolImage
+    ) => Promise<{ text: string; model?: string } | null>
+  }
 }
 
 const requestRoutes = new WeakMap<CodexAppServerClient, Map<string, RequestRoute>>()
@@ -1487,10 +1498,15 @@ async function runRoutedTool(args: {
         ? { status: 'error', error: result.error, ...(sub ? { sub } : {}) }
         : { status: 'completed', output: result.toolOutput ?? result.output, ...(sub ? { sub } : {}) },
     })
+    const modelOutput =
+      route.imageProjection?.dropImages() && result.toolOutput
+        ? toolOutputToCodexContentItems(
+            await describeToolOutputImages(result.toolOutput, route.imageProjection.describeImage),
+            { dropImages: true }
+          )
+        : (result.contentItems ?? [{ type: 'inputText' as const, text: result.error || result.output }])
     return {
-      contentItems: clipCodexContentItems(
-        result.contentItems ?? [{ type: 'inputText', text: result.error || result.output }]
-      ),
+      contentItems: clipCodexContentItems(modelOutput),
       success: !result.error,
     }
   } catch (error) {
@@ -2635,8 +2651,8 @@ export async function runCodexSubscriptionChat(
     }),
   }
   let dynamic: Awaited<ReturnType<typeof buildDynamicTools>>
-  // Delegation runs through the host MCP server: Codex serializes every dynamic tool behind one write lock,
-  // while an MCP server declared parallel-safe lets independent `task` calls overlap.
+  // Delegation and read-only screenshots run through the host MCP server: tasks can overlap,
+  // and code-mode models receive screenshot images as MCP content items.
   let hostMcpConfig: Record<string, unknown> | null = null
   try {
     dynamic = await buildDynamicTools(args, state)
@@ -2715,15 +2731,14 @@ export async function runCodexSubscriptionChat(
   const dynamicSpecs = hostMcpConfig ? specs.filter((spec) => !CODEX_HOST_MCP_TOOL_NAMES.has(spec.name)) : specs
   const registrations = dynamicToolRegistrations(dynamicSpecs)
   const toolProfile = profileDynamicTools(dynamicSpecs)
-  // Host MCP tools still belong to the thread identity: a thread created with dynamic `task`, or with the other
-  // delegation mode, cannot swap its catalog on resume.
+  // Hosted tools belong to the thread identity, since Codex cannot change tools on resume.
   const signature = dynamicToolSignature([
     ...dynamicSpecs,
     ...specs
       .filter((spec) => !dynamicSpecs.includes(spec))
       .map((spec) => ({ name: `mcp:${CODEX_HOST_MCP_SERVER_NAME}/${spec.name}` })),
   ])
-  const projectContext = await buildProjectContext(args.projectId, args.cwd)
+  const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
   const developerInstructionsFor = (profile: CodexThreadHarness): string => {
     if (args.projectId === null) {
       const standalone =
@@ -2737,9 +2752,11 @@ export async function runCodexSubscriptionChat(
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +
         subagentCatalog(dynamic.agents, args.conversationId, capabilityMode !== 'agent')
-      return buildHarnessDeveloperInstructions(standalone, profile.harness, {
-        asyncTools: profile.asyncQuestionGuidance,
-      })
+      return (
+        buildHarnessDeveloperInstructions(standalone, profile.harness, {
+          asyncTools: profile.asyncQuestionGuidance,
+        }) + projectContext
+      )
     }
     const base = profile.usesNativeOperatingPrompt
       ? maestrlyAstraHostInstructions(args.mode, dynamic.skills, dynamic.agents, {
@@ -2880,6 +2897,9 @@ export async function runCodexSubscriptionChat(
       'features.image_generation': false,
       // Applied on start AND resume: after an app restart the host MCP server listens on a new port.
       ...hostMcpConfig,
+      // Also on start AND resume: a fleet bot's commands use its own display, session bus and browser. The
+      // app-server process is shared, so the per-thread policy is the only per-conversation channel.
+      ...codexShellEnvironmentConfig(conversationShellEnv(args.conversationId)),
     } as Record<string, unknown>,
     developerInstructions,
     ...(runtimeProfile.personality ? { personality: runtimeProfile.personality } : {}),
@@ -2981,6 +3001,11 @@ export async function runCodexSubscriptionChat(
     signal: args.signal,
     mode: args.mode,
     subagentRuns: new Map(),
+    imageProjection: {
+      dropImages: () => currentDropImages,
+      describeImage: (image) =>
+        describeEphemeralToolImage({ image, conversationId: args.conversationId, cwd: args.cwd, signal: args.signal }),
+    },
   }
   let routeRegistration = registerRequestRoute(currentClient, canResume ? existing.threadId : '', route)
   let offNotification: () => void = () => {}
@@ -3221,6 +3246,9 @@ export async function runCodexSubscriptionChat(
     }
 
     const progress = new Map<string, string>()
+    // Root commands started and not completed. exec_command answers the model after its yield time and Codex keeps
+    // the process (a GUI app, a server); `item/completed` only comes when it exits, possibly never.
+    const openCommands = new Set<string>()
     const startedText = new Set<string>()
     const startedReasoning = new Set<string>()
     let latestUsage: TokenUsageNotification | null = null
@@ -3878,6 +3906,8 @@ export async function runCodexSubscriptionChat(
                         approvalPolicy: childApproval.approvalPolicy,
                         sandboxPolicy: sandboxPolicyFor(childApproval.sandbox, args.cwd),
                         dynamicTools: childDynamicTools,
+                        // A bot's child opens programs on the bot's own screen, like this root thread.
+                        shellEnvironment: conversationShellEnv(args.conversationId),
                         physicalProviderId: target.providerId,
                         accountId: target.accountId,
                         registerThread: useSharedRootClient
@@ -5018,6 +5048,7 @@ export async function runCodexSubscriptionChat(
           input: tool.input,
         })
         apply({ kind: 'tool-state', messageId: assistantId, toolCallId: item.id, state: { status: 'running' } })
+        if (item.type === 'commandExecution') openCommands.add(item.id)
         return
       }
       if (method === 'item/completed') {
@@ -5025,6 +5056,7 @@ export async function runCodexSubscriptionChat(
         if (!item || typeof item.id !== 'string') return
         if (!rootEvent && (item.type === 'agentMessage' || item.type === 'plan' || item.type === 'reasoning')) return
         inspectItem(item)
+        openCommands.delete(item.id)
         if (item.type === 'agentMessage' || item.type === 'plan') {
           if (typeof item.text === 'string' && !startedText.has(item.id)) {
             startedText.add(item.id)
@@ -5858,6 +5890,25 @@ export async function runCodexSubscriptionChat(
         }
       }
 
+      // Nothing reports these commands once the turn is over: the model already had their output and moved on, so
+      // close them with what they printed. A stop instead ends them as aborted (the `aborted` event).
+      if (!args.signal.aborted)
+        for (const id of openCommands) {
+          const output = clipPersistedToolOutput(progress.get(id) || '(no output yet)')
+          apply(
+            {
+              kind: 'tool-state',
+              messageId: assistantId,
+              toolCallId: id,
+              state: {
+                status: 'completed',
+                output: `${output}\n\n(Still running in the background when the turn ended; later output is not shown.)`,
+              },
+            },
+            true
+          )
+        }
+      openCommands.clear()
       const finalUsage = latestUsage as TokenUsageNotification | null
       const usage = withSubagentUsage(
         mainUsage(finalUsage),

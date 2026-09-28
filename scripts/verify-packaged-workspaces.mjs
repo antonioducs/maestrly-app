@@ -1,4 +1,4 @@
-const workspacePackages = ['protocol', 'client-sdk', 'runner-core']
+const workspacePackages = ['protocol', 'bot-fleet-protocol', 'client-sdk', 'runner-core']
 
 export function missingWorkspaceBuilds(entries) {
   const files = new Set(entries.map((entry) => entry.replaceAll('\\', '/').replace(/^\/+/, '')))

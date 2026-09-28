@@ -105,3 +105,22 @@ tags, overwrite assets, or publish a draft without repeating checksum verificati
 For a defective release, identify the affected version and issue a new patch/tag;
 use [SECURITY.md](../SECURITY.md) for vulnerabilities. Warn users when a schema
 change makes downgrade unsafe and point them to [backup/recovery](local-data.md).
+
+## Bot server images
+
+Each release also publishes `ghcr.io/antonioducs/maestrly-bot-gateway:<version>`
+and `ghcr.io/antonioducs/maestrly-bot-instance:<version>` for Linux amd64 and
+arm64. The tag uses the release version without `v`, including any prerelease
+suffix (for example, `0.9.4` or `0.9.4-beta.1`). The workflow publishes no
+`latest` tag. The GitHub Release cannot publish until both versioned images
+contain both architectures.
+
+After the first publication, make the `maestrly-bot-gateway` and
+`maestrly-bot-instance` packages public in each package's settings on GitHub
+(**Package settings → Change visibility**). This is a one-time setup so desktop
+installations can pull the images without signing in.
+For each release, inspect the published manifest, for example:
+
+```sh
+docker buildx imagetools inspect ghcr.io/antonioducs/maestrly-bot-instance:<version>
+```

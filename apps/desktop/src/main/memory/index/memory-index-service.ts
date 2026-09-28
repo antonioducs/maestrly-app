@@ -1,3 +1,4 @@
+import { ftsPrefixQuery } from '../relevance'
 import { createHash } from 'node:crypto'
 import { promises as fsp, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
@@ -13,6 +14,12 @@ import { isWorkspaceMemoryEnabled, onWorkspaceMemoryEnabledChanged } from '../ac
 import { listLocalMemories, onLocalMemoryChange } from '../local-memory-service'
 import { chunkSharedKnowledge, discoverSharedKnowledge } from '../shared-knowledge'
 import { findTrustedVectorExtension, openMemoryIndexDatabase, type VectorBackend } from './vector-backend'
+
+const CANDIDATE_SELECT = `SELECT c.rowid, c.id AS chunk_id, c.content, c.heading, c.start_line, c.end_line,
+      d.source_kind, d.source_id, d.title, d.type, d.status, d.scope, d.tags_json, d.pinned,
+      d.always_apply, d.source,
+      CASE WHEN d.source_kind='shared' THEN COALESCE(NULLIF(ms.link_name, ''), d.repo) ELSE d.repo END AS repo,
+      d.relative_path, d.updated_at`
 
 const INDEX_SCHEMA_VERSION = '1'
 const INDEX_CHUNKER_VERSION = '1'
@@ -30,6 +37,7 @@ export interface IndexedMemoryCandidate extends MemorySearchHit {
   chunkId: string
   rowid: number
   rank: number
+  distance?: number
 }
 
 interface IndexHandle {
@@ -756,15 +764,11 @@ export async function searchMemoryIndexLexical(
   const scope = scopeClause(normalizedRoots.map((root) => root.scopeKey))
   const bounded = Math.max(1, Math.min(limit, 100))
   const match = ftsQuery(query)
-  const baseSelect = `SELECT c.rowid, c.id AS chunk_id, c.content, c.heading, c.start_line, c.end_line,
-      d.source_kind, d.source_id, d.title, d.type, d.status, d.scope, d.tags_json, d.pinned,
-      d.always_apply, d.source,
-      CASE WHEN d.source_kind='shared' THEN COALESCE(NULLIF(ms.link_name, ''), d.repo) ELSE d.repo END AS repo,
-      d.relative_path, d.updated_at`
+
   const rows = match
     ? (handle.db
         .prepare(
-          `${baseSelect}, bm25(memory_fts, 0, 2, 1, 0.4, 0.4, 0.3) AS lexical_rank
+          `${CANDIDATE_SELECT}, bm25(memory_fts, 0, 2, 1, 0.4, 0.4, 0.3) AS lexical_rank
            FROM memory_fts
            JOIN memory_chunks c ON c.id = memory_fts.chunk_id
            JOIN memory_documents d ON d.id = c.document_id
@@ -775,7 +779,7 @@ export async function searchMemoryIndexLexical(
         .all(match, ...scope.params, bounded) as Array<Record<string, unknown>>)
     : (handle.db
         .prepare(
-          `${baseSelect}, 0 AS lexical_rank FROM memory_chunks c
+          `${CANDIDATE_SELECT}, 0 AS lexical_rank FROM memory_chunks c
            JOIN memory_documents d ON d.id = c.document_id
            LEFT JOIN memory_scopes ms ON ms.scope_key = d.scope_key
            WHERE d.status = 'active' AND d.eligible = 1 AND (d.pinned = 1 OR d.always_apply = 1) AND ${scope.sql}
@@ -816,7 +820,7 @@ export async function searchMemoryIndexVector(
   for (const [index, hit] of nearest.entries()) {
     const row = read.get(hit.rowid, ...scope.params) as Record<string, unknown> | undefined
     if (!row) continue
-    candidates.push(rowToCandidate(row, index + 1, 1 / (1 + hit.distance)))
+    candidates.push({ ...rowToCandidate(row, index + 1, 1 / (1 + hit.distance)), distance: hit.distance })
     if (candidates.length >= limit) break
   }
   return candidates
@@ -977,4 +981,62 @@ export function disposeMemoryIndexService(): void {
 
 export function assertSharedPathInScope(root: string, absolute: string): void {
   if (!isInside(root, absolute)) throw new Error('shared memory path escaped repository scope')
+}
+
+/** Prefix-stem lexical candidates for relevance scoring (best chunks first by BM25). */
+export async function searchMemoryIndexStems(
+  workspaceId: string,
+  stems: readonly string[],
+  roots?: MemoryScopeRoot[],
+  limit = 40
+): Promise<IndexedMemoryCandidate[]> {
+  if (!isWorkspaceMemoryEnabled(workspaceId) || stems.length === 0) return []
+  await reconcileMemoryIndex(workspaceId, roots)
+  if (!isWorkspaceMemoryEnabled(workspaceId)) return []
+  const handle = await openHandle(workspaceId)
+  const scope = scopeClause((await normalizeRoots(workspaceId, roots)).map((root) => root.scopeKey))
+  const rows = handle.db
+    .prepare(
+      `${CANDIDATE_SELECT}, bm25(memory_fts, 0, 2, 1, 0.4, 0.4, 0.3) AS lexical_rank
+       FROM memory_fts
+       JOIN memory_chunks c ON c.id = memory_fts.chunk_id
+       JOIN memory_documents d ON d.id = c.document_id
+       LEFT JOIN memory_scopes ms ON ms.scope_key = d.scope_key
+       WHERE memory_fts MATCH ? AND d.status = 'active' AND d.eligible = 1 AND ${scope.sql}
+       ORDER BY lexical_rank LIMIT ?`
+    )
+    .all(ftsPrefixQuery(stems), ...scope.params, Math.max(1, Math.min(limit, 100))) as Array<Record<string, unknown>>
+  return rows.map((row, index) => rowToCandidate(row, index + 1, 0))
+}
+
+/** Document frequencies of each stem among active, eligible documents in scope, for IDF weighting. */
+export async function memoryIndexDocumentFrequencies(
+  workspaceId: string,
+  stems: readonly string[],
+  roots?: MemoryScopeRoot[]
+): Promise<{ total: number; df: Map<string, number> }> {
+  const df = new Map<string, number>()
+  if (!isWorkspaceMemoryEnabled(workspaceId) || stems.length === 0) return { total: 0, df }
+  await reconcileMemoryIndex(workspaceId, roots)
+  if (!isWorkspaceMemoryEnabled(workspaceId)) return { total: 0, df }
+  const handle = await openHandle(workspaceId)
+  const scope = scopeClause((await normalizeRoots(workspaceId, roots)).map((root) => root.scopeKey))
+  const total = Number(
+    (
+      handle.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM memory_documents d WHERE d.status = 'active' AND d.eligible = 1 AND ${scope.sql}`
+        )
+        .get(...scope.params) as { n: number }
+    ).n
+  )
+  const count = handle.db.prepare(
+    `SELECT COUNT(DISTINCT c.document_id) AS n FROM memory_fts
+     JOIN memory_chunks c ON c.id = memory_fts.chunk_id
+     JOIN memory_documents d ON d.id = c.document_id
+     WHERE memory_fts MATCH ? AND d.status = 'active' AND d.eligible = 1 AND ${scope.sql}`
+  )
+  for (const stem of stems)
+    df.set(stem, Number((count.get(ftsPrefixQuery([stem]), ...scope.params) as { n: number }).n))
+  return { total, df }
 }

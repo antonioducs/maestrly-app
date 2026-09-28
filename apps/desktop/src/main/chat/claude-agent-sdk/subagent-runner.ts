@@ -34,6 +34,7 @@ import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import type { ResolvedHarness } from '../harness/types'
 import { chatDiag } from '../diag-log'
 import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
+import { conversationShellEnv, type ConversationShellEnv } from '../conversation-env'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'task',
@@ -121,6 +122,8 @@ async function runClaudeSubagentAttempt(
     target: ClaudeRuntimeTarget
     journal: ClaudeToolJournal
     onQuota: (classification: ReturnType<typeof classifyClaudeQuotaFailure>) => void
+    /** Screen of the parent conversation, the same for every query of the logical child. */
+    shellEnvironment: ConversationShellEnv
   }
 ): Promise<{
   text: string
@@ -174,7 +177,9 @@ async function runClaudeSubagentAttempt(
   const legacySystemPrompt = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-    args.conversationScope === 'standalone' ? 'This is a standalone conversation without project or workspace memory.' : MEMORY_TOOL_GUIDANCE,
+    args.conversationScope === 'standalone'
+      ? 'This is a standalone conversation without project or workspace memory.'
+      : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
@@ -248,43 +253,47 @@ async function runClaudeSubagentAttempt(
     if (runtimeSignal.aborted) onRuntimeAbort()
     let replaced = false
     try {
-      query = args.manager.createQuery({
-        prompt: prompt.prompt,
-        options: {
-          abortController: queryAbort,
-          cwd: args.cwd,
-          model: args.resolvedModelId ?? effective.modelId,
-          ...(effective.sentEffort
-            ? { effort: effective.sentEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
-            : {}),
-          settings: {
-            ...buildClaudeFastModeSettings(effective.fastMode === true),
+      query = args.manager.createQuery(
+        {
+          prompt: prompt.prompt,
+          options: {
+            abortController: queryAbort,
+            cwd: args.cwd,
+            model: args.resolvedModelId ?? effective.modelId,
+            ...(effective.sentEffort
+              ? { effort: effective.sentEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
+              : {}),
+            settings: {
+              ...buildClaudeFastModeSettings(effective.fastMode === true),
+            },
+            systemPrompt,
+            settingSources: [],
+            strictMcpConfig: true,
+            mcpServers: { maestrly: bridge.server },
+            tools: [],
+            allowedTools: bridge.allowedTools,
+            disallowedTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
+            toolAliases: bridge.toolAliases,
+            skills: [],
+            plugins: [],
+            agents: {},
+            hooks: {
+              PreToolUse: [bridge.preToolUseHook],
+              ...(postToolUseHook ? { PostToolUse: [postToolUseHook] } : {}),
+            },
+            ...(harness.progress === 'summarized'
+              ? { thinking: { type: 'adaptive' as const, display: 'summarized' as const } }
+              : {}),
+            permissionMode: 'dontAsk',
+            includePartialMessages: false,
+            persistSession: args.persistRuntime === true,
+            ...(attempt.resumeId ? { resume: attempt.resumeId } : {}),
+            promptSuggestions: false,
           },
-          systemPrompt,
-          settingSources: [],
-          strictMcpConfig: true,
-          mcpServers: { maestrly: bridge.server },
-          tools: [],
-          allowedTools: bridge.allowedTools,
-          disallowedTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
-          toolAliases: bridge.toolAliases,
-          skills: [],
-          plugins: [],
-          agents: {},
-          hooks: {
-            PreToolUse: [bridge.preToolUseHook],
-            ...(postToolUseHook ? { PostToolUse: [postToolUseHook] } : {}),
-          },
-          ...(harness.progress === 'summarized'
-            ? { thinking: { type: 'adaptive' as const, display: 'summarized' as const } }
-            : {}),
-          permissionMode: 'dontAsk',
-          includePartialMessages: false,
-          persistSession: args.persistRuntime === true,
-          ...(attempt.resumeId ? { resume: attempt.resumeId } : {}),
-          promptSuggestions: false,
         },
-      })
+        // A bot's child and the programs it starts use the bot's own display, like the parent conversation.
+        { shellEnvironment: args.shellEnvironment }
+      )
       args.manager.assertAccountIdentity(args.accountIdentity)
       try {
         const initialized = await query.initializationResult()
@@ -513,6 +522,8 @@ export async function runClaudeSubagent(
   let resumeFallbackTask = args.resume?.fallbackTask
   let forcedResumeReason: string | undefined
   const checkpoints: string[] = []
+  // Every query of this child (resumed, recreated or on another account) runs on the parent conversation's screen.
+  const shellEnvironment = conversationShellEnv(args.conversationId)
   const host = new AbortController()
   const signal = AbortSignal.any([args.signal, host.signal])
   try {
@@ -636,6 +647,7 @@ export async function runClaudeSubagent(
           accountIdentity: target.accountIdentity,
           target,
           journal,
+          shellEnvironment,
           resolvedModelId: runtimeModelId,
           harness: frozenHarness,
           onQuota: (classification) => {

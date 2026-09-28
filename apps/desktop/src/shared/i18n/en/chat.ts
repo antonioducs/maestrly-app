@@ -1,4 +1,19 @@
 export default {
+  mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
+  memorySettings: {
+    title: 'Memory',
+    description: 'How agents use durable project memory.',
+    autoRecall: 'Recall relevant memories automatically',
+    autoRecallHint: 'Adds up to 3 short memories to a message when they clearly match it. No model calls.',
+    extraction: 'Save memories from conversations',
+    extractionHint:
+      'A model reads finished turns in the background and saves decisions, preferences and lessons. Each run uses this model’s quota.',
+    model: 'Memory model',
+    save: 'Save memory settings',
+    saved: 'Saved',
+    modelRequired: 'Choose a model to save memories from conversations.',
+    saveFailed: 'Could not save memory settings.',
+  },
   kanban: {
     board: 'Board',
     project: 'Kanban project',
@@ -262,6 +277,7 @@ export default {
     increaseFont: 'Increase',
     appToolsLabel: 'Maestrly tools',
     appToolsDesc: 'terminal, browser, notes, memory, debug',
+    appToolsBotLocked: 'Always on for bots: their browser, screen and help tools depend on them',
     imageGenLabel: 'Image generation',
     imageGenDesc: 'lets the model draw images in this conversation',
     mcpServers: 'MCP servers',
@@ -359,6 +375,9 @@ export default {
     generating: 'generating…',
     goToBottom: 'Go to bottom',
     interrupted: 'Response interrupted (the stream was cut off) — ask it to continue.',
+    memoriesRecalled_one: '🧠 {{count}} memory recalled',
+    memoriesRecalled_other: '🧠 {{count}} memories recalled',
+    memoryRecalledHint: 'Memories recalled automatically for this message',
     memoriesUsed_one: '🧠 {{count}} memory used',
     memoriesUsed_other: '🧠 {{count}} memories used',
     memorySourcesHint: 'Show the memory sources used in this response',
@@ -634,6 +653,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Prepare context in the background',
+    backgroundCompactionManagedByMac: 'Set in the bot’s Settings, on the computer that manages the bots.',
     backgroundCompactionDescription:
       'Periodically prepare a compacted checkpoint with a separate model. The current conversation keeps working while preparation runs.',
     backgroundCompactionToggle: 'Use background context preparation',

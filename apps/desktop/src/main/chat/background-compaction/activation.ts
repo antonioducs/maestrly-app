@@ -31,7 +31,7 @@ export function previewPreparedActivation(
           ...message,
           parts: [
             ...message.parts.slice(0, partIndex + 1),
-            { type: 'compaction', id: marker.partId, text: summary, strategy: 'summary' },
+            { type: 'compaction', id: marker.partId, text: summary, strategy: 'summary', origin: 'prepared' },
             ...message.parts.slice(partIndex + 1),
           ],
         }

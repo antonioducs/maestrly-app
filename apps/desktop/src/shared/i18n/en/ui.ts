@@ -424,6 +424,7 @@ export default {
     // Side menu (#556): groups the settings by theme so the window stops being one giant list.
     nav: {
       bots: 'Bots',
+      fleet: 'Bot server',
       platform: 'Platform',
       chat: 'Maestrly Chat',
       usage: 'Usage & cost',
@@ -497,6 +498,9 @@ export default {
       volume: 'Master volume',
       mute: 'Mute this sound',
       unmute: 'Unmute this sound',
+      botsTitle: 'Bot alerts',
+      botsDesc:
+        'Plays the sounds above when a bot finishes or fails what you asked, or needs you. Routines and conversations between bots stay silent.',
       events: {
         ready: 'Turn ready',
         error: 'Turn failed',
@@ -598,7 +602,21 @@ export default {
   },
 
   sidebar: {
+    tabs: 'Sidebar',
     chats: 'Chats',
+    bots: 'Bots',
+    experimental: 'Experimental',
+    noBots: 'No bots yet',
+    noServerConnected: 'No server connected',
+    connectBotServer: 'Connect a bot server in Settings to see your bots here.',
+    openSettings: 'Open Settings',
+    createBot: 'Create bot',
+    pendingBots_one: '{{count}} pending request',
+    pendingBots_other: '{{count}} pending requests',
+    crossTabResults_one: '{{count}} result in {{tab}}',
+    crossTabResults_other: '{{count}} results in {{tab}}',
+    filterChats: 'Filter chats…',
+    filterBots: 'Filter bots…',
     newChat: 'New chat',
     noChats: 'No chats yet',
     rename: 'Rename',
@@ -651,7 +669,7 @@ export default {
     hideArchived: 'Hide archived',
     showArchived: 'Show archived ({{count}})',
     keepAwakeTitle:
-      'Keeps the Mac from sleeping while an agent is working, so long tasks do not freeze. A locked screen does not pause the agents; sleep does. It does not force the screen to stay on.',
+      'Keeps the computer from sleeping while an agent is working, so long tasks do not freeze. A locked screen does not pause the agents; sleep does. It does not force the screen to stay on.',
     keepAwakeOn: 'Prevent sleep: on',
     keepAwakeOff: 'Prevent sleep: off',
     usage: 'Usage',
@@ -994,6 +1012,8 @@ export default {
   },
 
   projectMemory: {
+    sourceAuto: 'Automatic',
+    pinnedHint: 'Pinned memories stay in the agent’s context, up to about 3,000 characters in total.',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Use Maestrly memory',
     disabled: 'Memory disabled',

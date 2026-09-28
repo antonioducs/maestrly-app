@@ -1,0 +1,3 @@
+#!/bin/sh
+# Opens Chromium with the calling bot's own profile, so its windows open on that bot's apps display.
+exec chromium --no-first-run --no-default-browser-check --password-store=basic --user-data-dir="${MAESTRLY_BOT_BROWSER_PROFILE:?}" "$@"

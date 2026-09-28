@@ -34,6 +34,8 @@ export interface CreateShellPtyArgs {
   cwd: string
   cols: number
   rows: number
+  /** Extra variables over the process environment, e.g. the display of the conversation's bot. */
+  env?: Readonly<Record<string, string>>
   onData: (data: string, meta?: PtyStreamMeta) => void
   onExit: (exitCode: number, isCurrent: boolean, generation?: number) => void
 }
@@ -81,6 +83,7 @@ export function createShellPty(args: CreateShellPtyArgs): void {
       cwd: args.cwd || os.homedir(),
       env: {
         ...process.env,
+        ...args.env,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
         LANG: process.env.LANG || 'en_US.UTF-8',

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown, Hand, ShieldAlert, TerminalSquare, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatPermMode } from '../../../shared/chat'
+import type { ChatComposerSource } from './chat-composer-source'
 
 const MODES: { id: ChatPermMode; labelKey: string; descKey: string; icon: React.ReactNode; danger?: boolean }[] = [
   { id: 'ask', labelKey: 'perm.askLabel', descKey: 'perm.askDesc', icon: <Hand className="h-3.5 w-3.5" /> },
@@ -21,13 +22,23 @@ const MODES: { id: ChatPermMode; labelKey: string; descKey: string; icon: React.
   },
 ]
 
-export function ChatPermModePicker({ conversationId }: { conversationId: string }) {
+export function ChatPermModePicker({
+  conversationId,
+  source,
+}: {
+  conversationId: string
+  source?: ChatComposerSource
+}) {
   const { t } = useTranslation('chat')
   const [mode, setMode] = useState<ChatPermMode>('ask')
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    if (source?.bot) {
+      setMode(source.bot.ceiling)
+      return
+    }
     let alive = true
     const load = () =>
       void window.api.chatGetPermMode(conversationId).then((value) => {
@@ -40,7 +51,7 @@ export function ChatPermModePicker({ conversationId }: { conversationId: string 
       alive = false
       unsubscribe()
     }
-  }, [conversationId])
+  }, [conversationId, source?.bot?.ceiling])
 
   useEffect(() => {
     if (!open) return
@@ -55,7 +66,8 @@ export function ChatPermModePicker({ conversationId }: { conversationId: string 
   const choose = (id: ChatPermMode) => {
     setMode(id)
     setOpen(false)
-    window.api.chatSetPermMode(conversationId, id)
+    if (source?.bot) void source.bot.setCeiling(id)
+    else window.api.chatSetPermMode(conversationId, id)
   }
 
   return (

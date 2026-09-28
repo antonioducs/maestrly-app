@@ -31,6 +31,7 @@ import {
 import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
+import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
 import { LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
@@ -40,9 +41,16 @@ import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 import { BotSection } from '@/components/bot/BotSection'
+import { FleetSettings } from '@/components/settings/FleetSettings'
+import type { FleetController } from '@/lib/fleet/use-fleet'
 
 interface Props {
+  fleet?: FleetController
   initialSection?: SettingsSection
+  /** Sections to offer, in the nav's order; all by default. With a single one, the section list is not shown. */
+  sections?: readonly SettingsSection[]
+  /** Chat settings subset (a bot's own Maestrly). */
+  chat?: ChatSettingsOptions
 
   onShowSidebar?: () => void
   /** Opens the project setup dialog, so a section that needs a project can offer it without guesswork. */
@@ -50,8 +58,18 @@ interface Props {
   onClose: () => void
 }
 
-export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProject, onClose }: Props) {
+export function SettingsView({
+  fleet,
+  initialSection = 'chat',
+  sections,
+  chat,
+  onShowSidebar,
+  onAddProject,
+  onClose,
+}: Props) {
   const { t } = useTranslation('ui')
+  const navItems = sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV
+  const showNav = navItems.length > 1
   const headingRef = useRef<HTMLHeadingElement>(null)
   const [locale, setLocale] = useLocale()
   const [defaultPermissionMode, setDefaultPermissionMode] = useState<ChatPermMode>('full')
@@ -239,6 +257,8 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProj
 
   const toggleSoundMute = () => updateSound((cur) => ({ ...cur, muted: !cur.muted }))
 
+  const toggleBotSounds = () => updateSound((cur) => ({ ...cur, bots: !cur.bots }))
+
   const setMasterVolume = (v: number) => updateSound((cur) => ({ ...cur, volume: v }))
 
   const setEventVoice = (event: SoundEvent, voice: SoundVoice) => {
@@ -315,25 +335,27 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProj
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border p-2">
-          {SETTINGS_NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => selectSection(item.id)}
-              aria-pressed={section === item.id}
-              className={cn(
-                'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors',
-                section === item.id
-                  ? 'bg-white/[0.06] text-foreground'
-                  : 'text-muted-foreground hover:bg-white/[0.03] hover:text-foreground'
-              )}
-            >
-              <span className="shrink-0 text-muted-foreground">{item.icon}</span>
-              <span className="min-w-0 flex-1 truncate">{t(item.labelKey)}</span>
-            </button>
-          ))}
-        </nav>
+        {showNav && (
+          <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-border p-2">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectSection(item.id)}
+                aria-pressed={section === item.id}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-medium transition-colors',
+                  section === item.id
+                    ? 'bg-white/[0.06] text-foreground'
+                    : 'text-muted-foreground hover:bg-white/[0.03] hover:text-foreground'
+                )}
+              >
+                <span className="shrink-0 text-muted-foreground">{item.icon}</span>
+                <span className="min-w-0 flex-1 truncate">{t(item.labelKey)}</span>
+              </button>
+            ))}
+          </nav>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div
             className={cn(
@@ -355,9 +377,10 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProj
               />
             )}
 
-            {section === 'chat' && <MaestrlyChatSection t={t} />}
+            {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
 
             {section === 'platform' && <PlatformSection />}
+            {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
             {section === 'bots' && (
               <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
             )}
@@ -371,6 +394,7 @@ export function SettingsView({ initialSection = 'chat', onShowSidebar, onAddProj
                 t={t}
                 sound={sound}
                 toggleSoundMute={toggleSoundMute}
+                toggleBotSounds={toggleBotSounds}
                 setMasterVolume={setMasterVolume}
                 setEventVoice={setEventVoice}
                 toggleEventMute={toggleEventMute}

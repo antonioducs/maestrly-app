@@ -30,6 +30,9 @@ const mousePositions = new WeakMap<WebContents, { x: number; y: number }>()
 // Automatically answer alert/confirm/prompt dialogs so synchronous page dialogs cannot block subsequent
 // tools. Default is accept.
 const dialogBehavior = new WeakMap<WebContents, { accept: boolean; promptText?: string }>()
+// Bot browser views disable native GTK dialogs so another screen keeps its input. Their JavaScript responses use
+// the same per-tab policy, installed before the first page loads.
+const nativeDialogsDisabled = new WeakSet<WebContents>()
 // Per-tab prompt override script ID, removed before reinstalling because Electron does not support native
 // prompt().
 const promptScriptId = new WeakMap<WebContents, string>()
@@ -462,10 +465,16 @@ async function withExplicitCdpCapture<T>(wc: WebContents, operation: () => Promi
  * DevTools coexistence; enable Runtime/Log/Network only for governor activity or requested logs. Safe
  * fire-and-forget.
  */
-export function attachToView(wc: WebContents): void {
-  ensureAttached(wc).catch(() => {
-    /* best-effort: navigate/snapshot re-tentam o attach sob demanda */
-  })
+export function attachToView(wc: WebContents, options: { nativeDialogsDisabled?: boolean } = {}): Promise<void> {
+  if (options.nativeDialogsDisabled) nativeDialogsDisabled.add(wc)
+  return ensureAttached(wc)
+    .then(async () => {
+      // The activity governor may have attached before this view selected its native-dialog policy.
+      if (options.nativeDialogsDisabled) await installPromptOverride(wc)
+    })
+    .catch(() => {
+      /* Navigation and tools retry attaching when the target becomes available. */
+    })
 }
 
 /** Collected console/exception logs, oldest first. */
@@ -504,7 +513,8 @@ export async function clearLogs(wc: WebContents): Promise<void> {
 
 /**
  * Replace unsupported Electron window.prompt in current and future documents. On accept return
- * configured promptText or the prompt's default; on cancel return null.
+ * configured promptText or the prompt's default; on cancel return null. Bot views also answer alert/confirm in the
+ * page because their native dialogs are disabled; the per-tab accept policy still applies.
  * addScriptToEvaluateOnNewDocument keeps behavior across navigation.
  */
 async function installPromptOverride(wc: WebContents): Promise<void> {
@@ -514,7 +524,10 @@ async function installPromptOverride(wc: WebContents): Promise<void> {
       ? JSON.stringify(beh.promptText)
       : '(d!=null?String(d):"")'
     : 'null'
-  const source = `window.prompt=function(m,d){return ${ret};};`
+  const source =
+    (nativeDialogsDisabled.has(wc)
+      ? `window.alert=function(){};window.confirm=function(){return ${beh.accept};};`
+      : '') + `window.prompt=function(m,d){return ${ret};};`
   const prev = promptScriptId.get(wc)
   if (prev) {
     await wc.debugger.sendCommand('Page.removeScriptToEvaluateOnNewDocument', { identifier: prev }).catch(() => {

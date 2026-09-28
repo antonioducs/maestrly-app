@@ -9,6 +9,9 @@
  * Skills installed through `npx skills` still appear normally (same directories) — the local manifest
  * (app_settings `chat.skills.installed`) only tracks ORIGIN for skills installed here (updates).
  */
+import { createHash } from 'node:crypto'
+import { FLEET_PROVISIONING_LIMITS, fleetSkillNameSchema } from '@maestrly/bot-fleet-protocol'
+import { packageSkillDirectory } from './skill-package'
 import { gunzipSync } from 'node:zlib'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -404,33 +407,177 @@ export async function installSkillFromSlug(input: {
     .then(() => true)
     .catch(() => false)
   if (exists && !input.overwrite) return { ok: false, error: 'already-exists', name: located.name, dir }
-  // ATOMIC installation: extract/validate in sibling staging, swap by rename only at end — mid-flight failure (limits,
-  // disk, permission) never loses the previous version. Dot prefix hides staging from listSkills.
-  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  const staging = path.join(installRoot, `.tmp-${located.name}-${stamp}`)
-  const backup = path.join(installRoot, `.bak-${located.name}-${stamp}`)
-  try {
-    await writeSkillFiles(entries, located.root, staging)
-  } catch (e) {
-    await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined)
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  const files: SkillFile[] = []
+  for (const entry of entries) {
+    if (!entry.path.startsWith(located.root + '/')) continue
+    const segments = safeRelSegments(entry.path.slice(located.root.length + 1))
+    if (segments) files.push({ path: segments.join('/'), data: entry.data, executable: segments[0] === 'scripts' })
   }
   try {
-    if (exists) await fsp.rename(dir, backup)
-    await fsp.rename(staging, dir)
-    if (exists) await fsp.rm(backup, { recursive: true, force: true }).catch(() => undefined)
+    await installSkillFiles({
+      name: located.name,
+      files,
+      root: installRoot,
+      source: 'registry',
+      provenance: {
+        slug: `${slug.owner}/${slug.repo}@${slug.skill || located.name}`,
+        source: `${slug.owner}/${slug.repo}`,
+        scope: input.scope,
+        dir,
+        installedAt: Date.now(),
+      },
+    })
   } catch (e) {
-    await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined)
-    // Restore the old version if already moved (rename silently fails if no backup exists).
-    if (exists) await fsp.rename(backup, dir).catch(() => undefined)
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
-  recordInstalledSkill(located.name, {
-    slug: `${slug.owner}/${slug.repo}@${slug.skill || located.name}`,
-    source: `${slug.owner}/${slug.repo}`,
-    scope: input.scope,
-    dir,
-    installedAt: Date.now(),
-  })
   return { ok: true, name: located.name, dir }
+}
+
+export interface SkillFile {
+  path: string
+  data: Buffer
+  executable: boolean
+}
+export type SkillInstallOutcome = 'added' | 'updated' | 'unchanged'
+
+export function skillFilesProblem(files: readonly SkillFile[]): string | null {
+  if (files.length > FLEET_PROVISIONING_LIMITS.skillFilesMax) return 'too-many-files'
+  let bytes = 0
+  const paths = new Set<string>()
+  for (const file of files) {
+    if (
+      !file.path ||
+      file.path.length > FLEET_PROVISIONING_LIMITS.skillPathMax ||
+      file.path.includes('\\') ||
+      file.path.includes('\0') ||
+      /^[A-Za-z]:/.test(file.path) ||
+      file.path.split('/').some((segment) => !segment || segment.startsWith('.'))
+    )
+      return 'invalid-path'
+    if (paths.has(file.path)) return 'duplicate-path'
+    paths.add(file.path)
+    bytes += file.data.byteLength
+    if (
+      file.data.byteLength > FLEET_PROVISIONING_LIMITS.skillFileBytesMax ||
+      bytes > FLEET_PROVISIONING_LIMITS.skillBytesMax
+    )
+      return 'too-large'
+  }
+  return paths.has('SKILL.md') ? null : 'no-skill-md'
+}
+
+export function skillFilesDigest(files: readonly SkillFile[]): string {
+  const digest = createHash('sha256')
+  for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+    digest
+      .update(file.path)
+      .update('\0')
+      .update(String(file.executable))
+      .update('\0')
+      .update(createHash('sha256').update(file.data).digest('hex'))
+  }
+  return digest.digest('hex')
+}
+
+type SkillFilesInstallInput = {
+  name: string
+  files: readonly SkillFile[]
+  root?: string
+} & ({ source: 'fleet' } | { source: 'registry'; provenance: InstalledSkillRecord })
+
+/** Shares the atomic swap with registry installs, which retain their existing archive limits and provenance. */
+export async function installSkillFiles(
+  input: SkillFilesInstallInput
+): Promise<{ outcome: SkillInstallOutcome; dir: string }> {
+  const installRoot = path.resolve(input.root ?? skillInstallRoot('global', ''))
+  const dir = path.join(installRoot, input.name)
+  if (
+    !input.name ||
+    dir === installRoot ||
+    path.dirname(dir) !== installRoot ||
+    (input.source === 'fleet' && !fleetSkillNameSchema.safeParse(input.name).success)
+  )
+    throw new Error('invalid-skill-name')
+  if (input.source === 'fleet') {
+    const problem = skillFilesProblem(input.files)
+    if (problem) throw new Error(problem)
+  } else {
+    if (input.files.some((file) => file.path.includes('\0') || !safeRelSegments(file.path)))
+      throw new Error('invalid-path')
+    if (input.files.length > MAX_SKILL_FILES) throw new Error('too-many-files')
+    if (input.files.reduce((total, file) => total + file.data.byteLength, 0) > MAX_SKILL_BYTES)
+      throw new Error('skill-too-large')
+  }
+  await cleanupAbandonedInstallArtifacts(installRoot, input.name)
+  const existing = await fsp.lstat(dir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  const provenance =
+    input.source === 'registry'
+      ? input.provenance
+      : {
+          slug: 'fleet',
+          source: 'fleet',
+          scope: 'global' as const,
+          dir,
+          installedAt: Date.now(),
+        }
+  if (input.source === 'fleet' && existing && (existing.isDirectory() || existing.isSymbolicLink())) {
+    const current = await packageSkillDirectory(dir).catch(() => null)
+    // Windows stores no executable bit, so an installed script there always reads as not executable.
+    const comparable = (files: readonly SkillFile[]) =>
+      process.platform === 'win32' ? files.map((file) => ({ ...file, executable: false })) : files
+    if (current && skillFilesDigest(comparable(current)) === skillFilesDigest(comparable(input.files))) {
+      recordInstalledSkill(input.name, provenance)
+      return { outcome: 'unchanged', dir }
+    }
+  }
+  // Stage beside the destination so both renames stay on the same filesystem.
+  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const staging = path.join(installRoot, `.tmp-${input.name}-${stamp}`)
+  const backup = path.join(installRoot, `.bak-${input.name}-${stamp}`)
+  try {
+    await fsp.mkdir(staging, { recursive: true })
+    for (const file of input.files) {
+      const target = path.join(staging, file.path)
+      await fsp.mkdir(path.dirname(target), { recursive: true })
+      await fsp.writeFile(target, file.data)
+      await fsp.chmod(target, file.executable ? 0o755 : 0o644)
+    }
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined)
+    throw error
+  }
+  let backedUp = false
+  let swapped = false
+  try {
+    if (existing) {
+      await fsp.rename(dir, backup)
+      backedUp = true
+    }
+    await fsp.rename(staging, dir)
+    swapped = true
+    recordInstalledSkill(input.name, provenance)
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true }).catch(() => undefined)
+    if (swapped) await fsp.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    if (backedUp) await fsp.rename(backup, dir).catch(() => undefined)
+    throw error
+  }
+  if (backedUp) await fsp.rm(backup, { recursive: true, force: true }).catch(() => undefined)
+  return { outcome: existing ? 'updated' : 'added', dir }
+}
+
+export async function removeGlobalSkill(name: string, root = skillInstallRoot('global', '')): Promise<boolean> {
+  if (!fleetSkillNameSchema.safeParse(name).success) throw new Error('invalid-skill-name')
+  const dir = path.join(root, name)
+  const exists = await fsp.lstat(dir).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  if (!exists) return false
+  await fsp.rm(dir, { recursive: true, force: true })
+  forgetInstalledSkill(name)
+  return true
 }

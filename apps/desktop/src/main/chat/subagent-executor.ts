@@ -60,6 +60,7 @@ import {
 } from './subagent-runner'
 import { ALL_TOOL_NAMES, buildTools, selectSubagentToolNames } from './tools'
 import { buildMaestroWorkerTools, isMaestroWorkerOperationalToolName } from './maestro-worker-tools'
+import { conversationShellEnv } from './conversation-env'
 
 export type SubagentExecutionResult = Awaited<ReturnType<typeof runSubagent>> & {
   runtimeEstimatedCostUsd?: number
@@ -464,6 +465,8 @@ export async function executeSubagent(args: {
           approvalPolicy: approval.approvalPolicy,
           sandboxPolicy: sandboxPolicyFor(approval.sandbox, args.cwd),
           dynamicTools: runtimes.map((entry) => entry.spec),
+          // A bot's child opens programs on the bot's own screen, like its parent conversation.
+          shellEnvironment: conversationShellEnv(args.conversationId),
           registerThread: (threadId) => registration.addThread(threadId),
           removeThread: (threadId) => registration.removeThread(threadId),
           progress,

@@ -337,19 +337,29 @@ export default {
     },
 
     // ---------------- MEMORY ----------------
-    memory_search: {
-      title: 'Search project memory',
+    history_search: {
+      title: 'Search conversation history',
       description:
-        'Narrow hybrid search over durable local memories and versioned .agents/knowledge. Use when prior decisions, constraints, preferences, procedures, or lessons may affect substantive work; skip trivial or self-contained requests. Read-only.',
+        'Searches this conversation’s full saved history, including turns already compacted away. Every word must appear; newest matches first. Returns message positions (seq) and snippets; read around one with history_read. Read-only.',
+    },
+    history_read: {
+      title: 'Read conversation history',
+      description:
+        'Reads the messages around a history position (seq) found by history_search, with tool outputs shortened. Read-only.',
+    },
+    memory_search: {
+      title: 'Search memory',
+      description:
+        'Fallback search over durable memory when the always-on memory and the automatically recalled memories do not cover what you need. Returns short snippets with ids and a relevance score; read one in full with memory_read. Read-only.',
     },
     memory_list: {
       title: 'List local memories',
       description: 'Lists structured local memories with lifecycle and metadata filters. Read-only.',
     },
     memory_read: {
-      title: 'Read project memory',
+      title: 'Read memory',
       description:
-        'Reads one specific structured local memory by id after search/list identifies it. Without id, returns a bounded deprecated projection.',
+        'Reads one memory in full by id or by the 8-character id prefix shown in the memory catalog and recall blocks.',
     },
     memory_upsert: {
       title: 'Remember durable information',
@@ -450,7 +460,6 @@ export default {
       description: 'Evaluates an expression in the context of the stopped frame (debugger REPL).',
       params: { expression: 'expression to evaluate' },
     },
-
   },
 
   returns: {
@@ -517,7 +526,15 @@ export default {
       quickAppended: 'Appended to page "{{title}}".',
       quickPageTitle: 'Notes',
     },
+    history: {
+      truncated: '(window truncated)',
+      empty: 'No messages at that position.',
+      compactionSummary: '[compaction summary] {{text}}',
+      compaction: '[compaction]',
+      generatedImage: '[generated image {{name}}]',
+    },
     memory: {
+      nothingRelevant: 'Nothing relevant enough. Try different words, or memory_list to browse.',
       empty: '(empty memory)',
       updated: 'Project memory updated.',
       appended: 'Appended to the project memory.',
@@ -526,6 +543,9 @@ export default {
 
   // Agent-facing errors.
   errors: {
+    memoryInvisibleCharacters: 'memory-content-rejected: remove invisible or bidirectional control characters',
+    memoryInstructionInjection:
+      'memory-content-rejected: memories cannot store instructions to ignore rules or run downloaded scripts',
     tabNotExist: 'Tab {{index}} does not exist (there are {{total}}).',
     termSpawnFailed: 'The terminal process exited before it was ready.',
     notTermOfConv: 'id "{{id}}" is not a terminal of this conversation.',

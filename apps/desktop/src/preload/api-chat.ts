@@ -1,3 +1,4 @@
+import type { MemorySettings } from '../shared/memory'
 import { clipboard, ipcRenderer } from 'electron'
 import type {
   ChatConfig,
@@ -166,6 +167,8 @@ function onSubscriptionStatus(
 export const chatApi = {
   chatConfig: (): Promise<ChatConfig> => ipcRenderer.invoke('chat:config'),
 
+  chatSetMemorySettings: (value: MemorySettings): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:memory:set', value),
   chatSetBackgroundCompaction: (config: BackgroundCompactionConfig): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:background-compaction:set', config),
 

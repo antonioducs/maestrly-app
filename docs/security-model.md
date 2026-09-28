@@ -50,6 +50,7 @@ that isolation is required.
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
 | Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
+| Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; loopback-only VNC; screen tickets and takeover |
 
 ## Renderer and IPC boundary
 
@@ -96,6 +97,42 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
+### Configuring bot environments from a paired device
+
+Every paired device can configure every environment and bot on its gateway.
+Selected stored credentials flow from the desktop app's main process through the gateway
+to the environment, whose bots all use them; provisioning does not retrieve
+stored secrets. The picker receives names, IDs, hosts and warnings, and account
+lists include only a last-four-character API-key hint. Stored secrets are not
+exposed to the renderer or recorded in logs, activity or gateway idempotency
+records. Import requests are not stored in the idempotency table.
+
+Successful additions and updates through provisioning, and subscription, skill
+and MCP removals, record `bot_configured` activity on the environment with the
+paired device's name and counts only, also when a desktop app from before environments
+configures one of its bots. Unchanged imports and interactive logins do not
+create this activity; the existing API-key removal route does not create it
+either. Copilot and Cursor imports share the same credential between your computer and
+the environment. Codex, Claude and Grok sign in to separate sessions in the
+environment. Accounts and MCP imports are refused when secure storage is
+unavailable in the environment.
+
+Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
+`claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
+subdomains for Grok. The desktop app's callback relay binds only to loopback, accepts the
+attempt's exact callback path and closes on completion, cancellation or expiry.
+It never renders bot-provided content and redirects only to allowed provider
+origins; other responses use the desktop app's own completion or failure page. Codex
+local success redirects are followed inside the environment, keeping tokens in
+those URLs there.
+
+MCP URLs, headers, commands, arguments and environment values are encrypted at
+rest when secure storage is available, on both your computer and the bot environment. General
+desktop MCP configuration retains an inline fallback when secure storage is
+unavailable or a secure write fails; unreadable encrypted entries are never
+connected. See [MCP storage](local-data.md#mcp-configuration) and the
+[fleet security boundary](bot-fleet.md#security-and-data).
+
 ## Commands, files, and Git
 
 Terminals and agent tools can modify source, run executables, and contact the
@@ -127,6 +164,92 @@ The ChatGPT bridge uses a random per-session path and validates loopback hosts.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
 
+## Bot server access
+
+An installed bot server publishes its gateway only on the Docker host's loopback.
+For a VPS, the desktop app forwards a port on `127.0.0.1` through SSH to the
+server's loopback port `7443`; a dropped tunnel reconnects. The desktop app pins
+the server's SSH host key as a SHA-256 fingerprint on first use and stops the
+tunnel if the key changes. A server you manage separately may use private HTTPS,
+such as Tailscale Serve.
+
+VPS setup accepts a password or private key for that job and generates a new
+ed25519 key for later access. This key grants root or passwordless `sudo`
+authority to the VPS: protect it as you would an administrator credential. The
+desktop app stores its private key as ciphertext protected by the OS keyring
+when secure storage is available; otherwise it holds the key only in memory.
+**Disconnect this computer** removes the local key and attempts to revoke its
+tagged public key on the server. If the server is unreachable, revoke that key
+in `authorized_keys` yourself. **Remove bot server** also revokes this
+computer's key; keys authorized by other computers must be removed separately.
+
+The gateway mounts the Docker socket and can control the Docker engine wherever
+it runs, including on this computer. Installer setups default to `public` bot
+egress: each environment starts with `NET_ADMIN`, installs network rules in its
+own namespace, then runs as uid 1000 without that capability in its bounding
+set. The rules reject the Docker host, private, link-local, CGNAT,
+remote loopback, multicast and reserved destinations while retaining access to
+the fleet Docker network and public internet. IPv6 is guarded when present. If the guard cannot
+install its rules, the environment refuses to start. The host firewall is not
+changed. The switch in **Settings → Bot server** selects `open` to allow private
+network access; each environment follows the new setting on its next start or
+restart. Manual Compose setups default to `open`. This is an outbound network
+control, not isolation between bots or environments on the shared fleet network.
+Host root or anyone with Docker socket access can change container settings;
+`docker exec` into a `public` container defaults to root, so pass `-u 1000` to
+act as the bot user.
+
+## Bot environments
+
+A fleet environment is one Linux container running one Maestrly process for up
+to eight bots. The environment, not the bot, is the fleet's isolation boundary.
+See [environments](bot-fleet.md#environments) for what its bots share.
+
+- **Inside an environment, bots trust each other.** They run as the same Linux
+  user with one home folder, one credential store and keyring, one set of
+  accounts, skills and MCP servers, and one browser session for `browser_*`. A
+  bot that runs commands can read and modify its neighbours' files,
+  conversations, memories, queued inputs, browser profiles and stored
+  credentials, operate their displays and programs, and use their gateway
+  tokens to call the gateway as them, for example to message a peer or save the
+  environment's owner memory. Approval ceilings, **Conversations with other bots** grants, per-bot
+  memory spaces and per-bot displays limit each bot's own tools; they are not a
+  security boundary between bots of one environment.
+- **Environments are separated** by their own container, home volume, keyring
+  and control token, and each bot calls the gateway with its own gateway token.
+  The gateway derives a bot's environment from that token, never from the
+  request. This separates ordinary activity but is not a hostile-code boundary
+  against the Docker host.
+- **The network is shared.** Environment containers and the gateway share one
+  Docker bridge network. The `public` egress guard does not filter traffic
+  between containers: a service a bot starts on a network port can be reached
+  from other environments. The gateway's public API refuses fleet-network
+  clients, every control-server request needs the environment's control token, and VNC servers
+  start on demand and listen only on each container's loopback.
+- **Screens.** Takeover holds exactly one bot, and control of a bot's browser
+  area or apps screen requires that device's takeover. The environment screen
+  shows only Maestrly's settings, so a paired device can control it without a
+  takeover. The browser areas and the environment screen share one display, and
+  the gateway allows one control session on it per environment at a time. While
+  it lasts, Electron windows outside the controlled screen are disabled for
+  native input and cannot request keyboard focus. Opening other bots' browser
+  popups or settings leaves the controlled screen focused. If window-manager
+  fallback assigns focus to a disabled window, keys are dropped until the owner
+  clicks their screen. The shared display has no window-move, resize, maximize
+  or cycling bindings; page-driven popup moves stay within the bot's area.
+  Bot browser pages answer JavaScript dialogs with their per-tab policy instead
+  of opening native windows. Popups suppress native dialogs, including confirmations,
+  so they cannot block another screen. Each apps screen is a separate display
+  with its own input.
+- **Browsers.** The browser that bots drive with `browser_*` keeps one set of
+  cookies and site logins for the whole environment. Programs on a bot's apps
+  screen open Chromium with a separate per-bot profile that uses Chromium's
+  basic password store, which the keyring does not protect.
+- **Secrets** flow only from your computer through the gateway to the environment and
+  are never returned. The gateway keeps each environment's control token and
+  keyring password and each bot's gateway token in plaintext in its database;
+  host root and anyone who controls the Docker socket can read them.
+
 ## MCP, skills, and memory
 
 The optional personal bot endpoint runs inside Desktop and binds to loopback by
@@ -153,10 +276,45 @@ permission model to host-mediated calls. It cannot constrain independent side
 effects performed internally by an MCP executable or remote service after the
 connection is authorized.
 
-Memory and notes stay local. Search indexes and embeddings are reproducible
-caches, not authoritative copies. Promoting local memory into a repository is an
+Desktop project memory and notes stay in the local profile. Search indexes and
+embeddings are reproducible caches, not authoritative copies. Promoting local memory into a repository is an
 explicit write and then follows that repository's own review and disclosure
 rules.
+
+## Agent and bot memory
+
+Fleet owner memory lives in the gateway. Global entries are included in every
+bot's context and an environment's entries in the context of that environment's
+bots; no entry is private to the authoring bot. A bot's saves belong to its
+environment, which the gateway derives from the bot's gateway token, and a bot
+can replace or archive only entries of its own environment. Under the owner's
+direct-write policy, `memory_upsert`, `memory_archive`, `memory_restore`,
+`owner_memory_save`, `owner_memory_forget` and `routine_report` run without
+approval prompts in bot conversations. The owner reviews changes in the desktop app.
+Owner-memory writes carry author and origin information; replacement and
+archival preserve history. `owner_memory_forget` archives, while permanent local
+deletion with `memory_forget` retains the normal approval gate. Read-only memory
+and history tools and host recall never prompt.
+
+The gateway checks saved owner-memory content for invisible or bidirectional
+control characters and recognized prompt-injection phrases. Extracted memories
+and memories that agents write with `memory_upsert` use the same content checks.
+The extraction prompt instructs the model to take owner facts only from owner
+messages and to treat tool and web content as untrusted; extraction ignores
+proposed owner facts for batches that contain no owner message. This is model guidance and heuristic filtering, not proof that a
+memory is correct or safe. Recalled blocks are framed as evidence to check, not
+instructions overriding system or repository rules.
+
+History tools read only their calling conversation; the bot-memory proxy exposes
+only that bot's own space. These are tool scopes, not isolation from another bot
+of the same environment that runs commands. Hidden memory blocks are excluded
+from history tool output and extraction. Automatic extraction and consolidation
+send condensed history or stored memories to the selected memory model (the
+compaction model for bots), consume its quota and record usage. Review shared
+owner memory in **Bots → Memory about you**, and each bot's memory in
+**Settings → Bot memory**. See
+[chat memory](chat-context.md#automatic-memory-saving) and
+[storage and retention](local-data.md#memory-storage).
 
 ## AI providers and data egress
 
@@ -210,6 +368,8 @@ secrets.
   user's authority.
 - Projects are logical scopes within one user profile, not isolation for hostile
   tenants.
+- Bots of one fleet environment are not isolated from each other, and fleet
+  environments share a Docker network without traffic filtering.
 - External MCP servers, skills, provider CLIs, Git helpers, browser pages, and
   downloaded editor/runtime components have independent security behavior.
 - Independently updated Codex releases are trusted through the npm registry's

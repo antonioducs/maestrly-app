@@ -5,7 +5,7 @@ import type {
   LocalMemoryStatus,
   MemoryType,
 } from '../../shared/memory'
-import { getDb } from './db'
+import { getDb, transaction } from './db'
 
 export interface LocalMemoryRow {
   id: string
@@ -122,6 +122,34 @@ export function listLocalMemoryRows(workspaceId: string, filters: LocalMemoryFil
        ORDER BY pinned DESC, updated_at DESC, id ASC LIMIT ? OFFSET ?`,
     )
     .all(...params) as unknown as LocalMemoryRow[]
+}
+
+/**
+ * Moves every local memory of one space, and the extraction, consolidation and conversation state kept for it, to
+ * another space id. Runs in one transaction (a savepoint when the caller already opened one).
+ */
+export function rekeyLocalMemorySpace(from: string, to: string): void {
+  if (!from || !to || from === to) throw new Error('Invalid memory space re-key.')
+  transaction(() => {
+    const db = getDb()
+    db.prepare('UPDATE local_memories SET workspace_id = ? WHERE workspace_id = ?').run(to, from)
+    db.prepare('UPDATE OR REPLACE memory_consolidation_state SET space_id = ? WHERE space_id = ?').run(to, from)
+    db.prepare('UPDATE memory_extraction_state SET space_id = ? WHERE space_id = ?').run(to, from)
+    db.prepare('UPDATE conversation_memory_state SET space_id = ? WHERE space_id = ?').run(to, from)
+  })
+}
+
+/** Deletes every local memory of one space and the state kept for it, in one transaction. */
+export function deleteLocalMemorySpace(spaceId: string): void {
+  if (!spaceId) throw new Error('Invalid memory space.')
+  transaction(() => {
+    const db = getDb()
+    // Entries of the space may supersede each other; the foreign key clears those links as rows go.
+    db.prepare('DELETE FROM local_memories WHERE workspace_id = ?').run(spaceId)
+    db.prepare('DELETE FROM memory_consolidation_state WHERE space_id = ?').run(spaceId)
+    db.prepare('DELETE FROM memory_extraction_state WHERE space_id = ?').run(spaceId)
+    db.prepare('DELETE FROM conversation_memory_state WHERE space_id = ?').run(spaceId)
+  })
 }
 
 export function countLocalMemories(workspaceId: string, status?: LocalMemoryStatus): number {

@@ -130,7 +130,7 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       modelId: 'composer-2.5',
     })
     expect(envelope.instructions).toContain('# Durable project memory')
-    expect(envelope.instructions).toContain('Search narrowly and read only the records needed')
+    expect(envelope.instructions).toContain('When a catalog title looks relevant')
     const names = new Set(builtinToolNamesForMode('agent'))
     if (await generateImageToolEnabled(conversationId, 'agent')) names.add(GENERATE_IMAGE_TOOL_NAME)
     if (skills.length) names.add('use_skill')

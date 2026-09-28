@@ -9,6 +9,7 @@ import type {
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import { CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
 import type { SubagentTextUpdate } from '../../src/main/chat/subagent-text-stream'
+import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { closeDb, freshDb } from '../helpers/db'
 
 const identity: ClaudeSubscriptionAccountIdentity = {
@@ -126,12 +127,17 @@ class FakeQuery implements AsyncIterable<SDKMessage> {
 
 class FakeManager {
   readonly calls: Array<{ prompt: unknown; options?: Record<string, unknown> }> = []
+  readonly runtimeOptions: Array<{ shellEnvironment?: Record<string, string> } | undefined> = []
   readonly assertAccountIdentity = vi.fn()
   readonly assertSubscriptionRuntimeAccount = vi.fn()
   query = new FakeQuery([assistant('Final review.'), result()])
 
-  createQuery(input: { prompt: unknown; options?: Record<string, unknown> }) {
+  createQuery(
+    input: { prompt: unknown; options?: Record<string, unknown> },
+    runtimeOptions?: { shellEnvironment?: Record<string, string> }
+  ) {
     this.calls.push(input)
+    this.runtimeOptions.push(runtimeOptions)
     return this.query
   }
 }
@@ -242,39 +248,39 @@ describe('Claude isolated subagent runner', () => {
     expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
   })
 
-  it.each([
-    'claude-opus-5',
-    'opus',
-  ])('applies Opus from the effective child model %s without Fable hooks', async (modelId) => {
-    const manager = new FakeManager()
-    manager.query = new FakeQuery([result()])
+  it.each(['claude-opus-5', 'opus'])(
+    'applies Opus from the effective child model %s without Fable hooks',
+    async (modelId) => {
+      const manager = new FakeManager()
+      manager.query = new FakeQuery([result()])
 
-    await runClaudeSubagent({
-      manager: manager as unknown as ClaudeSubscriptionManager,
-      accountIdentity: identity,
-      conversationId: 'conversation-1',
-      cwd: '/repo',
-      profile: profile({ modelId }),
-      resolvedModelId: modelId === 'opus' ? 'claude-opus-5' : undefined,
-      definition,
-      signal: new AbortController().signal,
-      agentName: 'reviewer',
-      task: 'Inspect independently.',
-      readOnly: true,
-      tools: tools(),
-    })
+      await runClaudeSubagent({
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        conversationId: 'conversation-1',
+        cwd: '/repo',
+        profile: profile({ modelId }),
+        resolvedModelId: modelId === 'opus' ? 'claude-opus-5' : undefined,
+        definition,
+        signal: new AbortController().signal,
+        agentName: 'reviewer',
+        task: 'Inspect independently.',
+        readOnly: true,
+        tools: tools(),
+      })
 
-    const options = manager.calls[0]?.options ?? {}
-    expect(options.model).toBe('claude-opus-5')
-    expect(options.systemPrompt).toContain(
-      harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
-    )
-    expect(options.thinking).toBeUndefined()
-    expect(options.effort).toBe('high')
-    expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
-    expect(options.allowedTools).not.toContain('mcp__maestrly__task')
-    expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
-  })
+      const options = manager.calls[0]?.options ?? {}
+      expect(options.model).toBe('claude-opus-5')
+      expect(options.systemPrompt).toContain(
+        harnessFor('claude-subscription', 'claude-opus-5').identity.behaviorProfileId!
+      )
+      expect(options.thinking).toBeUndefined()
+      expect(options.effort).toBe('high')
+      expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
+      expect(options.allowedTools).not.toContain('mcp__maestrly__task')
+      expect(options.allowedTools).not.toContain('mcp__maestrly__review_plan')
+    }
+  )
 
   it('exposes the host-governed skill loader only for a Maestro worker', async () => {
     const manager = new FakeManager()
@@ -364,30 +370,30 @@ describe('Claude isolated subagent runner', () => {
     { source: 'parent' as const, fastMode: false },
     { source: 'conversation-default' as const, fastMode: true },
     { source: 'conversation-default' as const, fastMode: false },
-  ])('uses snapshot Fast=$fastMode and always opts into per-session settings for $source', async ({
-    source,
-    fastMode,
-  }) => {
-    const manager = new FakeManager()
+  ])(
+    'uses snapshot Fast=$fastMode and always opts into per-session settings for $source',
+    async ({ source, fastMode }) => {
+      const manager = new FakeManager()
 
-    await runClaudeSubagent({
-      manager: manager as unknown as ClaudeSubscriptionManager,
-      accountIdentity: identity,
-      conversationId: 'conversation-1',
-      cwd: '/repo',
-      profile: profile({ source, fastMode }),
-      definition,
-      signal: new AbortController().signal,
-      agentName: 'reviewer',
-      task: 'Inspect.',
-      readOnly: true,
-      tools: tools(),
-    })
+      await runClaudeSubagent({
+        manager: manager as unknown as ClaudeSubscriptionManager,
+        accountIdentity: identity,
+        conversationId: 'conversation-1',
+        cwd: '/repo',
+        profile: profile({ source, fastMode }),
+        definition,
+        signal: new AbortController().signal,
+        agentName: 'reviewer',
+        task: 'Inspect.',
+        readOnly: true,
+        tools: tools(),
+      })
 
-    expect(manager.calls[0]?.options).toMatchObject({
-      settings: { fastMode, fastModePerSessionOptIn: true },
-    })
-  })
+      expect(manager.calls[0]?.options).toMatchObject({
+        settings: { fastMode, fastModePerSessionOptIn: true },
+      })
+    }
+  )
 
   it('returns runtime failures and closes the query', async () => {
     const manager = new FakeManager()
@@ -805,6 +811,56 @@ describe('Claude subagent account rotation', () => {
     expect(a.calls[0].options).toHaveProperty('resume', 'old-session')
     expect(a.calls[1].options).not.toHaveProperty('resume')
   })
+
+  it('launches every query of a delegated child on the screen of its own bot', async () => {
+    const a = new FakeManager()
+    const b = new FakeManager()
+    await routing(a, b)
+    setConversationShellEnv('rotation-conversation', {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+      ANTHROPIC_API_KEY: 'synthetic-not-a-key',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    setConversationShellEnv('another-bot', { DISPLAY: ':4' })
+    try {
+      // The native resume is rejected and recreated fresh, then that account hits its quota and the child
+      // continues on another account: all three queries use the same screen.
+      a.query = new FakeQuery([quotaMessage()])
+      a.query.initializationResult.mockRejectedValueOnce(new Error('Session not found'))
+      const outcome = await runClaudeSubagent({
+        ...argsFor(),
+        resume: { sessionId: 'old-session', fallbackTask: 'Previous report', accountId: null },
+      })
+
+      expect(outcome).toMatchObject({ text: 'Final review.', resumed: false })
+      expect(a.calls).toHaveLength(2)
+      expect(a.calls[0].options).toHaveProperty('resume', 'old-session')
+      expect(b.calls).toHaveLength(1)
+      expect([...a.runtimeOptions, ...b.runtimeOptions]).toEqual(
+        Array.from({ length: 3 }, () => ({
+          shellEnvironment: { DISPLAY: ':3', BROWSER: '/tmp/synthetic-bot-a/browser' },
+        }))
+      )
+    } finally {
+      setConversationShellEnv('rotation-conversation', null)
+      setConversationShellEnv('another-bot', null)
+    }
+  })
+
+  it('keeps the process environment for the child of a conversation without a screen', async () => {
+    const a = new FakeManager()
+    await routing(a, new FakeManager())
+    setConversationShellEnv('another-bot', { DISPLAY: ':4' })
+    try {
+      await runClaudeSubagent(argsFor())
+
+      expect(a.runtimeOptions).toHaveLength(1)
+      expect(a.runtimeOptions[0]?.shellEnvironment ?? {}).toEqual({})
+    } finally {
+      setConversationShellEnv('another-bot', null)
+    }
+  })
   it('retains physical ownership until a cancellation-ignoring callback and projection settle', async () => {
     const a = new FakeManager()
     const b = new FakeManager()
@@ -942,22 +998,21 @@ describe('Claude subagent account rotation', () => {
     expect(a.calls[1].options).toMatchObject({ tools: [], permissionMode: 'dontAsk' })
   })
 
-  it.each([
-    'authentication_error',
-    'network failure',
-    'unknown model',
-  ])('does not retry resume for %s', async (diagnostic) => {
-    const a = new FakeManager()
-    const { resolve } = await routing(a, new FakeManager())
-    a.query.initializationResult.mockRejectedValue(new Error(diagnostic))
-    const outcome = await runClaudeSubagent({
-      ...argsFor(),
-      resume: { sessionId: 'old', fallbackTask: 'Previous report' },
-    })
-    expect(outcome.error).toBeTruthy()
-    expect(a.calls).toHaveLength(1)
-    expect(resolve).toHaveBeenCalledTimes(1)
-  })
+  it.each(['authentication_error', 'network failure', 'unknown model'])(
+    'does not retry resume for %s',
+    async (diagnostic) => {
+      const a = new FakeManager()
+      const { resolve } = await routing(a, new FakeManager())
+      a.query.initializationResult.mockRejectedValue(new Error(diagnostic))
+      const outcome = await runClaudeSubagent({
+        ...argsFor(),
+        resume: { sessionId: 'old', fallbackTask: 'Previous report' },
+      })
+      expect(outcome.error).toBeTruthy()
+      expect(a.calls).toHaveLength(1)
+      expect(resolve).toHaveBeenCalledTimes(1)
+    }
+  )
 
   it('hides suspect local quota text while preserving its usage and terminal diagnostic', async () => {
     const a = new FakeManager()
@@ -983,31 +1038,27 @@ describe('Claude subagent account rotation', () => {
     expect(a.calls).toHaveLength(1)
   })
 
-  it.each([
-    undefined,
-    null,
-    -1,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])('does not zero-fill unknown or invalid native cost %s', async (cost) => {
-    const a = new FakeManager()
-    await routing(a, new FakeManager())
-    a.query = new FakeQuery([{ ...result(), total_cost_usd: cost } as SDKMessage])
-    expect(await runClaudeSubagent(argsFor())).not.toHaveProperty('runtimeEstimatedCostUsd')
-  })
+  it.each([undefined, null, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'does not zero-fill unknown or invalid native cost %s',
+    async (cost) => {
+      const a = new FakeManager()
+      await routing(a, new FakeManager())
+      a.query = new FakeQuery([{ ...result(), total_cost_usd: cost } as SDKMessage])
+      expect(await runClaudeSubagent(argsFor())).not.toHaveProperty('runtimeEstimatedCostUsd')
+    }
+  )
 
-  it.each([
-    'authentication_error',
-    'Network unavailable',
-    'Unknown model',
-  ])('retains terminal assistant diagnostic %s without rotating', async (diagnostic) => {
-    const a = new FakeManager()
-    const { resolve } = await routing(a, new FakeManager())
-    a.query = new FakeQuery([{ ...assistant(diagnostic), error: 'unknown' } as SDKMessage])
-    const outcome = await runClaudeSubagent(argsFor())
-    expect(outcome.error).toBeTruthy()
-    expect(outcome.error).not.toContain('did not finish')
-    expect(outcome.usage?.input).toBe(100)
-    expect(resolve).toHaveBeenCalledTimes(1)
-  })
+  it.each(['authentication_error', 'Network unavailable', 'Unknown model'])(
+    'retains terminal assistant diagnostic %s without rotating',
+    async (diagnostic) => {
+      const a = new FakeManager()
+      const { resolve } = await routing(a, new FakeManager())
+      a.query = new FakeQuery([{ ...assistant(diagnostic), error: 'unknown' } as SDKMessage])
+      const outcome = await runClaudeSubagent(argsFor())
+      expect(outcome.error).toBeTruthy()
+      expect(outcome.error).not.toContain('did not finish')
+      expect(outcome.usage?.input).toBe(100)
+      expect(resolve).toHaveBeenCalledTimes(1)
+    }
+  )
 })

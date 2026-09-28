@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import * as projectContext from '../../src/main/chat/project-context'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +17,13 @@ import {
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import type { CodexAppServerClient } from '../../src/main/chat/codex-subscription/client'
 import { CodexAppServerRpcError } from '../../src/main/chat/codex-subscription/client'
+import {
+  CODEX_HOST_MCP_SERVER_NAME,
+  CODEX_HOST_MCP_TOKEN_ENV,
+  CODEX_HOST_MCP_TOOL_NAMES,
+  closeCodexHostMcpServer,
+  codexHostMcpProcessEnv,
+} from '../../src/main/chat/codex-subscription/host-mcp'
 import type { CodexNotification, CodexServerRequest } from '../../src/main/chat/codex-subscription/protocol'
 import {
   approvalConfig,
@@ -53,19 +62,15 @@ import { chatDiag } from '../../src/main/chat/diag-log'
 import { BYOK_DEFAULT_RULESET, PermissionBroker } from '../../src/main/chat/permission'
 import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
-import { toolOutputImages } from '../../src/shared/chat'
+import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
 import { insertConversation, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
-import {
-  CODEX_HOST_MCP_SERVER_NAME,
-  CODEX_HOST_MCP_TOKEN_ENV,
-  codexHostMcpProcessEnv,
-} from '../../src/main/chat/codex-subscription/host-mcp'
 
 interface HostMcpToolSpec {
   name: string
@@ -677,52 +682,261 @@ describe('Codex subscription runner', () => {
   })
   afterEach(closeDb)
 
-  it('runs standalone Ask with general native instructions and unchanged restricted capabilities', async () => {
-    const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
+  it('routes screenshot through the host MCP server and the permission broker', async () => {
+    const { setAppFlag } = await import('../../src/main/store')
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_screenshot_gate', 'Take a screenshot', 1)
+    setAppFlag('chat.appTools', true)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_screenshot_gate', notifications: [] })
+    const emitted: ChatStreamEvent[] = []
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+    args.mode = 'agent'
+    const denial = new Error('Screenshot denied by Maestrly')
+    vi.mocked(args.broker.assert).mockRejectedValue(denial)
+    const running = runCodexSubscriptionChat(args)
     try {
-      writeFileSync(path.join(cwd, 'AGENTS.md'), 'PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
-      insertConversation({
-        id: 'standalone',
-        scope: 'standalone',
-        workspaceId: null,
-        branch: null,
-        mode: null,
-        experience: 'standard',
-        cwd,
-        name: 'Chat',
-        status: 'idle',
-        createdAt: 1,
-        archived: 0,
-        pinnedAt: null,
-        lastActivityAt: 1,
-        isMulti: 0,
-      })
-      persistUser('standalone', 'standalone-user', 'Help me think', 1)
-      const client = new FakeCodexClient()
-      client.queueTurn({
-        turnId: 'standalone-turn',
-        notifications: [completedNotification('thread_1', 'standalone-turn')],
-      })
-      await runCodexSubscriptionChat(runArgs('standalone', null, cwd, client))
-      const request = client.startThreadCalls[0] as {
-        baseInstructions?: string
-        developerInstructions: string
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 20_000 })
+      const started = client.startThreadCalls[0] as {
+        dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
         config: Record<string, unknown>
-        environments: unknown[]
       }
-      expect(request.baseInstructions).toBeUndefined()
-      expect(request.developerInstructions).toContain('general assistant')
-      expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
-      expect(request.developerInstructions).not.toContain('# Durable project memory')
-      expect(request.developerInstructions).toContain('app tools are disabled')
-      expect(request.config.project_doc_max_bytes).toBe(0)
-      expect(request.config['features.shell_tool']).toBe(false)
-      expect(request.config['skills.include_instructions']).toBe(false)
-      expect(request.environments).toEqual([])
+      expect([...CODEX_HOST_MCP_TOOL_NAMES]).toContain('browser_screenshot')
+      expect(started.config['mcp_servers.maestrly']).toBeDefined()
+      const dynamicNames = started.dynamicTools.flatMap((spec) => spec.tools?.map((tool) => tool.name) ?? [spec.name])
+      expect(dynamicNames).not.toContain('browser_screenshot')
+      expect(dynamicNames).not.toContain('computer_screenshot')
+      const server = started.config['mcp_servers.maestrly'] as { url: string }
+      expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:/)
+      const token = codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]
+      const request = (method: string, params: Record<string, unknown> = {}) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        }).then((response) => response.json() as Promise<{ result: Record<string, unknown> }>)
+      const listed = await request('tools/list')
+      expect(listed.result.tools).toEqual(
+        expect.arrayContaining([expect.objectContaining({ name: 'browser_screenshot' })])
+      )
+      const denied = await request('tools/call', {
+        name: 'browser_screenshot',
+        arguments: {},
+        _meta: { threadId: 'thread_1', callId: 'screenshot_call' },
+      })
+      expect(denied.result).toMatchObject({ isError: true, content: [{ type: 'text', text: denial.message }] })
+      expect(args.broker.assert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'mcp',
+          resources: ['browser_screenshot'],
+          toolCallId: 'screenshot_call',
+        })
+      )
+      expect(emitted).toContainEqual(
+        expect.objectContaining({
+          kind: 'tool-state',
+          toolCallId: 'screenshot_call',
+          state: { status: 'error', error: denial.message },
+        })
+      )
     } finally {
-      rmSync(cwd, { recursive: true, force: true })
+      client.emit(completedNotification('thread_1', 'turn_screenshot_gate'))
+      await running
+      await closeCodexHostMcpServer()
+    }
+  }, 30_000)
+
+  it('persists a hosted screenshot as a tool image without storing its bytes', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_hosted_image', 'Take a screenshot', 1)
+    const client = new FakeCodexClient()
+    const imageData = 'aGVsbG8='
+    const item = {
+      id: 'hosted_screenshot',
+      type: 'mcpToolCall',
+      server: 'maestrly',
+      tool: 'browser_screenshot',
+      arguments: {},
+      status: 'completed',
+      result: {
+        content: [
+          { type: 'text', text: 'Captured' },
+          { type: 'image', data: imageData, mimeType: 'image/png' },
+        ],
+      },
+    }
+    client.queueTurn({
+      turnId: 'turn_hosted_image',
+      notifications: [
+        { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_hosted_image', item } },
+        { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_hosted_image', item } },
+        completedNotification('thread_1', 'turn_hosted_image'),
+      ],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    const part = assistantMessages(conversation.id)[0]?.parts.find(
+      (entry) => entry.type === 'tool' && entry.id === 'hosted_screenshot'
+    )
+    expect(part).toMatchObject({ type: 'tool', toolName: 'browser_screenshot', state: { status: 'completed' } })
+    if (part?.type !== 'tool' || part.state.status !== 'completed') throw new Error('Missing screenshot tool part')
+    expect(toolOutputImages(part.state.output)).toHaveLength(1)
+    expect(JSON.stringify(part)).not.toContain(imageData)
+  })
+
+  it('closes a command left running in the background when the turn ends, keeping finished ones as they are', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_background', 'Open the calculator', 1)
+    const client = new FakeCodexClient()
+    const command = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      type: 'commandExecution',
+      command: '/bin/bash -lc ' + id,
+      cwd: conversation.cwd,
+      status: 'inProgress',
+      ...extra,
+    })
+    const event = (method: string, item: Record<string, unknown>) => ({
+      method,
+      params: { threadId: 'thread_1', turnId: 'turn_background', item },
+    })
+    client.queueTurn({
+      turnId: 'turn_background',
+      notifications: [
+        // A GUI app: exec_command yields after a second and Codex keeps the process; its end never arrives.
+        event('item/started', command('galculator')),
+        {
+          method: 'item/commandExecution/outputDelta',
+          params: { threadId: 'thread_1', turnId: 'turn_background', itemId: 'galculator', delta: 'window opened' },
+        },
+        event('item/started', command('quiet_gui')),
+        event('item/started', command('pwd')),
+        event('item/completed', command('pwd', { status: 'completed', aggregatedOutput: '/home/bot', exitCode: 0 })),
+        completedNotification('thread_1', 'turn_background'),
+      ],
+    })
+    await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+    const message = assistantMessages(conversation.id)[0]
+    expect(message?.finishReason).toBe('stop')
+    const state = (id: string) => {
+      const part = message?.parts.find((entry) => entry.type === 'tool' && entry.id === id)
+      if (part?.type !== 'tool') throw new Error('Missing tool part ' + id)
+      return part.state
+    }
+    // The model got its answer and moved on; the card must not spin forever.
+    expect(state('galculator')).toEqual({
+      status: 'completed',
+      output: expect.stringMatching(/^window opened\n\n\(Still running in the background when the turn ended/),
+    })
+    expect(state('quiet_gui')).toEqual({
+      status: 'completed',
+      output: expect.stringMatching(/^\(no output yet\)\n\n\(Still running in the background/),
+    })
+    expect(state('pwd')).toEqual({ status: 'completed', output: '/home/bot\n\n(exit code 0)' })
+  })
+
+  it('shows the image a native view_image looked at, instead of only its path', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'codex-view-image-'))
+    try {
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82])
+      const imageFile = path.join(dir, 'crop.png')
+      const textFile = path.join(dir, 'fake.png')
+      writeFileSync(imageFile, png)
+      writeFileSync(textFile, 'plain text')
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_view_image', 'Show me the crop', 1)
+      const client = new FakeCodexClient()
+      const viewed = { id: 'view_real', type: 'imageView', path: imageFile }
+      const notImage = { id: 'view_fake', type: 'imageView', path: textFile }
+      client.queueTurn({
+        turnId: 'turn_view_image',
+        notifications: [
+          { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: viewed } },
+          { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: viewed } },
+          { method: 'item/started', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: notImage } },
+          { method: 'item/completed', params: { threadId: 'thread_1', turnId: 'turn_view_image', item: notImage } },
+          completedNotification('thread_1', 'turn_view_image'),
+        ],
+      })
+      await runCodexSubscriptionChat(runArgs(conversation.id, workspace.id, conversation.cwd, client))
+      const parts = assistantMessages(conversation.id)[0]?.parts ?? []
+      const part = parts.find((entry) => entry.type === 'tool' && entry.id === 'view_real')
+      expect(part).toMatchObject({ type: 'tool', toolName: 'view_image', state: { status: 'completed' } })
+      if (part?.type !== 'tool' || part.state.status !== 'completed') throw new Error('Missing view_image part')
+      expect(toolOutputImages(part.state.output)).toEqual([
+        expect.objectContaining({ mediaType: 'image/png', name: 'crop.png' }),
+      ])
+      expect(JSON.stringify(part)).not.toContain(png.toString('base64'))
+      const fake = parts.find((entry) => entry.type === 'tool' && entry.id === 'view_fake')
+      if (fake?.type !== 'tool' || fake.state.status !== 'completed') throw new Error('Missing view_image part')
+      expect(toolOutputImages(fake.state.output)).toHaveLength(0)
+      expect(toolOutputText(fake.state.output)).toContain(textFile)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it.each(['', '\n\n# Memory\n## About your owner\nPrefer short replies.\n## Pinned memories\nUse signed releases.'])(
+    'runs standalone Ask with general native instructions and memory context %j',
+    async (memoryCore) => {
+      const context = vi.spyOn(projectContext, 'buildProjectContext').mockResolvedValue(memoryCore)
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
+      try {
+        writeFileSync(path.join(cwd, 'AGENTS.md'), 'PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
+        insertConversation({
+          id: 'standalone',
+          scope: 'standalone',
+          workspaceId: null,
+          branch: null,
+          mode: null,
+          experience: 'standard',
+          cwd,
+          name: 'Chat',
+          status: 'idle',
+          createdAt: 1,
+          archived: 0,
+          pinnedAt: null,
+          lastActivityAt: 1,
+          isMulti: 0,
+        })
+        persistUser('standalone', 'standalone-user', 'Help me think', 1)
+        const client = new FakeCodexClient()
+        client.queueTurn({
+          turnId: 'standalone-turn',
+          notifications: [completedNotification('thread_1', 'standalone-turn')],
+        })
+        await runCodexSubscriptionChat(runArgs('standalone', null, cwd, client))
+        const request = client.startThreadCalls[0] as {
+          baseInstructions?: string
+          developerInstructions: string
+          config: Record<string, unknown>
+          environments: unknown[]
+        }
+        expect(request.developerInstructions.endsWith(memoryCore)).toBe(true)
+        const base = memoryCore
+          ? request.developerInstructions.slice(0, -memoryCore.length)
+          : request.developerInstructions
+        expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
+          'a0e1ada60acc099b0a99fb4c09869a14ac8b9cc0ff5ba2efb4b02af7776cd613'
+        )
+        expect(request.baseInstructions).toBeUndefined()
+        expect(request.developerInstructions).toContain('general assistant')
+        expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
+        expect(request.developerInstructions).not.toContain('# Durable project memory')
+        expect(request.developerInstructions).toContain('app tools are disabled')
+        expect(request.config.project_doc_max_bytes).toBe(0)
+        expect(request.config['features.shell_tool']).toBe(false)
+        expect(request.config['skills.include_instructions']).toBe(false)
+        expect(request.environments).toEqual([])
+      } finally {
+        context.mockRestore()
+        rmSync(cwd, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('stops before dispatch when the full input exceeds the Codex transport limit', async () => {
     const workspace = makeWorkspace()
@@ -837,6 +1051,7 @@ describe('Codex subscription runner', () => {
       {
         type: 'namespace',
         name: 'maestrly_deferred',
+        description: 'Maestrly MCP and app tools discovered on demand.',
         tools: [
           { name: 'app_collision', deferLoading: true },
           { name: 'drawer_only', deferLoading: true },
@@ -1207,42 +1422,41 @@ describe('Codex subscription runner', () => {
     { source: 'parent' as const, fastMode: true, serviceTier: 'priority' },
     { source: 'parent' as const, fastMode: false, serviceTier: 'default' },
     { source: 'conversation-agent' as const, fastMode: false, serviceTier: 'default' },
-  ])('sends snapshot Fast=$fastMode tier=$serviceTier to both child RPCs for $source', async ({
-    source,
-    fastMode,
-    serviceTier,
-  }) => {
-    const client = new FakeCodexClient()
-    client.queueTurn({
-      turnId: `turn_child_${serviceTier}_${source}`,
-      notifications: [
-        {
-          method: 'turn/started',
-          params: {
-            threadId: 'thread_1',
-            turn: { id: `turn_child_${serviceTier}_${source}`, status: 'inProgress' },
+  ])(
+    'sends snapshot Fast=$fastMode tier=$serviceTier to both child RPCs for $source',
+    async ({ source, fastMode, serviceTier }) => {
+      const client = new FakeCodexClient()
+      client.queueTurn({
+        turnId: `turn_child_${serviceTier}_${source}`,
+        notifications: [
+          {
+            method: 'turn/started',
+            params: {
+              threadId: 'thread_1',
+              turn: { id: `turn_child_${serviceTier}_${source}`, status: 'inProgress' },
+            },
+          },
+          completedNotification('thread_1', `turn_child_${serviceTier}_${source}`),
+        ],
+      })
+
+      await runCodexSubagent({
+        ...directSubagentArgs(client, new AbortController().signal),
+        profile: {
+          ...directSubagentArgs(client, new AbortController().signal).profile,
+          effective: {
+            ...directSubagentArgs(client, new AbortController().signal).profile.effective!,
+            source,
+            fastMode,
           },
         },
-        completedNotification('thread_1', `turn_child_${serviceTier}_${source}`),
-      ],
-    })
+        serviceTier,
+      })
 
-    await runCodexSubagent({
-      ...directSubagentArgs(client, new AbortController().signal),
-      profile: {
-        ...directSubagentArgs(client, new AbortController().signal).profile,
-        effective: {
-          ...directSubagentArgs(client, new AbortController().signal).profile.effective!,
-          source,
-          fastMode,
-        },
-      },
-      serviceTier,
-    })
-
-    expect(client.startThreadCalls[0]).toMatchObject({ serviceTier })
-    expect(client.startTurnCalls[0]).toMatchObject({ serviceTier })
-  })
+      expect(client.startThreadCalls[0]).toMatchObject({ serviceTier })
+      expect(client.startTurnCalls[0]).toMatchObject({ serviceTier })
+    }
+  )
 
   it('bounds Codex subagent abort without terminal state and does not declare it stopped', async () => {
     const client = new FakeCodexClient()
@@ -1719,108 +1933,111 @@ describe('Codex subscription runner', () => {
     })
   })
 
-  it.each([
-    'completed',
-    'failed',
-    'aborted',
-  ] as const)('persists live root occupancy and flushes the trailing sample before %s', async (terminal) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_live_context', 'Keep working', 1)
-    const client = new FakeCodexClient()
-    const emitted: ChatStreamEvent[] = []
-    const controller = new AbortController()
-    client.queueTurn({
-      turnId: 'turn_live',
-      notifications: [
-        usageNotification('thread_1', 'turn_live', { total: breakdown(100, 80, 10), last: breakdown(100, 80, 10) }),
-      ],
-    })
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
-    args.signal = controller.signal
-    const running = runCodexSubscriptionChat(args)
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(110))
-    client.emit({ method: 'thread/started', params: { thread: { id: 'child_live', parentThreadId: 'thread_1' } } })
-    client.emit(
-      usageNotification('child_live', 'turn_child', {
-        total: breakdown(90_000, 0, 100),
-        last: breakdown(90_000, 0, 100),
+  it.each(['completed', 'failed', 'aborted'] as const)(
+    'persists live root occupancy and flushes the trailing sample before %s',
+    async (terminal) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_live_context', 'Keep working', 1)
+      const client = new FakeCodexClient()
+      const emitted: ChatStreamEvent[] = []
+      const controller = new AbortController()
+      client.queueTurn({
+        turnId: 'turn_live',
+        notifications: [
+          usageNotification('thread_1', 'turn_live', { total: breakdown(100, 80, 10), last: breakdown(100, 80, 10) }),
+        ],
       })
-    )
-    client.emit(
-      usageNotification('thread_1', 'turn_live', { total: breakdown(300, 0, 30), last: breakdown(200, 190, 20) })
-    )
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(220), {
-      timeout: 2_000,
-    })
-    expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
-    client.emit(
-      usageNotification('thread_1', 'turn_live', { total: breakdown(600, 0, 60), last: breakdown(300, 290, 30) })
-    )
-    client.emit(completedNotification('child_live', 'turn_child'))
-    if (terminal === 'aborted') controller.abort()
-    client.emit(completedNotification('thread_1', 'turn_live', terminal === 'aborted' ? 'interrupted' : terminal))
-    await running
-    const samples = emitted.filter((event) => event.kind === 'context-usage')
-    expect(samples.map((event) => event.snapshot.usedTokens)).toEqual([110, 220, 330])
-    expect(assistantMessages(conversation.id)[0]?.contextSnapshot).toMatchObject({
-      usedTokens: 330,
-      model: args.selection,
-      modelContextWindow: 200_000,
-      quality: 'measured',
-    })
-    const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
-    expect(emitted.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(emitted.indexOf(samples.at(-1)!))
-    const count = samples.length
-    client.emit(usageNotification('thread_1', 'turn_live', { total: breakdown(999, 0, 1), last: breakdown(999, 0, 1) }))
-    expect(emitted.filter((event) => event.kind === 'context-usage')).toHaveLength(count)
-  })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+      args.signal = controller.signal
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(110))
+      client.emit({ method: 'thread/started', params: { thread: { id: 'child_live', parentThreadId: 'thread_1' } } })
+      client.emit(
+        usageNotification('child_live', 'turn_child', {
+          total: breakdown(90_000, 0, 100),
+          last: breakdown(90_000, 0, 100),
+        })
+      )
+      client.emit(
+        usageNotification('thread_1', 'turn_live', { total: breakdown(300, 0, 30), last: breakdown(200, 190, 20) })
+      )
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(220), {
+        timeout: 2_000,
+      })
+      expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+      client.emit(
+        usageNotification('thread_1', 'turn_live', { total: breakdown(600, 0, 60), last: breakdown(300, 290, 30) })
+      )
+      client.emit(completedNotification('child_live', 'turn_child'))
+      if (terminal === 'aborted') controller.abort()
+      client.emit(completedNotification('thread_1', 'turn_live', terminal === 'aborted' ? 'interrupted' : terminal))
+      await running
+      const samples = emitted.filter((event) => event.kind === 'context-usage')
+      expect(samples.map((event) => event.snapshot.usedTokens)).toEqual([110, 220, 330])
+      expect(assistantMessages(conversation.id)[0]?.contextSnapshot).toMatchObject({
+        usedTokens: 330,
+        model: args.selection,
+        modelContextWindow: 200_000,
+        quality: 'measured',
+      })
+      const terminalKind = terminal === 'completed' ? 'finish' : terminal === 'failed' ? 'error' : 'aborted'
+      expect(emitted.findIndex((event) => event.kind === terminalKind)).toBeGreaterThan(
+        emitted.indexOf(samples.at(-1)!)
+      )
+      const count = samples.length
+      client.emit(
+        usageNotification('thread_1', 'turn_live', { total: breakdown(999, 0, 1), last: breakdown(999, 0, 1) })
+      )
+      expect(emitted.filter((event) => event.kind === 'context-usage')).toHaveLength(count)
+    }
+  )
 
-  it.each([
-    'failed',
-    'cancelled',
-  ] as const)('keeps the original context when portable compaction is %s', async (status) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_failed_context', 'Long task', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({
-      turnId: 'turn_failed_context',
-      notifications: [
-        usageNotification(
-          'thread_1',
-          'turn_failed_context',
-          { total: breakdown(890, 100, 10), last: breakdown(890, 100, 10) },
-          1_000
-        ),
-        completedNotification('thread_1', 'turn_failed_context', 'interrupted'),
-      ],
-    })
-    const controller = new AbortController()
-    const emitted: ChatStreamEvent[] = []
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
-    args.signal = controller.signal
-    args.contextWindow = 1_000
-    args.compactHistory = async () => {
-      expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running')
-      if (status === 'cancelled') controller.abort()
-      throw Object.assign(new Error('summarizer unavailable sk-1234567890abcdefghij'), {
-        partialUsage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
+  it.each(['failed', 'cancelled'] as const)(
+    'keeps the original context when portable compaction is %s',
+    async (status) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_failed_context', 'Long task', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({
+        turnId: 'turn_failed_context',
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_failed_context',
+            { total: breakdown(890, 100, 10), last: breakdown(890, 100, 10) },
+            1_000
+          ),
+          completedNotification('thread_1', 'turn_failed_context', 'interrupted'),
+        ],
       })
+      const controller = new AbortController()
+      const emitted: ChatStreamEvent[] = []
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+      args.signal = controller.signal
+      args.contextWindow = 1_000
+      args.compactHistory = async () => {
+        expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running')
+        if (status === 'cancelled') controller.abort()
+        throw Object.assign(new Error('summarizer unavailable sk-1234567890abcdefghij'), {
+          partialUsage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
+        })
+      }
+      await runCodexSubscriptionChat(args)
+      const assistant = assistantMessages(conversation.id)[0]
+      expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 900, quality: 'measured' })
+      expect(assistant.usage).toMatchObject({ input: 797, output: 13, cachedInput: 102, cacheCreate: 1 })
+      expect(assistant.compactionProgress).toMatchObject({ status, beforeTokens: 900 })
+      expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+      if (status === 'failed') {
+        expect(assistant.error).toContain('summarizer unavailable')
+        expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
+        expect(assistant.compactionProgress?.error).toBe(assistant.error)
+      }
+      expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
     }
-    await runCodexSubscriptionChat(args)
-    const assistant = assistantMessages(conversation.id)[0]
-    expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 900, quality: 'measured' })
-    expect(assistant.usage).toMatchObject({ input: 797, output: 13, cachedInput: 102, cacheCreate: 1 })
-    expect(assistant.compactionProgress).toMatchObject({ status, beforeTokens: 900 })
-    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
-    if (status === 'failed') {
-      expect(assistant.error).toContain('summarizer unavailable')
-      expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
-      expect(assistant.compactionProgress?.error).toBe(assistant.error)
-    }
-    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
-  })
+  )
 
   it('compacts portably at the threshold, replaces the root and continues in the same bubble with cumulative usage', async () => {
     const workspace = makeWorkspace()
@@ -2233,49 +2450,52 @@ describe('Codex subscription runner', () => {
   it.each([
     ['auto', { type: 'workspaceWrite', writableRoots: null }],
     ['ask', { type: 'readOnly', writableRoots: null }],
-  ] as const)('Agent %s disables the native shell and offers the bash bridge under the turn sandbox', async (permMode, expectedSandbox) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, `user_agent_${permMode}`, 'Implement the change', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({
-      turnId: `turn_agent_${permMode}`,
-      notifications: [completedNotification('thread_1', `turn_agent_${permMode}`)],
-    })
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.mode = 'agent'
-    args.permMode = permMode
+  ] as const)(
+    'Agent %s disables the native shell and offers the bash bridge under the turn sandbox',
+    async (permMode, expectedSandbox) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, `user_agent_${permMode}`, 'Implement the change', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({
+        turnId: `turn_agent_${permMode}`,
+        notifications: [completedNotification('thread_1', `turn_agent_${permMode}`)],
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      args.permMode = permMode
 
-    await runCodexSubscriptionChat(args)
+      await runCodexSubscriptionChat(args)
 
-    const threadStart = client.startThreadCalls[0] as {
-      config: Record<string, unknown>
-      dynamicTools: Array<{ name: string }>
-      environments?: unknown
+      const threadStart = client.startThreadCalls[0] as {
+        config: Record<string, unknown>
+        dynamicTools: Array<{ name: string }>
+        environments?: unknown
+      }
+      expect(threadStart).toMatchObject({
+        sandbox: 'read-only',
+        approvalPolicy: 'untrusted',
+        config: { 'features.shell_tool': false },
+      })
+      expect(threadStart.dynamicTools.map((tool) => tool.name)).toContain('bash')
+      expect(threadStart.environments).toBeUndefined()
+
+      const sandboxPolicy =
+        expectedSandbox.type === 'workspaceWrite'
+          ? {
+              type: 'workspaceWrite',
+              writableRoots: [conversation.cwd],
+              networkAccess: false,
+              excludeTmpdirEnvVar: false,
+              excludeSlashTmp: false,
+            }
+          : { type: 'readOnly', networkAccess: false }
+      expect(client.startTurnCalls[0]).toMatchObject({
+        approvalPolicy: 'untrusted',
+        sandboxPolicy,
+      })
     }
-    expect(threadStart).toMatchObject({
-      sandbox: 'read-only',
-      approvalPolicy: 'untrusted',
-      config: { 'features.shell_tool': false },
-    })
-    expect(threadStart.dynamicTools.map((tool) => tool.name)).toContain('bash')
-    expect(threadStart.environments).toBeUndefined()
-
-    const sandboxPolicy =
-      expectedSandbox.type === 'workspaceWrite'
-        ? {
-            type: 'workspaceWrite',
-            writableRoots: [conversation.cwd],
-            networkAccess: false,
-            excludeTmpdirEnvVar: false,
-            excludeSlashTmp: false,
-          }
-        : { type: 'readOnly', networkAccess: false }
-    expect(client.startTurnCalls[0]).toMatchObject({
-      approvalPolicy: 'untrusted',
-      sandboxPolicy,
-    })
-  })
+  )
 
   it('Agent Full keeps the native shell without the bash bridge and applies danger-full-access only to the turn', async () => {
     const workspace = makeWorkspace()
@@ -3616,6 +3836,145 @@ describe('Codex subscription runner', () => {
     await expect(response).resolves.toEqual({ decision: 'decline' })
     await running
     expect(broker.pendingFor(conversation.id)).toEqual([])
+  })
+
+  it('gives each conversation its own shell environment on thread start and resume', async () => {
+    const workspace = makeWorkspace()
+    const botA = makeConversation(workspace.id, {})
+    const botB = makeConversation(workspace.id, {})
+    setConversationShellEnv(botA.id, {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    try {
+      const turn = (threadId: string, turnId: string) => ({
+        turnId,
+        notifications: [
+          {
+            method: 'item/completed',
+            params: { threadId, turnId, item: { id: `answer_${turnId}`, type: 'agentMessage', text: 'done' } },
+          },
+          usageNotification(threadId, turnId, { total: breakdown(10, 0, 1, 0), last: breakdown(10, 0, 1, 0) }),
+          completedNotification(threadId, turnId),
+        ],
+      })
+      // Agent Full keeps the native Codex shell, the path where the environment matters.
+      const agentArgs = (conversationId: string, cwd: string, client: FakeCodexClient) => {
+        const args = runArgs(conversationId, workspace.id, cwd, client)
+        args.mode = 'agent'
+        args.permMode = 'full'
+        return args
+      }
+      const clientA = new FakeCodexClient()
+      persistUser(botA.id, 'user_env_1', 'first', 1)
+      clientA.queueTurn(turn('thread_1', 'turn_env_1'))
+      await runCodexSubscriptionChat(agentArgs(botA.id, botA.cwd, clientA))
+      persistUser(botA.id, 'user_env_2', 'second', 3)
+      clientA.queueTurn(turn('thread_1', 'turn_env_2'))
+      await runCodexSubscriptionChat(agentArgs(botA.id, botA.cwd, clientA))
+
+      expect(clientA.startThreadCalls).toHaveLength(1)
+      expect(clientA.resumeThreadCalls).toHaveLength(1)
+      for (const call of [clientA.startThreadCalls[0], clientA.resumeThreadCalls[0]]) {
+        const config = (call as { config: Record<string, unknown> }).config
+        expect(config).toMatchObject({
+          'shell_environment_policy.set.DISPLAY': ':3',
+          'shell_environment_policy.set.BROWSER': '/tmp/synthetic-bot-a/browser',
+          [`shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`]: '',
+        })
+        expect(config).not.toHaveProperty('shell_environment_policy.set.PATH')
+      }
+
+      const clientB = new FakeCodexClient()
+      persistUser(botB.id, 'user_env_b', 'first', 1)
+      clientB.queueTurn(turn('thread_1', 'turn_env_b'))
+      await runCodexSubscriptionChat(agentArgs(botB.id, botB.cwd, clientB))
+      const configB = (clientB.startThreadCalls[0] as { config: Record<string, unknown> }).config
+      expect(Object.keys(configB).filter((key) => key.startsWith('shell_environment_policy.set.'))).toEqual([
+        `shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`,
+      ])
+    } finally {
+      setConversationShellEnv(botA.id, null)
+    }
+  })
+
+  it('starts the native Codex subagent of a bot on that bot screen', async () => {
+    const workspace = makeWorkspace()
+    const botA = makeConversation(workspace.id, {})
+    const plain = makeConversation(workspace.id, {})
+    setConversationShellEnv(botA.id, {
+      DISPLAY: ':3',
+      BROWSER: '/tmp/synthetic-bot-a/browser',
+      PATH: '/tmp/synthetic-evil/bin',
+    } as Parameters<typeof setConversationShellEnv>[1])
+    const delegatedChildConfig = async (conversationId: string, cwd: string): Promise<Record<string, unknown>> => {
+      persistUser(conversationId, `user_screen_${conversationId}`, 'Delegate the investigation', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_root_screen', notifications: [] })
+      client.queueTurn({
+        turnId: 'turn_child_screen',
+        notifications: [
+          {
+            method: 'item/agentMessage/delta',
+            params: { threadId: 'thread_2', turnId: 'turn_child_screen', itemId: 'child_answer', delta: 'result' },
+          },
+          completedNotification('thread_2', 'turn_child_screen'),
+        ],
+      })
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: { name: 'explore', description: 'Explore', prompt: 'Inspect read-only.', source: 'built-in' },
+        profile: {
+          version: 1,
+          agentName: 'explore',
+          effective: {
+            providerId: 'builtin_codex_subscription',
+            modelId: 'gpt-5.6-mini',
+            configuredEffort: 'high',
+            sentEffort: 'high',
+            source: 'conversation-agent',
+            candidateIndex: 0,
+          },
+          attempts: [],
+        },
+      })
+      const args = runArgs(conversationId, workspace.id, cwd, client)
+      args.mode = 'agent'
+      const running = runCodexSubscriptionChat(args)
+
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      await expect(
+        client.serverRequest({
+          id: 'task_screen',
+          method: 'item/tool/call',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_root_screen',
+            itemId: 'task_screen',
+            callId: 'task_screen',
+            tool: 'task',
+            arguments: { agent: 'explore', prompt: 'Map the authentication flow.' },
+          },
+        })
+      ).resolves.toMatchObject({ success: true })
+      client.emit(completedNotification('thread_1', 'turn_root_screen'))
+      await running
+      expect(client.startThreadCalls).toHaveLength(2)
+      const child = client.startThreadCalls[1] as { ephemeral?: boolean; config: Record<string, unknown> }
+      expect(child.ephemeral).toBe(true)
+      return child.config
+    }
+    const shellPolicy = (config: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(config).filter(([key]) => key.startsWith('shell_environment_policy.')))
+    try {
+      expect(shellPolicy(await delegatedChildConfig(botA.id, botA.cwd))).toEqual({
+        'shell_environment_policy.set.DISPLAY': ':3',
+        'shell_environment_policy.set.BROWSER': '/tmp/synthetic-bot-a/browser',
+      })
+      expect(shellPolicy(await delegatedChildConfig(plain.id, plain.cwd))).toEqual({})
+    } finally {
+      setConversationShellEnv(botA.id, null)
+    }
   })
 
   it('resumes the bound thread and calculates new turn usage against the cumulative baseline', async () => {
@@ -5127,9 +5486,7 @@ describe('Codex subscription runner', () => {
       tool: 'task',
       arguments: { agent: 'general-purpose', prompt: 'Change module A.' },
       status,
-      ...(status === 'completed'
-        ? { result: { content: [{ type: 'text', text: 'done: Change module A.' }] } }
-        : {}),
+      ...(status === 'completed' ? { result: { content: [{ type: 'text', text: 'done: Change module A.' }] } } : {}),
     })
     client.emit({ method: 'item/started', params: { threadId: 'thread_1', item: mcpItem('inProgress') } })
     client.emit({ method: 'item/completed', params: { threadId: 'thread_1', item: mcpItem('completed') } })
@@ -5973,91 +6330,91 @@ describe('Codex subscription runner', () => {
     await running
   })
 
-  it.each([
-    false,
-    true,
-  ])('dispatches Cursor additional-account children and releases ownership (cancel=%s)', async (cancel) => {
-    cursorH.run.mockReset()
-    cursorH.managerCalls.mockClear()
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_codex_to_cursor', 'Use Cursor as a worker', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({ turnId: 'turn_codex_to_cursor', notifications: [] })
-    const profile = {
-      version: 1 as const,
-      agentName: 'general-purpose',
-      effective: {
-        providerId: 'builtin_cursor_subscription@acc_child',
-        modelId: 'composer-2',
-        configuredEffort: 'high',
-        sentEffort: 'high',
-        source: 'conversation-default' as const,
-        candidateIndex: 0,
-      },
-      attempts: [],
-    }
-    resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
-      definition: {
-        name: 'general-purpose',
-        description: 'Worker',
-        prompt: 'Complete the delegated task.',
-        source: 'built-in',
-        tools: ['read', 'grep'],
-      },
-      profile,
-    })
-    cursorH.run.mockResolvedValueOnce({
-      text: 'Cursor result',
-      model: { providerId: 'builtin_cursor_subscription@acc_child', modelId: 'composer-2' },
-    })
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.mode = 'agent'
-    args.acquirePhysicalProvider = vi.fn()
-    args.releasePhysicalProvider = vi.fn()
-    const cursorAbort = new AbortController()
-    args.signal = cursorAbort.signal
-    if (cancel)
-      cursorH.run.mockReset().mockImplementationOnce(async ({ signal }) => {
-        cursorAbort.abort()
-        signal.throwIfAborted()
-      })
-    const running = runCodexSubscriptionChat(args)
-
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
-    await expect(
-      client.serverRequest({
-        id: 'task_codex_to_cursor',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          itemId: 'task_codex_to_cursor',
-          callId: 'task_codex_to_cursor',
-          tool: 'task',
-          arguments: { agent: 'general-purpose', prompt: 'Review the flow with Cursor.' },
-        },
-      })
-    ).resolves.toMatchObject({ success: !cancel })
-    expect(cursorH.run).toHaveBeenCalledWith(
-      expect.objectContaining({
-        profile,
+  it.each([false, true])(
+    'dispatches Cursor additional-account children and releases ownership (cancel=%s)',
+    async (cancel) => {
+      cursorH.run.mockReset()
+      cursorH.managerCalls.mockClear()
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_codex_to_cursor', 'Use Cursor as a worker', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_codex_to_cursor', notifications: [] })
+      const profile = {
+        version: 1 as const,
         agentName: 'general-purpose',
-        task: 'Review the flow with Cursor.',
-        accountIdentity: { fingerprint: 'cursor-account', epoch: 2 },
-        allowSkillLoader: false,
-        frozenModelSelection: { modelId: 'composer-2', params: [{ id: 'reasoning', value: 'high' }] },
-        harness: expect.objectContaining({ identity: expect.any(Object) }),
+        effective: {
+          providerId: 'builtin_cursor_subscription@acc_child',
+          modelId: 'composer-2',
+          configuredEffort: 'high',
+          sentEffort: 'high',
+          source: 'conversation-default' as const,
+          candidateIndex: 0,
+        },
+        attempts: [],
+      }
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: {
+          name: 'general-purpose',
+          description: 'Worker',
+          prompt: 'Complete the delegated task.',
+          source: 'built-in',
+          tools: ['read', 'grep'],
+        },
+        profile,
       })
-    )
-    expect(cursorH.managerCalls).toHaveBeenCalledWith('acc_child')
-    expect(args.acquirePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
-    expect(args.releasePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
-    expect(Object.keys(cursorH.run.mock.calls[0][0].tools)).not.toContain('task')
-    expect(runSubagentMock).not.toHaveBeenCalled()
+      cursorH.run.mockResolvedValueOnce({
+        text: 'Cursor result',
+        model: { providerId: 'builtin_cursor_subscription@acc_child', modelId: 'composer-2' },
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      args.acquirePhysicalProvider = vi.fn()
+      args.releasePhysicalProvider = vi.fn()
+      const cursorAbort = new AbortController()
+      args.signal = cursorAbort.signal
+      if (cancel)
+        cursorH.run.mockReset().mockImplementationOnce(async ({ signal }) => {
+          cursorAbort.abort()
+          signal.throwIfAborted()
+        })
+      const running = runCodexSubscriptionChat(args)
 
-    client.emit(completedNotification('thread_1', 'turn_codex_to_cursor'))
-    await running
-  })
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      await expect(
+        client.serverRequest({
+          id: 'task_codex_to_cursor',
+          method: 'item/tool/call',
+          params: {
+            threadId: 'thread_1',
+            itemId: 'task_codex_to_cursor',
+            callId: 'task_codex_to_cursor',
+            tool: 'task',
+            arguments: { agent: 'general-purpose', prompt: 'Review the flow with Cursor.' },
+          },
+        })
+      ).resolves.toMatchObject({ success: !cancel })
+      expect(cursorH.run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profile,
+          agentName: 'general-purpose',
+          task: 'Review the flow with Cursor.',
+          accountIdentity: { fingerprint: 'cursor-account', epoch: 2 },
+          allowSkillLoader: false,
+          frozenModelSelection: { modelId: 'composer-2', params: [{ id: 'reasoning', value: 'high' }] },
+          harness: expect.objectContaining({ identity: expect.any(Object) }),
+        })
+      )
+      expect(cursorH.managerCalls).toHaveBeenCalledWith('acc_child')
+      expect(args.acquirePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
+      expect(args.releasePhysicalProvider).toHaveBeenCalledWith('builtin_cursor_subscription@acc_child')
+      expect(Object.keys(cursorH.run.mock.calls[0][0].tools)).not.toContain('task')
+      expect(runSubagentMock).not.toHaveBeenCalled()
+
+      client.emit(completedNotification('thread_1', 'turn_codex_to_cursor'))
+      await running
+    }
+  )
 
   it('preserves the snapshot and releases the ephemeral thread when the Codex subagent fails', async () => {
     const workspace = makeWorkspace()
@@ -7589,141 +7946,142 @@ describe('Codex subscription runner', () => {
       }
     })
 
-    it.each([
-      0, 20_000, 360_000,
-    ])('keeps an in-flight Codex task during root failover for %i ms without repeating the side effect', async (recoveryMs) => {
-      const workspace = makeWorkspace()
-      const conversation = makeConversation(workspace.id, {})
-      persistUser(conversation.id, 'user_failover_child_in_flight', 'Delegate and continue', 1)
-      const clientA = new FakeCodexClient()
-      const clientB = new FakeCodexClient()
-      codexManagerBridge.setClient(clientA, null)
-      codexManagerBridge.setClient(clientB, 'acc_b')
-      clientA.queueTurn({ turnId: 'turn_root_child_in_flight', notifications: [] })
-      clientA.queueTurn({
-        turnId: 'turn_child_in_flight',
-        notifications: [
-          {
-            method: 'turn/started',
-            params: { threadId: 'thread_2', turn: { id: 'turn_child_in_flight', status: 'inProgress' } },
-          },
-        ],
-      })
-      clientB.queueTurn({
-        turnId: 'turn_b_after_child_in_flight',
-        notifications: [completedNotification('thread_1', 'turn_b_after_child_in_flight')],
-      })
-      clientA.interruptTurnHook = async (params) => {
-        const request = params as { threadId?: string; turnId?: string }
-        if (request.threadId === 'thread_2' && request.turnId === 'turn_child_in_flight') {
-          clientA.emit(completedNotification('thread_2', 'turn_child_in_flight', 'interrupted'))
-        }
-      }
-      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
-        definition: {
-          name: 'explore',
-          description: 'Explore',
-          prompt: 'Inspect the task.',
-          source: 'built-in',
-        },
-        profile: {
-          version: 1,
-          agentName: 'explore',
-          effective: {
-            providerId: PRIMARY,
-            modelId: 'gpt-child',
-            configuredEffort: 'medium',
-            sentEffort: 'medium',
-            source: 'conversation-agent',
-            candidateIndex: 0,
-          },
-          attempts: [],
-        },
-      })
-
-      const args = runArgs(conversation.id, workspace.id, conversation.cwd, clientA)
-      args.mode = 'agent'
-      args.failoverChain = [PRIMARY, FALLBACK]
-      args.resolveNextTarget = vi.fn(async () => failoverTarget(clientB, FALLBACK, 'acc_b'))
-      const running = runCodexSubscriptionChat(args)
-
-      await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(1))
-      const taskResult = clientA.serverRequest({
-        id: 'task_root_failover_in_flight',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_root_child_in_flight',
-          itemId: 'task_root_failover_in_flight',
-          callId: 'task_root_failover_in_flight',
-          tool: 'task',
-          arguments: { agent: 'explore', prompt: 'Run the side effect once.' },
-        },
-      })
-      let taskSettled = false
-      void taskResult.then(() => {
-        taskSettled = true
-      })
-      await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(2))
-
-      if (recoveryMs) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
-      clientA.emit(
-        completedNotification(
-          'thread_1',
-          'turn_root_child_in_flight',
-          'failed',
-          'UsageLimitExceeded: weekly quota exhausted'
-        )
-      )
-      await waitImmediate()
-
-      expect(taskSettled).toBe(false)
-      expect(clientA.interruptTurnCalls).not.toContainEqual({
-        threadId: 'thread_2',
-        turnId: 'turn_child_in_flight',
-      })
-
-      if (recoveryMs) {
-        try {
-          await vi.advanceTimersByTimeAsync(recoveryMs)
-          if (recoveryMs === 360_000) {
-            // A different conversation can successfully probe A while this root still
-            // waits for its child. The old quota must not overwrite that newer success.
-            const router = getSubscriptionFailoverRouter()
-            const admitted = router.tryAdmit(PRIMARY)
-            expect(admitted.ok && admitted.lease).toBeTruthy()
-            if (admitted.ok) router.confirmAttemptSuccess(PRIMARY, admitted.lease)
+    it.each([0, 20_000, 360_000])(
+      'keeps an in-flight Codex task during root failover for %i ms without repeating the side effect',
+      async (recoveryMs) => {
+        const workspace = makeWorkspace()
+        const conversation = makeConversation(workspace.id, {})
+        persistUser(conversation.id, 'user_failover_child_in_flight', 'Delegate and continue', 1)
+        const clientA = new FakeCodexClient()
+        const clientB = new FakeCodexClient()
+        codexManagerBridge.setClient(clientA, null)
+        codexManagerBridge.setClient(clientB, 'acc_b')
+        clientA.queueTurn({ turnId: 'turn_root_child_in_flight', notifications: [] })
+        clientA.queueTurn({
+          turnId: 'turn_child_in_flight',
+          notifications: [
+            {
+              method: 'turn/started',
+              params: { threadId: 'thread_2', turn: { id: 'turn_child_in_flight', status: 'inProgress' } },
+            },
+          ],
+        })
+        clientB.queueTurn({
+          turnId: 'turn_b_after_child_in_flight',
+          notifications: [completedNotification('thread_1', 'turn_b_after_child_in_flight')],
+        })
+        clientA.interruptTurnHook = async (params) => {
+          const request = params as { threadId?: string; turnId?: string }
+          if (request.threadId === 'thread_2' && request.turnId === 'turn_child_in_flight') {
+            clientA.emit(completedNotification('thread_2', 'turn_child_in_flight', 'interrupted'))
           }
-        } finally {
-          vi.useRealTimers()
         }
-      }
+        resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+          definition: {
+            name: 'explore',
+            description: 'Explore',
+            prompt: 'Inspect the task.',
+            source: 'built-in',
+          },
+          profile: {
+            version: 1,
+            agentName: 'explore',
+            effective: {
+              providerId: PRIMARY,
+              modelId: 'gpt-child',
+              configuredEffort: 'medium',
+              sentEffort: 'medium',
+              source: 'conversation-agent',
+              candidateIndex: 0,
+            },
+            attempts: [],
+          },
+        })
 
-      clientA.emit({
-        method: 'item/agentMessage/delta',
-        params: {
+        const args = runArgs(conversation.id, workspace.id, conversation.cwd, clientA)
+        args.mode = 'agent'
+        args.failoverChain = [PRIMARY, FALLBACK]
+        args.resolveNextTarget = vi.fn(async () => failoverTarget(clientB, FALLBACK, 'acc_b'))
+        const running = runCodexSubscriptionChat(args)
+
+        await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(1))
+        const taskResult = clientA.serverRequest({
+          id: 'task_root_failover_in_flight',
+          method: 'item/tool/call',
+          params: {
+            threadId: 'thread_1',
+            turnId: 'turn_root_child_in_flight',
+            itemId: 'task_root_failover_in_flight',
+            callId: 'task_root_failover_in_flight',
+            tool: 'task',
+            arguments: { agent: 'explore', prompt: 'Run the side effect once.' },
+          },
+        })
+        let taskSettled = false
+        void taskResult.then(() => {
+          taskSettled = true
+        })
+        await vi.waitFor(() => expect(clientA.startTurnCalls).toHaveLength(2))
+
+        if (recoveryMs) vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+        clientA.emit(
+          completedNotification(
+            'thread_1',
+            'turn_root_child_in_flight',
+            'failed',
+            'UsageLimitExceeded: weekly quota exhausted'
+          )
+        )
+        await waitImmediate()
+
+        expect(taskSettled).toBe(false)
+        expect(clientA.interruptTurnCalls).not.toContainEqual({
           threadId: 'thread_2',
           turnId: 'turn_child_in_flight',
-          itemId: 'child_result',
-          delta: 'Side effect completed once.',
-        },
-      })
-      clientA.emit(completedNotification('thread_2', 'turn_child_in_flight'))
+        })
 
-      await expect(taskResult).resolves.toMatchObject({
-        success: true,
-        contentItems: [{ type: 'inputText', text: 'Side effect completed once.' }],
-      })
-      await running
+        if (recoveryMs) {
+          try {
+            await vi.advanceTimersByTimeAsync(recoveryMs)
+            if (recoveryMs === 360_000) {
+              // A different conversation can successfully probe A while this root still
+              // waits for its child. The old quota must not overwrite that newer success.
+              const router = getSubscriptionFailoverRouter()
+              const admitted = router.tryAdmit(PRIMARY)
+              expect(admitted.ok && admitted.lease).toBeTruthy()
+              if (admitted.ok) router.confirmAttemptSuccess(PRIMARY, admitted.lease)
+            }
+          } finally {
+            vi.useRealTimers()
+          }
+        }
 
-      expect(clientA.startThreadCalls).toHaveLength(2)
-      expect(clientA.startTurnCalls).toHaveLength(2)
-      expect(clientB.startThreadCalls).toHaveLength(1)
-      expect(clientB.startTurnCalls).toHaveLength(1)
-      expect(assistantMessages(conversation.id)[0].error).toBeUndefined()
-      expect(JSON.stringify(clientB.startTurnCalls[0])).toContain('Side effect completed once.')
-      if (recoveryMs === 360_000) expect(getSubscriptionFailoverRouter().getHealth(PRIMARY).state).toBe('available')
-    })
+        clientA.emit({
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread_2',
+            turnId: 'turn_child_in_flight',
+            itemId: 'child_result',
+            delta: 'Side effect completed once.',
+          },
+        })
+        clientA.emit(completedNotification('thread_2', 'turn_child_in_flight'))
+
+        await expect(taskResult).resolves.toMatchObject({
+          success: true,
+          contentItems: [{ type: 'inputText', text: 'Side effect completed once.' }],
+        })
+        await running
+
+        expect(clientA.startThreadCalls).toHaveLength(2)
+        expect(clientA.startTurnCalls).toHaveLength(2)
+        expect(clientB.startThreadCalls).toHaveLength(1)
+        expect(clientB.startTurnCalls).toHaveLength(1)
+        expect(assistantMessages(conversation.id)[0].error).toBeUndefined()
+        expect(JSON.stringify(clientB.startTurnCalls[0])).toContain('Side effect completed once.')
+        if (recoveryMs === 360_000) expect(getSubscriptionFailoverRouter().getHealth(PRIMARY).state).toBe('available')
+      }
+    )
 
     it.each([
       { outcome: 'continue', childError: 'UsageLimitExceeded: weekly' },
@@ -9512,253 +9870,250 @@ describe('Codex subscription runner', () => {
     await expect(controls[0].steer('too late', 'client-steer-2')).resolves.toBe('target-unavailable')
   })
 
-  it.each([
-    'before',
-    'after',
-  ] as const)('observes automatic native compaction with the reduction sample %s completion', async (sampleOrder) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_auto_native', 'Continue the task', 1)
-    const client = new FakeCodexClient()
-    const emitted: ChatStreamEvent[] = []
-    client.queueTurn({
-      turnId: 'turn_auto',
-      notifications: [
-        usageNotification(
-          'thread_1',
-          'turn_auto',
-          {
-            total: breakdown(800, 0, 10),
-            last: breakdown(800, 0, 10),
-          },
-          1_000
-        ),
-      ],
-    })
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
-    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
-    args.runtimeModel = astraRuntimeModel()
-    args.contextWindow = 1_000
-    args.compactHistory = vi.fn(async () => ({ summary: 'portable fallback' }))
-    const running = runCodexSubscriptionChat(args)
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(810))
-    const itemEvent = (method: string, threadId = 'thread_1', turnId = 'turn_auto', id = 'auto_compact') => ({
-      method,
-      params: { threadId, turnId, item: { type: 'contextCompaction', id } },
-    })
-    client.emit({ method: 'thread/started', params: { thread: { id: 'auto_child', parentThreadId: 'thread_1' } } })
-    client.emit(itemEvent('item/started', 'auto_child', 'child_turn'))
-    client.emit(itemEvent('item/completed', 'auto_child', 'child_turn'))
-    client.emit(itemEvent('item/started', 'thread_1', 'stale_turn'))
-    client.emit(itemEvent('item/completed', 'thread_1', 'stale_turn'))
-    expect(assistantMessages(conversation.id)[0]?.compactionProgress).toBeUndefined()
-    client.emit(completedNotification('auto_child', 'child_turn'))
-    client.emit({
-      method: 'item/completed',
-      params: {
-        threadId: 'thread_1',
+  it.each(['before', 'after'] as const)(
+    'observes automatic native compaction with the reduction sample %s completion',
+    async (sampleOrder) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_auto_native', 'Continue the task', 1)
+      const client = new FakeCodexClient()
+      const emitted: ChatStreamEvent[] = []
+      client.queueTurn({
         turnId: 'turn_auto',
-        item: { type: 'agentMessage', id: 'auto_text', text: 'Still working.' },
-      },
-    })
-    client.emit(itemEvent('item/started'))
-    client.emit(itemEvent('item/started'))
-    client.emit(completedNotification('thread_1', 'stale_turn', 'failed', 'stale failure'))
-    expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
-      status: 'running',
-      phase: 'native',
-      beforeTokens: 810,
-    })
-    expect(emitted.filter((event) => event.kind === 'compaction-progress')).toHaveLength(1)
-    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
-    // The native operation owns the turn even if it crosses the host's 90% threshold.
-    if (sampleOrder === 'before') {
-      client.emit(
-        usageNotification(
-          'thread_1',
-          'turn_auto',
-          {
-            total: breakdown(1_000, 0, 20),
-            last: breakdown(950, 0, 10),
-          },
-          1_000
-        )
-      )
-      client.emit(
-        usageNotification(
-          'thread_1',
-          'turn_auto',
-          {
-            total: breakdown(1_100, 0, 30),
-            last: breakdown(150, 0, 10),
-          },
-          1_000
-        )
-      )
-    }
-    client.emit(itemEvent('item/completed'))
-    client.emit(itemEvent('item/completed'))
-    client.emit(itemEvent('item/started'))
-    expect(emitted.filter((event) => event.kind === 'compaction')).toHaveLength(1)
-    expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('completed')
-    if (sampleOrder === 'after') {
-      expect(assistantMessages(conversation.id)[0]?.compactionProgress).not.toHaveProperty('afterTokens')
-      client.emit(
-        usageNotification(
-          'thread_1',
-          'turn_auto',
-          {
-            total: breakdown(1_100, 0, 30),
-            last: breakdown(150, 0, 10),
-          },
-          1_000
-        )
-      )
-    }
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.afterTokens).toBe(160), {
-      timeout: 2_000,
-    })
-    expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
-    client.emit(
-      usageNotification(
-        'thread_1',
-        'turn_auto',
-        {
-          total: breakdown(1_300, 0, 40),
-          last: breakdown(250, 0, 10),
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_auto',
+            {
+              total: breakdown(800, 0, 10),
+              last: breakdown(800, 0, 10),
+            },
+            1_000
+          ),
+        ],
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+      args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+      args.runtimeModel = astraRuntimeModel()
+      args.contextWindow = 1_000
+      args.compactHistory = vi.fn(async () => ({ summary: 'portable fallback' }))
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(810))
+      const itemEvent = (method: string, threadId = 'thread_1', turnId = 'turn_auto', id = 'auto_compact') => ({
+        method,
+        params: { threadId, turnId, item: { type: 'contextCompaction', id } },
+      })
+      client.emit({ method: 'thread/started', params: { thread: { id: 'auto_child', parentThreadId: 'thread_1' } } })
+      client.emit(itemEvent('item/started', 'auto_child', 'child_turn'))
+      client.emit(itemEvent('item/completed', 'auto_child', 'child_turn'))
+      client.emit(itemEvent('item/started', 'thread_1', 'stale_turn'))
+      client.emit(itemEvent('item/completed', 'thread_1', 'stale_turn'))
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress).toBeUndefined()
+      client.emit(completedNotification('auto_child', 'child_turn'))
+      client.emit({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_auto',
+          item: { type: 'agentMessage', id: 'auto_text', text: 'Still working.' },
         },
-        1_000
+      })
+      client.emit(itemEvent('item/started'))
+      client.emit(itemEvent('item/started'))
+      client.emit(completedNotification('thread_1', 'stale_turn', 'failed', 'stale failure'))
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
+        status: 'running',
+        phase: 'native',
+        beforeTokens: 810,
+      })
+      expect(emitted.filter((event) => event.kind === 'compaction-progress')).toHaveLength(1)
+      expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
+      // The native operation owns the turn even if it crosses the host's 90% threshold.
+      if (sampleOrder === 'before') {
+        client.emit(
+          usageNotification(
+            'thread_1',
+            'turn_auto',
+            {
+              total: breakdown(1_000, 0, 20),
+              last: breakdown(950, 0, 10),
+            },
+            1_000
+          )
+        )
+        client.emit(
+          usageNotification(
+            'thread_1',
+            'turn_auto',
+            {
+              total: breakdown(1_100, 0, 30),
+              last: breakdown(150, 0, 10),
+            },
+            1_000
+          )
+        )
+      }
+      client.emit(itemEvent('item/completed'))
+      client.emit(itemEvent('item/completed'))
+      client.emit(itemEvent('item/started'))
+      expect(emitted.filter((event) => event.kind === 'compaction')).toHaveLength(1)
+      expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('completed')
+      if (sampleOrder === 'after') {
+        expect(assistantMessages(conversation.id)[0]?.compactionProgress).not.toHaveProperty('afterTokens')
+        client.emit(
+          usageNotification(
+            'thread_1',
+            'turn_auto',
+            {
+              total: breakdown(1_100, 0, 30),
+              last: breakdown(150, 0, 10),
+            },
+            1_000
+          )
+        )
+      }
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.afterTokens).toBe(160), {
+        timeout: 2_000,
+      })
+      expect(emitted.some((event) => ['finish', 'error', 'aborted'].includes(event.kind))).toBe(false)
+      client.emit(
+        usageNotification(
+          'thread_1',
+          'turn_auto',
+          {
+            total: breakdown(1_300, 0, 40),
+            last: breakdown(250, 0, 10),
+          },
+          1_000
+        )
       )
-    )
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(260), {
-      timeout: 2_000,
-    })
-    client.emit(completedNotification('thread_1', 'turn_auto'))
-    await running
-    const assistant = assistantMessages(conversation.id)[0]
-    expect(assistant.parts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'text', text: 'Still working.' }),
-        expect.objectContaining({ type: 'compaction', strategy: 'codex-native' }),
-      ])
-    )
-    expect(assistant.compactionProgress).toMatchObject({
-      status: 'completed',
-      beforeTokens: 810,
-      afterTokens: 160,
-      afterQuality: 'measured',
-    })
-    expect(assistant.contextSnapshot?.usedTokens).toBe(260)
-    expect(client.interruptTurnCalls).toEqual([])
-    expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
-    expect(args.compactHistory).not.toHaveBeenCalled()
-    expect(client.startTurnCalls).toHaveLength(1)
-  })
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.contextSnapshot?.usedTokens).toBe(260), {
+        timeout: 2_000,
+      })
+      client.emit(completedNotification('thread_1', 'turn_auto'))
+      await running
+      const assistant = assistantMessages(conversation.id)[0]
+      expect(assistant.parts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'text', text: 'Still working.' }),
+          expect.objectContaining({ type: 'compaction', strategy: 'codex-native' }),
+        ])
+      )
+      expect(assistant.compactionProgress).toMatchObject({
+        status: 'completed',
+        beforeTokens: 810,
+        afterTokens: 160,
+        afterQuality: 'measured',
+      })
+      expect(assistant.contextSnapshot?.usedTokens).toBe(260)
+      expect(client.interruptTurnCalls).toEqual([])
+      expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
+      expect(args.compactHistory).not.toHaveBeenCalled()
+      expect(client.startTurnCalls).toHaveLength(1)
+    }
+  )
 
-  it.each([
-    'failed',
-    'cancelled',
-    'exit',
-    'completed',
-    'interrupted',
-  ] as const)('settles pending automatic native compaction on %s without a success marker', async (terminal) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_auto_native_failure', 'Continue the task', 1)
-    const client = new FakeCodexClient()
-    const emitted: ChatStreamEvent[] = []
-    const controller = new AbortController()
-    let rejectExit!: (error: Error) => void
-    const exit = new Promise<never>((_resolve, reject) => {
-      rejectExit = reject
-    })
-    void exit.catch(() => {})
-    client.waitForExit = () => exit
-    client.queueTurn({
-      turnId: 'turn_auto_failure',
-      notifications: [
+  it.each(['failed', 'cancelled', 'exit', 'completed', 'interrupted'] as const)(
+    'settles pending automatic native compaction on %s without a success marker',
+    async (terminal) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_auto_native_failure', 'Continue the task', 1)
+      const client = new FakeCodexClient()
+      const emitted: ChatStreamEvent[] = []
+      const controller = new AbortController()
+      let rejectExit!: (error: Error) => void
+      const exit = new Promise<never>((_resolve, reject) => {
+        rejectExit = reject
+      })
+      void exit.catch(() => {})
+      client.waitForExit = () => exit
+      client.queueTurn({
+        turnId: 'turn_auto_failure',
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_auto_failure',
+            { total: breakdown(800, 0, 10), last: breakdown(800, 0, 10) },
+            1_000
+          ),
+          {
+            method: 'item/started',
+            params: {
+              threadId: 'thread_1',
+              turnId: 'turn_auto_failure',
+              item: { type: 'contextCompaction', id: 'auto_failed' },
+            },
+          },
+        ],
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
+      args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+      args.runtimeModel = astraRuntimeModel()
+      args.contextWindow = 1_000
+      args.signal = controller.signal
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running'))
+      client.emit(
         usageNotification(
           'thread_1',
           'turn_auto_failure',
-          { total: breakdown(800, 0, 10), last: breakdown(800, 0, 10) },
-          1_000
-        ),
-        {
-          method: 'item/started',
-          params: {
-            threadId: 'thread_1',
-            turnId: 'turn_auto_failure',
-            item: { type: 'contextCompaction', id: 'auto_failed' },
+          {
+            total: breakdown(900, 0, 20),
+            last: breakdown(100, 0, 10),
           },
-        },
-      ],
-    })
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => emitted.push(event))
-    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
-    args.runtimeModel = astraRuntimeModel()
-    args.contextWindow = 1_000
-    args.signal = controller.signal
-    const running = runCodexSubscriptionChat(args)
-    await vi.waitFor(() => expect(assistantMessages(conversation.id)[0]?.compactionProgress?.status).toBe('running'))
-    client.emit(
-      usageNotification(
-        'thread_1',
-        'turn_auto_failure',
-        {
-          total: breakdown(900, 0, 20),
-          last: breakdown(100, 0, 10),
-        },
-        1_000
-      )
-    )
-    const reason = 'native operation rejected sk-1234567890abcdefghij'
-    if (terminal === 'cancelled') controller.abort(new Error(reason))
-    if (terminal === 'exit') rejectExit(new Error(reason))
-    else
-      client.emit(
-        completedNotification(
-          'thread_1',
-          'turn_auto_failure',
-          terminal === 'cancelled' ? 'interrupted' : terminal,
-          reason
+          1_000
         )
       )
-    await running
-    const assistant = assistantMessages(conversation.id)[0]
-    expect(assistant.compactionProgress).toMatchObject({
-      status: terminal === 'cancelled' || terminal === 'interrupted' ? 'cancelled' : 'failed',
-      phase: 'native',
-      beforeTokens: 810,
-    })
-    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
-    expect(assistant.contextSnapshot?.usedTokens).toBe(810)
-    expect(assistant.parts.some((part) => part.type === 'compaction')).toBe(false)
-    expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
-    if (terminal === 'failed' || terminal === 'cancelled' || terminal === 'exit') {
-      expect(assistant.compactionProgress?.error).toContain('native operation rejected')
-      expect(assistant.compactionProgress?.error).not.toContain('sk-1234567890abcdefghij')
-      if (terminal !== 'cancelled') expect(assistant.error).toBe(assistant.compactionProgress?.error)
-    }
-    const count = emitted.length
-    client.emit({
-      method: 'item/completed',
-      params: {
-        threadId: 'thread_1',
-        turnId: 'turn_auto_failure',
-        item: { type: 'contextCompaction', id: 'auto_failed' },
-      },
-    })
-    client.emit(
-      usageNotification(
-        'thread_1',
-        'turn_auto_failure',
-        { total: breakdown(999, 0, 0), last: breakdown(1, 0, 0) },
-        1_000
+      const reason = 'native operation rejected sk-1234567890abcdefghij'
+      if (terminal === 'cancelled') controller.abort(new Error(reason))
+      if (terminal === 'exit') rejectExit(new Error(reason))
+      else
+        client.emit(
+          completedNotification(
+            'thread_1',
+            'turn_auto_failure',
+            terminal === 'cancelled' ? 'interrupted' : terminal,
+            reason
+          )
+        )
+      await running
+      const assistant = assistantMessages(conversation.id)[0]
+      expect(assistant.compactionProgress).toMatchObject({
+        status: terminal === 'cancelled' || terminal === 'interrupted' ? 'cancelled' : 'failed',
+        phase: 'native',
+        beforeTokens: 810,
+      })
+      expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+      expect(assistant.contextSnapshot?.usedTokens).toBe(810)
+      expect(assistant.parts.some((part) => part.type === 'compaction')).toBe(false)
+      expect(emitted.some((event) => event.kind === 'compaction')).toBe(false)
+      if (terminal === 'failed' || terminal === 'cancelled' || terminal === 'exit') {
+        expect(assistant.compactionProgress?.error).toContain('native operation rejected')
+        expect(assistant.compactionProgress?.error).not.toContain('sk-1234567890abcdefghij')
+        if (terminal !== 'cancelled') expect(assistant.error).toBe(assistant.compactionProgress?.error)
+      }
+      const count = emitted.length
+      client.emit({
+        method: 'item/completed',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_auto_failure',
+          item: { type: 'contextCompaction', id: 'auto_failed' },
+        },
+      })
+      client.emit(
+        usageNotification(
+          'thread_1',
+          'turn_auto_failure',
+          { total: breakdown(999, 0, 0), last: breakdown(1, 0, 0) },
+          1_000
+        )
       )
-    )
-    expect(emitted).toHaveLength(count)
-    expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
-  })
+      expect(emitted).toHaveLength(count)
+      expect(client.requestCalls.some((call) => call.method === 'thread/compact/start')).toBe(false)
+    }
+  )
 
   it('compacts Astra natively in the same thread and bypasses the portable fallback on success', async () => {
     const workspace = makeWorkspace()
@@ -9875,71 +10230,71 @@ describe('Codex subscription runner', () => {
     ).toBe(true)
   })
 
-  it.each([
-    'failed',
-    'cancelled',
-  ] as const)('reports native compaction %s without inventing a reduced context', async (status) => {
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, {})
-    persistUser(conversation.id, 'user_native_failure', 'Long Astra task', 1)
-    const client = new FakeCodexClient()
-    const controller = new AbortController()
-    client.queueTurn({
-      turnId: 'turn_native_failure',
-      notifications: [
-        usageNotification(
-          'thread_1',
-          'turn_native_failure',
-          { total: breakdown(950, 100, 10), last: breakdown(950, 100, 10) },
-          1_000
-        ),
-        completedNotification('thread_1', 'turn_native_failure', 'interrupted'),
-      ],
-    })
-    client.requestHook = (method) => {
-      if (method !== 'thread/compact/start') return
-      expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
-        status: 'running',
-        phase: 'native',
+  it.each(['failed', 'cancelled'] as const)(
+    'reports native compaction %s without inventing a reduced context',
+    async (status) => {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_native_failure', 'Long Astra task', 1)
+      const client = new FakeCodexClient()
+      const controller = new AbortController()
+      client.queueTurn({
+        turnId: 'turn_native_failure',
+        notifications: [
+          usageNotification(
+            'thread_1',
+            'turn_native_failure',
+            { total: breakdown(950, 100, 10), last: breakdown(950, 100, 10) },
+            1_000
+          ),
+          completedNotification('thread_1', 'turn_native_failure', 'interrupted'),
+        ],
       })
-      if (status === 'cancelled') controller.abort()
-      else
-        setImmediate(() => {
-          client.emit({ method: 'turn/started', params: { threadId: 'thread_1', turn: { id: 'native_failure' } } })
-          client.emit(
-            usageNotification(
-              'thread_1',
-              'native_failure',
-              { total: breakdown(990, 100, 10), last: breakdown(50, 0, 10) },
-              1_000
-            )
-          )
-          client.emit(
-            completedNotification(
-              'thread_1',
-              'native_failure',
-              'failed',
-              'native summary rejected sk-1234567890abcdefghij'
-            )
-          )
+      client.requestHook = (method) => {
+        if (method !== 'thread/compact/start') return
+        expect(assistantMessages(conversation.id)[0]?.compactionProgress).toMatchObject({
+          status: 'running',
+          phase: 'native',
         })
+        if (status === 'cancelled') controller.abort()
+        else
+          setImmediate(() => {
+            client.emit({ method: 'turn/started', params: { threadId: 'thread_1', turn: { id: 'native_failure' } } })
+            client.emit(
+              usageNotification(
+                'thread_1',
+                'native_failure',
+                { total: breakdown(990, 100, 10), last: breakdown(50, 0, 10) },
+                1_000
+              )
+            )
+            client.emit(
+              completedNotification(
+                'thread_1',
+                'native_failure',
+                'failed',
+                'native summary rejected sk-1234567890abcdefghij'
+              )
+            )
+          })
+      }
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
+      args.runtimeModel = astraRuntimeModel()
+      args.contextWindow = 1_000
+      args.signal = controller.signal
+      await runCodexSubscriptionChat(args)
+      const assistant = assistantMessages(conversation.id)[0]
+      expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 960, quality: 'measured' })
+      expect(assistant.compactionProgress).toMatchObject({ status, phase: 'native', beforeTokens: 960 })
+      expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
+      if (status === 'failed') {
+        expect(assistant.error).toContain('native summary rejected')
+        expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
+        expect(assistant.compactionProgress?.error).toBe(assistant.error)
+      }
     }
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.selection = { providerId: 'builtin_codex_subscription', modelId: 'gpt-6-astra' }
-    args.runtimeModel = astraRuntimeModel()
-    args.contextWindow = 1_000
-    args.signal = controller.signal
-    await runCodexSubscriptionChat(args)
-    const assistant = assistantMessages(conversation.id)[0]
-    expect(assistant.contextSnapshot).toMatchObject({ usedTokens: 960, quality: 'measured' })
-    expect(assistant.compactionProgress).toMatchObject({ status, phase: 'native', beforeTokens: 960 })
-    expect(assistant.compactionProgress).not.toHaveProperty('afterTokens')
-    if (status === 'failed') {
-      expect(assistant.error).toContain('native summary rejected')
-      expect(assistant.error).not.toContain('sk-1234567890abcdefghij')
-      expect(assistant.compactionProgress?.error).toBe(assistant.error)
-    }
-  })
+  )
 
   it('retries one fresh Astra thread with experimental context disabled when the account is ineligible', async () => {
     const workspace = makeWorkspace()

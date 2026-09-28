@@ -1,3 +1,4 @@
+import { localMemoriesTableSql, migrateLocalMemorySpaces } from './local-memory-spaces'
 import { DatabaseSync } from 'node:sqlite'
 import { conversationScopeConstraint, migrateStandaloneConversations } from './standalone-conversation-migration'
 import { app } from 'electron'
@@ -170,6 +171,7 @@ export function initStore(file?: string): void {
     // Legacy normalization needs its existing cascades. Only the standalone table rebuild
     // uses a second transaction, after normalization commits and before any runtime starts.
     migrateStandaloneConversations(db)
+    migrateLocalMemorySpaces(db)
     db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_standalone
       ON conversations(scope, archived, position, created_at) WHERE scope = 'standalone'`)
   } catch (error) {
@@ -298,28 +300,7 @@ function initializeSchema(): void {
 
     -- Private durable Memory Center records use opaque conversation provenance without FK so transcript
     -- deletion cannot erase explicitly saved decisions.
-    CREATE TABLE IF NOT EXISTS local_memories (
-      id                     TEXT PRIMARY KEY,
-      workspace_id           TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-      title                  TEXT NOT NULL,
-      content                TEXT NOT NULL,
-      type                   TEXT NOT NULL,
-      status                 TEXT NOT NULL DEFAULT 'active',
-      scope                  TEXT NOT NULL DEFAULT '',
-      tags_json              TEXT NOT NULL DEFAULT '[]',
-      importance             INTEGER NOT NULL DEFAULT 0,
-      pinned                 INTEGER NOT NULL DEFAULT 0,
-      source                 TEXT NOT NULL,
-      origin_conversation_id TEXT,
-      origin_message_id      TEXT,
-      supersedes_id          TEXT REFERENCES local_memories(id) ON DELETE SET NULL,
-      promoted_path          TEXT,
-      content_hash           TEXT NOT NULL,
-      created_at             INTEGER NOT NULL,
-      updated_at             INTEGER NOT NULL,
-      last_used_at           INTEGER,
-      use_count              INTEGER NOT NULL DEFAULT 0
-    );
+    ${localMemoriesTableSql('local_memories')};
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_status
       ON local_memories(workspace_id, status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_type
@@ -328,6 +309,33 @@ function initializeSchema(): void {
       ON local_memories(workspace_id, pinned DESC, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_local_memories_workspace_hash
       ON local_memories(workspace_id, content_hash);
+    -- Frozen memory core per compaction epoch, the sources it was built from, and memories recalled in this epoch.
+    CREATE TABLE IF NOT EXISTS memory_extraction_state (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      space_id        TEXT NOT NULL,
+      last_seq        INTEGER NOT NULL DEFAULT -1,
+      status          TEXT NOT NULL DEFAULT 'idle',
+      error           TEXT,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_run_at     INTEGER,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS memory_consolidation_state (
+      space_id           TEXT PRIMARY KEY,
+      auto_created_since INTEGER NOT NULL DEFAULT 0,
+      last_run_at        INTEGER,
+      updated_at         INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS conversation_memory_state (
+      conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+      space_id        TEXT NOT NULL,
+      core_epoch      TEXT NOT NULL,
+      core_text       TEXT NOT NULL,
+      baseline_json   TEXT NOT NULL DEFAULT '[]',
+      recall_epoch    TEXT NOT NULL DEFAULT '',
+      recalled_json   TEXT NOT NULL DEFAULT '[]',
+      updated_at      INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS local_memory_migrations (
       workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
       source_hash  TEXT NOT NULL,
@@ -362,6 +370,8 @@ function initializeSchema(): void {
       created_at      INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages(conversation_id, seq);
+    -- Reads by creation time (a bot transcript's pages), whatever order the stamps took against seq.
+    CREATE INDEX IF NOT EXISTS idx_chat_msg_conv_created ON chat_messages(conversation_id, created_at, seq);
 
     -- Optional incremental compaction keeps one activation-ready candidate alongside one resumable job.
     -- The candidate may outlive a cancelled job, while conversation deletion cleans both atomically.
@@ -1231,11 +1241,13 @@ function sanitizeChatUsageLedger(): void {
 }
 
 let transactionSequence = 0
+let transactionDepth = 0
 
 /** Savepoints preserve atomicity for both independent operations and nested migration steps. */
 export function transaction(fn: () => void): void {
   const savepoint = `maestrly_transaction_${++transactionSequence}`
   db.exec(`SAVEPOINT ${savepoint}`)
+  transactionDepth++
   try {
     fn()
     db.exec(`RELEASE SAVEPOINT ${savepoint}`)
@@ -1243,7 +1255,14 @@ export function transaction(fn: () => void): void {
     db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`)
     db.exec(`RELEASE SAVEPOINT ${savepoint}`)
     throw error
+  } finally {
+    transactionDepth--
   }
+}
+
+/** Whether a `transaction` is running: what the connection reads meanwhile may still be rolled back. */
+export function inTransaction(): boolean {
+  return transactionDepth > 0
 }
 
 /** Expose DatabaseSync to focused persistence modules. */

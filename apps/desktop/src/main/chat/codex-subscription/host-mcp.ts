@@ -5,6 +5,7 @@
  * independent `task` calls emitted in one response executed one after another. Tools from an MCP server
  * configured with `supports_parallel_tool_calls` take the shared read lock and overlap (verified against the
  * pinned 0.155.1 runtime; 0.153.4 still ran these MCP calls serially, with otherwise identical results).
+ * Screenshots also use MCP because GPT-6 code mode can forward MCP image items; dynamic tool images flatten to text.
  *
  * Security: binds 127.0.0.1, rejects non-loopback `Host` headers (DNS rebinding), bounds the body and requires a
  * per-process bearer token. Codex reads the token from its own environment (`bearer_token_env_var`), so the
@@ -20,8 +21,17 @@ import type { CodexToolContentItem } from '../tool-output'
 
 export const CODEX_HOST_MCP_SERVER_NAME = 'maestrly'
 export const CODEX_HOST_MCP_TOKEN_ENV = 'MAESTRLY_CODEX_HOST_MCP_TOKEN'
-/** Host-owned tools that must overlap when the model emits several of them in one response. */
-export const CODEX_HOST_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(['task', 'delegate'])
+/** Image-producing app tools have read-only effects and may share Codex's MCP read lock. */
+export const CODEX_HOST_MCP_IMAGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'browser_screenshot',
+  'computer_screenshot',
+])
+/** Delegation tools overlap, while screenshot content remains visible to code-mode models. */
+export const CODEX_HOST_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'task',
+  'delegate',
+  ...CODEX_HOST_MCP_IMAGE_TOOL_NAMES,
+])
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 const MAX_TOOLSETS = 256
@@ -262,6 +272,18 @@ async function ensureServer(): Promise<number> {
 }
 
 /**
+ * Dotted thread-config entries that set variables for the shells Codex runs in one thread. A keyed `set` entry
+ * merges with the user's policy, unlike `exclude`/`filters` which replace or conflict with it.
+ */
+export function codexShellEnvironmentConfig(env: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const config: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (typeof value === 'string') config[`shell_environment_policy.set.${name}`] = value
+  }
+  return config
+}
+
+/**
  * Publishes `tools` for one conversation and returns the dotted thread-config overrides that attach the host MCP
  * server. Keys are content-addressed so a thread kept loaded by Codex keeps resolving its original catalog.
  */
@@ -272,8 +294,7 @@ export async function codexHostMcpThreadConfig(args: {
   return {
     [`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`]: await codexHostMcpServerConfig(args),
     // Codex shells inherit the app-server environment by default; blank the token for commands the model runs.
-    // A keyed `set` entry merges with user policy, unlike `exclude`/`filters` which replace or conflict.
-    [`shell_environment_policy.set.${CODEX_HOST_MCP_TOKEN_ENV}`]: '',
+    ...codexShellEnvironmentConfig({ [CODEX_HOST_MCP_TOKEN_ENV]: '' }),
   }
 }
 

@@ -50,7 +50,8 @@ export interface BackgroundCompactionWork {
   updatedAt: number
 }
 
-export type BackgroundCompactionPauseReason = 'stopped' | 'archived' | 'selection' | 'disabled'
+/** `suspended` is set by the conversation's owner (a fleet bot that is not installed) and only `resume` lifts it. */
+export type BackgroundCompactionPauseReason = 'stopped' | 'archived' | 'selection' | 'disabled' | 'suspended'
 
 export interface BackgroundCompactionRecord {
   conversationId: string
@@ -115,7 +116,10 @@ export interface BackgroundCompactionDiagnostic {
 }
 
 export interface BackgroundCompactionCoordinatorDeps {
-  getConfig(): BackgroundCompactionConfig | unknown
+  /** The configuration that applies to this conversation: its own override (a fleet bot's) or the global one. */
+  getConfig(conversationId: string): BackgroundCompactionConfig | unknown
+  /** True when the conversation has its own configuration, so a global change leaves it alone. */
+  hasConfigOverride?(conversationId: string): boolean
   getConversation(id: string): BackgroundCompactionConversation | null | undefined
   getMessages(id: string): ChatMessage[]
   resolveSelection(

@@ -10,6 +10,8 @@ export interface PlatformInfo {
   openLabels: { terminal: string; files: string }
 
   isE2E: boolean
+  /** This app is a bot's own Maestrly (`MAESTRLY_BOT_MODE`): its window only offers the settings a bot needs. */
+  botMode: boolean
 }
 
 export interface AppInfo {
@@ -33,6 +35,8 @@ const platformInfo: PlatformInfo = {
     files: PLATFORM_OS === 'win' ? 'Explorer' : PLATFORM_OS === 'mac' ? 'Finder' : 'Files',
   },
   isE2E: process.env.AGENTS_E2E === '1',
+  // Same variable as FLEET_BOT_ENV.mode, read by main's isBotMode(); a literal keeps the protocol out of the preload.
+  botMode: process.env.MAESTRLY_BOT_MODE === '1',
 }
 
 export const appApi = {

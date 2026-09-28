@@ -1,3 +1,6 @@
+import { MEMORY_SETTINGS_KEY, parseMemorySettings, readMemorySettings } from '../memory/settings'
+import { scheduleMemoryExtraction } from '../memory/extraction/scheduler'
+import { prepareTurnMemory } from '../memory/turn-memory'
 import { conversationPermissionScope } from '../../shared/conversation-scope'
 import { resolveConversationExecutionContext } from '../conversation-context'
 import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
@@ -5,7 +8,11 @@ import { nameStandaloneConversationFromText } from '../standalone-conversation-t
 import { autonomousPolicy } from './autonomous'
 import { emitChatHost } from './host-events'
 import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
-import { clearHumanTurnOrigin, isHumanTurnAdmission, recordHumanTurnOrigin } from './conversation-dispatch-authorization'
+import {
+  clearHumanTurnOrigin,
+  isHumanTurnAdmission,
+  recordHumanTurnOrigin,
+} from './conversation-dispatch-authorization'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
 import {
   assertBotTurnAdmission,
@@ -98,6 +105,7 @@ import {
   PermissionBroker,
   AUTO_RULESET,
   BYOK_DEFAULT_RULESET,
+  BOT_MEMORY_WRITE_RULES,
   YOLO_RULESET,
   type PermissionRequest,
   type Ruleset,
@@ -211,6 +219,8 @@ import {
   getMessageSeq,
   lastConversationContextMessage,
   listConversationContextMessages,
+  listActiveConversationContextMessages,
+  hasConversationContextMessages,
   listExecutionContextMessages,
   listPublicChatMessagesPage,
   recordChatUsageAttempt,
@@ -402,6 +412,8 @@ import {
   type PortableSummaryCheckpoint,
 } from './portable-context'
 import { chatDiag } from './diag-log'
+import { getCompactionSummarizer } from './compaction-summarizer'
+import { isBotMode } from '../fleet/instance/config'
 import { invalidateUnifiedUsageCache } from '../usage/usage-service'
 import { registerSubscriptionUsageIpc } from './subscription-usage-ipc'
 import {
@@ -425,7 +437,11 @@ import {
 } from './background-compaction/activation'
 import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '../../shared/subagent-profile-effort'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from '../../shared/background-compaction'
-import { ChatBackgroundCompactionCoordinator, parseBackgroundCompactionConfig } from './background-compaction'
+import {
+  backgroundCompactionConfigIdentity,
+  ChatBackgroundCompactionCoordinator,
+  parseBackgroundCompactionConfig,
+} from './background-compaction'
 import type { BackgroundCompactionAttemptHandle } from './background-compaction/types'
 
 type SafeSend = (channel: string, payload: unknown) => void
@@ -2026,6 +2042,66 @@ function backgroundCompactionConfig(): BackgroundCompactionConfig | undefined {
   }
 }
 
+/** Per-conversation background-compaction settings (a fleet bot's own), kept in memory by their owner. */
+const backgroundCompactionOverrides = new Map<string, BackgroundCompactionConfig>()
+const BACKGROUND_COMPACTION_DISABLED: BackgroundCompactionConfig = {
+  enabled: false,
+  intervalTokens: 100_000,
+  selection: null,
+}
+
+/** The background-compaction settings that apply to one conversation: its own override, else the global one. */
+function effectiveBackgroundCompactionConfig(conversationId: string): BackgroundCompactionConfig | undefined {
+  return backgroundCompactionOverrides.get(conversationId) ?? backgroundCompactionConfig()
+}
+
+export async function fleetChatCommands(conversationId: string) {
+  const conv = typeof conversationId === 'string' ? getConversation(conversationId) : undefined
+  // Skills enter the palette WITHOUT bodies: choosing one only inserts `/name` into the draft; expansion happens
+  // on send (startSend). Show only ENABLED, `user-invocable` skills.
+  const skills = conv
+    ? (await effectiveSkills(conv.cwd, conversationId))
+        .filter((s) => s.userInvocable)
+        .map((s) => ({
+          name: s.name,
+          description: s.description,
+          ...(s.argumentHint ? { argumentHint: s.argumentHint } : {}),
+          source: s.source,
+        }))
+    : []
+  return {
+    prompts: listUserPrompts(),
+    project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [],
+    skills,
+  }
+}
+
+export function fleetChatGetConvTools(conversationId: string): ChatConvTools {
+  return typeof conversationId === 'string'
+    ? convToolsFor(conversationId)
+    : { app: false, mcpDisabled: [], imageGen: getAppFlag(IMAGE_GEN_FLAG, true) }
+}
+
+export function fleetChatSetConvTools(
+  conversationId: string,
+  patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
+): { ok: boolean } {
+  if (typeof conversationId === 'string') {
+    const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
+    patchConvChat(conversationId, { tools: { ...cur, ...(patch ?? {}) } })
+  }
+  return { ok: true }
+}
+
+export function fleetChatConfig(): Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> {
+  const config = buildConfig()
+  return {
+    mcpServers: config.mcpServers.map(({ id, name, transport, enabled }) => ({ id, name, transport, enabled })),
+    appToolsEnabled: config.appToolsEnabled,
+    imageGenEnabled: config.imageGenEnabled,
+  }
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -2076,6 +2152,7 @@ function buildConfig(): ChatConfig {
       name: s.name,
       transport: s.transport,
       enabled: s.enabled,
+      unavailable: s.unavailable === true,
       url: s.url,
       command: s.command,
     })),
@@ -2088,6 +2165,7 @@ function buildConfig(): ChatConfig {
     defaultSelection: defaultSelection(),
     defaultReasoning: defaultReasoningEffort(),
     defaultFastMode: getAppFlag(CHAT_DEFAULT_FAST_MODE_KEY, false),
+    memory: readMemorySettings(),
     ...(backgroundCompaction ? { backgroundCompaction } : {}),
     imageInterpreter: getImageInterpreter(),
     subscriptionFailover: {
@@ -2472,14 +2550,13 @@ function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
 
 /** Base conversation ruleset for the mode. */
 function rulesetFor(conversationId: string): Ruleset {
-  switch (permModeFor(conversationId)) {
-    case 'full':
-      return YOLO_RULESET
-    case 'auto':
-      return AUTO_RULESET
-    default:
-      return BYOK_DEFAULT_RULESET
-  }
+  const base =
+    permModeFor(conversationId) === 'full'
+      ? YOLO_RULESET
+      : permModeFor(conversationId) === 'auto'
+        ? AUTO_RULESET
+        : BYOK_DEFAULT_RULESET
+  return isBotMode() ? [...base, ...BOT_MEMORY_WRITE_RULES] : base
 }
 
 /** Effective conversation behavior mode (default agent). */
@@ -2773,7 +2850,7 @@ async function readMentionPart(cwd: string, m: Mention): Promise<MessagePart | n
  * custom/proxy retains capabilities but has unknown pricing. No providerId → canonical metadata (compat). Also powers
  * auto-compact to keep them aligned. Returns raw sources too (so the UI can show the actual ceiling).
  */
-async function effectiveModelMeta(
+export async function effectiveModelMeta(
   modelId: string,
   providerId?: string,
   signal?: AbortSignal
@@ -3110,7 +3187,7 @@ async function preflightContext(
     const nativeTransfer =
       isCodexSubscriptionProvider(selection.providerId) &&
       projection?.source === 'portable-transcript' &&
-      listConversationContextMessages(conversationId).length > 0
+      hasConversationContextMessages(conversationId)
     if (nativeTransfer) {
       chatDiag({
         kind: 'preflight-context-window-unknown',
@@ -3131,7 +3208,7 @@ async function preflightContext(
   const exceedsTransport = (projectionSource: string): boolean =>
     isCodexSubscriptionProvider(selection.providerId) &&
     codexTransferCharacters(
-      projectionSource === 'runtime-usage' ? [] : listConversationContextMessages(conversationId),
+      projectionSource === 'runtime-usage' ? [] : listActiveConversationContextMessages(conversationId),
       pendingParts
     ) > CODEX_TRANSFER_MAX_CHARACTERS
   if (!load.shouldCompact && !exceedsTransport(source)) return { ok: true, compacted: false }
@@ -3242,8 +3319,8 @@ async function currentChatHistoryStats(
 ): Promise<StoredChatHistoryStats> {
   const selection = selectionOverride ?? selectionFor(conversationId)
   // Binding lastMessageId / portable projection: MAIN context only (isolated rounds do not invalidate resume
-  // or inflate the reseed/preflight projection).
-  const history = listConversationContextMessages(conversationId)
+  // or inflate the reseed/preflight projection), from the last portable marker on: only estimates read it.
+  const history = listActiveConversationContextMessages(conversationId)
   const latestMessage = lastConversationContextMessage(conversationId)
   let stats: StoredChatHistoryStats
   let runtimeReusable = false
@@ -3460,6 +3537,10 @@ async function currentChatHistoryStats(
 
 /** Internal send options (used by plan decision turns; not exposed to user IPC). */
 interface StartSendOpts {
+  /** Host-generated continuations skip memory admission. */
+  skipMemory?: boolean
+  /** Recall against the actual input when the host wraps it in a prompt. */
+  memoryQuery?: string
   remoteAdmission?: boolean
   botAdmission?: BotTurnAdmission
   runnerAdmission?: (run: ActiveRun) => void
@@ -3498,7 +3579,6 @@ interface StartSendOpts {
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
   dispatchSeed?: { dispatchId: string; sourceConversationId: string }
 }
-
 
 async function startSend(
   deps: ChatIpcDeps,
@@ -3975,6 +4055,15 @@ async function startSend(
       if (p) parts.push(p)
     }
     for (const p of hiddenParts) parts.push(p)
+    const turnMemory =
+      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory
+        ? null
+        : await prepareTurnMemory({
+            conversationId,
+            text: opts?.memoryQuery ?? text,
+            signal: operation.controller.signal,
+          })
+    if (turnMemory) for (const p of turnMemory.hiddenParts) parts.push(p)
 
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
@@ -4446,8 +4535,10 @@ async function startSend(
       ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
       ...(reviewLoopMessageMeta ?? {}),
+      ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
     })
+    turnMemory?.commit()
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
     operation.pendingMessage = undefined
@@ -4482,6 +4573,7 @@ async function startSend(
     }
     send(`chat:delta:${conversationId}`, {
       kind: 'user-saved',
+      ...(turnMemory?.memoryContext ? { memoryRecalled: true } : {}),
       compacted: preflight.compacted,
       // New descriptions changed ALREADY-rendered parts (optimistic bubble/history) → UI reloads the page.
       ...(imagesDescribed ? { imagesDescribed } : {}),
@@ -4618,19 +4710,28 @@ async function startSend(
             }
           : {}),
       }).then((result) => {
+        if (result.billedModel && (result.usage || result.runtimeEstimatedCostUsd != null)) {
+          recordChatUsageAttempt({
+            id: randomUUID(),
+            conversationId,
+            model: result.billedModel,
+            usage: result.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+          })
+        }
         if (!result.ok) {
           throw Object.assign(new Error(result.error ?? 'Portable compaction failed.'), {
-            partialUsage: result.usage,
-            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+            partialUsage: result.billedModel ? undefined : result.usage,
+            runtimeEstimatedCostUsd: result.billedModel ? undefined : result.runtimeEstimatedCostUsd,
           })
         }
         if (result.ok && result.summary && !isolated) backgroundCoordinator?.manualCompaction(conversationId)
         return result.ok && result.summary
           ? {
               summary: result.summary,
-              usage: result.usage,
+              usage: result.billedModel ? undefined : result.usage,
               // Native helper-call cost estimate → runner adds it to turn cost.
-              ...(result.runtimeEstimatedCostUsd != null
+              ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
                 ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
                 : {}),
             }
@@ -5472,6 +5573,7 @@ async function startSend(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
+        if (!isolated && !controller.signal.aborted) scheduleMemoryExtraction(conversationId)
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         const guard = maestroGuardContinuation
         if (guard) {
@@ -6255,7 +6357,7 @@ async function logoutGrokSubscriptionAccount(
 }
 
 /** Completely removes an additional SLOT: logout/home cleanup + threads/sessions + defaults + slot. */
-async function removeSubscriptionAccountSlot(accountId: string): Promise<{ ok: boolean; error?: string }> {
+export async function removeSubscriptionAccountSlot(accountId: string): Promise<{ ok: boolean; error?: string }> {
   const account = getSubscriptionAccount(accountId)
   if (!account) return { ok: false, error: 'unknown-account' }
   const providerId = subscriptionProviderIdFor(account.kind, accountId)
@@ -6384,6 +6486,9 @@ interface CompactOpts {
   executionId?: string
   /** Frozen profile (never selectionFor/live prefs). */
   selectionOverride?: FrozenChatSelection
+  /** Frozen billing and summary model; the conversation selection still owns progress and native cleanup. */
+  summarizerOverride?: FrozenChatSelection
+  origin?: 'manual'
   /** Behavior and canonical identity already frozen by an active turn admission. */
   harness?: ResolvedHarness
   resolvedModelId?: string
@@ -6414,6 +6519,7 @@ interface CompactResult {
   summary?: string
   usage?: NormalizedAiUsage
   runtimeEstimatedCostUsd?: number
+  billedModel?: ChatModelRef
 }
 
 function compactionDiagnostic(error: unknown): string {
@@ -6441,16 +6547,7 @@ async function retireNativeBindingAfterPortableCompaction(
   }
 }
 
-async function compact(
-  conversationId: string,
-  opts: CompactOpts = {}
-): Promise<{
-  ok: boolean
-  error?: string
-  summary?: string
-  usage?: NormalizedAiUsage
-  runtimeEstimatedCostUsd?: number
-}> {
+async function compact(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   if (opts.allowActive) return compactReserved(conversationId, opts)
   const providerId = selectionFor(conversationId)?.providerId ?? null
   const operation = reserveConversationOperation(conversationId, providerId, opts.operation)
@@ -6477,6 +6574,21 @@ async function compact(
   }
 }
 
+export function startManualCompaction(
+  conversationId: string,
+  onFinished: (result: CompactResult) => void
+): { ok: boolean; error?: string } {
+  if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
+  if (active.has(conversationId) || pendingConversationOperations.has(conversationId))
+    return { ok: false, error: 'busy' }
+  if (activeChatContext(listConversationContextMessages(conversationId)).messages.length < 2)
+    return { ok: false, error: 'too-short' }
+  void compact(conversationId, { origin: 'manual' }).then(onFinished, (error) =>
+    onFinished({ ok: false, error: compactionDiagnostic(error) })
+  )
+  return { ok: true }
+}
+
 /** Exported for isolated compaction frozen-profile tests (review-loop). */
 export async function compactReserved(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   const previousStatus = opts.operation ? getConversation(conversationId)?.status : undefined
@@ -6485,6 +6597,23 @@ export async function compactReserved(conversationId: string, opts: CompactOpts 
     savedDeps?.emitStatus(conversationId, 'working', { silent: true })
   }
   try {
+    const resolver = !opts.executionId && !opts.historyOverride ? getCompactionSummarizer(conversationId) : undefined
+    if (resolver) {
+      try {
+        const profile = resolver()
+        if (!profile) return { ok: false, error: 'compaction-model-unavailable' }
+        const resolved = await resolveReviewLoopSelection(conversationId, {
+          providerId: profile.providerId,
+          modelId: profile.modelId,
+          effort: profile.effort,
+          fastMode: profile.fastMode,
+        })
+        if (!resolved.ok) return { ok: false, error: 'compaction-model-unavailable' }
+        opts = { ...opts, summarizerOverride: resolved.selection, harness: undefined, resolvedModelId: undefined }
+      } catch {
+        return { ok: false, error: 'compaction-model-unavailable' }
+      }
+    }
     return await compactReservedWithProgress(conversationId, opts)
   } finally {
     if (opts.operation) {
@@ -6501,6 +6630,12 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   // attach observations to an existing assistant, always rereading it before a metadata write.
   const ownsProgress = opts.persist !== false && !opts.executionId && !opts.onProgress && !active.has(conversationId)
   const selection = opts.selectionOverride ?? selectionFor(conversationId)
+  const billedSelection = opts.summarizerOverride
+    ? {
+        providerId: opts.summarizerOverride.providerId,
+        modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+      }
+    : selection
   const history = ownsProgress ? listConversationContextMessages(conversationId) : []
   const anchor = [...history].reverse().find((message) => message.role === 'assistant' && message.model)
   const stillOwnsOperation = () =>
@@ -6596,6 +6731,11 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
     publisher?.dispose()
   }
   result ??= { ok: false, error: 'Portable compaction failed.' }
+  if (opts.summarizerOverride)
+    result.billedModel = {
+      providerId: opts.summarizerOverride.providerId,
+      modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+    }
   if (result.error) result.error = compactionDiagnostic(result.error)
   // The successful boundary is the newest visible message on reload; carry the finished
   // operation there so the renderer does not need to cross an older context boundary.
@@ -6621,7 +6761,7 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
     !result.ok &&
     opts.persist !== false &&
     !opts.executionId &&
-    selection &&
+    billedSelection &&
     stillOwnsOperation() &&
     (!progressId || getChatMessage(conversationId, anchor!.id)?.compactionProgress?.id === progressId) &&
     getConversation(conversationId)
@@ -6634,7 +6774,7 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
         role: 'assistant',
         parts: [],
         createdAt: Date.now(),
-        model: { providerId: selection.providerId, modelId: selection.modelId },
+        model: { providerId: billedSelection.providerId, modelId: billedSelection.modelId },
         error: result.error,
         usage: {
           usageVersion: 2,
@@ -6672,7 +6812,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   if (!opts.allowActive && active.has(conversationId)) return { ok: false, error: 'busy' }
   // Mid-turn round compaction carries the full FROZEN profile (reasoning/fastMode/identity);
   // the normal path rereads the live selection.
-  const frozen = opts.selectionOverride ?? null
+  const frozen = opts.summarizerOverride ?? opts.selectionOverride ?? null
   const selection = frozen
     ? {
         providerId: frozen.providerId,
@@ -7065,18 +7205,47 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         id: randomUUID(),
         conversationId,
         role: 'assistant',
-        parts: [{ type: 'compaction', id: randomUUID(), text: summary, strategy: 'summary' }],
-        model: selection,
+        parts: [
+          {
+            type: 'compaction',
+            id: randomUUID(),
+            text: summary,
+            strategy: 'summary',
+            ...(opts.origin ? { origin: opts.origin } : {}),
+          },
+        ],
+        model: opts.summarizerOverride ? (selectionFor(conversationId) ?? selection) : selection,
         usage: {
           usageVersion: 2,
-          input: usage?.input ?? 0,
-          output: usage?.output ?? 0,
-          ...(usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
-          ...(usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          input: opts.summarizerOverride ? 0 : (usage?.input ?? 0),
+          output: opts.summarizerOverride ? 0 : (usage?.output ?? 0),
+          ...(!opts.summarizerOverride && usage?.cacheRead ? { cachedInput: usage.cacheRead } : {}),
+          ...(!opts.summarizerOverride && usage?.cacheCreate ? { cacheCreate: usage.cacheCreate } : {}),
+          ...(opts.summarizerOverride
+            ? {
+                subInput: usage?.input ?? 0,
+                subOutput: usage?.output ?? 0,
+                subCachedInput: usage?.cacheRead ?? 0,
+                subCacheCreate: usage?.cacheCreate ?? 0,
+                subagentUsage: [
+                  {
+                    providerId: opts.summarizerOverride.providerId,
+                    modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+                    input: usage?.input ?? 0,
+                    output: usage?.output ?? 0,
+                    cachedInput: usage?.cacheRead ?? 0,
+                    cacheCreate: usage?.cacheCreate ?? 0,
+                    ...(compacted.runtimeEstimatedCostUsd != null
+                      ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
+                      : {}),
+                  },
+                ],
+              }
+            : {}),
           contextInput: estimateTextTokens(summary),
           contextOutput: 0,
           ...(contextWindow ? { modelContextWindow: contextWindow } : {}),
-          ...(compacted.runtimeEstimatedCostUsd != null
+          ...(!opts.summarizerOverride && compacted.runtimeEstimatedCostUsd != null
             ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
             : {}),
           billingOnly: true,
@@ -7203,12 +7372,15 @@ async function waitForBackgroundDispatch(providerId: string, signal?: AbortSigna
 
 function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
   return (backgroundCoordinator ??= new ChatBackgroundCompactionCoordinator({
-    getConfig: () => backgroundCompactionConfig() ?? { enabled: false, intervalTokens: 100_000, selection: null },
+    getConfig: (conversationId) =>
+      effectiveBackgroundCompactionConfig(conversationId) ?? BACKGROUND_COMPACTION_DISABLED,
+    hasConfigOverride: (conversationId) => backgroundCompactionOverrides.has(conversationId),
     getConversation: (id) => {
       const conv = getConversation(id)
       return conv ? { id, archived: Boolean(conv.archived) } : null
     },
-    getMessages: listConversationContextMessages,
+    // Candidates hash and summarize only what follows the last portable marker.
+    getMessages: listActiveConversationContextMessages,
     resolveSelection: async (id, profile, signal) => {
       const result = await resolveReviewLoopSelection(id, profile)
       signal.throwIfAborted()
@@ -7287,7 +7459,7 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
   }))
 }
 
-function backgroundCompactionStatus(conversationId: string): BackgroundCompactionStatus {
+export function backgroundCompactionStatus(conversationId: string): BackgroundCompactionStatus {
   try {
     return getBackgroundCoordinator().status(conversationId)
   } catch {
@@ -7307,7 +7479,11 @@ async function maybeScheduleBackgroundCompaction(
   boundary?: { messageId: string; partId: string },
   contextWindow?: number
 ): Promise<void> {
-  if (chatDisposePromise || !backgroundCompactionConfig()?.enabled || lookupReviewLoopByConversation(conversationId))
+  if (
+    chatDisposePromise ||
+    !effectiveBackgroundCompactionConfig(conversationId)?.enabled ||
+    lookupReviewLoopByConversation(conversationId)
+  )
     return
   if (active.has(conversationId) && !boundary) return
   const epoch = backgroundNotificationEpochs.get(conversationId) ?? 0
@@ -7317,7 +7493,9 @@ async function maybeScheduleBackgroundCompaction(
       contextWindow ??
       (selection ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow : undefined)
     // Unknown conversation metadata does not prevent preparation; admission still uses its own real limit.
-    const window = knownWindow ?? Math.min(backgroundCompactionConfig()?.intervalTokens ?? 100_000, 1_000_000_000) * 2
+    const window =
+      knownWindow ??
+      Math.min(effectiveBackgroundCompactionConfig(conversationId)?.intervalTokens ?? 100_000, 1_000_000_000) * 2
     if (
       !window ||
       !getConversation(conversationId) ||
@@ -7337,7 +7515,7 @@ async function activateBackgroundCompactionCandidate(
   contextWindow: number
 ): Promise<{ summary: string; prepared: PreparedMarker } | null> {
   const startedAt = Date.now()
-  if (!backgroundCompactionConfig()?.enabled) return null
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return null
   const coordinator = getBackgroundCoordinator()
   const candidate = coordinator.getCandidate(conversationId)
   if (!candidate) return null
@@ -7397,7 +7575,31 @@ async function activateBackgroundCompactionCandidate(
   return { summary: candidate.summary, prepared }
 }
 
-async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
+export async function setMemorySettings(value: unknown): Promise<{ ok: boolean; error?: string }> {
+  const settings = parseMemorySettings(value)
+  if (!settings) return { ok: false, error: 'invalid-input' }
+  const selection = settings.extraction.selection
+  if (selection) {
+    const { meta } = await effectiveModelMeta(selection.modelId, selection.providerId)
+    const metadata = { status: meta ? ('available' as const) : ('unavailable' as const), meta }
+    const effort = validateSubagentProfileEffort(selection, metadata)
+    const fast = validateSubagentProfileFastMode(selection, metadata)
+    if (!effort.valid || !fast.valid)
+      return {
+        ok: false,
+        error:
+          (
+            effort.diagnostics.find((item) => item.severity === 'error') ??
+            fast.diagnostics.find((item) => item.severity === 'error')
+          )?.message ?? 'invalid-memory-model',
+      }
+  }
+  if (settings.extraction.enabled && !selection) return { ok: false, error: 'memory-model-required' }
+  setAppSetting(MEMORY_SETTINGS_KEY, JSON.stringify(settings))
+  return { ok: true }
+}
+
+export async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: boolean; error?: string }> {
   const config = parseBackgroundCompactionConfig(value)
   if (!config) return { ok: false, error: 'invalid-input' }
   if (config.selection) {
@@ -7421,9 +7623,59 @@ async function setBackgroundCompactionConfig(value: unknown): Promise<{ ok: bool
   return { ok: true }
 }
 
-async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
+/**
+ * Gives one conversation its own background-compaction settings (a fleet bot sets them for its conversation
+ * instead of writing the global setting), or with `null` returns it to the global setting. Only that
+ * conversation's prepared work is reset, and only when its effective settings actually change. Validation is
+ * structural; the owner validates the provider-specific effort and Fast mode before calling this.
+ */
+export function setConversationCompactionOverride(
+  conversationId: string,
+  config: BackgroundCompactionConfig | null
+): void {
+  const next = config === null ? null : parseBackgroundCompactionConfig(config)
+  if (config !== null && !next) throw new Error('invalid-input')
+  const identity = (value: BackgroundCompactionConfig | undefined): string =>
+    backgroundCompactionConfigIdentity(value ?? BACKGROUND_COMPACTION_DISABLED)
+  const previous = identity(effectiveBackgroundCompactionConfig(conversationId))
+  if (next) backgroundCompactionOverrides.set(conversationId, next)
+  else backgroundCompactionOverrides.delete(conversationId)
+  if (identity(effectiveBackgroundCompactionConfig(conversationId)) === previous) return
+  getBackgroundCoordinator().configureChanged(conversationId)
+}
+
+/**
+ * Suspends one conversation's background compaction until `resumeConversationBackgroundCompaction`, whatever its
+ * settings, and waits at most `timeoutMs` for a running round to return; a result that arrives later is discarded.
+ * The suspension is stored with the conversation. A fleet bot suspends its conversation when it is uninstalled.
+ */
+export async function suspendConversationBackgroundCompaction(
+  conversationId: string,
+  timeoutMs = 3_000
+): Promise<void> {
+  // A notification still waiting for model metadata must not schedule a round afterwards.
+  backgroundNotificationEpochs.set(conversationId, (backgroundNotificationEpochs.get(conversationId) ?? 0) + 1)
+  const coordinator = getBackgroundCoordinator()
+  coordinator.suspend(conversationId)
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([
+    coordinator.roundSettled(conversationId),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    }),
+  ])
+  if (timer) clearTimeout(timer)
+}
+
+/** Lifts `suspendConversationBackgroundCompaction`; the conversation's next turn schedules work again. */
+export function resumeConversationBackgroundCompaction(conversationId: string): void {
+  getBackgroundCoordinator().resume(conversationId)
+}
+
+export async function retryBackgroundCompaction(conversationId: string): Promise<{ ok: boolean; error?: string }> {
   if (!getConversation(conversationId)) return { ok: false, error: 'invalid-conversation' }
-  if (!backgroundCompactionConfig()?.enabled) return { ok: false, error: 'not-configured' }
+  if (getBackgroundCoordinator().isSuspended(conversationId)) return { ok: false, error: 'suspended' }
+  if (!effectiveBackgroundCompactionConfig(conversationId)?.enabled) return { ok: false, error: 'not-configured' }
   const selection = selectionFor(conversationId)
   const window = selection
     ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow
@@ -8309,8 +8561,9 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
 
   deps.mhandle('chat:config', () => buildConfig())
+  deps.mhandle('chat:memory:set', (_event, value: unknown) => setMemorySettings(value))
   deps.mhandle('chat:background-compaction:set', (_event, config: BackgroundCompactionConfig) =>
-    setBackgroundCompactionConfig(config)
+    isBotMode() ? Promise.resolve({ ok: false, error: 'managed-by-owner' }) : setBackgroundCompactionConfig(config)
   )
   deps.mhandle('chat:background-compaction:retry', (_event, conversationId: string) =>
     typeof conversationId === 'string' && conversationId
@@ -9171,26 +9424,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   // '/' palette: user prompts (app_settings) + project commands (.md in cwd). Built-in ACTIONS
   // (/clear etc.) are defined in the renderer.
-  deps.mhandle('chat:commands', async (_e, conversationId: string) => {
-    const conv = typeof conversationId === 'string' ? getConversation(conversationId) : undefined
-    // Skills enter the palette WITHOUT bodies: choosing one only inserts `/name` into the draft; expansion happens
-    // on send (startSend). Show only ENABLED, `user-invocable` skills.
-    const skills = conv
-      ? (await effectiveSkills(conv.cwd, conversationId))
-          .filter((s) => s.userInvocable)
-          .map((s) => ({
-            name: s.name,
-            description: s.description,
-            ...(s.argumentHint ? { argumentHint: s.argumentHint } : {}),
-            source: s.source,
-          }))
-      : []
-    return {
-      prompts: listUserPrompts(),
-      project: conv && conv.scope !== 'standalone' ? await listProjectCommands(conv.cwd) : [],
-      skills,
-    }
-  })
+  deps.mhandle('chat:commands', (_e, conversationId: string) => fleetChatCommands(conversationId))
   // ---- Skill management (Settings + conversation popover) ----
   // `conversationId` is optional: without it, show only GLOBAL skills (~/.agents|.claude/skills) — as in
   // Settings, which has no cwd.
@@ -9434,7 +9668,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Compact history (summarize through the model and replace with a recap) — /compact.
   deps.mhandle('chat:compact', (_e, conversationId: string) =>
     typeof conversationId === 'string'
-      ? compact(conversationId)
+      ? compact(conversationId, { origin: 'manual' })
       : Promise.resolve({ ok: false, error: 'invalid-input' })
   )
 
@@ -10084,20 +10318,11 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
 
   // Tools PER CONVERSATION (app-tools + disabled MCP servers + image generation).
-  deps.mhandle('chat:get-conv-tools', (_e, conversationId: string) =>
-    typeof conversationId === 'string'
-      ? convToolsFor(conversationId)
-      : { app: false, mcpDisabled: [], imageGen: getAppFlag(IMAGE_GEN_FLAG, true) }
-  )
+  deps.mhandle('chat:get-conv-tools', (_e, conversationId: string) => fleetChatGetConvTools(conversationId))
   deps.mhandle(
     'chat:set-conv-tools',
-    (_e, conversationId: string, patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) => {
-      if (typeof conversationId === 'string') {
-        const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
-        patchConvChat(conversationId, { tools: { ...cur, ...(patch ?? {}) } })
-      }
-      return { ok: true }
-    }
+    (_e, conversationId: string, patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) =>
+      fleetChatSetConvTools(conversationId, patch)
   )
 
   // Edit last message + resend: truncate from the edited message seq and run a new turn.
@@ -10295,9 +10520,7 @@ export async function listChatProviderModels(
     if (!status.authenticated) return []
     try {
       return visible(
-        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map(
-          (model) => model.value
-        )
+        (await getClaudeSubscriptionManager(accountId).listModels(undefined, force)).map((model) => model.value)
       )
     } catch (error) {
       throw new Error(claudeSubscriptionErrorMessage(error))
@@ -10308,9 +10531,7 @@ export async function listChatProviderModels(
     const status = await cursorAuthStatus(force, accountId)
     if (!status.authenticated) return []
     try {
-      return visible(
-        (await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
-      )
+      return visible((await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id))
     } catch (error) {
       throw new Error(cursorSdkErrorMessage(error))
     }
@@ -10319,9 +10540,7 @@ export async function listChatProviderModels(
     const status = await grokAuthStatus(force, accountId)
     if (!status.authenticated) return []
     try {
-      return visible(
-        (await getGrokSubscriptionManager(accountId).listModels(force)).map((model) => model.id)
-      )
+      return visible((await getGrokSubscriptionManager(accountId).listModels(force)).map((model) => model.id))
     } catch (error) {
       throw new Error(grokSubscriptionErrorMessage(error))
     }
@@ -10337,7 +10556,8 @@ export function conversationExecutionSettings(conversationId: string): Conversat
   const selection = selectionFor(conversationId)
   if (!selection?.providerId || !selection.modelId) return null
   const prefs = getConvUiPrefs(conversationId).chat
-  const reasoning = typeof prefs?.reasoning === 'string' && prefs.reasoning.trim() ? prefs.reasoning : defaultReasoningEffort()
+  const reasoning =
+    typeof prefs?.reasoning === 'string' && prefs.reasoning.trim() ? prefs.reasoning : defaultReasoningEffort()
   return {
     providerId: selection.providerId,
     modelId: selection.modelId,
@@ -10390,7 +10610,11 @@ export async function describeChatModelForDispatch(
       5_000,
       null
     ),
-    bestEffortWithin(runnerCapabilityMetaFallback(providerId, modelId).catch(() => null), 5_000, null),
+    bestEffortWithin(
+      runnerCapabilityMetaFallback(providerId, modelId).catch(() => null),
+      5_000,
+      null
+    ),
   ])
   const advertised = primary?.reasoningEfforts?.length ? primary.reasoningEfforts : (fallback?.reasoningEfforts ?? [])
   const reasoningEfforts = [...new Set(advertised.map((effort) => effort.trim()).filter(Boolean))]
@@ -10433,6 +10657,9 @@ export async function startConversationDispatchTurn(input: {
 export async function startExecutorChatTurn(input: {
   conversationId: string
   prompt: string
+  skipMemory?: boolean
+  memoryQuery?: string
+  attachments?: ChatAttachmentInput[]
   signal: AbortSignal
   remoteAdmission?: boolean
   botAdmission?: BotTurnAdmission
@@ -10453,7 +10680,9 @@ export async function startExecutorChatTurn(input: {
   try {
     if (input.remoteAdmission && !remoteChatPolicy(input.conversationId))
       throw new Error('Remote chat policy is missing')
-    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
+    const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, input.attachments, {
+      skipMemory: input.skipMemory,
+      memoryQuery: input.memoryQuery,
       remoteAdmission: input.remoteAdmission,
       botAdmission: input.botAdmission,
       ...(input.slot ? { operation: input.slot.operation } : {}),

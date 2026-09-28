@@ -1,7 +1,7 @@
 import { createContext, runInContext } from 'node:vm'
 import type { WebContents } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { scroll, setDialogBehavior } from '../../src/main/browser-control'
+import { attachToView, scroll, setDialogBehavior } from '../../src/main/browser-control'
 
 vi.mock('../../src/main/performance/metrics', () => ({ incrementPerformanceCounter: vi.fn() }))
 
@@ -37,6 +37,25 @@ function browser() {
 }
 
 describe('browser CDP strings stay data in JavaScript execution contexts', () => {
+  it('answers disabled native dialogs with the tab policy in the current and future documents', async () => {
+    const b = browser()
+    await attachToView(b.wc, { nativeDialogsDisabled: true })
+    expect(runInContext('window.alert("notice")', b.context)).toBeUndefined()
+    expect(runInContext('window.confirm("continue?")', b.context)).toBe(true)
+    await setDialogBehavior(b.wc, false)
+    expect(runInContext('window.confirm("continue?")', b.context)).toBe(false)
+    expect(runInContext('window.prompt("question", "default")', b.context)).toBeNull()
+    runInContext(b.scripts.at(-1)!, b.context)
+    expect(runInContext('window.confirm("later?")', b.context)).toBe(false)
+  })
+
+  it('installs the nonblocking policy even when the activity governor attached first', async () => {
+    const b = browser()
+    await attachToView(b.wc)
+    await attachToView(b.wc, { nativeDialogsDisabled: true })
+    expect(runInContext('window.confirm("continue?")', b.context)).toBe(true)
+  })
+
   it.each(hostileText)('preserves hostile prompt text without executing it: %s', async (text) => {
     const b = browser()
     await setDialogBehavior(b.wc, true, text)

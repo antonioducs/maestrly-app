@@ -105,9 +105,10 @@ vi.mock('../../src/main/chat/subscription-failover/claude-ephemeral', async (ori
 })
 
 import { addProvider } from '../../src/main/chat/catalog'
-import { getChatMessage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import { chatHistoryStats, getChatMessage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import {
   compactReserved,
+  startManualCompaction,
   chatRuntimeState,
   registerChatIpc,
   subscribeChatStream,
@@ -117,6 +118,7 @@ import {
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { selectContextObservation } from '../../src/renderer/components/chat/context-observation'
+import { clearCompactionSummarizer, setCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 const usage = { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 }
@@ -173,6 +175,7 @@ describe('service-owned compaction progress', () => {
   })
 
   afterEach(() => {
+    clearCompactionSummarizer(conversationId)
     unsubscribeChatStream(wc, conversationId)
     vi.useRealTimers()
     closeDb()
@@ -214,6 +217,44 @@ describe('service-owned compaction progress', () => {
       snapshot: { quality: 'estimated' },
     })
     expect(getConvUiPrefs(conversationId)).toEqual(beforePrefs)
+  })
+
+  it('uses a registered summarizer for billing while preserving conversation progress', async () => {
+    setCompactionSummarizer(conversationId, () => ({
+      ...model,
+      modelId: 'background-helper',
+      effort: 'off',
+      fastMode: false,
+    }))
+    const result = await compact()
+    expect(result.ok).toBe(true)
+    expect(h.resolveLanguageModel).toHaveBeenCalledWith(model.providerId, 'background-helper')
+    expect(progressEvents().at(-1)?.model).toEqual(model)
+    expect(listChatMessages(conversationId).at(-1)?.model).toEqual(model)
+    expect(
+      chatHistoryStats(conversationId).perModel.find((item) => item.modelId === 'background-helper')?.subInput
+    ).toBeGreaterThan(0)
+  })
+
+  it('marks a requested compaction as manual and reports completion after persistence', async () => {
+    setCompactionSummarizer(conversationId, () => ({
+      ...model,
+      modelId: 'background-helper',
+      effort: 'off',
+      fastMode: false,
+    }))
+    const finished = vi.fn()
+    expect(startManualCompaction(conversationId, finished)).toEqual({ ok: true })
+    await vi.waitFor(() => expect(finished).toHaveBeenCalledWith(expect.objectContaining({ ok: true })))
+    expect(listChatMessages(conversationId).at(-1)?.parts).toEqual([
+      expect.objectContaining({ type: 'compaction', origin: 'manual' }),
+    ])
+  })
+
+  it('fails closed when the registered summarizer is unavailable', async () => {
+    setCompactionSummarizer(conversationId, () => null)
+    expect(await compact()).toEqual({ ok: false, error: 'compaction-model-unavailable' })
+    expect(h.generateText).not.toHaveBeenCalled()
   })
 
   it('prepares only on use, then consumes at the covered part without inference on send', async () => {
@@ -577,91 +618,113 @@ describe('service-owned compaction progress', () => {
     expect(page.messages.filter((message) => message.id === projectedId)).toHaveLength(1)
   })
 
-  it.each([
-    'completed',
-    'failed',
-    'cancelled',
-  ] as const)('releases manual compaction before publishing %s to the queue', async (status) => {
-    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
-    const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
-    const emitStatus = vi.fn()
-    registerChatIpc({
-      mhandle: (channel, handler) => {
-        handlers.set(channel, handler)
-      },
-      mon: (channel, handler) => {
-        listeners.set(channel, handler)
-      },
-      emitStatus,
-    })
-    h.generateText.mockImplementation(async () => {
-      expect(emitStatus).toHaveBeenLastCalledWith(conversationId, 'working', { silent: true })
-      expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: true, compacting: true })
-      if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
-      if (status !== 'completed') throw Object.assign(new Error('Summary failed'), { status: 400 })
-      return success()
-    })
-    const terminalStates: ReturnType<typeof chatRuntimeState>[] = []
-    h.webContents.send.mockImplementation((_channel, event) => {
-      if (event.kind === 'compaction-finished') terminalStates.push(chatRuntimeState(conversationId))
-    })
-    await handlers.get('chat:compact')!({ sender: wc } as never, conversationId)
-    expect(h.webContents.send).toHaveBeenCalledWith(
-      `chat:delta:${conversationId}`,
-      expect.objectContaining({ kind: 'compaction-finished', status })
-    )
-    expect(terminalStates).toEqual([expect.objectContaining({ streaming: false, compacting: false })])
-    expect(emitStatus).toHaveBeenCalledTimes(2)
-    expect(emitStatus.mock.calls[1][1]).not.toBe('working')
-    expect(h.runChat).not.toHaveBeenCalled()
-    h.webContents.send.mockReset()
-  })
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'releases manual compaction before publishing %s to the queue',
+    async (status) => {
+      const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+      const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
+      const emitStatus = vi.fn()
+      registerChatIpc({
+        mhandle: (channel, handler) => {
+          handlers.set(channel, handler)
+        },
+        mon: (channel, handler) => {
+          listeners.set(channel, handler)
+        },
+        emitStatus,
+      })
+      h.generateText.mockImplementation(async () => {
+        expect(emitStatus).toHaveBeenLastCalledWith(conversationId, 'working', { silent: true })
+        expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: true, compacting: true })
+        if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
+        if (status !== 'completed') throw Object.assign(new Error('Summary failed'), { status: 400 })
+        return success()
+      })
+      const terminalStates: ReturnType<typeof chatRuntimeState>[] = []
+      h.webContents.send.mockImplementation((_channel, event) => {
+        if (event.kind === 'compaction-finished') terminalStates.push(chatRuntimeState(conversationId))
+      })
+      await handlers.get('chat:compact')!({ sender: wc } as never, conversationId)
+      expect(h.webContents.send).toHaveBeenCalledWith(
+        `chat:delta:${conversationId}`,
+        expect.objectContaining({ kind: 'compaction-finished', status })
+      )
+      expect(terminalStates).toEqual([expect.objectContaining({ streaming: false, compacting: false })])
+      expect(emitStatus).toHaveBeenCalledTimes(2)
+      expect(emitStatus.mock.calls[1][1]).not.toBe('working')
+      expect(h.runChat).not.toHaveBeenCalled()
+      h.webContents.send.mockReset()
+    }
+  )
 
-  it.each([
-    'failed',
-    'cancelled',
-  ] as const)('removes %s preflight input from the projection without persisting or running it', async (status) => {
+  it('uses the registered summarizer for required preflight compaction', async () => {
+    setCompactionSummarizer(conversationId, () => ({
+      ...model,
+      modelId: 'background-helper',
+      effort: 'off',
+      fastMode: false,
+    }))
     const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
-    const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
     registerChatIpc({
       mhandle: (channel, handler) => {
         handlers.set(channel, handler)
       },
-      mon: (channel, handler) => {
-        listeners.set(channel, handler)
-      },
+      mon: vi.fn(),
       emitStatus: vi.fn(),
     })
-    let stageSignal: AbortSignal | undefined
-    let rejectStage!: (error: Error) => void
-    h.generateText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => {
-      stageSignal = abortSignal
-      return new Promise((_, reject) => {
-        rejectStage = reject
-        abortSignal.addEventListener('abort', () => reject(abortSignal.reason))
-      })
-    })
-    const result = handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
-    await vi.waitFor(() => expect(stageSignal).toBeDefined())
-    expect(await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)).toMatchObject({
-      messages: expect.arrayContaining([
-        expect.objectContaining({
-          role: 'user',
-          parts: expect.arrayContaining([expect.objectContaining({ text: 'Pending task' })]),
-        }),
-      ]),
-    })
-    if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
-    else rejectStage(Object.assign(new Error('Summary rejected'), { status: 400 }))
-    expect(await result).toMatchObject({ ok: false })
-    const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
-      messages: unknown[]
-    }
-    expect(page.messages).toHaveLength(2)
-    expect(listChatMessages(conversationId)).toHaveLength(2)
-    expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: false, compacting: false })
-    expect(h.runChat).not.toHaveBeenCalled()
+    const result = await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    expect(result).toMatchObject({ ok: true })
+    expect(h.resolveLanguageModel).toHaveBeenCalledWith(model.providerId, 'background-helper')
+    expect(listChatMessages(conversationId).flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'compaction' })])
+    )
   })
+
+  it.each(['failed', 'cancelled'] as const)(
+    'removes %s preflight input from the projection without persisting or running it',
+    async (status) => {
+      const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+      const listeners = new Map<string, Parameters<ChatIpcDeps['mon']>[1]>()
+      registerChatIpc({
+        mhandle: (channel, handler) => {
+          handlers.set(channel, handler)
+        },
+        mon: (channel, handler) => {
+          listeners.set(channel, handler)
+        },
+        emitStatus: vi.fn(),
+      })
+      let stageSignal: AbortSignal | undefined
+      let rejectStage!: (error: Error) => void
+      h.generateText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => {
+        stageSignal = abortSignal
+        return new Promise((_, reject) => {
+          rejectStage = reject
+          abortSignal.addEventListener('abort', () => reject(abortSignal.reason))
+        })
+      })
+      const result = handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+      await vi.waitFor(() => expect(stageSignal).toBeDefined())
+      expect(await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)).toMatchObject({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            parts: expect.arrayContaining([expect.objectContaining({ text: 'Pending task' })]),
+          }),
+        ]),
+      })
+      if (status === 'cancelled') listeners.get('chat:stop')!({ sender: wc } as never, conversationId)
+      else rejectStage(Object.assign(new Error('Summary rejected'), { status: 400 }))
+      expect(await result).toMatchObject({ ok: false })
+      const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+        messages: unknown[]
+      }
+      expect(page.messages).toHaveLength(2)
+      expect(listChatMessages(conversationId)).toHaveLength(2)
+      expect(chatRuntimeState(conversationId)).toMatchObject({ streaming: false, compacting: false })
+      expect(h.runChat).not.toHaveBeenCalled()
+    }
+  )
 
   it('publishes preflight failure before rejecting turn admission and preserves the pending user input', async () => {
     const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
@@ -679,30 +742,30 @@ describe('service-owned compaction progress', () => {
     expect(listChatMessages(conversationId)).toHaveLength(2)
   })
 
-  it.each([
-    'builtin_codex_subscription',
-    'builtin_claude_subscription',
-  ])('forwards engine stage cancellation through the %s adapter to the native backend', async (providerId) => {
-    patchConvUiPrefs(conversationId, { chat: { providerId, modelId: 'native-model' } })
-    const controller = new AbortController()
-    let stageSignal: AbortSignal | undefined
-    h.summarizeNative.mockImplementation(({ signal }: { signal: AbortSignal }) => {
-      stageSignal = signal
-      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
-    })
-    const result = compact({ signal: controller.signal })
-    await vi.waitFor(() => expect(stageSignal).toBeDefined())
-    expect(stageSignal).not.toBe(controller.signal)
-    expect(getChatMessage(conversationId, 'assistant')?.compactionProgress).toMatchObject({
-      status: 'running',
-      phase: 'chunk',
-    })
-    controller.abort(new Error('Cancel native compactor'))
-    expect(await result).toMatchObject({ ok: false, error: 'Cancel native compactor' })
-    expect(stageSignal?.aborted).toBe(true)
-    expect(progressEvents().at(-1)?.status).toBe('cancelled')
-    expect(listChatMessages(conversationId)).toHaveLength(2)
-  })
+  it.each(['builtin_codex_subscription', 'builtin_claude_subscription'])(
+    'forwards engine stage cancellation through the %s adapter to the native backend',
+    async (providerId) => {
+      patchConvUiPrefs(conversationId, { chat: { providerId, modelId: 'native-model' } })
+      const controller = new AbortController()
+      let stageSignal: AbortSignal | undefined
+      h.summarizeNative.mockImplementation(({ signal }: { signal: AbortSignal }) => {
+        stageSignal = signal
+        return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
+      })
+      const result = compact({ signal: controller.signal })
+      await vi.waitFor(() => expect(stageSignal).toBeDefined())
+      expect(stageSignal).not.toBe(controller.signal)
+      expect(getChatMessage(conversationId, 'assistant')?.compactionProgress).toMatchObject({
+        status: 'running',
+        phase: 'chunk',
+      })
+      controller.abort(new Error('Cancel native compactor'))
+      expect(await result).toMatchObject({ ok: false, error: 'Cancel native compactor' })
+      expect(stageSignal?.aborted).toBe(true)
+      expect(progressEvents().at(-1)?.status).toBe('cancelled')
+      expect(listChatMessages(conversationId)).toHaveLength(2)
+    }
+  )
 
   it('does not double count Claude usage reported by both attempt observation and the engine failure', async () => {
     patchConvUiPrefs(conversationId, { chat: { providerId: 'builtin_claude_subscription', modelId: 'native-model' } })

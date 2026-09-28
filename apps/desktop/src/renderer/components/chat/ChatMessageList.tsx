@@ -11,20 +11,11 @@ import {
   type RefObject,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Copy,
-  Check,
-  Pencil,
-  FileText,
-  ScanText,
-  TriangleAlert,
-  Sparkles,
-  ChevronRight,
-  BrainCircuit,
-} from 'lucide-react'
+import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
+import { MemorySourcesChip } from './MemorySourcesChip'
 import { ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
 import { SubagentCard } from './SubagentCard'
@@ -648,7 +639,6 @@ const Bubble = memo(function Bubble({
   const roundStatus = isReviewLoopRound ? reviewLoopRoundStatus(message) : null
 
   const [roundCollapsed, setRoundCollapsed] = useState(() => isReviewLoopRound && roundStatus !== 'running')
-  const [memoryExpanded, setMemoryExpanded] = useState(false)
   useEffect(() => {
     if (!isReviewLoopRound) return
     if (roundStatus === 'running') setRoundCollapsed(false)
@@ -710,6 +700,7 @@ const Bubble = memo(function Bubble({
             />
           </div>
         )}
+        <MemorySourcesChip message={message} variant="recalled" onOpenMention={onOpenMention} />
         {message.steering && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span>
@@ -762,56 +753,7 @@ const Bubble = memo(function Bubble({
 
   const body = (
     <>
-      {message.memoryContext && message.memoryContext.sources.length > 0 && (
-        <div className="w-fit max-w-full">
-          <button
-            type="button"
-            onClick={() => setMemoryExpanded((value) => !value)}
-            className="flex items-center gap-1.5 rounded-full border border-fuchsia-400/25 bg-fuchsia-400/[0.08] px-2 py-0.5 text-[10px] font-medium text-fuchsia-200 hover:bg-fuchsia-400/[0.13]"
-            title={t('messages.memorySourcesHint')}
-          >
-            <BrainCircuit className="size-3" />
-            {t('messages.memoriesUsed', { count: message.memoryContext.sources.length })}
-          </button>
-          {memoryExpanded && (
-            <div className="mt-1.5 max-w-lg space-y-1 rounded-lg border border-white/[0.08] bg-black/20 p-1.5">
-              {message.memoryContext.sources.map((source, index) => (
-                <button
-                  key={`${source.kind}:${source.id}:${source.path ?? ''}:${index}`}
-                  type="button"
-                  onClick={() => {
-                    if (source.kind === 'local') {
-                      window.dispatchEvent(
-                        new CustomEvent('maestrly:open-memory', {
-                          detail: { conversationId: message.conversationId, memoryId: source.id },
-                        })
-                      )
-                      return
-                    }
-                    if (!source.path) return
-                    const publicRepo =
-                      source.repo &&
-                      source.repo !== 'repository' &&
-                      !source.repo.includes('/') &&
-                      !source.repo.includes('\\') &&
-                      !source.repo.includes(':')
-                        ? `${source.repo}/`
-                        : ''
-                    onOpenMention?.(`${publicRepo}${source.path}`, source.startLine, source.endLine)
-                  }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[10px] text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
-                >
-                  <span className="rounded bg-white/[0.06] px-1 py-0.5">
-                    {source.kind === 'local' ? t('messages.memoryLocal') : t('messages.memoryShared')}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{source.title}</span>
-                  {source.path && <span className="max-w-48 truncate font-mono opacity-70">{source.path}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <MemorySourcesChip message={message} variant="used" onOpenMention={onOpenMention} />
       {message.parts.map((p, i) =>
         p.type === 'tool' && p.toolName === 'delegate' ? (
           p.toolCallId === firstDelegateId ? (

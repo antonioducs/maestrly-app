@@ -1,6 +1,10 @@
+import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
+import { isBotMode } from './fleet/instance/config'
+import { startBotInstanceMode } from './fleet/instance'
+import { environmentScreenBounds } from './fleet/instance/window-bounds'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -11,6 +15,7 @@ import {
   Tray,
   nativeImage,
   nativeTheme,
+  screen,
   session,
   type MenuItemConstructorOptions,
   type IpcMainEvent,
@@ -81,6 +86,7 @@ import {
   disposeConversation,
   setFloatFocuser,
   ensureViewFor,
+  focusBrowserPopup,
 } from './drawer-manager'
 import {
   startVSCodeServer,
@@ -159,6 +165,10 @@ import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
+import { registerFleetClientIpc } from './fleet/client/ipc'
+import { registerFleetInstallerIpc } from './fleet/installer/ipc'
+import { fleetClientService } from './fleet/client/service'
+import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
 
@@ -198,6 +208,15 @@ async function stopConversationLive(convId: string): Promise<void> {
   popupManager.disposeConversation(convId)
   disposeConversation(convId)
   await Promise.all([stoppingChat, unwatchNotes(convId)])
+}
+
+/**
+ * In bot mode the main window is the environment screen: Maestrly's settings, kept in tile 0 of the environment
+ * display (the other tiles hold the bots' browsers). On a smaller display it keeps inside the display.
+ */
+function placeEnvironmentScreen(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
 async function stopAllLiveWork(): Promise<void> {
@@ -407,6 +426,7 @@ function setupApplicationMenu(): void {
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
   mainWindow = new BrowserWindow({
+    show: !isBotMode(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -428,6 +448,8 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   })
+  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn.
+  if (isBotMode()) mainWindow.removeMenu()
 
   const wc = mainWindow.webContents
   wc.on('console-message', (_e, level, message, line, sourceId) => {
@@ -469,7 +491,7 @@ async function createWindow(): Promise<void> {
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
   // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
-  configureUpdateService()
+  if (!isBotMode()) configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -506,6 +528,11 @@ async function createWindow(): Promise<void> {
   initTerminalManager(mainWindow)
 
   mainWindow.on('close', (e) => {
+    if (isBotMode() && !backgroundQuit) {
+      e.preventDefault()
+      mainWindow?.hide()
+      return
+    }
     if (executorSettings().background && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
@@ -520,7 +547,7 @@ async function createWindow(): Promise<void> {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    wc.openDevTools({ mode: 'detach' })
+    if (!isBotMode()) wc.openDevTools({ mode: 'detach' })
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -655,6 +682,11 @@ function registerIpc(): void {
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
   registerPlatformIpc(reg)
   registerBotIpc(reg)
+  // Set before the client starts, so that the first live event already sounds.
+  fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
+  registerFleetInstallerIpc(reg)
+  registerFleetClientIpc(reg)
+  registerFleetInstanceIpc(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -712,9 +744,12 @@ app.whenReady().then(async () => {
   // PDF copies opened by a previous session's viewer are no longer needed.
   await clearAttachmentPreviews()
   await cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
-  const toolOutputCleanupTimer = setInterval(() => {
-    void cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
-  }, 60 * 60 * 1000)
+  const toolOutputCleanupTimer = setInterval(
+    () => {
+      void cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
+    },
+    60 * 60 * 1000
+  )
   toolOutputCleanupTimer.unref()
   app.once('will-quit', () => clearInterval(toolOutputCleanupTimer))
 
@@ -762,7 +797,7 @@ app.whenReady().then(async () => {
 
   conversationMigrationService.replayIncomplete()
   // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  startRuntimeAssetUpdates()
+  if (!isBotMode()) startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
@@ -803,6 +838,34 @@ app.whenReady().then(async () => {
       ])
     )
   }
+  if (isBotMode() && mainWindow) {
+    const environmentScreen = mainWindow
+    try {
+      placeEnvironmentScreen(environmentScreen)
+      await startBotInstanceMode(environmentScreen, {
+        floatBrowser: (id) => {
+          floatingManager.detach(id, 'browser', { focus: false })
+          floatingManager.setPinned(id, 'browser', true)
+        },
+        closeConversation: (id) => stopConversationLive(id),
+        purgeConversation: (id) => deleteConversation(id),
+        placeSettingsWindow: () => placeEnvironmentScreen(environmentScreen),
+        focusBrowser: (id) => {
+          if (!focusBrowserPopup(id)) floatingManager.focusFloatIfAny(id, 'browser')
+        },
+      })
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          component: 'bot-instance',
+          level: 'error',
+          message: error instanceof Error ? error.message : 'Startup failed',
+        })
+      )
+      app.exit(1)
+      return
+    }
+  }
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
@@ -816,12 +879,14 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  if (isBotMode()) return
   flushPendingBrowserPersists()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()
   popupManager.disposeAll()
   disposeNotes()
   disposeMemory()
+  disposeMemoryExtraction()
   disposeMemoryIndexService()
   killAllPtys()
   disposeDrawer()
@@ -959,6 +1024,7 @@ app.on('before-quit', (e) => {
     stopVSCodeServer()
     disposeDrawer()
     disposeMemoryReclaimer()
+    disposeMemoryExtraction()
     disposeMemoryIndexService()
     disposeOwnedProcesses()
   }

@@ -3,6 +3,21 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
+  mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
+  memorySettings: {
+    title: 'Memória',
+    description: 'Como os agentes usam a memória durável do projeto.',
+    autoRecall: 'Lembrar memórias relevantes automaticamente',
+    autoRecallHint: 'Junta até 3 memórias curtas à mensagem quando elas combinam claramente. Não chama modelo.',
+    extraction: 'Salvar memórias das conversas',
+    extractionHint:
+      'Um modelo lê os turnos concluídos em segundo plano e salva decisões, preferências e lições. Cada execução usa a cota desse modelo.',
+    model: 'Modelo de memória',
+    save: 'Salvar memória',
+    saved: 'Salvo',
+    modelRequired: 'Escolha um modelo para salvar memórias das conversas.',
+    saveFailed: 'Não foi possível salvar as configurações de memória.',
+  },
   kanban: {
     board: 'Board',
     project: 'Projeto Kanban',
@@ -268,6 +283,7 @@ export default {
     increaseFont: 'Aumentar',
     appToolsLabel: 'Ferramentas do Maestrly',
     appToolsDesc: 'terminal, navegador, notas, memória, debug',
+    appToolsBotLocked: 'Sempre ligadas no bot: o navegador, a tela e o pedido de ajuda dependem delas',
     imageGenLabel: 'Geração de imagem',
     imageGenDesc: 'permite ao modelo desenhar imagens nesta conversa',
     mcpServers: 'Servidores MCP',
@@ -365,6 +381,9 @@ export default {
     generating: 'gerando…',
     goToBottom: 'Ir para o fim',
     interrupted: 'Resposta interrompida (o stream foi cortado) — peça para continuar.',
+    memoriesRecalled_one: '🧠 {{count}} memória lembrada',
+    memoriesRecalled_other: '🧠 {{count}} memórias lembradas',
+    memoryRecalledHint: 'Memórias lembradas automaticamente para esta mensagem',
     memoriesUsed_one: '🧠 {{count}} memória usada',
     memoriesUsed_other: '🧠 {{count}} memórias usadas',
     memorySourcesHint: 'Mostrar as fontes de memória usadas nesta resposta',
@@ -641,6 +660,7 @@ export default {
   },
   settings: {
     backgroundCompactionHeading: 'Preparar contexto em segundo plano',
+    backgroundCompactionManagedByMac: 'Definido nos Ajustes do bot, no computador que controla os bots.',
     backgroundCompactionDescription:
       'Prepara periodicamente um checkpoint compactado com outro modelo. A conversa atual continua funcionando durante a preparação.',
     backgroundCompactionToggle: 'Usar preparação de contexto em segundo plano',

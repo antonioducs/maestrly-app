@@ -42,6 +42,8 @@ describe('standalone conversation schema rebuild', () => {
       'chat_codex_threads',
       'chat_codex_thread_cleanup',
       'chat_usage_ledger',
+      // Workspace deletion also clears memory spaces through a trigger on workspaces.
+      'local_memories',
     ]
     try {
       // Use the product's actual dependent DDL and restore the pre-feature conversation shape.

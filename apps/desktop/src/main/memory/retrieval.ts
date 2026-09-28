@@ -98,7 +98,7 @@ function boundResults(candidates: IndexedMemoryCandidate[], limit: number, maxCh
     }
     chunksPerDocument.set(doc, (chunksPerDocument.get(doc) ?? 0) + 1)
     contents.add(contentHash)
-    const { chunkId: _chunkId, rowid: _rowid, rank: _rank, ...hit } = candidate
+    const { chunkId: _chunkId, rowid: _rowid, rank: _rank, distance: _distance, ...hit } = candidate
     results.push({ ...hit, content: normalizedContent })
   }
   return results

@@ -335,19 +335,29 @@ export default {
       params: { text: 'markdown a acrescentar' },
     },
 
-    memory_search: {
-      title: 'Buscar memória do projeto',
+    history_search: {
+      title: 'Buscar no histórico da conversa',
       description:
-        'Busca híbrida e estreita em memórias locais duráveis e .agents/knowledge versionado. Use quando decisões, restrições, preferências, procedimentos ou lições anteriores puderem afetar um trabalho substancial; evite pedidos triviais ou autocontidos. Somente leitura.',
+        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados. Todas as palavras precisam aparecer; os resultados mais recentes vêm primeiro. Retorna posições (seq) e trechos; leia ao redor de um com history_read. Somente leitura.',
+    },
+    history_read: {
+      title: 'Ler histórico da conversa',
+      description:
+        'Lê as mensagens ao redor de uma posição do histórico (seq) encontrada com history_search, com saídas de ferramentas encurtadas. Somente leitura.',
+    },
+    memory_search: {
+      title: 'Buscar na memória',
+      description:
+        'Busca de reserva na memória durável quando a memória sempre visível e as lembradas automaticamente não bastam. Retorna trechos curtos com ids e uma relevância; leia uma inteira com memory_read. Somente leitura.',
     },
     memory_list: {
       title: 'Listar memórias locais',
       description: 'Lista memórias locais estruturadas com filtros de lifecycle e metadata. Somente leitura.',
     },
     memory_read: {
-      title: 'Ler memória do projeto',
+      title: 'Ler memória',
       description:
-        'Lê uma memória local estruturada específica por id após search/list identificá-la. Sem id, retorna uma projeção legada limitada.',
+        'Lê uma memória inteira pelo id ou pelo prefixo de 8 caracteres mostrado no catálogo e nos blocos de lembrança.',
     },
     memory_upsert: {
       title: 'Memorizar informação durável',
@@ -452,7 +462,6 @@ export default {
       description: 'Avalia uma expressão no contexto do frame parado (REPL do debugger).',
       params: { expression: 'expressão a avaliar' },
     },
-
   },
 
   returns: {
@@ -519,7 +528,15 @@ export default {
       quickAppended: 'Acrescentado à página "{{title}}".',
       quickPageTitle: 'Notas',
     },
+    history: {
+      truncated: '(trecho truncado)',
+      empty: 'Nenhuma mensagem nessa posição.',
+      compactionSummary: '[resumo da compactação] {{text}}',
+      compaction: '[compactação]',
+      generatedImage: '[imagem gerada {{name}}]',
+    },
     memory: {
+      nothingRelevant: 'Nada relevante o suficiente. Tente outras palavras ou use memory_list para explorar.',
       empty: '(memória vazia)',
       updated: 'Memória do projeto atualizada.',
       appended: 'Acrescentado à memória do projeto.',
@@ -527,6 +544,9 @@ export default {
   },
 
   errors: {
+    memoryInvisibleCharacters: 'memory-content-rejected: remova caracteres invisíveis ou de controle bidirecional',
+    memoryInstructionInjection:
+      'memory-content-rejected: memórias não podem guardar instruções para ignorar regras ou executar scripts baixados',
     tabNotExist: 'Aba {{index}} não existe (há {{total}}).',
     termSpawnFailed: 'O processo do terminal encerrou antes de ficar pronto.',
     notTermOfConv: 'id "{{id}}" não é um terminal desta conversa.',

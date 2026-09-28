@@ -1,3 +1,4 @@
+import { registerHistoryTools } from './mcp/tools/history'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { getConversation, getLocale } from './store'
 import { tFor } from './i18n'
@@ -8,6 +9,7 @@ import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
 import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
+import { registerBotModeTools } from './mcp/tools/bot-instance'
 
 /**
  * In-process native Chat tool registry. Client and server connect exclusively through
@@ -34,9 +36,11 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   if (conversation) registerConversationNotesTools(ctx)
   if (conversation?.scope !== 'standalone') {
     registerProjectNotesTools(ctx)
-    registerMemoryTools(ctx)
   }
+  if (conversation) registerHistoryTools(ctx)
+  registerMemoryTools(ctx)
   registerDebugTools(ctx)
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
+  registerBotModeTools(ctx)
   return server
 }

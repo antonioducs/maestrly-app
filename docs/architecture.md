@@ -25,7 +25,9 @@ disabled. It is not a security authority: every sensitive identifier and payload
 is checked again in the main process. Some trusted application renderers are not
 Electron-sandboxed because they depend on the preload and native integration;
 OAuth and visual companion surfaces use stricter isolated sessions. See the
-[security model](security-model.md) for the resulting assumptions.
+[security model](security-model.md) for the resulting assumptions. For the
+separate Linux gateway and desktop containers used by remote bots, see the
+[remote bots guide](bot-fleet.md).
 
 ## Component ownership
 

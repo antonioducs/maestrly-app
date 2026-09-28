@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest'
+import { FLEET_COMPACTION_LIMITS } from '@maestrly/bot-fleet-protocol'
+import {
+  compactionFormFrom,
+  compactionPatch,
+  compactionProgress,
+  backgroundCompactionState,
+} from '../../src/renderer/lib/fleet/compaction'
+
+describe('fleet compaction mapping', () => {
+  it('defaults to 100k tokens and validates the inclusive 10–1000k range', () => {
+    expect(compactionFormFrom(null).intervalThousands).toBe('100')
+    expect(
+      compactionPatch({ modelId: 'prov::model', reasoning: null, fastMode: false, intervalThousands: '10' })
+    ).toEqual({
+      providerId: 'prov',
+      modelId: 'model',
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: FLEET_COMPACTION_LIMITS.intervalTokensMin,
+    })
+    expect(
+      compactionPatch({ modelId: 'prov::model', reasoning: null, fastMode: false, intervalThousands: '1000' })
+        ?.intervalTokens
+    ).toBe(FLEET_COMPACTION_LIMITS.intervalTokensMax)
+    for (const intervalThousands of ['9', '1001', '12.5', 'abc', ''])
+      expect(
+        compactionPatch({ modelId: 'prov::model', reasoning: null, fastMode: false, intervalThousands })
+      ).toBeNull()
+  })
+
+  it('maps nullable fleet progress and background state to desktop status props', () => {
+    const updatedAt = '2026-09-25T12:00:00.000Z'
+    expect(
+      compactionProgress({
+        id: 'progress-1',
+        status: 'running',
+        phase: null,
+        completed: null,
+        total: null,
+        attempt: null,
+        beforeTokens: null,
+        afterTokens: null,
+        afterQuality: null,
+        error: null,
+        updatedAt,
+      })
+    ).toMatchObject({ id: 'progress-1', status: 'running', updatedAt: Date.parse(updatedAt) })
+    expect(backgroundCompactionState({ status: 'failed', error: 'offline' })).toMatchObject({
+      status: 'failed',
+      error: 'offline',
+    })
+  })
+})

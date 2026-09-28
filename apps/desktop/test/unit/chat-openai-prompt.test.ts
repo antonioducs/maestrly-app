@@ -9,8 +9,7 @@ const solHarness = resolveChatHarness('openai-responses', 'gpt-5.6-sol', 'https:
 const OPENAI_CODEX_BASE_INSTRUCTIONS = solHarness.prompts.base!
 const OPENAI_CODEX_PROMPT_SOURCE = solHarness.source!
 type CompileOpenAIPromptInput = Omit<BuildHarnessPromptInput, 'harness'>
-const compileOpenAIPrompt = (value: CompileOpenAIPromptInput) =>
-  buildHarnessPrompt({ ...value, harness: solHarness })
+const compileOpenAIPrompt = (value: CompileOpenAIPromptInput) => buildHarnessPrompt({ ...value, harness: solHarness })
 
 const input = (overrides: Partial<CompileOpenAIPromptInput> = {}): CompileOpenAIPromptInput => ({
   cwd: '/repo',
@@ -130,7 +129,7 @@ describe('OpenAI Codex prompt port', () => {
     expect(ask).toContain('restricted catalog')
     for (const prompt of [withNotes, withoutNotes, disabled, ask]) {
       expect(prompt).toContain('# Durable project memory')
-      expect(prompt).toContain('search memory before acting or asking the user to repeat context')
+      expect(prompt).toContain('Relevant memories are also recalled automatically')
     }
   })
 

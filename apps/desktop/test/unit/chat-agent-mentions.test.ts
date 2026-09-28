@@ -412,6 +412,7 @@ describe('optimistic image message reconciliation', () => {
 
   it('preserves optimistic streaming messages without local divergence', () => {
     expect(shouldReloadOnUserSaved({ ...base })).toBe(false)
+    expect(shouldReloadOnUserSaved({ ...base, memoryRecalled: true })).toBe(true)
   })
 
   it('reloads local image sends even for vision models', () => {

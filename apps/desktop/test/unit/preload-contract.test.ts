@@ -24,6 +24,8 @@ import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
+import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -59,6 +61,8 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['chatApi', chatApi],
   ['platformApi', platformApi],
   ['botApi', botApi],
+  ['fleetApi', fleetApi],
+  ['fleetInstallerApi', fleetInstallerApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -150,11 +154,81 @@ describe('preload API — exposure', () => {
     expect(typeof p.ttOffset).toBe('number')
     expect(typeof p.openLabels.terminal).toBe('string')
     expect(typeof p.openLabels.files).toBe('string')
+    // Outside a bot container the full desktop runs.
+    expect((p as unknown as { botMode: boolean }).botMode).toBe(false)
   })
 
+  it('forwards archived bot calls to their channels', async () => {
+    await api.fleetListArchivedBots()
+    await api.fleetRestoreArchivedBot('scout')
+    await api.fleetDeleteArchivedBot('scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:listArchivedBots')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:restoreArchivedBot', 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:deleteArchivedBot', 'scout')
+  })
+
+  it("hides a bot's settings window through main instead of closing it", async () => {
+    await api.fleetInstanceHideWindow()
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:instance:hide')
+  })
+
+  it('forwards fleet conversation op arguments without a caller conversation id', async () => {
+    await api.fleetConversationCall('bot', 'chatSetConvTools', { imageGen: false })
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:conversationCall', 'bot', 'chatSetConvTools', [{ imageGen: false }])
+  })
+
+  it('forwards provisioning and login arguments in order', async () => {
+    const selection = { apiKeyIds: ['p1'], copyIds: [], skillNames: [], mcpServerIds: [] }
+    const request = { kind: 'codex', method: 'browser', slot: 'auto' }
+    await api.fleetImportFromMac('bot', selection)
+    await api.fleetLoginStart('bot', request)
+    await api.fleetLoginStatus('bot', 'l1')
+    await api.fleetLoginSubmitCode('bot', 'l1', 'code')
+    await api.fleetLoginCancel('bot', 'l1')
+    await api.fleetLoginOpen('bot', 'l1', 'manual')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:provisioning:import', 'bot', selection)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:start', 'bot', request)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:status', 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:code', 'bot', 'l1', 'code')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:cancel', 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:open', 'bot', 'l1', 'manual')
+  })
+  it('forwards bot server installer calls to their channels', async () => {
+    const remote = {
+      target: { host: '203.0.113.10', port: 22, username: 'root' },
+      credentials: { kind: 'password' as const, password: 'synthetic-root-password' },
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+    }
+    await api.fleetInstallerStatus()
+    await api.fleetInstallerCheckLocal()
+    await api.fleetInstallerInstallLocal({ deviceName: 'Mac', allowPrivateNetwork: true })
+    await api.fleetInstallerInstallRemote(remote)
+    await api.fleetInstallerUpdate()
+    await api.fleetInstallerSetPrivateNetwork(true)
+    await api.fleetInstallerDisconnect()
+    await api.fleetInstallerRemove({ confirm: 'remove' })
+    await api.fleetInstallerCancel()
+    expect(invokeSpy.mock.calls).toEqual([
+      ['fleet:installer:status'],
+      ['fleet:installer:checkLocal'],
+      ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: true }],
+      ['fleet:installer:installRemote', remote],
+      ['fleet:installer:update'],
+      ['fleet:installer:setPrivateNetwork', true],
+      ['fleet:installer:disconnect'],
+      ['fleet:installer:remove', { confirm: 'remove' }],
+      ['fleet:installer:cancel'],
+    ])
+    const listener = vi.fn()
+    const off = api.onFleetInstallerStatus(listener) as () => void
+    expect(onSpy).toHaveBeenCalledWith('fleet:installer:status', expect.any(Function))
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:installer:status', onSpy.mock.calls.at(-1)?.[1])
+  })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(405)
+    expect(keys).toHaveLength(486)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -353,6 +427,17 @@ describe('preload API — popup opening uses SEND', () => {
 // Main-to-renderer events: subscribe, return unsubscribe, and verify main emission.
 // ---------------------------------------------------------------------------
 describe('preload API — main-to-renderer events (ipcRenderer.on)', () => {
+  it('onFleetInstanceOpenAccounts subscribes to the main event and removes its listener', () => {
+    const callback = vi.fn()
+    const off = api.onFleetInstanceOpenAccounts(callback) as () => void
+    expect(onSpy).toHaveBeenCalledWith('fleet:instance:open-settings', expect.any(Function))
+    const listener = onSpy.mock.calls[0]?.[1] as (event: unknown, section: string) => void
+    listener({}, 'mcp')
+    expect(callback).toHaveBeenCalledWith('mcp')
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('fleet:instance:open-settings', listener)
+    expect(mainText).toContain("broadcast('fleet:instance:open-settings',")
+  })
   it('onToggleDrawerShortcut registers drawer:toggle-shortcut and removes the exact listener', () => {
     const callback = vi.fn()
     const off = api.onToggleDrawerShortcut(callback) as () => void

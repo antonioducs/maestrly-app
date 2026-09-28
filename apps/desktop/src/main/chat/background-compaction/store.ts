@@ -251,7 +251,11 @@ function parseWork(value: unknown): BackgroundCompactionWork | null {
 }
 
 function parsePauseReason(value: unknown): BackgroundCompactionPauseReason | undefined {
-  return value === 'stopped' || value === 'archived' || value === 'selection' || value === 'disabled'
+  return value === 'stopped' ||
+    value === 'archived' ||
+    value === 'selection' ||
+    value === 'disabled' ||
+    value === 'suspended'
     ? value
     : undefined
 }

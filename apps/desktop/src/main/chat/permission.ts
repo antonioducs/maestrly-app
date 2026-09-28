@@ -1,5 +1,5 @@
 import { permissionScopeKey, type PermissionScope } from '../../shared/conversation-scope'
-import { autonomousPolicy,assertAutonomousPermission } from './autonomous'
+import { autonomousPolicy, assertAutonomousPermission } from './autonomous'
 import { remoteChatPolicy, assertRemoteChatPermission, isWebManagedConversation } from './remote-policy'
 /**
  * BYOK chat tool permission broker. Faithfully ported without Effect from opencode `permission.ts`
@@ -118,6 +118,29 @@ function evaluate(action: string, resource: string, ...rulesets: Ruleset[]): Rul
 }
 
 // ---- Default rulesets (BYOK gates dangerous actions; inverted opencode build-agent port). ----
+const allowMcp = (names: readonly string[]): Ruleset =>
+  names.map((resource) => ({ action: 'mcp', resource, effect: 'allow' as const }))
+/** Memory reads never prompt: the host already recalls memory into context on every turn without asking. */
+export const HOST_MEMORY_READ_RULES: Ruleset = allowMcp([
+  'memory_search',
+  'memory_list',
+  'memory_read',
+  'history_search',
+  'history_read',
+])
+/** In a bot container the owner reviews memory on the Mac instead of approving each write (owner decision). */
+export const BOT_MEMORY_WRITE_RULES: Ruleset = allowMcp([
+  'memory_upsert',
+  'memory_archive',
+  'memory_restore',
+  'owner_memory_save',
+  'owner_memory_forget',
+  'routine_report',
+])
+export function ruleEffect(action: string, resource: string, ...rulesets: Ruleset[]): Rule['effect'] {
+  return evaluate(action, resource, ...rulesets).effect
+}
+
 export const BYOK_DEFAULT_RULESET: Ruleset = [
   { action: '*', resource: '*', effect: 'allow' }, // Unrestricted read/grep/glob.
   { action: 'bash', resource: '*', effect: 'ask' },
@@ -128,6 +151,7 @@ export const BYOK_DEFAULT_RULESET: Ruleset = [
   { action: 'read', resource: '*.env', effect: 'ask' },
   { action: 'read', resource: '*.env.*', effect: 'ask' },
   { action: 'read', resource: '*.env.example', effect: 'allow' },
+  ...HOST_MEMORY_READ_RULES,
 ]
 export const YOLO_RULESET: Ruleset = [{ action: '*', resource: '*', effect: 'allow' }]
 
@@ -248,13 +272,17 @@ export class PermissionBroker extends EventEmitter {
    */
   async assertDecision(input: AssertInput): Promise<'once' | 'always'> {
     if (input.signal?.aborted) throw new PermissionCancelledError()
-    const remote=remoteChatPolicy(input.conversationId)
-    if(!remote&&isWebManagedConversation(input.conversationId))throw new Error('Remote conversation has no active lease.')
-    const remoteEffect=remote?assertRemoteChatPermission(remote,input):null
-    if(remoteEffect==='read')return 'once'
-    const autonomous=autonomousPolicy(input.conversationId)
-    if(autonomous){assertAutonomousPermission(autonomous,input);return 'once'}
-    const r = remoteEffect==='ask'?{effect:'ask' as const,rules:[]}:this.evaluateInput(input)
+    const remote = remoteChatPolicy(input.conversationId)
+    if (!remote && isWebManagedConversation(input.conversationId))
+      throw new Error('Remote conversation has no active lease.')
+    const remoteEffect = remote ? assertRemoteChatPermission(remote, input) : null
+    if (remoteEffect === 'read') return 'once'
+    const autonomous = autonomousPolicy(input.conversationId)
+    if (autonomous) {
+      assertAutonomousPermission(autonomous, input)
+      return 'once'
+    }
+    const r = remoteEffect === 'ask' ? { effect: 'ask' as const, rules: [] } : this.evaluateInput(input)
     if (r.effect === 'deny') throw new DeniedError(r.rules)
     if (r.effect === 'allow') return 'once'
     const req = this.buildRequest(input)
@@ -296,7 +324,11 @@ export class PermissionBroker extends EventEmitter {
   reply(input: ReplyInput): void {
     const existing = this.pending.get(input.requestId)
     if (!existing) return
-    if(input.reply==='always'&&(remoteChatPolicy(existing.request.conversationId)||isWebManagedConversation(existing.request.conversationId)))throw new Error('Web chat permissions are valid for one operation only.')
+    if (
+      input.reply === 'always' &&
+      (remoteChatPolicy(existing.request.conversationId) || isWebManagedConversation(existing.request.conversationId))
+    )
+      throw new Error('Web chat permissions are valid for one operation only.')
 
     if (input.reply === 'reject') {
       this.emitResolved(existing.request, 'deny')

@@ -433,6 +433,7 @@ export default {
     // Menu lateral (#556): agrupa as configs por tema p/ a janela deixar de ser uma lista gigante.
     nav: {
       bots: 'Bots',
+      fleet: 'Servidor de bots',
       platform: 'Plataforma',
       chat: 'Maestrly Chat',
       usage: 'Uso e custos',
@@ -506,6 +507,9 @@ export default {
       volume: 'Volume geral',
       mute: 'Silenciar este som',
       unmute: 'Ativar este som',
+      botsTitle: 'Alertas dos bots',
+      botsDesc:
+        'Toca os sons acima quando um bot termina ou falha no que você pediu, ou precisa de você. Rotinas e conversas entre bots não tocam.',
       events: {
         ready: 'Turno pronto',
         error: 'Turno falhou',
@@ -608,7 +612,21 @@ export default {
   },
 
   sidebar: {
+    tabs: 'Barra lateral',
     chats: 'Chats',
+    bots: 'Bots',
+    experimental: 'Experimental',
+    noBots: 'Nenhum bot ainda',
+    noServerConnected: 'Nenhum servidor conectado',
+    connectBotServer: 'Conecte um servidor de bots nas Configurações para ver seus bots aqui.',
+    openSettings: 'Abrir Configurações',
+    createBot: 'Criar bot',
+    pendingBots_one: '{{count}} pedido pendente',
+    pendingBots_other: '{{count}} pedidos pendentes',
+    crossTabResults_one: '{{count}} resultado em {{tab}}',
+    crossTabResults_other: '{{count}} resultados em {{tab}}',
+    filterChats: 'Filtrar chats…',
+    filterBots: 'Filtrar bots…',
     newChat: 'Novo chat',
     noChats: 'Nenhum chat ainda',
     rename: 'Renomear',
@@ -661,7 +679,7 @@ export default {
     hideArchived: 'Ocultar arquivadas',
     showArchived: 'Mostrar arquivadas ({{count}})',
     keepAwakeTitle:
-      'Impede o Mac de dormir enquanto há agente trabalhando, para tarefas longas não congelarem. A tela bloqueada não pausa os agentes; o sleep, sim. Não força a tela acesa.',
+      'Impede o computador de dormir enquanto há agente trabalhando, para tarefas longas não congelarem. A tela bloqueada não pausa os agentes; o sleep, sim. Não força a tela acesa.',
     keepAwakeOn: 'Impedir suspensão: ligado',
     keepAwakeOff: 'Impedir suspensão: desligado',
     usage: 'Usage',
@@ -1007,6 +1025,8 @@ export default {
   },
 
   projectMemory: {
+    sourceAuto: 'Automática',
+    pinnedHint: 'Memórias fixadas ficam no contexto do agente, até cerca de 3.000 caracteres no total.',
     centerTitle: 'Memory Center · {{name}}',
     enabled: 'Usar memória do Maestrly',
     disabled: 'Memória desativada',

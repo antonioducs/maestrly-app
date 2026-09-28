@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Layers3, RotateCcw, Settings2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 import type {
   ChatSkillGroup,
   ChatSkillInfo,
@@ -64,7 +65,21 @@ function SkillRow({
   )
 }
 
-export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: string; onChanged?: () => void }) {
+export function ChatSkillsMenu({
+  conversationId,
+  onChanged,
+  source: providedSource,
+  manageSkillsLabel,
+  emptySkillsLabel,
+}: {
+  conversationId: string
+  onChanged?: () => void
+  source?: ChatComposerSource
+  manageSkillsLabel?: string
+  /** Shown for a bot with no skills yet, where the menu is the way to reach the bot's own skill settings. */
+  emptySkillsLabel?: string
+}) {
+  const source = providedSource ?? localChatComposerSource(conversationId)
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<ChatSkillsState>(EMPTY_STATE)
@@ -78,7 +93,7 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
   const [busyGroups, setBusyGroups] = useState<Set<string>>(new Set())
 
   const load = (): Promise<void> =>
-    window.api.chatSkillsState(conversationId).then((next) => {
+    source.chatSkillsState().then((next) => {
       setState(next)
       setEditingGroupId((current) =>
         next.groups.some((group) => group.id === current) ? current : (next.groups[0]?.id ?? '')
@@ -120,11 +135,11 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
   }, [open])
 
   const setOverride = (name: string, override: ChatSkillOverride | 'inherit'): void => {
-    void window.api.chatSkillSetOverride(conversationId, name, override).then(changed)
+    void source.chatSkillSetOverride(name, override).then(changed)
   }
 
   const setSelection = (selection: ChatSkillSelection): void => {
-    void window.api.chatSkillSetSelection(conversationId, selection).then(changed)
+    void source.chatSkillSetSelection(selection).then(changed)
   }
 
   const selectionValue = state.selection.kind === 'group' ? `group:${state.selection.groupId}` : state.selection.kind
@@ -152,7 +167,9 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
     return !query || skill.name.includes(query) || skill.description.toLowerCase().includes(query)
   })
 
-  if (state.skills.length === 0 && state.groups.length === 0) return null
+  const botWithoutSkills = Boolean(source.bot) && state.skills.length === 0
+  // Locally, skills are installed from Settings; a bot's menu stays visible so its settings stay reachable.
+  if (state.skills.length === 0 && state.groups.length === 0 && !source.bot) return null
 
   const toggleGroupSkill = (group: ChatSkillGroup, skillName: string): void => {
     if (groupMutations.current.has(group.id)) return
@@ -207,7 +224,7 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
             {state.hasOverrides && (
               <button
                 type="button"
-                onClick={() => void window.api.chatSkillResetOverrides(conversationId).then(changed)}
+                onClick={() => void source.chatSkillResetOverrides().then(changed)}
                 title={t('skillsMenu.resetOverrides')}
                 className="text-muted-foreground hover:text-foreground"
               >
@@ -216,15 +233,26 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
             )}
             <button
               type="button"
-              onClick={() => setEditGroups((value) => !value)}
-              title={t('skillsMenu.editGroups')}
+              onClick={() => (source.bot ? void source.bot.manage('skills') : setEditGroups((value) => !value))}
+              title={source.bot ? manageSkillsLabel : t('skillsMenu.editGroups')}
               className={cn('text-muted-foreground hover:text-foreground', editGroups && 'text-violet-300')}
             >
               <Settings2 className="h-3.5 w-3.5" />
             </button>
           </div>
 
-          {!editGroups ? (
+          {botWithoutSkills ? (
+            <div className="border-t border-white/[0.06] px-2.5 py-2">
+              <p className="text-[11px] leading-relaxed text-muted-foreground">{emptySkillsLabel}</p>
+              <button
+                type="button"
+                onClick={() => void source.bot?.manage('skills')}
+                className="mt-1.5 text-[12px] text-foreground underline decoration-white/30 underline-offset-2 hover:decoration-white"
+              >
+                {manageSkillsLabel}
+              </button>
+            </div>
+          ) : !editGroups ? (
             <>
               <div className="px-2 pb-1.5">
                 <label className="mb-1 block text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -246,7 +274,9 @@ export function ChatSkillsMenu({ conversationId, onChanged }: { conversationId: 
                       {group.name} ({group.skills.length})
                     </SelectOption>
                   ))}
-                  {state.selectedGroupMissing && <SelectOption value={selectionValue}>{t('skillsMenu.deletedGroup')}</SelectOption>}
+                  {state.selectedGroupMissing && (
+                    <SelectOption value={selectionValue}>{t('skillsMenu.deletedGroup')}</SelectOption>
+                  )}
                 </OptionSelect>
               </div>
 

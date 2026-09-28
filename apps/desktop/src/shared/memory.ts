@@ -4,7 +4,7 @@ export type MemoryType = (typeof MEMORY_TYPES)[number]
 export const LOCAL_MEMORY_STATUSES = ['active', 'superseded', 'archived'] as const
 export type LocalMemoryStatus = (typeof LOCAL_MEMORY_STATUSES)[number]
 
-export const LOCAL_MEMORY_SOURCES = ['user', 'agent', 'legacy-import'] as const
+export const LOCAL_MEMORY_SOURCES = ['user', 'agent', 'auto', 'legacy-import'] as const
 export type LocalMemorySource = (typeof LOCAL_MEMORY_SOURCES)[number]
 
 export const SHARED_MEMORY_TYPES = ['decision', 'constraint', 'procedure', 'lesson', 'reference'] as const
@@ -176,4 +176,12 @@ export interface MemoryPromotionPreviewInput {
 export interface MemoryPromotionInput extends MemoryPromotionPreviewInput {
   repositoryRoot?: string
   overwrite?: boolean
+}
+
+export interface MemorySettings {
+  autoRecall: boolean
+  extraction: {
+    enabled: boolean
+    selection: { providerId: string; modelId: string; effort: string; fastMode: boolean } | null
+  }
 }

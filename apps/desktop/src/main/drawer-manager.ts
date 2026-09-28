@@ -89,6 +89,7 @@ export {
   getBrowserState,
   getBrowserStateForScope,
   toggleBrowserDevTools,
+  focusBrowserPopup,
 } from './drawer/browser'
 export {
   showVSCodeLoading,

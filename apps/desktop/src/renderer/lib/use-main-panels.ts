@@ -1,7 +1,22 @@
 /** Coordinate mutually exclusive project panels, settings, and onboarding. */
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction, type SyntheticEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+  type SyntheticEvent,
+} from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import type { SettingsSection } from '@/components/settings/nav'
+
+export type FleetView =
+  | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
+  | { kind: 'environment'; environmentId: string; tab: 'overview' | 'screen' }
+  | { kind: 'server' }
+  | { kind: 'inbox' }
+  | { kind: 'memory' }
 
 type UseMainPanelsParams = {
   workspaces: WorkspaceWithConversations[]
@@ -12,7 +27,16 @@ type UseMainPanelsParams = {
 export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
+  const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
+  const [focusMemoryId, setFocusMemoryId] = useState<string | undefined>()
+  useEffect(() => {
+    if (!projectMemoryWs) setFocusMemoryId(undefined)
+  }, [projectMemoryWs])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [fleetView, setFleetView] = useState<FleetView | null>(null)
+  const [createBot, setCreateBot] = useState(false)
+  // The environment a new bot joins when created from its environment view; null offers a new environment.
+  const [createBotEnvironmentId, setCreateBotEnvironmentId] = useState<string | null>(null)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('chat')
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [onboardingChecked, setOnboardingChecked] = useState(false)
@@ -21,15 +45,19 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ conversationId?: string }>).detail
+      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string }>).detail
       if (!detail?.conversationId) return
       const workspace = workspaces.find((item) =>
         item.conversations.some((conversation) => conversation.id === detail.conversationId)
       )
       if (!workspace) return
       setProjectNotesWs(null)
+      setFleetView(null)
+      setCreateBot(false)
       setSettingsOpen(false)
       setOnboardingOpen(false)
+      setFocusMemoryId(detail.memoryId)
+      setFocusMemoryRequest((value) => value + 1)
       setProjectMemoryWs(workspace.id)
     }
     window.addEventListener('maestrly:open-memory', open)
@@ -60,7 +88,9 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs ||
     projectMemoryWs ||
     (settingsOpen ? 'settings' : null) ||
-    (onboardingOpen ? 'onboarding' : null)
+    (onboardingOpen ? 'onboarding' : null) ||
+    (fleetView ? 'fleet' : null) ||
+    (createBot ? 'fleet-create' : null)
 
   useEffect(
     () =>
@@ -71,6 +101,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         setProjectMemoryWs(null)
         setSettingsOpen(false)
         setOnboardingOpen(false)
+        setFleetView(null)
+        setCreateBot(false)
         setActive(conversation)
       }),
     [refreshWorkspaces, setActive]
@@ -84,6 +116,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         window.api.setOnboardingDone(true)
         setOnboardingOpen(false)
       }
+      setFleetView(null)
+      setCreateBot(false)
       setActive(conversation)
     },
     [refreshWorkspaces, setActive]
@@ -91,6 +125,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat') => {
     const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
+    setFleetView(null)
+    setCreateBot(false)
     setSettingsSection(section)
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
@@ -102,6 +138,8 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
     setSettingsOpen(false)
+    setFleetView(null)
+    setCreateBot(false)
     setOnboardingOpen(true)
   }, [])
 
@@ -126,15 +164,44 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setProjectMemoryWs(null)
       setSettingsOpen(false)
       setOnboardingOpen(false)
+      setFleetView(null)
+      setCreateBot(false)
       setActive(conversation)
     },
     [setActive]
   )
 
+  const openCreateBot = useCallback((environmentId: string | null = null) => {
+    setCreateBotEnvironmentId(environmentId)
+    setCreateBot(true)
+  }, [])
+
+  const openFleetView = useCallback(
+    (view: FleetView) => {
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setSettingsOpen(false)
+      setOnboardingOpen(false)
+      setCreateBot(false)
+      setActive(null)
+      setFleetView(view)
+    },
+    [setActive]
+  )
+
   return {
+    fleetView,
+    setFleetView,
+    createBot,
+    setCreateBot,
+    createBotEnvironmentId,
+    openCreateBot,
+    openFleetView,
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,
+    focusMemoryId,
+    focusMemoryRequest,
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,

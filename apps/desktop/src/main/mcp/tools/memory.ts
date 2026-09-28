@@ -1,7 +1,7 @@
 import { z } from 'zod'
+import { memoryContentProblem } from '../../memory/content-safety'
 import { LOCAL_MEMORY_SOURCES, LOCAL_MEMORY_STATUSES, MEMORY_TYPES, SHARED_MEMORY_TYPES } from '../../../shared/memory'
 import { appendMemory, readMemory, writeMemory } from '../../memory-service'
-import { isWorkspaceMemoryEnabled } from '../../memory/access'
 import {
   archiveLocalMemory,
   createLocalMemory,
@@ -11,9 +11,11 @@ import {
   restoreLocalMemory,
   updateLocalMemory,
   forgetLocalMemory,
+  resolveLocalMemoryId,
 } from '../../memory/local-memory-service'
 import { promoteLocalMemory } from '../../memory/memory-center-service'
-import { retrieveHybridMemory } from '../../memory/retrieval'
+import { memorySpaceForConversation, type MemorySpace } from '../../memory/spaces'
+import { searchMemorySpace } from '../../memory/search'
 import { getConversation } from '../../store'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
@@ -22,24 +24,22 @@ const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
 
 export function registerMemoryTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
-  if (getConversation(convId)?.scope === 'standalone') return
-  const conversation = () => getConversation(convId)
-  const workspaceId = () => {
-    const conv = conversation()
-    return conv?.scope === 'project' ? conv.workspaceId : undefined
+  const conversation = getConversation(convId)
+  // Project conversations keep their tools while memory is disabled (they report `memory-disabled`); other
+  // conversations get memory only when a host registered a space for them (bots).
+  if (!memorySpaceForConversation(convId) && conversation?.scope !== 'project') return
+  const repositoryTools = conversation?.scope === 'project' && memorySpaceForConversation(convId)?.kind !== 'bot'
+  const gate = (): { space: MemorySpace } | { error: ReturnType<typeof err> } => {
+    const space = memorySpaceForConversation(convId)
+    if (space) return { space }
+    const current = getConversation(convId)
+    if (current?.scope === 'project' && current.workspaceId) return { error: err('memory-disabled') }
+    return { error: err(t('errors.convWsNotFound')) }
   }
-  const enabledWorkspace = () => {
-    const id = workspaceId()
-    if (!id) return { error: err(t('errors.convWsNotFound')) }
-    if (!isWorkspaceMemoryEnabled(id)) return { error: err('memory-disabled') }
-    return { id }
-  }
-  const roots = () => {
-    const conv = conversation()
-    if (!conv) return []
-    return conv.isMulti
-      ? (conv.repos ?? []).map((repo) => ({ root: repo.worktreePath, linkName: repo.linkName }))
-      : [{ root: conv.cwd }]
+  const resolve = (spaceId: string, id: string): { id: string } | { error: ReturnType<typeof err> } => {
+    const resolved = resolveLocalMemoryId(spaceId, id)
+    if (resolved === 'ambiguous') return { error: err('memory-id-ambiguous') }
+    return resolved ? { id: resolved } : { error: err('memory-not-found') }
   }
 
   server.registerTool(
@@ -53,18 +53,27 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       },
     },
     async ({ query, limit }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      return json(
-        await retrieveHybridMemory({
-          workspaceId: gate.id!,
-          query,
-          roots: roots(),
-          limit: limit ?? 5,
-          maxChars: 8 * 1024,
-          markUsed: true,
-        })
+      const g = gate()
+      if ('error' in g) return g.error
+      const hits = await searchMemorySpace(g.space, query, { mode: 'search', limit: limit ?? 5 })
+      markLocalMemoriesUsed(
+        g.space.id,
+        hits.filter((hit) => hit.kind === 'local').map((hit) => hit.id)
       )
+      return json({
+        results: hits.map((hit) => ({
+          id: hit.id,
+          kind: hit.kind,
+          type: hit.type,
+          title: hit.title,
+          relevance: Math.round(hit.relevance * 100) / 100,
+          snippet: hit.snippet,
+          ...(hit.pinned ? { pinned: true } : {}),
+          ...(hit.updatedAt ? { updatedAt: new Date(hit.updatedAt).toISOString() } : {}),
+          ...(hit.path ? { repo: hit.repo, path: hit.path, startLine: hit.startLine, endLine: hit.endLine } : {}),
+        })),
+        ...(hits.length === 0 ? { note: t('returns.memory.nothingRelevant') } : {}),
+      })
     }
   )
 
@@ -84,9 +93,9 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       },
     },
     async (filters) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      return json(listLocalMemories(gate.id!, filters))
+      const g = gate()
+      if ('error' in g) return g.error
+      return json(listLocalMemories(g.space.id, filters))
     }
   )
 
@@ -98,11 +107,16 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       inputSchema: { id: z.string().min(1).max(200).optional() },
     },
     async ({ id }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      if (!id) return ok((await readMemory(gate.id!)) || t('returns.memory.empty'))
-      const memory = getLocalMemory(gate.id!, id)
-      if (memory) markLocalMemoriesUsed(gate.id!, [memory.id])
+      const g = gate()
+      if ('error' in g) return g.error
+      if (!id)
+        return g.space.kind === 'workspace'
+          ? ok((await readMemory(g.space.id)) || t('returns.memory.empty'))
+          : err('memory-id-required')
+      const resolved = resolve(g.space.id, id)
+      if ('error' in resolved) return resolved.error
+      const memory = getLocalMemory(g.space.id, resolved.id)
+      if (memory) markLocalMemoriesUsed(g.space.id, [memory.id])
       return memory ? json(memory) : err('memory-not-found')
     }
   )
@@ -129,18 +143,36 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       },
     },
     async ({ id, supersedes_id, origin_message_id, ...input }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      const existing = id ? getLocalMemory(gate.id!, id) : undefined
+      const g = gate()
+      if ('error' in g) return g.error
+      const resolvedId = id ? resolveLocalMemoryId(g.space.id, id) : undefined
+      if (resolvedId === 'ambiguous') return err('memory-id-ambiguous')
+      if (supersedes_id) {
+        const resolved = resolve(g.space.id, supersedes_id)
+        if ('error' in resolved) return resolved.error
+        supersedes_id = resolved.id
+      }
+      const existing = resolvedId ? getLocalMemory(g.space.id, resolvedId) : undefined
+      if (!existing || existing.title !== input.title || existing.content !== input.content) {
+        const problem = memoryContentProblem(`${input.title}\n${input.content}`)
+        if (problem)
+          return err(
+            t(
+              problem === 'invisible-characters'
+                ? 'errors.memoryInvisibleCharacters'
+                : 'errors.memoryInstructionInjection'
+            )
+          )
+      }
       const result = existing
-        ? updateLocalMemory(gate.id!, existing.id, {
+        ? updateLocalMemory(g.space.id, existing.id, {
             ...input,
             ...(supersedes_id ? { supersedesId: supersedes_id } : {}),
           })
         : createLocalMemory({
             ...input,
             ...(id ? { id } : {}),
-            workspaceId: gate.id!,
+            workspaceId: g.space.id,
             source: 'agent',
             originConversationId: convId,
             ...(origin_message_id ? { originMessageId: origin_message_id } : {}),
@@ -158,8 +190,10 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       inputSchema: { id: z.string().min(1).max(200) },
     },
     async ({ id }) => {
-      const gate = enabledWorkspace()
-      return gate.error ?? json(archiveLocalMemory(gate.id!, id))
+      const g = gate()
+      if ('error' in g) return g.error
+      const resolved = resolve(g.space.id, id)
+      return 'error' in resolved ? resolved.error : json(archiveLocalMemory(g.space.id, resolved.id))
     }
   )
   server.registerTool(
@@ -170,8 +204,10 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       inputSchema: { id: z.string().min(1).max(200) },
     },
     async ({ id }) => {
-      const gate = enabledWorkspace()
-      return gate.error ?? json(restoreLocalMemory(gate.id!, id))
+      const g = gate()
+      if ('error' in g) return g.error
+      const resolved = resolve(g.space.id, id)
+      return 'error' in resolved ? resolved.error : json(restoreLocalMemory(g.space.id, resolved.id))
     }
   )
   server.registerTool(
@@ -182,10 +218,14 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       inputSchema: { id: z.string().min(1).max(200), confirm: z.literal(true) },
     },
     async ({ id }) => {
-      const gate = enabledWorkspace()
-      return gate.error ?? json({ forgotten: forgetLocalMemory(gate.id!, id) })
+      const g = gate()
+      if ('error' in g) return g.error
+      const resolved = resolve(g.space.id, id)
+      return 'error' in resolved ? resolved.error : json({ forgotten: forgetLocalMemory(g.space.id, resolved.id) })
     }
   )
+  if (!repositoryTools) return
+
   server.registerTool(
     'memory_promote_to_shared',
     {
@@ -201,9 +241,10 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       },
     },
     async ({ id, repo, ...options }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      const conv = conversation()!
+      const g = gate()
+      if ('error' in g) return g.error
+      if (g.space.kind !== 'workspace') return err('memory-repository-required')
+      const conv = getConversation(convId)!
       let repositoryRoot = conv.cwd
       if (conv.isMulti) {
         const selected = (conv.repos ?? []).find((item) => item.linkName === repo)
@@ -212,7 +253,7 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       }
       return json(
         await promoteLocalMemory({
-          workspaceId: gate.id!,
+          workspaceId: g.space.id,
           memoryId: id,
           repositoryRoot,
           ...options,
@@ -230,9 +271,10 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       inputSchema: { content: z.string().max(256 * 1024) },
     },
     async ({ content }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      await writeMemory(gate.id!, content, true)
+      const g = gate()
+      if ('error' in g) return g.error
+      if (g.space.kind !== 'workspace') return err('memory-repository-required')
+      await writeMemory(g.space.id, content, true)
       return ok(t('returns.memory.updated'))
     }
   )
@@ -249,9 +291,10 @@ export function registerMemoryTools(ctx: McpToolContext): void {
       },
     },
     async ({ text }) => {
-      const gate = enabledWorkspace()
-      if (gate.error) return gate.error
-      await appendMemory(gate.id!, text, true)
+      const g = gate()
+      if ('error' in g) return g.error
+      if (g.space.kind !== 'workspace') return err('memory-repository-required')
+      await appendMemory(g.space.id, text, true)
       return ok(t('returns.memory.appended'))
     }
   )

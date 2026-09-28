@@ -1,0 +1,31 @@
+{
+  "name": "@maestrly/bot-gateway",
+  "version": "0.1.0",
+  "description": "Headless Maestrly bot fleet gateway",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "maestrly-bot-gateway": "dist/main.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@maestrly/bot-fleet-protocol": "0.1.0",
+    "zod": "4.6.5",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "@types/ws": "8.18.1",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

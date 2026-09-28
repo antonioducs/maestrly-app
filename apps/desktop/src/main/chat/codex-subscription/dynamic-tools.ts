@@ -30,9 +30,7 @@ function deferredNamespaceName(specs: readonly DynamicToolFunctionSpec[]): strin
  * The Codex app-server accepts deferLoading only on functions nested under a namespace. Runtime dispatch remains
  * flat because item/tool/call sends the child function name separately from its namespace.
  */
-export function dynamicToolRegistrations(
-  specs: readonly DynamicToolFunctionSpec[]
-): DynamicToolRegistrationSpec[] {
+export function dynamicToolRegistrations(specs: readonly DynamicToolFunctionSpec[]): DynamicToolRegistrationSpec[] {
   const eager = specs.filter((spec) => spec.deferLoading !== true)
   const deferred = specs.filter((spec) => spec.deferLoading === true)
   if (!deferred.length) return [...eager]

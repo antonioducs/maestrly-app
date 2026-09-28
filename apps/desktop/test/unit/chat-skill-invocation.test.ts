@@ -110,7 +110,7 @@ vi.mock('../../src/main/chat/provider', () => ({
 
 vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: vi.fn(() => []) }))
 
-import { registerChatIpc } from '../../src/main/chat/service'
+import { registerChatIpc, startExecutorChatTurn } from '../../src/main/chat/service'
 import { __resetCwdActivityForTests } from '../../src/main/cwd-activity-coordinator'
 import type { MessagePart } from '../../src/shared/chat'
 
@@ -169,6 +169,21 @@ describe('chat:send skill invocation', () => {
     expect(body).toContain(path.join(cwd, '.agents/skills/deploy')) // root p/ resolver scripts/references
     expect(body).toContain('scripts/run.sh')
     expect(body).toContain('User arguments: prod')
+  })
+
+  it('expands a bot executor slash prompt through the same startSend path', async () => {
+    mkSkill('deploy', '---\nname: deploy\n---\nRun the bot checklist.')
+    handlersOf()
+    const handle = await startExecutorChatTurn({
+      conversationId: 'conv-chat',
+      prompt: '/deploy staging',
+      signal: new AbortController().signal,
+    })
+    expect(handle.conversationId).toBe('conv-chat')
+    expect(userParts()[0]).toMatchObject({ type: 'skill-invocation', name: 'deploy', args: 'staging' })
+    expect((userParts()[0] as Extract<MessagePart, { type: 'skill-invocation' }>).body).toContain(
+      'Run the bot checklist.'
+    )
   })
 
   it('treats globally disabled skill invocations as plain text', async () => {

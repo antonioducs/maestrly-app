@@ -16,9 +16,13 @@ const statusLabelKey: Record<BackgroundCompactionState['status'], string> = {
 export function BackgroundCompactionStatus({
   conversationId,
   state,
+  onRetry,
+  onOpenSettings,
 }: {
   conversationId: string
   state?: BackgroundCompactionState
+  onRetry?: () => Promise<{ ok: boolean; error?: string }>
+  onOpenSettings?: () => void
 }) {
   const { t } = useTranslation('chat')
   const { openSettings } = useSettings()
@@ -46,7 +50,8 @@ export function BackgroundCompactionStatus({
     if (retrying) return
     setRetrying(true)
     try {
-      await window.api.chatRetryBackgroundCompaction(conversationId)
+      if (onRetry) await onRetry()
+      else await window.api.chatRetryBackgroundCompaction(conversationId)
     } catch {
       // The failed state remains actionable; the next event or hydration supplies backend details.
     } finally {
@@ -83,7 +88,7 @@ export function BackgroundCompactionStatus({
           </button>
           <button
             type="button"
-            onClick={() => openSettings('chat')}
+            onClick={() => (onOpenSettings ? onOpenSettings() : openSettings('chat'))}
             className="rounded px-1 py-0.5 font-medium text-red-200 hover:bg-red-400/10 hover:text-red-100"
           >
             {t('backgroundCompaction.settings')}

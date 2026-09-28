@@ -118,6 +118,7 @@ import {
   waitForTurnDelegationsTerminal,
 } from '../maestro-delegation-registry'
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolBridge } from './tools'
+import { conversationShellEnv } from '../conversation-env'
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
 import { claudeServedModelMismatch } from './served-model'
 import { renderDesignUltraGuidance } from '../design-mode-prompt'
@@ -735,7 +736,7 @@ async function prepareRuntime(
       () => args.manager.assertAccountIdentity(args.accountIdentity),
       state.toolJournal
     )
-    const projectContext = await buildProjectContext(args.projectId, args.cwd)
+    const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
     const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
@@ -1584,22 +1585,26 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         state.queryAbortController = queryAbortController
         intentionalPlanInterruptIssued = false
         intentionalPlanInterruptCaught = false
-        state.query = args.manager.createQuery({
-          prompt: nextPrompt.prompt,
-          options: buildClaudeChatQueryOptions({
-            abortController: queryAbortController,
-            cwd: args.cwd,
-            modelId: runtimeModelId,
-            reasoningEffort: args.reasoningEffort,
-            fastMode: args.fastMode,
-            systemPrompt: runtime.systemPrompt,
-            bridge: runtime.bridge,
-            ...(runtime.postToolUseHook ? { postToolUseHook: runtime.postToolUseHook } : {}),
-            progressMode: runtime.harness.progress,
-            disallowedNativeTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
-            ...nextResume,
-          }),
-        })
+        state.query = args.manager.createQuery(
+          {
+            prompt: nextPrompt.prompt,
+            options: buildClaudeChatQueryOptions({
+              abortController: queryAbortController,
+              cwd: args.cwd,
+              modelId: runtimeModelId,
+              reasoningEffort: args.reasoningEffort,
+              fastMode: args.fastMode,
+              systemPrompt: runtime.systemPrompt,
+              bridge: runtime.bridge,
+              ...(runtime.postToolUseHook ? { postToolUseHook: runtime.postToolUseHook } : {}),
+              progressMode: runtime.harness.progress,
+              disallowedNativeTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
+              ...nextResume,
+            }),
+          },
+          // A fleet bot's Claude process and the programs it starts use the bot's own display.
+          { shellEnvironment: conversationShellEnv(args.conversationId) }
+        )
         const activeQuery = state.query
         const observeContext = contextProgress.observeAttempt()
         let latestContextUsage: ReturnType<typeof normalizeClaudeUsage> | undefined

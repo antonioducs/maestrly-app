@@ -13,21 +13,40 @@ function files(directory) {
   })
 }
 
-for (const scope of ['apps/server/src', 'apps/runner/src', 'apps/web/src', 'packages/protocol/src', 'packages/client-sdk/src', 'packages/runner-core/src']) {
+for (const scope of [
+  'apps/server/src',
+  'apps/runner/src',
+  'apps/bot-gateway/src',
+  'apps/web/src',
+  'packages/protocol/src',
+  'packages/bot-fleet-protocol/src',
+  'packages/client-sdk/src',
+  'packages/runner-core/src',
+]) {
   for (const file of files(path.join(root, scope))) {
     const source = readFileSync(file, 'utf8')
-    if (/(?:from\s*|import\s*\()['"]electron/.test(source)) failures.push(`${path.relative(root, file)} imports Electron`)
-    if (/(?:from\s*|import\s*\()['"][^'"]*apps\/desktop/.test(source)) failures.push(`${path.relative(root, file)} imports desktop code`)
+    if (/(?:from\s*|import\s*\()['"]electron/.test(source))
+      failures.push(`${path.relative(root, file)} imports Electron`)
+    if (/(?:from\s*|import\s*\()['"][^'"]*apps\/desktop/.test(source))
+      failures.push(`${path.relative(root, file)} imports desktop code`)
   }
 }
 
-for (const file of files(path.join(root, 'packages/protocol/src'))) {
-  if (/(?:from\s*|import\s*\()['"]node:/.test(readFileSync(file, 'utf8'))) failures.push(`${path.relative(root, file)} is not browser-importable`)
+for (const scope of ['packages/protocol/src', 'packages/bot-fleet-protocol/src']) {
+  for (const file of files(path.join(root, scope))) {
+    if (/(?:from\s*|import\s*\()['"]node:/.test(readFileSync(file, 'utf8')))
+      failures.push(`${path.relative(root, file)} is not browser-importable`)
+  }
 }
 
 const runnerManifest = JSON.parse(readFileSync(path.join(root, 'apps/runner/package.json'), 'utf8'))
 const serverManifest = JSON.parse(readFileSync(path.join(root, 'apps/server/package.json'), 'utf8'))
-for (const [name, manifest] of [['runner', runnerManifest], ['server', serverManifest]]) {
+const gatewayManifest = JSON.parse(readFileSync(path.join(root, 'apps/bot-gateway/package.json'), 'utf8'))
+for (const [name, manifest] of [
+  ['runner', runnerManifest],
+  ['server', serverManifest],
+  ['bot-gateway', gatewayManifest],
+]) {
   const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
   if (dependencies.electron) failures.push(`${name} declares Electron`)
   if (dependencies['@maestrly/desktop']) failures.push(`${name} declares desktop`)
@@ -35,10 +54,14 @@ for (const [name, manifest] of [['runner', runnerManifest], ['server', serverMan
 
 const desktopBuilder = readFileSync(path.join(root, 'apps/desktop/electron-builder.yml'), 'utf8')
 if (!/^appId: io\.github\.antonioducs\.maestrly$/m.test(desktopBuilder)) failures.push('desktop appId changed')
-if (!statSync(path.join(root, 'LICENSE')).isFile() || !/MIT License/.test(readFileSync(path.join(root, 'LICENSE'), 'utf8'))) failures.push('MIT license missing')
+if (
+  !statSync(path.join(root, 'LICENSE')).isFile() ||
+  !/MIT License/.test(readFileSync(path.join(root, 'LICENSE'), 'utf8'))
+)
+  failures.push('MIT license missing')
 
 if (failures.length > 0) {
   process.stderr.write(`${failures.map((failure) => `- ${failure}`).join('\n')}\n`)
   process.exit(1)
 }
-process.stdout.write('[boundaries] four products and focused packages are isolated.\n')
+process.stdout.write('[boundaries] five products and focused packages are isolated.\n')

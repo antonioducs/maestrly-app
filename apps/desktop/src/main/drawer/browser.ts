@@ -15,6 +15,10 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
+import { conversationScreen } from '../conversation-screen'
+import { isBotMode } from '../fleet/instance/config'
+import { centerInArea, clampToArea, insideWindowFrame } from '../fleet/instance/window-bounds'
+import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
   OFFSCREEN,
   activeConvId,
@@ -46,6 +50,17 @@ type WindowOpenHandler = Parameters<WebContents['setWindowOpenHandler']>[0]
 let popupBrowserRelayout: ((convId: string) => void) | null = null
 const oauthOwnerScopeByWindow = new Map<BrowserWindow, string>()
 const browserCaptureTails = new WeakMap<WebContents, Promise<void>>()
+const browserDialogReady = new WeakMap<WebContents, Promise<void>>()
+
+/** Bot pages load only once their nonblocking dialog policy is installed. Native dialogs are disabled from creation. */
+function loadBrowserUrl(wc: WebContents, url: string): void {
+  const load = () => {
+    if (!wc.isDestroyed()) void wc.loadURL(url).catch(() => {})
+  }
+  const ready = browserDialogReady.get(wc)
+  if (ready) void ready.then(load)
+  else load()
+}
 
 function enqueueBrowserCapture<T>(wc: WebContents, operation: () => Promise<T>): Promise<T> {
   const previous = browserCaptureTails.get(wc) ?? Promise.resolve()
@@ -103,7 +118,10 @@ function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<Na
             if (!image.isEmpty()) finish(() => resolve(image))
           },
           (error) => {
-            if (/UnknownVizError/i.test(String((error as Error)?.message ?? error)) && captureAttempts < maxCaptureAttempts) {
+            if (
+              /UnknownVizError/i.test(String((error as Error)?.message ?? error)) &&
+              captureAttempts < maxCaptureAttempts
+            ) {
               wc.invalidate()
               setTimeout(requestFrame, 75)
               return
@@ -416,7 +434,7 @@ export function hardenBrowserSession(): void {
 function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebContentsView {
   const resourceId = tab.id
   const v = new WebContentsView({
-    webPreferences: { partition: BROWSER_PARTITION },
+    webPreferences: { partition: BROWSER_PARTITION, ...(isBotMode() ? { disableDialogs: true } : {}) },
   })
   v.setBackgroundColor('#0A0A0B')
   v.setBounds(OFFSCREEN)
@@ -442,7 +460,18 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   })
   // Attach CDP early; Page/DevTools coexist while Runtime/Log/Network capture follows activity leases and
   // tool demand.
-  attachToView(wc)
+  const dialogs = attachToView(wc, { nativeDialogsDisabled: isBotMode() })
+  if (isBotMode()) {
+    // Runtime.evaluate needs a renderer before it can install the current-document override. Bootstrap only an empty
+    // document; waiting for CDP before creating that renderer would deadlock the first real navigation.
+    const blank = wc.loadURL('about:blank')
+    browserDialogReady.set(
+      wc,
+      Promise.all([blank, dialogs])
+        .then(() => attachToView(wc, { nativeDialogsDisabled: true }))
+        .catch(() => undefined)
+    )
+  }
   attachHotkeyCapture(wc) // #328: capture shortcuts while browser content has focus
   attachMacMouseNavigation(wc, (direction) => {
     if (direction === 'back') browserBack(convId)
@@ -453,10 +482,22 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   // compositing. did-create-window handles presentation.
   const buildWindowOpenHandler = (): WindowOpenHandler => (details) => {
     if (isPopupDisposition(details)) {
+      const popupOptions = oauthChildWindowOptions(BROWSER_PARTITION)
       return {
         action: 'allow',
         outlivesOpener: false, // close login windows when their opener tab closes
-        overrideBrowserWindowOptions: oauthChildWindowOptions(BROWSER_PARTITION),
+        // Hidden until did-create-window places and shows it: a window shown while it is constructed would take the
+        // focus before anything could decide whether it may (another bot's screen may be under control).
+        overrideBrowserWindowOptions: {
+          ...popupOptions,
+          show: false,
+          webPreferences: {
+            ...popupOptions.webPreferences,
+            // Electron's native dialogs are separate GTK windows and bypass the popup's disabled input. They must
+            // never block another bot's controlled screen. Native confirmations in bot popups are canceled.
+            ...(isBotMode() ? { disableDialogs: true } : {}),
+          },
+        },
       }
     }
     if (tab.ownerScopeId) {
@@ -467,6 +508,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     return { action: 'deny' }
   }
   const registerOAuthWindow = (child: BrowserWindow): void => {
+    setScreenFocusOwner(child, { kind: 'conversation', conversationId: convId })
     d.oauthWindows.add(child)
     if (tab.ownerScopeId) oauthOwnerScopeByWindow.set(child, tab.ownerScopeId)
     // Show top-level OAuth windows above the app, including macOS fullscreen Spaces through
@@ -479,12 +521,22 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       }
     }
     try {
-      child.center()
-      child.show()
-      child.focus()
+      // A conversation with its own screen area keeps its popups there, window manager frame included: they keep the
+      // frame for its close button. Others center on their display.
+      const area = conversationScreen(convId)?.windowArea
+      if (area) child.setBounds(centerInArea(child.getBounds(), insideWindowFrame(area)))
+      else child.center()
+      showWindow(child)
     } catch {
       /* The window may already be closed. */
     }
+    // A page may move or resize its popup (window.moveTo, window.resizeTo); inside a screen area it stays there.
+    child.webContents.on('content-bounds-updated', (event, bounds) => {
+      const area = conversationScreen(convId)?.windowArea
+      if (!area) return
+      event.preventDefault()
+      if (!child.isDestroyed()) child.setBounds(clampToArea(bounds, insideWindowFrame(area)))
+    })
     // Apply the same hardened options, shared partition, and conversation ownership recursively to popups
     // opened from OAuth windows.
     child.webContents.setWindowOpenHandler(buildWindowOpenHandler())
@@ -493,6 +545,8 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
       d.oauthWindows.delete(child)
       oauthOwnerScopeByWindow.delete(child)
       if (isBrowserVisibleInSlot(convId)) focusViewInMain(convId, 'browser')
+      // While someone controls this conversation's screen, its next popup or its browser gets the keyboard back.
+      else refocusScreen({ kind: 'conversation', conversationId: convId })
     })
   }
   wc.setWindowOpenHandler(buildWindowOpenHandler())
@@ -520,6 +574,18 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   wc.on('did-stop-loading', emit)
   wc.on('page-title-updated', emit)
   return v
+}
+
+/**
+ * Focuses the newest visible popup of a conversation's browser, such as a sign-in window, which lies above its
+ * browser; false when it has none.
+ */
+export function focusBrowserPopup(convId: string): boolean {
+  const popups = [...(drawers.get(convId)?.oauthWindows ?? [])].reverse()
+  const popup = popups.find((child) => !child.isDestroyed() && child.isVisible())
+  if (!popup) return false
+  popup.focus()
+  return true
 }
 
 // Debounce per-conversation tab URL/order/active-state persistence rather than writing on every navigation.
@@ -611,7 +677,7 @@ function materializeBrowserTab(convId: string, tab: BrowserTab): WebContentsView
   tab.url = normalizeUrl(tab.url || 'https://www.google.com')
   touchBrowserTab(tab)
   registerBrowserTabReclaimable(convId, tab)
-  void tab.view.webContents.loadURL(tab.url)
+  loadBrowserUrl(tab.view.webContents, tab.url)
   scheduleColdBrowserEviction()
   return tab.view
 }
@@ -771,7 +837,7 @@ export function navigateBrowser(convId: string, input: string): void {
   touchBrowserTab(active)
   scheduleColdBrowserEviction()
   const wc = active.view.webContents
-  wc.loadURL(normalizeUrl(input))
+  loadBrowserUrl(wc, normalizeUrl(input))
 }
 export function browserBack(convId: string): void {
   const d = getDrawer(convId)

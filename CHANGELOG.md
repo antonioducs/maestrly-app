@@ -5,6 +5,35 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Experimental: run remote bots as separate Maestrly desktops in Docker, on this
+  computer or on your own Linux server, with their own screens, browser, model
+  accounts, and files. Bots on a server keep working while your computer is off.
+- Set up the bot server from Settings → Bot server: Maestrly installs it on this
+  computer's Docker or on an Ubuntu or Debian VPS over SSH, pairs this computer,
+  and updates the server to the app's version. Bots reach only the public
+  internet unless you let them reach private networks.
+- Group up to eight bots in an environment that shares one desktop, home folder,
+  and set of model accounts, skills, MCP servers, and site logins.
+- Pair your computer with a bot gateway you manage, manage bots from the Bots
+  sidebar, watch or take control of a bot's screen, and answer its questions and
+  approval requests from Awaiting you.
+- Add model accounts to an environment or bring them from your computer,
+  schedule routines on the server, allow selected bots to exchange bounded
+  messages, and review their activity.
+- See the screenshots and images a bot's tools produce in its conversation, and
+  send it images from your computer by attaching, pasting, or dropping them.
+- Choose a bot's reasoning effort, fast mode, and access from its composer,
+  dictate messages with the microphone, and follow its context use and
+  estimated cost; its model list follows the models you enabled for its
+  account.
+
+### Fixed
+
+- Deliver browser and desktop screenshots to GPT-6 models on ChatGPT
+  subscriptions when they call tools from code.
+
 ## [0.10.0] - 2026-09-26
 
 ### Added
