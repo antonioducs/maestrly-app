@@ -30,6 +30,7 @@ import {
   BOT_SERVER_GATEWAY_PORT,
   BOT_SERVER_REMOTE_DIR,
   bundledComposePath,
+  checkoutRoot,
   displayNameFor,
   imageVersion,
   parseBotServerEnv,
@@ -829,7 +830,7 @@ const localRunner = () => new LocalRunner()
 
 /** `scripts/bot-fleet-images.mjs` from the checkout, run by Electron as Node with Docker on PATH. */
 function runImageBuilder(options: RunOptions): Promise<RunResult> {
-  const root = path.resolve(app.getAppPath(), '..', '..')
+  const root = checkoutRoot()
   const script = path.join(root, 'scripts', 'bot-fleet-images.mjs')
   if (!existsSync(script))
     return Promise.resolve({ code: 1, stdout: '', stderr: 'scripts/bot-fleet-images.mjs is not in this checkout' })

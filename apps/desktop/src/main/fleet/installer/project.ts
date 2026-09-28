@@ -158,16 +158,29 @@ export function composeArgs(dir: string, join: (...parts: string[]) => string): 
   ]
 }
 
+const CHECKOUT_COMPOSE = path.join('deploy', 'bot-fleet', 'compose.yml')
+
+/**
+ * The repository a development build runs from: the app's directory or one of its first parents that holds the bot
+ * fleet project, else the working directory. `electron .` runs from `apps/desktop`; `electron out/main/index.js`, as in
+ * end-to-end tests, from `apps/desktop/out/main`.
+ */
+export function checkoutRoot(location: { appPath?: string; cwd?: string } = {}): string {
+  const appPath = path.resolve(location.appPath ?? app.getAppPath())
+  let dir = appPath
+  for (let level = 0; level <= 4; level++) {
+    if (existsSync(path.join(dir, CHECKOUT_COMPOSE))) return dir
+    dir = path.dirname(dir)
+  }
+  const cwd = location.cwd ?? process.cwd()
+  return existsSync(path.join(cwd, CHECKOUT_COMPOSE)) ? cwd : path.resolve(appPath, '..', '..')
+}
+
 /** The Compose file shipped with the app, or the checkout's in a development build. */
 export function bundledComposePath(
   location: { isPackaged?: boolean; resourcesPath?: string; appPath?: string; cwd?: string } = {}
 ): string {
   const isPackaged = location.isPackaged ?? app.isPackaged
   if (isPackaged) return path.join(location.resourcesPath ?? process.resourcesPath, 'bot-server', 'compose.yml')
-  const appPath = location.appPath ?? app.getAppPath()
-  const relative = path.join('deploy', 'bot-fleet', 'compose.yml')
-  const roots = [appPath, path.resolve(appPath, '..', '..'), location.cwd ?? process.cwd()]
-  const root =
-    roots.find((candidate) => existsSync(path.join(candidate, relative))) ?? path.resolve(appPath, '..', '..')
-  return path.join(root, relative)
+  return path.join(checkoutRoot(location), CHECKOUT_COMPOSE)
 }

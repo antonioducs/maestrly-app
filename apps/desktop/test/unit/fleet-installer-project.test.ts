@@ -7,6 +7,7 @@ import { InstallerError, installerErrorOf } from '../../src/main/fleet/installer
 import { BOT_SERVER_REGISTRY, botServerImages } from '../../src/main/fleet/installer/images'
 import {
   bundledComposePath,
+  checkoutRoot,
   composeArgs,
   displayNameFor,
   imageVersion,
@@ -193,6 +194,17 @@ describe('bot server project files', () => {
     const checkout = bundledComposePath({ isPackaged: false, appPath: path.join(repository, 'apps/desktop') })
     expect(checkout).toBe(path.join(repository, 'deploy/bot-fleet/compose.yml'))
     expect(existsSync(checkout)).toBe(true)
+    // `electron out/main/index.js`, as the end-to-end tests start the app, makes the bundle's directory the app path.
+    expect(bundledComposePath({ isPackaged: false, appPath: path.join(repository, 'apps/desktop/out/main') })).toBe(
+      checkout
+    )
+  })
+
+  it('finds the checkout above the app, else in the working directory', () => {
+    const root = path.resolve(repository)
+    expect(checkoutRoot({ appPath: path.join(repository, 'apps/desktop'), cwd: '/nowhere' })).toBe(root)
+    expect(checkoutRoot({ appPath: path.join(repository, 'apps/desktop/out/main'), cwd: '/nowhere' })).toBe(root)
+    expect(checkoutRoot({ appPath: path.parse(root).root, cwd: repository })).toBe(repository)
   })
 })
 
