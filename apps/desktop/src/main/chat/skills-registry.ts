@@ -525,7 +525,10 @@ export async function installSkillFiles(
         }
   if (input.source === 'fleet' && existing && (existing.isDirectory() || existing.isSymbolicLink())) {
     const current = await packageSkillDirectory(dir).catch(() => null)
-    if (current && skillFilesDigest(current) === skillFilesDigest(input.files)) {
+    // Windows stores no executable bit, so an installed script there always reads as not executable.
+    const comparable = (files: readonly SkillFile[]) =>
+      process.platform === 'win32' ? files.map((file) => ({ ...file, executable: false })) : files
+    if (current && skillFilesDigest(comparable(current)) === skillFilesDigest(comparable(input.files))) {
       recordInstalledSkill(input.name, provenance)
       return { outcome: 'unchanged', dir }
     }
