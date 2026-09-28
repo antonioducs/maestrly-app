@@ -11,7 +11,13 @@ vi.mock('node:sqlite', async (importOriginal) => {
     constructor(...args: ConstructorParameters<typeof sqlite.DatabaseSync>) {
       super(...args)
       // A connection created with `open: false` opens later with the default; it is only slower.
-      if (this.isOpen) this.exec('PRAGMA synchronous = OFF')
+      if (!this.isOpen) return
+      try {
+        this.exec('PRAGMA synchronous = OFF')
+      } catch {
+        // A file that is not a database opens anyway and fails on first use, where the code under test expects it:
+        // failing here instead would leave the connection open, and the file locked on Windows.
+      }
     }
   }
   return { ...sqlite, DatabaseSync }
