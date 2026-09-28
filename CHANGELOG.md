@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-28
+
 ### Added
 
 - Experimental: run remote bots as separate Maestrly desktops in Docker, on this
@@ -28,11 +30,28 @@ User-visible changes by version. Downloads are on
   dictate messages with the microphone, and follow its context use and
   estimated cost; its model list follows the models you enabled for its
   account.
+- Hear an alert when a bot finishes or fails what you asked, or needs you.
+- Split the sidebar into Chats, Workspaces, and Bots tabs.
+- Recall relevant memories for each message in project conversations with
+  memory; a chip under the message opens the recalled memories. Turn it off in
+  Settings → Chat → Memory.
+- Save memories from conversations in the background with a memory model you
+  choose, and consolidate overlapping automatic memories. Saving starts off.
+- Let agents search and read their own conversation history.
+
+### Changed
+
+- Encrypt MCP connection details (URLs, headers, commands, arguments, and
+  environment values) at rest when secure storage is available. Earlier
+  versions cannot read them: after a downgrade, set up those MCP servers again.
+- Open and continue long conversations faster.
 
 ### Fixed
 
 - Deliver browser and desktop screenshots to GPT-6 models on ChatGPT
   subscriptions when they call tools from code.
+- Remove the temporary directory of a Codex runtime check on Windows instead
+  of leaving it behind.
 
 ## [0.10.0] - 2026-09-26
 
