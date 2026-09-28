@@ -6,6 +6,7 @@ import { renderBotServerEnv } from '../../src/main/fleet/installer/project'
 import type { RunOptions, RunResult } from '../../src/main/fleet/installer/runner'
 import {
   FleetInstallerService,
+  pullDetail,
   type FleetInstallerDeps,
   type FleetInstallerFleet,
   type InstallerSession,
@@ -845,5 +846,46 @@ describe('the tunnel at startup', () => {
     const bot = setup({ record: remoteRecord(), key: 'k', deps: { env: { MAESTRLY_BOT_MODE: '1' } } })
     await bot.service.start()
     expect(bot.tunnels).toHaveLength(0)
+  })
+})
+
+describe('image download progress', () => {
+  const progress = (lines: string[]) => {
+    const details: Array<string | null> = []
+    const push = pullDetail('registry.example.test/maestrly-bot-gateway:0.9.4', (text) => details.push(text))
+    for (const line of lines) push(line)
+    return details.at(-1)
+  }
+
+  it('counts the layers of a download on the classic image store', () => {
+    expect(
+      progress([
+        '0.9.4: Pulling from maestrly-bot-gateway',
+        'e0efe4312ea5: Already exists',
+        'e88e872a61b8: Pulling fs layer',
+        'e88e872a61b8: Waiting',
+        'e88e872a61b8: Verifying Checksum',
+        'e88e872a61b8: Download complete',
+        'e88e872a61b8: Pull complete',
+        'Digest: sha256:e9de3bae272a2d1ee97165b60d63bdc3b7fe7382298dd226cc95ef11808bccd5',
+      ])
+    ).toBe('registry.example.test/maestrly-bot-gateway:0.9.4 (2/2)')
+  })
+
+  it("leaves out the image config that Docker's containerd store reports as downloaded", () => {
+    // As Docker 29 prints it: the config blob appears once, as downloaded, and is never pulled.
+    expect(
+      progress([
+        '0.9.4: Pulling from maestrly-bot-gateway',
+        'e0efe4312ea5: Pulling fs layer',
+        'e88e872a61b8: Pulling fs layer',
+        '216d81376ad7: Download complete',
+        'e0efe4312ea5: Download complete',
+        'e88e872a61b8: Download complete',
+        'e88e872a61b8: Pull complete',
+        'e0efe4312ea5: Pull complete',
+        'Status: Downloaded newer image for registry.example.test/maestrly-bot-gateway:0.9.4',
+      ])
+    ).toBe('registry.example.test/maestrly-bot-gateway:0.9.4 (2/2)')
   })
 })

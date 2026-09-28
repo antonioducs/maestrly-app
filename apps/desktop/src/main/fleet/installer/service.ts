@@ -151,12 +151,14 @@ function lineDetail(detail: (text: string | null) => void): (line: string) => vo
 }
 
 /** A download's layers as `ref (done/total)`, from `docker pull` output. */
-function pullDetail(ref: string, detail: (text: string | null) => void): (line: string) => void {
+export function pullDetail(ref: string, detail: (text: string | null) => void): (line: string) => void {
   const layers = new Map<string, boolean>()
   let last = 0
   return (line) => {
     const match = /^([0-9a-f]{12}): (.+)$/.exec(line.trim())
     if (!match) return
+    // Docker's containerd image store also reports the image's config, only as downloaded: it is not a layer.
+    if (!layers.has(match[1]) && match[2].startsWith('Download complete')) return
     const finished = /Pull complete|Already exists/.test(match[2])
     layers.set(match[1], finished || (layers.get(match[1]) ?? false))
     const now = Date.now()
