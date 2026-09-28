@@ -229,6 +229,24 @@ describe('fleet API and events', () => {
     expect(delays[0]).toBeLessThanOrEqual(1250)
   })
 
+  it('starts the backoff over after each stream that opened', async () => {
+    const delays: number[] = []
+    const events: FleetEvents = new FleetEvents(
+      new FleetApiClient(origin, 'valid'),
+      () => undefined,
+      () => undefined,
+      async () => undefined,
+      async (ms) => {
+        delays.push(ms)
+        if (delays.length >= 4) events.stop()
+      }
+    )
+    events.start()
+    // Each stream here opens, then ends: every reconnection waits about a second, never 2, 4 or 8.
+    await vi.waitFor(() => expect(delays).toHaveLength(4))
+    for (const delay of delays) expect(delay).toBeLessThanOrEqual(1250)
+  })
+
   it('parses SSE comments and frames and stops on 401 or 426', async () => {
     const seen: string[] = []
     const states: string[] = []

@@ -274,6 +274,8 @@ export async function validateCodexRuntime(
   } finally {
     await client?.close({ gracePeriodMs: 1_000 }).catch(() => undefined)
     resetNativeSubagentCatalogOverrideCache(codexHome)
-    await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    // Windows keeps the directory locked briefly after the process tree exits, longer while a `git` child of the
+    // runtime's plugin sync finishes; retry for about ten seconds instead of leaving it behind.
+    await rm(temporary, { recursive: true, force: true, maxRetries: 12, retryDelay: 150 }).catch(() => undefined)
   }
 }

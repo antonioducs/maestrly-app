@@ -43,7 +43,10 @@ export class FleetEvents {
     while (this.running) {
       this.onState(attempt ? 'reconnecting' : 'connecting', null)
       try {
-        await this.consume()
+        // A stream that opened starts the backoff over: a gateway that drops now and then is reached again at once.
+        await this.consume(() => {
+          attempt = 0
+        })
         if (!this.running) break
         throw new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Event stream ended')
       } catch (error) {
@@ -64,7 +67,7 @@ export class FleetEvents {
     this.running = false
   }
 
-  private async consume(): Promise<void> {
+  private async consume(onOpen: () => void): Promise<void> {
     const controller = new AbortController()
     this.controller = controller
     let heartbeat: ReturnType<typeof setTimeout> | undefined
@@ -90,6 +93,7 @@ export class FleetEvents {
       if (!response.body) throw new Error('Missing event stream')
       await this.onConnected()
       if (!this.running) return
+      onOpen()
       this.onState('connected', null)
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
