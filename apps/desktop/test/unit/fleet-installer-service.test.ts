@@ -171,7 +171,8 @@ function setup(options: SetupOptions = {}) {
         async start() {
           port = options.tunnelPort?.(tunnelOptions) ?? tunnelOptions.listenPort
           busy.add(port)
-          state = tunnelOptions.privateKey() === null && !tunnelOptions.connect ? 'needs-credentials' : 'connected'
+          // As the real tunnel: a given session carries the traffic, else Maestrly's key signs in.
+          state = tunnelOptions.session || tunnelOptions.privateKey() !== null ? 'connected' : 'needs-credentials'
           tunnelOptions.onState?.(state)
           return port
         },

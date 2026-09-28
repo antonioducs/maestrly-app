@@ -2,7 +2,8 @@ import http from 'node:http'
 import net from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { FleetTunnelState } from '../../src/shared/fleet-installer'
-import { generateSshKey } from '../../src/main/fleet/installer/ssh'
+import { InstallerError } from '../../src/main/fleet/installer/errors'
+import { SshSession, generateSshKey } from '../../src/main/fleet/installer/ssh'
 import { SshTunnel } from '../../src/main/fleet/installer/tunnel'
 import { startFakeSshServer, type FakeSshServer } from '../fixtures/fake-ssh-server'
 
@@ -109,6 +110,54 @@ describe('SSH tunnel to the gateway', () => {
     await tunnel.stop()
     expect(tunnel.state).toBe('off')
     await expect(get(port)).rejects.toThrow()
+  })
+
+  it('carries traffic over a session it is given, without a key, and leaves that session open', async () => {
+    const target = await gateway()
+    const fake = await startFakeSshServer({
+      users: { root: 'synthetic-root-password' },
+      forwardTo: (port) => (port === 7443 ? target : null),
+    })
+    cleanups.push(() => fake.close())
+    const server = { host: '127.0.0.1', port: fake.port, username: 'root' }
+    const session = await SshSession.connect(
+      server,
+      { kind: 'password', password: 'synthetic-root-password' },
+      { expectedHostKey: fake.fingerprint }
+    )
+    cleanups.push(() => session.close())
+    // As setup does until Maestrly's key is on the server.
+    const tunnel = new SshTunnel({
+      target: server,
+      hostKey: fake.fingerprint,
+      privateKey: () => null,
+      session: async () => session,
+      listenPort: await freePort(),
+      delay: () => 20,
+    })
+    cleanups.push(() => tunnel.stop())
+    const port = await tunnel.start()
+    await until(() => tunnel.state === 'connected')
+    expect(await get(port)).toBe('synthetic gateway')
+    expect(fake.connections).toBe(1)
+    await tunnel.stop()
+    expect((await session.exec('id -u')).stdout.trim()).toBe('0')
+  })
+
+  it('asks for access again when its given session can no longer be used', async () => {
+    const tunnel = new SshTunnel({
+      target: { host: '127.0.0.1', port: 22, username: 'root' },
+      hostKey: 'SHA256:synthetic',
+      privateKey: () => null,
+      session: async () => {
+        throw new InstallerError('ssh-auth')
+      },
+      listenPort: await freePort(),
+      delay: () => 20,
+    })
+    cleanups.push(() => tunnel.stop())
+    await tunnel.start()
+    await until(() => tunnel.state === 'needs-credentials')
   })
 
   it('drops local connections while it has no SSH session', async () => {

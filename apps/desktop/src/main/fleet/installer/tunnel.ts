@@ -2,8 +2,7 @@ import net from 'node:net'
 import type { FleetRemoteTarget, FleetTunnelState } from '../../../shared/fleet-installer'
 import { InstallerError } from './errors'
 import { BOT_SERVER_GATEWAY_PORT } from './project'
-import type { FleetSshCredentials } from '../../../shared/fleet-installer'
-import { SshSession, type SshConnectOptions } from './ssh'
+import { SshSession } from './ssh'
 
 /** What the tunnel needs from an SSH connection. */
 export type TunnelSession = Pick<SshSession, 'forward' | 'onClose' | 'close'>
@@ -13,13 +12,13 @@ export interface TunnelOptions {
   hostKey: string
   /** Maestrly's key to the server; null asks the owner to set up access again. */
   privateKey: () => string | null
+  /**
+   * The SSH session to carry the traffic instead of one signed in with `privateKey`, such as setup's own session until
+   * Maestrly's key is on the server. The tunnel does not close it; rejecting with `ssh-auth` stops the tunnel.
+   */
+  session?: () => Promise<TunnelSession>
   listenPort: number
   remotePort?: number
-  connect?: (
-    target: FleetRemoteTarget,
-    credentials: FleetSshCredentials,
-    options: SshConnectOptions
-  ) => Promise<TunnelSession>
   delay?: (attempt: number) => number
   /** A free loopback port, used when `listenPort` is taken. */
   freePort?: () => Promise<number>
@@ -101,22 +100,33 @@ export class SshTunnel {
     )
   }
 
+  /** How to open the next SSH session: the given one, or a sign-in with Maestrly's key; null without a key. */
+  private opener(): (() => Promise<TunnelSession>) | null {
+    if (this.options.session) return this.options.session
+    const privateKey = this.options.privateKey()
+    if (!privateKey) return null
+    return () =>
+      SshSession.connect(
+        this.options.target,
+        { kind: 'key', privateKey, passphrase: null },
+        { expectedHostKey: this.options.hostKey, keepaliveIntervalMs: 15_000 }
+      )
+  }
+
   private async run() {
-    const connect = this.options.connect ?? SshSession.connect
     const delay = this.options.delay ?? ((attempt: number) => Math.min(30_000, 1_000 * 2 ** attempt))
     let attempt = 0
     let connectedBefore = false
     while (!this.stopped) {
-      const privateKey = this.options.privateKey()
-      if (!privateKey) return this.setState('needs-credentials')
+      const open = this.opener()
+      if (!open) return this.setState('needs-credentials')
       this.setState(connectedBefore ? 'reconnecting' : 'connecting')
       try {
-        const session = await connect(
-          this.options.target,
-          { kind: 'key', privateKey, passphrase: null },
-          { expectedHostKey: this.options.hostKey, keepaliveIntervalMs: 15_000 }
-        )
-        if (this.stopped) return session.close()
+        const session = await open()
+        if (this.stopped) {
+          if (!this.options.session) session.close()
+          return
+        }
         this.session = session
         connectedBefore = true
         attempt = 0
@@ -148,7 +158,7 @@ export class SshTunnel {
   async stop(): Promise<void> {
     this.stopped = true
     this.wake?.()
-    this.session?.close()
+    if (!this.options.session) this.session?.close()
     this.session = null
     for (const socket of this.sockets) socket.destroy()
     const server = this.server

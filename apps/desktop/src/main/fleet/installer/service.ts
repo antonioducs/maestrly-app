@@ -428,7 +428,7 @@ export class FleetInstallerService {
             hostKey: session.hostKey,
             privateKey: () => null,
             listenPort,
-            connect: async () => {
+            session: async () => {
               if (sessionClosed) throw new InstallerError('ssh-auth')
               return session
             },
