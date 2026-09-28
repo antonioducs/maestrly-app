@@ -177,10 +177,26 @@ test('release publishes both bot server images for amd64 and arm64 before the Gi
 
 test('CI is read-only and exposes stable platform names', () => {
   const source = read('.github/workflows/ci.yml')
-  assert.match(source, /^permissions:\n {2}contents: read$/m)
-  const platforms = [...source.matchAll(/^\s+- label: (Linux|macOS|Windows)$/gm)].map((match) => match[1]).sort()
-  assert.deepEqual(platforms, ['Linux', 'Windows', 'macOS'].sort())
-  assert.match(source, /check-commits\.mjs --subject-env PR_TITLE/)
+  const suites = read('.github/workflows/ci-desktop.yml')
+  for (const workflow of [source, suites]) assert.match(workflow, /^permissions:\n {2}contents: read$/m)
+  assert.match(suites, /^ {2}workflow_call:$/m)
+  for (const [job, label, os] of [
+    ['linux', 'Linux', 'ubuntu-24.04'],
+    ['macos', 'macOS', 'macos-15'],
+    ['windows', 'Windows', 'windows-2025'],
+  ]) {
+    // Every platform runs both suites, and its required check passes only when they all passed.
+    assert.match(source, new RegExp(`^ {2}${job}:\\n.*\\n {4}uses: \\./\\.github/workflows/ci-desktop\\.yml\\n {4}with:\\n {6}os: ${os}$`, 'm'))
+    const result = new RegExp(`^ {2}${job}-result:\\n {4}name: ${label}\\n {4}needs: ${job}\\n {4}if: \\$\\{\\{ always\\(\\) \\}\\}\\n`, 'm')
+    assert.match(source, result, label)
+    assert.match(source, new RegExp(`RESULT: \\$\\{\\{ needs\\.${job}\\.result \\}\\}\\n {8}run: test "\\$RESULT" = success`))
+  }
+  assert.equal((source.match(/^ {4}name: (Linux|macOS|Windows)$/gm) ?? []).length, 3)
+  assert.match(suites, /check-commits\.mjs --subject-env PR_TITLE/)
+  assert.match(suites, /run: npm run test:policy && npm run test:docs/)
+  assert.match(suites, /run: npm run check$/m)
+  assert.match(suites, /run: xvfb-run -a npm run test:e2e/)
+  assert.match(suites, /if: runner\.os != 'Linux'\n {8}run: npm run test:e2e/)
 })
 
 test('contribution policy preserves truthful authorship and standard commit metadata', () => {

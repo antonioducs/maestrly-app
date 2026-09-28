@@ -1,0 +1,73 @@
+name: CI suites
+
+# The suites of one platform, called by ci.yml. Checks and Electron E2E run in parallel on separate runners, so the
+# slower one bounds the platform's time and a failed one can be re-run alone.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Runner image
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate repository history
+        run: npm run check:history
+      - name: Validate pull request title
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/check-commits.mjs --subject-env PR_TITLE
+      - name: Test repository policies and documentation
+        run: npm run test:policy && npm run test:docs
+      - name: Check application
+        run: npm run check
+
+  e2e:
+    name: E2E
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build application
+        run: npm run build
+      - name: Install Electron system libraries
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps chromium
+      - name: Test Electron on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+      - name: Test Electron on desktop
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
