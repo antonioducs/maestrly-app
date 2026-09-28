@@ -1,4 +1,22 @@
 import { fileURLToPath } from 'node:url'
+import { vi } from 'vitest'
+
+/**
+ * Test databases skip the disk flush of every commit (`PRAGMA synchronous = OFF`). The engine, WAL, foreign keys and
+ * migrations stay the production ones, and no test checks durability across an operating system crash. Windows
+ * runners flush each commit to disk, which made SQLite-heavy suites hundreds of times slower there than on macOS.
+ */
+vi.mock('node:sqlite', async (importOriginal) => {
+  const sqlite = await importOriginal<typeof import('node:sqlite')>()
+  class DatabaseSync extends sqlite.DatabaseSync {
+    constructor(...args: ConstructorParameters<typeof sqlite.DatabaseSync>) {
+      super(...args)
+      // A connection created with `open: false` opens later with the default; it is only slower.
+      if (this.isOpen) this.exec('PRAGMA synchronous = OFF')
+    }
+  }
+  return { ...sqlite, DatabaseSync }
+})
 
 // Fixtures must not inherit signing, LFS filters, or hooks from the host Git configuration.
 process.env.GIT_CONFIG_GLOBAL = fileURLToPath(new URL('./fixtures/empty.gitconfig', import.meta.url))
