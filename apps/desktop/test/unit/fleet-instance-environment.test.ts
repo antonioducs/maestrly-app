@@ -739,9 +739,10 @@ describe('bot environment registry', () => {
     })
     expect(conversationShellEnv(convA)).toEqual({
       DISPLAY: ':1',
-      DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/alpha/bus`,
+      // Built by the bot's own Maestrly, which joins paths as the platform does.
+      DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(home, '.cache', 'maestrly-bots', 'alpha', 'bus')}`,
       BROWSER: '/usr/local/bin/maestrly-bot-browser',
-      MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/alpha/chromium`,
+      MAESTRLY_BOT_BROWSER_PROFILE: path.join(home, '.config', 'maestrly-bots', 'alpha', 'chromium'),
     })
     expect(conversationShellEnv(runtime.bot('beta').primaryConversationId!)).toMatchObject({ DISPLAY: ':2' })
   })

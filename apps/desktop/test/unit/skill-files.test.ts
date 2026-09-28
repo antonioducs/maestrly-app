@@ -50,7 +50,8 @@ describe('skill file packaging', () => {
     const linked = path.join(root, 'linked')
     await fsp.symlink(dir, linked)
     const files = await packageSkillDirectory(linked)
-    expect(files).toEqual([file('SKILL.md'), file('scripts/run.sh', 'body', true)])
+    // Windows has no executable bit to read.
+    expect(files).toEqual([file('SKILL.md'), file('scripts/run.sh', 'body', process.platform !== 'win32')])
     expect(await measureSkillDirectory(linked)).toEqual({ files: 2, bytes: 8, scripts: true, problem: null })
   })
   it('reports a missing root SKILL.md and too many files consistently', async () => {
@@ -121,8 +122,11 @@ describe('skill file installation', () => {
     expect(first).toEqual({ outcome: 'added', dir: path.join(root, 'sample') })
     const target = path.join(first.dir, 'SKILL.md')
     const before = await fsp.stat(target)
-    expect((await fsp.stat(path.join(first.dir, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
-    expect(before.mode & 0o777).toBe(0o644)
+    // Windows keeps no POSIX modes: every file reads as 0o666 there.
+    if (process.platform !== 'win32') {
+      expect((await fsp.stat(path.join(first.dir, 'scripts/run.sh'))).mode & 0o777).toBe(0o755)
+      expect(before.mode & 0o777).toBe(0o644)
+    }
     expect((await installSkillFiles(input)).outcome).toBe('unchanged')
     expect((await fsp.stat(target)).mtimeMs).toBe(before.mtimeMs)
     expect((await installSkillFiles({ ...input, files: [file('SKILL.md', 'changed')] })).outcome).toBe('updated')

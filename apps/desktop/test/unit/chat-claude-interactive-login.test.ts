@@ -56,6 +56,13 @@ beforeEach(async () => {
     },
   })
 })
+/** Maestrly runs the interactive Claude login in a pseudo-terminal only on macOS and Linux. */
+const loginIt = it.skipIf(process.platform === 'win32')
+
+it.runIf(process.platform === 'win32')('refuses the interactive login on Windows', async () => {
+  await expect(manager.startInteractiveLogin()).rejects.toThrow('Interactive Claude login is not supported on Windows.')
+})
+
 afterEach(async () => {
   manager.cancelLogin()
   for (const child of children.splice(0)) child.kill('SIGKILL')
@@ -63,7 +70,7 @@ afterEach(async () => {
   await manager.status()
   await rm(root, { recursive: true, force: true })
 })
-it('captures both URLs and accepts a relayed callback', async () => {
+loginIt('captures both URLs and accepts a relayed callback', async () => {
   const login = await manager.startInteractiveLogin()
   const redirect = new URL(new URL(login.autoUrl).searchParams.get('redirect_uri')!)
   expect(redirect.hostname).toBe('localhost')
@@ -79,29 +86,29 @@ it('captures both URLs and accepts a relayed callback', async () => {
   expect(result.status.authenticated).toBe(true)
   expect(result.status.account?.email).toBe('owner@example.com')
 })
-it('accepts a pasted code', async () => {
+loginIt('accepts a pasted code', async () => {
   const login = await manager.startInteractiveLogin()
   login.submitCode(' good#fake-state ')
   expect((await login.done).ok).toBe(true)
 })
-it('rejects a wrong code', async () => {
+loginIt('rejects a wrong code', async () => {
   const login = await manager.startInteractiveLogin()
   login.submitCode('bad')
   expect((await login.done).ok).toBe(false)
 })
-it('cancels and removes the capture directory', async () => {
+loginIt('cancels and removes the capture directory', async () => {
   const login = await manager.startInteractiveLogin()
   login.cancel()
   expect(await login.done).toMatchObject({ ok: false, error: 'Claude login was cancelled.' })
   await expect(access(capture)).rejects.toThrow()
 })
-it('kills a silent process when URLs time out', async () => {
+loginIt('kills a silent process when URLs time out', async () => {
   silent = true
   await expect(manager.startInteractiveLogin({ urlTimeoutMs: 300 })).rejects.toThrow('Claude did not start the sign-in')
   expect(children[0].exitCode !== null || children[0].signalCode !== null).toBe(true)
   await expect(access(capture)).rejects.toThrow()
 })
-it('rejects overlapping logins and holds the mutation lock until completion', async () => {
+loginIt('rejects overlapping logins and holds the mutation lock until completion', async () => {
   const login = await manager.startInteractiveLogin()
   await expect(manager.startInteractiveLogin()).rejects.toThrow('already in progress')
   expect(() => manager.createQuery({ prompt: 'test' })).toThrow('authentication is changing')
@@ -118,13 +125,13 @@ it('returns the cached status without I/O', async () => {
   expect(manager.peekStatus()).toBe(status)
   expect(environment).not.toHaveBeenCalled()
 })
-it('kills the process at the total deadline', async () => {
+loginIt('kills the process at the total deadline', async () => {
   const login = await manager.startInteractiveLogin({ totalTimeoutMs: 600 })
   expect((await login.done).ok).toBe(false)
   await expect(access(capture)).rejects.toThrow()
 })
 
-it('supports the default process spawner', async () => {
+loginIt('supports the default process spawner', async () => {
   manager = new ClaudeSubscriptionManager({
     resolveExecutable: () => path.join(root, 'claude'),
     getUserDataPath: () => root,
@@ -135,7 +142,7 @@ it('supports the default process spawner', async () => {
   login.submitCode('good#fake-state')
   expect((await login.done).ok).toBe(true)
 })
-it('can cancel a queued login and release its mutation lock', async () => {
+loginIt('can cancel a queued login and release its mutation lock', async () => {
   const pending = manager.startInteractiveLogin()
   manager.cancelLogin()
   await expect(pending).rejects.toThrow('cancelled')

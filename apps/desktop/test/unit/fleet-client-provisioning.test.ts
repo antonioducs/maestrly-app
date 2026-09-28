@@ -220,7 +220,8 @@ describe('Mac import error privacy', () => {
   })
 })
 
-describe('unreadable Mac skills', () => {
+// Windows ignores the POSIX modes that make a directory unreadable here.
+describe.skipIf(process.platform === 'win32')('unreadable Mac skills', () => {
   it('keeps accounts and MCP available when a nested skill directory cannot be read', async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'fleet-unreadable-'))
     const nested = path.join(dir, 'nested')
