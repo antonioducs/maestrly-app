@@ -1,8 +1,15 @@
+import { createHash } from 'node:crypto'
 import net from 'node:net'
 import ssh2 from 'ssh2'
-import { hostKeyFingerprint } from '../../src/main/fleet/installer/ssh'
 
 const { Server, utils } = ssh2
+
+/**
+ * The fingerprint as OpenSSH prints it, computed here rather than with the app's function: tests then check the app's
+ * computation, and Electron end-to-end tests can use this server without loading main-process modules.
+ */
+const hostKeyFingerprint = (key: Buffer) =>
+  `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/, '')}`
 
 export interface FakeExecResult {
   code: number

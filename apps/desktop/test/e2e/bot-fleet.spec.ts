@@ -1117,6 +1117,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
     await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    // A server this computer did not install is paired through the manual form.
+    await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)
     await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
     await page.getByRole('button', { name: 'Conectar', exact: true }).click()
@@ -2350,6 +2352,8 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
     await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    // A server this computer did not install is paired through the manual form.
+    await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)
     await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
     await page.getByRole('button', { name: 'Conectar', exact: true }).click()
@@ -2916,6 +2920,8 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
     await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    // A server this computer did not install is paired through the manual form.
+    await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(`http://127.0.0.1:${address.port}`)
     await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
     await page.getByRole('button', { name: 'Conectar', exact: true }).click()
@@ -3397,6 +3403,8 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
     await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    // A server this computer did not install is paired through the manual form.
+    await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)
     await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')
     await page.getByRole('button', { name: 'Conectar', exact: true }).click()
