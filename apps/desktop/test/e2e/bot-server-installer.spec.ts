@@ -194,7 +194,8 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
       remote: { host: '127.0.0.1', port: server.port, username: 'root', hostKey: server.fingerprint },
     })
     expect(installed.job?.hostKey).toBe(server.fingerprint)
-    expect(installed.tunnel).toBe('connected')
+    // The lasting tunnel signs in with Maestrly's key in the background once setup ends.
+    await expect.poll(async () => (await installerStatus(page)).tunnel).toBe('connected')
     expect(JSON.stringify(installed)).not.toContain('synthetic-root-password')
     expect(vps.scripts(server.commands)).toEqual([
       'probe',
