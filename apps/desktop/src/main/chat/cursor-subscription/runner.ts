@@ -26,6 +26,7 @@ import { createBackgroundCompactionPrefixNotifier } from '../background-compacti
 import { droppedImageText, nativeSeedContextText } from '../message'
 import { describeEphemeralToolImage } from '../image-interpreter'
 import { resolveFileImageBytesSync } from '../attachment-artifacts'
+import { pdfFallbackText } from '../pdf-attachments'
 import { adaptToolSetForModel } from '../tool-capabilities'
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
@@ -196,6 +197,10 @@ export function currentUserInput(
       if (blob) images.push({ data: blob.data, mimeType: blob.mimeType })
       else if (dropImages) textParts.push(droppedImageText(part))
       else textParts.push(`[Image attachment ${part.name} could not be decoded by the host.]`)
+      continue
+    }
+    if (part.kind === 'pdf') {
+      textParts.push(pdfFallbackText(part))
       continue
     }
     const label = part.hidden ? `Content referenced by ${part.name}` : `Attached file ${part.name}`

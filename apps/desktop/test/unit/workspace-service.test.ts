@@ -61,6 +61,10 @@ vi.mock('../../src/main/chat/claude-agent-sdk/lifecycle', () => ({
   deleteClaudeSessionForConversation: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('../../src/main/chat/attachment-artifacts', () => ({
+  deleteConversationAttachmentImages: vi.fn().mockResolvedValue(undefined),
+}))
+
 vi.mock('../../src/main/chat/chat-store', () => ({
   collectChatToolImageRefs: vi.fn(() => new Set()),
   releaseUnreferencedChatToolImages: vi.fn(),
@@ -82,6 +86,7 @@ import * as codexLifecycle from '../../src/main/chat/codex-subscription/lifecycl
 import * as githubCopilotLifecycle from '../../src/main/chat/github-copilot/lifecycle'
 import * as cursorLifecycle from '../../src/main/chat/cursor-subscription/lifecycle'
 import * as claudeLifecycle from '../../src/main/chat/claude-agent-sdk/lifecycle'
+import * as attachmentArtifacts from '../../src/main/chat/attachment-artifacts'
 import * as memoryIndex from '../../src/main/memory/index'
 import {
   addWorkspace,
@@ -392,6 +397,26 @@ describe('workspace-service deleteConversation', () => {
     expect(store.deleteConversation).toHaveBeenCalledWith('c-runner-existing-branch')
   })
 
+  it.each([
+    ['local', { mode: 'local', isMulti: 0, cwd: '/repo', branch: 'main' }],
+    ['worktree', { mode: 'worktree', isMulti: 0, cwd: '/worktrees/feature', branch: 'feature' }],
+    ['multi-repository', { mode: 'worktree', isMulti: 1, repos: [{ path: '/repo' }], cwd: '/agg', branch: 'multi' }],
+  ])('removes attached images and PDFs of a %s conversation after its row', async (_kind, conv) => {
+    vi.mocked(store.getConversation).mockReturnValue({
+      id: 'c-files',
+      scope: 'project',
+      workspaceId: 'ws-1',
+      ...conv,
+    } as never)
+
+    await deleteConversation('c-files')
+
+    expect(attachmentArtifacts.deleteConversationAttachmentImages).toHaveBeenCalledWith('c-files')
+    expect(vi.mocked(store.deleteConversation).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(attachmentArtifacts.deleteConversationAttachmentImages).mock.invocationCallOrder[0]
+    )
+  })
+
   it('keeps a shared worktree while sibling conversations use the same directory', async () => {
     vi.mocked(store.countOtherConversationsInCwd).mockReturnValue(1)
     vi.mocked(store.getConversation).mockReturnValue({
@@ -441,6 +466,7 @@ describe('standalone lifecycle', () => {
     )
     expect(git.removeWorktree).not.toHaveBeenCalled()
     expect(git.deleteBranch).not.toHaveBeenCalled()
+    expect(attachmentArtifacts.deleteConversationAttachmentImages).toHaveBeenCalledWith('standalone')
   })
   it('preserves the row and permissions when directory cleanup fails', async () => {
     lifecycle.removeDirectory.mockRejectedValueOnce(new Error('unsafe directory'))
@@ -453,5 +479,7 @@ describe('standalone lifecycle', () => {
     await expect(deleteConversation('standalone')).rejects.toThrow('provider failed')
     expect(lifecycle.removeDirectory).not.toHaveBeenCalled()
     expect(store.deleteConversation).not.toHaveBeenCalled()
+    // Attachments stay while the conversation survives, so a retry still finds them.
+    expect(attachmentArtifacts.deleteConversationAttachmentImages).not.toHaveBeenCalled()
   })
 })

@@ -3,7 +3,8 @@ import type { HarnessSnapshotV1 } from '../../../shared/harness'
 import { snapshotAllowsResume } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
 import { droppedImageText, renderNativeSeedTranscript } from '../message'
-import { resolveFileImageBytesSync } from '../attachment-artifacts'
+import { resolveFileImageBytesSync, resolveFilePdfBytesSync } from '../attachment-artifacts'
+import { pdfFallbackText, sendPdfNatively } from '../pdf-attachments'
 import type { ClaudeSubscriptionAccountIdentity } from './manager'
 import {
   CLAUDE_HARNESS_PROFILE,
@@ -90,7 +91,8 @@ export function resolveClaudeSession(args: ResolveClaudeSessionArgs): ResolvedCl
 export function buildClaudeSessionPrompt(
   message: ChatMessage,
   seedTranscript: string,
-  opts: { dropImages?: boolean; transientContext?: string } = {}
+  /** `nativePdf` defaults to true: Claude reads PDF document blocks; tests and future gates may disable it. */
+  opts: { dropImages?: boolean; transientContext?: string; nativePdf?: boolean } = {}
 ): GatedClaudeUserPrompt {
   const content: Array<Record<string, unknown>> = []
   if (seedTranscript) {
@@ -123,6 +125,19 @@ export function buildClaudeSessionPrompt(
             },
           })
         }
+      }
+    } else if (part.type === 'file' && part.kind === 'pdf') {
+      const bytes = sendPdfNatively(part, opts.nativePdf ?? true)
+        ? resolveFilePdfBytesSync(message.conversationId, part)
+        : null
+      if (bytes) {
+        content.push({
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: Buffer.from(bytes).toString('base64') },
+          title: part.name,
+        })
+      } else {
+        content.push({ type: 'text', text: pdfFallbackText(part) })
       }
     }
   }

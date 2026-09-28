@@ -29,6 +29,8 @@ export interface OpenAIHistoryBuildResult {
 
 export interface OpenAIHistoryBuildOptions {
   dropImages?: boolean
+  /** Forwarded to `toModelMessages` for user messages carrying PDF attachments. */
+  nativePdf?: boolean
   /**
    * `fallback` keeps chat usable through the legacy visual codec when a sidecar is incomplete/corrupt. `include`
    * returns representable messages even with issues; useful only for diagnostics/raw transport.
@@ -173,7 +175,7 @@ export function buildOpenAIModelMessages(
       }
     }
 
-    messages.push(...toModelMessages([message], { dropImages: opts.dropImages }))
+    messages.push(...toModelMessages([message], { dropImages: opts.dropImages, nativePdf: opts.nativePdf }))
   }
 
   return {

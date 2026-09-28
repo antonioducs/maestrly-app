@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../src/shared/chat'
 import {
   estimateNativeSeedContextTokens,
   estimatePortableContextTokens,
+  estimatePortablePartsTokens,
   estimateTextTokens,
   portableContextLoad,
   portableContextOutputReserveTokens,
@@ -682,5 +683,24 @@ describe('portable context', () => {
       // full 1M window would reserve more — custom limit keeps preflight on the effective ceiling
       expect(portableContextReserveTokens(1_000_000)).toBe(64_000)
     })
+  })
+})
+
+describe('PDF context accounting', () => {
+  it('counts PDFs at least per page, since native documents cost far more than their extracted text', () => {
+    const tokens = estimatePortablePartsTokens([
+      {
+        type: 'file',
+        id: 'p',
+        name: 'a.pdf',
+        mediaType: 'application/pdf',
+        kind: 'pdf',
+        artifactId: 'abc',
+        byteSize: 10,
+        pageCount: 10,
+        data: '--- Page 1 ---\nHi',
+      },
+    ])
+    expect(tokens).toBeGreaterThanOrEqual(20_000)
   })
 })

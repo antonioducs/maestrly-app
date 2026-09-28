@@ -107,6 +107,7 @@ describe('parseCatalog (models.dev)', () => {
       cacheWritePer1M: 0.19,
       reasoning: false,
       vision: true,
+      pdf: false,
       chatCapable: true,
     })
     expect(m.get('openai/gpt-4o-mini')?.contextWindow).toBe(128000)
@@ -180,6 +181,18 @@ describe('parseCatalog (models.dev)', () => {
   it('distinguishes unknown vision from false', () => {
     const m = parseCatalog({ p: { models: { x: { id: 'p/x', limit: { context: 1000 }, cost: { input: 1 } } } } })
     expect(m.get('x')?.vision).toBeUndefined()
+  })
+
+  it('extracts PDF input support, distinguishing unknown from false', () => {
+    const model = (input?: string[]) => ({
+      id: 'p/x',
+      limit: { context: 1000 },
+      cost: { input: 1 },
+      ...(input ? { modalities: { input, output: ['text'] } } : {}),
+    })
+    expect(parseCatalog({ p: { models: { x: model(['text', 'image', 'pdf']) } } }).get('x')?.pdf).toBe(true)
+    expect(parseCatalog({ p: { models: { x: model(['text', 'image']) } } }).get('x')?.pdf).toBe(false)
+    expect(parseCatalog({ p: { models: { x: model() } } }).get('x')?.pdf).toBeUndefined()
   })
 
   it('tolerates invalid JSON and unexpected shapes', () => {
@@ -442,6 +455,11 @@ describe('exact then canonical proxy pricing composition', () => {
 
   it('neither exact nor canonical returns null without metadata', () => {
     expect(composeEffectiveMeta(null, null)).toBeNull()
+  })
+
+  it('preserves PDF input support during metadata composition', () => {
+    expect(composeEffectiveMeta(null, { ...canonical, pdf: true })?.pdf).toBe(true)
+    expect(composeEffectiveMeta({ ...canonical, pdf: false }, { ...canonical, pdf: true })?.pdf).toBe(false)
   })
 
   it('does not invent missing canonical prices', () => {

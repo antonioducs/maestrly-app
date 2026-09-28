@@ -7,17 +7,23 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
-- Run remote bots as separate Maestrly desktops on your own Linux server, with
-  their own screens, browser, model accounts, and files; they keep working while
-  your Mac is off.
-- Pair your Mac with a private bot gateway, manage bots from the Bots sidebar,
-  watch or take control of a bot's screen, and answer its questions and approval
-  requests from Awaiting you.
-- Add a model API key in each bot's Settings, schedule routines on the server,
-  allow selected bots to exchange bounded messages, and review activity from
-  while your Mac was off.
+- Experimental: run remote bots as separate Maestrly desktops in Docker, on this
+  computer or on your own Linux server, with their own screens, browser, model
+  accounts, and files. Bots on a server keep working while your computer is off.
+- Set up the bot server from Settings → Bot server: Maestrly installs it on this
+  computer's Docker or on an Ubuntu or Debian VPS over SSH, pairs this computer,
+  and updates the server to the app's version. Bots reach only the public
+  internet unless you let them reach private networks.
+- Group up to eight bots in an environment that shares one desktop, home folder,
+  and set of model accounts, skills, MCP servers, and site logins.
+- Pair your computer with a bot gateway you manage, manage bots from the Bots
+  sidebar, watch or take control of a bot's screen, and answer its questions and
+  approval requests from Awaiting you.
+- Add model accounts to an environment or bring them from your computer,
+  schedule routines on the server, allow selected bots to exchange bounded
+  messages, and review their activity.
 - See the screenshots and images a bot's tools produce in its conversation, and
-  send it images from your Mac by attaching, pasting, or dropping them.
+  send it images from your computer by attaching, pasting, or dropping them.
 - Choose a bot's reasoning effort, fast mode, and access from its composer,
   dictate messages with the microphone, and follow its context use and
   estimated cost; its model list follows the models you enabled for its
@@ -27,6 +33,20 @@ User-visible changes by version. Downloads are on
 
 - Deliver browser and desktop screenshots to GPT-6 models on ChatGPT
   subscriptions when they call tools from code.
+
+## [0.10.0] - 2026-09-26
+
+### Added
+
+- Attach PDF files to chat messages. Models that read PDFs receive the
+  document; other runtimes receive text extracted locally.
+- Click a PDF in a sent message to open it in the system's PDF viewer.
+- Drag files onto the chat composer to attach them.
+
+### Fixed
+
+- Delete a conversation's attached images and PDFs when the conversation is
+  deleted, instead of leaving them in the application profile.
 
 ## [0.9.3] - 2026-09-24
 

@@ -161,6 +161,7 @@ import {
   startRuntimeAssetUpdates,
 } from './runtime-assets/app-service'
 import { cleanupToolOutputs } from './chat/tool-output-store'
+import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
@@ -740,6 +741,8 @@ app.whenReady().then(async () => {
     return
   }
   await cleanupOrphanRuntimeAssetTemps()
+  // PDF copies opened by a previous session's viewer are no longer needed.
+  await clearAttachmentPreviews()
   await cleanupToolOutputs().catch((error) => console.warn('[tool-output] Cleanup failed', error))
   const toolOutputCleanupTimer = setInterval(
     () => {

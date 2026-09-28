@@ -17,9 +17,12 @@ import {
   compactGitHubCopilotSession,
   GITHUB_COPILOT_AGENT_DESCRIPTION_MAX_CHARS,
   GITHUB_COPILOT_TASK_TOOL_DESCRIPTION_MAX_BYTES,
+  currentMessageInput,
   normalizeGitHubCopilotFinishReason,
   runGitHubCopilotChat,
 } from '../../src/main/chat/github-copilot/runner'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
+import { storedPdfPart } from '../helpers/pdf-parts'
 import { chatDiag } from '../../src/main/chat/diag-log'
 import {
   getGitHubCopilotSessionBinding,
@@ -1169,5 +1172,19 @@ describe('GitHub Copilot official runner', () => {
       expect.arrayContaining([expect.objectContaining({ type: 'text', text: 'ok isolated' })])
     )
     expect(assistants[0]?.usage).toMatchObject({ output: 12, cachedInput: 5 })
+  })
+})
+
+describe('GitHub Copilot input PDF policy', () => {
+  it('sends PDFs as extracted text without blob attachments', async () => {
+    const { conversationId, part, cleanup } = await storedPdfPart()
+    try {
+      const message = { id: 'm', conversationId, role: 'user', createdAt: 1, parts: [part] } as ChatMessage
+      const input = currentMessageInput(message, '')
+      expect(input.prompt).toContain(pdfFallbackText(part))
+      expect(input.attachments).toBeUndefined()
+    } finally {
+      await cleanup()
+    }
   })
 })

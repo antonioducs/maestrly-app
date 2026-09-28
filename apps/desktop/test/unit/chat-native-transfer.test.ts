@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../src/shared/chat'
 import { codexTransferCharacters, CODEX_TRANSFER_MAX_CHARACTERS } from '../../src/main/chat/native-transfer'
 import { nativeSeedContextText, renderNativeSeedTranscript } from '../../src/main/chat/message'
+import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
 
 describe('Codex transfer transport budget', () => {
   const history: ChatMessage[] = [
@@ -48,5 +49,22 @@ describe('Codex transfer transport budget', () => {
         ]
       )
     ).toBe(body.length)
+  })
+})
+
+describe('codexTransferCharacters with PDF attachments', () => {
+  it('counts the extracted-text form Codex receives', () => {
+    const part = {
+      type: 'file' as const,
+      id: 'p',
+      name: 'a.pdf',
+      mediaType: 'application/pdf',
+      kind: 'pdf' as const,
+      artifactId: 'abc',
+      byteSize: 10,
+      pageCount: 1,
+      data: '--- Page 1 ---\nHi',
+    }
+    expect(codexTransferCharacters([], [part])).toBe(pdfFallbackText(part).length)
   })
 })
