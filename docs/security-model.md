@@ -164,6 +164,41 @@ The ChatGPT bridge uses a random per-session path and validates loopback hosts.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
 
+## Bot server access
+
+An installed bot server publishes its gateway only on the Docker host's loopback.
+For a VPS, the desktop app forwards a port on `127.0.0.1` through SSH to the
+server's loopback port `7443`; a dropped tunnel reconnects. The desktop app pins
+the server's SSH host key as a SHA-256 fingerprint on first use and stops the
+tunnel if the key changes. A server you manage separately may use private HTTPS,
+such as Tailscale Serve.
+
+VPS setup accepts a password or private key for that job and generates a new
+ed25519 key for later access. This key grants root or passwordless `sudo`
+authority to the VPS: protect it as you would an administrator credential. The
+desktop app stores its private key as ciphertext protected by the OS keyring
+when secure storage is available; otherwise it holds the key only in memory.
+**Disconnect this computer** removes the local key and attempts to revoke its
+tagged public key on the server. If the server is unreachable, revoke that key
+in `authorized_keys` yourself. **Remove bot server** also revokes this
+computer's key; keys authorized by other computers must be removed separately.
+
+The gateway mounts the Docker socket and can control the Docker engine wherever
+it runs, including on this computer. Installer setups default to `public` bot
+egress: each environment starts with `NET_ADMIN`, installs network rules in its
+own namespace, then runs as uid 1000 without that capability in its bounding
+set. The rules reject the Docker host, private, link-local, CGNAT,
+remote loopback, multicast and reserved destinations while retaining access to
+the fleet Docker network and public internet. IPv6 is guarded when present. If the guard cannot
+install its rules, the environment refuses to start. The host firewall is not
+changed. The switch in **Settings → Bot server** selects `open` to allow private
+network access; each environment follows the new setting on its next start or
+restart. Manual Compose setups default to `open`. This is an outbound network
+control, not isolation between bots or environments on the shared fleet network.
+Host root or anyone with Docker socket access can change container settings;
+`docker exec` into a `public` container defaults to root, so pass `-u 1000` to
+act as the bot user.
+
 ## Bot environments
 
 A fleet environment is one Linux container running one Maestrly process for up
@@ -186,10 +221,10 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   request. This separates ordinary activity but is not a hostile-code boundary
   against the Docker host.
 - **The network is shared.** Environment containers and the gateway share one
-  Docker bridge network, and Maestrly does not filter traffic between
-  containers: a service a bot starts on a network port can be reached from other
-  environments. The gateway's public API refuses fleet-network clients, every
-  control-server request needs the environment's control token, and VNC servers
+  Docker bridge network. The `public` egress guard does not filter traffic
+  between containers: a service a bot starts on a network port can be reached
+  from other environments. The gateway's public API refuses fleet-network
+  clients, every control-server request needs the environment's control token, and VNC servers
   start on demand and listen only on each container's loopback.
 - **Screens.** Takeover holds exactly one bot, and control of a bot's browser
   area or apps screen requires that device's takeover. The environment screen

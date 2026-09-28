@@ -1,24 +1,153 @@
 # Remote bots (bot fleet)
 
-A remote bot is a Maestrly agent that runs on an always-on Linux server and keeps working when your computer is off. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one desktop app to control them all. Unlike [an external agent connected to chats on your desktop](grok-connector.md), a fleet bot runs on the server and does not depend on your computer staying open.
+A bot is a Maestrly agent that runs in Docker on this computer or on a Linux server. Bots on a server keep working when your computer is off; bots on this computer stop when it sleeps or shuts down. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one desktop app to control them all. Unlike [an external agent connected to chats on your desktop](grok-connector.md), a fleet bot runs in its own container.
+
+**Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
+
+## Set up the bot server
+
+Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. The first image download is several gigabytes (the bot image is about 7 GB uncompressed), and each environment needs its own persistent home volume.
+
+### On this computer
+
+Choose **This computer**. Docker must be installed and running; Maestrly does not install it here. If Docker is missing, use **Download Docker**, install it, then **Check again**. Maestrly checks Docker and the Compose plugin before enabling **Install bot server**:
+
+| Docker check | What to do |
+| --- | --- |
+| Docker not found | Install Docker, then **Check again**. Docker Desktop, OrbStack, Colima, Rancher Desktop, and Docker Engine are supported. |
+| Docker is not running | Start Docker, wait for it to finish starting, then **Check again**. |
+| No permission (Linux) | Add your user to the `docker` group, sign in again, then **Check again**. |
+| Compose plugin missing | Install the Docker Compose plugin, then **Check again**. |
+| Development fleet running | An unpackaged app does not install beside `npm run bot-fleet:dev`, which uses the same local images. Stop its gateway with `docker compose -p maestrly-fleet-dev stop` (or remove the fleet and its data with `npm run bot-fleet:dev -- down`), then **Check again**. |
+
+**Install bot server** writes the bundled Compose project under the app's data directory, downloads both images of the app's version from GHCR, starts the gateway on a loopback port, and pairs this computer automatically. An unpackaged development build instead uses local images and builds missing ones with `scripts/bot-fleet-images.mjs`. Progress continues if you leave Settings; use **Cancel** while it runs, **Try again** after a failure, or **Back** to change your choice. A failed or cancelled attempt may leave files, images, or a running gateway; **Try again** reuses them. Bots stop when this computer sleeps or shuts down. The **Server** page says **Bots run here** and warns about that limit.
+
+### On a VPS
+
+Choose **A server (VPS)**. Get a Linux VPS from a provider that gives you SSH access. Use Ubuntu 22.04 or later or Debian 12 or later on x86_64 or arm64, with a root login or a user with passwordless `sudo`. Plan for at least 4 GB of memory and 20 GB free disk space; allow outbound access to your model providers and GHCR. Enter **Server address**, **User**, and **Password**. Under **Advanced options**, change **SSH port** or choose **Use a private key instead** and provide **Private key** and, if needed, **Key passphrase**. Maestrly uses these credentials for setup only.
+
+Choose **Install on the server**. Maestrly checks the server, installs Docker Engine and Compose from Docker's installer when needed, writes Compose files under `/opt/maestrly-bots/`, pulls both images of the app's version from GHCR, starts the gateway, and pairs this computer. It generates a separate ed25519 administrator key, authorizes it on the server, and stores the private key with the OS keyring when available. The app pins the server's SSH host key fingerprint on first use. If secure storage is unavailable, the key lasts only until the app closes; after restarting, the panel asks you to sign in again: use **Set up again** with the server's password or key. The setup progress shows the host key fingerprint and can be cancelled or retried like an install on this computer.
+
+The gateway stays on the server's loopback port `7443`. The desktop app reaches it through an SSH tunnel from `127.0.0.1` on this computer and shows **Reconnecting to the server…** when SSH drops. Installer setups need no Tailscale or HTTPS certificate. On a second computer, installing against an existing `/opt/maestrly-bots/` starts the gateway if needed and only pairs that computer; it does not replace the server's images or network setting.
+
+### Update, disconnect, and remove
+
+When the installed server is older than the desktop app, use **Update server** in **Settings → Bot server**. A packaged app pulls both images of its version from GHCR and recreates the gateway; an unpackaged app uses local images. Restart or **Update environment** to move each running environment to the configured bot image; its home volume remains. Maestrly does not downgrade a newer server; update the desktop app instead. **Set up again** lets you repeat setup if access needs repair.
+
+**Disconnect this computer** unpairs this device and leaves the gateway, environments, and their data running. On a VPS, Maestrly also tries to revoke this computer's SSH key; if the server is unreachable, check its `authorized_keys` yourself. The local install record and stored key are cleared. **Remove bot server** requires a connected server and a typed `remove` confirmation. It deletes every bot and environment, their home volumes, the gateway and its data volume, the installed images when Docker can remove them, and Maestrly's Compose files; on a VPS it also revokes this computer's key. Remove keys belonging to other computers from the VPS's `authorized_keys` separately. Back up anything you need first. If removal fails partway through, inspect what remains before retrying.
+
+### Network access for bots
+
+Installer setups start with the private-network switch off: **Let bots reach this computer and its local network** for Docker here, or **Let bots reach the server's private network** for a VPS. This sets `MAESTRLY_GATEWAY_BOT_EGRESS=public`. Each environment can reach the public internet and the fleet Docker network, but its network guard rejects the Docker host, private and link-local networks, loopback addresses outside its own container, CGNAT, and cloud metadata addresses. Turn the switch on to set `open` when a bot needs a service on your computer or server, such as Ollama or another local model endpoint. The change reaches each environment when it next starts or restarts; running environments keep their current access until then. A server you manage defaults to `open` unless you set `public` in its `.env`.
+
+### With a server you manage
+
+1. On the Linux server, install Docker Engine and the Compose plugin. Obtain this repository at the same Maestrly version as the desktop app. Pull the published images for that version (`<version>` has no `v` prefix):
+
+   ```sh
+   VERSION=0.9.4 # the desktop app's version, shown on its Server page
+   docker pull "ghcr.io/antonioducs/maestrly-bot-gateway:$VERSION"
+   docker pull "ghcr.io/antonioducs/maestrly-bot-instance:$VERSION"
+   ```
+
+   Published images support linux/amd64 and linux/arm64. To build from source instead, run `node scripts/bot-fleet-images.mjs --platform linux/amd64` from the repository root, or use `linux/arm64` on an ARM server. Without `--platform`, it builds for the machine running it. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`; it installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
+
+2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the matching GHCR tags, or to the versioned tags you built; adjust `TZ`, the default environment memory limit, shared memory, and `MAESTRLY_GATEWAY_BOT_EGRESS` if needed. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` to the VPS name shown on the app's **Server** page. Start Compose:
+
+   ```sh
+   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d
+   ```
+
+   | `.env` setting | Purpose | Default |
+   | --- | --- | --- |
+   | `MAESTRLY_GATEWAY_DISPLAY_NAME` | Name shown on the app's **Server** page (up to 64 characters) | Gateway container hostname |
+   | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit of each environment that has no limit of its own | `4g` |
+   | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per environment | `1g` |
+   | `MAESTRLY_GATEWAY_BOT_EGRESS` | `open` permits private network access; `public` guards it | `open` |
+
+3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
+
+   ```sh
+   tailscale serve --bg https / http://127.0.0.1:7443
+   ```
+
+   Check the resulting Tailscale HTTPS address and current `tailscale serve` syntax. Keep host port 7443 on loopback; do not publish 7444, 7680, or any VNC port from 5900 to 5967.
+
+4. Run diagnostics, then create a one-use pairing code (valid for ten minutes):
+
+   ```sh
+   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway doctor
+   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
+   ```
+
+5. In the desktop app, open **Settings → Bot server** and choose **I already have a server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every environment and bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
+
+### Updates, backups, and removal
+
+Pull both images of the target release, or build them from its source, and set both image tags in `.env`. Recreate the gateway with `docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d --force-recreate` (`--force-recreate` also covers rebuilding the same `:local` tag). Then restart each environment from the **Server** page or with **Restart environment** in its environment view to move it to the new image. A restart acts on every bot in the environment, and the app names them before you confirm. When the configured image changed, the restart replaces the container; otherwise it restarts the same one. Either way the home volume keeps accounts, site logins, files, and every bot's conversation. Running environments stay on their current image until you restart them. The **Server** page compares the version each bot reports with the desktop app version; a mismatch is a compatibility warning, not proof of the bot image version. A separate protocol incompatibility prevents the client from connecting.
+
+The environment view offers **Update environment** when the configured image's `org.opencontainers.image.version` label differs from the version the environment reports. Unlabeled images and builds with the same version still update through **Restart environment**.
+
+Back up the Compose `gateway-data` volume and **every** environment home volume: `maestrly-env-<environment-id>-home`, and `maestrly-bot-<bot-id>-home` for environments that were single bots before the update. The former contains pairing records, environment and bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains the environment's desktop profile, accounts, site logins, browser profiles, files, and each of its bots' conversation, queue, and memory. Preserve volume contents and permissions, and restore the gateway data and matching home volumes together before starting the service. Keep backups private. Archived environments keep their home volume and server history; a bot archived on its own keeps its data in its environment's home volume.
+
+Stop the gateway and environment containers before making a file-level copy of these volumes. SQLite uses WAL files, so copying only a live `.sqlite` file can omit committed data. SQLite's backup API can take a consistent database snapshot while it is open; a complete environment backup must also keep the other profile files and queued attachments consistent with that snapshot.
+
+To remove a computer's access, revoke its device or **Disconnect** it in Settings.
+
+**Archive a bot** from its **Settings** tab. This archives only that bot: its environment's Maestrly uninstalls it and stops its screens, and its slot becomes free. Its conversation, memory, and files stay in the environment's home volume. Its routines, background compaction, and memory extraction stop until it is restored. Late replies cannot add memories or activate summaries; model usage already incurred can still be recorded. The environment and its other bots keep running. An environment keeps running, and using memory, even after its last bot is archived; stop or archive the environment to free that memory.
+
+After an environment restarts, its bots wait for the gateway to confirm membership, pause and any active takeover before processing queued work. The gateway also repeats this installation automatically when Maestrly restarts inside the same container. A bot archived or paused while the environment was stopped cannot resume its old queue during startup.
+
+**Archive an environment** from its environment view. This stops and removes its container, keeps its home volume, and archives every bot in it. An archived environment uses no memory, and its bots' routines do not run.
+
+**Bot server → Archived environments** lists archived environments with their bots:
+
+- **Restore** recreates the container on the kept home volume and brings back the bots archived with it, in their slots. Bots that had been archived on their own before stay archived. Restored bots reconnect to peers that are still active, and their routines resume from the next scheduled time; runs missed while archived are not replayed.
+- **Delete forever** asks you to type the environment's name. It then removes the container, if any, the home volume, and every gateway record of the environment and its bots: routines, routine runs, peer messages, activity, secrets, and owner memory entries scoped to that environment. Global owner memory survives. This cannot be undone.
+
+**Bot server → Archived bots** lists bots archived on their own from an active environment:
+
+- **Restore** puts the bot back in its environment, in its previous slot when free, otherwise in the lowest free slot. Its environment must not be archived (restore the environment first) and must have a free slot. The bot is installed at once when the environment runs; in a stopped environment it is installed when the environment starts, and a bot that is the only one in its stopped environment starts that environment. It reconnects to peers that are still active.
+- **Delete forever** asks you to type the bot's name and needs its environment running. The environment's Maestrly deletes the bot's conversation, memory, own folders, **Apps** browser profile, and settings; the gateway then deletes its routines, routine runs, peer messages, activity, and gateway token. Files the bot left in the shared home folder, the environment's accounts, skills, and MCP servers, and owner memory stay. A new bot with the same name can reuse its id. When the environment still runs an image from before environments and holds no other bot, deletion removes the whole environment and its home volume, as it did for single-bot containers.
+
+If a home volume was removed outside Maestrly, the lists say so, and a restored environment or bot starts without those files.
+
+To remove the installation, stop Compose and explicitly delete the gateway and environment home volumes only after exporting anything you need.
+
+### Compatibility
+
+The fleet protocol stays at version 1; environments add fields and routes with defaults. The desktop app shows environments only when the gateway advertises the `environments` feature.
+
+| Combination | Behavior |
+| --- | --- |
+| Current desktop app and gateway, environment on an image from before environments | The environment runs its single bot through its original routes. Adding a bot, the **Apps** screen, and the environment screen ask you to restart the environment first. Archiving that bot stops the environment and keeps its data. A later start on the old image holds the archived bot before reporting the environment as running. Restart onto the current image for the full environment lifecycle. |
+| Desktop app from before environments, current gateway | Bots list, chat, and configure as before; configuring a bot changes its environment, which its other bots share. **Start**, **Stop**, and **Restart** of a bot act on its environment when the bot is alone in it; otherwise the gateway refuses with "This bot shares its environment. Restart the environment instead." **Screen** shows the bot's browser area only. In an environment on the current bot image, **Log in on the bot's screen** opens Maestrly's settings on the environment screen, which that app cannot show; add an API key or bring accounts from your computer instead. Activity history omits environment entries, and memory figures appear only for bots alone in their environment. That app cannot stop or archive environments; on current bot images, an environment whose bots it archived keeps running. |
+| Current desktop app, gateway from before environments | The app keeps the interface from before environments: one container per bot, with accounts, skills, and MCP servers in each bot's **Settings**. |
+
+Desktop apps from before environments can list, restore and delete an archived environment containing exactly one bot through their archived-bot controls. This includes bots archived before the gateway upgrade. An archived environment containing several bots requires an environment-aware desktop app, so a bot shortcut cannot restore or delete its neighbours. Current desktop apps request `separateEnvironments=1` on the archived-bot collection and show archived environments separately.
+
+**Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
+
+The gateway migrates schemas 5 and 6 to 7 in place and refuses databases with a newer schema. Older gateways cannot open schema 7; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+
+Environment default compaction models need the gateway's `environment-compaction` feature. Desktop apps without it keep choosing a model in each bot's **Settings**; they show a bot that uses its environment's default as that model, and saving it there makes it the bot's own. An environment on an image without the capability keeps working with its default, but choosing the default from the desktop app asks you to restart the environment first.
 
 ## How it connects
 
 ```mermaid
 flowchart LR
-  Desktop[Maestrly on your computer] <-->|HTTPS over tailnet| Tailnet[Tailscale tailnet]
-  Tailnet <-->|public API and screen proxy :7443| Gateway[Bot gateway]
+  Desktop[Desktop app] <-->|loopback or SSH tunnel, or private HTTPS for a manual server| Gateway[Bot gateway]
   Gateway <-->|internal API :7444| Environments[Environment containers on private Docker network]
   Environments <-->|authenticated screen and control :7680| Gateway
 ```
 
-Compose publishes only the gateway's public listener on server loopback. The internal listener and each environment's control port stay on the Docker network. VNC listens only on loopback inside each environment container and starts only while a screen is open. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the environment's control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
+Compose publishes only the gateway's public listener on the Docker host's loopback. An install on a VPS uses an SSH tunnel to that listener; a server you manage can use private HTTPS through Tailscale Serve. The internal listener and each environment's control port stay on the Docker network. VNC listens only on loopback inside each environment container and starts only while a screen is open. The gateway brokers short-lived screen tickets and reaches VNC through authenticated screen tunnels on the environment's control server. This fleet is separate from the [Maestrly web platform](self-hosting.md).
 
 ### Listeners and screens
 
 | Listener or display | Where | Reachable from |
 | --- | --- | --- |
-| Public API and screen proxy, port `7443` | Gateway container | Published by Compose on the server's `127.0.0.1:7443` (`MAESTRLY_GATEWAY_BIND`). Expose it privately, for example with Tailscale Serve. Clients on the fleet network are refused. |
+| Public API and screen proxy, port `7443` | Gateway container | Published by Compose on the Docker host's loopback (`MAESTRLY_GATEWAY_BIND`); the desktop app uses a local port or an SSH tunnel. For a server you manage, expose it privately, for example with Tailscale Serve. Clients on the fleet network are refused. |
 | Internal API, port `7444` | Gateway container | Fleet Docker network and loopback only. Each bot authenticates with its own gateway token. |
 | Control server, port `7680` | Each environment container | Fleet Docker network. Every request needs that environment's control token, which only the gateway holds. |
 | Environment display `:0`, 3840×2400 | Each environment container | Inside the container. A 3×3 grid of 1280×800 tiles: tile 0 shows the environment screen (Maestrly's settings) and tile *k* the browser of the bot in slot *k*. |
@@ -70,15 +199,9 @@ Skills and MCP servers belong to the environment. Manage them in the environment
 
 The environment screen shows only Maestrly's **Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with a bot goes through Maestrly on your computer. It stays within tile 0 of the environment display, so it never covers a bot's browser area. Closing the window hides it; the bots keep working in their browser windows.
 
-## Requirements
-
-- A Linux server with Docker Engine, enough disk for images and one persistent home volume per environment, and outbound access to your model providers. The included desktop uses CPU rendering; no GPU is required.
-- Budget memory for each environment and its bots' pages and programs. The supplied Compose default is a **4 GiB limit per environment** and **1 GiB shared memory per environment**. A bot added to an existing environment shares that environment's limit. Actual use varies and rises when browsers or other apps open; see the [measurements](#verify-the-installation) and monitor the **Server** page before adding bots or environments.
-- Tailscale on the server and your computer is recommended. Use a private HTTPS entry point to the gateway; do not expose it directly to the public internet.
-
 ## Trying it locally
 
-With Docker running and the local gateway and bot images built, start an isolated loopback fleet from the repository root:
+For development, with Docker running and the local gateway and bot images built, start an isolated loopback fleet from the repository root:
 
 ```sh
 npm run bot-fleet:dev -- up
@@ -89,95 +212,6 @@ npm run bot-fleet:dev -- seed
 `up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, each in a new environment named after it, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file.
 
 When finished, run `npm run bot-fleet:dev -- down`. It stops the dev gateway, reads a copy of its database, and removes this fleet's environment containers and home volumes, including archived environments and the legacy `maestrly-bot-<id>` names. It removes the fake model, gateway data, network and helper state last. Resources whose ownership is ambiguous stay in place. If records cannot be read or resources remain, it reports them and exits with an error, keeping the gateway data and helper state for another attempt; the gateway stays stopped.
-
-## Set up the server
-
-1. On the Linux server, obtain this repository at the same Maestrly version as the desktop app. From its root, build both images for the server architecture:
-
-   ```sh
-   node scripts/bot-fleet-images.mjs --platform linux/amd64
-   ```
-
-   Use `linux/arm64` on an ARM server; without `--platform` it builds for the machine running it. The builder tags `maestrly/bot-gateway` and `maestrly/bot-instance` with the repository version and `:local`. It installs build dependencies inside Docker. If building elsewhere, transfer both images with `docker save` and `docker load`.
-
-2. Copy `deploy/bot-fleet/.env.example` to `deploy/bot-fleet/.env`. Set `MAESTRLY_GATEWAY_IMAGE` and `MAESTRLY_GATEWAY_BOT_IMAGE` to the versioned tags you built; adjust `TZ`, the default environment memory limit, and shared memory if needed. Set `MAESTRLY_GATEWAY_DISPLAY_NAME` to the VPS name shown on the app's **Server** page. Start Compose:
-
-   ```sh
-   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d
-   ```
-
-   | `.env` setting | Purpose | Default |
-   | --- | --- | --- |
-   | `MAESTRLY_GATEWAY_DISPLAY_NAME` | Name shown on the app's **Server** page (up to 64 characters) | Gateway container hostname |
-   | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit of each environment that has no limit of its own | `4g` |
-   | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per environment | `1g` |
-
-3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
-
-   ```sh
-   tailscale serve --bg https / http://127.0.0.1:7443
-   ```
-
-   Check the resulting Tailscale HTTPS address and current `tailscale serve` syntax. Keep host port 7443 on loopback; do not publish 7444, 7680, or any VNC port from 5900 to 5967.
-
-4. Run diagnostics, then create a one-use pairing code (valid for ten minutes):
-
-   ```sh
-   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway doctor
-   docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
-   ```
-
-5. In Maestrly on your computer, open **Settings → Bot server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. A paired device can control every environment and bot on this gateway. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to audit or revoke access.
-
-### Updates, backups, and removal
-
-Build both images from the target release and set both image tags in `.env`. Recreate the gateway with `docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml up -d --force-recreate` (`--force-recreate` also covers rebuilding the same `:local` tag). Then restart each environment from the **Server** page or with **Restart environment** in its environment view to move it to the new image. A restart acts on every bot in the environment, and the app names them before you confirm. When the configured image changed, the restart replaces the container; otherwise it restarts the same one. Either way the home volume keeps accounts, site logins, files, and every bot's conversation. Running environments stay on their current image until you restart them. The **Server** page compares the version each bot reports with the desktop app version; a mismatch is a compatibility warning, not proof of the bot image version. A separate protocol incompatibility prevents the client from connecting.
-
-The environment view offers **Update environment** when the configured image's `org.opencontainers.image.version` label differs from the version the environment reports. Unlabeled images and builds with the same version still update through **Restart environment**.
-
-Back up the Compose `gateway-data` volume and **every** environment home volume: `maestrly-env-<environment-id>-home`, and `maestrly-bot-<bot-id>-home` for environments that were single bots before the update. The former contains pairing records, environment and bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains the environment's desktop profile, accounts, site logins, browser profiles, files, and each of its bots' conversation, queue, and memory. Preserve volume contents and permissions, and restore the gateway data and matching home volumes together before starting the service. Keep backups private. Archived environments keep their home volume and server history; a bot archived on its own keeps its data in its environment's home volume.
-
-Stop the gateway and environment containers before making a file-level copy of these volumes. SQLite uses WAL files, so copying only a live `.sqlite` file can omit committed data. SQLite's backup API can take a consistent database snapshot while it is open; a complete environment backup must also keep the other profile files and queued attachments consistent with that snapshot.
-
-To remove a computer's access, revoke its device or **Disconnect** it in Settings.
-
-**Archive a bot** from its **Settings** tab. This archives only that bot: its environment's Maestrly uninstalls it and stops its screens, and its slot becomes free. Its conversation, memory, and files stay in the environment's home volume. Its routines, background compaction, and memory extraction stop until it is restored. Late replies cannot add memories or activate summaries; model usage already incurred can still be recorded. The environment and its other bots keep running. An environment keeps running, and using memory, even after its last bot is archived; stop or archive the environment to free that memory.
-
-After an environment restarts, its bots wait for the gateway to confirm membership, pause and any active takeover before processing queued work. The gateway also repeats this installation automatically when Maestrly restarts inside the same container. A bot archived or paused while the environment was stopped cannot resume its old queue during startup.
-
-**Archive an environment** from its environment view. This stops and removes its container, keeps its home volume, and archives every bot in it. An archived environment uses no memory, and its bots' routines do not run.
-
-**Bot server → Archived environments** lists archived environments with their bots:
-
-- **Restore** recreates the container on the kept home volume and brings back the bots archived with it, in their slots. Bots that had been archived on their own before stay archived. Restored bots reconnect to peers that are still active, and their routines resume from the next scheduled time; runs missed while archived are not replayed.
-- **Delete forever** asks you to type the environment's name. It then removes the container, if any, the home volume, and every gateway record of the environment and its bots: routines, routine runs, peer messages, activity, secrets, and owner memory entries scoped to that environment. Global owner memory survives. This cannot be undone.
-
-**Bot server → Archived bots** lists bots archived on their own from an active environment:
-
-- **Restore** puts the bot back in its environment, in its previous slot when free, otherwise in the lowest free slot. Its environment must not be archived (restore the environment first) and must have a free slot. The bot is installed at once when the environment runs; in a stopped environment it is installed when the environment starts, and a bot that is the only one in its stopped environment starts that environment. It reconnects to peers that are still active.
-- **Delete forever** asks you to type the bot's name and needs its environment running. The environment's Maestrly deletes the bot's conversation, memory, own folders, **Apps** browser profile, and settings; the gateway then deletes its routines, routine runs, peer messages, activity, and gateway token. Files the bot left in the shared home folder, the environment's accounts, skills, and MCP servers, and owner memory stay. A new bot with the same name can reuse its id. When the environment still runs an image from before environments and holds no other bot, deletion removes the whole environment and its home volume, as it did for single-bot containers.
-
-If a home volume was removed outside Maestrly, the lists say so, and a restored environment or bot starts without those files.
-
-To remove the installation, stop Compose and explicitly delete the gateway and environment home volumes only after exporting anything you need.
-
-### Compatibility
-
-The fleet protocol stays at version 1; environments add fields and routes with defaults. The desktop app shows environments only when the gateway advertises the `environments` feature.
-
-| Combination | Behavior |
-| --- | --- |
-| Current desktop app and gateway, environment on an image from before environments | The environment runs its single bot through its original routes. Adding a bot, the **Apps** screen, and the environment screen ask you to restart the environment first. Archiving that bot stops the environment and keeps its data. A later start on the old image holds the archived bot before reporting the environment as running. Restart onto the current image for the full environment lifecycle. |
-| Desktop app from before environments, current gateway | Bots list, chat, and configure as before; configuring a bot changes its environment, which its other bots share. **Start**, **Stop**, and **Restart** of a bot act on its environment when the bot is alone in it; otherwise the gateway refuses with "This bot shares its environment. Restart the environment instead." **Screen** shows the bot's browser area only. In an environment on the current bot image, **Log in on the bot's screen** opens Maestrly's settings on the environment screen, which that app cannot show; add an API key or bring accounts from your computer instead. Activity history omits environment entries, and memory figures appear only for bots alone in their environment. That app cannot stop or archive environments; on current bot images, an environment whose bots it archived keeps running. |
-| Current desktop app, gateway from before environments | The app keeps the interface from before environments: one container per bot, with accounts, skills, and MCP servers in each bot's **Settings**. |
-
-Desktop apps from before environments can list, restore and delete an archived environment containing exactly one bot through their archived-bot controls. This includes bots archived before the gateway upgrade. An archived environment containing several bots requires an environment-aware desktop app, so a bot shortcut cannot restore or delete its neighbours. Current desktop apps request `separateEnvironments=1` on the archived-bot collection and show archived environments separately.
-
-**Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
-
-The gateway migrates schemas 5 and 6 to 7 in place and refuses databases with a newer schema. Older gateways cannot open schema 7; back up the gateway volume before upgrading and restore a matching backup to downgrade.
-
-Environment default compaction models need the gateway's `environment-compaction` feature. Desktop apps without it keep choosing a model in each bot's **Settings**; they show a bot that uses its environment's default as that model, and saving it there makes it the bot's own. An environment on an image without the capability keeps working with its default, but choosing the default from the desktop app asks you to restart the environment first.
 
 ## Use bots from your computer
 
@@ -212,13 +246,13 @@ Each environment has a **Default compaction model**, chosen in its environment v
 | **Start / Stop / Restart** | Act on the whole environment and every bot in it, from the environment view or the **Server** page. The home volume remains. |
 | **Archive** | In a bot's **Settings**, archives that bot only. In the environment view, removes the environment's container and archives every bot in it. Records and the home volume are kept. |
 
-In **Settings → Routines**, give a routine a title and self-contained prompt. Choose a fixed local time, days, and **Time zone** (no selected days means every day), or an interval of 15 minutes to 24 hours. Runs are scheduled on the server even while your computer is off. A run is skipped if the bot is paused or offline, if the scheduled time was missed by more than 15 minutes, or while the previous run of that routine is still queued or running. Only the first skip of a streak is logged; skipped runs are not replayed later. You can disable, edit, delete, or **Run now**.
+In **Settings → Routines**, give a routine a title and self-contained prompt. Choose a fixed local time, days, and **Time zone** (no selected days means every day), or an interval of 15 minutes to 24 hours. Runs are scheduled by the gateway: they continue while your computer is off when the gateway runs on a VPS, and stop while this computer is asleep or off when it runs here. A run is skipped if the bot is paused or offline, if the scheduled time was missed by more than 15 minutes, or while the previous run of that routine is still queued or running. Only the first skip of a streak is logged; skipped runs are not replayed later. You can disable, edit, delete, or **Run now**.
 
 Bots can create up to 10 of their own routines through tools, subject to their access ceiling and owner approval. Settings marks routines created by a bot. The owner can edit or delete any routine; a bot can change or delete only routines it created. Each run uses a full model turn and the owner's model quota, so choose the longest useful interval.
 
 **Conversations with other bots** grants a bot access to named peers, in its own or another environment. Messages appear in both conversations; an offline recipient gets a pending delivery. The gateway allows at most 30 messages per bot per hour. After 20 messages between a pair within 30 minutes without an owner message, it blocks the pair for 30 minutes and raises an attention item to break loops.
 
-The **Server** page shows versions, CPU, memory, disk, and peer messages. With environments, it lists one row per environment, with memory, CPU, uptime, **Restart**, **Stop**, and **Start**, and its bots under it; memory and CPU are measured for the whole environment, and the memory bar has one segment per environment. **Restart** and **Stop** ask for confirmation and name the environment's bots. Bots keep working while your computer is off; when it reconnects, open a bot to see what it did in its conversation and routine runs, and check **Awaiting you** for anything that waits for you.
+The **Server** page shows versions, CPU, memory, disk, and peer messages. With environments, it lists one row per environment, with memory, CPU, uptime, **Restart**, **Stop**, and **Start**, and its bots under it; memory and CPU are measured for the whole environment, and the memory bar has one segment per environment. **Restart** and **Stop** ask for confirmation and name the environment's bots. Bots on a VPS keep working while your computer is off; when it reconnects, open a bot to see what it did in its conversation and routine runs, and check **Awaiting you** for anything that waits for you.
 
 While your computer is connected, bots use the **Alert sounds** in **Settings → Appearance & sound**. **Turn ready** or **Turn failed** plays when a bot finishes a message you sent, or the work it resumes after you give back control. **Permission request** plays when a bot needs you, such as a new request in **Awaiting you** or a blocked conversation between bots, whatever started its turn. Routine runs and conversations between bots end silently, and nothing that happened while your computer was off sounds when it reconnects. Turn off **Bot alerts** to silence bots without silencing your own conversations. A gateway or environment image that predates this does not report who started a turn, so every finished turn sounds, routines included, until both are updated.
 
@@ -441,7 +475,7 @@ The ceiling is a maximum, not a request for broader permission. The bot cannot r
 
 ## Security and data
 
-Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. Tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
+Pairing codes are one-use and expire after ten minutes. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Revoke a lost device with `devices revoke`. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
 
 The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores environment and bot profiles, routines and prompts, routine runs, owner memory, activity, peer messages, device token hashes, and **plaintext** secrets needed to restart containers: a control token and keyring password per environment and a gateway token per bot. Host root can read them. API keys pass through the gateway when added but are **not stored** there; the environment stores them in its own encrypted credential store inside its home volume. Each environment's keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Secrets flow only from your computer through the gateway to the environment and are never returned. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot or environment names or error text.
 
@@ -449,7 +483,7 @@ The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) h
 
 **Environments are separated from each other** as bots were before environments: each has its own container, home volume, keyring, and control token. This separates ordinary activity, but it is not a hostile-code security boundary against the Docker host. All environment containers share the fleet Docker bridge network, and Maestrly does not filter traffic between them: a program that a bot starts and that listens on a network port can be reached from other environments. The gateway protects its own services on that network: its public API refuses fleet-network clients, the internal API accepts only fleet-network and loopback clients and identifies each bot by its gateway token, every control-server request needs the environment's control token, and VNC listens only on each container's loopback.
 
-The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the environment runs with `sandbox: false`: a compromised page in that renderer can control the environment's container and every bot in it, though its normal container boundary does not give it your computer or direct access to the server host. No control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the control server authenticates screen tunnels. Control of a bot's **Browser** or **Apps** screen requires your takeover of that bot. Control of the environment screen needs no takeover, because it shows only Maestrly's settings, but it shares a display with the bots' browser areas: the gateway allows one control session on that display per environment at a time. Takeover holds exactly one bot. Device revocation closes active screen and event streams and gives back any screen held by that device. Configuration from a computer is recorded in activity on the environment, with the device name and counts only. See the broader [security model](security-model.md#bot-environments).
+The gateway mounts the Docker socket. Docker socket access is effectively root authority on the host, so treat the gateway and anyone who can modify it as trusted. The supplied seccomp profile allows namespace syscalls needed by Chromium's sandbox. The Maestrly main renderer inside the environment runs with `sandbox: false`: a compromised page in that renderer can control the environment's container and every bot in it, though its normal container boundary does not directly grant access to the Docker host. No control or VNC port should be published on the host. VNC has no password and listens only on container loopback; the control server authenticates screen tunnels. Control of a bot's **Browser** or **Apps** screen requires your takeover of that bot. Control of the environment screen needs no takeover, because it shows only Maestrly's settings, but it shares a display with the bots' browser areas: the gateway allows one control session on that display per environment at a time. Takeover holds exactly one bot. Device revocation closes active screen and event streams and gives back any screen held by that device. Configuration from a computer is recorded in activity on the environment, with the device name and counts only. See the broader [security model](security-model.md#bot-environments).
 
 Environments and their default compaction models move the gateway database to
 schema v7. Older gateways that do not support v7 refuse to open it; back up the gateway volume before upgrading and
@@ -462,6 +496,14 @@ compatible. See [memory storage](local-data.md#memory-storage),
 
 | Symptom | Check |
 | --- | --- |
+| Docker is not running | Start Docker and wait until it is ready, then use **Check again** in **Settings → Bot server**. |
+| Docker permission denied (Linux) | Add your user to the `docker` group, sign in again, then use **Check again**. |
+| Compose plugin missing | Install the Docker Compose plugin, then use **Check again**. |
+| Bot server images unavailable or download failed | Check the internet connection and free disk space. For a packaged app, check that both GHCR images for the app's version are public; for an unpackaged app on this computer, build them with `node scripts/bot-fleet-images.mjs`. Then **Try again**. |
+| **The server's identity changed** | Verify the VPS's SSH host key fingerprint with your provider or administrator before using **Set up again**. A changed key stops the tunnel. |
+| SSH tunnel cannot reach the gateway | Check that SSH forwarding is enabled on the VPS (`AllowTcpForwarding yes` in `sshd_config`) and that the gateway listens on the server's `127.0.0.1:7443`. |
+| VPS setup needs passwordless `sudo` | Sign in as root or give the SSH user passwordless `sudo`; Maestrly uses `sudo -n` and cannot answer a sudo password prompt. |
+| **Sign in again** after restarting | The generated SSH key was held only in memory because secure storage was unavailable. Use **Set up again** with the server's password or key; Maestrly keeps the pairing and replaces its key. |
 | **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Main model**. |
 | **Needs a compaction model** | Choose the environment's **Default compaction model**, or a model of the bot's own in its **Settings** tab; reconnect the environment's account if it became unavailable. Queued messages resume when setup is complete. |
 | **offline** or **starting** | Check the environment's container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart** on the environment. |

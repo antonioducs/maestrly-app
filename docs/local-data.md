@@ -20,6 +20,42 @@ deleting the chat removes it. Back up the complete profile before reset.
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
+## Bot server installation
+
+When the desktop app installs a bot server, `fleet.installer` in
+`app_settings` records whether it runs here or on a VPS, the app image
+version, the local gateway or SSH tunnel port, the private-network setting,
+and the installation time. For a VPS it also records the SSH host, port, user,
+pinned host-key fingerprint and the tag of Maestrly's authorized key. It
+contains no password or private key.
+
+`fleet.installer.sshKey` holds the generated VPS private key as ciphertext
+protected by the OS keyring through Electron `safeStorage`. If secure storage
+is unavailable, the key remains in memory only; after restarting the app, use
+**Set up again** with the server's password or key. The password or private key entered for setup is
+not saved. **Disconnect this computer** clears the install record and stored
+key, while leaving the server's Compose files and volumes running. On a VPS,
+it attempts to revoke this computer's tagged public key.
+
+The app writes `<userData>/bot-server/compose.yml` and
+`<userData>/bot-server/.env` for an install on this computer. On a VPS it writes
+the same files under `/opt/maestrly-bots/`. The `.env` names both images, the
+gateway bind and port, display name, time zone, Docker network and bot egress
+mode; it does not hold the SSH key. The Compose `gateway-data` volume holds
+the gateway database, and each environment has a
+`maestrly-env-<id>-home` volume (older environments may have a
+`maestrly-bot-<id>-home` volume). Back up the gateway volume and every
+environment home together; see
+[updates, backups, and removal](bot-fleet.md#updates-backups-and-removal).
+
+**Remove bot server** requires a connected server and deletes its bots,
+environments and their home volumes, the Compose gateway and data volume, the
+configured images when Docker can remove them, and the app-managed Compose
+files. It clears this computer's install record and key; on a VPS it also
+revokes this computer's key and removes `/opt/maestrly-bots/`. Other
+computers' authorized keys must be removed separately. It leaves Docker
+itself installed. Removal affects other paired computers too.
+
 ## Memory storage
 
 Desktop durable entries remain in `local_memories`. Its `workspace_id` now names
