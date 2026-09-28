@@ -43,9 +43,17 @@ export interface FakeSshServer {
   restart(options?: { newHostKey?: boolean }): Promise<void>
 }
 
+/** ssh2's generator strips a public key's leading zero bytes, leaving one key in 256 unreadable: draw another. */
+function newHostKey(): string {
+  for (;;) {
+    const key = utils.generateKeyPairSync('ed25519').private
+    if (!(utils.parseKey(key) instanceof Error)) return key
+  }
+}
+
 /** An SSH server in this process, standing in for a VPS in tests. Uses only synthetic credentials. */
 export async function startFakeSshServer(options: FakeSshServerOptions): Promise<FakeSshServer> {
-  let hostKey = utils.generateKeyPairSync('ed25519').private
+  let hostKey = newHostKey()
   const authorizedKeys: string[] = []
   const commands: FakeSshServer['commands'] = []
   const clients = new Set<{ end(): unknown }>()
@@ -159,7 +167,7 @@ export async function startFakeSshServer(options: FakeSshServerOptions): Promise
     close,
     async restart(restartOptions = {}) {
       await close()
-      if (restartOptions.newHostKey) hostKey = utils.generateKeyPairSync('ed25519').private
+      if (restartOptions.newHostKey) hostKey = newHostKey()
       await listen()
     },
   }

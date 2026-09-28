@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomBytes, type KeyObject } from 'node:crypto'
 import path from 'node:path'
 import type { Duplex } from 'node:stream'
 // ssh2 is CommonJS without named exports Node can detect from the ESM main bundle.
@@ -8,7 +8,7 @@ import { lastLine } from './docker-host'
 import { InstallerError } from './errors'
 import type { CommandRunner, RunOptions, RunResult } from './runner'
 
-const { Client, utils } = ssh2
+const { Client } = ssh2
 
 /** The SSH host key fingerprint as OpenSSH prints it: `SHA256:` and unpadded base64. */
 export function hostKeyFingerprint(key: Buffer): string {
@@ -20,10 +20,55 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-/** A new ed25519 key pair in OpenSSH format; the comment ends the public key line. */
-export function generateSshKey(comment: string): { privateKey: string; publicKey: string } {
-  const pair = utils.generateKeyPairSync('ed25519', { comment })
-  return { privateKey: pair.private, publicKey: pair.public }
+/** An SSH wire `string`: its length as a 32-bit big-endian number, then its bytes. */
+function sshString(value: Buffer | string): Buffer {
+  const data = typeof value === 'string' ? Buffer.from(value) : value
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(data.length)
+  return Buffer.concat([length, data])
+}
+
+/**
+ * A new ed25519 key pair in OpenSSH format; the comment ends the public key line. Encoded here from Node's key: ssh2's
+ * generator strips the leading zero bytes of the public key, so one key in 256 came out unreadable.
+ */
+export function generateSshKey(
+  comment: string,
+  pair: { privateKey: KeyObject } = generateKeyPairSync('ed25519')
+): { privateKey: string; publicKey: string } {
+  const jwk = pair.privateKey.export({ format: 'jwk' })
+  if (jwk.crv !== 'Ed25519' || !jwk.d || !jwk.x) throw new Error('Not an ed25519 private key')
+  const seed = Buffer.from(jwk.d, 'base64url')
+  const publicKey = Buffer.from(jwk.x, 'base64url')
+  const keyType = 'ssh-ed25519'
+  const publicBlob = Buffer.concat([sshString(keyType), sshString(publicKey)])
+  // Two equal check numbers, the key, and padding 1, 2, 3… to the 8-byte block of the unencrypted format.
+  const check = randomBytes(4)
+  const secret = Buffer.concat([
+    check,
+    check,
+    sshString(keyType),
+    sshString(publicKey),
+    sshString(Buffer.concat([seed, publicKey])),
+    sshString(comment),
+  ])
+  const padding = Buffer.from(Array.from({ length: (8 - (secret.length % 8)) % 8 }, (_, index) => index + 1))
+  const keys = Buffer.alloc(4)
+  keys.writeUInt32BE(1)
+  const body = Buffer.concat([
+    Buffer.from('openssh-key-v1\0'),
+    sshString('none'),
+    sshString('none'),
+    sshString(''),
+    keys,
+    sshString(publicBlob),
+    sshString(Buffer.concat([secret, padding])),
+  ])
+  const lines = body.toString('base64').match(/.{1,70}/g) ?? []
+  return {
+    privateKey: ['-----BEGIN OPENSSH PRIVATE KEY-----', ...lines, '-----END OPENSSH PRIVATE KEY-----', ''].join('\n'),
+    publicKey: `${keyType} ${publicBlob.toString('base64')} ${comment}`,
+  }
 }
 
 export interface SshConnectOptions {

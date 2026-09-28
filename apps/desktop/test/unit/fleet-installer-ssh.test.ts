@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import ssh2 from 'ssh2'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { RunOptions, RunResult } from '../../src/main/fleet/installer/runner'
 import {
@@ -174,6 +176,29 @@ describe('SSH sessions', () => {
     })
     await authorizeKey(await login(fake), key.publicKey)
     const session = await SshSession.connect(target, credentials, { expectedHostKey: fake.fingerprint })
+    cleanups.push(() => session.close())
+    expect(session.root).toBe(true)
+  })
+
+  it('keeps a public key that starts with zero bytes', async () => {
+    // ssh2's own generator stripped these bytes, leaving one key in 256 unreadable.
+    let pair = generateKeyPairSync('ed25519')
+    while (Buffer.from(pair.privateKey.export({ format: 'jwk' }).x!, 'base64url')[0] !== 0)
+      pair = generateKeyPairSync('ed25519')
+    const key = generateSshKey('maestrly-000000000000', pair)
+    const parsed = ssh2.utils.parseKey(key.privateKey)
+    if (parsed instanceof Error) throw parsed
+    const blob = parsed.getPublicSSH() as Buffer
+    expect(blob.readUInt32BE(15)).toBe(32)
+    expect(blob[19]).toBe(0)
+    expect(key.publicKey).toBe(`ssh-ed25519 ${blob.toString('base64')} maestrly-000000000000`)
+    const fake = await server()
+    fake.authorizedKeys.push(key.publicKey)
+    const session = await SshSession.connect(
+      { host: '127.0.0.1', port: fake.port, username: 'root' },
+      { kind: 'key', privateKey: key.privateKey, passphrase: null },
+      { expectedHostKey: fake.fingerprint }
+    )
     cleanups.push(() => session.close())
     expect(session.root).toBe(true)
   })
