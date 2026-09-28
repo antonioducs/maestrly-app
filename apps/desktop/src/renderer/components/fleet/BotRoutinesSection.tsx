@@ -24,6 +24,7 @@ import { SearchSelect } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { choiceClass } from '@/lib/fleet/choice'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
+import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import {
   nextRadioIndex,
   routineFormFrom,
@@ -57,6 +58,7 @@ const routineActivity = ['routine_created', 'routine_updated', 'routine_deleted'
 /** A bot's routines: each change is saved at once, apart from the settings that wait for the save button. */
 export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: FleetController; id: string }) {
   const { t, i18n } = useTranslation('fleet')
+  const { status: installer } = useFleetInstaller()
   const [routines, setRoutines] = useState<FleetRoutine[]>([])
   const [routine, setRoutine] = useState<RoutineForm | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -168,7 +170,7 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
     <SettingsSection
       id={id}
       title={t('botSettings.routines')}
-      note={t('botSettings.routinesNote')}
+      note={t(installer?.record?.mode === 'local' ? 'botSettings.routinesNoteLocal' : 'botSettings.routinesNote')}
       aside={
         <>
           <SavesNowTag />

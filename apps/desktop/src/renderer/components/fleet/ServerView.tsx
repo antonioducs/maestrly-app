@@ -9,6 +9,7 @@ import { formatUptime } from '@/lib/fleet/forms'
 import { botsWithDifferentVersion, groupBotsByEnvironment } from '@/lib/fleet/selectors'
 import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
+import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
 
@@ -168,6 +169,8 @@ export function ServerView({
 }) {
   const { t, i18n } = useTranslation('fleet')
   const { host, bots, environments } = fleet.state.snapshot
+  const { status: installer } = useFleetInstaller()
+  const runsHere = installer?.record?.mode === 'local'
   // With environments, rows are environments (their resources counted once) with their bots under them.
   const grouped = hasEnvironments(fleet.state.connection) ? groupBotsByEnvironment(environments, bots) : null
   const [confirm, setConfirm] = useState<{ environment: FleetEnvironment; action: 'restart' | 'stop' } | null>(null)
@@ -218,8 +221,10 @@ export function ServerView({
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.yourMac')}</div>
-                <strong>{t('server.canTurnOff')}</strong>
-                <p className="mt-1 text-xs text-muted-foreground">{t('server.macNote')}</p>
+                <strong>{t(runsHere ? 'server.localTitle' : 'server.canTurnOff')}</strong>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t(runsHere ? 'server.localNote' : 'server.macNote')}
+                </p>
               </div>
               <div className="rounded-lg border border-border bg-surface-elevated p-4">
                 <div className="text-xs text-muted-foreground">{t('server.server')}</div>

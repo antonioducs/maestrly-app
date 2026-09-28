@@ -541,6 +541,14 @@ describe('environment translations', () => {
       'components/fleet/FleetSidebarPanel.tsx',
       'components/fleet/OwnerMemoryView.tsx',
       'components/fleet/ServerView.tsx',
+      'components/settings/FleetSettings.tsx',
+      'components/settings/bot-server/BotServerChoice.tsx',
+      'components/settings/bot-server/BotServerLocalSetup.tsx',
+      'components/settings/bot-server/BotServerRemoteSetup.tsx',
+      'components/settings/bot-server/BotServerManualSetup.tsx',
+      'components/settings/bot-server/BotServerProgress.tsx',
+      'components/settings/bot-server/BotServerPanel.tsx',
+      'components/settings/bot-server/PrivateNetworkSwitch.tsx',
     ]
     const missing: string[] = []
     for (const file of files) {
