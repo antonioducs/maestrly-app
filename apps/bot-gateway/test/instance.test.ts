@@ -22,7 +22,7 @@ async function instance(answers: Record<string, Answer>) {
       return
     }
     const answer = routes.get(req.method + ' ' + req.url)
-    if (answer) return answer(res, req)
+    if (typeof answer === 'function') return answer(res, req)
     json(404, { code: 'NOT_FOUND', message: 'Not found' })(res, req)
   })
   servers.push(server)
