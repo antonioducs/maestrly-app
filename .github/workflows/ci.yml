@@ -28,7 +28,8 @@ jobs:
           - label: Windows
             os: windows-2025
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows runners take 25-30 minutes since the bot fleet suites landed; leave room for slower runners.
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
