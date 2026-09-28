@@ -1442,7 +1442,8 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .poll(() => (requests.filter((item) => item.key === 'botPatch').at(-1)?.body as { ceiling?: string })?.ceiling)
       .toBe('full')
     await page
-      .locator('input[type="file"][accept^="image/*"]')
+      // The chat composer's picker; it offers PDFs and text too, which the bot composer refuses.
+      .locator('input[type="file"][accept*="image/*"]')
       .setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png })
     await expect(page.getByAltText('test.png')).toBeVisible()
     await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('Check the orders')
