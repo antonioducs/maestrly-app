@@ -44,6 +44,27 @@ async function openBotServer(page: Page) {
 
 const installerStatus = (page: Page) => page.evaluate(() => window.api.fleetInstallerStatus())
 const connected = (page: Page) => page.getByRole('main').getByRole('status').filter({ hasText: 'Conectado' })
+/**
+ * Starts an installer job and waits for it to end, failing with its steps and error, so that a failed setup is not
+ * reported as a missing status. Slow runners take several seconds per step.
+ */
+async function runJob(page: Page, start: () => Promise<void>) {
+  const before = (await installerStatus(page)).job?.id ?? null
+  await start()
+  await expect
+    .poll(
+      async () => {
+        const job = (await installerStatus(page)).job
+        return job && job.id !== before ? job.state : 'waiting'
+      },
+      { timeout: 120_000 }
+    )
+    .not.toMatch(/^(waiting|running)$/)
+  const job = (await installerStatus(page)).job
+  expect(job?.state, JSON.stringify(job)).toBe('succeeded')
+}
+/** After setup the fleet client reconnects through the lasting tunnel with backoff, which can take a few seconds. */
+const CONNECTED = { timeout: 45_000 }
 const images = (version: string) => [
   `${REGISTRY}/maestrly-bot-gateway:${version}`,
   `${REGISTRY}/maestrly-bot-instance:${version}`,
@@ -83,9 +104,9 @@ test('sets up the bot server on this computer, changes its network access, and r
     })
     await expect(privateNetwork).toHaveAttribute('aria-checked', 'false')
     await page.getByLabel('Nome do dispositivo').fill('Mesa E2E')
-    await page.getByRole('button', { name: 'Instalar servidor de bots' }).click()
+    await runJob(page, () => page.getByRole('button', { name: 'Instalar servidor de bots' }).click())
 
-    await expect(connected(page)).toContainText('fleet-local-host')
+    await expect(connected(page)).toContainText('fleet-local-host', CONNECTED)
     await expect(page.getByRole('heading', { name: 'Neste computador' })).toBeVisible()
     const installed = await installerStatus(page)
     const version = installed.appVersion
@@ -119,7 +140,7 @@ test('sets up the bot server on this computer, changes its network access, and r
     await expect(privateNetwork).toHaveAttribute('aria-checked', 'true')
     expect(await readFile(path.join(project, '.env'), 'utf8')).toContain('MAESTRLY_GATEWAY_BOT_EGRESS=open')
     expect(engine.commands(['compose', 'up'])).toHaveLength(2)
-    await expect(connected(page)).toContainText('fleet-local-host')
+    await expect(connected(page)).toContainText('fleet-local-host', CONNECTED)
 
     await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
     await page.getByRole('tab', { name: 'Bots' }).click()
@@ -178,12 +199,12 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
       await page.getByLabel('Senha', { exact: true }).fill(password)
       await page.getByRole('button', { name: 'Opções avançadas' }).click()
       await page.getByLabel('Porta SSH').fill(String(server.port))
-      await page.getByRole('button', { name: 'Instalar no servidor' }).click()
+      await runJob(page, () => page.getByRole('button', { name: 'Instalar no servidor' }).click())
     }
 
     await openBotServer(page)
     await installOnServer('synthetic-root-password')
-    await expect(connected(page)).toContainText('fleet-vps')
+    await expect(connected(page)).toContainText('fleet-vps', CONNECTED)
     await expect(page.getByRole('heading', { name: 'Servidor 127.0.0.1 (SSH)' })).toBeVisible()
     const installed = await installerStatus(page)
     const version = installed.appVersion
@@ -254,7 +275,7 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     for (const ref of older) vps.engine.images.add(ref)
     const commandsBeforeJoin = server.commands.length
     await installOnServer('rotated-root-password')
-    await expect(connected(page)).toContainText('fleet-vps')
+    await expect(connected(page)).toContainText('fleet-vps', CONNECTED)
     await expect(page.getByText(`Servidor 0.0.1 · Maestrly ${version}`)).toBeVisible()
     const joined = await installerStatus(page)
     expect(joined.job?.steps.map((step) => [step.id, step.state])).toEqual([
@@ -272,7 +293,7 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     expect(vps.scripts(server.commands.slice(commandsBeforeJoin))).toEqual(['probe', 'authorize-key'])
     expect(gateway.pairings.map((pairing) => pairing.deviceId)).toEqual(['device-1', 'device-2'])
 
-    await page.getByRole('button', { name: 'Atualizar servidor' }).click()
+    await runJob(page, () => page.getByRole('button', { name: 'Atualizar servidor' }).click())
     await expect(page.getByText(`Servidor ${version} · Maestrly ${version}`)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Atualizar servidor' })).toHaveCount(0)
     expect((await installerStatus(page)).job).toMatchObject({ kind: 'update', state: 'succeeded' })
@@ -286,7 +307,7 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
       expect(updated).toContain(line)
     // The older images are removed once the server runs the new ones.
     expect([...vps.engine.images].sort()).toEqual([...images(version)].sort())
-    await expect(connected(page)).toContainText('fleet-vps')
+    await expect(connected(page)).toContainText('fleet-vps', CONNECTED)
 
     // A reinstalled server, or someone in between: the tunnel stops for good and the panel asks to set it up again.
     await server.restart({ newHostKey: true })

@@ -73,6 +73,21 @@ async function removeTemporaryDirectory(directory: string): Promise<void> {
   }
 }
 
+/**
+ * These tests need no Codex plugins. With plugins on, every app-server start fetches the curated plugin repository
+ * with `git` into CODEX_HOME; on Windows those `git` children could outlive the process tree kill and keep the test's
+ * CODEX_HOME locked. Production conversations keep plugins; only chosen threads turn them off.
+ */
+const NO_PLUGIN_SYNC = ['--disable', 'plugins'] as const
+const APP_SERVER_ARGS = [
+  'app-server',
+  '--disable',
+  'multi_agent',
+  '--disable',
+  'multi_agent_v2',
+  ...NO_PLUGIN_SYNC,
+] as const
+
 /** Minimal pinned-runtime model fields; production overrides copy official catalogs. */
 function modelFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -230,7 +245,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
         })
         client = await CodexAppServerClient.connect({
           binaryPath: expectedBinary,
-          binaryArgs: ['app-server', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'],
+          binaryArgs: [...APP_SERVER_ARGS],
           clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
           capabilities: { experimentalApi: true },
           env: { CODEX_HOME: home, OPENAI_API_KEY: 'fixture-key', ...codexHostMcpProcessEnv() },
@@ -386,7 +401,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       )
       client = await CodexAppServerClient.connect({
         binaryPath: expectedBinary,
-        binaryArgs: ['app-server', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'],
+        binaryArgs: [...APP_SERVER_ARGS],
         clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
         capabilities: { experimentalApi: true },
         env: { CODEX_HOME: home, OPENAI_API_KEY: 'fixture-key' },
@@ -625,7 +640,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
     try {
       client = await CodexAppServerClient.connect({
         binaryPath: expectedBinary,
-        binaryArgs: ['app-server', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'],
+        binaryArgs: [...APP_SERVER_ARGS],
         clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
         capabilities: { experimentalApi: true },
         env: { CODEX_HOME: codexHome },
@@ -776,7 +791,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       })
       client = await CodexAppServerClient.connect({
         binaryPath: expectedBinary,
-        binaryArgs: ['app-server', '-c', `model_catalog_json=${catalogPath}`],
+        binaryArgs: ['app-server', ...NO_PLUGIN_SYNC, '-c', `model_catalog_json=${catalogPath}`],
         clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
         capabilities: { experimentalApi: true },
         env: { CODEX_HOME: codexHome, ...codexHostMcpProcessEnv() },
@@ -832,7 +847,7 @@ describe.skipIf(!target || !existsSync(expectedBinary))('official Codex runtime'
       try {
         client = await CodexAppServerClient.connect({
           binaryPath: expectedBinary,
-          binaryArgs: ['app-server', '--disable', 'multi_agent', '--disable', 'multi_agent_v2'],
+          binaryArgs: [...APP_SERVER_ARGS],
           clientInfo: { name: 'maestrly-test', title: 'Maestrly Test', version: '0.0.0' },
           capabilities: { experimentalApi: true },
           env: { CODEX_HOME: codexHome },

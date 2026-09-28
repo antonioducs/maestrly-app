@@ -50,6 +50,8 @@ User-visible changes by version. Downloads are on
 
 - Deliver browser and desktop screenshots to GPT-6 models on ChatGPT
   subscriptions when they call tools from code.
+- Remove the temporary directory of a Codex runtime check on Windows instead
+  of leaving it behind.
 
 ## [0.10.0] - 2026-09-26
 

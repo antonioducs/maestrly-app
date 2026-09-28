@@ -15,51 +15,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: ${{ matrix.label }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Linux
-            os: ubuntu-24.04
-          - label: macOS
-            os: macos-15
-          - label: Windows
-            os: windows-2025
-    runs-on: ${{ matrix.os }}
-    # Windows runners take 25-30 minutes since the bot fleet suites landed; leave room for slower runners.
-    timeout-minutes: 45
+  linux:
+    name: Linux suites
+    uses: ./.github/workflows/ci-desktop.yml
+    with:
+      os: ubuntu-24.04
+  macos:
+    name: macOS suites
+    uses: ./.github/workflows/ci-desktop.yml
+    with:
+      os: macos-15
+  windows:
+    name: Windows suites
+    uses: ./.github/workflows/ci-desktop.yml
+    with:
+      os: windows-2025
+
+  # The stable check names the main ruleset requires: each passes only when every suite of its platform passed.
+  linux-result:
+    name: Linux
+    needs: linux
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install dependencies
-        run: npm ci
-      - name: Validate repository history
-        run: npm run check:history
-      - name: Validate pull request title
-        if: github.event_name == 'pull_request'
+      - name: Require the Linux suites
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: node scripts/check-commits.mjs --subject-env PR_TITLE
-      - name: Test repository policies and documentation
-        run: npm run test:policy && npm run test:docs
-      - name: Check application
-        run: npm run check
-      - name: Install Electron system libraries
-        if: runner.os == 'Linux'
-        run: npx playwright install-deps chromium
-      - name: Test Electron on Linux
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:e2e
-      - name: Test Electron on desktop
-        if: runner.os != 'Linux'
-        run: npm run test:e2e
+          RESULT: ${{ needs.linux.result }}
+        run: test "$RESULT" = success
+  macos-result:
+    name: macOS
+    needs: macos
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the macOS suites
+        env:
+          RESULT: ${{ needs.macos.result }}
+        run: test "$RESULT" = success
+  windows-result:
+    name: Windows
+    needs: windows
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the Windows suites
+        env:
+          RESULT: ${{ needs.windows.result }}
+        run: test "$RESULT" = success
