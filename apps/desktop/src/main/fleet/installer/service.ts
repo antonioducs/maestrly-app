@@ -349,10 +349,16 @@ export class FleetInstallerService {
     ]
     return this.runJob('install-remote', 'remote', ids, async (context) => {
       const previous = this.deps.store.readRecord()
-      const pinned =
+      const sameServer =
         previous?.remote && previous.remote.host === input.target.host && previous.remote.port === input.target.port
-          ? previous.remote.hostKey
+          ? previous.remote
           : null
+      const pinned = sameServer?.hostKey ?? null
+      // Setting up the same server again (its key was lost or refused): its idle tunnel gives the port back.
+      if (sameServer) {
+        await this.tunnel?.stop()
+        this.tunnel = null
+      }
       const session = await context.step('connect', async () => {
         const opened = await this.deps.connectSsh(input.target, input.credentials, {
           expectedHostKey: pinned,
@@ -442,6 +448,8 @@ export class FleetInstallerService {
             { expectedHostKey: session.hostKey, signal: context.signal }
           )
           check.close()
+          // The key of an earlier setup of this server no longer has a holder.
+          if (sameServer && sameServer.keyTag !== keyTag) await revokeKey(session, sameServer.keyTag).catch(() => {})
           this.deps.store.saveKey(key.privateKey)
           const current = parseBotServerEnv(env)
           const record: FleetInstallRecord = {
@@ -466,6 +474,8 @@ export class FleetInstallerService {
       } finally {
         await (temporary as InstallerTunnel | null)?.stop()
         session.close()
+        const kept = this.deps.store.readRecord()
+        if (!saved && kept?.mode === 'remote') await this.startTunnel(kept).catch(() => {})
       }
     })
   }

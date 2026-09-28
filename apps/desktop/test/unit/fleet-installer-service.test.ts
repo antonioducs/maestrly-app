@@ -145,6 +145,8 @@ function setup(options: SetupOptions = {}) {
   const broadcasts: FleetInstallerStatus[] = []
   const removedDirs: string[] = []
   const metaOrigins: string[] = []
+  // Ports held by started tunnels, so that the default free port skips them as the real one would.
+  const busy = new Set<number>()
   const deps: FleetInstallerDeps = {
     appVersion: '0.9.4',
     isPackaged: true,
@@ -168,12 +170,14 @@ function setup(options: SetupOptions = {}) {
       return {
         async start() {
           port = options.tunnelPort?.(tunnelOptions) ?? tunnelOptions.listenPort
+          busy.add(port)
           state = tunnelOptions.privateKey() === null && !tunnelOptions.connect ? 'needs-credentials' : 'connected'
           tunnelOptions.onState?.(state)
           return port
         },
         async stop() {
           entry.stopped = true
+          busy.delete(port)
           state = 'off'
         },
         get port() {
@@ -207,7 +211,11 @@ function setup(options: SetupOptions = {}) {
     async fetchMeta(origin) {
       metaOrigins.push(origin)
     },
-    freePort: async (preferred) => preferred,
+    freePort: async (preferred) => {
+      let port = preferred
+      while (busy.has(port)) port++
+      return port
+    },
     broadcast: (status) => broadcasts.push(status),
     readBundledCompose: async () => 'services: {}\n',
     runImageBuilder: async () => ok(),
@@ -572,6 +580,62 @@ describe('installing on a VPS', () => {
     expect(status.job?.error?.code).toBe('unknown')
     expect(steps(status)?.[7]).toEqual(['pair', 'skipped'])
     expect(fleetState.disconnects).toBe(0)
+  })
+
+  it('sets up the same server again on its own port, keeps the pairing, and revokes the lost key', async () => {
+    const { service, vps, tunnels, stored, fleetState } = setup({
+      record: remoteRecord(),
+      key: null,
+      connection: { url: 'http://127.0.0.1:7443', deviceId: 'device-1', state: 'reconnecting' },
+      vps: fakeSession(
+        vpsScript({
+          existing_env: Buffer.from('MAESTRLY_GATEWAY_IMAGE=ghcr.io/antonioducs/maestrly-bot-gateway:0.9.4\n').toString(
+            'base64'
+          ),
+        })
+      ),
+    })
+    await service.start()
+    expect(service.status().tunnel).toBe('needs-credentials')
+    const status = await service.installRemote({
+      target,
+      credentials: { kind: 'password', password: 'synthetic-root-password' },
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+    })
+    expect(status.job?.error).toBeNull()
+    // The idle tunnel stopped first, so the temporary one and the new one take the recorded port.
+    expect(tunnels.map((tunnel) => [tunnel.options.listenPort, tunnel.stopped])).toEqual([
+      [7443, true],
+      [7443, true],
+      [7443, false],
+    ])
+    expect(steps(status)?.[7]).toEqual(['pair', 'skipped'])
+    expect(fleetState.connects).toEqual([])
+    const scripts = vps.commands.map((item) => item.input.split('\n')[0]).filter((line) => line.startsWith('#'))
+    expect(scripts.slice(-2)).toEqual(['# maestrly-bot-server:authorize-key', '# maestrly-bot-server:revoke-key'])
+    expect(vps.commands.at(-1)?.command).toBe("sh -s -- 'maestrly-bbbbbbbbbbbb'")
+    expect(stored.record?.remote?.keyTag).toBe('maestrly-aaaaaaaaaaaa')
+    expect(status.tunnel).toBe('connected')
+  })
+
+  it('reopens the tunnel of the recorded server when setting it up again fails', async () => {
+    const { service, tunnels, stored } = setup({
+      record: remoteRecord(),
+      key: 'synthetic-private-key',
+      vps: fakeSession(vpsScript({ os_version: '20.04' })),
+    })
+    await service.start()
+    const status = await service.installRemote({
+      target,
+      credentials: { kind: 'password', password: 'synthetic-root-password' },
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+    })
+    expect(status.job?.error?.code).toBe('os-unsupported')
+    expect(stored.record?.remote?.keyTag).toBe('maestrly-bbbbbbbbbbbb')
+    expect(tunnels.map((tunnel) => tunnel.stopped)).toEqual([true, false])
+    expect(service.status().tunnel).toBe('connected')
   })
 
   it('undoes the pairing when the key cannot be set up', async () => {
