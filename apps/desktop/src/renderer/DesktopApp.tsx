@@ -37,7 +37,6 @@ import { ServerView } from '@/components/fleet/ServerView'
 import { InboxView } from '@/components/fleet/InboxView'
 import { OwnerMemoryView } from '@/components/fleet/OwnerMemoryView'
 import { CreateBotDialog } from '@/components/fleet/CreateBotDialog'
-import { FleetDigestBanner } from '@/components/fleet/FleetDigestBanner'
 import { useAgentStatuses } from '@/lib/use-agent-statuses'
 import { usePlans } from '@/lib/use-plans'
 import { ProjectSetupDialog } from '@/project-setup/ProjectSetupDialog'
@@ -704,14 +703,6 @@ export function DesktopApp() {
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onAddProject={requestProject}
                   onClose={() => setSettingsOpen(false)}
-                />
-              )}
-              {fleetView && (
-                <FleetDigestBanner
-                  fleet={fleet}
-                  onOpenBot={openFleetBot}
-                  onOpenEnvironment={openFleetEnvironment}
-                  onOpenServer={() => openFleetView({ kind: 'server' })}
                 />
               )}
               {fleetView?.kind === 'bot' && fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId) && (

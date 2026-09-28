@@ -22,8 +22,8 @@ describe('fleet renderer wiring', () => {
   })
   it('subscribes to all fleet state streams and disposes subscriptions', () => {
     const hook = source('lib/fleet/use-fleet.ts')
-    for (const event of ['onFleetConnection', 'onFleetEvent', 'onFleetDigest']) expect(hook).toContain(event)
-    for (const unsubscribe of ['offConnection()', 'offEvent()', 'offDigest()']) expect(hook).toContain(unsubscribe)
+    for (const event of ['onFleetConnection', 'onFleetEvent']) expect(hook).toContain(event)
+    for (const unsubscribe of ['offConnection()', 'offEvent()']) expect(hook).toContain(unsubscribe)
   })
   it('exposes keyboard accessible bot tabs and keeps the screen and settings extension points', () => {
     const view = source('components/fleet/BotView.tsx')

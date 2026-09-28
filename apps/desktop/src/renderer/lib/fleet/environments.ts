@@ -1,6 +1,5 @@
 import {
   FLEET_ENVIRONMENTS_FEATURE,
-  type FleetActivityEntry,
   type FleetArchivedBot,
   type FleetBot,
   type FleetEnvironment,
@@ -134,28 +133,6 @@ export function ownerMemoryScope(
   if (!entry.environmentId) return { kind: 'global' }
   const environment = environments.find((item) => item.id === entry.environmentId)
   return { kind: 'environment', id: entry.environmentId, name: environment?.name ?? null }
-}
-
-export type ActivitySubject =
-  | { kind: 'bot'; id: string; name: string; tint: string }
-  | { kind: 'environment'; id: string | null; name: string }
-  | null
-/**
- * Who an activity entry is about: its bot, else its environment. Environment lifecycle entries carry the name in
- * their summary, the only name left once the environment is deleted.
- */
-export function activitySubject(
-  entry: Pick<FleetActivityEntry, 'botId' | 'environmentId' | 'kind' | 'summary'>,
-  bots: Pick<FleetBot, 'id' | 'name' | 'tint'>[],
-  environments: Pick<FleetEnvironment, 'id' | 'name'>[]
-): ActivitySubject {
-  const bot = entry.botId ? bots.find((item) => item.id === entry.botId) : undefined
-  if (bot) return { kind: 'bot', id: bot.id, name: bot.name, tint: bot.tint }
-  const environment = entry.environmentId ? environments.find((item) => item.id === entry.environmentId) : undefined
-  if (environment) return { kind: 'environment', id: environment.id, name: environment.name }
-  if (entry.kind.startsWith('environment_') && entry.summary)
-    return { kind: 'environment', id: null, name: entry.summary }
-  return null
 }
 
 /** Starting, stopping or restarting a bot of an environment acts on its environment, shared with its other bots. */

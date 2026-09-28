@@ -211,7 +211,6 @@ describe('environments in the Mac snapshot', () => {
           })
         if (path === '/v1/inbox') return json({ items: [] })
         if (path === '/v1/peer-messages') return json({ messages: [] })
-        if (path === '/v1/activity') return json({ entries: [], lastSeq: 0 })
         throw new Error('Unexpected route ' + path)
       })
     )

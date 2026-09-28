@@ -14,7 +14,6 @@ import {
   fleetCreateBotRequestSchema,
   fleetCreateRoutineRequestSchema,
   fleetInteractionResolutionSchema,
-  fleetNonNegativeIntSchema,
   fleetPatchBotRequestSchema,
   fleetPatchRoutineRequestSchema,
   fleetTakeoverReleaseRequestSchema,
@@ -293,8 +292,6 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:getPeerMessages', (_event, limit: unknown) =>
     fleet.call('peerMessages', { query: { limit: z.number().int().min(1).max(200).optional().parse(limit) } })
   )
-  reg.handle('fleet:getDigest', () => fleet.getDigest())
-  reg.mhandle('fleet:ackDigest', (_event, seq: unknown) => fleet.ackDigest(fleetNonNegativeIntSchema.parse(seq)))
   reg.mhandle('fleet:screenOpen', (event, rawTarget: unknown, rawMode: unknown) => {
     const mode = z.enum(['view', 'control']).parse(rawMode)
     const target = resolveScreenTarget(fleet, rawTarget)

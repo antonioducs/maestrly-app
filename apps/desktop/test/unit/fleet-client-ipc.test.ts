@@ -21,8 +21,6 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     disconnect: vi.fn(),
     getSnapshot: vi.fn(),
     refresh: vi.fn(),
-    getDigest: vi.fn(),
-    ackDigest: vi.fn(),
     call: mocks.call,
     getImage: mocks.getImage,
     screens: mocks.screens,

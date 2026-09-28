@@ -12,7 +12,6 @@ import {
 } from '@/lib/fleet/environments'
 import { groupBotsByEnvironment } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { FleetDigestBanner } from './FleetDigestBanner'
 
 const dotClass: Record<EnvironmentDot, string> = {
   ready: 'bg-emerald-400',
@@ -72,7 +71,6 @@ export function FleetSidebarPanel({
   const segments = memorySegments(snapshot.host, snapshot.bots, snapshot.environments)
   return (
     <div className="p-2 text-xs">
-      {!selected && <FleetDigestBanner fleet={fleet} onOpenBot={onOpenBot} onOpenServer={onOpenServer} compact />}
       {connection.state !== 'connected' && (
         <div role="status" className="px-2 py-2 text-muted-foreground">
           {t(connection.state === 'connecting' ? 'connection.connectingTo' : 'connection.reconnectingTo', {

@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import en from '../../src/shared/i18n/en/fleet'
-import pt from '../../src/shared/i18n/pt-BR/fleet'
-import { fleetActivityKindSchema, type FleetActivityEntry, type FleetRoutine } from '@maestrly/bot-fleet-protocol'
+import type { FleetRoutine } from '@maestrly/bot-fleet-protocol'
 import {
-  digestKey,
-  formatDuration,
   formatUptime,
   visibleTranscriptItems,
   formatTimer,
@@ -90,10 +86,9 @@ describe('fleet forms', () => {
       values: { time: '09:00', days: 'Mon, Wed', timezone: 'UTC' },
     })
   })
-  it('formats control time and away duration', () => {
+  it('formats control time', () => {
     expect(formatTimer(61_900)).toBe('01:01')
     expect(formatTimer(-100)).toBe('00:00')
-    expect(formatDuration(3_700_000)).toEqual({ hours: 1, minutes: 1 })
   })
   it('formats uptime with days after 48 hours and hides continuation inputs', () => {
     expect(formatUptime(3_700_000)).toEqual({ days: 0, hours: 1, minutes: 1, long: false })
@@ -118,15 +113,5 @@ describe('fleet forms', () => {
     expect(nextRadioIndex(1, 'Home', 3)).toBe(0)
     expect(nextRadioIndex(1, 'End', 3)).toBe(2)
     expect(nextRadioIndex(1, 'Escape', 3)).toBeNull()
-  })
-  it('maps all activity kinds to localized digest keys', () => {
-    const kinds = fleetActivityKindSchema.options
-    for (const kind of kinds) {
-      expect(en.digest.kind).toHaveProperty(kind)
-      expect(pt.digest.kind).toHaveProperty(kind)
-    }
-    expect(kinds.map((kind) => digestKey({ kind } as FleetActivityEntry))).toEqual(
-      kinds.map((kind) => `digest.kind.${kind}`)
-    )
   })
 })

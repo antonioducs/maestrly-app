@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
-  fleetActivityEntrySchema,
   fleetBotSchema,
   fleetEnvironmentSchema,
   type FleetBot,
@@ -10,7 +9,6 @@ import {
 import { resources } from '../../src/shared/i18n/resources'
 import { groupBotsByEnvironment } from '../../src/renderer/lib/fleet/selectors'
 import {
-  activitySubject,
   archivedBotPurge,
   createKeyWatcher,
   creationStepReached,
@@ -210,34 +208,6 @@ describe('environment helpers', () => {
       name: 'Acme',
     })
     expect(ownerMemoryScope({ environmentId: 'gone' }, [acme])).toEqual({ kind: 'environment', id: 'gone', name: null })
-  })
-
-  it('names the bot or the environment of an activity entry', () => {
-    const entry = (patch: Record<string, unknown>) =>
-      fleetActivityEntrySchema.parse({
-        seq: 1,
-        at,
-        botId: null,
-        kind: 'bot_created',
-        summary: null,
-        data: {},
-        ...patch,
-      })
-    expect(activitySubject(entry({ botId: 'scout', environmentId: 'acme' }), bots, [acme])).toEqual({
-      kind: 'bot',
-      id: 'scout',
-      name: 'Scout',
-      tint: '#336699',
-    })
-    // Configuration is recorded on the environment, with the device name as summary.
-    expect(
-      activitySubject(entry({ kind: 'bot_configured', environmentId: 'acme', summary: 'Mac' }), bots, [acme])
-    ).toEqual({ kind: 'environment', id: 'acme', name: 'Acme' })
-    // A deleted environment is only named by its summary.
-    expect(
-      activitySubject(entry({ kind: 'environment_deleted', environmentId: 'old', summary: 'Old' }), bots, [acme])
-    ).toEqual({ kind: 'environment', id: null, name: 'Old' })
-    expect(activitySubject(entry({ kind: 'bot_deleted', summary: 'Gone' }), bots, [acme])).toBeNull()
   })
 
   it('starts, stops and restarts a bot of an environment through its environment', () => {
@@ -569,7 +539,6 @@ describe('environment translations', () => {
       'components/fleet/BotSkillsMcpSection.tsx',
       'components/fleet/CreateBotDialog.tsx',
       'components/fleet/FleetSidebarPanel.tsx',
-      'components/fleet/FleetDigestBanner.tsx',
       'components/fleet/OwnerMemoryView.tsx',
       'components/fleet/ServerView.tsx',
     ]

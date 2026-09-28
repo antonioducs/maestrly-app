@@ -9,7 +9,6 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import { ipcRenderer } from 'electron'
 import type {
-  FleetActivityEntry,
   FleetOwnerMemory,
   FleetOwnerMemoryEntry,
   FleetOwnerMemoryPatchRequest,
@@ -94,11 +93,6 @@ export type FleetConnectionView = {
   error: string | null
   tokenPersistence: 'secure' | 'memory'
 }
-export type FleetDigest = {
-  entries: FleetActivityEntry[]
-  since: number
-  awayMs: number
-} | null
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]
@@ -324,8 +318,6 @@ export const fleetApi = {
   fleetGetInbox: (): Promise<{ items: FleetInboxItem[] }> => ipcRenderer.invoke('fleet:getInbox'),
   fleetGetPeerMessages: (limit?: number): Promise<{ messages: FleetPeerMessage[] }> =>
     ipcRenderer.invoke('fleet:getPeerMessages', limit),
-  fleetGetDigest: (): Promise<FleetDigest> => ipcRenderer.invoke('fleet:getDigest'),
-  fleetAckDigest: (lastSeq: number): Promise<void> => ipcRenderer.invoke('fleet:ackDigest', lastSeq),
   /** A bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
   fleetScreenOpen: (target: FleetScreenTargetInput, mode: 'view' | 'control'): Promise<{ channelId: string }> =>
     ipcRenderer.invoke('fleet:screenOpen', target, mode),
@@ -334,7 +326,6 @@ export const fleetApi = {
   fleetScreenClose: (channelId: string): Promise<void> => ipcRenderer.invoke('fleet:screenClose', channelId),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
-  onFleetDigest: (cb: (digest: FleetDigest) => void): (() => void) => subscribe('fleet:digest', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),
   onFleetScreenState: (cb: (state: FleetScreenState) => void): (() => void) => subscribe('fleet:screen:state', cb),
   onFleetInstanceOpenAccounts: (cb: (target: 'accounts' | 'skills' | 'mcp') => void): (() => void) =>

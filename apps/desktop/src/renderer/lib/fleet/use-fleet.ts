@@ -41,12 +41,6 @@ export function useFleet() {
         if (active) dispatch({ type: 'snapshot', value: snapshot })
       })
       .catch(() => {})
-    void window.api
-      .fleetGetDigest()
-      .then((digest) => {
-        if (active) dispatch({ type: 'digest', value: digest })
-      })
-      .catch(() => {})
     const offConnection = window.api.onFleetConnection((connection) => {
       dispatch({ type: 'connection', value: connection })
       if (connection.state === 'connected')
@@ -61,12 +55,10 @@ export function useFleet() {
         void loadTranscript(event.botId).catch(() => {})
       }
     })
-    const offDigest = window.api.onFleetDigest((digest) => dispatch({ type: 'digest', value: digest }))
     return () => {
       active = false
       offConnection()
       offEvent()
-      offDigest()
     }
   }, [loadTranscript])
   const ensureTranscript = useCallback(

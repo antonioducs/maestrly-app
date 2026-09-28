@@ -6,7 +6,6 @@ import {
   FLEET_PROTOCOL_VERSION,
   isAllowedFleetUrl,
   normalizePairingCode,
-  type FleetActivityEntry,
   type FleetBot,
   type FleetEnvironment,
   type FleetGatewayEvent,
@@ -18,14 +17,7 @@ import { broadcast } from '../../window-ipc'
 import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
 import { FleetEvents, type FleetConnectionState } from './events'
-import {
-  clearFleetCredentials,
-  readFleetSettings,
-  saveFleetCredentials,
-  saveLastActivitySeq,
-  saveLastSeenAt,
-  type TokenPersistence,
-} from './settings'
+import { clearFleetCredentials, readFleetSettings, saveFleetCredentials, type TokenPersistence } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
 
 export type FleetConnectionView = {
@@ -46,11 +38,6 @@ export type FleetSnapshot = {
   peerMessages: FleetPeerMessage[]
 }
 const emptySnapshot = (): FleetSnapshot => ({ host: null, bots: [], environments: [], inbox: [], peerMessages: [] })
-export type FleetDigest = {
-  entries: FleetActivityEntry[]
-  since: number
-  awayMs: number
-} | null
 
 export class FleetClientService {
   private api: FleetApiClient | null = null
@@ -66,7 +53,6 @@ export class FleetClientService {
     tokenPersistence: 'secure',
   }
   private snapshot: FleetSnapshot = emptySnapshot()
-  private digest: FleetDigest = null
   private generation = 0
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
@@ -90,7 +76,6 @@ export class FleetClientService {
 
   stop(): void {
     void disposeBotLogins()
-    if (this.connection.state === 'connected') saveLastSeenAt(Date.now())
     this.generation++
     this.events?.stop()
     this.events = null
@@ -107,9 +92,6 @@ export class FleetClientService {
   }
   getSnapshot(): FleetSnapshot {
     return this.snapshot
-  }
-  getDigest(): FleetDigest {
-    return this.digest
   }
   /** Whether the connected gateway advertises a feature (`/v1/meta`), refreshed on every reconnect. */
   hasFeature(feature: string): boolean {
@@ -128,7 +110,6 @@ export class FleetClientService {
     this.stop()
     this.api = new FleetApiClient(url, token)
     this.snapshot = emptySnapshot()
-    this.digest = null
     this.setConnection({
       features: [],
       state: 'connecting',
@@ -189,8 +170,6 @@ export class FleetClientService {
     }
     clearFleetCredentials()
     this.snapshot = emptySnapshot()
-    this.digest = null
-    broadcast('fleet:digest', null)
     this.setConnection({
       features: [],
       state: 'unconfigured',
@@ -224,58 +203,10 @@ export class FleetClientService {
       peerMessages: peers.messages,
     }
     this.setConnection({ hostname: host.hostname })
-    await this.refreshDigest(api, generation)
     return this.snapshot
   }
 
-  private async refreshDigest(api: FleetApiClient, generation: number): Promise<void> {
-    const settings = readFleetSettings()
-    const baseline = settings.lastActivitySeq
-    let after = baseline ?? 0
-    let latest = after
-    const entries: FleetActivityEntry[] = []
-    // Gateways leave environment entries out of the history for Macs that cannot read them, unless asked.
-    const environments = this.hasFeature(FLEET_ENVIRONMENTS_FEATURE) ? { includeEnvironmentActivity: 1 } : {}
-    for (;;) {
-      const page = await api.call('activity', { query: { after, limit: 500, ...environments } })
-      if (generation !== this.generation) return
-      entries.push(...page.entries)
-      latest = Math.max(latest, page.lastSeq)
-      if (page.entries.length < 500) break
-      const next = page.entries.at(-1)?.seq ?? after
-      if (next <= after) break
-      after = next
-    }
-    if (baseline === null) {
-      saveLastActivitySeq(latest)
-      this.digest = null
-    } else if (entries.length) {
-      this.digest = {
-        entries,
-        since: baseline,
-        awayMs: settings.lastSeenAt === null ? 0 : Math.max(0, Date.now() - settings.lastSeenAt),
-      }
-    }
-    saveLastSeenAt(Date.now())
-    broadcast('fleet:digest', this.digest)
-  }
-
-  ackDigest(lastSeq: number): void {
-    if (!Number.isSafeInteger(lastSeq) || lastSeq < 0) throw new Error('Invalid activity sequence')
-    const current = readFleetSettings().lastActivitySeq ?? 0
-    const latest = this.digest?.entries.at(-1)?.seq ?? current
-    if (lastSeq > latest) throw new Error('Activity sequence is ahead of digest')
-    saveLastActivitySeq(Math.max(current, lastSeq))
-    if (this.digest) {
-      this.digest.entries = this.digest.entries.filter((entry) => entry.seq > lastSeq)
-      if (!this.digest.entries.length) this.digest = null
-      else this.digest.since = lastSeq
-    }
-    broadcast('fleet:digest', this.digest)
-  }
-
   private applyEvent(event: FleetGatewayEvent): void {
-    saveLastSeenAt(Date.now())
     switch (event.type) {
       case 'bot.updated':
         // Archiving emits the archived bot before `bot.removed`; it must not stay listed whatever the order.
@@ -313,7 +244,7 @@ export class FleetClientService {
         ].slice(0, 200)
         break
       case 'activity': {
-        // Only live entries sound: what happened while the Mac was away arrives in the digest instead.
+        // Only live entries arrive here: nothing that happened while the Mac was away is fetched, or sounds.
         const alert = fleetAlertFor(event.entry)
         if (alert && event.entry.botId) {
           try {

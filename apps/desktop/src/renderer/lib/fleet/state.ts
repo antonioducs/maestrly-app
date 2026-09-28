@@ -6,7 +6,7 @@ import {
   type FleetTranscriptItem,
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
-import type { FleetConnectionView, FleetDigest, FleetSnapshot } from '../../../preload/api-fleet'
+import type { FleetConnectionView, FleetSnapshot } from '../../../preload/api-fleet'
 import { compareByName } from './selectors'
 
 export type TranscriptState = FleetTranscriptPage & {
@@ -18,7 +18,6 @@ export type FleetState = {
   connection: FleetConnectionView
   snapshot: FleetSnapshot
   ownerMemoryRevision: number
-  digest: FleetDigest
   activity: FleetActivityEntry[]
   transcripts: Record<string, TranscriptState>
 }
@@ -41,7 +40,6 @@ export const initialFleetState: FleetState = {
   },
   snapshot: { host: null, bots: [], environments: [], inbox: [], peerMessages: [] },
   ownerMemoryRevision: 0,
-  digest: null,
   activity: [],
   transcripts: {},
 }
@@ -76,7 +74,6 @@ function withoutEnvironment(state: FleetState, environmentId: string): FleetStat
 export type FleetAction =
   | { type: 'connection'; value: FleetConnectionView }
   | { type: 'snapshot'; value: FleetSnapshotInput }
-  | { type: 'digest'; value: FleetDigest }
   | { type: 'event'; value: FleetGatewayEvent }
   | { type: 'transcript.loading'; botId: string }
   | {
@@ -93,8 +90,6 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
       return { ...state, connection: action.value }
     case 'snapshot':
       return { ...state, snapshot: { ...action.value, environments: action.value.environments ?? [] } }
-    case 'digest':
-      return { ...state, digest: action.value }
     case 'transcript.loading':
       return {
         ...state,

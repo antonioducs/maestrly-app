@@ -1,10 +1,4 @@
-import type {
-  FleetActivityEntry,
-  FleetBot,
-  FleetRoutine,
-  FleetRoutineSchedule,
-  FleetTranscriptItem,
-} from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetRoutine, FleetRoutineSchedule, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { FLEET_ROUTINE_LIMITS } from '@maestrly/bot-fleet-protocol'
 
 export function visibleTranscriptItems(items: FleetTranscriptItem[]): FleetTranscriptItem[] {
@@ -20,10 +14,6 @@ export function formatUptime(milliseconds: number): { days: number; hours: numbe
     minutes: totalMinutes % 60,
     long: days >= 2,
   }
-}
-
-export function digestKey(entry: FleetActivityEntry): string {
-  return `digest.kind.${entry.kind}`
 }
 
 export const ceilingValues = ['ask', 'auto', 'full'] as const
@@ -118,9 +108,4 @@ export function routineScheduleSummary(
 export function formatTimer(milliseconds: number): string {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000))
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`
-}
-
-export function formatDuration(milliseconds: number): { hours: number; minutes: number } {
-  const minutes = Math.max(0, Math.floor(milliseconds / 60000))
-  return { hours: Math.floor(minutes / 60), minutes: minutes % 60 }
 }

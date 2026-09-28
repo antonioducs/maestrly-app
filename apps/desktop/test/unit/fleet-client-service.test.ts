@@ -10,14 +10,6 @@ const state = vi.hoisted(() => ({
     onEvent: (event: unknown) => void
   }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
-  activity: [] as {
-    seq: number
-    at: string
-    botId: string | null
-    kind: 'bot_started' | 'turn_completed' | 'turn_failed' | 'needs_you'
-    summary: null
-    data: Record<string, string>
-  }[],
 }))
 vi.mock('../../src/main/store', () => ({
   getAppSetting: (key: string) => state.settings.get(key) ?? null,
@@ -84,7 +76,6 @@ beforeEach(() => {
   state.secureAvailable = true
   state.events.length = 0
   state.broadcasts.length = 0
-  state.activity.length = 0
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit) => {
@@ -106,13 +97,6 @@ beforeEach(() => {
       if (path === '/v1/environments') return response({ environments: [] })
       if (path === '/v1/inbox') return response({ items: [] })
       if (path === '/v1/peer-messages') return response({ messages: [] })
-      if (path === '/v1/activity') {
-        const after = Number(new URL(url).searchParams.get('after'))
-        return response({
-          entries: state.activity.filter((item) => item.seq > after),
-          lastSeq: state.activity.at(-1)?.seq ?? 0,
-        })
-      }
       if (path === '/v1/devices/self') return new Response(null, { status: 204 })
       throw new Error('Unexpected route ' + path)
     })
@@ -133,15 +117,7 @@ describe('fleet client service', () => {
     await service.disconnect()
     expect(service.getConnection().features).toEqual([])
   })
-  it('pairs, securely stores credentials, skips the first digest, then persists an acknowledged digest', async () => {
-    state.activity.push({
-      seq: 1,
-      at: '2026-01-01T00:00:00Z',
-      botId: null,
-      kind: 'bot_started',
-      summary: null,
-      data: {},
-    })
+  it('pairs, securely stores credentials, refreshes without fetching past activity, and forgets it all', async () => {
     const service = new FleetClientService()
     await service.connect({
       url: 'http://127.0.0.1:7443',
@@ -160,41 +136,16 @@ describe('fleet client service', () => {
     })
     await state.events[0].onConnected()
     expect(service.getSnapshot().host?.hostname).toBe('fleet-host')
-    expect(service.getDigest()).toBeNull()
-    expect(readFleetSettings().lastActivitySeq).toBe(1)
-    state.activity.push({
-      seq: 2,
-      at: '2026-01-01T00:01:00Z',
-      botId: null,
-      kind: 'bot_started',
-      summary: null,
-      data: {},
-    })
-    await state.events[0].onConnected()
-    expect(service.getDigest()?.entries.map((item) => item.seq)).toEqual([2])
-    service.ackDigest(2)
-    expect(readFleetSettings().lastActivitySeq).toBe(2)
-    expect(service.getDigest()).toBeNull()
+    // Only live activity reaches the Mac; the history of what it missed is not fetched.
+    const paths = vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)
+    expect(paths).not.toContain('/v1/activity')
+    // What older versions kept to summarize the time away is cleared with the rest.
+    state.settings.set('fleet.lastActivitySeq', '12')
+    state.settings.set('fleet.lastSeenAt', '1700000000000')
     await service.disconnect()
     expect(service.getConnection().deviceId).toBeNull()
     expect(readFleetSettings().token).toBeNull()
-  })
-
-  it('asks for the activity of environments only from a gateway that has them', async () => {
-    state.features = ['provisioning']
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
-    await state.events[0].onConnected()
-    state.features = ['provisioning', 'environments']
-    await state.events[0].onConnected()
-    const asked = vi
-      .mocked(fetch)
-      .mock.calls.map(([url]) => new URL(String(url)))
-      .filter((url) => url.pathname === '/v1/activity')
-      .map((url) => url.searchParams.get('includeEnvironmentActivity'))
-    // Gateways leave the kinds older Macs cannot read out of the history unless asked.
-    expect(asked).toEqual([null, '1'])
-    service.stop()
+    expect([state.settings.get('fleet.lastActivitySeq'), state.settings.get('fleet.lastSeenAt')]).toEqual(['', ''])
   })
 
   it('drops an archived bot from the snapshot whatever the event order', async () => {
@@ -212,7 +163,7 @@ describe('fleet client service', () => {
     service.stop()
   })
 
-  it('sounds for live bot activity the owner is waiting on, never for what happened while away', async () => {
+  it('sounds for live bot activity the owner is waiting on', async () => {
     const service = new FleetClientService()
     const alerts: string[] = []
     service.onAlert = (botId, alert) => alerts.push(botId + ':' + alert)
@@ -221,14 +172,10 @@ describe('fleet client service', () => {
     const at = '2026-01-01T00:00:00Z'
     const entry = (
       seq: number,
-      kind: (typeof state.activity)[number]['kind'],
+      kind: 'bot_started' | 'turn_completed' | 'turn_failed' | 'needs_you',
       data: Record<string, string> = {},
       botId: string | null = 'scout'
     ) => ({ seq, at, botId, kind, summary: null, data })
-    state.activity.push(entry(1, 'turn_completed', { source: 'owner' }), entry(2, 'needs_you'))
-    await state.events[0].onConnected()
-    expect(service.getDigest()?.entries).toHaveLength(2)
-    expect(alerts).toEqual([])
     const live = [
       entry(3, 'turn_completed', { source: 'owner' }),
       entry(4, 'turn_failed', { source: 'continuation' }, 'orders'),
@@ -253,25 +200,16 @@ describe('fleet client service', () => {
     service.stop()
   })
 
-  it('restores digest elapsed time after an app restart', async () => {
+  it('reconnects with the stored credentials after an app restart', async () => {
     const first = new FleetClientService()
     await first.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
     await state.events[0].onConnected()
     first.stop()
-    state.settings.set('fleet.lastSeenAt', String(Date.now() - 60_000))
-    state.activity.push({
-      seq: 1,
-      at: '2026-01-01T00:00:00Z',
-      botId: null,
-      kind: 'bot_started',
-      summary: null,
-      data: {},
-    })
     const restarted = new FleetClientService()
     restarted.start()
-    expect(restarted.getConnection().deviceId).toBe('device-1')
+    expect(restarted.getConnection()).toMatchObject({ deviceId: 'device-1', state: 'connecting' })
     await state.events[1].onConnected()
-    expect(restarted.getDigest()?.awayMs).toBeGreaterThanOrEqual(59_000)
+    expect(restarted.getSnapshot().host?.hostname).toBe('fleet-host')
     restarted.stop()
   })
 

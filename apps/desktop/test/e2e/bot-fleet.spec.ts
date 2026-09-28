@@ -359,15 +359,6 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   let subagentProfilesEnabled = true
   let takeoverConflicts = 1
   let rejectCancellation = false
-  const memoryActivity = {
-    seq: 2,
-    at: now(),
-    botId: 'scout',
-    kind: 'owner_memory_saved',
-    summary: 'Prefers weekly summaries.',
-    data: {},
-  }
-  let memoryActivityReady = false
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
     const frame = `event: fleet\ndata: ${JSON.stringify(valid)}\n\n`
@@ -972,9 +963,6 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       case 'peerMessages':
         value = { messages: [] }
         break
-      case 'activity':
-        value = { entries: memoryActivityReady ? [memoryActivity] : [], lastSeq: memoryActivityReady ? 2 : 0 }
-        break
       case 'botTakeover': {
         if (takeoverConflicts-- > 0) {
           send(409, { code: 'CONFLICT', message: 'Bot is finishing a step' })
@@ -1302,11 +1290,21 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       .poll(() => requests.filter((item) => item.key === 'botMemoryPatch').at(-1)?.body)
       .toEqual({ pinned: true })
     await expect(botMemory.getByRole('button', { name: 'Desafixar', exact: true })).toBeVisible()
-    memoryActivityReady = true
-    emit({ type: 'activity', at: now(), entry: memoryActivity })
+    // Live activity only updates what it concerns; the Mac never fetches the history of what it missed.
+    emit({
+      type: 'activity',
+      at: now(),
+      entry: {
+        seq: 2,
+        at: now(),
+        botId: 'scout',
+        kind: 'owner_memory_saved',
+        summary: 'Prefers weekly summaries.',
+        data: {},
+      },
+    })
     await page.evaluate(() => window.api.fleetRefresh())
-    await expect(page.getByText('Aprendeu sobre você · Prefers weekly summaries.', { exact: false })).toBeVisible()
-    await page.getByRole('button', { name: 'Dispensar', exact: true }).click()
+    expect(requests.filter((item) => item.key === 'activity')).toEqual([])
     await page.getByRole('tab', { name: 'Conversa' }).click()
     const setupScout = fleetBotSchema.parse({
       ...bots[0],
@@ -2086,9 +2084,6 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'peerMessages':
         value = { messages: [] }
         break
-      case 'activity':
-        value = { entries: [], lastSeq: 0 }
-        break
       case 'botGet':
         if (!bot) return notFound()
         value = bot
@@ -2806,9 +2801,6 @@ test('fleet UI keeps older environment images, stopped environments and refused 
       case 'peerMessages':
         value = { messages: [] }
         break
-      case 'activity':
-        value = { entries: [], lastSeq: 0 }
-        break
       case 'botGet':
         if (!bot) return refuse('NOT_FOUND', 'Bot not found')
         value = bot
@@ -3274,9 +3266,6 @@ test('fleet UI gives environments a default compaction model that their bots inh
         break
       case 'peerMessages':
         value = { messages: [] }
-        break
-      case 'activity':
-        value = { entries: [], lastSeq: 0 }
         break
       case 'ownerMemoryList':
         value = { revision: 0, activeChars: 0, entries: [] }
