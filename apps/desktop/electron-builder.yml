@@ -33,6 +33,9 @@ extraResources:
     to: sounds/
   - from: resources/licenses/
     to: licenses/
+  # The bot server installer runs this Compose file on this computer or copies it to a VPS.
+  - from: ../../deploy/bot-fleet/compose.yml
+    to: bot-server/compose.yml
 
 asarUnpack:
   - "node_modules/@cursor/sdk-*/bin/**"
