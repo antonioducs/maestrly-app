@@ -62,7 +62,10 @@ export function BotServerPanel({
       <div className="rounded-lg border border-border bg-surface-elevated p-4">
         <p className="text-xs text-muted-foreground">{t('botServer.panel.location')}</p>
         <h3 className="mt-1 font-semibold break-all">{title}</h3>
-        <p className="mt-2 text-sm text-muted-foreground">{t(`connection.${connection.state}`)}</p>
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
+          {t(`connection.${connection.state}`)}
+          {connection.hostname && <span className="ml-2">{connection.hostname}</span>}
+        </p>
         {connection.error && (
           <p role="alert" className="mt-1 text-xs text-destructive">
             {connection.error}

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FLEET_INSTALLER_ERROR_CODES, type FleetInstallerStatus } from '../../../shared/fleet-installer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
@@ -21,6 +21,11 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
   const [error, setError] = useState<string | null>(null)
   const retry = useRef<(() => Promise<FleetInstallerStatus>) | null>(null)
   const connection = fleet.state.connection
+  // Once a job started from a setup form runs, its progress and then the panel follow, not the form again.
+  const runningJobId = status?.job?.state === 'running' ? status.job.id : null
+  useEffect(() => {
+    if (runningJobId) setScreen('choice')
+  }, [runningJobId])
 
   const errorText = (cause: unknown): string => {
     const message = fleetErrorMessage(cause)
