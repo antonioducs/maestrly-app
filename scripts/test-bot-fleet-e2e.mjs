@@ -1960,6 +1960,7 @@ async function main() {
     [partnerId, await historyIds(partnerId)],
   ]
   const restartStarted = Date.now()
+  const eventsBeforeRestart = events.length
   const restarted = await request('POST', environmentRoute + '/restart', undefined, { timeout: 300000 })
   timings.environmentRestartMs = Date.now() - restartStarted
   assert.equal(restarted.lifecycle, 'running')
@@ -1986,13 +1987,18 @@ async function main() {
       id + ' lost its conversation in the restart'
     )
   }
+  // The gateway coalesces an environment's updates within 250 ms, so "restarting" may reach devices already replaced by
+  // the next state; the restart takes seconds, so some state other than running reaches them.
   assert.ok(
-    events.some(
-      (event) =>
-        event.type === 'environment.updated' &&
-        event.environment.id === scoutEnvId &&
-        event.environment.lifecycle === 'restarting'
-    )
+    events
+      .slice(eventsBeforeRestart)
+      .some(
+        (event) =>
+          event.type === 'environment.updated' &&
+          event.environment.id === scoutEnvId &&
+          event.environment.lifecycle !== 'running'
+      ),
+    'no device heard the environment restart'
   )
   const aliveTag = randomUUID().slice(0, 8)
   const alive = await Promise.all([scoutId, partnerId].map((id) => send(id, 'E2E-ALIVE tag=' + aliveTag)))
