@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { getDb } from '../../src/main/store'
+import { getDb, transaction } from '../../src/main/store'
 import {
   deleteChatMessage,
   forgetChatStoreCaches,
@@ -56,7 +56,12 @@ const reviewLoop = {
  * ones (a checkpoint text part, provider strategies) after and before them, markers of isolated rounds, internal
  * messages and unreadable metadata. It ends with a user message, as a turn starts.
  */
-function generate(conversationId: string, seed: number, count: number) {
+/** Writes the conversation in one transaction: a commit per message syncs the disk each time, slowly on Windows. */
+function generate(conversationId: string, seed: number, count: number): void {
+  transaction(() => writeConversation(conversationId, seed, count))
+}
+
+function writeConversation(conversationId: string, seed: number, count: number) {
   const random = prng(seed)
   let createdAt = 1_000
   for (let index = 0; index < count; index++) {

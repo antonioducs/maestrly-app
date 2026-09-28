@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { closeDb, freshDb } from '../helpers/db'
+import { transaction } from '../../src/main/store'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import * as chatStore from '../../src/main/chat/chat-store'
 import {
@@ -62,7 +63,16 @@ const question = () => ({
  * milliseconds, once by two minutes), messages sharing a time, linked and still-unmapped inputs, inputs still queued,
  * interaction items, a native question an interaction item stands for, internal messages and compaction markers.
  */
+/** Writes the conversation in one transaction: a commit per message syncs the disk each time, slowly on Windows. */
 function generate(conversationId: string, seed: number, turns: number) {
+  let written!: ReturnType<typeof writeConversation>
+  transaction(() => {
+    written = writeConversation(conversationId, seed, turns)
+  })
+  return written
+}
+
+function writeConversation(conversationId: string, seed: number, turns: number) {
   const random = prng(seed)
   const pick = <T>(values: readonly T[]): T => values[Math.floor(random() * values.length)]
   let clock = Date.UTC(2026, 8, 1, 12)
