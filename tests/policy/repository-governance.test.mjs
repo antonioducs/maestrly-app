@@ -66,6 +66,19 @@ test('package smoke validates packaging changes and cannot publish', () => {
   assert.match(packagedDesktopSmoke, /firstWindow\(\{ timeout: launchTimeoutMs \}\)/)
 })
 
+test('bot fleet workflow builds the server images and runs real containers without publishing', () => {
+  const source = read('.github/workflows/bot-fleet.yml')
+  const triggerBlock = /^on:\n([\s\S]*?)^permissions:/m.exec(source)?.[1] ?? ''
+  const triggers = [...triggerBlock.matchAll(/^ {2}([a-z_]+):/gm)].map((match) => match[1]).sort()
+  assert.deepEqual(triggers, ['pull_request', 'push', 'schedule', 'workflow_dispatch'])
+  assert.match(source, /^permissions:\n {2}contents: read$/m)
+  assert.doesNotMatch(source, /packages: write|docker\/login-action|push: true|ghcr\.io|pull_request_target/)
+  assert.match(source, /node scripts\/bot-fleet-images\.mjs --platform linux\/amd64/)
+  assert.match(source, /npm run test:e2e:bot-fleet/)
+  for (const glob of ['deploy/bot-fleet/**', 'apps/bot-gateway/**', 'packages/bot-fleet-protocol/**', 'apps/desktop/src/main/fleet/**', 'package-lock.json'])
+    assert.ok(triggerBlock.includes(`- ${glob}`), glob)
+})
+
 test('release workflow publishes verified native artifacts only from version tags', () => {
   const source = read('.github/workflows/release.yml')
   const manifest = JSON.parse(read('package.json'))
