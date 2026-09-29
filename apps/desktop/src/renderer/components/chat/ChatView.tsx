@@ -72,6 +72,7 @@ import { ChatMessageList } from './ChatMessageList'
 import {
   boundChatHistoryWindow,
   mergeLiveChatHistory,
+  withConversationId,
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
@@ -1063,7 +1064,14 @@ export function ChatView({
         event.state.status !== 'pending' &&
         event.state.status !== 'running'
       ) {
-        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
+        setMessages((prev) =>
+          normalizeHistoryWindow(
+            prev,
+            withConversationId(applyChatEvent(prev, event), conversationId),
+            'replace',
+            event.messageId
+          )
+        )
       }
     }
     if (hidden) return
@@ -1074,7 +1082,9 @@ export function ChatView({
     setMessages((prev) =>
       normalizeHistoryWindow(
         prev,
-        liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
+        liveSnapshot
+          ? mergeLiveChatHistory(prev, liveSnapshot)
+          : withConversationId(applyChatEvent(prev, event), conversationId),
         'replace',
         event.messageId
       )

@@ -7,6 +7,7 @@ import {
   CHAT_HISTORY_MAX_MESSAGES,
   estimateHistoryWindowBytes,
   mergeLiveChatHistory,
+  withConversationId,
 } from '../../src/renderer/lib/chat-history-window'
 
 /**
@@ -162,5 +163,19 @@ describe('live streaming history bounds', () => {
       expect(window.length).toBeLessThanOrEqual(CHAT_HISTORY_MAX_MESSAGES)
     }
     expect(window.some((m) => m.id === 'live4')).toBe(true)
+  })
+})
+
+describe('withConversationId', () => {
+  it('gives a response started before any history arrived the id of its conversation', () => {
+    // With no earlier message to copy it from, the reducer starts the assistant message without a conversation.
+    const started = applyChatEvent([], { kind: 'message-start', messageId: 'a1', createdAt: 2, responseStartedAt: 1 })
+    expect(started[0]?.conversationId).toBe('')
+    expect(withConversationId(started, 'c1')[0]?.conversationId).toBe('c1')
+  })
+
+  it('keeps messages that already know their conversation, and the same array when nothing changes', () => {
+    const messages = [{ ...textMessage('m1'), conversationId: 'other' }]
+    expect(withConversationId(messages, 'c1')).toBe(messages)
   })
 })
