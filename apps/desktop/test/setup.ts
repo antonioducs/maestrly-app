@@ -24,6 +24,17 @@ vi.mock('node:sqlite', async (importOriginal) => {
   return { ...sqlite, DatabaseSync }
 })
 
+/**
+ * `vi.waitFor` gives up after 1 s by default. On CI runners, Windows above all, a chain of SQLite writes, IPC and child
+ * processes often takes longer, and with hundreds of waits some test failed at random on most runs. On CI the default
+ * is 10 s: a condition that holds still returns at once, and an explicit timeout is kept.
+ */
+if (process.env.CI) {
+  const waitFor = vi.waitFor.bind(vi)
+  vi.waitFor = ((callback, options) =>
+    waitFor(callback, typeof options === 'number' ? options : { timeout: 10_000, ...options })) as typeof vi.waitFor
+}
+
 // Fixtures must not inherit signing, LFS filters, or hooks from the host Git configuration.
 process.env.GIT_CONFIG_GLOBAL = fileURLToPath(new URL('./fixtures/empty.gitconfig', import.meta.url))
 process.env.GIT_CONFIG_NOSYSTEM = '1'
