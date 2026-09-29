@@ -79,6 +79,7 @@ import { recordModelCallUsage } from './usage-diagnostics'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from './credentials'
 import { fetchModels, fetchModelWindow, invalidateModels } from './models'
 import { getContextLimit, setContextLimit, resolveContextWindow } from './context-limits'
+import { limitConversationContextWindow } from './conversation-context-limit'
 import {
   addMcpServer,
   disposeMcpRuntime,
@@ -3176,7 +3177,10 @@ async function preflightContext(
       if (!compatible) await deleteClaudeSessionForConversation(conversationId)
     }
   }
-  const window = hasPhysicalContextWindow ? (physicalContextWindow ?? undefined) : meta?.contextWindow
+  const window = limitConversationContextWindow(
+    conversationId,
+    hasPhysicalContextWindow ? (physicalContextWindow ?? undefined) : meta?.contextWindow
+  )
   if (!window && !isCodexSubscriptionProvider(selection.providerId)) return { ok: true, compacted: false }
   const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
     .contextProjection
@@ -4640,13 +4644,16 @@ async function startSend(
     // A target that became larger after the lease-free preflight must not reopen room within this admission.
     // The next turn resolves fresh; this turn remains bounded by the smallest physical estimate already validated.
     const admittedCodexContextWindow = contextWindowForCodexTarget(admittedCodexTarget)
-    let turnContextWindow = useCodexSubscription
-      ? admittedCodexContextWindow != null && smallestPreflightedCodexWindow != null
-        ? Math.min(admittedCodexContextWindow, smallestPreflightedCodexWindow)
-        : (admittedCodexContextWindow ?? smallestPreflightedCodexWindow)
-      : useClaudeSubscription && !isolated
-        ? (smallestClaudeWindow ?? claudeRuntimeTarget?.contextWindow ?? undefined)
-        : (await effectiveModelMeta(selection.modelId, selection.providerId).catch(() => null))?.meta?.contextWindow
+    let turnContextWindow = limitConversationContextWindow(
+      conversationId,
+      useCodexSubscription
+        ? admittedCodexContextWindow != null && smallestPreflightedCodexWindow != null
+          ? Math.min(admittedCodexContextWindow, smallestPreflightedCodexWindow)
+          : (admittedCodexContextWindow ?? smallestPreflightedCodexWindow)
+        : useClaudeSubscription && !isolated
+          ? (smallestClaudeWindow ?? claudeRuntimeTarget?.contextWindow ?? undefined)
+          : (await effectiveModelMeta(selection.modelId, selection.providerId).catch(() => null))?.meta?.contextWindow
+    )
     const observeTurnContextWindow = (value: unknown): void => {
       const next = Math.floor(Number(value) || 0)
       if (next <= 0) return
@@ -4782,7 +4789,8 @@ async function startSend(
           userLimit: manualContextLimit,
           sameRequestObservation: observedContext,
         })
-        if (resolvedContext.effectiveEstimate != null) turnContextWindow = resolvedContext.effectiveEstimate
+        if (resolvedContext.effectiveEstimate != null)
+          turnContextWindow = limitConversationContextWindow(conversationId, resolvedContext.effectiveEstimate)
         const supportedEfforts = codexSerializableReasoningEfforts(
           codexModel?.model ?? selectedModelId,
           codexModel?.supportedReasoningEfforts.map((option) => option.reasoningEffort) ?? []
@@ -7489,9 +7497,13 @@ async function maybeScheduleBackgroundCompaction(
   const epoch = backgroundNotificationEpochs.get(conversationId) ?? 0
   try {
     const selection = selectionFor(conversationId)
-    const knownWindow =
+    const knownWindow = limitConversationContextWindow(
+      conversationId,
       contextWindow ??
-      (selection ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow : undefined)
+        (selection
+          ? (await effectiveModelMeta(selection.modelId, selection.providerId)).meta?.contextWindow
+          : undefined)
+    )
     // Unknown conversation metadata does not prevent preparation; admission still uses its own real limit.
     const window =
       knownWindow ??
