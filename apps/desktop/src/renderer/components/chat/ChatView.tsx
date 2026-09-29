@@ -443,7 +443,11 @@ export function ChatView({
     ): ChatMessage[] => {
       const keepIds = keepIdsFor()
       if (anchorId) keepIds.add(anchorId)
-      return boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages
+      // A response that starts before any history arrived has no conversation id of its own.
+      return withConversationId(
+        boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages,
+        convIdRef.current
+      )
     },
     []
   )
@@ -1064,14 +1068,7 @@ export function ChatView({
         event.state.status !== 'pending' &&
         event.state.status !== 'running'
       ) {
-        setMessages((prev) =>
-          normalizeHistoryWindow(
-            prev,
-            withConversationId(applyChatEvent(prev, event), conversationId),
-            'replace',
-            event.messageId
-          )
-        )
+        setMessages((prev) => normalizeHistoryWindow(prev, applyChatEvent(prev, event), 'replace', event.messageId))
       }
     }
     if (hidden) return
@@ -1082,9 +1079,7 @@ export function ChatView({
     setMessages((prev) =>
       normalizeHistoryWindow(
         prev,
-        liveSnapshot
-          ? mergeLiveChatHistory(prev, liveSnapshot)
-          : withConversationId(applyChatEvent(prev, event), conversationId),
+        liveSnapshot ? mergeLiveChatHistory(prev, liveSnapshot) : applyChatEvent(prev, event),
         'replace',
         event.messageId
       )
