@@ -164,6 +164,43 @@ The ChatGPT bridge uses a random per-session path and validates loopback hosts.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
 
+## Artifacts
+
+Artifacts are active HTML, CSS, and JavaScript written by agents, so the desktop
+renders them as untrusted content. The artifact host runs in an Electron utility
+process that receives only its configuration and holds no app credentials. It
+is not a sandbox: it runs as the same user with full Node.js access, and it
+isolates crashes and keeps secrets out of its memory.
+
+The host listens on `127.0.0.1` only and refuses requests whose `Host` is not a
+loopback name on its port, which blocks DNS rebinding. Artifact IDs and tokens
+carry at least 128 random bits and are stored as SHA-256 digests. A missing,
+deleted, or inaccessible artifact answers the same 404, and responses ask
+crawlers not to index them.
+
+The owner signs in with a single-use ticket that the desktop mints, which
+expires after 60 seconds and travels in the URL fragment, so it never reaches
+server logs or `Referer`. The viewer removes it from the address bar before
+using it. The resulting session cookie is `HttpOnly`, `SameSite=Strict`, and
+scoped to that artifact's API path. The viewer's API accepts writes only with
+the exact origin, a custom header, and a JSON body. The viewer cannot share,
+delete, or change access; those actions exist only in the desktop.
+
+Artifact content is served from a separate path carrying an HMAC-signed
+capability bound to the session, the artifact, the version, and an expiry of 12
+hours. Its responses carry a sandbox Content Security Policy without
+`allow-same-origin` or `allow-top-navigation`, so content has an opaque origin
+even when opened directly: it cannot read cookies, call the host API, navigate
+the viewer, submit forms, or register service workers. Network access is limited
+to its own files and a fixed allowlist of CDNs. Messages from content to the
+viewer are validated, capped, and rendered as text.
+
+The drawer browser partition is shared with the agent's browser tools, so an
+agent browsing there acts with the owner's artifact session. That grants no
+more than the artifact tools already do. Agents can read and write only the
+artifacts of their own project or standalone conversation, and cannot delete or
+share them.
+
 ## Bot server access
 
 An installed bot server publishes its gateway only on the Docker host's loopback.
