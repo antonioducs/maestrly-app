@@ -104,19 +104,23 @@ export function SearchSelect({
     const onDown = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
     }
+    // Before the dialog around, which listens on the document and would close on the same Escape.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      setOpen(false)
     }
     const onViewportChange = () => positionPanel()
     document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
     if (avoidOverflow) {
       window.addEventListener('resize', onViewportChange)
       window.addEventListener('scroll', onViewportChange, true)
     }
     return () => {
       document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('resize', onViewportChange)
       window.removeEventListener('scroll', onViewportChange, true)
     }
