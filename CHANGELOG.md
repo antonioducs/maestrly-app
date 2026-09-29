@@ -25,6 +25,8 @@ User-visible changes by version. Downloads are on
   and never goes below the version its image ships. A bot's **Settings →
   Components** shows the versions and offers manual checks; servers can turn
   automatic checks off with `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`.
+- Experimental: an environment's view shows the Claude Code and Codex versions
+  its bots run, where each comes from, and **Check for updates**.
 
 ### Changed
 
