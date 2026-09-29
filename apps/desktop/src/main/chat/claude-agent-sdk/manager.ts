@@ -33,9 +33,10 @@ import {
   onClaudeRemoteCatalogChanged,
 } from './model-catalog'
 import { broadcast } from '../../window-ipc'
+import { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion } from './version'
 
 export const CLAUDE_AGENT_SDK_VERSION = '0.3.285'
-export const CLAUDE_CODE_COMPATIBLE_VERSION = '2.1.263'
+export { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion }
 const CLAUDE_PROFILE_DIRECTORY = 'claude-agent-sdk'
 const CLAUDE_SIGNED_OUT_MARKER = '.maestrly-signed-out'
 const CLAUDE_USAGE_CACHE_TTL_MS = 60_000
@@ -259,19 +260,6 @@ function normalizedSubscriptionType(value: unknown): string | null {
 
 function parseVersion(raw: string): string | null {
   return raw.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null
-}
-
-function versionParts(version: string): [number, number, number] {
-  const [major = 0, minor = 0, patch = 0] = version.split('.').map((part) => Number.parseInt(part, 10) || 0)
-  return [major, minor, patch]
-}
-
-export function isCompatibleClaudeCodeVersion(version: string): boolean {
-  const current = versionParts(version)
-  const minimum = versionParts(CLAUDE_CODE_COMPATIBLE_VERSION)
-  if (current[0] !== minimum[0]) return false
-  if (current[1] !== minimum[1]) return current[1] > minimum[1]
-  return current[2] >= minimum[2]
 }
 
 export function parseClaudeAuthStatus(raw: string): {

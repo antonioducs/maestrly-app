@@ -13,16 +13,18 @@ import type {
 } from '../../shared/runtime-assets'
 import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { isE2E } from '../test-mode'
+import { CLAUDE_CODE_COMPATIBILITY_REVISION, validateClaudeCodeRuntime } from './claude-code-compatibility'
+import { CLAUDE_CODE_RELEASE_PROFILE, discoverClaudeCodeRelease } from './claude-code-releases'
 import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from './codex-compatibility'
 import { CODEX_RELEASE_PROFILE, compareStableVersions, discoverCodexRelease } from './codex-releases'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
-import { CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
+import { CLAUDE_CODE_RELEASE_STORE_KEY, CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
 import { RuntimeUpdateController } from './runtime-updates'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
 
 let service: RuntimeAssetService | null = null
-let codexReleases: RuntimeReleaseStore | null = null
+const releaseStores = new Map<UpdatableRuntimeAssetId, RuntimeReleaseStore>()
 const updateControllers = new Map<UpdatableRuntimeAssetId, RuntimeUpdateController>()
 const diskUsageCache = new Map<RuntimeAssetId, number>()
 const runtimeAssetNotificationTimers = new Map<RuntimeAssetId, ReturnType<typeof setTimeout>>()
@@ -45,18 +47,32 @@ export class RuntimeAssetComponentRequiredError extends Error {
   }
 }
 
-/** Persisted metadata of independently installed Codex releases (local SQLite app settings). */
+const RELEASE_CHANNELS = {
+  'codex-runtime': { profile: CODEX_RELEASE_PROFILE, key: CODEX_RELEASE_STORE_KEY },
+  'claude-code-runtime': { profile: CLAUDE_CODE_RELEASE_PROFILE, key: CLAUDE_CODE_RELEASE_STORE_KEY },
+} as const satisfies Record<UpdatableRuntimeAssetId, unknown>
+
+/** Persisted metadata of independently installed releases of one runtime (local SQLite app settings). */
+export function releaseStore(id: UpdatableRuntimeAssetId): RuntimeReleaseStore {
+  let store = releaseStores.get(id)
+  if (!store) {
+    const { profile, key } = RELEASE_CHANNELS[id]
+    store = new RuntimeReleaseStore({
+      profile,
+      storage: {
+        read: () => getAppSetting(key),
+        write: (value) => setAppSetting(key, value),
+      },
+      target: hostRuntimeTarget(),
+      embedded: RUNTIME_ASSET_REGISTRY[id],
+    })
+    releaseStores.set(id, store)
+  }
+  return store
+}
+
 export function codexReleaseStore(): RuntimeReleaseStore {
-  codexReleases ??= new RuntimeReleaseStore({
-    profile: CODEX_RELEASE_PROFILE,
-    storage: {
-      read: () => getAppSetting(CODEX_RELEASE_STORE_KEY),
-      write: (value) => setAppSetting(CODEX_RELEASE_STORE_KEY, value),
-    },
-    target: hostRuntimeTarget(),
-    embedded: RUNTIME_ASSET_REGISTRY['codex-runtime'],
-  })
-  return codexReleases
+  return releaseStore('codex-runtime')
 }
 
 export function runtimeAssetService(): RuntimeAssetService {
@@ -67,9 +83,9 @@ export function runtimeAssetService(): RuntimeAssetService {
         ? path.join(process.resourcesPath, 'local-ml')
         : path.join(app.getAppPath(), 'runtime-assets', 'local-ml', 'archives')
     ),
-    // Consulted only for a Codex installation whose version differs from the embedded pin.
+    // Consulted only for an updatable runtime installation whose version differs from the embedded pin.
     acceptedDefinition: (id, version) =>
-      id === 'codex-runtime' ? codexReleaseStore().acceptedDefinition(version) : null,
+      isUpdatableRuntimeAssetId(id) ? releaseStore(id).acceptedDefinition(version) : null,
     onStatusChanged: (status) => scheduleRuntimeAssetChanged(status.id),
   })
   return service
@@ -91,6 +107,20 @@ function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateControl
         onChanged: () => scheduleRuntimeAssetChanged('codex-runtime'),
         schedule: app.isPackaged && !isE2E(),
       })
+    case 'claude-code-runtime':
+      return new RuntimeUpdateController({
+        profile: CLAUDE_CODE_RELEASE_PROFILE,
+        compatibilityRevision: CLAUDE_CODE_COMPATIBILITY_REVISION,
+        service: runtimeAssetService(),
+        store: releaseStore('claude-code-runtime'),
+        target: hostRuntimeTarget(),
+        embedded: RUNTIME_ASSET_REGISTRY['claude-code-runtime'],
+        discover: (target, signal) => discoverClaudeCodeRelease(target, signal),
+        validate: (installationPath, definition, signal) =>
+          validateClaudeCodeRuntime(installationPath, definition, signal),
+        onChanged: () => scheduleRuntimeAssetChanged('claude-code-runtime'),
+        schedule: false,
+      })
   }
 }
 
@@ -107,6 +137,8 @@ export function runtimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateContro
 export function codexRuntimeUpdates(): RuntimeUpdateController {
   return runtimeUpdates('codex-runtime')
 }
+
+export { listedRuntimeAssetIds } from './visibility'
 
 export function startRuntimeAssetUpdates(): void {
   codexRuntimeUpdates().start()
@@ -139,6 +171,7 @@ export function setRuntimeAssetChangedEmitter(emit: (info: RuntimeAssetInfo) => 
 
 const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 'requiredBy'>> = {
   'codex-runtime': { displayName: 'Codex runtime', requiredBy: 'Codex' },
+  'claude-code-runtime': { displayName: 'Claude Code runtime', requiredBy: 'Claude' },
   'github-copilot-runtime': {
     displayName: 'GitHub Copilot runtime',
     requiredBy: 'GitHub Copilot',
@@ -172,14 +205,14 @@ async function directoryBytes(root: string): Promise<number> {
 }
 
 /**
- * Version a Codex first install would receive: the latest checked stable release when newer than the embedded pin
- * and not rejected, otherwise the pin. Other assets always install their embedded version.
+ * Version a first install of an updatable runtime would receive: the latest checked stable release when newer than
+ * the embedded pin and not rejected, otherwise the pin. Other assets always install their embedded version.
  */
 function installableDefinition(id: RuntimeAssetId) {
   const embedded = RUNTIME_ASSET_REGISTRY[id]
-  if (id !== 'codex-runtime') return embedded
+  if (!isUpdatableRuntimeAssetId(id)) return embedded
   try {
-    const store = codexReleaseStore()
+    const store = releaseStore(id)
     const candidate = store.candidate()
     const newer = candidate && (compareStableVersions(candidate.version, embedded.version) ?? 0) > 0
     return newer && store.rejected()?.version !== candidate.version ? candidate : embedded
@@ -293,7 +326,7 @@ export function resetRuntimeAssetAppServiceForTests(): void {
   emitRuntimeAssetChanged = null
   for (const controller of updateControllers.values()) controller.dispose()
   updateControllers.clear()
-  codexReleases = null
+  releaseStores.clear()
   service = null
   diskUsageCache.clear()
 }

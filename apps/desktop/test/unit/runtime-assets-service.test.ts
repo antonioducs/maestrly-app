@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RuntimeAssetId } from '../../src/shared/runtime-assets'
+import { RUNTIME_ASSET_IDS, type RuntimeAssetId } from '../../src/shared/runtime-assets'
 import type { RuntimeDownloader } from '../../src/main/runtime-assets/downloader'
 import type { RuntimeAssetDefinition } from '../../src/main/runtime-assets/registry'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
@@ -39,6 +39,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
   const empty = (id: RuntimeAssetId): RuntimeAssetDefinition => ({ id, version: 'none', targets: {} })
   return {
     'codex-runtime': empty('codex-runtime'),
+    'claude-code-runtime': empty('claude-code-runtime'),
     'github-copilot-runtime': empty('github-copilot-runtime'),
     'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
@@ -95,7 +96,7 @@ describe('RuntimeAssetService', () => {
     expect(marker).toMatchObject({ schema: 1, id: 'tunnel-client', version: '1.0.0', criticalPaths: ['bin/tool'] })
     expect(marker.files.map((file: { path: string }) => file.path)).toEqual(['bin/tool', 'README'])
     expect(marker.files[0].sha256).toMatch(/^[a-f0-9]{64}$/)
-    expect(await service.list()).toHaveLength(5)
+    expect(await service.list()).toHaveLength(RUNTIME_ASSET_IDS.length)
   })
 
   it('installs a single-file asset without extraction and verifies it', async () => {

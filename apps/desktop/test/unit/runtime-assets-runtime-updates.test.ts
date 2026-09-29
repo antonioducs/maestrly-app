@@ -72,6 +72,7 @@ function harness(
     userDataPath: userData,
     registry: {
       'codex-runtime': embedded,
+      'claude-code-runtime': empty('claude-code-runtime'),
       'github-copilot-runtime': empty('github-copilot-runtime'),
       'tunnel-client': empty('tunnel-client'),
       'local-ml-runtime': empty('local-ml-runtime'),

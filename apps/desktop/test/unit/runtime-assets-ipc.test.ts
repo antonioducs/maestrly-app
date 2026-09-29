@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeAssetId, RuntimeAssetInfo, RuntimeAssetState } from '../../src/shared/runtime-assets'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 
@@ -93,6 +93,36 @@ describe('runtime asset IPC', () => {
       mon: vi.fn(),
     } as unknown as IpcRegistrar
     registerRuntimeAssetIpc(reg, { emitChanged })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('hides the Claude Code runtime outside bots', async () => {
+    const listed = (await reads.get('runtime-assets:list')?.({})) as RuntimeAssetInfo[]
+    expect(listed.map((info) => info.id)).not.toContain('claude-code-runtime')
+    for (const [handlers, channel] of [
+      [reads, 'status'],
+      [mutations, 'install'],
+      [mutations, 'update'],
+      [mutations, 'check-update'],
+      [mutations, 'set-auto-update'],
+    ] as const) {
+      await expect(
+        Promise.resolve().then(() => handlers.get(`runtime-assets:${channel}`)?.({}, 'claude-code-runtime', true))
+      ).rejects.toThrow('Unknown runtime asset id')
+    }
+    expect(mocks.runtimeUpdates).not.toHaveBeenCalled()
+  })
+
+  it('lists the Claude Code runtime in bots and routes its updates to its own controller', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const listed = (await reads.get('runtime-assets:list')?.({})) as RuntimeAssetInfo[]
+    expect(listed.map((info) => info.id)).toContain('claude-code-runtime')
+    await mutations.get('runtime-assets:update')?.({}, 'claude-code-runtime')
+    expect(mocks.runtimeUpdates).toHaveBeenCalledWith('claude-code-runtime')
+    expect(mocks.updates.update).toHaveBeenCalledTimes(1)
   })
 
   it('list and status are read-only and never install or download', async () => {

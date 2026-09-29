@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES } from '../../src/shared/runtime-assets'
 import {
+  CLAUDE_CODE_PINNED_VERSION,
   RUNTIME_ASSET_REGISTRY,
   RUNTIME_TARGET_IDS,
   WHISPER_MODEL_FILE,
+  claudeCodeArtifactUrl,
   hostRuntimeTarget,
   type RuntimeAssetDefinition,
   type RuntimeTargetId,
@@ -13,6 +18,7 @@ describe('runtime asset registry', () => {
   it('exposes immutable known IDs and every lifecycle state', () => {
     expect(RUNTIME_ASSET_IDS).toEqual([
       'codex-runtime',
+      'claude-code-runtime',
       'github-copilot-runtime',
       'tunnel-client',
       'local-ml-runtime',
@@ -141,6 +147,29 @@ describe('runtime asset registry', () => {
         criticalPaths: [WHISPER_MODEL_FILE],
       })
     }
+  })
+
+  it('pins the Claude Code runtime the installed Agent SDK bundles, for the Linux targets bots run on', () => {
+    const sdkEntry = createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk')
+    const sdk = JSON.parse(readFileSync(path.join(path.dirname(sdkEntry), 'package.json'), 'utf8')) as {
+      claudeCodeVersion?: string
+    }
+    expect(CLAUDE_CODE_PINNED_VERSION).toBe(sdk.claudeCodeVersion)
+    const definition = RUNTIME_ASSET_REGISTRY['claude-code-runtime']
+    expect(definition.version).toBe(CLAUDE_CODE_PINNED_VERSION)
+    expect(Object.keys(definition.targets).sort()).toEqual(['linux-arm64', 'linux-x64'])
+    for (const id of ['linux-arm64', 'linux-x64'] as const) {
+      expect(definition.targets[id]).toMatchObject({
+        url: claudeCodeArtifactUrl(CLAUDE_CODE_PINNED_VERSION, id),
+        archive: 'tar.gz',
+        hash: { algorithm: 'sha512', encoding: 'base64' },
+        stripPrefix: 'package',
+        criticalPaths: ['claude', 'package.json'],
+        executablePath: 'claude',
+      })
+    }
+    expect(definition.targets['linux-arm64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_804_240)
+    expect(definition.targets['linux-x64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_536_804)
   })
 
   it('maps supported hosts and rejects unsupported targets', () => {
