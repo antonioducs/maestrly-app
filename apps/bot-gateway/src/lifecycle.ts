@@ -14,6 +14,7 @@ import {
   type FleetCreateBotRequest,
   type FleetEnvironment,
   type FleetEnvironmentSetup,
+  type FleetRuntimeInfo,
   type FleetErrorCode,
   type FleetGatewayEvent,
   type FleetInstanceEnvironmentStatus,
@@ -90,8 +91,14 @@ export class Lifecycle {
   /** Whether an environment's container runs an older image than the configured one, by environment. */
   readonly imageOutdated = new Map<string, boolean>()
   readonly takeovers = new Map<string, FleetTakeoverState>()
-  /** What each environment's Maestrly reported at its last health check. */
-  private readonly instances = new Map<string, { appVersion: string; capabilities: string[] }>()
+  /**
+   * What each environment's Maestrly reported at its last health check, and the runtimes its bots last reported (the
+   * same for every bot of an environment; null until one reports them).
+   */
+  private readonly instances = new Map<
+    string,
+    { appVersion: string; capabilities: string[]; runtimes: FleetRuntimeInfo[] | null }
+  >()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
@@ -204,11 +211,21 @@ export class Lifecycle {
     this.pendingSeen.set(id, next)
     this.statuses.set(id, status)
     this.emitBot(id)
+    this.updateRuntimes(id, status)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
     if (status.ready && this.get(id)?.lifecycle === 'running') this.onReady(id)
     const environmentId = this.store.getBot(id)?.environmentId
     if (environmentId && this.store.getEnvironment(environmentId)?.updateRequestedAt)
       void this.maybeUpdate(environmentId)
+  }
+  /** A status with runtimes updates its environment's; devices hear of it only when they changed. */
+  private updateRuntimes(id: string, status: FleetInstanceStatus) {
+    if (!status.runtimes) return
+    const environmentId = this.store.getBot(id)?.environmentId
+    const instance = environmentId ? this.instances.get(environmentId) : undefined
+    if (!environmentId || !instance || JSON.stringify(instance.runtimes) === JSON.stringify(status.runtimes)) return
+    instance.runtimes = status.runtimes
+    this.emitEnvironment(environmentId, false)
   }
   private stopLink(environmentId: string) {
     this.links.get(environmentId)?.abort()
@@ -463,7 +480,7 @@ export class Lifecycle {
         available: this.imageOutdated.get(environment.id) ?? false,
         pendingSince: environment.updateRequestedAt,
       },
-      runtimes: null,
+      runtimes: instance?.runtimes ?? null,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
@@ -848,12 +865,12 @@ export class Lifecycle {
     this.updateEnvironment(environmentId, { lifecycle: 'starting', setup: environmentSetup('desktop') })
     const client = this.client(environmentId),
       deadline = Date.now() + this.healthTimeoutMs
-    let health: { appVersion: string; capabilities: string[] } | null = null
+    let health: { appVersion: string; capabilities: string[]; runtimes: null } | null = null
     while (Date.now() < deadline) {
       try {
         const value = await client.health()
         if (value.ready) {
-          health = { appVersion: value.appVersion, capabilities: value.capabilities }
+          health = { appVersion: value.appVersion, capabilities: value.capabilities, runtimes: null }
           break
         }
       } catch {}
@@ -1892,7 +1909,11 @@ export class Lifecycle {
     const client = this.client(id)
     const health = await client.health()
     if (!health.ready) throw new GatewayError('INSTANCE_UNAVAILABLE', 'Bot desktop not ready')
-    this.instances.set(id, { appVersion: health.appVersion, capabilities: health.capabilities })
+    this.instances.set(id, {
+      appVersion: health.appVersion,
+      capabilities: health.capabilities,
+      runtimes: this.instances.get(id)?.runtimes ?? null,
+    })
     const lingering = await this.installMembers(id, client, null, true)
     this.updateEnvironment(id, { lifecycle: 'running', setup: environmentSetup('ready') })
     for (const bot of this.store.botsOfEnvironment(id))
