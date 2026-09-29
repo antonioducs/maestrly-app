@@ -6,6 +6,7 @@ import {
 } from '../../../shared/fleet-targets'
 import { useCallback, useEffect, useState } from 'react'
 import {
+  FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -143,6 +144,18 @@ export function environmentCompactionAvailability(
   if (environment.lifecycle === 'stopped' || environment.lifecycle === 'failed') return 'stopped'
   if (environment.lifecycle !== 'running') return 'not-running'
   return environment.capabilities.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE) ? 'ready' : 'restart-environment'
+}
+export type ContextLimitAvailability = 'unsupported' | 'restart-environment' | 'ready'
+/**
+ * Whether the owner can cap a compaction config's context window: the gateway must store the limit, and a running
+ * Maestrly that predates it ignores it until its environment restarts on the current image.
+ */
+export function contextLimitAvailability(
+  fleet: FleetController,
+  runtime: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
+): ContextLimitAvailability {
+  if (!fleet.state.connection.features.includes(FLEET_CONTEXT_LIMIT_FEATURE)) return 'unsupported'
+  return needsRestart(runtime, FLEET_CONTEXT_LIMIT_FEATURE) ? 'restart-environment' : 'ready'
 }
 /** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */
 export function provisioningTargetForBot(

@@ -75,6 +75,7 @@ describe('environment routes', () => {
       'environments',
       'environment-compaction',
       'environment-updates',
+      'context-limit',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)

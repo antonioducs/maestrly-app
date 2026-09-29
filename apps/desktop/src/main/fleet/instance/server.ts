@@ -3,6 +3,7 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import {
+  FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_ROUTES,
@@ -65,13 +66,15 @@ export class InstanceHttpError extends Error {
 
 /**
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
- * each addressed by id under `/v1/bots/:botId`, and the list of its models for the environment's default compaction
- * model. Its health and every status advertise them.
+ * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
+ * model, and caps each bot's conversation at the context limit of its compaction settings. Its health and every status
+ * advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_CONTEXT_LIMIT_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'

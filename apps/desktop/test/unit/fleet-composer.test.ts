@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { FLEET_IMAGE_LIMITS, type FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
-import { formatFleetUsage, selectionPatch, validateAttachments } from '../../src/renderer/lib/fleet/composer'
+import {
+  fleetUsageLimit,
+  formatFleetTokens,
+  formatFleetUsage,
+  selectionPatch,
+  validateAttachments,
+} from '../../src/renderer/lib/fleet/composer'
 import { createFleetImageCache, holdFleetImage } from '../../src/renderer/lib/fleet/image-cache'
 import type { FleetImageData } from '../../src/preload/api-fleet'
 
@@ -56,6 +62,23 @@ describe('fleet composer helpers', () => {
         updatedAt: null,
       })
     ).toBe('~22.6k/828.4k 2.7%')
+  })
+  it('shows the owner cap as a limit only when it bounds the window', () => {
+    const usage = {
+      contextUsedTokens: 120_000,
+      contextWindowTokens: 300_000,
+      contextQuality: 'measured' as const,
+      costUsd: null,
+      updatedAt: null,
+    }
+    const compaction = { providerId: 'p', modelId: 'm', reasoning: null, fastMode: false, intervalTokens: 100_000 }
+    expect(fleetUsageLimit(usage, { ...compaction, contextLimitTokens: 300_000 })).toBe(300_000)
+    expect(
+      fleetUsageLimit({ ...usage, contextWindowTokens: 200_000 }, { ...compaction, contextLimitTokens: 300_000 })
+    ).toBeNull()
+    expect(fleetUsageLimit(usage, compaction)).toBeNull()
+    expect(fleetUsageLimit(usage, null)).toBeNull()
+    expect(formatFleetTokens(300_000)).toBe('300.0k')
   })
   it('deduplicates concurrent reads and serves a loaded image again without reloading it', async () => {
     const load = vi.fn(async () => ({ mediaType: 'image/png' as const, data: new Uint8Array([1]) }))

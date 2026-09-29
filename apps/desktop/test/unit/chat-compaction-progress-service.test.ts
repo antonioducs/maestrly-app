@@ -119,6 +119,7 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { selectContextObservation } from '../../src/renderer/components/chat/context-observation'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
+import { setConversationContextLimit } from '../../src/main/chat/conversation-context-limit'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 const usage = { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 }
@@ -176,6 +177,7 @@ describe('service-owned compaction progress', () => {
 
   afterEach(() => {
     clearCompactionSummarizer(conversationId)
+    setConversationContextLimit(conversationId, null)
     unsubscribeChatStream(wc, conversationId)
     vi.useRealTimers()
     closeDb()
@@ -678,6 +680,37 @@ describe('service-owned compaction progress', () => {
     expect(listChatMessages(conversationId).flatMap((message) => message.parts)).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'compaction' })])
     )
+  })
+
+  const sendHandler = () => {
+    const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+    registerChatIpc({
+      mhandle: (channel, handler) => void handlers.set(channel, handler),
+      mon: vi.fn(),
+      emitStatus: vi.fn(),
+    })
+    return handlers.get('chat:send')!
+  }
+
+  it('compacts before a turn at the conversation limit, below the model window, and runs the turn inside it', async () => {
+    patchConvUiPrefs(conversationId, { chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true } })
+    setConversationContextLimit(conversationId, 30_000)
+    const result = await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    expect(result).toMatchObject({ ok: true })
+    expect(listChatMessages(conversationId).flatMap((message) => message.parts)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'compaction' })])
+    )
+    await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledWith(expect.objectContaining({ contextWindow: 30_000 })))
+  })
+
+  it('keeps the model window of a conversation without a limit', async () => {
+    patchConvUiPrefs(conversationId, { chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true } })
+    const result = await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })
+    expect(result).toMatchObject({ ok: true })
+    expect(listChatMessages(conversationId).flatMap((message) => message.parts)).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: 'compaction' })])
+    )
+    await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledWith(expect.objectContaining({ contextWindow: 200_000 })))
   })
 
   it.each(['failed', 'cancelled'] as const)(

@@ -1,6 +1,7 @@
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
+  FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -234,6 +235,7 @@ export async function publicRoute(
             FLEET_ENVIRONMENTS_FEATURE,
             FLEET_ENVIRONMENT_COMPACTION_FEATURE,
             FLEET_ENVIRONMENT_UPDATES_FEATURE,
+            FLEET_CONTEXT_LIMIT_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),

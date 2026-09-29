@@ -1,6 +1,7 @@
 import {
   FLEET_IMAGE_LIMITS,
   FLEET_IMAGE_MEDIA_TYPES,
+  type FleetCompactionConfig,
   type FleetSelection,
   type FleetSelectionOption,
   type FleetUsage,
@@ -43,13 +44,19 @@ export function selectionPatch(
   return { ...current, ...change }
 }
 
-const tokens = (n: number) =>
+export const formatFleetTokens = (n: number) =>
   n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 const cost = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : n >= 0.01 ? `$${n.toFixed(3)}` : `$${n.toFixed(4)}`)
 export function formatFleetUsage(usage: FleetUsage): string | null {
   const used = usage.contextUsedTokens
   if (used == null) return usage.costUsd == null ? null : `~${cost(usage.costUsd)}`
   const window = usage.contextWindowTokens
-  const context = `~${tokens(used)}${window ? `/${tokens(window)} ${((used / window) * 100).toFixed(1)}%` : ''}`
+  const context = `~${formatFleetTokens(used)}${window ? `/${formatFleetTokens(window)} ${((used / window) * 100).toFixed(1)}%` : ''}`
   return `${context}${usage.costUsd == null ? '' : ` · ~${cost(usage.costUsd)}`}`
+}
+
+/** The owner's cap on the bot's window when it is what bounds it, so the meter can show it as a limit. */
+export function fleetUsageLimit(usage: FleetUsage, compaction: FleetCompactionConfig | null): number | null {
+  const limit = compaction?.contextLimitTokens ?? null
+  return limit !== null && usage.contextWindowTokens === limit ? limit : null
 }

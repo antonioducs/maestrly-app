@@ -68,6 +68,11 @@ import {
 } from '../../chat/service'
 import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
 import {
+  getConversationContextLimit,
+  limitConversationContextWindow,
+  setConversationContextLimit,
+} from '../../chat/conversation-context-limit'
+import {
   chatHistoryStats,
   getChatMessage,
   latestMeasuredContextSnapshot,
@@ -466,6 +471,7 @@ export class BotRuntime {
     this.registeredConversation = null
     const id = registered.id
     clearCompactionSummarizer(id)
+    setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
     clearMemoryCoreExtras(id)
     clearOwnerMemoryWriter(id)
@@ -548,6 +554,12 @@ export class BotRuntime {
       },
     })
     publishConvChatSettings(id)
+    // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
+    const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
+    if ((getConversationContextLimit(id) ?? null) !== limit) {
+      setConversationContextLimit(id, limit)
+      void this.refreshUsage()
+    }
     const conversation = getConversation(id)
     if (conversation) {
       if (this.registeredConversation?.id === id) this.registeredConversation.cwd = conversation.cwd
@@ -753,7 +765,12 @@ export class BotRuntime {
           : fallback?.contextInput != null
             ? Math.round(fallback.contextInput + (fallback.contextOutput ?? 0))
             : null
-        const contextWindowTokens = snapshot?.modelContextWindow ?? fallback?.modelContextWindow ?? null
+        // Runtimes report their model's own window; the bot's conversation compacts at its cap, so the meter shows that.
+        const contextWindowTokens =
+          limitConversationContextWindow(
+            id,
+            snapshot?.modelContextWindow ?? fallback?.modelContextWindow ?? undefined
+          ) ?? null
         const current = this.currentSelection()
         const models = await Promise.all(
           history.perModel.map(async (item) => ({

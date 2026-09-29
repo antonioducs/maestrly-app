@@ -9,7 +9,14 @@ import {
 import type { BackgroundCompactionStatus } from '../../../shared/background-compaction'
 import type { ChatCompactionProgress } from '../../../shared/chat'
 
-export type CompactionForm = { modelId: string; reasoning: string | null; fastMode: boolean; intervalThousands: string }
+export type CompactionForm = {
+  modelId: string
+  reasoning: string | null
+  fastMode: boolean
+  intervalThousands: string
+  /** Empty: the conversation uses its model's own window. */
+  contextLimitThousands: string
+}
 
 /** The model choice that makes a bot use its environment's default; never a model id, which always holds `::`. */
 export const ENVIRONMENT_COMPACTION_CHOICE = '__environment__'
@@ -33,19 +40,48 @@ export function compactionFormFrom(config: FleetCompactionConfig | null): Compac
     reasoning: config?.reasoning ?? null,
     fastMode: config?.fastMode ?? false,
     intervalThousands: String((config?.intervalTokens ?? FLEET_COMPACTION_LIMITS.intervalTokensDefault) / 1_000),
+    contextLimitThousands: config?.contextLimitTokens ? String(config.contextLimitTokens / 1_000) : '',
   }
 }
 
+/** A whole number of thousands in range, in tokens; null otherwise. */
+function tokensFromThousands(value: string, min: number, max: number): number | null {
+  if (!/^\d+$/.test(value)) return null
+  const tokens = Number(value) * 1_000
+  return tokens >= min && tokens <= max ? tokens : null
+}
+
+/** The form's summary interval in tokens; null when it is not a whole number of thousands in range. */
+export function compactionIntervalTokens(form: CompactionForm): number | null {
+  return tokensFromThousands(
+    form.intervalThousands,
+    FLEET_COMPACTION_LIMITS.intervalTokensMin,
+    FLEET_COMPACTION_LIMITS.intervalTokensMax
+  )
+}
+
+/** The form's context limit in tokens: null when empty (the model's own window), undefined when it is invalid. */
+export function compactionContextLimitTokens(form: CompactionForm): number | null | undefined {
+  const value = form.contextLimitThousands.trim()
+  if (!value) return null
+  return (
+    tokensFromThousands(
+      value,
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMin,
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMax
+    ) ?? undefined
+  )
+}
+
 export function compactionPatch(form: CompactionForm): FleetCompactionConfig | null {
-  const interval = Number(form.intervalThousands)
   const separator = form.modelId.indexOf('::')
+  const intervalTokens = compactionIntervalTokens(form)
+  const contextLimitTokens = compactionContextLimitTokens(form)
   if (
     separator < 1 ||
     separator === form.modelId.length - 2 ||
-    !/^\d+$/.test(form.intervalThousands) ||
-    !Number.isInteger(interval) ||
-    interval * 1_000 < FLEET_COMPACTION_LIMITS.intervalTokensMin ||
-    interval * 1_000 > FLEET_COMPACTION_LIMITS.intervalTokensMax
+    intervalTokens === null ||
+    contextLimitTokens === undefined
   )
     return null
   return {
@@ -53,8 +89,23 @@ export function compactionPatch(form: CompactionForm): FleetCompactionConfig | n
     modelId: form.modelId.slice(separator + 2),
     reasoning: form.reasoning,
     fastMode: form.fastMode,
-    intervalTokens: interval * 1_000,
+    intervalTokens,
+    // Left out without a limit, so a config without one stays exactly as configs were before limits existed.
+    ...(contextLimitTokens !== null ? { contextLimitTokens } : {}),
   }
+}
+
+/** Whether two configs compact the same way; a missing limit and a null one both mean the model's window. */
+export function sameCompactionConfig(a: FleetCompactionConfig | null, b: FleetCompactionConfig | null): boolean {
+  if (!a || !b) return a === b
+  return (
+    a.providerId === b.providerId &&
+    a.modelId === b.modelId &&
+    a.reasoning === b.reasoning &&
+    a.fastMode === b.fastMode &&
+    a.intervalTokens === b.intervalTokens &&
+    (a.contextLimitTokens ?? null) === (b.contextLimitTokens ?? null)
+  )
 }
 
 export function compactionProgress(

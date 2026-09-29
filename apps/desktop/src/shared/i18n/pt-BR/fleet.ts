@@ -522,6 +522,7 @@ export default {
     },
 
     usageTooltip: 'Uso de contexto {{quality}}. O custo é uma estimativa.',
+    usageLimited: 'Janela limitada a {{limit}} nas configurações do bot.',
     measured: 'medido',
     estimated: 'estimado',
     attachmentError: {
@@ -779,6 +780,7 @@ export default {
       role: 'papel',
       compactionModel: 'modelo de compactação',
       compactionInterval: 'intervalo dos resumos',
+      compactionContextLimit: 'janela máxima de contexto',
     },
     compactionModelRequired: 'Escolha um modelo de compactação.',
     saveBar: {
@@ -807,11 +809,17 @@ export default {
       default: 'Padrão',
       interval: 'Preparar um resumo a cada (mil tokens)',
       intervalInvalid: 'Informe um número inteiro de 10 a 1000.',
+      contextLimit: 'Janela máxima de contexto (mil tokens)',
+      contextLimitPlaceholder: 'Janela do modelo',
+      contextLimitHint:
+        'Vale para qualquer modelo do bot; se a janela do modelo for menor, vale a dele. O bot compacta ao chegar a 90%.',
+      contextLimitInvalid: 'Informe um número inteiro de {{min}} a {{max}}, ou deixe vazio.',
+      contextLimitRestart: 'Reinicie o ambiente para os bots dele aplicarem a janela máxima.',
       removedAccount: 'conta removida',
       environmentDefault: 'Padrão do ambiente · {{model}}',
       environmentDefaultUnset: 'Padrão do ambiente · ainda não definido',
       editEnvironmentDefault: 'Editar padrão do ambiente',
-      inheritNote: 'Raciocínio e intervalo seguem o padrão do ambiente.',
+      inheritNote: 'Raciocínio, intervalo e janela máxima seguem o padrão do ambiente.',
       becomesDefault: 'Também vira o padrão de {{environment}}; os outros bots dele passam a usá-lo.',
       problem: {
         missing: 'Escolha um modelo para o bot começar.',

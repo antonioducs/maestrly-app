@@ -71,7 +71,9 @@ const sameCompaction = (a: FleetCompactionConfig | null, b: FleetCompactionConfi
     a.modelId === b.modelId &&
     a.reasoning === b.reasoning &&
     a.fastMode === b.fastMode &&
-    a.intervalTokens === b.intervalTokens)
+    a.intervalTokens === b.intervalTokens &&
+    // Configs stored before the limit have none: absent and null both mean the model's window.
+    (a.contextLimitTokens ?? null) === (b.contextLimitTokens ?? null))
 function failureCode(error: unknown): FleetErrorCode {
   if (error instanceof GatewayError) return error.code
   return error instanceof DockerError && error.status === 404 ? 'IMAGE_MISSING' : 'DOCKER_UNAVAILABLE'

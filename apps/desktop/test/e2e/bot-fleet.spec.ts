@@ -3140,7 +3140,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     const valid = fleetGatewayEventSchema.parse(event)
     for (const stream of streams) stream.write(`event: fleet\ndata: ${JSON.stringify(valid)}\n\n`)
   }
-  const capable = ['provisioning', 'environments', 'environment-compaction']
+  const capable = ['provisioning', 'environments', 'environment-compaction', 'context-limit']
   const model = (modelId: string, intervalTokens = 100_000) => ({
     providerId: 'prov_env',
     modelId,
@@ -3316,7 +3316,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
       case 'meta':
         value = {
           protocol: 1,
-          features: ['provisioning', 'environments', 'environment-compaction'],
+          features: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
           gatewayVersion: '0.9.3',
           botImage: 'test-image',
           botImageVersion: '0.9.3',
@@ -3553,6 +3553,17 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await modelPicker(botCompaction).click()
     await page.getByRole('option', { name: 'Shared · Model A', exact: true }).click()
     await botCompaction.getByLabel('Preparar um resumo a cada (mil tokens)').fill('90')
+    await saveChanges()
+    await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a', 90_000) })
+    // A maximum context window goes with the bot's compaction config; emptying it goes back to the model's window.
+    await botCompaction.getByLabel('Janela máxima de contexto (mil tokens)').fill('300')
+    await saveChanges()
+    await expect
+      .poll(() => botPatches().at(-1))
+      .toEqual({ compaction: { ...model('model-a', 90_000), contextLimitTokens: 300_000 } })
+    await expect(saveBar()).toHaveCount(0)
+    await expect(botCompaction.getByLabel('Janela máxima de contexto (mil tokens)')).toHaveValue('300')
+    await botCompaction.getByLabel('Janela máxima de contexto (mil tokens)').fill('')
     await saveChanges()
     await expect.poll(() => botPatches().at(-1)).toEqual({ compaction: model('model-a', 90_000) })
 

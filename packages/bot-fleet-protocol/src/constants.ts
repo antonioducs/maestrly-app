@@ -16,12 +16,15 @@ export const FLEET_ROUTINE_PROMPT_MAX = 4_000
 export const FLEET_ROUTINE_LIMITS = { intervalMinMinutes: 15, intervalMaxMinutes: 1440, botCreatedMax: 10 } as const
 /**
  * A bot compacts its conversation with a model the owner chooses: summaries are prepared in the background every
- * `intervalTokens` of new conversation, and the same model compacts on the spot when no prepared summary fits.
+ * `intervalTokens` of new conversation, and the same model compacts on the spot when no prepared summary fits. The owner
+ * may also cap the conversation's context window below its model's (`contextLimitTokens`) to bound what each turn costs.
  */
 export const FLEET_COMPACTION_LIMITS = {
   intervalTokensMin: 10_000,
   intervalTokensMax: 1_000_000,
   intervalTokensDefault: 100_000,
+  contextLimitTokensMin: 100_000,
+  contextLimitTokensMax: 10_000_000,
 } as const
 /** A compaction summary shown in the transcript is cut here (the bot keeps the whole summary). */
 export const FLEET_COMPACTION_SUMMARY_MAX = 16_000
@@ -142,6 +145,11 @@ export const FLEET_ENVIRONMENT_COMPACTION_FEATURE = 'environment-compaction'
 export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
 /** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
 export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
+/**
+ * Gateway feature (`/v1/meta`): compaction configs carry `contextLimitTokens`. As an instance capability: the instance
+ * caps its bots' conversations at it; a running image without it ignores the limit until its environment restarts.
+ */
+export const FLEET_CONTEXT_LIMIT_FEATURE = 'context-limit'
 /** Bots per environment, and the range of the container memory limit the owner may set. */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,

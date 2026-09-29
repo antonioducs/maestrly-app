@@ -292,11 +292,11 @@ describe('bot environment registry', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta', name: 'Beta' }, conversationId: convB } },
       ],
     })
-    expect(aggregate.capabilities).toEqual(['provisioning', 'environments', 'environment-compaction'])
+    expect(aggregate.capabilities).toEqual(['provisioning', 'environments', 'environment-compaction', 'context-limit'])
     expect(runtime.health()).toMatchObject({
       ok: true,
       ready: true,
-      capabilities: ['provisioning', 'environments', 'environment-compaction'],
+      capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
     })
   })
 
@@ -836,11 +836,11 @@ describe('bot environment registry', () => {
         appVersion: expect.any(String),
         protocol: 1,
         ready: true,
-        capabilities: ['provisioning', 'environments', 'environment-compaction'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
         environmentId: 'env-one',
-        capabilities: ['provisioning', 'environments', 'environment-compaction'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
         bots: [
           { botId: 'alpha', slot: 1 },
           { botId: 'beta', slot: 2 },
@@ -848,7 +848,7 @@ describe('bot environment registry', () => {
       })
       expect(await (await request('GET', '/v1/bots/beta/status')).json()).toMatchObject({
         profile: { botId: 'beta', name: 'Beta' },
-        capabilities: ['provisioning', 'environments', 'environment-compaction'],
+        capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
       })
       const selections = await request('GET', '/v1/environment/selections')
       expect(selections.status).toBe(200)

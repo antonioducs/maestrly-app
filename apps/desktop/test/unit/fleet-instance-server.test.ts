@@ -368,7 +368,7 @@ describe('instance control HTTP', () => {
   })
 
   it("lists the environment's models for its default compaction model", async () => {
-    expect(INSTANCE_CAPABILITIES).toEqual(['provisioning', 'environments', 'environment-compaction'])
+    expect(INSTANCE_CAPABILITIES).toEqual(['provisioning', 'environments', 'environment-compaction', 'context-limit'])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
     expect(response.status).toBe(200)

@@ -9,6 +9,7 @@ import { closeDb, freshDb, restartDb } from '../helpers/db'
 import * as chatService from '../../src/main/chat/service'
 import { BackgroundCompactionStore } from '../../src/main/chat/background-compaction/store'
 import { backgroundCompactionConfigIdentity } from '../../src/main/chat/background-compaction/config'
+import { getConversationContextLimit } from '../../src/main/chat/conversation-context-limit'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { EnvironmentRuntime, type EnvironmentRuntimeDeps } from '../../src/main/fleet/instance/environment'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
@@ -437,5 +438,36 @@ describe('background work of an installed bot', () => {
     await disposing
     expect(alpha.gatewayConfig).toBeNull()
     expect(gateway.mock.calls.slice(before)).toEqual([])
+  })
+})
+
+describe('context limit of a bot conversation', () => {
+  it('caps each bot at its own limit, follows a new profile, and drops the cap when uninstalled', async () => {
+    const setup = environment()
+    await setup.runtime.start()
+    const limited = (contextLimitTokens: number): FleetInstanceProfile => ({
+      ...profile('alpha', 'Alpha'),
+      compaction: { ...compaction, contextLimitTokens },
+    })
+    await setup.runtime.installBot({ profile: limited(300_000), slot: 1, gatewayToken: tokenA })
+    await setup.runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    const convA = setup.runtime.bot('alpha').primaryConversationId!
+    const convB = setup.runtime.bot('beta').primaryConversationId!
+    expect(getConversationContextLimit(convA)).toBe(300_000)
+    expect(getConversationContextLimit(convB)).toBeUndefined()
+    // Without a measured window yet, its usage reports the cap as its window.
+    await vi.waitFor(async () =>
+      expect((await setup.runtime.bot('alpha').status()).usage?.contextWindowTokens).toBe(300_000)
+    )
+
+    await setup.runtime.installBot({ profile: limited(150_000), slot: 1, gatewayToken: tokenA })
+    expect(getConversationContextLimit(convA)).toBe(150_000)
+    await vi.waitFor(async () =>
+      expect((await setup.runtime.bot('alpha').status()).usage?.contextWindowTokens).toBe(150_000)
+    )
+
+    await setup.runtime.uninstallBot('alpha', { purge: false })
+    expect(getConversationContextLimit(convA)).toBeUndefined()
+    expect(getConversationContextLimit(convB)).toBeUndefined()
   })
 })

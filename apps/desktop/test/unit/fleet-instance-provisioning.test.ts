@@ -250,7 +250,12 @@ it('advertises provisioning, environments and environment compaction in runtime 
     ready: true,
     usage: null,
   })
-  expect((await runtime.status()).capabilities).toEqual(['provisioning', 'environments', 'environment-compaction'])
+  expect((await runtime.status()).capabilities).toEqual([
+    'provisioning',
+    'environments',
+    'environment-compaction',
+    'context-limit',
+  ])
 })
 
 it.each(['   ', ''])(
