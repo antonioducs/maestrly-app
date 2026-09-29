@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   type FLEET_GATEWAY_ROUTES,
   fleetBotIdSchema,
@@ -8,6 +9,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
@@ -23,6 +25,11 @@ export type FleetFeatures = { hasFeature(feature: string): boolean }
 export function requireEnvironments(fleet: FleetFeatures): void {
   if (!fleet.hasFeature(FLEET_ENVIRONMENTS_FEATURE))
     throw new FleetClientError('INVALID_REQUEST', 400, FLEET_ENVIRONMENTS_UNSUPPORTED)
+}
+/** Update routes exist only on gateways that schedule environment updates. */
+export function requireEnvironmentUpdates(fleet: FleetFeatures): void {
+  if (!fleet.hasFeature(FLEET_ENVIRONMENT_UPDATES_FEATURE))
+    throw new FleetClientError('INVALID_REQUEST', 400, FLEET_UPDATES_UNSUPPORTED)
 }
 
 // A bare string is a bot id, as the views from before environments send it.

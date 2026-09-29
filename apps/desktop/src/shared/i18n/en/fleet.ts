@@ -374,6 +374,9 @@ export default {
     environmentLabel: 'Environment {{name}} · {{status}} · {{bots}}',
     environmentMemory: '{{memory}} GB',
   },
+  updates: {
+    unsupported: 'This server cannot schedule updates yet. Update the server first.',
+  },
   activity: {
     tool: '{{tool}} {{target}}',
     thinking: 'Thinking…',

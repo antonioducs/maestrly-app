@@ -375,6 +375,9 @@ export default {
     environmentLabel: 'Ambiente {{name}} · {{status}} · {{bots}}',
     environmentMemory: '{{memory}} GB',
   },
+  updates: {
+    unsupported: 'Este servidor ainda não agenda atualizações. Atualize o servidor primeiro.',
+  },
   activity: {
     tool: '{{tool}} {{target}}',
     thinking: 'Pensando…',
