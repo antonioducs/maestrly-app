@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { FLEET_TODO_LIMITS, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
@@ -235,6 +235,8 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/other/chat')).toBe('')
     expect(botIdentityPrompt('/bot/chat')).toContain('# Bot identity\nYour name is Scout.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
+    expect(botIdentityPrompt('/bot/chat')).toContain('Plan review is unavailable')
+    expect(botIdentityPrompt('/bot/chat')).toContain('present it directly in the conversation')
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 22')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
@@ -773,6 +775,59 @@ describe('additional tool states', () => {
       ],
     } as ChatMessage
     expect(projectChatMessages([aborted])[0]).toMatchObject({ kind: 'tool', state: 'interrupted' })
+  })
+  it('sends the todo_write checklist within protocol limits and no todos for other tools', () => {
+    const tool = (toolCallId: string, toolName: string, input: unknown) => ({
+      type: 'tool',
+      id: toolCallId,
+      toolCallId,
+      toolName,
+      input,
+      state: { status: 'completed', output: 'To-do list (current):\n[x] Inspect files' },
+    })
+    const long = 'x'.repeat(FLEET_TODO_LIMITS.contentMax + 20)
+    const message = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      finishReason: 'stop',
+      parts: [
+        tool('todo', 'todo_write', {
+          todos: [
+            { content: 'Inspect files', status: 'completed' },
+            { content: 'Fix rendering', status: 'in_progress' },
+            { content: 'Unknown status', status: 'blocked' },
+            { content: '', status: 'pending' },
+            null,
+            { content: long, status: 'pending' },
+          ],
+        }),
+        tool('many', 'todo_write', {
+          todos: Array.from({ length: FLEET_TODO_LIMITS.itemsMax + 5 }, (_, index) => ({
+            content: `Step ${index}`,
+            status: 'pending',
+          })),
+        }),
+        tool('partial', 'todo_write', { todos: '[{"content":' }),
+        tool('shell', 'bash', { command: 'npm test' }),
+      ],
+    } as ChatMessage
+    const [todo, many, partial, shell] = projectChatMessages([message])
+    expect(todo).toMatchObject({
+      kind: 'tool',
+      name: 'todo_write',
+      state: 'done',
+      todos: [
+        { content: 'Inspect files', status: 'completed' },
+        { content: 'Fix rendering', status: 'in_progress' },
+        { content: long.slice(0, FLEET_TODO_LIMITS.contentMax), status: 'pending' },
+      ],
+    })
+    expect(many.kind === 'tool' && many.todos).toHaveLength(FLEET_TODO_LIMITS.itemsMax)
+    expect(partial).toMatchObject({ kind: 'tool', todos: [] })
+    expect(shell).toMatchObject({ kind: 'tool', name: 'bash' })
+    expect(shell).not.toHaveProperty('todos')
   })
 })
 

@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import { z } from 'zod'
 import { runDebugCommand } from '../../debug-bridge'
 import { requestVSCodeForDebug } from '../../drawer-manager'
@@ -6,6 +7,7 @@ import type { McpToolContext } from './context'
 import { ok, err } from './context'
 
 export function registerDebugTools(ctx: McpToolContext): void {
+  if (isBotMode()) return
   const { server, convId, t } = ctx
   // MCP controls the conversation's embedded VS Code debugger through DAP and the file bridge. The Code tab
   // must be loaded so its workspace extension host runs, and the user can see debugging in the editor.

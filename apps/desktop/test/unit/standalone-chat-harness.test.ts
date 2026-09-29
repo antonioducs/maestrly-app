@@ -1,5 +1,5 @@
 import { buildHarnessPrompt } from '../../src/main/chat/harness/prompt-builder'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { buildMaestrlyBasePrompt } from '../../src/main/chat/harness/host-contracts'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 
@@ -74,4 +74,23 @@ it.each([
   expect(result.instructions).not.toContain('MUST NOT INJECT PROJECT')
   expect(result.instructions).not.toContain('# Durable project memory')
   expect(result.instructions).toContain('Do NOT edit')
+})
+
+it.each(['unknown', 'gpt-5.6-sol', 'gpt-6-astra'])('does not advertise desktop-only tools to bots using %s', (model) => {
+  vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+  try {
+    const prompt = buildHarnessPrompt({
+      harness: harnessFor('openai-responses', model),
+      cwd: '/private/bot',
+      mode: 'agent',
+      appToolsEnabled: true,
+      hasNotesTab: true,
+    }).instructions
+    expect(prompt).not.toContain('debug_*')
+    expect(prompt).not.toContain('notes_*')
+    expect(prompt).not.toContain('Project notes are available')
+    expect(prompt).not.toContain('follow along in the UI')
+  } finally {
+    vi.unstubAllEnvs()
+  }
 })

@@ -18,6 +18,7 @@ import {
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
   FLEET_SCREEN,
+  FLEET_TODO_LIMITS,
   FLEET_TOOL_OUTPUT_MAX,
 } from './constants.js'
 
@@ -424,6 +425,12 @@ export const fleetBotMemorySchema = z.object({
 })
 export type FleetBotMemory = z.infer<typeof fleetBotMemorySchema>
 
+export const fleetTodoSchema = z.object({
+  content: z.string().min(1).max(FLEET_TODO_LIMITS.contentMax),
+  status: z.enum(['pending', 'in_progress', 'completed']),
+})
+export type FleetTodo = z.infer<typeof fleetTodoSchema>
+
 const transcriptBase = { id: fleetIdSchema, at: fleetTimestampSchema }
 const routineRef = z.object({ id: fleetIdSchema, title: z.string() })
 const peerRef = z.object({ botId: fleetBotIdSchema, name: z.string() })
@@ -454,6 +461,8 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     output: z.string().max(FLEET_TOOL_OUTPUT_MAX).nullable(),
     // Screenshots and generated images the tool returned, viewable by the owner.
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.imagesPerItemMax).default([]),
+    // todo_write only: the list it recorded. Absent from other tools and from instances that predate it.
+    todos: z.array(fleetTodoSchema).max(FLEET_TODO_LIMITS.itemsMax).optional(),
   }),
   z.object({
     ...transcriptBase,

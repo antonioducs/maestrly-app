@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_TOOL_OUTPUT_MAX,
+  FLEET_TODO_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
   compareFleetTranscriptItems,
   fleetTranscriptItemSchema,
@@ -10,8 +11,9 @@ import {
   type FleetTranscriptPage,
   type FleetQuestion,
   type FleetImageRef,
+  type FleetTodo,
 } from '@maestrly/bot-fleet-protocol'
-import type { ChatMessage, ChatQuestion, MessagePart } from '../../../shared/chat'
+import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
 import { appendSettledLog, promptForInput, readSettledLog, settledLog, type QueuedInput } from './queue'
 import { imageId } from './images'
@@ -36,6 +38,13 @@ export function fleetQuestions(questions: ChatQuestion[]): FleetQuestion[] {
     options: question.options.map((option) => ({ label: option.label, description: option.description ?? null })),
     multiSelect: !!question.multiSelect,
   }))
+}
+/** A todo_write list within the protocol limits: an item over them would drop the whole tool item from the page. */
+function fleetTodos(input: unknown): FleetTodo[] {
+  return chatTodosFromInput(input)
+    .filter((todo) => todo.content)
+    .slice(0, FLEET_TODO_LIMITS.itemsMax)
+    .map((todo) => ({ content: short(todo.content, FLEET_TODO_LIMITS.contentMax), status: todo.status }))
 }
 export function toolTarget(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
@@ -142,6 +151,7 @@ function toolItem(
           : 'running',
     output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
     images,
+    ...(part.toolName === 'todo_write' ? { todos: fleetTodos(part.input) } : {}),
   }
 }
 function ownerImageRefs(message: ChatMessage): FleetImageRef[] {

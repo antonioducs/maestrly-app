@@ -27,6 +27,8 @@ export const FLEET_COMPACTION_LIMITS = {
 export const FLEET_COMPACTION_SUMMARY_MAX = 16_000
 export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
+/** The to-do list a bot keeps with todo_write, shown to the owner as a checklist; longer lists and items are cut. */
+export const FLEET_TODO_LIMITS = { itemsMax: 50, contentMax: 500 } as const
 export const FLEET_QUEUE_PREVIEW_MAX = 80
 
 /** Image limits. Attachments match the desktop composer's own limits; reads cover tool screenshots too. */

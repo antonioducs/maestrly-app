@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import { buildMaestrlyBasePrompt } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
@@ -1552,7 +1553,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
     })
     const rawQuestions = asyncQuestion
       ? typeof params.question === 'string'
-        ? [{ id: 'async', header: 'Question', question: params.question, options: [] }]
+        ? [{ id: 'async', header: 'Question', question: params.question, isSecret: params.isSecret, options: [] }]
         : []
       : Array.isArray(params.questions)
         ? params.questions
@@ -1575,18 +1576,21 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
         options,
       }
     })
-    emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleItemId, toolName: 'ask_question' })
-    emit(
-      {
-        kind: 'tool-call',
-        messageId: route.messageId,
-        toolCallId: visibleItemId,
-        toolName: 'ask_question',
-        input: { questions },
-      },
-      true
-    )
     try {
+      if (isBotMode() && questions.some((question) => question.isSecret)) {
+        throw new Error('Secret questions are not supported in fleet bot mode. Continue without requesting secrets.')
+      }
+      emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleItemId, toolName: 'ask_question' })
+      emit(
+        {
+          kind: 'tool-call',
+          messageId: route.messageId,
+          toolCallId: visibleItemId,
+          toolName: 'ask_question',
+          input: { questions },
+        },
+        true
+      )
       const answers = await waitForQuestionAnswers(
         route,
         visibleItemId,
@@ -2099,7 +2103,7 @@ async function buildDynamicTools(
     }
     // ALL Maestrly skills (`.agents` + `.claude`) enter the same host-owned ToolSet above. Codex's
     // NATIVE catalog is disabled in all modes (`skills.include_instructions: false`).
-    if (!args.reviewerRuntime && args.mode !== 'ask' && args.mode !== 'maestro') {
+    if (!isBotMode() && !args.reviewerRuntime && args.mode !== 'ask' && args.mode !== 'maestro') {
       const schema = asSchema(reviewPlanTool.parameters)
       runtimes.push({
         spec: {

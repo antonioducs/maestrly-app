@@ -6,6 +6,7 @@
  * naturally uses the CURRENT model/mode. See stagePlan/decidePlan in plan-broker + plan-ipc.
  */
 import { z } from 'zod'
+import { isBotMode } from '../../fleet/instance/config'
 import { defineTool } from './util'
 
 const parameters = z.object({
@@ -22,7 +23,7 @@ export const reviewPlanTool = defineTool<typeof parameters, { staged: boolean; e
     'implementing non-trivial changes to get the plan approved first.',
   parameters,
   execute: async (args, ctx) => {
-    if (!ctx.submitPlan) return { staged: false }
+    if (isBotMode() || !ctx.submitPlan) return { staged: false }
     const accepted = ctx.submitPlan(args.plan, args.title)
     return accepted ? { staged: true } : { staged: false, error: 'plan-origin-conflict' }
   },
