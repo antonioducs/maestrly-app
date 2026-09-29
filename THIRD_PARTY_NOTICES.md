@@ -132,7 +132,9 @@ declares `SEE LICENSE IN README.md`; its distributed README links Anthropic's
 
 Maestrly does not redistribute the optional platform-specific Claude Code
 binaries shipped as SDK convenience dependencies. Users install Claude Code
-separately and authenticate their own Claude subscription.
+separately and authenticate their own Claude subscription. Fleet bots can also
+download newer official `@anthropic-ai/claude-code-linux-<arch>` packages from
+the npm registry into their own environment, under the same terms.
 
 ## Local ML runtime
 
