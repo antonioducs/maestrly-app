@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { missingWorkspaceBuilds } from '../../scripts/verify-packaged-workspaces.mjs'
 
-const names = ['protocol', 'bot-fleet-protocol', 'client-sdk', 'runner-core']
+const names = ['protocol', 'bot-fleet-protocol', 'artifact-host', 'client-sdk', 'runner-core']
 const entries = names.flatMap((name) => [
   `/node_modules/@maestrly/${name}/package.json`,
   `/node_modules/@maestrly/${name}/dist/index.js`,
@@ -31,7 +31,9 @@ test('package wrapper compiles workspace dependencies before Electron build', ()
   const source = readFileSync(new URL('../../scripts/package.mjs', import.meta.url), 'utf8')
   const dependencies = source.indexOf("['run', 'build:runner-core']")
   const fleet = source.indexOf("'run', 'build:fleet-protocol'")
+  const artifacts = source.indexOf("'run', 'build:artifact-host'")
   const desktop = source.indexOf("runPackageBin('electron-vite'")
   assert.ok(dependencies >= 0 && dependencies < desktop)
   assert.ok(fleet > dependencies && fleet < desktop)
+  assert.ok(artifacts > dependencies && artifacts < desktop)
 })
