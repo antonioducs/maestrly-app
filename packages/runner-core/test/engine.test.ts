@@ -13,6 +13,8 @@ import {
 } from '../src/index.js'
 
 const temporary: string[] = []
+/** Every run syncs the journal to disk before it starts; Windows runners take most of a second for three of them. */
+const DISK = { timeout: 10_000 }
 afterEach(async () => {
   const { rm } = await import('node:fs/promises')
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
@@ -61,7 +63,7 @@ describe('RunnerEngine', () => {
     } as unknown as WorkspaceManager
     const engine = new RunnerEngine(server, new Map([['deterministic', executor]]), workspace, new RunnerJournal(path.join(directory, 'journal.json')))
     const running = engine.runOnce()
-    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'), DISK)
     expect(cleaned).toBe(false)
     finish()
     await running
@@ -100,11 +102,11 @@ describe('RunnerEngine', () => {
     expect(await engine.poll()).toBe(true)
     expect(await engine.poll()).toBe(true)
     expect(await engine.poll()).toBe(false)
-    await vi.waitFor(() => expect(finishers.size).toBe(3))
+    await vi.waitFor(() => expect(finishers.size).toBe(3), DISK)
     expect(engine.activeRuns).toBe(3)
     finishers.get('run-a')!({ state: 'succeeded' })
-    await vi.waitFor(() => expect(server.complete).toHaveBeenCalledWith('run-a', 'lease-run-a', expect.objectContaining({ state: 'succeeded' })))
-    await vi.waitFor(() => expect(engine.activeRuns).toBe(2))
+    await vi.waitFor(() => expect(server.complete).toHaveBeenCalledWith('run-a', 'lease-run-a', expect.objectContaining({ state: 'succeeded' })), DISK)
+    await vi.waitFor(() => expect(engine.activeRuns).toBe(2), DISK)
     await engine.stop('Runner is stopping.')
     expect(engine.activeRuns).toBe(0)
     expect(server.complete).toHaveBeenCalledWith('run-b', 'lease-run-b', expect.objectContaining({ state: 'cancelled' }))
