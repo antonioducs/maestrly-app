@@ -17,7 +17,7 @@ interrupts whatever its bots are doing.
 | Work arriving while waiting | Owner messages and **Run now** are delivered as usual: the owner asked for them. Scheduled routine runs are skipped as `skipped_busy`. Peer messages stay in the gateway's pending deliveries and are delivered after the restart. |
 | Stopped or failed environments | Not started. They already move to the configured image at their next start; the app says so. |
 | Server version | The version the gateway reports (`FleetHostInfo.gatewayVersion`, the release version baked into its image) and, during an update, the tag of the gateway image in the server's `.env`. The version this Mac recorded is only a fallback. This closes the downgrade described below. |
-| Servers the app did not install | The app cannot replace their images. It shows that the server is older than the app and links to the manual steps; environment updates still work in one click once the gateway supports them. |
+| Servers the app did not install | The app cannot replace their images. It says that the server is older than the app and to update both server images as the bot fleet guide describes; environment updates still work in one click once the gateway supports them. |
 | Out of scope | Automatic updates without a click, and a minimum version enforced by the gateway. |
 
 ### The downgrade this fixes
@@ -40,17 +40,19 @@ this binary").
     available: boolean
     /** When the owner scheduled the update; null when none is waiting. */
     pendingSince: string | null
-    /** Its bots that are busy while the update waits; empty otherwise. */
-    waitingFor: FleetBotId[]
   }
   ```
 
+- `FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human']` and `fleetBotBlocksUpdate(bot)` in the protocol
+  package: the one busy rule, used by the gateway to decide and by the Mac to show who the update waits for (from each
+  bot's live `status`, so there is no list to go stale).
 - `POST /v1/environments/:eid/update`, body `{ when: 'idle' | 'now' }`, response `FleetEnvironment`.
-  - `idle`: schedules the update and answers at once with `pendingSince` set. It never waits for the restart, even when
-    every bot is already idle. Scheduling again keeps the first `pendingSince`. Without an available update it answers
-    the environment unchanged. An environment that is not running answers `BOT_NOT_RUNNING`.
-  - `now`: clears any pending update and restarts the environment as `/restart` does (awaited, recreating the container
-    on the configured image).
+  - `idle`: inspects the environment's container and the configured image again (so a retagged image counts without a
+    gateway restart), schedules the update and answers at once with `pendingSince` set. It never waits for the
+    restart, even when every bot is already idle. Scheduling again keeps the first `pendingSince`. Without an available
+    update it answers the environment unchanged. An environment that is not running answers `BOT_NOT_RUNNING`.
+  - `now`: restarts the environment as `/restart` does (awaited, recreating the container on the configured image),
+    which clears any pending update.
 - `DELETE /v1/environments/:eid/update` cancels a pending update and answers the environment.
 - No new activity kinds or event types: older Macs parse those with closed enums. Completion is the existing
   `environment_restarted` activity with `updated: true`; state changes travel in `environment.updated`.
@@ -62,9 +64,9 @@ this binary").
 - **Available.** `update.available` is the existing `imageOutdated` state (container image id ≠ configured image id),
   computed at reconcile and at each start. It replaces the version-label comparison for gateways with the feature, so
   a rebuilt image with the same version (such as `:local`) also shows as an update.
-- **Pending.** Set by `when: 'idle'`. Cleared when the environment is recreated on the configured image, when the
-  owner cancels or updates now, when the environment stops, is archived or deleted, and when reconcile finds no update
-  available any more.
+- **Pending.** Set by `when: 'idle'`. Cleared at the start of every start, restart (the drain's, **Update now**'s or a
+  plain one) and stop of the environment, when the owner cancels, when it is archived or deleted, and when reconcile
+  finds no update available any more or the container not running.
 - **Drain.** `maybeUpdate(environmentId)` runs after each status update of a bot in a pending environment, right after
   the update is scheduled, after reconcile, and every 30 seconds while any update is pending. When no active bot of the
   environment is busy, it takes the environment's lock, checks again with the statuses current at that moment, and
@@ -85,8 +87,8 @@ this binary").
 
 A renderer selector, `botUpdateSummary`, combines the installer status, the fleet snapshot and the app version into:
 
-- `server`: `update` (the app can update it), `behind` (older than the app, not installed by this app: notice and
-  guide link), `newer` (existing warning), or `current`;
+- `server`: `update` (the app can update it), `behind` (older than the app, not installed by this app: notice
+  pointing to the guide), `newer` (existing warning), or `current`;
 - per environment: `available`, `pending` (with the busy bots), `nextStart` (stopped or failed with an update
   available), or `current`. An environment from a gateway without the feature (`update === null`) falls back to the
   existing label comparison (`environmentUpdateAvailable`) and to the existing immediate **Update environment**.
@@ -114,18 +116,22 @@ An update is available when the server is `update` or `behind`, or an environmen
 
 A main-process `fleet:updateBots` IPC:
 
-1. When the installer reports `update: 'available'`, runs the existing installer update job with one more step,
-   `environments`. The job refuses to downgrade: in its `files` step it reads the gateway image tag from the server's
-   `.env`, and if that version is newer than the app it stops with `server-newer` and records that version.
-2. The `environments` step (or, without a server update, the whole action) waits until the fleet client is connected
-   to a gateway that offers `environment-updates`, then sends `POST …/update { when: 'idle' }` for each running
-   environment with an update available. Each environment fails on its own; the step reports which ones failed and the
-   banner offers to try again.
-3. A gateway without `environment-updates` after the server step (a server the app did not install) leaves the
+1. When the server can be updated, runs the existing installer update job with one more step,
+   `environment-updates` (the `environments` step id already names "Remove environments"). The job refuses to
+   downgrade: in its `files` step it reads the gateway image tag from the server's `.env`, and if that version is
+   newer than the app it records it and stops with `server-newer`.
+2. The `environment-updates` step (or, without a server update, the whole action) waits until the fleet client is
+   connected to a gateway that offers `environment-updates`, lists the environments from the gateway, then sends
+   `POST …/update { when: 'idle' }` for each running environment with an update available and none pending. Each
+   environment fails on its own; the result names the failed ones, and since they still show an available update the
+   banner's button stays to try again.
+3. A gateway without `environment-updates` (a server the app did not install and nobody updated) leaves the
    environments to their existing **Update environment** button.
 
-The installer's `update` state uses the version the connected gateway reports, falling back to `record.version`, and
-refreshes `record.version` from it.
+Whether the server can be updated comes from one shared function, `knownServerVersion(recordVersion,
+reportedVersion)`: the version the connected gateway reports when it is a release version, else `record.version`.
+The main process uses it for the installer's `update` state and guard; the renderer uses it with the live host info,
+so the display does not wait for an installer status broadcast.
 
 ## Error handling
 
@@ -147,7 +153,7 @@ refreshes `record.version` from it.
   update; pending resumed after a gateway restart; scheduled routines skipped as busy while pending, **Run now** still
   delivered; peer messages held, then delivered after the restart; `/v1/meta` version.
 - **Desktop main:** the installer refuses to downgrade when the server's `.env` or the reported gateway version is
-  newer; `update` state from the reported version; the `environments` step schedules only running environments with an
+  newer; `update` state from the reported version; the `environment-updates` step schedules only running environments with an
   update, tolerates one failure, and waits for the feature.
 - **Desktop renderer:** `botUpdateSummary` cases (including the fallback for gateways without the feature); the
   banner, tab icon and environment view states in the fake-server e2e, including one click through to a pending
