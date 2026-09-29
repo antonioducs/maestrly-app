@@ -2064,7 +2064,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'meta':
         value = {
           protocol: 1,
-          features: ['provisioning', 'environments', 'environment-updates'],
+          features: ['provisioning', 'environments', 'environment-updates', 'runtime-updates'],
           gatewayVersion: '0.9.3',
           botImage: 'test-image',
           botImageVersion: '0.9.3',
@@ -2092,6 +2092,15 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         const cancelled = fleetEnvironmentSchema.parse({ ...environment, update, updatedAt: now() })
         upsertEnvironment(cancelled)
         value = cancelled
+        break
+      }
+      case 'environmentRuntimesCheck': {
+        if (!environment) return notFound()
+        // The environment answers at once: its runtimes show the check it started.
+        const runtimes = (environment.runtimes ?? []).map((runtime) => ({ ...runtime, state: 'checking' as const }))
+        const checking = fleetEnvironmentSchema.parse({ ...environment, runtimes, updatedAt: now() })
+        upsertEnvironment(checking)
+        value = checking
         break
       }
       case 'host':
@@ -2668,6 +2677,49 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(lifecycle.getByRole('button', { name: 'Atualizar ambiente' })).toHaveCount(0)
     await expect(page.getByText('Atualização disponível', { exact: true })).toHaveCount(0)
     expect(requests.filter((item) => item.key === 'environmentRestart')).toHaveLength(1)
+
+    // Acme reports the Claude Code and Codex it runs; Home, on an older image, reports none.
+    const runtimes = [
+      {
+        id: 'claude-code',
+        version: '2.1.285',
+        source: 'image',
+        automatic: true,
+        state: 'up-to-date',
+        availableVersion: null,
+        lastCheckedAt: now(),
+        error: null,
+      },
+      {
+        id: 'codex',
+        version: '0.160.0',
+        source: 'managed',
+        automatic: false,
+        state: 'available',
+        availableVersion: '0.161.0',
+        lastCheckedAt: now(),
+        error: null,
+      },
+    ]
+    upsertEnvironment(fleetEnvironmentSchema.parse({ ...environments.find((item) => item.id === 'acme')!, runtimes }))
+    const runtimesSection = page.getByRole('region', { name: 'Claude Code e Codex', exact: true })
+    const claudeRow = runtimesSection.locator('[data-fleet-runtime="claude-code"]')
+    await expect(claudeRow).toContainText('v2.1.285 · da imagem do bot')
+    await expect(claudeRow).toContainText('Atualizado')
+    const codexRow = runtimesSection.locator('[data-fleet-runtime="codex"]')
+    await expect(codexRow).toContainText('v0.160.0 · atualizado')
+    await expect(codexRow).toContainText('v0.161.0 disponível')
+    await expect(codexRow).toContainText('Atualização automática desligada')
+    const check = runtimesSection.getByRole('button', { name: 'Verificar atualizações' })
+    await check.click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentRuntimesCheck').map((item) => item.path))
+      .toEqual(['/v1/environments/acme/runtimes/check'])
+    await expect(claudeRow).toContainText('Verificando…')
+    await expect(check).toBeDisabled()
+    await header('Home').click()
+    await expect(page.getByRole('region', { name: 'Iniciar e parar', exact: true })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Claude Code e Codex', exact: true })).toHaveCount(0)
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()

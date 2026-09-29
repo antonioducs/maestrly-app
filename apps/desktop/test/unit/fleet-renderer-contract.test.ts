@@ -122,6 +122,33 @@ describe('fleet renderer wiring', () => {
         expect(catalog.updates[key], key).toEqual(expect.any(String))
     }
   })
+  it('shows the runtimes an environment reports and checks them from its view', () => {
+    const view = source('components/fleet/EnvironmentView.tsx')
+    expect(view).toContain('<EnvironmentRuntimes environment={environment} fleet={fleet} />')
+    const runtimes = source('components/fleet/EnvironmentRuntimes.tsx')
+    expect(runtimes).toContain('fleet.checkEnvironmentRuntimes(environment.id)')
+    expect(runtimes).toContain('FLEET_RUNTIME_UPDATES_FEATURE')
+    for (const catalog of [resources.en.fleet, resources['pt-BR'].fleet]) {
+      const copy = catalog.environment.runtimes
+      for (const key of ['title', 'note', 'lastChecked', 'neverChecked', 'manual', 'check', 'unsupported', 'restart'])
+        expect(copy[key as keyof typeof copy], key).toEqual(expect.any(String))
+      for (const id of ['claude-code', 'codex'] as const) expect(copy.name[id]).toEqual(expect.any(String))
+      for (const source of ['image', 'managed'] as const) expect(copy.source[source]).toEqual(expect.any(String))
+      for (const state of [
+        'idle',
+        'checking',
+        'up-to-date',
+        'available',
+        'downloading',
+        'verifying',
+        'installing',
+        'validating',
+        'rolling-back',
+        'failed',
+      ] as const)
+        expect(copy.state[state], state).toEqual(expect.any(String))
+    }
+  })
   it('compares Mac and bot versions and displays the gateway independently', () => {
     const server = source('components/fleet/ServerView.tsx')
     expect(server).toContain('botsWithDifferentVersion(bots, version)')

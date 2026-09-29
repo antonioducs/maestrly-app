@@ -47,6 +47,7 @@ import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { CompactionFields } from './CompactionFields'
+import { EnvironmentRuntimes } from './EnvironmentRuntimes'
 import { EnvironmentScreen } from './EnvironmentScreen'
 
 const tabs = ['overview', 'screen'] as const
@@ -427,6 +428,7 @@ function EnvironmentOverview({
             )}
           </div>
         </section>
+        <EnvironmentRuntimes environment={environment} fleet={fleet} />
         <section className="space-y-3" aria-labelledby="fleet-environment-lifecycle">
           <h2 id="fleet-environment-lifecycle" className="font-semibold">
             {t('environment.lifecycleTitle')}

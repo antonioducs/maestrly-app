@@ -78,6 +78,7 @@ import {
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
   FLEET_UPDATES_UNSUPPORTED,
+  FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_RESTART_REQUIRED,
   fleetTargetKey,
@@ -364,6 +365,19 @@ describe('environment IPC', () => {
       ['environmentUpdateCancel', { params: { eid: 'acme' } }],
     ])
     expect(isEnvironmentUpdatesUnsupported(new Error('Error: ' + FLEET_UPDATES_UNSUPPORTED))).toBe(true)
+  })
+
+  it('checks environment runtimes only on gateways that relay them', async () => {
+    features.list = ['environments', 'environment-updates']
+    const ipc = register()
+    expect(ipc.mutations.has('fleet:environmentRuntimesCheck')).toBe(true)
+    expect(ipc.reads.has('fleet:environmentRuntimesCheck')).toBe(false)
+    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', 'work')).toThrow(FLEET_RUNTIME_UPDATES_UNSUPPORTED)
+    features.list = ['environments', 'runtime-updates']
+    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', '../work')).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    await ipc.mutate('fleet:environmentRuntimesCheck', 'acme')
+    expect(calls()).toEqual([['environmentRuntimesCheck', { params: { eid: 'acme' } }]])
   })
 
   it('gives an update done now the lifecycle deadline, and a scheduled one too', async () => {
@@ -998,6 +1012,7 @@ describe('environment preload API', () => {
       await fleetApi.fleetOwnerMemoryCreate({ content: 'Uses the staging VPN.', environmentId: 'work' })
       await fleetApi.fleetEnvironmentUpdate('work', 'idle')
       await fleetApi.fleetEnvironmentUpdateCancel('work')
+      await fleetApi.fleetEnvironmentRuntimesCheck('work')
       expect(invoke.mock.calls).toEqual([
         ['fleet:environmentAction', 'work', 'restart'],
         ['fleet:patchEnvironment', 'work', { memoryLimitBytes: null }],
@@ -1016,6 +1031,7 @@ describe('environment preload API', () => {
         ['fleet:ownerMemoryCreate', { content: 'Uses the staging VPN.', environmentId: 'work' }],
         ['fleet:environmentUpdate', 'work', 'idle'],
         ['fleet:environmentUpdateCancel', 'work'],
+        ['fleet:environmentRuntimesCheck', 'work'],
       ])
     } finally {
       invoke.mockRestore()

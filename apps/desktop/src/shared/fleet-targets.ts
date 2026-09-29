@@ -23,6 +23,8 @@ export function fleetTargetKey(target: FleetProvisioningTargetInput): string {
 export const FLEET_ENVIRONMENTS_UNSUPPORTED = 'FLEET_ENVIRONMENTS_UNSUPPORTED'
 /** Raised by the main process when the gateway cannot schedule environment updates yet. */
 export const FLEET_UPDATES_UNSUPPORTED = 'FLEET_UPDATES_UNSUPPORTED'
+/** Raised by the main process when the gateway cannot report or check the environments' runtimes yet. */
+export const FLEET_RUNTIME_UPDATES_UNSUPPORTED = 'FLEET_RUNTIME_UPDATES_UNSUPPORTED'
 /** Raised when another control session holds the environment display that browser areas and its screen share. */
 export const FLEET_SCREEN_CONFLICT = 'FLEET_SCREEN_CONFLICT'
 /** Raised when an environment still runs an image from before environments: restarting it updates it. */

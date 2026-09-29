@@ -32,6 +32,7 @@ import {
   provisioningRoute,
   requireEnvironmentUpdates,
   requireEnvironments,
+  requireRuntimeUpdates,
   resolveProvisioningTarget,
   resolveScreenTarget,
   screenTicketError,
@@ -141,6 +142,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const params = { eid: environmentId.parse(rawId) }
     requireEnvironmentUpdates(fleet)
     return fleet.call('environmentUpdateCancel', { params })
+  })
+  // Answers at once: the environment checks in the background and reports the results in its runtimes.
+  reg.mhandle('fleet:environmentRuntimesCheck', (_event, rawId: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    requireRuntimeUpdates(fleet)
+    return fleet.call('environmentRuntimesCheck', { params })
   })
   reg.mhandle('fleet:patchEnvironment', (_event, rawId: unknown, patch: unknown) => {
     const params = { eid: environmentId.parse(rawId) }
