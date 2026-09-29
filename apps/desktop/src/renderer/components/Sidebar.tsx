@@ -73,6 +73,8 @@ interface Props {
   onOpenFleetOwnerMemory: () => void
   botServerConnected?: boolean
   botPendingCount?: number
+  /** Bots can be updated, or an update of theirs runs or waits. */
+  botUpdate?: 'available' | 'pending' | null
   onCreateBot?: () => void
   onOpenBotSettings: () => void
 
@@ -148,6 +150,7 @@ export function Sidebar({
   onOpenFleetOwnerMemory,
   botServerConnected = false,
   botPendingCount = 0,
+  botUpdate = null,
   onCreateBot,
   onOpenBotSettings,
   focusedWorkspaceId,
@@ -563,6 +566,7 @@ export function Sidebar({
         creatingChat={creatingChat}
         botServerConnected={botServerConnected}
         botPendingCount={botPendingCount}
+        botUpdate={botUpdate}
         onCreateBot={onCreateBot}
       />
 

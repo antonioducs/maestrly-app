@@ -50,6 +50,8 @@ export class FakeGateway {
   })
   private listening = false
   private devices = 0
+  /** The version of the gateway image running, which `compose up` sets from the `.env`, as the real one reports. */
+  version = '0.9.3'
   private environments: FleetEnvironment[] = []
   private bots: FleetBot[] = []
   private archived: FleetArchivedEnvironment[] = []
@@ -109,6 +111,7 @@ export class FakeGateway {
         memoryLimitBytes: null,
         appVersion: '0.9.3',
         capabilities,
+        update: { available: false, pendingSince: null },
         botIds: ['scout'],
         createdAt: at,
         updatedAt: at,
@@ -183,10 +186,10 @@ export class FakeGateway {
       case 'meta':
         return send(200, {
           protocol: 1,
-          gatewayVersion: '0.9.3',
+          gatewayVersion: this.version,
           botImage: 'e2e',
           botImageVersion: null,
-          features: ['provisioning', 'environments'],
+          features: ['provisioning', 'environments', 'environment-updates'],
         })
       case 'pair': {
         const { code, deviceName } = body as { code: string; deviceName: string }
@@ -220,7 +223,7 @@ export class FakeGateway {
             memory: { totalBytes: 8 * GB, usedBytes: 2 * GB, botsBytes: GB },
             disk: { totalBytes: 80 * GB, usedBytes: 20 * GB },
             uptimeSeconds: 600,
-            gatewayVersion: '0.9.3',
+            gatewayVersion: this.version,
             botImage: 'e2e',
             botImageVersion: null,
             dockerVersion: '28.0.1',
@@ -389,6 +392,9 @@ export class FakeDockerEngine {
     const gateway = this.options.gateway
     if (gateway.running && env === this.upEnv) return ok('Container maestrly-bots-maestrly-bot-gateway-1  Running\n')
     const published = Number(values.get('MAESTRLY_GATEWAY_PORT'))
+    const gatewayImage = values.get('MAESTRLY_GATEWAY_IMAGE') ?? ''
+    const tag = gatewayImage.slice(gatewayImage.lastIndexOf(':') + 1)
+    if (/^\d+\.\d+\.\d+/.test(tag)) gateway.version = tag
     // A changed `.env` recreates the container: its connections end, and the gateway keeps its volume.
     if (gateway.running) gateway.dropConnections()
     else await gateway.start(this.options.listenPort(published))

@@ -109,7 +109,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
           onAction={(action, allow) => {
             void run(
               action === 'update'
-                ? () => window.api.fleetInstallerUpdate()
+                ? () => window.api.fleetUpdateBots().then((result) => result.status)
                 : () => window.api.fleetInstallerSetPrivateNetwork(!!allow)
             )
           }}

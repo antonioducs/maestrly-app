@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FlaskConical, FolderPlus, Search, PanelLeft, Layers, Plus } from 'lucide-react'
+import { CircleArrowUp, Clock, FlaskConical, FolderPlus, Search, PanelLeft, Layers, Plus } from 'lucide-react'
 import { instanceBadgeStyle } from '../../../shared/instance-color'
 import type { AppInfo } from '../../../preload'
 import { cn } from '@/lib/utils'
@@ -20,6 +20,7 @@ export function SidebarHeader({
   creatingChat,
   botServerConnected,
   botPendingCount,
+  botUpdate = null,
   onCreateBot,
 }: {
   query: string
@@ -34,6 +35,8 @@ export function SidebarHeader({
   creatingChat: boolean
   botServerConnected: boolean
   botPendingCount: number
+  /** Bots can be updated, or an update of theirs runs or waits. */
+  botUpdate?: 'available' | 'pending' | null
   onCreateBot?: () => void
 }) {
   const { t } = useTranslation('ui')
@@ -127,6 +130,21 @@ export function SidebarHeader({
                 <span title={t('sidebar.experimental')} className="inline-flex text-amber-500">
                   <FlaskConical aria-hidden="true" className="size-3" />
                   <span className="sr-only">{t('sidebar.experimental')}</span>
+                </span>
+              )}
+              {item === 'bots' && botUpdate && (
+                <span
+                  title={botUpdate === 'pending' ? t('sidebar.botUpdatePending') : t('sidebar.botUpdate')}
+                  className="inline-flex text-primary"
+                >
+                  {botUpdate === 'pending' ? (
+                    <Clock aria-hidden="true" className="size-3" />
+                  ) : (
+                    <CircleArrowUp aria-hidden="true" className="size-3" />
+                  )}
+                  <span className="sr-only">
+                    {botUpdate === 'pending' ? t('sidebar.botUpdatePending') : t('sidebar.botUpdate')}
+                  </span>
                 </span>
               )}
               {item === 'bots' && botPendingCount > 0 && (

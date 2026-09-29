@@ -375,6 +375,17 @@ export default {
     environmentMemory: '{{memory}} GB',
   },
   updates: {
+    available: 'Update available',
+    availableVersion: 'Maestrly {{version}} is ready for your bots.',
+    availableNoVersion: 'A newer bot image is ready for your bots.',
+    updateBots: 'Update bots',
+    updatingServer: 'Updating the bot server…',
+    waiting: 'Updating once they finish: {{bots}}',
+    waitingNone: 'Updating…',
+    pendingShort: 'Update scheduled',
+    behind:
+      'The server runs Maestrly {{server}}, older than this app ({{app}}). Update both server images as the bot fleet guide describes.',
+    failed: 'Could not schedule the update of {{names}}. Try again.',
     unsupported: 'This server cannot schedule updates yet. Update the server first.',
   },
   activity: {
@@ -1123,7 +1134,7 @@ export default {
       location: 'Bot server',
       remoteTitle: 'Server {{host}} (SSH)',
       versions: 'Server {{server}} · Maestrly {{app}}',
-      update: 'Update server',
+      update: 'Update bots',
       serverNewer: 'This server is newer than Maestrly. Update the app to manage it.',
       setupAgain: 'Set up again',
       memoryKey: 'The server access key is only in memory. Sign in again after restarting Maestrly.',

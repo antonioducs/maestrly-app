@@ -376,6 +376,17 @@ export default {
     environmentMemory: '{{memory}} GB',
   },
   updates: {
+    available: 'Atualização disponível',
+    availableVersion: 'A Maestrly {{version}} está pronta para os seus bots.',
+    availableNoVersion: 'Uma imagem mais nova está pronta para os seus bots.',
+    updateBots: 'Atualizar bots',
+    updatingServer: 'Atualizando o servidor de bots…',
+    waiting: 'Atualiza assim que terminarem: {{bots}}',
+    waitingNone: 'Atualizando…',
+    pendingShort: 'Atualização agendada',
+    behind:
+      'O servidor roda a Maestrly {{server}}, mais antiga que este app ({{app}}). Atualize as duas imagens do servidor como o guia de bots descreve.',
+    failed: 'Não foi possível agendar a atualização de {{names}}. Tente de novo.',
     unsupported: 'Este servidor ainda não agenda atualizações. Atualize o servidor primeiro.',
   },
   activity: {
@@ -1124,7 +1135,7 @@ export default {
       location: 'Servidor de bots',
       remoteTitle: 'Servidor {{host}} (SSH)',
       versions: 'Servidor {{server}} · Maestrly {{app}}',
-      update: 'Atualizar servidor',
+      update: 'Atualizar bots',
       serverNewer: 'Este servidor é mais recente que o Maestrly. Atualize o aplicativo para gerenciá-lo.',
       setupAgain: 'Configurar de novo',
       memoryKey: 'A chave de acesso ao servidor está só na memória. Entre de novo após reiniciar o Maestrly.',
