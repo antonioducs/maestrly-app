@@ -231,6 +231,26 @@ describe('peers', () => {
       code: 'RATE_LIMITED',
     })
   })
+  it('holds messages to a bot whose environment waits to update, then delivers them', async () => {
+    const fake = await instance(),
+      f = fixture(fake.origin)
+    const a = await bot(f, 'Alpha'),
+      b = await bot(f, 'Beta')
+    const peers = new Peers(f.store, f.lifecycle)
+    await f.lifecycle.patch(a, { talksTo: [b] })
+    const target = f.lifecycle.get(b)!.environmentId!
+    f.store.updateEnvironment(target, { updateRequestedAt: new Date().toISOString() })
+    const sent = fake.inputs.length
+    const held = await peers.send(a, { to: b, text: 'Held', idempotencyKey: randomUUID() })
+    expect(held.delivered).toBe(false)
+    expect(fake.inputs).toHaveLength(sent)
+    expect(f.store.pendingPeers(b).map((message) => message.text)).toEqual(['Held'])
+    // The update done, the retry that follows the bot's readiness delivers it.
+    f.store.updateEnvironment(target, { updateRequestedAt: null })
+    await peers.retry(b)
+    expect(f.store.pendingPeers(b)).toEqual([])
+    expect(fake.inputs.at(-1)).toMatchObject({ source: 'peer', text: 'Held', peer: { botId: a } })
+  })
   it('authenticates internal HTTP with each bot token', async () => {
     const fake = await instance(),
       f = fixture(fake.origin)
