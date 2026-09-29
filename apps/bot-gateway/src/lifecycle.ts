@@ -37,6 +37,7 @@ const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
 const managed = 'org.maestrly.fleet.managed'
 const environmentLabel = 'org.maestrly.fleet.environment-id'
 const egressLabel = 'org.maestrly.fleet.egress'
+const runtimeUpdatesLabel = 'org.maestrly.fleet.runtime-updates'
 /** The label of containers created before environments: their bot's id, which their environment took over. */
 const legacyBotLabel = 'org.maestrly.fleet.bot-id'
 const now = () => new Date().toISOString()
@@ -762,6 +763,7 @@ export class Lifecycle {
       [FLEET_BOT_ENV.controlToken]: secrets.controlToken,
       [FLEET_BOT_ENV.gatewayUrl]: this.config.internalUrl,
       ...(guarded ? { [FLEET_BOT_ENV.egress]: 'public' } : {}),
+      ...(this.config.botRuntimeUpdates === 'off' ? { [FLEET_BOT_ENV.runtimeUpdates]: 'off' } : {}),
       ...(sole && soleToken
         ? { [FLEET_BOT_ENV.id]: sole.id, [FLEET_BOT_ENV.name]: sole.name, [FLEET_BOT_ENV.gatewayToken]: soleToken }
         : {}),
@@ -772,7 +774,12 @@ export class Lifecycle {
       name: environment.containerName,
       image: this.config.botImage,
       hostname: environmentId,
-      labels: { [managed]: 'true', [environmentLabel]: environmentId, [egressLabel]: this.config.botEgress },
+      labels: {
+        [managed]: 'true',
+        [environmentLabel]: environmentId,
+        [egressLabel]: this.config.botEgress,
+        [runtimeUpdatesLabel]: this.config.botRuntimeUpdates,
+      },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
       network: this.config.network,
       volume: environment.volumeName,
@@ -805,7 +812,9 @@ export class Lifecycle {
     const imageId = await this.updateImageState(environmentId, container)
     const imageChanged = imageId !== null && container.imageId !== imageId
     const egressChanged = (container.labels[egressLabel] ?? 'open') !== this.config.botEgress
-    if (imageId && (imageChanged || egressChanged)) {
+    // Containers from before this setting update on their own, as `auto` does.
+    const runtimeUpdatesChanged = (container.labels[runtimeUpdatesLabel] ?? 'auto') !== this.config.botRuntimeUpdates
+    if (imageId && (imageChanged || egressChanged || runtimeUpdatesChanged)) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
       this.instances.delete(environmentId)
@@ -819,6 +828,7 @@ export class Lifecycle {
         environmentId,
         ...(imageChanged ? { fromImage, toImage } : {}),
         ...(egressChanged ? { egress: this.config.botEgress } : {}),
+        ...(runtimeUpdatesChanged ? { runtimeUpdates: this.config.botRuntimeUpdates } : {}),
       })
       this.lifecycleActivity(environmentId, via, 'restarted', {
         updated: true,

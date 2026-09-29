@@ -707,6 +707,8 @@ async function main() {
     MAESTRLY_GATEWAY_PORT: String(port),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
     MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
+    // Bots must not download Claude Code or Codex releases during the test.
+    MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off',
   }
   await compose(['up', '-d', '--no-build'])
   const meta = await poll('gateway /v1/meta', () => request('GET', '/v1/meta'), 30000)

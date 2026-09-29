@@ -1,6 +1,12 @@
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { z } from 'zod'
-import { FLEET_BOT_EGRESS_MODES, FLEET_GATEWAY_ENV, FLEET_PORTS, isValidTimeZone } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_BOT_EGRESS_MODES,
+  FLEET_BOT_RUNTIME_UPDATE_MODES,
+  FLEET_GATEWAY_ENV,
+  FLEET_PORTS,
+  isValidTimeZone,
+} from '@maestrly/bot-fleet-protocol'
 
 const bytes = z
   .string()
@@ -22,6 +28,8 @@ const schema = z.object({
   dockerSocket: z.string().min(1),
   botMemory: bytes,
   botEgress: z.enum(FLEET_BOT_EGRESS_MODES),
+  /** Whether bots update Claude Code and Codex on their own. */
+  botRuntimeUpdates: z.enum(FLEET_BOT_RUNTIME_UPDATE_MODES),
   botShm: bytes,
   timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
@@ -54,6 +62,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     dockerSocket: env[FLEET_GATEWAY_ENV.dockerSocket] ?? '/var/run/docker.sock',
     botMemory: env[FLEET_GATEWAY_ENV.botMemory] ?? '4g',
     botEgress: env[FLEET_GATEWAY_ENV.botEgress] ?? 'open',
+    botRuntimeUpdates: env[FLEET_GATEWAY_ENV.botRuntimeUpdates] || 'auto',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',
     botSecurityOpt,
