@@ -196,6 +196,9 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
             .executeJavaScript(`document.getElementById('t')?.textContent ?? null`)
             .catch(() => null)
           if (heading !== 'Artifact probe') continue
+          // The heading is parsed before app.css finishes loading; computed styles are final only after `load`.
+          const ready = await frame.executeJavaScript('document.readyState').catch(() => null)
+          if (ready !== 'complete') continue
           const inside = (await frame.executeJavaScript(`(async () => {
             const heading = document.getElementById('t')
             let cookie
