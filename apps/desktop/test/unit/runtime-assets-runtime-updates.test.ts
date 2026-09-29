@@ -7,9 +7,9 @@ import type { RuntimeAssetId } from '../../src/shared/runtime-assets'
 import { CODEX_COMPATIBILITY_REVISION } from '../../src/main/runtime-assets/codex-compatibility'
 import { CODEX_RELEASE_PROFILE } from '../../src/main/runtime-assets/codex-releases'
 import { RuntimeReleaseStore, type RuntimeReleaseStorage } from '../../src/main/runtime-assets/release-store'
-import { CodexUpdateController } from '../../src/main/runtime-assets/codex-updates'
 import type { RuntimeDownloader } from '../../src/main/runtime-assets/downloader'
 import { createCodexTarget, type RuntimeAssetDefinition } from '../../src/main/runtime-assets/registry'
+import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-updates'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
 
 let userData: string
@@ -47,7 +47,13 @@ function memoryStorage(): RuntimeReleaseStorage & { value: () => string | null }
   }
 }
 
-function harness(options: { schedule?: boolean; storage?: ReturnType<typeof memoryStorage> } = {}) {
+function harness(
+  options: {
+    schedule?: boolean
+    storage?: ReturnType<typeof memoryStorage>
+    baseline?: { version: string | null }
+  } = {}
+) {
   const storage = options.storage ?? memoryStorage()
   const embedded = codexDefinition('1.0.0')
   const empty = (id: RuntimeAssetId): RuntimeAssetDefinition => ({ id, version: 'none', targets: {} })
@@ -81,7 +87,11 @@ function harness(options: { schedule?: boolean; storage?: ReturnType<typeof memo
   const discover = vi.fn(async () => codexDefinition(latest.version))
   const validate = vi.fn(async (_path: string, _definition: RuntimeAssetDefinition, _signal: AbortSignal) => undefined)
   const onChanged = vi.fn()
-  const controller = new CodexUpdateController({
+  const update = vi.spyOn(service, 'update')
+  const baseline = options.baseline
+  const controller = new RuntimeUpdateController({
+    profile: CODEX_RELEASE_PROFILE,
+    compatibilityRevision: CODEX_COMPATIBILITY_REVISION,
     service,
     store,
     target: 'mac-arm64',
@@ -93,11 +103,12 @@ function harness(options: { schedule?: boolean; storage?: ReturnType<typeof memo
     initialDelayMs: 1_000,
     intervalMs: 10_000,
     log: () => undefined,
+    ...(baseline ? { baseline: async () => (baseline.version ? { version: baseline.version } : null) } : {}),
   })
-  return { storage, store, service, downloader, discover, validate, onChanged, controller, latest, embedded }
+  return { storage, store, service, update, downloader, discover, validate, onChanged, controller, latest, embedded }
 }
 
-describe('CodexUpdateController', () => {
+describe('RuntimeUpdateController', () => {
   it('defaults to notify-only and persists the automatic preference', async () => {
     const first = harness()
     expect((await first.controller.snapshot()).automatic).toBe(false)
@@ -396,5 +407,68 @@ describe('CodexUpdateController', () => {
     expect(store.acceptedDefinition('2.0.0')).toBeNull()
     expect(store.acceptedDefinition('3.0.0')).not.toBeNull()
     expect(store.acceptedDefinition('4.0.0')).not.toBeNull()
+  })
+
+  describe('with a runtime provided by the image', () => {
+    it('installs a newer release over the provided one without a managed installation', async () => {
+      const { controller, service, store, update, latest } = harness({
+        schedule: true,
+        baseline: { version: '1.0.0' },
+      })
+      store.setAutomatic(true)
+      latest.version = '1.1.0'
+
+      expect(await controller.effectiveVersion()).toBe('1.0.0')
+      await controller.cycle(true)
+      expect(update).toHaveBeenCalledTimes(1)
+      expect(update.mock.calls[0][0]).toMatchObject({ version: '1.1.0' })
+      expect(await service.status('codex-runtime')).toMatchObject({ state: 'ready', version: '1.1.0' })
+      expect(await controller.effectiveVersion()).toBe('1.1.0')
+    })
+
+    it('never downloads a release that is not newer than the provided one', async () => {
+      const { controller, store, downloader, latest } = harness({ schedule: true, baseline: { version: '1.0.0' } })
+      store.setAutomatic(true)
+      latest.version = '1.0.0'
+      await controller.cycle(true)
+      expect(downloader).not.toHaveBeenCalled()
+      expect(await controller.update()).not.toHaveProperty('error')
+      expect(downloader).not.toHaveBeenCalled()
+    })
+
+    it('reports a newer release relative to the provided version', async () => {
+      const { controller, latest } = harness({ baseline: { version: '1.0.0' } })
+      latest.version = '1.1.0'
+      expect(await controller.check()).toMatchObject({ state: 'available', availableVersion: '1.1.0' })
+      latest.version = '1.0.0'
+      expect(await controller.check()).toMatchObject({ state: 'up-to-date' })
+    })
+
+    it('removes a managed installation the image caught up with, but not while it is leased', async () => {
+      const baseline = { version: '1.0.0' as string | null }
+      const { controller, service, store, latest } = harness({ schedule: true, baseline })
+      store.setAutomatic(true)
+      latest.version = '1.1.0'
+      await controller.cycle(true)
+      expect(await service.status('codex-runtime')).toMatchObject({ state: 'ready', version: '1.1.0' })
+
+      baseline.version = '1.2.0'
+      const lease = await service.acquireLease('codex-runtime')
+      await controller.cycle(false)
+      expect(await service.status('codex-runtime')).toMatchObject({ state: 'ready', version: '1.1.0' })
+      expect(await controller.effectiveVersion()).toBe('1.2.0')
+
+      lease.release()
+      await controller.cycle(false)
+      expect(await service.status('codex-runtime')).toMatchObject({ state: 'not-installed' })
+      expect(await controller.effectiveVersion()).toBe('1.2.0')
+    })
+
+    it('does nothing when neither a managed nor a provided runtime exists', async () => {
+      const { controller, discover } = harness({ schedule: true, baseline: { version: null } })
+      await controller.cycle(true)
+      expect(discover).not.toHaveBeenCalled()
+      expect(await controller.update()).toMatchObject({ error: 'not-installed' })
+    })
   })
 })

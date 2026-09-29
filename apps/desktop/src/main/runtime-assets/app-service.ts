@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { isUpdatableRuntimeAssetId } from '../../shared/runtime-assets'
 import type {
   RuntimeAssetId,
   RuntimeAssetInfo,
@@ -8,20 +9,21 @@ import type {
   RuntimeAssetPublicStatus,
   RuntimeAssetStatus,
   RuntimeAssetUpdateInfo,
+  UpdatableRuntimeAssetId,
 } from '../../shared/runtime-assets'
 import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { isE2E } from '../test-mode'
-import { validateCodexRuntime } from './codex-compatibility'
+import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from './codex-compatibility'
 import { CODEX_RELEASE_PROFILE, compareStableVersions, discoverCodexRelease } from './codex-releases'
-import { CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
-import { CodexUpdateController } from './codex-updates'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
+import { CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
+import { RuntimeUpdateController } from './runtime-updates'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
 
 let service: RuntimeAssetService | null = null
 let codexReleases: RuntimeReleaseStore | null = null
-let codexUpdates: CodexUpdateController | null = null
+const updateControllers = new Map<UpdatableRuntimeAssetId, RuntimeUpdateController>()
 const diskUsageCache = new Map<RuntimeAssetId, number>()
 const runtimeAssetNotificationTimers = new Map<RuntimeAssetId, ReturnType<typeof setTimeout>>()
 const pendingRuntimeAssetNotifications = new Set<RuntimeAssetId>()
@@ -73,20 +75,37 @@ export function runtimeAssetService(): RuntimeAssetService {
   return service
 }
 
-/** Independent Codex release channel; scheduling is enabled only in packaged, non-E2E builds. */
-export function codexRuntimeUpdates(): CodexUpdateController {
-  codexUpdates ??= new CodexUpdateController({
-    service: runtimeAssetService(),
-    store: codexReleaseStore(),
-    target: hostRuntimeTarget(),
-    embedded: RUNTIME_ASSET_REGISTRY['codex-runtime'],
-    discover: (target, signal) => discoverCodexRelease(target, signal),
-    validate: (installationPath, definition, signal) =>
-      validateCodexRuntime(installationPath, definition, signal, { clientVersion: app.getVersion() }),
-    onChanged: () => scheduleRuntimeAssetChanged('codex-runtime'),
-    schedule: app.isPackaged && !isE2E(),
-  })
-  return codexUpdates
+function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateController {
+  switch (id) {
+    case 'codex-runtime':
+      return new RuntimeUpdateController({
+        profile: CODEX_RELEASE_PROFILE,
+        compatibilityRevision: CODEX_COMPATIBILITY_REVISION,
+        service: runtimeAssetService(),
+        store: codexReleaseStore(),
+        target: hostRuntimeTarget(),
+        embedded: RUNTIME_ASSET_REGISTRY['codex-runtime'],
+        discover: (target, signal) => discoverCodexRelease(target, signal),
+        validate: (installationPath, definition, signal) =>
+          validateCodexRuntime(installationPath, definition, signal, { clientVersion: app.getVersion() }),
+        onChanged: () => scheduleRuntimeAssetChanged('codex-runtime'),
+        schedule: app.isPackaged && !isE2E(),
+      })
+  }
+}
+
+/** Independent release channel of one runtime; scheduling is enabled only in packaged, non-E2E builds. */
+export function runtimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateController {
+  let controller = updateControllers.get(id)
+  if (!controller) {
+    controller = createRuntimeUpdates(id)
+    updateControllers.set(id, controller)
+  }
+  return controller
+}
+
+export function codexRuntimeUpdates(): RuntimeUpdateController {
+  return runtimeUpdates('codex-runtime')
 }
 
 export function startRuntimeAssetUpdates(): void {
@@ -94,7 +113,7 @@ export function startRuntimeAssetUpdates(): void {
 }
 
 export function disposeRuntimeAssetUpdates(): void {
-  codexUpdates?.dispose()
+  for (const controller of updateControllers.values()) controller.dispose()
 }
 
 function scheduleRuntimeAssetChanged(id: RuntimeAssetId): void {
@@ -178,8 +197,9 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
       error: error instanceof Error ? error.message : String(error),
     })
   )
-  const update: RuntimeAssetUpdateInfo | undefined =
-    id === 'codex-runtime' ? await codexRuntimeUpdates().snapshot() : undefined
+  const update: RuntimeAssetUpdateInfo | undefined = isUpdatableRuntimeAssetId(id)
+    ? await runtimeUpdates(id).snapshot()
+    : undefined
   const definition = installableDefinition(id)
   const target = definition.targets[hostRuntimeTarget()]
   const diskUsageBytes = includeDiskUsage
@@ -253,10 +273,9 @@ export async function ensureRuntimeAsset(id: RuntimeAssetId, signal?: AbortSigna
   if (signal?.aborted) throw signal.reason ?? new Error('Runtime asset installation cancelled')
   const current = await runtimeAssetService().status(id)
   if (current.state === 'ready' && current.path) return current
-  const installed =
-    id === 'codex-runtime'
-      ? await codexRuntimeUpdates().installInitial(signal)
-      : await runtimeAssetService().install(id, signal)
+  const installed = isUpdatableRuntimeAssetId(id)
+    ? await runtimeUpdates(id).installInitial(signal)
+    : await runtimeAssetService().install(id, signal)
   if (installed.state !== 'ready' || !installed.path) {
     throw new RuntimeAssetComponentRequiredError(id, installed.error ?? `Installation ended in ${installed.state}.`)
   }
@@ -272,8 +291,8 @@ export function resetRuntimeAssetAppServiceForTests(): void {
   runtimeAssetNotificationTimers.clear()
   pendingRuntimeAssetNotifications.clear()
   emitRuntimeAssetChanged = null
-  codexUpdates?.dispose()
-  codexUpdates = null
+  for (const controller of updateControllers.values()) controller.dispose()
+  updateControllers.clear()
   codexReleases = null
   service = null
   diskUsageCache.clear()

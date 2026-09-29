@@ -4,14 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
-import { validateCodexRuntime } from '../../src/main/runtime-assets/codex-compatibility'
+import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from '../../src/main/runtime-assets/codex-compatibility'
 import {
   CODEX_RELEASE_PROFILE,
   compareStableVersions,
   discoverCodexRelease,
 } from '../../src/main/runtime-assets/codex-releases'
 import { RuntimeReleaseStore } from '../../src/main/runtime-assets/release-store'
-import { CodexUpdateController } from '../../src/main/runtime-assets/codex-updates'
+import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-updates'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from '../../src/main/runtime-assets/registry'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
 import { RUNTIME_ASSET_IDS, type RuntimeAssetId } from '../../src/shared/runtime-assets'
@@ -77,7 +77,9 @@ suite('managed provider runtime assets real smoke', () => {
         userDataPath,
         acceptedDefinition: (id, version) => (id === 'codex-runtime' ? store.acceptedDefinition(version) : null),
       })
-      const controller = new CodexUpdateController({
+      const controller = new RuntimeUpdateController({
+        profile: CODEX_RELEASE_PROFILE,
+        compatibilityRevision: CODEX_COMPATIBILITY_REVISION,
         service,
         store,
         target: targetId,
