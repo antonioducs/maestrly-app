@@ -108,6 +108,8 @@ const isJsonContent = (value: string | undefined): boolean => /^application\/jso
 function send(res: http.ServerResponse, status: number, headers: Record<string, string>, body?: string | Buffer): void {
   const payload = body === undefined ? undefined : typeof body === 'string' ? Buffer.from(body) : body
   res.writeHead(status, { ...headers, ...(payload ? { 'content-length': String(payload.byteLength) } : {}) })
+  // Artifact HTML is intentionally active, but handleContent serves it with a CSP sandbox and opaque origin.
+  // codeql[js/reflected-xss]
   res.end(payload)
 }
 
