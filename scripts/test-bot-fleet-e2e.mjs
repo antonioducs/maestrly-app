@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { createWriteStream, mkdirSync, readFileSync } from 'node:fs'
+import { createWriteStream, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,6 +49,8 @@ let dockerReady = false
 let sseAbort
 let sseTask
 let composeEnv
+// The configured bot image while the update checkpoint points its tag at a derived image: cleanup puts it back.
+let updateImage = null
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -282,6 +285,7 @@ async function containerState(name) {
     running: value.State.Running,
     startedAt: value.State.StartedAt,
     labels: value.Config.Labels ?? {},
+    image: value.Image,
     memory: value.HostConfig.Memory,
     memorySwap: value.HostConfig.MemorySwap,
   }
@@ -634,10 +638,19 @@ async function capture(name, display = ':0', fileName = 'e2e-scout.png') {
   })
   return target
 }
+/** Points the configured bot image's tag back at the image it named before the update checkpoint. */
+async function restoreBotImage() {
+  if (!updateImage || updateImage.restored) return
+  const tagged = await docker(['tag', updateImage.original, updateImage.configured], { allowFailure: true })
+  updateImage.restored = tagged.code === 0
+  if (!updateImage.restored)
+    console.error('Could not tag ' + updateImage.configured + ' back to ' + updateImage.original + ': ' + tagged.stderr)
+}
 async function cleanup() {
   if (sseAbort) sseAbort.abort()
   await sseTask
   if (!dockerReady) return
+  await restoreBotImage()
   if (keep) {
     console.log('Kept Docker resources for project ' + project)
     return
@@ -657,6 +670,9 @@ async function cleanup() {
     .filter(Boolean)
   for (const volume of volumes) await docker(['volume', 'rm', volume], { allowFailure: true })
   await docker(['network', 'rm', network], { allowFailure: true })
+  // Only now: this run's containers used the derived image, which no tag names once the configured one is back.
+  if (updateImage?.derived && updateImage.restored)
+    await docker(['rmi', '-f', updateImage.derived], { allowFailure: true })
   const left = [
     ...(await docker(['ps', '-aq', '--filter', 'name=' + suffix], { allowFailure: true })).stdout.split(/\s+/),
     ...(await docker(['volume', 'ls', '-q', '--filter', 'name=' + suffix], { allowFailure: true })).stdout.split(/\s+/),
@@ -2209,6 +2225,89 @@ async function main() {
     'restore and delete forever',
     'conversation and peer back after restore; bot data gone after delete; environment archive kept the volume, ' +
       'delete forever removed it and its records'
+  )
+
+  // A newer bot image: the configured tag now names an image derived from the one Scout's environment runs. An update
+  // scheduled while Scout works waits; once its turn ends, the gateway recreates the container on the new image.
+  const configuredImage = (await request('GET', '/v1/meta')).botImage
+  const originalImage = (await docker(['image', 'inspect', '--format', '{{.Id}}', configuredImage])).stdout.trim()
+  const baseTag = 'maestrly/bot-instance:e2e-update-base-' + suffix
+  const buildDir = mkdtempSync(path.join(os.tmpdir(), 'fleet-e2e-update-'))
+  try {
+    await docker(['tag', originalImage, baseTag])
+    const dockerfile = 'FROM ' + baseTag + '\nLABEL org.maestrly.e2e.update=' + suffix + '\n'
+    writeFileSync(path.join(buildDir, 'Dockerfile'), dockerfile)
+    updateImage = { configured: configuredImage, original: originalImage, derived: null, restored: false }
+    await docker(['build', '-q', '-t', configuredImage, buildDir])
+    updateImage.derived = (await docker(['image', 'inspect', '--format', '{{.Id}}', configuredImage])).stdout.trim()
+  } finally {
+    rmSync(buildDir, { recursive: true, force: true })
+    await docker(['rmi', baseTag], { allowFailure: true })
+  }
+  assert.notEqual(updateImage.derived, originalImage)
+  const beforeUpdate = await containerState(containers[1])
+  assert.equal(beforeUpdate.image, originalImage)
+  const historiesBeforeUpdate = [
+    [scoutId, await historyIds(scoutId)],
+    [partnerId, await historyIds(partnerId)],
+  ]
+  const updateTag = randomUUID().slice(0, 8)
+  const slowUpdate = await send(scoutId, 'E2E-SLOW ms=15000 tag=' + updateTag)
+  await poll('Scout working before the update', async () => (await bot(scoutId)).status === 'working', 30000)
+  const scheduled = await request('POST', environmentRoute + '/update', { when: 'idle' })
+  assert.equal(scheduled.update.available, true)
+  assert.ok(scheduled.update.pendingSince, 'the update was not scheduled')
+  await sleep(3000)
+  const whileWorking = await containerState(containers[1])
+  assert.deepEqual([whileWorking.id, whileWorking.running], [beforeUpdate.id, true])
+  assert.equal((await request('GET', environmentRoute)).update.pendingSince, scheduled.update.pendingSince)
+  await answer(slowUpdate, 'E2E-SLOW-DONE tag=' + updateTag, { noPermission: true })
+  const afterUpdate = await poll(
+    'environment updated once Scout is idle',
+    async () => {
+      const environment = await request('GET', environmentRoute)
+      const state = await containerState(containers[1])
+      return environment.lifecycle === 'running' &&
+        environment.update?.available === false &&
+        environment.update?.pendingSince === null &&
+        state?.id !== beforeUpdate.id &&
+        state?.image === updateImage.derived
+        ? state
+        : null
+    },
+    180000
+  )
+  for (const id of [scoutId, partnerId])
+    await poll(
+      id + ' back after the update',
+      async () => {
+        const value = await bot(id)
+        return value.lifecycle === 'running' && value.status === 'idle'
+      },
+      120000
+    )
+  for (const [id, ids] of historiesBeforeUpdate) {
+    const kept = new Set(await historyIds(id))
+    assert.ok(
+      ids.every((item) => kept.has(item)),
+      id + ' lost its conversation in the update'
+    )
+  }
+  const updatedTag = randomUUID().slice(0, 8)
+  await answer(await send(scoutId, 'E2E-ALIVE tag=' + updatedTag), 'E2E-ALIVE-OK tag=' + updatedTag, {
+    noPermission: true,
+  })
+  const updateEntry = (await activityEntries(true))
+    .filter((entry) => entry.kind === 'environment_restarted' && entry.environmentId === scoutEnvId)
+    .at(-1)
+  assert.equal(updateEntry?.data.updated, true)
+  await restoreBotImage()
+  assert.ok(updateImage.restored, 'the configured bot image could not be tagged back')
+  pass(
+    'environment update when idle',
+    'waited while Scout worked, then recreated its container (' +
+      afterUpdate.id.slice(0, 12) +
+      ') on the new image with both conversations kept'
   )
   for (const name of containers) {
     const stat = await docker(['stats', '--no-stream', '--format', '{{.MemUsage}}', name], { allowFailure: true })
