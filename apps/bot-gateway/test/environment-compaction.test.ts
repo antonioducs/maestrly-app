@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   type FleetBot,
   type FleetCompactionConfig,
@@ -272,5 +273,46 @@ describe('environment compaction defaults', () => {
     expect(stored(h, scout)).toBeNull()
     expect(await bot(h, scout)).toMatchObject({ compaction: x, compactionSource: 'environment' })
     expect(installed(h, scout)?.profile.compaction).toEqual(x)
+  })
+})
+
+describe('compaction context limit', () => {
+  it('announces the feature and reinstalls the inheriting bots when only the default limit changes', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const meta = await json<{ features: string[] }>(await h.request('GET', '/v1/meta'))
+    expect(meta.features).toContain(FLEET_CONTEXT_LIMIT_FEATURE)
+    const x = model('model-x')
+    await patchEnvironment(h, { compaction: x })
+    const installs = installCount(h, 'test')
+    const limited = { ...x, contextLimitTokens: 300_000 }
+    expect(await patchEnvironment(h, { compaction: limited })).toMatchObject({ compaction: limited })
+    expect(installCount(h, 'test')).toBe(installs + 1)
+    expect(installed(h, 'test')?.profile.compaction).toEqual(limited)
+    expect(await bot(h, 'test')).toMatchObject({ compaction: limited, compactionSource: 'environment' })
+    // Removing the limit is a change too, and brings back the model window.
+    await patchEnvironment(h, { compaction: x })
+    expect(installCount(h, 'test')).toBe(installs + 2)
+    expect(installed(h, 'test')?.profile.compaction?.contextLimitTokens ?? null).toBeNull()
+  })
+
+  it('treats an explicit null limit as the same config as one without it', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const x = model('model-x')
+    await patchEnvironment(h, { compaction: x })
+    const installs = installCount(h, 'test')
+    await patchEnvironment(h, { compaction: { ...x, contextLimitTokens: null } })
+    expect(installCount(h, 'test')).toBe(installs)
+  })
+
+  it('gives a bot its own limit and refuses one out of range', async () => {
+    const h = await harness(Date.now, { environments: true })
+    await patchEnvironment(h, { compaction: model('model-x') })
+    const own = { ...model('model-y'), contextLimitTokens: 150_000 }
+    expect(await patchBot(h, 'test', { compaction: own })).toMatchObject({ compaction: own, compactionSource: 'bot' })
+    expect(JSON.parse(stored(h, 'test')!)).toEqual(own)
+    expect(installed(h, 'test')?.profile.compaction).toEqual(own)
+    const refused = await h.request('PATCH', '/v1/bots/test', { compaction: { ...own, contextLimitTokens: 50_000 } })
+    expect(refused.status).toBe(400)
+    expect(installed(h, 'test')?.profile.compaction).toEqual(own)
   })
 })
