@@ -839,8 +839,9 @@ app.whenReady().then(async () => {
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
-  // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  if (!isBotMode()) startRuntimeAssetUpdates()
+  // Runtime release checks: delayed, packaged builds and bots only, never for a component that is not installed.
+  // Bots also update Claude Code, with the runtime of their image as the floor.
+  startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 

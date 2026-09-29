@@ -1,4 +1,6 @@
+import { FLEET_BOT_ENV } from '@maestrly/bot-fleet-protocol'
 import { app } from 'electron'
+import { accessSync, constants } from 'node:fs'
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { isUpdatableRuntimeAssetId } from '../../shared/runtime-assets'
@@ -11,21 +13,27 @@ import type {
   RuntimeAssetUpdateInfo,
   UpdatableRuntimeAssetId,
 } from '../../shared/runtime-assets'
+import { bundledClaudeCandidate } from '../chat/claude-agent-sdk/resolve-claude'
+import { resolveCodexRuntime } from '../chat/codex-subscription/runtime-resolver'
+import { isBotMode } from '../fleet/instance/config'
 import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { isE2E } from '../test-mode'
 import { CLAUDE_CODE_COMPATIBILITY_REVISION, validateClaudeCodeRuntime } from './claude-code-compatibility'
 import { CLAUDE_CODE_RELEASE_PROFILE, discoverClaudeCodeRelease } from './claude-code-releases'
 import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from './codex-compatibility'
 import { CODEX_RELEASE_PROFILE, compareStableVersions, discoverCodexRelease } from './codex-releases'
-import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
+import { CLAUDE_CODE_PINNED_VERSION, RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
 import { CLAUDE_CODE_RELEASE_STORE_KEY, CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
-import { RuntimeUpdateController } from './runtime-updates'
+import { type RuntimeBaseline, RuntimeUpdateController } from './runtime-updates'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
 
 let service: RuntimeAssetService | null = null
 const releaseStores = new Map<UpdatableRuntimeAssetId, RuntimeReleaseStore>()
 const updateControllers = new Map<UpdatableRuntimeAssetId, RuntimeUpdateController>()
+const imageBaselines = new Map<UpdatableRuntimeAssetId, Promise<RuntimeBaseline | null>>()
+const runtimeUpdateListeners = new Set<(id: UpdatableRuntimeAssetId) => void>()
+const runtimeUpdateListenerTimers = new Map<UpdatableRuntimeAssetId, ReturnType<typeof setTimeout>>()
 const diskUsageCache = new Map<RuntimeAssetId, number>()
 const runtimeAssetNotificationTimers = new Map<RuntimeAssetId, ReturnType<typeof setTimeout>>()
 const pendingRuntimeAssetNotifications = new Set<RuntimeAssetId>()
@@ -65,6 +73,8 @@ export function releaseStore(id: UpdatableRuntimeAssetId): RuntimeReleaseStore {
       },
       target: hostRuntimeTarget(),
       embedded: RUNTIME_ASSET_REGISTRY[id],
+      // Bots keep their runtimes current on their own; the desktop app notifies and lets the user decide.
+      automaticDefault: isBotMode(),
     })
     releaseStores.set(id, store)
   }
@@ -86,9 +96,89 @@ export function runtimeAssetService(): RuntimeAssetService {
     // Consulted only for an updatable runtime installation whose version differs from the embedded pin.
     acceptedDefinition: (id, version) =>
       isUpdatableRuntimeAssetId(id) ? releaseStore(id).acceptedDefinition(version) : null,
-    onStatusChanged: (status) => scheduleRuntimeAssetChanged(status.id),
+    onStatusChanged: (status) => {
+      scheduleRuntimeAssetChanged(status.id)
+      if (isUpdatableRuntimeAssetId(status.id)) notifyRuntimeUpdateListeners(status.id)
+    },
   })
   return service
+}
+
+/** Bots update on their own unless the server turned it off (`MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`). */
+export function botRuntimeUpdatesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[FLEET_BOT_ENV.runtimeUpdates] !== 'off'
+}
+
+function scheduleRuntimeUpdates(): boolean {
+  return !isE2E() && (app.isPackaged || (isBotMode() && botRuntimeUpdatesEnabled()))
+}
+
+async function readImageBaseline(id: UpdatableRuntimeAssetId): Promise<RuntimeBaseline | null> {
+  switch (id) {
+    case 'codex-runtime': {
+      try {
+        const image = resolveCodexRuntime()
+        return image.source === 'materialized' && image.version ? { version: image.version } : null
+      } catch {
+        return null
+      }
+    }
+    case 'claude-code-runtime': {
+      // The binary of the Agent SDK's platform package is the Claude Code the SDK bundles.
+      const bundled = bundledClaudeCandidate()
+      if (!bundled) return null
+      try {
+        accessSync(bundled, constants.X_OK)
+        return { version: CLAUDE_CODE_PINNED_VERSION }
+      } catch {
+        return null
+      }
+    }
+  }
+}
+
+/**
+ * The runtime a bot image ships, which a managed installation must be newer than to be used. Null outside bots and
+ * when the image has none. The image never changes while this process runs, so it is read once.
+ */
+export function imageRuntimeBaseline(id: UpdatableRuntimeAssetId): Promise<RuntimeBaseline | null> {
+  if (!isBotMode()) return Promise.resolve(null)
+  let baseline = imageBaselines.get(id)
+  if (!baseline) {
+    baseline = readImageBaseline(id)
+    imageBaselines.set(id, baseline)
+  }
+  return baseline
+}
+
+/**
+ * Called after an updatable runtime's installation or release channel changed (throttled), so its consumers can
+ * switch to the version now in use.
+ */
+export function onRuntimeUpdateChanged(listener: (id: UpdatableRuntimeAssetId) => void): () => void {
+  runtimeUpdateListeners.add(listener)
+  return () => runtimeUpdateListeners.delete(listener)
+}
+
+function notifyRuntimeUpdateListeners(id: UpdatableRuntimeAssetId): void {
+  if (!runtimeUpdateListeners.size || runtimeUpdateListenerTimers.has(id)) return
+  const timer = setTimeout(() => {
+    runtimeUpdateListenerTimers.delete(id)
+    for (const listener of runtimeUpdateListeners) {
+      try {
+        listener(id)
+      } catch {
+        // A consumer's failure never affects the update or the other consumers.
+      }
+    }
+  }, RUNTIME_ASSET_NOTIFICATION_THROTTLE_MS)
+  timer.unref?.()
+  runtimeUpdateListenerTimers.set(id, timer)
+}
+
+function runtimeUpdateChanged(id: UpdatableRuntimeAssetId): void {
+  scheduleRuntimeAssetChanged(id)
+  notifyRuntimeUpdateListeners(id)
 }
 
 function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateController {
@@ -104,8 +194,9 @@ function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateControl
         discover: (target, signal) => discoverCodexRelease(target, signal),
         validate: (installationPath, definition, signal) =>
           validateCodexRuntime(installationPath, definition, signal, { clientVersion: app.getVersion() }),
-        onChanged: () => scheduleRuntimeAssetChanged('codex-runtime'),
-        schedule: app.isPackaged && !isE2E(),
+        onChanged: () => runtimeUpdateChanged('codex-runtime'),
+        schedule: scheduleRuntimeUpdates(),
+        baseline: () => imageRuntimeBaseline('codex-runtime'),
       })
     case 'claude-code-runtime':
       return new RuntimeUpdateController({
@@ -118,13 +209,17 @@ function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateControl
         discover: (target, signal) => discoverClaudeCodeRelease(target, signal),
         validate: (installationPath, definition, signal) =>
           validateClaudeCodeRuntime(installationPath, definition, signal),
-        onChanged: () => scheduleRuntimeAssetChanged('claude-code-runtime'),
-        schedule: false,
+        onChanged: () => runtimeUpdateChanged('claude-code-runtime'),
+        schedule: scheduleRuntimeUpdates(),
+        baseline: () => imageRuntimeBaseline('claude-code-runtime'),
       })
   }
 }
 
-/** Independent release channel of one runtime; scheduling is enabled only in packaged, non-E2E builds. */
+/**
+ * Independent release channel of one runtime. Background checks run in packaged builds and in bots (unless the server
+ * turned them off), never in development or E2E builds.
+ */
 export function runtimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateController {
   let controller = updateControllers.get(id)
   if (!controller) {
@@ -140,8 +235,10 @@ export function codexRuntimeUpdates(): RuntimeUpdateController {
 
 export { listedRuntimeAssetIds } from './visibility'
 
+/** Codex everywhere its schedule allows; Claude Code only in bots, the only place Maestrly manages it. */
 export function startRuntimeAssetUpdates(): void {
   codexRuntimeUpdates().start()
+  if (isBotMode()) runtimeUpdates('claude-code-runtime').start()
 }
 
 export function disposeRuntimeAssetUpdates(): void {
@@ -233,6 +330,12 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
   const update: RuntimeAssetUpdateInfo | undefined = isUpdatableRuntimeAssetId(id)
     ? await runtimeUpdates(id).snapshot()
     : undefined
+  const baseline = isUpdatableRuntimeAssetId(id) ? await imageRuntimeBaseline(id) : null
+  const managedNewer =
+    status.state === 'ready' &&
+    !!status.version &&
+    !!baseline &&
+    (compareStableVersions(status.version, baseline.version) ?? 0) > 0
   const definition = installableDefinition(id)
   const target = definition.targets[hostRuntimeTarget()]
   const diskUsageBytes = includeDiskUsage
@@ -261,6 +364,7 @@ async function buildRuntimeAssetInfo(id: RuntimeAssetId, includeDiskUsage: boole
     unpackedBytes: target?.unpackedBytes ?? 0,
     status: safeStatus,
     ...(update ? { update } : {}),
+    ...(baseline ? { provided: { version: baseline.version, active: !managedNewer } } : {}),
   }
 }
 
@@ -327,6 +431,10 @@ export function resetRuntimeAssetAppServiceForTests(): void {
   for (const controller of updateControllers.values()) controller.dispose()
   updateControllers.clear()
   releaseStores.clear()
+  imageBaselines.clear()
+  runtimeUpdateListeners.clear()
+  for (const timer of runtimeUpdateListenerTimers.values()) clearTimeout(timer)
+  runtimeUpdateListenerTimers.clear()
   service = null
   diskUsageCache.clear()
 }

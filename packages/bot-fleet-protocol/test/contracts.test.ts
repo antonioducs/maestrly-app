@@ -11,6 +11,7 @@ import {
 import {
   FLEET_BOT_ENV,
   FLEET_BOT_EGRESS_MODES,
+  FLEET_BOT_RUNTIME_UPDATE_MODES,
   FLEET_GATEWAY_ENV,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -160,6 +161,9 @@ describe('domain contracts', () => {
     expect(FLEET_BOT_EGRESS_MODES).toEqual(['open', 'public'])
     expect(FLEET_GATEWAY_ENV.botEgress).toBe('MAESTRLY_GATEWAY_BOT_EGRESS')
     expect(FLEET_BOT_ENV.egress).toBe('MAESTRLY_BOT_EGRESS')
+    expect(FLEET_BOT_RUNTIME_UPDATE_MODES).toEqual(['auto', 'off'])
+    expect(FLEET_GATEWAY_ENV.botRuntimeUpdates).toBe('MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES')
+    expect(FLEET_BOT_ENV.runtimeUpdates).toBe('MAESTRLY_BOT_RUNTIME_UPDATES')
   })
   it('preserves structured permission tools in transcript, pending inbox, and events', () => {
     const tool = { name: 'computer_click', target: '(10, 20)' }
