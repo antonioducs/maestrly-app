@@ -1,5 +1,6 @@
 import {
   deriveBotId,
+  fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -97,6 +98,10 @@ export class Lifecycle {
   /** Archived bots and environments being deleted forever: neither listed nor restorable meanwhile. */
   private readonly deleting = new Set<string>()
   private readonly deletingEnvironments = new Set<string>()
+  /** Updates being applied, by environment: a status arriving meanwhile waits for the same one instead of a second. */
+  private readonly draining = new Map<string, Promise<void>>()
+  /** Checks waiting updates while any exists: a bot may go idle without a status event reaching the gateway. */
+  private updateTimer: NodeJS.Timeout | null = null
   private readonly logger = new Logger()
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
@@ -114,7 +119,8 @@ export class Lifecycle {
     readonly instance: InstanceFactory = (id, secret, host) =>
       new InstanceClient(id, secret, 'http://' + host + ':' + FLEET_PORTS.instanceControl),
     readonly healthTimeoutMs = 240000,
-    readonly controllerLostMs = 300000
+    readonly controllerLostMs = 300000,
+    readonly updateCheckMs = 30000
   ) {}
   /**
    * Runs an environment's container, membership and installation changes one at a time, so that a bot joining while
@@ -197,6 +203,9 @@ export class Lifecycle {
     this.emitBot(id)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
     if (status.ready && this.get(id)?.lifecycle === 'running') this.onReady(id)
+    const environmentId = this.store.getBot(id)?.environmentId
+    if (environmentId && this.store.getEnvironment(environmentId)?.updateRequestedAt)
+      void this.maybeUpdate(environmentId)
   }
   private stopLink(environmentId: string) {
     this.links.get(environmentId)?.abort()
@@ -447,7 +456,10 @@ export class Lifecycle {
       compaction: environment.compaction,
       appVersion: instance?.appVersion ?? null,
       capabilities: this.environmentCapabilities(environment.id),
-      update: null,
+      update: {
+        available: this.imageOutdated.get(environment.id) ?? false,
+        pendingSince: environment.updateRequestedAt,
+      },
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
@@ -709,6 +721,7 @@ export class Lifecycle {
   }
   /** Brings a stopped or failed environment back: its container if it still has one, otherwise a new one. */
   private async bringUp(environment: StoredEnvironment) {
+    this.clearUpdate(environment.id)
     const container = await this.container(environment)
     if (container) await this.startWithCurrentImage(environment.id, container, false, null)
     else await this.provision(environment.id)
@@ -1056,6 +1069,8 @@ export class Lifecycle {
     this.onCloseEnvironmentScreens(environmentId, 4002)
     const code = failureCode(error)
     this.updateEnvironment(environmentId, {
+      // Starting it again recreates its container on the configured image anyway.
+      updateRequestedAt: null,
       lifecycle: 'failed',
       setup: {
         step: 'failed',
@@ -1071,6 +1086,7 @@ export class Lifecycle {
     return this.exclusive(id, async () => {
       const environment = this.requireEnvironment(id)
       if (environment.lifecycle !== 'running') {
+        this.clearUpdate(id)
         const container = await this.container(environment)
         if (!container)
           throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
@@ -1095,7 +1111,8 @@ export class Lifecycle {
   /** Stops an environment's container and every bot in it; the environment must be exclusive. */
   private async halt(id: string, via: Via) {
     const environment = this.store.getEnvironment(id)!
-    this.updateEnvironment(id, { lifecycle: 'stopping' })
+    // Its next start moves it to the configured image anyway.
+    this.updateEnvironment(id, { lifecycle: 'stopping', updateRequestedAt: null })
     this.cancelReconcile(id)
     this.stopLink(id)
     this.releaseBots(id, 4002)
@@ -1109,23 +1126,124 @@ export class Lifecycle {
   /** Restarts every bot of an environment, recreating its container on the configured image when it is older. */
   async restartEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
     this.requireEnvironment(id)
-    return this.exclusive(id, async () => {
+    return this.exclusive(id, () => this.restartLocked(id, via))
+  }
+  /** A restart moves the environment to the configured image, which is what a waiting update waits for. */
+  private async restartLocked(id: string, via: Via): Promise<FleetEnvironment> {
+    const environment = this.requireEnvironment(id)
+    const container = await this.container(environment)
+    if (!container) throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
+    this.updateEnvironment(id, { lifecycle: 'restarting', updateRequestedAt: null })
+    this.cancelReconcile(id)
+    this.stopLink(id)
+    this.releaseBots(id, 4002)
+    this.onCloseEnvironmentScreens(id, 4002)
+    try {
+      if (!(await this.startWithCurrentImage(id, container, true, via))) this.lifecycleActivity(id, via, 'restarted')
+    } catch (error) {
+      this.failEnvironment(id, error)
+    }
+    return this.environmentView(this.store.getEnvironment(id)!)
+  }
+  /** Whether the bot's environment waits to update: its scheduled routine runs are skipped and peer messages held. */
+  updatePending(botId: string): boolean {
+    const environmentId = this.store.getBot(botId)?.environmentId
+    return !!environmentId && !!this.store.getEnvironment(environmentId)?.updateRequestedAt
+  }
+  /** The active bots of an environment that restarting it now would interrupt. */
+  busyBots(environmentId: string): string[] {
+    return this.store
+      .botsOfEnvironment(environmentId)
+      .map((bot) => this.get(bot.id))
+      .filter((bot): bot is FleetBot => !!bot && fleetBotBlocksUpdate(bot))
+      .map((bot) => bot.id)
+  }
+  /**
+   * Schedules a move to the configured image that waits until none of the environment's bots is busy, and answers at
+   * once. Without an update available it changes nothing; scheduling again keeps the first request.
+   */
+  async scheduleUpdate(id: string): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    const view = await this.exclusive(id, async () => {
       const environment = this.requireEnvironment(id)
+      if (environment.lifecycle !== 'running')
+        throw new GatewayError('BOT_NOT_RUNNING', 'Start the environment to update it')
+      // Inspected again, so that an image retagged since the last start counts without restarting the gateway.
       const container = await this.container(environment)
-      if (!container)
-        throw new GatewayError('NOT_FOUND', via ? 'Bot container missing' : 'Environment container missing')
-      this.updateEnvironment(id, { lifecycle: 'restarting' })
-      this.cancelReconcile(id)
-      this.stopLink(id)
-      this.releaseBots(id, 4002)
-      this.onCloseEnvironmentScreens(id, 4002)
-      try {
-        if (!(await this.startWithCurrentImage(id, container, true, via))) this.lifecycleActivity(id, via, 'restarted')
-      } catch (error) {
-        this.failEnvironment(id, error)
-      }
+      if (container) await this.updateImageState(id, container)
+      if (this.imageOutdated.get(id) && !environment.updateRequestedAt) {
+        this.updateEnvironment(id, { updateRequestedAt: now() })
+        this.logger.info('Environment update scheduled', { environmentId: id })
+      } else this.emitEnvironment(id, false)
       return this.environmentView(this.store.getEnvironment(id)!)
     })
+    if (view.update?.pendingSince) {
+      this.armUpdateChecks()
+      void this.maybeUpdate(id)
+    }
+    return view
+  }
+  /** Updates at once, interrupting its busy bots: a restart on the configured image. */
+  updateNow(id: string): Promise<FleetEnvironment> {
+    return this.restartEnvironment(id)
+  }
+  async cancelUpdate(id: string): Promise<FleetEnvironment> {
+    this.requireEnvironment(id)
+    return this.exclusive(id, async () => {
+      this.requireEnvironment(id)
+      this.clearUpdate(id)
+      return this.environmentView(this.store.getEnvironment(id)!)
+    })
+  }
+  /** Tries every waiting update; the timer calls it, and so can tests. */
+  async checkUpdates(): Promise<void> {
+    const pending = this.store.listEnvironments().filter((environment) => environment.updateRequestedAt)
+    if (!pending.length) this.disarmUpdateChecks()
+    await Promise.all(pending.map((environment) => this.maybeUpdate(environment.id)))
+  }
+  private clearUpdate(id: string) {
+    const environment = this.store.getEnvironment(id)
+    if (environment?.updateRequestedAt && !environment.archivedAt)
+      this.updateEnvironment(id, { updateRequestedAt: null })
+  }
+  private readyToUpdate(id: string): boolean {
+    const environment = this.store.getEnvironment(id)
+    return (
+      !!environment?.updateRequestedAt &&
+      !environment.archivedAt &&
+      environment.lifecycle === 'running' &&
+      this.busyBots(id).length === 0
+    )
+  }
+  /** Applies a waiting update once none of the environment's bots is busy. */
+  private maybeUpdate(id: string): Promise<void> {
+    const running = this.draining.get(id)
+    if (running) return running
+    if (!this.readyToUpdate(id)) return Promise.resolve()
+    const drain = this.exclusive(id, async () => {
+      // Checked again with the statuses of this moment: a turn may have started while the lock was taken.
+      if (!this.readyToUpdate(id)) return
+      this.logger.info('Environment idle; updating', { environmentId: id })
+      await this.restartLocked(id, null)
+    })
+      .catch((error: unknown) => {
+        this.logger.warn('Environment update failed', {
+          environmentId: id,
+          failure: error instanceof GatewayError ? error.code : 'INTERNAL',
+        })
+      })
+      .finally(() => this.draining.delete(id))
+    this.draining.set(id, drain)
+    return drain
+  }
+  private armUpdateChecks() {
+    if (this.updateTimer) return
+    this.updateTimer = setInterval(() => void this.checkUpdates(), this.updateCheckMs)
+    this.updateTimer.unref?.()
+  }
+  private disarmUpdateChecks() {
+    if (this.updateTimer) clearInterval(this.updateTimer)
+    this.updateTimer = null
   }
   /**
    * Changes an environment's name, memory limit or default compaction model. A new limit reaches its container live
@@ -1208,6 +1326,8 @@ export class Lifecycle {
       this.instances.delete(id)
       const members = this.store.botsOfEnvironment(id)
       const botIds = this.store.transaction(() => {
+        // Restoring it creates its container on the configured image anyway.
+        if (environment.updateRequestedAt) this.store.updateEnvironment(id, { updateRequestedAt: null })
         const archived = this.store.archiveEnvironment(id)
         for (const botId of archived) this.syncPeers(botId, [])
         return archived
@@ -1730,12 +1850,19 @@ export class Lifecycle {
         container = found.get(id)
       if (!container) {
         this.imageOutdated.delete(id)
-        this.updateEnvironment(id, { lifecycle: environment.lifecycle === 'creating' ? 'failed' : 'stopped' })
+        this.updateEnvironment(id, {
+          lifecycle: environment.lifecycle === 'creating' ? 'failed' : 'stopped',
+          updateRequestedAt: null,
+        })
         continue
       }
       this.imageOutdated.set(id, Boolean(currentImage && container.imageId !== currentImage.id))
       if (this.imageOutdated.get(id))
         this.logger.info('Environment container uses an older image; restart to update', { environmentId: id })
+      // A waiting update survives a gateway restart, including the one updating the server, while there is still
+      // something to update in a running container.
+      if (environment.updateRequestedAt && (!this.imageOutdated.get(id) || container.state !== 'running'))
+        this.clearUpdate(id)
       if (container.state === 'running') {
         try {
           if (await this.exclusive(id, () => this.reconcileEnvironment(id))) this.scheduleReconcile(id, 1000)
@@ -1745,6 +1872,7 @@ export class Lifecycle {
         }
       } else this.updateEnvironment(id, { lifecycle: 'stopped' })
     }
+    if (this.store.listEnvironments().some((environment) => environment.updateRequestedAt)) this.armUpdateChecks()
   }
   /** Installs a running environment's bots again; true when a bot that had to leave its slot could not. */
   private async reconcileEnvironment(id: string): Promise<boolean> {
@@ -1790,6 +1918,7 @@ export class Lifecycle {
     for (const id of [...this.links.keys()]) this.stopLink(id)
     for (const timer of this.controllerTimers.values()) clearTimeout(timer)
     this.controllerTimers.clear()
+    this.disarmUpdateChecks()
   }
   /** Measures each running environment's container; a bot alone in its environment reports the figures too. */
   async refreshStats() {
