@@ -17,6 +17,57 @@ export default {
   },
 
   tools: {
+    artifact_create: {
+      title: 'Publicar artefato',
+      description:
+        'Publica uma página web autocontida (HTML, CSS, JavaScript e assets) como um artefato versionado que o usuário abre pelo chat ou pela central de artefatos. Passe os arquivos inline com `files`, ou publique uma pasta de build com `directory` (relativa aos arquivos desta conversa). O arquivo de entrada padrão é index.html. Os artefatos são privados do usuário. Use para protótipos, relatórios, dashboards e outras páginas que valha a pena ver num navegador.',
+      params: {
+        title: 'título curto mostrado ao usuário',
+        description: 'descrição opcional em uma linha',
+        files: 'arquivos da página; passe exatamente um entre files e directory',
+        filePath: 'caminho relativo, como index.html ou assets/app.js',
+        fileContent: 'conteúdo do arquivo: texto, ou base64 quando encoding for base64',
+        fileEncoding: 'utf8 (padrão), ou base64 para arquivos binários como imagens',
+        directory:
+          'pasta a publicar, relativa aos arquivos desta conversa (por exemplo dist); arquivos ocultos e node_modules são ignorados',
+        entry: 'arquivo HTML aberto primeiro (padrão index.html)',
+      },
+    },
+    artifact_update: {
+      title: 'Atualizar artefato',
+      description:
+        'Cria uma nova versão de um artefato; as versões anteriores são mantidas. Passe a baseVersion que você leu. Use `edits` para substituições exatas de texto, `files` e `delete` para adicionar, substituir ou remover arquivos, ou `directory` para trocar todos os arquivos pelo conteúdo de uma pasta.',
+      params: {
+        id: 'id do artefato',
+        baseVersion: 'a versão atual que você está alterando (de artifact_get ou do último resultado)',
+        summary: 'resumo curto do que mudou',
+        edits: 'substituições exatas aplicadas em ordem; cada oldText precisa aparecer exatamente uma vez',
+        oldText: 'texto exato a substituir, com contexto suficiente para ser único',
+        files: 'arquivos a adicionar ou substituir; os demais são mantidos',
+        delete: 'caminhos dos arquivos a remover',
+        directory: 'pasta cujo conteúdo substitui todos os arquivos, relativa aos arquivos desta conversa',
+        entry: 'novo arquivo HTML de entrada (padrão: manter o atual)',
+      },
+    },
+    artifact_get: {
+      title: 'Ler artefato',
+      description: 'Lê um artefato: suas versões e arquivos, ou o texto de um arquivo com `path`.',
+      params: {
+        id: 'id do artefato',
+        version: 'versão a ler (padrão: a atual)',
+        path: 'arquivo a ler como texto (até 200 KB)',
+      },
+    },
+    artifact_list: {
+      title: 'Listar artefatos',
+      description: 'Lista os artefatos desta conversa, ou de todo o projeto com scope=project.',
+      params: { scope: 'conversation (padrão) ou project' },
+    },
+    artifact_open: {
+      title: 'Abrir artefato',
+      description: 'Abre um artefato para o usuário no navegador do drawer desta conversa.',
+      params: { id: 'id do artefato', version: 'versão a mostrar (padrão: a atual)' },
+    },
     browser_navigate: {
       title: 'Navegar',
       description: 'Navega o navegador da gaveta para uma URL (ou termo de busca).',
@@ -465,6 +516,10 @@ export default {
   },
 
   returns: {
+    artifacts: {
+      note: 'O usuário pode abri-lo pelo card no chat ou pela central de artefatos. Para alterá-lo, chame artifact_update com baseVersion igual a esta versão.',
+      opened: '"{{title}}" (versão {{version}}) aberto no navegador do drawer.',
+    },
     browser: {
       navigated: 'Navegou para {{url}}',
       moved: '{{label}} → {{url}}',
@@ -544,6 +599,38 @@ export default {
   },
 
   errors: {
+    artifacts: {
+      inputConflict:
+        'Informe o conteúdo de exatamente um jeito: files ou directory (artifact_update também aceita edits, ou files com delete).',
+      invalidEncoding: '{{path}} não é base64 válido.',
+      inlineTooLarge: 'Os arquivos inline passam de 5 MiB no total. Grave-os numa pasta e publique com directory.',
+      directoryRefused: 'A pasta não pode ser publicada: {{message}}',
+      hostDisabled: 'A hospedagem de artefatos está desligada em Configurações → Artefatos.',
+      portInUse: 'A porta {{port}} está em uso. Troque em Configurações → Artefatos.',
+      hostUnavailable: 'O host de artefatos está indisponível. Verifique Configurações → Artefatos.',
+      internal: 'A operação com o artefato falhou inesperadamente.',
+      invalid_input: 'Entrada inválida: {{message}}',
+      invalid_path: '{{message}}',
+      unsupported_type:
+        'Tipo de arquivo não suportado: {{path}}. Use formatos web como HTML, CSS, JavaScript, JSON, SVG, imagens, fontes, áudio ou vídeo.',
+      duplicate_path: 'Caminho de arquivo duplicado (sem diferenciar maiúsculas): {{path}}',
+      too_many_files: 'Uma versão comporta no máximo 500 arquivos.',
+      file_too_large: '{{path}} passa de 10 MiB.',
+      bundle_too_large: 'Uma versão não pode passar de 50 MiB.',
+      missing_entry: 'O arquivo de entrada {{path}} não está entre os arquivos.',
+      entry_not_html: 'O arquivo de entrada {{path}} precisa ser HTML.',
+      edit_not_found: '{{message}}',
+      edit_ambiguous: '{{message}}. Inclua mais texto ao redor para que apareça uma única vez.',
+      edit_binary: '{{path}} não é um arquivo de texto UTF-8.',
+      not_found: 'Não encontrado: {{message}}. Use artifact_list ou artifact_get para ver o que existe.',
+      version_conflict: 'A versão {{currentVersion}} é a atual. Leia-a com artifact_get e tente de novo.',
+      version_limit: 'Este artefato chegou a 200 versões. Publique um artefato novo.',
+      quota_exceeded:
+        'O limite de armazenamento de artefatos foi atingido. O usuário pode aumentá-lo em Configurações → Artefatos ou excluir artefatos.',
+      port_in_use: 'A porta {{port}} está em uso. Troque em Configurações → Artefatos.',
+      storage: 'O armazenamento de artefatos falhou: {{message}}',
+      host_unavailable: 'O host de artefatos está indisponível. Verifique Configurações → Artefatos.',
+    },
     memoryInvisibleCharacters: 'memory-content-rejected: remova caracteres invisíveis ou de controle bidirecional',
     memoryInstructionInjection:
       'memory-content-rejected: memórias não podem guardar instruções para ignorar regras ou executar scripts baixados',
