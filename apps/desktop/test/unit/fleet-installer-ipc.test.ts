@@ -15,6 +15,7 @@ function register() {
     installLocal: vi.fn(async () => 'local'),
     installRemote: vi.fn(async () => 'remote'),
     update: vi.fn(async () => 'update'),
+    updateBots: vi.fn(async () => 'updateBots'),
     setPrivateNetwork: vi.fn(async () => 'private'),
     disconnect: vi.fn(async () => 'disconnect'),
     remove: vi.fn(async () => 'remove'),
@@ -53,8 +54,16 @@ describe('bot server installer IPC', () => {
         'fleet:installer:remove',
         'fleet:installer:setPrivateNetwork',
         'fleet:installer:update',
+        'fleet:installer:updateBots',
       ].sort()
     )
+  })
+
+  it('updates bots through the service', async () => {
+    const { mutate, service } = register()
+    expect(await mutate('fleet:installer:updateBots')).toBe('updateBots')
+    expect(service.updateBots).toHaveBeenCalledTimes(1)
+    expect(service.update).not.toHaveBeenCalled()
   })
 
   it('rejects malformed input before the service sees it', () => {

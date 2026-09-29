@@ -429,6 +429,7 @@ export async function harness(
   return {
     dir,
     store,
+    docker,
     lifecycle,
     gateway,
     bot,

@@ -14,7 +14,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 import { GatewayError } from '../src/errors.js'
 import { Store, type StoredEnvironment } from '../src/store.js'
-import { createSchema5Database, createSchema6Database, dumpTables } from './store-fixtures.js'
+import { createSchema5Database, createSchema6Database, createSchema7Database, dumpTables } from './store-fixtures.js'
 
 const dirs: string[] = []
 const stores: Store[] = []
@@ -102,6 +102,7 @@ function environmentRecord(id: string, overrides: Partial<StoredEnvironment> = {
     volumeName: 'maestrly-env-' + id + '-home',
     memoryLimitBytes: null,
     compaction: null,
+    updateRequestedAt: null,
     createdAt: at(20),
     updatedAt: at(20),
     archivedAt: null,
@@ -222,9 +223,9 @@ function seedSchema5(db: DatabaseSync) {
 }
 
 describe('schema 6 migration', () => {
-  it('creates schema 7 with environments in an empty data directory', () => {
+  it('creates schema 8 with environments in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('7')
+    expect(version(store.db)).toBe('8')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -242,6 +243,7 @@ describe('schema 6 migration', () => {
       ['updated_at', 1],
       ['archived_at', 0],
       ['compaction_json', 0],
+      ['update_requested_at', 0],
     ])
     expect(columns('environment_secrets')).toEqual([
       ['environment_id', 0],
@@ -302,7 +304,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('7')
+    expect(version(store.db)).toBe('8')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -316,6 +318,7 @@ describe('schema 6 migration', () => {
         volumeName: 'maestrly-bot-alpha-home',
         memoryLimitBytes: null,
         compaction,
+        updateRequestedAt: null,
         createdAt: at(20),
         updatedAt: at(21),
         archivedAt: null,
@@ -331,6 +334,7 @@ describe('schema 6 migration', () => {
         volumeName: 'maestrly-bot-beta-home',
         memoryLimitBytes: null,
         compaction: null,
+        updateRequestedAt: null,
         createdAt: at(18),
         updatedAt: at(22),
         archivedAt: at(22),
@@ -405,7 +409,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('7')
+    expect(version(reopened.db)).toBe('8')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -481,7 +485,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('7')
+    expect(version(store.db)).toBe('8')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -489,14 +493,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('8')
+    expect(version(after)).toBe('9')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -615,7 +619,7 @@ describe('schema 7 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('7')
+    expect(version(store.db)).toBe('8')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -649,7 +653,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('7')
+    expect(version(reopened.db)).toBe('8')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -676,7 +680,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('7')
+    expect(version(store.db)).toBe('8')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -691,6 +695,107 @@ describe('schema 7 migration', () => {
     expect(store.updateEnvironment('work', { name: 'Work 2' }, at(24)).compaction).toEqual(model('model-y', 120000))
     expect(store.updateEnvironment('work', { compaction: null }, at(25)).compaction).toBeNull()
     expect(store.getEnvironment('work')?.compaction).toBeNull()
+    checked(store.db)
+  })
+})
+
+describe('schema 8 migration', () => {
+  const checked = (db: DatabaseSync) => {
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+  }
+
+  it('adds a pending update to every environment of a schema 7 database, none of them waiting', () => {
+    const dir = temp()
+    const db = createSchema7Database(dir)
+    db.prepare(
+      'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,created_at,updated_at,archived_at,compaction_json) VALUES(?,?,?,?,?,?,NULL,?,?,?,?)'
+    ).run(
+      'alpha',
+      'Alpha',
+      'running',
+      JSON.stringify(setup('ready')),
+      'maestrly-env-alpha',
+      'maestrly-env-alpha-home',
+      at(10),
+      at(11),
+      null,
+      JSON.stringify(compaction)
+    )
+    db.prepare(
+      'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,created_at,updated_at,archived_at,compaction_json) VALUES(?,?,?,?,?,?,NULL,?,?,?,NULL)'
+    ).run(
+      'beta',
+      'Beta',
+      'archived',
+      JSON.stringify(setup('ready')),
+      'maestrly-env-beta',
+      'maestrly-env-beta-home',
+      at(10),
+      at(12),
+      at(12)
+    )
+    for (const id of ['alpha', 'beta'])
+      db.prepare('INSERT INTO environment_secrets(environment_id,control_token,keyring_password) VALUES(?,?,?)').run(
+        id,
+        'synthetic-control-' + id,
+        'synthetic-keyring-' + id
+      )
+    const before = db.prepare('SELECT * FROM environments ORDER BY id').all()
+    checked(db)
+    db.close()
+
+    const store = open(dir)
+    expect(version(store.db)).toBe('8')
+    checked(store.db)
+    expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
+      before.map((row) => ({ ...row, update_requested_at: null }))
+    )
+    expect(store.getEnvironment('alpha')).toEqual(
+      environmentRecord('alpha', {
+        name: 'Alpha',
+        containerName: 'maestrly-env-alpha',
+        volumeName: 'maestrly-env-alpha-home',
+        compaction,
+        createdAt: at(10),
+        updatedAt: at(11),
+      })
+    )
+    expect(store.getEnvironment('beta')?.updateRequestedAt).toBeNull()
+
+    const schema = schemaOf(store.db)
+    const data = dumpTables(store.db)
+    store.close()
+    const reopened = open(dir)
+    expect(version(reopened.db)).toBe('8')
+    expect(schemaOf(reopened.db)).toEqual(schema)
+    expect(dumpTables(reopened.db)).toEqual(data)
+    expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
+  })
+
+  it('migrates a schema 6 database through schema 7 to schema 8', () => {
+    const dir = temp()
+    createSchema6Database(dir).close()
+    const store = open(dir)
+    expect(version(store.db)).toBe('8')
+    checked(store.db)
+    store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
+  })
+
+  it('stores, keeps and clears when an environment update was requested', () => {
+    const store = open()
+    store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
+    const requested = store.updateEnvironment('work', { updateRequestedAt: at(22) }, at(22))
+    expect(requested).toEqual(environmentRecord('work', { updateRequestedAt: at(22), updatedAt: at(22) }))
+    expect(store.getEnvironment('work')).toEqual(requested)
+    // Other changes keep it.
+    expect(store.updateEnvironment('work', { lifecycle: 'restarting' }, at(23)).updateRequestedAt).toBe(at(22))
+    expect(store.updateEnvironment('work', { updateRequestedAt: null }, at(24)).updateRequestedAt).toBeNull()
+    expect(store.getEnvironment('work')?.updateRequestedAt).toBeNull()
+    // An environment inserted while waiting keeps its request.
+    store.insertEnvironment(environmentRecord('home', { updateRequestedAt: at(21) }), environmentSecrets('home'))
+    expect(store.getEnvironment('home')?.updateRequestedAt).toBe(at(21))
     checked(store.db)
   })
 })
@@ -1026,6 +1131,7 @@ describe('environments and their bots', () => {
       volumeName: 'maestrly-bot-legacy-home',
       memoryLimitBytes: null,
       compaction: null,
+      updateRequestedAt: null,
       createdAt: at(20),
       updatedAt: at(20),
       archivedAt: null,

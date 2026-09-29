@@ -70,4 +70,16 @@ describe('available bot image version', () => {
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ botImageVersion: '1.2.3' })
   })
+
+  it('reports the gateway version in gateway metadata', async () => {
+    vi.stubEnv('MAESTRLY_GATEWAY_VERSION', '9.8.7')
+    try {
+      const fleet = await harness()
+      const meta = await (await fleet.request('GET', '/v1/meta')).json()
+      expect(meta.gatewayVersion).toBe('9.8.7')
+      expect(meta.features).toContain('environment-updates')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
 })

@@ -105,10 +105,11 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
         <BotServerPanel
           status={status}
           connection={connection}
+          reportedVersion={fleet.state.snapshot.host?.gatewayVersion ?? null}
           onAction={(action, allow) => {
             void run(
               action === 'update'
-                ? () => window.api.fleetInstallerUpdate()
+                ? () => window.api.fleetUpdateBots().then((result) => result.status)
                 : () => window.api.fleetInstallerSetPrivateNetwork(!!allow)
             )
           }}

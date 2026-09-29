@@ -302,6 +302,15 @@ export const fleetEnvironmentSetupSchema = z.object({
 })
 export type FleetEnvironmentSetup = z.infer<typeof fleetEnvironmentSetupSchema>
 
+/** Whether an environment can move to the configured bot image, and whether that move waits for its bots. */
+export const fleetEnvironmentUpdateSchema = z.object({
+  /** The environment's container runs an image other than the configured bot image. */
+  available: z.boolean(),
+  /** When the owner scheduled the update; null when none is waiting. */
+  pendingSince: fleetTimestampSchema.nullable(),
+})
+export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema>
+
 /**
  * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
  * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
@@ -318,6 +327,8 @@ export const fleetEnvironmentSchema = z.object({
   compaction: fleetCompactionConfigSchema.nullable().default(null),
   appVersion: z.string().nullable(),
   capabilities: z.array(z.string().max(40)).max(20).default([]),
+  /** Null when the gateway predates environment updates. */
+  update: fleetEnvironmentUpdateSchema.nullable().default(null),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,

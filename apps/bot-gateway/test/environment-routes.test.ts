@@ -74,6 +74,7 @@ describe('environment routes', () => {
       'provisioning',
       'environments',
       'environment-compaction',
+      'environment-updates',
     ])
     const request = { name: 'Archived', idempotencyKey: randomUUID() }
     const created = await h.request('POST', '/v1/environments', request)
@@ -119,6 +120,45 @@ describe('environment routes', () => {
     expect(h.store.activity().filter((entry) => entry.kind === 'environment_created')).toEqual([
       expect.objectContaining({ botId: null, environmentId: 'archived', summary: 'Archived' }),
     ])
+  })
+
+  it('schedules, cancels and forces an environment update', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const path = '/v1/environments/test/update'
+    const image = 'sha256:' + 'c'.repeat(64)
+    const current = await json(await h.request('POST', path, { when: 'idle' }))
+    expect(current.update).toEqual({ available: false, pendingSince: null })
+    h.docker.setImage(h.lifecycle.config.botImage, image)
+    const status = h.lifecycle.statuses.get(h.bot.id)!
+    status.turn = { ...status.turn, state: 'running' }
+
+    const scheduled = await h.request('POST', path, { when: 'idle' })
+    expect(scheduled.status).toBe(200)
+    const pending = await json(scheduled)
+    expect(pending.update).toEqual({ available: true, pendingSince: expect.any(String) })
+    expect((await json(await h.request('GET', '/v1/environments/test'))).update).toEqual(pending.update)
+    const cancelled = await h.request('DELETE', path)
+    expect(cancelled.status).toBe(200)
+    expect((await json(cancelled)).update).toEqual({ available: true, pendingSince: null })
+
+    const invalid = await h.request('POST', path, { when: 'later' })
+    expect(invalid.status).toBe(400)
+    expect((await json(invalid)).code).toBe('INVALID_REQUEST')
+    expect((await json(await h.request('POST', '/v1/environments/missing/update', { when: 'idle' }))).code).toBe(
+      'NOT_FOUND'
+    )
+    expect((await json(await h.request('DELETE', '/v1/environments/missing/update'))).code).toBe('NOT_FOUND')
+
+    await h.request('POST', path, { when: 'idle' })
+    const now = await h.request('POST', path, { when: 'now' })
+    expect(now.status).toBe(200)
+    expect(await json(now)).toMatchObject({ lifecycle: 'running', update: { available: false, pendingSince: null } })
+    const name = h.store.getEnvironment('test')!.containerName
+    expect([...h.docker.containers.values()].find((item) => item.name === name)?.imageId).toBe(image)
+
+    await h.request('POST', '/v1/environments/test/stop')
+    const stopped = await h.request('POST', path, { when: 'idle' })
+    expect((await json(stopped)).code).toBe('BOT_NOT_RUNNING')
   })
 
   it('creates bots in a new, a named or an existing environment, up to eight in one', async () => {

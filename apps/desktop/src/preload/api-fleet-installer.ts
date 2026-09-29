@@ -3,6 +3,7 @@ import type {
   FleetInstallLocalInput,
   FleetInstallRemoteInput,
   FleetInstallerStatus,
+  FleetUpdateBotsResult,
   LocalDockerCheck,
 } from '../shared/fleet-installer'
 
@@ -23,6 +24,8 @@ export const fleetInstallerApi = {
   fleetInstallerInstallRemote: (input: FleetInstallRemoteInput): Promise<FleetInstallerStatus> =>
     ipcRenderer.invoke('fleet:installer:installRemote', input),
   fleetInstallerUpdate: (): Promise<FleetInstallerStatus> => ipcRenderer.invoke('fleet:installer:update'),
+  /** Updates the server when this app can, then schedules every environment on an older image to follow. */
+  fleetUpdateBots: (): Promise<FleetUpdateBotsResult> => ipcRenderer.invoke('fleet:installer:updateBots'),
   fleetInstallerSetPrivateNetwork: (allow: boolean): Promise<FleetInstallerStatus> =>
     ipcRenderer.invoke('fleet:installer:setPrivateNetwork', allow),
   fleetInstallerDisconnect: (): Promise<FleetInstallerStatus> => ipcRenderer.invoke('fleet:installer:disconnect'),

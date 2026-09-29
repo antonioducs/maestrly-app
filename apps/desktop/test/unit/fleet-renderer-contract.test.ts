@@ -52,6 +52,76 @@ describe('fleet renderer wiring', () => {
       expect(component).toContain("t('action.resumeBlocked')")
     }
   })
+  it('shows bot updates and updates bots in one click wherever the bot server shows', () => {
+    const sidebar = source('components/fleet/FleetSidebarPanel.tsx')
+    expect(sidebar).toContain('<BotUpdateBanner')
+    expect(sidebar).toMatch(/<EnvironmentHeader[\s\S]{0,200}update=/)
+    const header = source('components/sidebar/SidebarHeader.tsx')
+    expect(header).toMatch(/item === 'bots' &&[\s\S]{0,600}t\('sidebar\.botUpdate'\)/)
+    expect(source('components/fleet/ServerView.tsx')).toContain('<BotUpdateBanner')
+    expect(source('components/settings/FleetSettings.tsx')).toContain('fleetUpdateBots')
+    expect(source('DesktopApp.tsx')).toContain('useBotUpdates(fleet)')
+    const banner = source('components/fleet/BotUpdateBanner.tsx')
+    for (const key of [
+      'updates.available',
+      'updates.updateBots',
+      'updates.updatingServer',
+      'updates.waiting',
+      'updates.behind',
+    ])
+      expect(banner).toContain(`'${key}'`)
+    for (const catalog of [resources.en, resources['pt-BR']]) {
+      for (const key of [
+        'available',
+        'availableVersion',
+        'availableNoVersion',
+        'updateBots',
+        'updatingServer',
+        'waiting',
+        'waitingNone',
+        'pendingShort',
+        'behind',
+        'failed',
+        'unsupported',
+      ])
+        expect(catalog.fleet.updates[key as keyof typeof catalog.fleet.updates], key).toEqual(expect.any(String))
+      expect(catalog.ui.sidebar.botUpdate).toEqual(expect.any(String))
+    }
+    expect(resources.en.fleet.botServer.panel.update).toBe('Update bots')
+    expect(resources['pt-BR'].fleet.botServer.panel.update).toBe('Atualizar bots')
+  })
+  it('schedules, forces and cancels an environment update from its view, naming the bots it waits for', () => {
+    const view = source('components/fleet/EnvironmentView.tsx')
+    for (const text of [
+      'environmentUpdateState(',
+      'updateBlockers(',
+      "fleetEnvironmentUpdate(environment.id, 'now')",
+      "fleet.updateEnvironment(environment.id, 'idle')",
+      'fleet.cancelEnvironmentUpdate(environment.id)',
+      "t('updates.cancel')",
+      "t('updates.pendingTitle')",
+      "t('updates.nextStart')",
+      "'updateNow'",
+    ])
+      expect(view, text).toContain(text)
+    for (const catalog of [resources.en.fleet, resources['pt-BR'].fleet]) {
+      for (const status of ['working', 'waiting', 'human'] as const)
+        expect(catalog.updates.busy[status]).toEqual(expect.any(String))
+      for (const key of [
+        'pendingTitle',
+        'pendingNote',
+        'waitingSince',
+        'updateNow',
+        'cancel',
+        'confirmNowTitle',
+        'confirmNow_one',
+        'confirmNow_other',
+        'confirmNowIdle',
+        'nextStart',
+      ] as const)
+        expect(catalog.updates[key], key).toEqual(expect.any(String))
+    }
+  })
   it('compares Mac and bot versions and displays the gateway independently', () => {
     const server = source('components/fleet/ServerView.tsx')
     expect(server).toContain('botsWithDifferentVersion(bots, version)')

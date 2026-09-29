@@ -1,19 +1,37 @@
 import type { FleetConnectionView } from '../../../preload/api-fleet'
-import type { FleetInstallerStepId, FleetInstallerStatus, FleetInstallMode } from '../../../shared/fleet-installer'
+import {
+  fleetUpdateState,
+  knownServerVersion,
+  type FleetInstallerStepId,
+  type FleetInstallerStatus,
+  type FleetInstallMode,
+} from '../../../shared/fleet-installer'
 
 export function stepLabelKey(id: FleetInstallerStepId, mode: FleetInstallMode): string {
   return id === 'check' ? `botServer.step.check${mode === 'local' ? 'Local' : 'Remote'}` : `botServer.step.${id}`
 }
 
-export function panelState(status: FleetInstallerStatus, connection: FleetConnectionView) {
+/**
+ * What the bot server panel offers. `reportedVersion` is the version the connected gateway reports: newer than what
+ * this computer recorded when another computer updated the server, it wins, so the app never offers a downgrade.
+ */
+export function panelState(
+  status: FleetInstallerStatus,
+  connection: FleetConnectionView,
+  reportedVersion: string | null = null
+) {
   const mode = status.record?.mode ?? (connection.state === 'unconfigured' ? null : 'manual')
   const busy = status.job?.state === 'running'
   const connected = connection.state === 'connected'
   const reachable = connected && (mode !== 'remote' || status.tunnel === 'connected')
+  const update =
+    status.record && connected && reportedVersion !== null
+      ? fleetUpdateState(knownServerVersion(status.record.version, reportedVersion), status.appVersion)
+      : status.update
   return {
     mode,
-    canUpdate: !!status.record && status.update === 'available' && reachable && !busy,
-    serverNewer: !!status.record && status.update === 'server-newer',
+    canUpdate: !!status.record && update === 'available' && reachable && !busy,
+    serverNewer: !!status.record && update === 'server-newer',
     canRemove: !!status.record && reachable && !busy,
     canTogglePrivateNetwork: !!status.record && reachable && !busy,
     busy,

@@ -74,6 +74,17 @@ export function createSchema6Database(dir: string): DatabaseSync {
   return db
 }
 
+/**
+ * Creates `gateway.sqlite` in `dir` exactly as a version 7 gateway left it: schema 6 plus the column its migration added
+ * to environments, and returns it open.
+ */
+export function createSchema7Database(dir: string): DatabaseSync {
+  const db = createSchema6Database(dir)
+  db.exec('ALTER TABLE environments ADD COLUMN compaction_json TEXT')
+  db.exec("UPDATE meta SET value='7' WHERE key='schema_version'")
+  return db
+}
+
 /** Every row of every table, for checking that a failed or repeated migration left a database as it was. */
 export function dumpTables(db: DatabaseSync): Record<string, unknown[]> {
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all()

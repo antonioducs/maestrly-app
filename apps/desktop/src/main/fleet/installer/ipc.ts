@@ -40,6 +40,7 @@ export function registerFleetInstallerIpc(
     | 'installLocal'
     | 'installRemote'
     | 'update'
+    | 'updateBots'
     | 'setPrivateNetwork'
     | 'disconnect'
     | 'remove'
@@ -57,6 +58,7 @@ export function registerFleetInstallerIpc(
     service.installRemote(installRemoteInput.parse(input))
   )
   reg.mhandle('fleet:installer:update', () => service.update())
+  reg.mhandle('fleet:installer:updateBots', () => service.updateBots())
   reg.mhandle('fleet:installer:setPrivateNetwork', (_event, allow: unknown) =>
     service.setPrivateNetwork(z.boolean().parse(allow))
   )

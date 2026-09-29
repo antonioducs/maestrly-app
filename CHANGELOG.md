@@ -5,10 +5,21 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Experimental: see when bots can be updated and update them in one click with
+  **Update bots**. Maestrly updates the bot server it installed, then each
+  environment restarts on the new image once none of its bots is working,
+  waiting for you, or under your control, even while your computer is off. An
+  environment's view shows what its update waits for and offers **Update now**
+  and **Cancel update**.
+
 ### Fixed
 
 - Close only the open list, not the whole dialog, when pressing Escape in a
   searchable dropdown such as the environment choice when creating a bot.
+- Never move a bot server back to an older version when another computer
+  already updated it past this app.
 
 ## [0.11.0] - 2026-09-28
 

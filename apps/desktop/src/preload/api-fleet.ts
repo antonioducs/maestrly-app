@@ -226,6 +226,15 @@ export const fleetApi = {
     environmentId: string,
     action: 'start' | 'stop' | 'restart' | 'archive'
   ): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:environmentAction', environmentId, action),
+  /**
+   * Moves the environment to the server's bot image: `idle` schedules it for when none of its bots is busy and answers
+   * at once; `now` restarts it at once, interrupting its bots. Gateways with `environment-updates` only.
+   */
+  fleetEnvironmentUpdate: (environmentId: string, when: 'idle' | 'now'): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:environmentUpdate', environmentId, when),
+  /** Cancels an update that waits for the environment's bots. */
+  fleetEnvironmentUpdateCancel: (environmentId: string): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:environmentUpdateCancel', environmentId),
   fleetPatchEnvironment: (environmentId: string, patch: FleetPatchEnvironmentRequest): Promise<FleetEnvironment> =>
     ipcRenderer.invoke('fleet:patchEnvironment', environmentId, patch),
   /** Empty for gateways without environments. */

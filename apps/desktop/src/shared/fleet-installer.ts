@@ -2,7 +2,7 @@
  * The bot server installer's state, shared by the main process, the preload and the renderer. Pure module (no Node or
  * Electron imports): the main process owns installs; the renderer only mirrors `FleetInstallerStatus`.
  */
-import { compareSemver } from './update'
+import { compareSemver, parseSemver } from './update'
 
 /** Where Maestrly installed the bot server: this computer's Docker, or a VPS reached over SSH. */
 export type FleetInstallMode = 'local' | 'remote'
@@ -46,6 +46,7 @@ export const FLEET_INSTALLER_STEP_IDS = [
   'pair',
   'key',
   'environments',
+  'environment-updates',
   'teardown',
 ] as const
 export type FleetInstallerStepId = (typeof FLEET_INSTALLER_STEP_IDS)[number]
@@ -113,6 +114,21 @@ export interface FleetInstallerStatus {
   job: FleetInstallerJob | null
 }
 
+/** What scheduling the update of every environment that has one did. */
+export interface FleetEnvironmentUpdateResult {
+  /** False when the gateway does not schedule updates: environments keep their own Update button. */
+  supported: boolean
+  /** The environments scheduled to update once their bots are idle. */
+  scheduled: string[]
+  failed: { environmentId: string; name: string; message: string }[]
+}
+/** Updating bots in one click: the server when this app can, then their environments. */
+export interface FleetUpdateBotsResult {
+  status: FleetInstallerStatus
+  /** Null when no environment was scheduled because the server update failed or was cancelled. */
+  environments: FleetEnvironmentUpdateResult | null
+}
+
 export type LocalDockerState = 'missing' | 'stopped' | 'no-permission' | 'no-compose' | 'dev-fleet' | 'ready'
 export interface LocalDockerCheck {
   state: LocalDockerState
@@ -135,6 +151,14 @@ export interface FleetInstallRemoteInput {
   credentials: FleetSshCredentials
   deviceName: string
   allowPrivateNetwork: boolean
+}
+
+/**
+ * The server's version as best known: the release version its connected gateway reports, else the one this computer
+ * recorded when it installed or updated it. Another computer may have updated the server since.
+ */
+export function knownServerVersion(recordVersion: string | null, reportedVersion: string | null): string | null {
+  return reportedVersion && parseSemver(reportedVersion) ? reportedVersion : recordVersion
 }
 
 /** Whether the server can move to the app's version. An unknown server version can always be updated. */

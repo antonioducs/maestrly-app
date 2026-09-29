@@ -2,6 +2,7 @@ import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
@@ -9,6 +10,7 @@ import {
   normalizePairingCode,
   type FleetCreateBotRequest,
   type FleetCreateEnvironmentRequest,
+  type FleetEnvironmentUpdateRequest,
   type FleetPatchBotRequest,
   type FleetPatchEnvironmentRequest,
   type FleetSendMessageRequest,
@@ -226,8 +228,13 @@ export async function publicRoute(
       return {
         body: {
           protocol: FLEET_PROTOCOL_VERSION,
-          gatewayVersion: '0.1.0',
-          features: [FLEET_PROVISIONING_FEATURE, FLEET_ENVIRONMENTS_FEATURE, FLEET_ENVIRONMENT_COMPACTION_FEATURE],
+          gatewayVersion: ctx.host.gatewayVersion,
+          features: [
+            FLEET_PROVISIONING_FEATURE,
+            FLEET_ENVIRONMENTS_FEATURE,
+            FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+            FLEET_ENVIRONMENT_UPDATES_FEATURE,
+          ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
         },
@@ -276,6 +283,15 @@ export async function publicRoute(
       return { body: await ctx.lifecycle.stopEnvironment(eid) }
     case 'environmentRestart':
       return { body: await ctx.lifecycle.restartEnvironment(eid) }
+    case 'environmentUpdate':
+      return {
+        body:
+          (body as FleetEnvironmentUpdateRequest).when === 'now'
+            ? await ctx.lifecycle.updateNow(eid)
+            : await ctx.lifecycle.scheduleUpdate(eid),
+      }
+    case 'environmentUpdateCancel':
+      return { body: await ctx.lifecycle.cancelUpdate(eid) }
     case 'environmentArchive':
       return { body: await ctx.lifecycle.archiveEnvironment(eid) }
     case 'archivedEnvironmentsList':

@@ -83,6 +83,17 @@ describe('bot server renderer helpers', () => {
     expect(panelState(status(null), connection('connected')).mode).toBe('manual')
     expect(panelState(status('local', 'available', true), connection('connected')).busy).toBe(true)
   })
+  it('never offers to move back a server whose gateway reports a newer version', () => {
+    // Recorded 1.0.0, app 1.1.0: without a reported version the update stands.
+    expect(panelState(status('local', 'available'), connection('connected'), null).canUpdate).toBe(true)
+    const newer = panelState(status('local', 'available'), connection('connected'), '1.2.0')
+    expect(newer.canUpdate).toBe(false)
+    expect(newer.serverNewer).toBe(true)
+    const current = panelState(status('local', 'available'), connection('connected'), '1.1.0')
+    expect([current.canUpdate, current.serverNewer]).toEqual([false, false])
+    // Not a release version: the recorded one counts.
+    expect(panelState(status('local', 'available'), connection('connected'), 'test').canUpdate).toBe(true)
+  })
   it('validates remote fields and credentials', () => {
     const valid = {
       host: 'example.test',

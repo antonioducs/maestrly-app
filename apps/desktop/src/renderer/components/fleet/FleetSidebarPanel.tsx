@@ -1,8 +1,10 @@
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
-import { BrainCircuit, Server } from 'lucide-react'
+import { BrainCircuit, CircleArrowUp, Clock, Server } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { activityLabel, gb, memorySegments } from '@/lib/fleet/format'
+import { environmentUpdateState, type EnvironmentUpdateState } from '@/lib/fleet/updates'
+import { BotUpdateBanner } from './BotUpdateBanner'
 import {
   botMatchesQuery,
   environmentDot,
@@ -118,6 +120,7 @@ export function FleetSidebarPanel({
           )}
         </button>
       )}
+      {!query && <BotUpdateBanner fleet={fleet} compact />}
       {!query && snapshot.inbox.length > 0 && (
         <button
           type="button"
@@ -144,6 +147,7 @@ export function FleetSidebarPanel({
           <div key={group.environment.id} role="group" aria-label={group.environment.name} className="pt-1">
             <EnvironmentHeader
               environment={group.environment}
+              update={environmentUpdateState(group.environment, snapshot.host)}
               selected={selected === `environment:${group.environment.id}`}
               onOpen={() => onOpenEnvironment(group.environment.id)}
             />
@@ -169,30 +173,44 @@ export function FleetSidebarPanel({
 
 function EnvironmentHeader({
   environment,
+  update,
   selected,
   onOpen,
 }: {
   environment: FleetEnvironment
+  update: EnvironmentUpdateState
   selected: boolean
   onOpen: () => void
 }) {
   const { t } = useTranslation('fleet')
   const bots = t('environment.botCount', { count: environment.botIds.length })
   const memory = environment.resources.memoryBytes
+  const updateLabel =
+    update === 'available' ? t('updates.available') : update === 'pending' ? t('updates.pendingShort') : null
+  const label = t('sidebar.environmentLabel', {
+    name: environment.name,
+    status: t(`environment.lifecycle.${environment.lifecycle}`),
+    bots,
+  })
   return (
     <button
       type="button"
       onClick={onOpen}
       aria-current={selected ? 'page' : undefined}
-      aria-label={t('sidebar.environmentLabel', {
-        name: environment.name,
-        status: t(`environment.lifecycle.${environment.lifecycle}`),
-        bots,
-      })}
+      aria-label={updateLabel ? `${label} · ${updateLabel}` : label}
       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-accent' : ''}`}
     >
       <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${dotClass[environmentDot(environment)]}`} />
       <span className="min-w-0 flex-1 truncate font-medium">{environment.name}</span>
+      {updateLabel && (
+        <span title={updateLabel} className="shrink-0 text-primary">
+          {update === 'pending' ? (
+            <Clock aria-hidden="true" className="size-3.5" />
+          ) : (
+            <CircleArrowUp aria-hidden="true" className="size-3.5" />
+          )}
+        </span>
+      )}
       <span className="shrink-0 text-muted-foreground">
         {memory ? `${t('sidebar.environmentMemory', { memory: gb(memory) })} · ` : ''}
         {bots}

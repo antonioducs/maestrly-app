@@ -1,6 +1,7 @@
 import { FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
@@ -36,6 +37,11 @@ export function isEnvironmentsUnsupported(cause: unknown): boolean {
   return fleetErrorMessage(cause).includes(FLEET_ENVIRONMENTS_UNSUPPORTED)
 }
 
+/** The server cannot schedule environment updates yet and must be updated first. */
+export function isEnvironmentUpdatesUnsupported(cause: unknown): boolean {
+  return fleetErrorMessage(cause).includes(FLEET_UPDATES_UNSUPPORTED)
+}
+
 /** Another control session holds the environment display that its browser areas and its screen share. */
 export function isScreenConflict(cause: unknown): boolean {
   return fleetErrorMessage(cause).includes(FLEET_SCREEN_CONFLICT)
@@ -67,6 +73,8 @@ const marked = (marker: string) => (message: string) => message.includes(marker)
  */
 const KNOWN_REFUSALS: KnownRefusal[] = [
   { matches: marked(FLEET_ENVIRONMENTS_UNSUPPORTED), key: 'provisioning.updateServer' },
+  { matches: marked(FLEET_UPDATES_UNSUPPORTED), key: 'updates.unsupported' },
+  { matches: exactly('Start the environment to update it'), key: 'errors.environmentNotRunning' },
   { matches: marked(FLEET_SCREEN_CONFLICT), key: 'screen.conflict' },
   { matches: marked(FLEET_SCREEN_RESTART_REQUIRED), key: 'screen.restartEnvironment' },
   { matches: marked(FLEET_SCREEN_OFFLINE), key: 'errors.screenOffline' },

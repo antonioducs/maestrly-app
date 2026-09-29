@@ -94,6 +94,8 @@ export class Peers {
   private async deliver(message: FleetPeerMessage): Promise<boolean> {
     const target = this.lifecycle.get(message.to)
     if (target?.lifecycle !== 'running' || !this.lifecycle.statuses.get(message.to)?.ready) return false
+    // Its environment waits to update: the message stays pending, and the retry on readiness delivers it afterwards.
+    if (this.lifecycle.updatePending(message.to)) return false
     try {
       await this.lifecycle.instanceFor(message.to).postInput({
         source: 'peer',

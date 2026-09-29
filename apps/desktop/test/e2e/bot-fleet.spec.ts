@@ -2064,7 +2064,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'meta':
         value = {
           protocol: 1,
-          features: ['provisioning', 'environments'],
+          features: ['provisioning', 'environments', 'environment-updates'],
           gatewayVersion: '0.9.3',
           botImage: 'test-image',
           botImageVersion: '0.9.3',
@@ -2073,6 +2073,27 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       case 'pair':
         value = { deviceId: 'device-env-e2e', token: 'fixture-token' }
         break
+      case 'environmentUpdate': {
+        if (!environment) return notFound()
+        const available = environment.update?.available ?? false
+        // Now: the gateway restarts it on the configured image. Idle: it waits for its bots, keeping the first request.
+        const update =
+          (body as { when: string }).when === 'now'
+            ? { available: false, pendingSince: null }
+            : { available, pendingSince: available ? (environment.update?.pendingSince ?? now()) : null }
+        const updated = fleetEnvironmentSchema.parse({ ...environment, lifecycle: 'running', update, updatedAt: now() })
+        upsertEnvironment(updated)
+        value = updated
+        break
+      }
+      case 'environmentUpdateCancel': {
+        if (!environment) return notFound()
+        const update = { available: environment.update?.available ?? false, pendingSince: null }
+        const cancelled = fleetEnvironmentSchema.parse({ ...environment, update, updatedAt: now() })
+        upsertEnvironment(cancelled)
+        value = cancelled
+        break
+      }
       case 'host':
         value = host
         break
@@ -2608,6 +2629,45 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(
       page.getByRole('listitem').filter({ hasText: 'Prefers PDF invoices.' }).getByText('Acme', { exact: true })
     ).toBeVisible()
+
+    // The server offers a newer bot image to Acme: the Bots tab and the sidebar say so, and one click schedules it.
+    const acme = environments.find((item) => item.id === 'acme')!
+    upsertEnvironment(fleetEnvironmentSchema.parse({ ...acme, update: { available: true, pendingSince: null } }))
+    await expect(page.getByRole('tab', { name: /Atualização de bots disponível/ })).toBeVisible()
+    await expect(page.getByText('Atualização disponível', { exact: true })).toBeVisible()
+    await expect(header('Acme')).toHaveAccessibleName(/Atualização disponível$/)
+    await page.getByRole('button', { name: 'Atualizar bots', exact: true }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentUpdate').map((item) => [item.path, item.body]))
+      .toEqual([['/v1/environments/acme/update', { when: 'idle' }]])
+    // Only Acme has an update: environments of this gateway without one are left alone.
+    await expect(page.getByRole('button', { name: 'Atualizar bots', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: /Atualização de bots em andamento/ })).toBeVisible()
+
+    // The environment waits for its bots; the owner can cancel, schedule again, or update now.
+    await header('Acme').click()
+    const lifecycle = page.getByRole('region', { name: 'Iniciar e parar', exact: true })
+    await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toBeVisible()
+    await lifecycle.getByRole('button', { name: 'Cancelar atualização' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentUpdateCancel').map((item) => item.path))
+      .toEqual(['/v1/environments/acme/update'])
+    await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toHaveCount(0)
+    // Scheduling asks for nothing: no bot is interrupted.
+    await lifecycle.getByRole('button', { name: 'Atualizar ambiente' }).click()
+    await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toBeVisible()
+    await lifecycle.getByRole('button', { name: 'Atualizar agora' }).click()
+    const updateNow = page.getByRole('dialog', { name: 'Atualizar Acme agora?' })
+    await expect(updateNow).toContainText('Todos os bots deste ambiente reiniciam: Scout.')
+    await updateNow.getByRole('button', { name: 'Atualizar agora' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'environmentUpdate').map((item) => item.body))
+      .toEqual([{ when: 'idle' }, { when: 'idle' }, { when: 'now' }])
+    await expect(updateNow).toHaveCount(0)
+    await expect(lifecycle.getByText('Atualização agendada', { exact: true })).toHaveCount(0)
+    await expect(lifecycle.getByRole('button', { name: 'Atualizar ambiente' })).toHaveCount(0)
+    await expect(page.getByText('Atualização disponível', { exact: true })).toHaveCount(0)
+    expect(requests.filter((item) => item.key === 'environmentRestart')).toHaveLength(1)
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()
