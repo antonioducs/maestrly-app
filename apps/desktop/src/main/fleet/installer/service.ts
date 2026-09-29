@@ -8,6 +8,7 @@ import { app } from 'electron'
 import { FLEET_ENVIRONMENTS_FEATURE, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
 import {
   fleetUpdateState,
+  knownServerVersion,
   type FleetInstallLocalInput,
   type FleetInstallMode,
   type FleetInstallRecord,
@@ -19,8 +20,10 @@ import {
   type FleetInstallerStepId,
   type FleetRemoteTarget,
   type FleetSshCredentials,
+  type FleetUpdateState,
   type LocalDockerCheck,
 } from '../../../shared/fleet-installer'
+import { compareSemver } from '../../../shared/update'
 import { broadcast } from '../../window-ipc'
 import { fleetClientService, type FleetClientService } from '../client/service'
 import { DockerHost, lastLine } from './docker-host'
@@ -58,7 +61,7 @@ export type InstallerSession = Pick<SshSession, 'exec' | 'forward' | 'onClose' |
 export type InstallerTunnel = Pick<SshTunnel, 'start' | 'stop' | 'port' | 'state' | 'lastForwardError'>
 export type FleetInstallerFleet = Pick<
   FleetClientService,
-  'getConnection' | 'connect' | 'disconnect' | 'retarget' | 'call' | 'hasFeature'
+  'getConnection' | 'getSnapshot' | 'connect' | 'disconnect' | 'retarget' | 'call' | 'hasFeature'
 >
 export interface FleetInstallerStore {
   readRecord(): FleetInstallRecord | null
@@ -195,12 +198,22 @@ export class FleetInstallerService {
     return botServerImages({ version: this.deps.appVersion, isPackaged: this.deps.isPackaged, env: this.deps.env })
   }
 
+  /** The version the connected gateway reports; a reconnecting client may still hold the one it replaced. */
+  private reportedGatewayVersion(): string | null {
+    return this.deps.fleet.getConnection().state === 'connected'
+      ? (this.deps.fleet.getSnapshot().host?.gatewayVersion ?? null)
+      : null
+  }
+  private serverUpdateState(record: FleetInstallRecord): FleetUpdateState {
+    return fleetUpdateState(knownServerVersion(record.version, this.reportedGatewayVersion()), this.deps.appVersion)
+  }
+
   status(): FleetInstallerStatus {
     const record = this.deps.store.readRecord()
     return {
       record,
       appVersion: this.deps.appVersion,
-      update: record ? fleetUpdateState(record.version, this.deps.appVersion) : 'none',
+      update: record ? this.serverUpdateState(record) : 'none',
       tunnel: this.tunnel?.state ?? 'off',
       keyPersistence: record?.mode === 'remote' ? this.deps.store.keyPersistence() : null,
       job: this.job ? structuredClone(this.job) : null,
@@ -607,7 +620,7 @@ export class FleetInstallerService {
     this.assertIdle()
     const record = this.deps.store.readRecord()
     if (!record) throw new InstallerError('not-connected')
-    if (fleetUpdateState(record.version, this.deps.appVersion) !== 'available') return this.status()
+    if (this.serverUpdateState(record) !== 'available') return this.status()
     const ids: FleetInstallerStepId[] =
       record.mode === 'remote' ? ['connect', 'files', 'images', 'start'] : ['files', 'images', 'start']
     return this.runJob('update', record.mode, ids, async (context) => {
@@ -618,6 +631,12 @@ export class FleetInstallerService {
           if (record.mode === 'remote' && images.source === 'local')
             throw new InstallerError('images-unavailable', DEV_REMOTE_DETAIL)
           const current = await host.readEnv()
+          // Another computer may have moved the server past this app: its files tell, whatever this one recorded.
+          const installed = current ? imageVersion(parseBotServerEnv(current).gatewayImage ?? '') : null
+          if (installed && compareSemver(installed, this.deps.appVersion) > 0) {
+            this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: installed })
+            throw new InstallerError('server-newer')
+          }
           const env = current
             ? withEnvValues(current, { MAESTRLY_GATEWAY_IMAGE: images.gateway, MAESTRLY_GATEWAY_BOT_IMAGE: images.bot })
             : renderBotServerEnv({

@@ -121,7 +121,15 @@ function setup(options: SetupOptions = {}) {
     disconnects: 0,
     retargets: [] as string[],
     calls: [] as Array<[string, unknown]>,
+    /** Every gateway call a test expects, by route: a value, or a function of the call's options. Others fail. */
     responses: {} as Record<string, unknown>,
+    snapshot: { host: null, bots: [], environments: [], inbox: [], peerMessages: [] } as {
+      host: { gatewayVersion: string } | null
+      bots: unknown[]
+      environments: unknown[]
+      inbox: unknown[]
+      peerMessages: unknown[]
+    },
   }
   const fleet = {
     getConnection: () => fleetState.connection,
@@ -136,9 +144,12 @@ function setup(options: SetupOptions = {}) {
     },
     retarget: (url: string) => fleetState.retargets.push(url),
     hasFeature: (feature: string) => fleetState.connection.features.includes(feature),
+    getSnapshot: () => fleetState.snapshot,
     async call(key: string, callOptions?: unknown) {
       fleetState.calls.push([key, callOptions])
-      return fleetState.responses[key] ?? {}
+      if (!(key in fleetState.responses)) throw new Error('Unexpected gateway call: ' + key)
+      const response = fleetState.responses[key]
+      return typeof response === 'function' ? response(callOptions) : response
     },
   } as unknown as FleetInstallerFleet
   const connections: Array<{ credentials: { kind: string }; expectedHostKey: string | null }> = []
@@ -704,6 +715,43 @@ describe('keeping the server up to date', () => {
     expect(local.calls).toEqual([])
   })
 
+  it('never moves back a server another computer updated, as its files tell', async () => {
+    const { service, local, stored } = setup({ record: localRecord() })
+    const newerEnv = oldEnv.replace(/:0\.9\.3/g, ':0.9.9')
+    local.files.set(localFile('.env'), newerEnv)
+    expect(service.status().update).toBe('available')
+    const status = await service.update()
+    expect(status.job?.state).toBe('failed')
+    expect(status.job?.error?.code).toBe('server-newer')
+    expect(steps(status)?.[0]).toEqual(['files', 'failed'])
+    expect(local.files.get(localFile('.env'))).toBe(newerEnv)
+    expect(local.commands(['pull'])).toEqual([])
+    expect(local.commands(['compose', 'up'])).toEqual([])
+    expect(stored.record?.version).toBe('0.9.9')
+    expect(status.update).toBe('server-newer')
+  })
+
+  it('takes the version the connected gateway reports over the recorded one', async () => {
+    const { service, local, fleetState } = setup({
+      record: localRecord(),
+      connection: { url: 'http://127.0.0.1:7450', deviceId: 'device-1', state: 'connected' },
+    })
+    fleetState.snapshot.host = { gatewayVersion: '0.9.9' }
+    expect(service.status().update).toBe('server-newer')
+    const status = await service.update()
+    expect(status.job).toBeNull()
+    expect(local.calls).toEqual([])
+    fleetState.snapshot.host = { gatewayVersion: '0.9.4' }
+    expect(service.status().update).toBe('none')
+    // A development gateway reports no release version: the recorded one counts.
+    fleetState.snapshot.host = { gatewayVersion: '1' }
+    expect(service.status().update).toBe('available')
+    // A reconnecting client may still hold the old gateway's host: only a connected one counts.
+    fleetState.snapshot.host = { gatewayVersion: '0.9.9' }
+    fleetState.connection = { ...fleetState.connection, state: 'reconnecting' }
+    expect(service.status().update).toBe('available')
+  })
+
   it('switches what bots may reach and restarts the gateway', async () => {
     const { service, local, stored } = setup({ record: localRecord() })
     local.files.set(localFile('.env'), oldEnv)
@@ -767,13 +815,16 @@ describe('leaving and removing the server', () => {
     )
     fleetState.responses = {
       environmentsList: { environments: [{ id: 'work', name: 'Work', lifecycle: 'running' }] },
+      environmentArchive: { id: 'work', name: 'Work', lifecycle: 'archived' },
       archivedEnvironmentsList: {
         environments: [
           { id: 'work', name: 'Work' },
           { id: 'old', name: 'Old' },
         ],
       },
+      archivedEnvironmentDelete: undefined,
       archivedBotsList: { bots: [{ id: 'scout', name: 'Scout' }] },
+      archivedBotDelete: undefined,
     }
     const status = await service.remove()
     expect(steps(status)).toEqual([

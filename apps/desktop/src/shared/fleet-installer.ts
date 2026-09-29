@@ -2,7 +2,7 @@
  * The bot server installer's state, shared by the main process, the preload and the renderer. Pure module (no Node or
  * Electron imports): the main process owns installs; the renderer only mirrors `FleetInstallerStatus`.
  */
-import { compareSemver } from './update'
+import { compareSemver, parseSemver } from './update'
 
 /** Where Maestrly installed the bot server: this computer's Docker, or a VPS reached over SSH. */
 export type FleetInstallMode = 'local' | 'remote'
@@ -135,6 +135,14 @@ export interface FleetInstallRemoteInput {
   credentials: FleetSshCredentials
   deviceName: string
   allowPrivateNetwork: boolean
+}
+
+/**
+ * The server's version as best known: the release version its connected gateway reports, else the one this computer
+ * recorded when it installed or updated it. Another computer may have updated the server since.
+ */
+export function knownServerVersion(recordVersion: string | null, reportedVersion: string | null): string | null {
+  return reportedVersion && parseSemver(reportedVersion) ? reportedVersion : recordVersion
 }
 
 /** Whether the server can move to the app's version. An unknown server version can always be updated. */
