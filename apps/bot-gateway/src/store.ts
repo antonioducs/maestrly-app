@@ -41,12 +41,14 @@ export type StoredEnvironment = {
   memoryLimitBytes: number | null
   /** The compaction model of its bots that have none of their own; null when the owner has not chosen one. */
   compaction: FleetCompactionConfig | null
+  /** When the owner asked to update it once its bots are idle; null when no update waits. */
+  updateRequestedAt: string | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null
 }
 export type EnvironmentChanges = Partial<
-  Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes' | 'compaction'>
+  Pick<StoredEnvironment, 'name' | 'lifecycle' | 'setup' | 'memoryLimitBytes' | 'compaction' | 'updateRequestedAt'>
 >
 /** What an environment's container is started with: the token of its control API and the password of its keyring. */
 export type EnvironmentSecrets = { controlToken: string; keyringPassword: string }
@@ -150,7 +152,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 7) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 8) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -207,6 +209,7 @@ export class Store {
     }
     if (version <= 5) this.migrateToEnvironments()
     if (version <= 6) this.migrateEnvironmentCompaction()
+    if (version <= 7) this.migrateEnvironmentUpdates()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -293,6 +296,11 @@ export class Store {
           this.db.prepare('UPDATE bots SET compaction_json=NULL WHERE id=?').run(bot.id)
     }
     this.db.prepare("UPDATE meta SET value='7' WHERE key='schema_version'").run()
+  }
+  /** Schema 8: an environment can wait for its bots to be idle before it updates. */
+  private migrateEnvironmentUpdates() {
+    this.db.exec('ALTER TABLE environments ADD COLUMN update_requested_at TEXT')
+    this.db.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -510,6 +518,7 @@ export class Store {
       volumeName: String(row.volume_name),
       memoryLimitBytes: row.memory_limit_bytes === null ? null : Number(row.memory_limit_bytes),
       compaction: row.compaction_json ? (JSON.parse(String(row.compaction_json)) as FleetCompactionConfig) : null,
+      updateRequestedAt: (row.update_requested_at as string | null) ?? null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
       archivedAt: (row.archived_at as string | null) ?? null,
@@ -530,7 +539,7 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           environment.id,
@@ -541,6 +550,7 @@ export class Store {
           environment.volumeName,
           environment.memoryLimitBytes,
           environment.compaction ? JSON.stringify(environment.compaction) : null,
+          environment.updateRequestedAt,
           environment.createdAt,
           environment.updatedAt,
           environment.lifecycle === 'archived' ? (environment.archivedAt ?? environment.updatedAt) : null
@@ -568,8 +578,8 @@ export class Store {
     ).map((row) => this.environment(row))
   }
   /**
-   * Changes an active environment's name, lifecycle, setup, memory limit (null: the gateway's default) or default
-   * compaction model (null: none).
+   * Changes an active environment's name, lifecycle, setup, memory limit (null: the gateway's default), default
+   * compaction model (null: none) or pending update (null: none).
    */
   updateEnvironment(id: string, changes: EnvironmentChanges, at = now()): StoredEnvironment {
     if (changes.lifecycle === 'archived') throw new Error('Archive an environment with archiveEnvironment')
@@ -583,11 +593,13 @@ export class Store {
         setup: changes.setup ?? current.setup,
         memoryLimitBytes: changes.memoryLimitBytes === undefined ? current.memoryLimitBytes : changes.memoryLimitBytes,
         compaction: changes.compaction === undefined ? current.compaction : changes.compaction,
+        updateRequestedAt:
+          changes.updateRequestedAt === undefined ? current.updateRequestedAt : changes.updateRequestedAt,
         updatedAt: at,
       }
       this.db
         .prepare(
-          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,compaction_json=?,updated_at=? WHERE id=?'
+          'UPDATE environments SET name=?,lifecycle=?,setup_json=?,memory_limit_bytes=?,compaction_json=?,update_requested_at=?,updated_at=? WHERE id=?'
         )
         .run(
           next.name,
@@ -595,6 +607,7 @@ export class Store {
           JSON.stringify(next.setup),
           next.memoryLimitBytes,
           next.compaction ? JSON.stringify(next.compaction) : null,
+          next.updateRequestedAt,
           next.updatedAt,
           id
         )
@@ -776,6 +789,7 @@ export class Store {
             volumeName: legacyVolumeName(bot.id),
             memoryLimitBytes: null,
             compaction: null,
+            updateRequestedAt: null,
             createdAt: bot.createdAt,
             updatedAt: bot.updatedAt,
             archivedAt: null,

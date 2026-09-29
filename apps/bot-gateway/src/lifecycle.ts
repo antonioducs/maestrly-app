@@ -523,6 +523,7 @@ export class Lifecycle {
         volumeName: environmentVolumeName(id),
         memoryLimitBytes,
         compaction: null,
+        updateRequestedAt: null,
         createdAt: at,
         updatedAt: at,
         archivedAt: null,
