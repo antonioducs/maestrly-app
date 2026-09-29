@@ -5,6 +5,11 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- Close only the open list, not the whole dialog, when pressing Escape in a
+  searchable dropdown such as the environment choice when creating a bot.
+
 ## [0.11.0] - 2026-09-28
 
 ### Added

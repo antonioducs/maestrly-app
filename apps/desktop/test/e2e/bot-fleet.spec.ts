@@ -3001,8 +3001,11 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await expect(parkedOption).toContainText('Inicie este ambiente antes de adicionar bots.')
     await expect(page.getByRole('option', { name: /Legado/ })).toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByRole('option', { name: /Acme/ })).not.toHaveAttribute('aria-disabled', 'true')
+    // Escape closes the list only. A dialog that started closing still shows during its exit animation, so its
+    // state is what tells.
     await page.keyboard.press('Escape')
-    await expect(createDialog).toBeVisible()
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+    await expect(createDialog).toHaveAttribute('data-state', 'open')
     await createDialog.getByRole('button', { name: 'Criar bot' }).click()
     await expect(createDialog.getByText('Escolha em qual ambiente ele roda.')).toBeVisible()
     await createDialog.getByRole('button', { name: 'Cancelar' }).click()
