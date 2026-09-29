@@ -31,6 +31,10 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- Let bots use new Claude models such as Opus 5.5: the bot image now ships
+  Claude Code 2.1.285, so bots see these models as the desktop app does,
+  including the extra high effort, instead of a reduced context window and a
+  request to update Claude Code on every turn.
 - Close only the open list, not the whole dialog, when pressing Escape in a
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer

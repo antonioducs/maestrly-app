@@ -28,7 +28,7 @@ export class ClaudeAgentExecutor implements ExecutorAdapter {
   constructor(private readonly options: ClaudeAgentExecutorOptions = {}) {}
 
   async capabilities(): Promise<ExecutorCapabilities> {
-    return { executor: 'claude-agent', capabilities: [{ name: 'executor:claude-agent', version: '0.3.263', attributes: {} }, { name: 'delivery:patch', attributes: {} }] }
+    return { executor: 'claude-agent', capabilities: [{ name: 'executor:claude-agent', version: '0.3.285', attributes: {} }, { name: 'delivery:patch', attributes: {} }] }
   }
 
   async start(context: ExecutionContext): Promise<ExecutionHandle> {
