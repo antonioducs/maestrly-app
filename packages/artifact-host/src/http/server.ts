@@ -215,10 +215,14 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     const version = body.version
     if (typeof version !== 'number' || !Number.isInteger(version) || version < 1)
       return json(res, 400, { error: 'invalid_version' })
-    const record = store.getVersion(id, version)
+    const record = store.getVersion(artifact.id, version)
     if (!record) return apiNotFound(res)
     const expiresAt = now + CAPABILITY_TTL_MS
-    const capability = signCapability({ a: id, v: version, s: session.id, e: expiresAt }, deps.capabilityKey)
+    // Bind the capability to the stored artifact the session belongs to, never to the request path.
+    const capability = signCapability(
+      { a: artifact.id, v: record.number, s: session.id, e: expiresAt },
+      deps.capabilityKey
+    )
     const entry = record.entry.split('/').map(encodeURIComponent).join('/')
     return json(res, 200, { url: `/c/${capability}/${entry}`, expiresAt })
   }
