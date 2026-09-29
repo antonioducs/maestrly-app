@@ -7,6 +7,8 @@ apps/web/dist/
 apps/server/dist/
 apps/runner/dist/
 packages/*/dist/
+packages/artifact-host/build/
+packages/artifact-host/src/generated/
 coverage/
 test-results/
 playwright-report/
