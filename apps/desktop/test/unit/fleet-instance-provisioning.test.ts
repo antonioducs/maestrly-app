@@ -256,6 +256,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'environment-compaction',
     'context-limit',
     'transcript-reasoning',
+    'runtime-updates',
   ])
 })
 

@@ -10,6 +10,8 @@ import { onRuntimeUpdateChanged } from './app-service'
 export interface BotRuntimesOptions {
   /** The status of every bot of this environment, read now. */
   readonly botStatuses: () => Promise<readonly FleetInstanceStatus[]>
+  /** A runtime's version or release channel changed, so bot statuses report it anew. */
+  readonly onRuntimesChanged?: () => void
 }
 
 function log(message: string, error?: unknown): void {
@@ -58,6 +60,7 @@ export function startBotRuntimes(options: BotRuntimesOptions): () => void {
   const unsubscribe = onRuntimeUpdateChanged((id) => {
     if (id === 'claude-code-runtime') refreshClaude()
     else recycleCodexIfStale()
+    options.onRuntimesChanged?.()
   })
   return () => {
     unsubscribe()

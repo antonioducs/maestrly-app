@@ -298,11 +298,19 @@ describe('bot environment registry', () => {
       'environment-compaction',
       'context-limit',
       'transcript-reasoning',
+      'runtime-updates',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
       ready: true,
-      capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit', 'transcript-reasoning'],
+      capabilities: [
+        'provisioning',
+        'environments',
+        'environment-compaction',
+        'context-limit',
+        'transcript-reasoning',
+        'runtime-updates',
+      ],
     })
   })
 
@@ -848,6 +856,7 @@ describe('bot environment registry', () => {
           'environment-compaction',
           'context-limit',
           'transcript-reasoning',
+          'runtime-updates',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -858,6 +867,7 @@ describe('bot environment registry', () => {
           'environment-compaction',
           'context-limit',
           'transcript-reasoning',
+          'runtime-updates',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -872,6 +882,7 @@ describe('bot environment registry', () => {
           'environment-compaction',
           'context-limit',
           'transcript-reasoning',
+          'runtime-updates',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

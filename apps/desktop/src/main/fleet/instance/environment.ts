@@ -77,6 +77,7 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, type BotRuntimeHost, type BotScreen } from './runtime'
+import { checkBotRuntimes } from './runtimes'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
 
 /** The part of the display manager an environment uses. */
@@ -246,6 +247,15 @@ export class EnvironmentRuntime {
     for (const bot of this.registry.values()) if (bot.primaryConversationId === conversationId) return bot
     return null
   }
+  checkRuntimes(): void {
+    checkBotRuntimes()
+  }
+
+  /** Every bot reports the environment's runtimes: a change is published in each bot's status. */
+  runtimesChanged(): void {
+    for (const bot of this.bots()) bot.runtimesChanged()
+  }
+
   /** The status of every installed bot, read now. */
   botStatuses(): Promise<FleetInstanceStatus[]> {
     return Promise.all(this.bots().map((bot) => bot.status()))

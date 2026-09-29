@@ -90,6 +90,16 @@ describe('startBotRuntimes', () => {
     stop()
   })
 
+  it('publishes new bot statuses whenever a runtime changes', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const onRuntimesChanged = vi.fn()
+    const stop = startBotRuntimes({ botStatuses: async () => [idle], onRuntimesChanged })
+    emit('claude-code-runtime')
+    emit('codex-runtime')
+    expect(onRuntimesChanged).toHaveBeenCalledTimes(2)
+    stop()
+  })
+
   it('leaves Codex connections alone when they already run the selected runtime', async () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
     mocks.managers = [{ connectedRuntimePath: mocks.selectedCodex }]

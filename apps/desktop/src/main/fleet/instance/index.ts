@@ -89,7 +89,10 @@ export async function startBotInstanceMode(
   let stopRuntimes = () => {}
   try {
     await environment.start()
-    stopRuntimes = startBotRuntimes({ botStatuses: () => environment.botStatuses() })
+    stopRuntimes = startBotRuntimes({
+      botStatuses: () => environment.botStatuses(),
+      onRuntimesChanged: () => environment.runtimesChanged(),
+    })
     const server = createInstanceControlServer(config, environment)
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
