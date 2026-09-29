@@ -5,7 +5,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeAssetId } from '../../src/shared/runtime-assets'
 import { CODEX_COMPATIBILITY_REVISION } from '../../src/main/runtime-assets/codex-compatibility'
-import { CodexReleaseStore, type CodexReleaseStorage } from '../../src/main/runtime-assets/codex-release-store'
+import { CODEX_RELEASE_PROFILE } from '../../src/main/runtime-assets/codex-releases'
+import { RuntimeReleaseStore, type RuntimeReleaseStorage } from '../../src/main/runtime-assets/release-store'
 import { CodexUpdateController } from '../../src/main/runtime-assets/codex-updates'
 import type { RuntimeDownloader } from '../../src/main/runtime-assets/downloader'
 import { createCodexTarget, type RuntimeAssetDefinition } from '../../src/main/runtime-assets/registry'
@@ -35,7 +36,7 @@ function codexDefinition(version: string): RuntimeAssetDefinition {
   }
 }
 
-function memoryStorage(): CodexReleaseStorage & { value: () => string | null } {
+function memoryStorage(): RuntimeReleaseStorage & { value: () => string | null } {
   let value: string | null = null
   return {
     read: () => value,
@@ -50,7 +51,7 @@ function harness(options: { schedule?: boolean; storage?: ReturnType<typeof memo
   const storage = options.storage ?? memoryStorage()
   const embedded = codexDefinition('1.0.0')
   const empty = (id: RuntimeAssetId): RuntimeAssetDefinition => ({ id, version: 'none', targets: {} })
-  const store = new CodexReleaseStore({ storage, target: 'mac-arm64', embedded })
+  const store = new RuntimeReleaseStore({ profile: CODEX_RELEASE_PROFILE, storage, target: 'mac-arm64', embedded })
   const downloader = vi.fn<RuntimeDownloader>(async (target, destination, download) => {
     await writeFile(destination, 'archive')
     download.onProgress?.(7, 7)

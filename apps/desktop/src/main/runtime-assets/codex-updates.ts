@@ -5,8 +5,8 @@ import type {
   RuntimeAssetUpdateState,
 } from '../../shared/runtime-assets'
 import { CODEX_COMPATIBILITY_REVISION } from './codex-compatibility'
-import type { CodexReleaseStore } from './codex-release-store'
-import { compareStableVersions } from './codex-releases'
+import { compareStableVersions } from './npm-registry'
+import type { RuntimeReleaseStore } from './release-store'
 import type { RuntimeAssetDefinition, RuntimeTargetId } from './registry'
 import { RuntimeAssetUpdateError, type RuntimeAssetService, type RuntimeAssetUpdateProgress } from './service'
 
@@ -34,7 +34,7 @@ type ServicePort = Pick<
 
 export interface CodexUpdateControllerOptions {
   readonly service: ServicePort
-  readonly store: CodexReleaseStore
+  readonly store: RuntimeReleaseStore
   readonly target: RuntimeTargetId
   readonly embedded: RuntimeAssetDefinition
   readonly discover: (target: RuntimeTargetId, signal: AbortSignal) => Promise<RuntimeAssetDefinition>
@@ -126,7 +126,7 @@ export class CodexUpdateController {
     let automatic = false
     let lastCheckedAt: string | undefined
     let candidate: RuntimeAssetDefinition | null = null
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       automatic = store.automatic
       lastCheckedAt = store.lastCheckedAt
@@ -344,7 +344,7 @@ export class CodexUpdateController {
       if (signal.aborted) throw signal.reason ?? error
       this.log('Release check before installation failed; installing the embedded version', error)
     }
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       rejected = store.rejected()
     } catch {
@@ -380,7 +380,7 @@ export class CodexUpdateController {
     const { service, store } = this.options
     const status = await service.status(ID).catch(() => null)
     if (status?.state !== 'ready' || !status.version || !status.path) return
-    let release: ReturnType<CodexReleaseStore['acceptedRelease']> = null
+    let release: ReturnType<RuntimeReleaseStore['acceptedRelease']> = null
     try {
       release = store.acceptedRelease(status.version)
     } catch {
@@ -434,7 +434,7 @@ export class CodexUpdateController {
     await this.prune()
     let automatic = false
     let candidate: RuntimeAssetDefinition | null = null
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       automatic = store.automatic
       candidate = store.candidate()

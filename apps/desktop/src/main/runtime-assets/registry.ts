@@ -1,5 +1,6 @@
 import type { RuntimeAssetId } from '../../shared/runtime-assets'
 import localMlManifest from '../../../runtime-assets/local-ml/manifest.json'
+import { NPM_REGISTRY_ORIGIN } from './npm-registry'
 
 export type RuntimeTargetId = 'mac-arm64' | 'mac-x64' | 'linux-arm64' | 'linux-x64' | 'win-arm64' | 'win-x64'
 export type ArchiveFormat = 'tar.gz' | 'zip' | 'file'
@@ -146,7 +147,7 @@ export const CODEX_TARGET_LAYOUT: Readonly<
   >
 )
 
-export const CODEX_NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
+export const CODEX_NPM_REGISTRY_ORIGIN = NPM_REGISTRY_ORIGIN
 
 /** Canonical tarball URL of one official Codex platform artifact; dynamic releases must match it exactly. */
 export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {

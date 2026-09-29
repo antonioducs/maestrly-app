@@ -12,15 +12,15 @@ import type {
 import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { isE2E } from '../test-mode'
 import { validateCodexRuntime } from './codex-compatibility'
-import { CODEX_RELEASE_STORE_KEY, CodexReleaseStore } from './codex-release-store'
-import { compareStableVersions, discoverCodexRelease } from './codex-releases'
+import { CODEX_RELEASE_PROFILE, compareStableVersions, discoverCodexRelease } from './codex-releases'
+import { CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
 import { CodexUpdateController } from './codex-updates'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
 
 let service: RuntimeAssetService | null = null
-let codexReleases: CodexReleaseStore | null = null
+let codexReleases: RuntimeReleaseStore | null = null
 let codexUpdates: CodexUpdateController | null = null
 const diskUsageCache = new Map<RuntimeAssetId, number>()
 const runtimeAssetNotificationTimers = new Map<RuntimeAssetId, ReturnType<typeof setTimeout>>()
@@ -44,8 +44,9 @@ export class RuntimeAssetComponentRequiredError extends Error {
 }
 
 /** Persisted metadata of independently installed Codex releases (local SQLite app settings). */
-export function codexReleaseStore(): CodexReleaseStore {
-  codexReleases ??= new CodexReleaseStore({
+export function codexReleaseStore(): RuntimeReleaseStore {
+  codexReleases ??= new RuntimeReleaseStore({
+    profile: CODEX_RELEASE_PROFILE,
     storage: {
       read: () => getAppSetting(CODEX_RELEASE_STORE_KEY),
       write: (value) => setAppSetting(CODEX_RELEASE_STORE_KEY, value),

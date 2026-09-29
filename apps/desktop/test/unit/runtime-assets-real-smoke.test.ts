@@ -5,8 +5,12 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 import { validateCodexRuntime } from '../../src/main/runtime-assets/codex-compatibility'
-import { CodexReleaseStore } from '../../src/main/runtime-assets/codex-release-store'
-import { compareStableVersions, discoverCodexRelease } from '../../src/main/runtime-assets/codex-releases'
+import {
+  CODEX_RELEASE_PROFILE,
+  compareStableVersions,
+  discoverCodexRelease,
+} from '../../src/main/runtime-assets/codex-releases'
+import { RuntimeReleaseStore } from '../../src/main/runtime-assets/release-store'
 import { CodexUpdateController } from '../../src/main/runtime-assets/codex-updates'
 import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from '../../src/main/runtime-assets/registry'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
@@ -58,7 +62,8 @@ suite('managed provider runtime assets real smoke', () => {
       const userDataPath = path.join(temporary, 'codex-updates')
       let persisted: string | null = null
       const embedded = RUNTIME_ASSET_REGISTRY['codex-runtime']
-      const store = new CodexReleaseStore({
+      const store = new RuntimeReleaseStore({
+        profile: CODEX_RELEASE_PROFILE,
         storage: {
           read: () => persisted,
           write: (value) => {
