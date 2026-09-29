@@ -46,6 +46,7 @@ export const FLEET_INSTALLER_STEP_IDS = [
   'pair',
   'key',
   'environments',
+  'environment-updates',
   'teardown',
 ] as const
 export type FleetInstallerStepId = (typeof FLEET_INSTALLER_STEP_IDS)[number]
@@ -111,6 +112,21 @@ export interface FleetInstallerStatus {
   /** Where Maestrly keeps its SSH key to a VPS; null without one. */
   keyPersistence: 'secure' | 'memory' | null
   job: FleetInstallerJob | null
+}
+
+/** What scheduling the update of every environment that has one did. */
+export interface FleetEnvironmentUpdateResult {
+  /** False when the gateway does not schedule updates: environments keep their own Update button. */
+  supported: boolean
+  /** The environments scheduled to update once their bots are idle. */
+  scheduled: string[]
+  failed: { environmentId: string; name: string; message: string }[]
+}
+/** Updating bots in one click: the server when this app can, then their environments. */
+export interface FleetUpdateBotsResult {
+  status: FleetInstallerStatus
+  /** Null when no environment was scheduled because the server update failed or was cancelled. */
+  environments: FleetEnvironmentUpdateResult | null
 }
 
 export type LocalDockerState = 'missing' | 'stopped' | 'no-permission' | 'no-compose' | 'dev-fleet' | 'ready'

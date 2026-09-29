@@ -1111,6 +1111,7 @@ export default {
       pair: 'Conectar este computador',
       key: 'Salvar o acesso',
       environments: 'Remover ambientes',
+      'environment-updates': 'Agendar a atualização dos ambientes',
       teardown: 'Remover arquivos do servidor',
     },
     progress: {

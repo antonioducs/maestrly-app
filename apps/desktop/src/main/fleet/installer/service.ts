@@ -9,6 +9,7 @@ import { FLEET_ENVIRONMENTS_FEATURE, FLEET_PROTOCOL_VERSION } from '@maestrly/bo
 import {
   fleetUpdateState,
   knownServerVersion,
+  type FleetEnvironmentUpdateResult,
   type FleetInstallLocalInput,
   type FleetInstallMode,
   type FleetInstallRecord,
@@ -20,6 +21,7 @@ import {
   type FleetInstallerStepId,
   type FleetRemoteTarget,
   type FleetSshCredentials,
+  type FleetUpdateBotsResult,
   type FleetUpdateState,
   type LocalDockerCheck,
 } from '../../../shared/fleet-installer'
@@ -27,6 +29,7 @@ import { compareSemver } from '../../../shared/update'
 import { broadcast } from '../../window-ipc'
 import { fleetClientService, type FleetClientService } from '../client/service'
 import { DockerHost, lastLine } from './docker-host'
+import { scheduleEnvironmentUpdates } from './environment-updates'
 import { InstallerError, installerErrorOf } from './errors'
 import { botServerImages, type BotServerImages } from './images'
 import {
@@ -179,6 +182,8 @@ export class FleetInstallerService {
   private job: FleetInstallerJob | null = null
   private controller: AbortController | null = null
   private tunnel: InstallerTunnel | null = null
+  /** What the last server update's `environment-updates` step scheduled, for `updateBots` to report. */
+  private lastEnvironmentUpdate: FleetEnvironmentUpdateResult | null = null
 
   constructor(private readonly deps: FleetInstallerDeps) {}
 
@@ -622,7 +627,9 @@ export class FleetInstallerService {
     if (!record) throw new InstallerError('not-connected')
     if (this.serverUpdateState(record) !== 'available') return this.status()
     const ids: FleetInstallerStepId[] =
-      record.mode === 'remote' ? ['connect', 'files', 'images', 'start'] : ['files', 'images', 'start']
+      record.mode === 'remote'
+        ? ['connect', 'files', 'images', 'start', 'environment-updates']
+        : ['files', 'images', 'start', 'environment-updates']
     return this.runJob('update', record.mode, ids, async (context) => {
       const { host, close } = await this.openHost(record, context)
       try {
@@ -656,10 +663,35 @@ export class FleetInstallerService {
         })
         await this.removeOtherVersions(host, images)
         this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: this.deps.appVersion })
+        // The updated gateway recreates no running environment on its own: each is scheduled to follow once idle.
+        const environments = await context.step('environment-updates', () =>
+          scheduleEnvironmentUpdates(this.deps.fleet, {
+            signal: context.signal,
+            waitMs: this.deps.healthTimeoutMs,
+            pollMs: this.deps.pollMs,
+          })
+        )
+        if (!environments.supported) context.skip('environment-updates')
+        this.lastEnvironmentUpdate = environments
       } finally {
         close()
       }
     })
+  }
+
+  /**
+   * Updates bots in one click: moves the server to the app's version when this app installed it and it is older,
+   * then schedules every running environment on an older image to update once its bots are idle.
+   */
+  async updateBots(): Promise<FleetUpdateBotsResult> {
+    const record = this.deps.store.readRecord()
+    if (record && this.serverUpdateState(record) === 'available') {
+      this.lastEnvironmentUpdate = null
+      const status = await this.update()
+      return { status, environments: status.job?.state === 'succeeded' ? this.lastEnvironmentUpdate : null }
+    }
+    this.assertIdle()
+    return { status: this.status(), environments: await scheduleEnvironmentUpdates(this.deps.fleet, { waitMs: 0 }) }
   }
 
   /** Removes this registry's images of other versions; ones still in use stay. Never fails the update. */

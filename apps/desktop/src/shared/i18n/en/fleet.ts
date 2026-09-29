@@ -1110,6 +1110,7 @@ export default {
       pair: 'Connect this computer',
       key: 'Save access',
       environments: 'Remove environments',
+      'environment-updates': 'Schedule environment updates',
       teardown: 'Remove server files',
     },
     progress: {

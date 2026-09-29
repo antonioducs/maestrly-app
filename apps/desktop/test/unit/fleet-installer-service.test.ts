@@ -693,6 +693,8 @@ describe('keeping the server up to date', () => {
       ['files', 'done'],
       ['images', 'done'],
       ['start', 'done'],
+      // Not connected to a gateway that schedules updates: environments keep their own Update button.
+      ['environment-updates', 'skipped'],
     ])
     expect(local.files.get(localFile('.env'))).toBe(oldEnv.replace(/:0\.9\.3/g, ':0.9.4'))
     expect(local.commands(['pull'])).toEqual([
@@ -764,6 +766,145 @@ describe('keeping the server up to date', () => {
     expect(local.files.has(localFile('compose.yml'))).toBe(false)
     expect(local.commands(['compose', 'up'])).toHaveLength(1)
     expect(stored.record?.allowPrivateNetwork).toBe(true)
+  })
+})
+
+describe('updating bots in one click', () => {
+  const oldEnv = renderBotServerEnv({
+    gatewayImage: 'ghcr.io/antonioducs/maestrly-bot-gateway:0.9.3',
+    botImage: 'ghcr.io/antonioducs/maestrly-bot-instance:0.9.3',
+    port: 7450,
+    displayName: 'Estação antiga',
+    egress: 'public',
+    timezone: 'Europe/Lisbon',
+  })
+  const environment = (
+    id: string,
+    lifecycle: string,
+    update: { available: boolean; pendingSince: string | null } | null
+  ) => ({ id, name: 'Environment ' + id, lifecycle, update })
+  const listed = [
+    environment('a', 'running', { available: true, pendingSince: null }),
+    environment('b', 'running', { available: true, pendingSince: at }),
+    environment('c', 'stopped', { available: true, pendingSince: null }),
+    environment('d', 'running', { available: false, pendingSince: null }),
+    environment('e', 'running', null),
+  ]
+  const connected = { url: 'http://127.0.0.1:7450', deviceId: 'device-1', state: 'connected' as const }
+  const updatesFeature = ['environments', 'environment-updates']
+  /** A gateway that lists these environments and schedules each update it is asked for, but the failing ones. */
+  function gateway(fleetState: ReturnType<typeof setup>['fleetState'], environments = listed, failing: string[] = []) {
+    fleetState.responses = {
+      environmentsList: { environments },
+      environmentUpdate: (options: { params: { eid: string }; body: unknown }) => {
+        if (failing.includes(options.params.eid)) throw new Error('Synthetic refusal')
+        return { ...environments.find((item) => item.id === options.params.eid), body: options.body }
+      },
+    }
+  }
+  const updates = (fleetState: ReturnType<typeof setup>['fleetState']) =>
+    fleetState.calls.filter(([key]) => key === 'environmentUpdate')
+
+  it('schedules only running environments with an update that none waits for', async () => {
+    const { fleetState, service } = setup({ connection: { ...connected, features: updatesFeature } })
+    gateway(fleetState)
+    const result = await service.updateBots()
+    expect(result.status.job).toBeNull()
+    expect(result.environments).toEqual({ supported: true, scheduled: ['a'], failed: [] })
+    expect(updates(fleetState)).toEqual([['environmentUpdate', { params: { eid: 'a' }, body: { when: 'idle' } }]])
+  })
+
+  it('schedules the others when one environment refuses', async () => {
+    const { fleetState, service } = setup({ connection: { ...connected, features: updatesFeature } })
+    const two = [
+      environment('a', 'running', { available: true, pendingSince: null }),
+      environment('f', 'running', { available: true, pendingSince: null }),
+    ]
+    gateway(fleetState, two, ['a'])
+    const result = await service.updateBots()
+    expect(result.environments).toEqual({
+      supported: true,
+      scheduled: ['f'],
+      failed: [{ environmentId: 'a', name: 'Environment a', message: 'Synthetic refusal' }],
+    })
+  })
+
+  it('waits for a gateway that schedules updates, and schedules nothing on one that does not', async () => {
+    const { fleetState } = setup({ connection: { ...connected, features: ['environments'] } })
+    gateway(fleetState)
+    const { scheduleEnvironmentUpdates } = await import('../../src/main/fleet/installer/environment-updates')
+    let asked = 0
+    const fleet = {
+      getConnection: () => fleetState.connection,
+      hasFeature: (feature: string) => {
+        // The client reconnects to the updated gateway after two checks.
+        if (++asked > 2) fleetState.connection = { ...fleetState.connection, features: updatesFeature }
+        return fleetState.connection.features.includes(feature)
+      },
+      call: (key: string, options?: unknown) =>
+        (fleetState.responses[key] as (value?: unknown) => unknown) instanceof Function
+          ? (fleetState.responses[key] as (value?: unknown) => unknown)(options)
+          : fleetState.responses[key],
+    } as unknown as FleetInstallerFleet
+    expect(await scheduleEnvironmentUpdates(fleet, { waitMs: 1000, pollMs: 1 })).toMatchObject({ scheduled: ['a'] })
+
+    const old = setup({ connection: { ...connected, features: ['environments'] } })
+    const result = await old.service.updateBots()
+    expect(result.environments).toEqual({ supported: false, scheduled: [], failed: [] })
+    expect(old.fleetState.calls).toEqual([])
+  })
+
+  it('updates the server first, then schedules its environments once the gateway is back', async () => {
+    const { service, local, stored, fleetState } = setup({
+      record: localRecord(),
+      connection: { ...connected, features: updatesFeature },
+    })
+    local.files.set(localFile('.env'), oldEnv)
+    local.on(['image', 'ls'], () => ok(''))
+    const recorded: Array<string | null | undefined> = []
+    gateway(fleetState)
+    const list = fleetState.responses.environmentsList
+    fleetState.responses.environmentsList = () => {
+      recorded.push(stored.record?.version)
+      return list
+    }
+    const result = await service.updateBots()
+    expect(steps(result.status)).toEqual([
+      ['files', 'done'],
+      ['images', 'done'],
+      ['start', 'done'],
+      ['environment-updates', 'done'],
+    ])
+    // The server is recorded as updated before its environments are scheduled.
+    expect(recorded).toEqual(['0.9.4'])
+    expect(result.environments).toEqual({ supported: true, scheduled: ['a'], failed: [] })
+    expect(updates(fleetState)).toHaveLength(1)
+  })
+
+  it('schedules no environment when the server update fails', async () => {
+    const { service, local, fleetState } = setup({
+      record: localRecord(),
+      connection: { ...connected, features: updatesFeature },
+    })
+    local.files.set(localFile('.env'), oldEnv)
+    local.on(['pull'], fail('manifest unknown'))
+    gateway(fleetState)
+    const result = await service.updateBots()
+    expect(result.status.job?.state).toBe('failed')
+    expect(result.environments).toBeNull()
+    expect(fleetState.calls).toEqual([])
+  })
+
+  it('reports no environment update while another server task runs', async () => {
+    const { service, local, fleetState } = setup({
+      record: localRecord(),
+      connection: { ...connected, features: updatesFeature },
+    })
+    local.files.set(localFile('.env'), oldEnv)
+    gateway(fleetState)
+    const running = service.setPrivateNetwork(true)
+    await expect(service.updateBots()).rejects.toMatchObject({ code: 'job-running' })
+    await running
   })
 })
 

@@ -205,6 +205,7 @@ describe('preload API — exposure', () => {
     await api.fleetInstallerInstallLocal({ deviceName: 'Mac', allowPrivateNetwork: true })
     await api.fleetInstallerInstallRemote(remote)
     await api.fleetInstallerUpdate()
+    await api.fleetUpdateBots()
     await api.fleetInstallerSetPrivateNetwork(true)
     await api.fleetInstallerDisconnect()
     await api.fleetInstallerRemove({ confirm: 'remove' })
@@ -215,6 +216,7 @@ describe('preload API — exposure', () => {
       ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: true }],
       ['fleet:installer:installRemote', remote],
       ['fleet:installer:update'],
+      ['fleet:installer:updateBots'],
       ['fleet:installer:setPrivateNetwork', true],
       ['fleet:installer:disconnect'],
       ['fleet:installer:remove', { confirm: 'remove' }],
@@ -228,7 +230,7 @@ describe('preload API — exposure', () => {
   })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(486)
+    expect(keys).toHaveLength(489)
     expect(keys.sort()).toMatchSnapshot()
   })
 
