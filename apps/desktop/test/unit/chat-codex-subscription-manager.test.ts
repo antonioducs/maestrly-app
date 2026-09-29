@@ -669,6 +669,40 @@ describe('CodexSubscriptionManager', () => {
     expect(release).toHaveBeenCalledTimes(1)
   })
 
+  it('recycles an idle connection onto the runtime selected now, without reporting a failure', async () => {
+    const releases = [vi.fn(), vi.fn()]
+    const acquireRuntimeLease = vi.fn(async (runtimePath: string) => ({
+      id: 'codex-runtime' as const,
+      path: runtimePath,
+      release: releases[acquireRuntimeLease.mock.calls.length - 1],
+    }))
+    const resolveRuntime = vi.fn(() => runtime(process.execPath))
+    manager = new CodexSubscriptionManager({
+      resolveRuntime,
+      acquireRuntimeLease,
+      connectClient,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+
+    const first = await manager.getClient()
+    expect(manager.connectedRuntimePath).toBe(process.execPath)
+    await expect(manager.recycleConnection()).resolves.toBe(true)
+    expect(first.state).toBe('closed')
+    expect(releases[0]).toHaveBeenCalledTimes(1)
+    expect(manager.connectedRuntimePath).toBeNull()
+    expect(manager.getStatusSnapshot()).toBeNull()
+
+    const second = await manager.getClient()
+    expect(second).not.toBe(first)
+    expect(resolveRuntime).toHaveBeenCalledTimes(2)
+    expect(releases[1]).not.toHaveBeenCalled()
+    await expect(manager.getStatus()).resolves.toMatchObject({ state: 'ready', error: null })
+    // Nothing to recycle is a success.
+    await manager.dispose()
+    await expect(manager.recycleConnection()).resolves.toBe(true)
+  })
+
   it('releases leases on app-server initialization failure', async () => {
     const release = vi.fn()
     connectClient.mockRejectedValueOnce(new Error('fixture start failed'))
