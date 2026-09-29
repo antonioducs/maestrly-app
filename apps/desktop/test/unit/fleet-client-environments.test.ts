@@ -77,6 +77,7 @@ import {
 } from '../../src/main/fleet/client/provisioning/logins'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
+  FLEET_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_RESTART_REQUIRED,
   fleetTargetKey,
@@ -90,7 +91,11 @@ import {
   provisioningAvailability,
   provisioningTargetForBot,
 } from '../../src/renderer/lib/fleet/provisioning'
-import { isEnvironmentsUnsupported, isScreenConflict } from '../../src/renderer/lib/fleet/errors'
+import {
+  isEnvironmentUpdatesUnsupported,
+  isEnvironmentsUnsupported,
+  isScreenConflict,
+} from '../../src/renderer/lib/fleet/errors'
 import { FleetScreenChannel, type ScreenApi } from '../../src/renderer/lib/fleet/screen-channel'
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 import { fleetApi } from '../../src/preload/api-fleet'
@@ -108,6 +113,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     compaction: null,
     appVersion: '1.0.0',
     capabilities: ['provisioning', 'environments'],
+    update: null,
     botIds: [],
     createdAt: at,
     updatedAt: at,
@@ -331,6 +337,48 @@ describe('environment IPC', () => {
       ['environmentSelections', { params: { eid: 'work' } }],
       ['environmentPatch', { params: { eid: 'work' }, body: { compaction: null } }],
     ])
+  })
+
+  it('schedules, forces and cancels environment updates only on gateways that schedule them', async () => {
+    features.list = ['environments']
+    const ipc = register()
+    for (const channel of ['fleet:environmentUpdate', 'fleet:environmentUpdateCancel']) {
+      expect(ipc.mutations.has(channel)).toBe(true)
+      expect(ipc.reads.has(channel)).toBe(false)
+    }
+    // Environments alone are not enough: an older gateway has no update routes.
+    expect(() => ipc.mutate('fleet:environmentUpdate', 'work', 'idle')).toThrow(FLEET_UPDATES_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:environmentUpdateCancel', 'work')).toThrow(FLEET_UPDATES_UNSUPPORTED)
+    features.list = ['environments', 'environment-updates']
+    expect(() => ipc.mutate('fleet:environmentUpdate', 'work', 'later')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUpdate', '../work', 'idle')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUpdateCancel', 'Work!')).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    await ipc.mutate('fleet:environmentUpdate', 'acme', 'idle')
+    await ipc.mutate('fleet:environmentUpdate', 'acme', 'now')
+    await ipc.mutate('fleet:environmentUpdateCancel', 'acme')
+    expect(calls()).toEqual([
+      ['environmentUpdate', { params: { eid: 'acme' }, body: { when: 'idle' } }],
+      ['environmentUpdate', { params: { eid: 'acme' }, body: { when: 'now' } }],
+      ['environmentUpdateCancel', { params: { eid: 'acme' } }],
+    ])
+    expect(isEnvironmentUpdatesUnsupported(new Error('Error: ' + FLEET_UPDATES_UNSUPPORTED))).toBe(true)
+  })
+
+  it('gives an update done now the lifecycle deadline, and a scheduled one too', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 204 }))
+    )
+    const api = new FleetApiClient('http://127.0.0.1:7443', 'synthetic-token')
+    try {
+      await api.call('environmentUpdate', { params: { eid: 'work' }, body: { when: 'now' } }).catch(() => {})
+      await api.call('environmentUpdateCancel', { params: { eid: 'work' } }).catch(() => {})
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([300_000, 15_000])
+    } finally {
+      timeout.mockRestore()
+    }
   })
 
   it('refuses environment calls on a gateway without environments and lists no archived ones there', async () => {
@@ -947,6 +995,8 @@ describe('environment preload API', () => {
         environment: { name: 'Work' },
       })
       await fleetApi.fleetOwnerMemoryCreate({ content: 'Uses the staging VPN.', environmentId: 'work' })
+      await fleetApi.fleetEnvironmentUpdate('work', 'idle')
+      await fleetApi.fleetEnvironmentUpdateCancel('work')
       expect(invoke.mock.calls).toEqual([
         ['fleet:environmentAction', 'work', 'restart'],
         ['fleet:patchEnvironment', 'work', { memoryLimitBytes: null }],
@@ -963,6 +1013,8 @@ describe('environment preload API', () => {
           { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [], environment: { name: 'Work' } },
         ],
         ['fleet:ownerMemoryCreate', { content: 'Uses the staging VPN.', environmentId: 'work' }],
+        ['fleet:environmentUpdate', 'work', 'idle'],
+        ['fleet:environmentUpdateCancel', 'work'],
       ])
     } finally {
       invoke.mockRestore()

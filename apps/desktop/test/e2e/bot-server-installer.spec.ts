@@ -119,7 +119,7 @@ test('sets up the bot server on this computer, changes its network access, and r
       ['pair', 'done'],
     ])
     await expect(page.getByText(`Servidor ${version} · Maestrly ${version}`)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Atualizar servidor' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Atualizar bots' })).toHaveCount(0)
     expect(engine.commands(['pull'])).toEqual(images(version).map((ref) => ['pull', ref]))
     expect(engine.commands(['compose', 'up'])).toEqual([['compose', 'up', '-d', '--no-build']])
     expect(gateway.pairings).toEqual([{ code: expect.any(String), deviceName: 'Mesa E2E', deviceId: 'device-1' }])
@@ -293,10 +293,13 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     expect(vps.scripts(server.commands.slice(commandsBeforeJoin))).toEqual(['probe', 'authorize-key'])
     expect(gateway.pairings.map((pairing) => pairing.deviceId)).toEqual(['device-1', 'device-2'])
 
-    await runJob(page, () => page.getByRole('button', { name: 'Atualizar servidor' }).click())
+    await runJob(page, () => page.getByRole('button', { name: 'Atualizar bots' }).click())
     await expect(page.getByText(`Servidor ${version} · Maestrly ${version}`)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Atualizar servidor' })).toHaveCount(0)
-    expect((await installerStatus(page)).job).toMatchObject({ kind: 'update', state: 'succeeded' })
+    await expect(page.getByRole('button', { name: 'Atualizar bots' })).toHaveCount(0)
+    const updatedJob = (await installerStatus(page)).job
+    expect(updatedJob).toMatchObject({ kind: 'update', state: 'succeeded' })
+    // The environments are scheduled once the updated gateway is back; the fake's only one has nothing to update.
+    expect(updatedJob?.steps.map((step) => [step.id, step.state]).at(-1)).toEqual(['environment-updates', 'done'])
     const updated = vps.files.get(REMOTE_ENV) ?? ''
     for (const line of [
       `MAESTRLY_GATEWAY_IMAGE=${images(version)[0]}`,

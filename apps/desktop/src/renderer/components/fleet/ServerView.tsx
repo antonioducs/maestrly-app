@@ -12,6 +12,7 @@ import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
+import { BotUpdateBanner } from './BotUpdateBanner'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -216,6 +217,7 @@ export function ServerView({
           <h1 className="text-xl font-semibold">{t('server.title')}</h1>
           <p className="text-sm text-muted-foreground">{host?.hostname ?? fleet.state.connection.hostname}</p>
         </header>
+        <BotUpdateBanner fleet={fleet} />
         {host && (
           <>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

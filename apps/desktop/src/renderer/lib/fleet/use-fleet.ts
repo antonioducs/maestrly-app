@@ -89,6 +89,25 @@ export function useFleet() {
     },
     []
   )
+  /** `idle` schedules the environment's update for when its bots are idle; `now` restarts it at once. */
+  const updateEnvironment = useCallback(async (environmentId: string, when: 'idle' | 'now') => {
+    setActionError(null)
+    try {
+      const environment = await window.api.fleetEnvironmentUpdate(environmentId, when)
+      dispatch({ type: 'event', value: { type: 'environment.updated', at: new Date().toISOString(), environment } })
+    } catch (error) {
+      setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
+    }
+  }, [])
+  const cancelEnvironmentUpdate = useCallback(async (environmentId: string) => {
+    setActionError(null)
+    try {
+      const environment = await window.api.fleetEnvironmentUpdateCancel(environmentId)
+      dispatch({ type: 'event', value: { type: 'environment.updated', at: new Date().toISOString(), environment } })
+    } catch (error) {
+      setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
+    }
+  }, [])
   const resolve = useCallback(
     async (botId: string, id: string, resolution: FleetInteractionResolution) => {
       await window.api.fleetResolveInteraction(botId, id, resolution)
@@ -107,6 +126,8 @@ export function useFleet() {
     ensureTranscript,
     botAction,
     environmentAction,
+    updateEnvironment,
+    cancelEnvironmentUpdate,
     resolve,
     actionError,
   }

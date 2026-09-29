@@ -60,6 +60,28 @@ it('records delivery, accepts only own reports, finishes and supplies previous r
   ).toMatchObject({ routineId: routine.id, runId: h.instance.inputs.at(-1)!.routine!.runId, outcome: 'sent' })
   expect(h.gateway.routines.runs(h.bot.id, routine.id)[0].status).toBe('unknown')
 })
+it('skips scheduled runs while the environment waits to update, and still runs one on request', async () => {
+  let now = Date.parse('2026-09-25T10:00:00.000Z')
+  const h = await harness(() => now)
+  const routine = h.gateway.routines.create(h.bot.id, {
+    title: 'Check',
+    prompt: 'Check',
+    schedule: { kind: 'interval', everyMinutes: 15 },
+    enabled: true,
+    idempotencyKey: randomUUID(),
+  })
+  h.store.updateEnvironment(h.bot.environmentId!, { updateRequestedAt: new Date(now).toISOString() })
+  const sent = h.instance.inputs.length
+  now += 15 * 60_000
+  await h.gateway.routines.tick()
+  expect(h.instance.inputs).toHaveLength(sent)
+  expect(h.store.routines(h.bot.id)[0]).toMatchObject({ id: routine.id, lastOutcome: 'skipped_busy' })
+  expect(h.store.routineRuns(routine.id, 100)).toEqual([])
+  // The owner asked for it: Run now is delivered even while the update waits.
+  expect((await h.request('POST', `/v1/bots/${h.bot.id}/routines/${routine.id}/run`)).status).toBe(200)
+  expect(h.instance.inputs).toHaveLength(sent + 1)
+  expect(h.store.routineRuns(routine.id, 100)).toHaveLength(1)
+})
 it('deduplicates scheduled replay and prunes runs with their routine or bot', async () => {
   let now = Date.parse('2026-09-25T10:00:00.000Z')
   const h = await harness(() => now)

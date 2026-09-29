@@ -680,6 +680,8 @@ export default {
     createBot: 'Criar bot',
     pendingBots_one: '{{count}} pedido pendente',
     pendingBots_other: '{{count}} pedidos pendentes',
+    botUpdate: 'Atualização de bots disponível',
+    botUpdatePending: 'Atualização de bots em andamento',
     crossTabResults_one: '{{count}} resultado em {{tab}}',
     crossTabResults_other: '{{count}} resultados em {{tab}}',
     filterChats: 'Filtrar chats…',

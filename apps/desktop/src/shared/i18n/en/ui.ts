@@ -670,6 +670,8 @@ export default {
     createBot: 'Create bot',
     pendingBots_one: '{{count}} pending request',
     pendingBots_other: '{{count}} pending requests',
+    botUpdate: 'Bot update available',
+    botUpdatePending: 'Bot update in progress',
     crossTabResults_one: '{{count}} result in {{tab}}',
     crossTabResults_other: '{{count}} results in {{tab}}',
     filterChats: 'Filter chats…',

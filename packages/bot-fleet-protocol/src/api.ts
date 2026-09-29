@@ -187,6 +187,12 @@ export const fleetPatchEnvironmentRequestSchema = z
   )
 export type FleetPatchEnvironmentRequest = z.infer<typeof fleetPatchEnvironmentRequestSchema>
 /**
+ * Moves an environment to the configured bot image: `idle` schedules it for when none of its bots is busy and answers
+ * at once; `now` restarts it at once, interrupting its bots.
+ */
+export const fleetEnvironmentUpdateRequestSchema = z.object({ when: z.enum(['idle', 'now']) })
+export type FleetEnvironmentUpdateRequest = z.infer<typeof fleetEnvironmentUpdateRequestSchema>
+/**
  * A new bot joins an existing environment (`environmentId`) or gets a new one (`environment`), never both. With
  * neither, as older Macs send it, the gateway creates a new environment named after the bot.
  */
@@ -841,6 +847,20 @@ export const FLEET_GATEWAY_ROUTES = {
   environmentRestart: {
     method: 'POST',
     path: '/v1/environments/:eid/restart',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  /** Gateways with `environment-updates` only. */
+  environmentUpdate: {
+    method: 'POST',
+    path: '/v1/environments/:eid/update',
+    body: fleetEnvironmentUpdateRequestSchema,
+    response: fleetEnvironmentSchema,
+  },
+  /** Cancels an update that waits for the environment's bots; gateways with `environment-updates` only. */
+  environmentUpdateCancel: {
+    method: 'DELETE',
+    path: '/v1/environments/:eid/update',
     body: null,
     response: fleetEnvironmentSchema,
   },

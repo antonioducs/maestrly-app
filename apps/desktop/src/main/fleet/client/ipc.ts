@@ -6,6 +6,7 @@ import {
   fleetBotIdSchema,
   fleetEnvironmentIdSchema,
   fleetPatchEnvironmentRequestSchema,
+  fleetEnvironmentUpdateRequestSchema,
   fleetOwnerMemoryCreateRequestSchema,
   fleetOwnerMemoryPatchRequestSchema,
   fleetBotMemoryPatchRequestSchema,
@@ -28,6 +29,7 @@ import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
 import {
   provisioningRoute,
+  requireEnvironmentUpdates,
   requireEnvironments,
   resolveProvisioningTarget,
   resolveScreenTarget,
@@ -83,6 +85,8 @@ const environmentActionRoute = {
   restart: 'environmentRestart',
   archive: 'environmentArchive',
 } as const
+// `idle` waits for the environment's bots and answers at once; `now` restarts it, interrupting them.
+const updateWhen = fleetEnvironmentUpdateRequestSchema.shape.when
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, fleet)
@@ -125,6 +129,17 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const route = environmentActionRoute[environmentAction.parse(rawAction)]
     requireEnvironments(fleet)
     return fleet.call(route, { params })
+  })
+  reg.mhandle('fleet:environmentUpdate', (_event, rawId: unknown, rawWhen: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    const body = { when: updateWhen.parse(rawWhen) }
+    requireEnvironmentUpdates(fleet)
+    return fleet.call('environmentUpdate', { params, body })
+  })
+  reg.mhandle('fleet:environmentUpdateCancel', (_event, rawId: unknown) => {
+    const params = { eid: environmentId.parse(rawId) }
+    requireEnvironmentUpdates(fleet)
+    return fleet.call('environmentUpdateCancel', { params })
   })
   reg.mhandle('fleet:patchEnvironment', (_event, rawId: unknown, patch: unknown) => {
     const params = { eid: environmentId.parse(rawId) }

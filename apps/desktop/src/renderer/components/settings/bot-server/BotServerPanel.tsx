@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetInstallerStatus } from '../../../../shared/fleet-installer'
+import { knownServerVersion, type FleetInstallerStatus } from '../../../../shared/fleet-installer'
 import type { FleetConnectionView } from '../../../../preload/api-fleet'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -19,6 +19,7 @@ import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 export function BotServerPanel({
   status,
   connection,
+  reportedVersion,
   onAction,
   onDisconnect,
   onRemove,
@@ -26,13 +27,15 @@ export function BotServerPanel({
 }: {
   status: FleetInstallerStatus
   connection: FleetConnectionView
+  /** The version the connected gateway reports; another computer may have updated the server past this record. */
+  reportedVersion: string | null
   onAction: (action: 'update' | 'privateNetwork', allow?: boolean) => void
   onDisconnect: () => Promise<void>
   onRemove: () => Promise<void>
   onSetupAgain: () => void
 }) {
   const { t } = useTranslation('fleet')
-  const panel = panelState(status, connection)
+  const panel = panelState(status, connection, reportedVersion)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const [typed, setTyped] = useState('')
@@ -73,7 +76,12 @@ export function BotServerPanel({
         )}
         {record && (
           <p className="mt-2 text-xs text-muted-foreground">
-            {t('botServer.panel.versions', { server: record.version ?? t('server.unknown'), app: status.appVersion })}
+            {t('botServer.panel.versions', {
+              server:
+                knownServerVersion(record.version, connection.state === 'connected' ? reportedVersion : null) ??
+                t('server.unknown'),
+              app: status.appVersion,
+            })}
           </p>
         )}
       </div>

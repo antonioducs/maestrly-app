@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Boxes } from 'lucide-react'
+import { Boxes, Clock } from 'lucide-react'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   type FleetBot,
@@ -33,6 +33,7 @@ import {
   provisioningAvailability,
   useFleetProvisioning,
 } from '@/lib/fleet/provisioning'
+import { environmentUpdateState, updateBlockers } from '@/lib/fleet/updates'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
@@ -42,7 +43,8 @@ import { CompactionFields } from './CompactionFields'
 import { EnvironmentScreen } from './EnvironmentScreen'
 
 const tabs = ['overview', 'screen'] as const
-type Confirm = 'restart' | 'update' | 'stop' | 'archive'
+/** `update` restarts on a gateway that cannot schedule updates; `updateNow` forces a scheduled one. */
+type Confirm = 'restart' | 'update' | 'updateNow' | 'stop' | 'archive'
 
 /** An environment: its bots, the accounts, skills and MCP servers they share, its screen and its lifecycle. */
 export function EnvironmentView({
@@ -147,6 +149,7 @@ export function EnvironmentView({
             onOpenBot={onOpenBot}
             onCreateBot={onCreateBot}
             onOpenScreen={() => setTab('screen')}
+            onOpenInbox={() => onView({ kind: 'inbox' })}
             onArchived={() => onView({ kind: 'server' })}
           />
         ) : (
@@ -163,6 +166,7 @@ function EnvironmentOverview({
   onOpenBot,
   onCreateBot,
   onOpenScreen,
+  onOpenInbox,
   onArchived,
 }: {
   environment: FleetEnvironment
@@ -170,6 +174,7 @@ function EnvironmentOverview({
   onOpenBot: (id: string) => void
   onCreateBot: (environmentId: string) => void
   onOpenScreen: () => void
+  onOpenInbox: () => void
   onArchived: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
@@ -195,11 +200,20 @@ function EnvironmentOverview({
   const oldImage = environmentScreenAvailability(environment) === 'restart-environment'
   const host = fleet.state.snapshot.host
   const update = environmentUpdateAvailable(environment, host)
+  // A gateway that schedules updates reports them; an older one only restarts, as before.
+  const schedulable = environment.update !== null
+  const updateState = environmentUpdateState(environment, host)
+  const blockers = updateBlockers(environment, fleet.state.snapshot.bots)
+  const pendingSince = environment.update?.pendingSince ?? null
   const names =
     formatNames(
       bots.map((bot) => bot.name),
       i18n.language
     ) || t('environment.noBotsNamed')
+  const blockerNames = formatNames(
+    blockers.map((bot) => bot.name),
+    i18n.language
+  )
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   // Stable: the dialog refocuses on a new callback, and this view re-renders with every resource sample.
   const cancelConfirm = useCallback(() => setConfirm(null), [])
@@ -250,11 +264,12 @@ function EnvironmentOverview({
     setBusy(true)
     setError('')
     try {
-      // Updating is a restart: the environment comes back on the image the server offers.
-      const updated = await window.api.fleetEnvironmentAction(
-        environment.id,
-        confirm === 'update' ? 'restart' : confirm
-      )
+      // On a gateway that cannot schedule updates, updating is a restart: the environment comes back on the image the
+      // server offers. Updating now does the same through the update route, which also drops a waiting update.
+      const updated =
+        confirm === 'updateNow'
+          ? await window.api.fleetEnvironmentUpdate(environment.id, 'now')
+          : await window.api.fleetEnvironmentAction(environment.id, confirm === 'update' ? 'restart' : confirm)
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },
@@ -420,21 +435,74 @@ function EnvironmentOverview({
                 <Button size="sm" variant="outline" disabled={!running} onClick={() => setConfirm('restart')}>
                   {t('environment.restart')}
                 </Button>
-                {update && (
-                  <Button size="sm" disabled={!running} onClick={() => setConfirm('update')}>
-                    {t('environment.update')}
-                  </Button>
-                )}
+                {schedulable
+                  ? updateState === 'available' && (
+                      // Nothing is interrupted: the update waits for the environment's bots on the server.
+                      <Button size="sm" onClick={() => void fleet.updateEnvironment(environment.id, 'idle')}>
+                        {t('environment.update')}
+                      </Button>
+                    )
+                  : update && (
+                      <Button size="sm" disabled={!running} onClick={() => setConfirm('update')}>
+                        {t('environment.update')}
+                      </Button>
+                    )}
                 <Button size="sm" variant="outline" disabled={!running} onClick={() => setConfirm('stop')}>
                   {t('environment.stop')}
                 </Button>
               </>
             )}
           </div>
-          {update && host?.botImageVersion && (
+          {(updateState === 'available' || updateState === 'next-start') && host?.botImageVersion && (
             <p className="text-xs text-muted-foreground">
               {t('environment.updateAvailable', { version: host.botImageVersion })}
             </p>
+          )}
+          {updateState === 'next-start' && <p className="text-xs text-muted-foreground">{t('updates.nextStart')}</p>}
+          {updateState === 'pending' && (
+            <div role="status" className="space-y-2 rounded-lg border border-border bg-surface-elevated p-3 text-sm">
+              <p className="flex items-center gap-2 font-medium">
+                <Clock aria-hidden="true" className="size-4 shrink-0 text-primary" />
+                {t('updates.pendingTitle')}
+              </p>
+              <p className="text-xs text-muted-foreground">{t('updates.pendingNote')}</p>
+              {pendingSince && (
+                <p className="text-xs text-muted-foreground">
+                  {t('updates.waitingSince', {
+                    time: new Date(pendingSince).toLocaleTimeString(i18n.language, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    }),
+                  })}
+                </p>
+              )}
+              {blockers.length > 0 && (
+                <ul className="space-y-1 text-xs">
+                  {blockers.map((bot) => (
+                    <li key={bot.id} className="flex flex-wrap items-center gap-2">
+                      <span>{t(`updates.busy.${bot.status}`, { name: bot.name })}</span>
+                      {bot.status === 'waiting' && (
+                        <button
+                          type="button"
+                          onClick={onOpenInbox}
+                          className="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {t('sidebar.awaiting')}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => setConfirm('updateNow')}>
+                  {t('updates.updateNow')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => void fleet.cancelEnvironmentUpdate(environment.id)}>
+                  {t('updates.cancel')}
+                </Button>
+              </div>
+            </div>
           )}
         </section>
         <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
@@ -456,29 +524,37 @@ function EnvironmentOverview({
               ? t('environment.confirmRestartTitle', { name: environment.name })
               : confirm === 'update'
                 ? t('environment.confirmUpdateTitle', { name: environment.name })
-                : confirm === 'stop'
-                  ? t('environment.confirmStopTitle', { name: environment.name })
-                  : t('environment.confirmArchiveTitle')
+                : confirm === 'updateNow'
+                  ? t('updates.confirmNowTitle', { name: environment.name })
+                  : confirm === 'stop'
+                    ? t('environment.confirmStopTitle', { name: environment.name })
+                    : t('environment.confirmArchiveTitle')
           }
           message={
             confirm === 'restart'
               ? t('environment.confirmRestart', { bots: names })
               : confirm === 'update'
                 ? t('environment.confirmUpdate', { bots: names })
-                : confirm === 'stop'
-                  ? t('environment.confirmStop', { bots: names })
-                  : t('environment.confirmArchive', { bots: names })
+                : confirm === 'updateNow'
+                  ? blockers.length
+                    ? t('updates.confirmNow', { bots: blockerNames, count: blockers.length })
+                    : t('updates.confirmNowIdle', { bots: names })
+                  : confirm === 'stop'
+                    ? t('environment.confirmStop', { bots: names })
+                    : t('environment.confirmArchive', { bots: names })
           }
           confirmLabel={
             confirm === 'restart'
               ? t('environment.restartButton')
               : confirm === 'update'
                 ? t('environment.updateButton')
-                : confirm === 'stop'
-                  ? t('environment.stopButton')
-                  : t('environment.archiveButton')
+                : confirm === 'updateNow'
+                  ? t('updates.updateNow')
+                  : confirm === 'stop'
+                    ? t('environment.stopButton')
+                    : t('environment.archiveButton')
           }
-          destructive={confirm === 'archive' || confirm === 'stop'}
+          destructive={confirm === 'archive' || confirm === 'stop' || (confirm === 'updateNow' && blockers.length > 0)}
           busy={busy}
           onCancel={cancelConfirm}
           onConfirm={() => void confirmAction()}

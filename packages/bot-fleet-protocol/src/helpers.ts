@@ -1,5 +1,6 @@
 import type { FleetLoginKind } from './api.js'
-import { FLEET_ENVIRONMENT_DISPLAY } from './constants.js'
+import { FLEET_ENVIRONMENT_DISPLAY, FLEET_UPDATE_BUSY_STATUSES } from './constants.js'
+import type { FleetBot } from './domain.js'
 export type FleetUrlResult = { ok: true; origin: string } | { ok: false; reason: string }
 
 export function deriveBotId(name: string, existingIds: Iterable<string>): string {
@@ -119,6 +120,11 @@ export function normalizeMemoryText(text: string): string {
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/** Whether restarting the bot's environment now would interrupt it: an environment update waits for such bots. */
+export function fleetBotBlocksUpdate(bot: Pick<FleetBot, 'status'>): boolean {
+  return (FLEET_UPDATE_BUSY_STATUSES as readonly string[]).includes(bot.status)
 }
 
 export type FleetScreenArea = { x: number; y: number; width: number; height: number }

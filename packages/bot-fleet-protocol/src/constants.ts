@@ -135,6 +135,13 @@ export const FLEET_ENVIRONMENTS_FEATURE = 'environments'
  * inherit. As an instance capability: the instance lists its environment's model options.
  */
 export const FLEET_ENVIRONMENT_COMPACTION_FEATURE = 'environment-compaction'
+/**
+ * Gateway feature (`/v1/meta`): an environment update can wait for the environment's bots to be idle, and each
+ * environment reports whether its container runs an older image than the configured one.
+ */
+export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
+/** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
+export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
 /** Bots per environment, and the range of the container memory limit the owner may set. */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,

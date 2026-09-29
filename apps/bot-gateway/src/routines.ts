@@ -271,6 +271,8 @@ export class Routines {
     if (bot?.paused) outcome = 'skipped_paused'
     else if (bot?.lifecycle !== 'running' || !this.lifecycle.statuses.get(routine.botId)?.ready)
       outcome = 'skipped_offline'
+    // A run starting now would keep the waiting update from ever finding the bot idle.
+    else if (scheduled && this.lifecycle.updatePending(routine.botId)) outcome = 'skipped_busy'
     else if (scheduled && routine.nextRunAt && this.now() - Date.parse(routine.nextRunAt) > 15 * 60000)
       outcome = 'skipped_missed'
     else if (scheduled && this.busy(routine)) outcome = 'skipped_busy'

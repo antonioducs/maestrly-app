@@ -38,6 +38,8 @@ const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
   environmentStart: LIFECYCLE_TIMEOUT_MS,
   environmentStop: LIFECYCLE_TIMEOUT_MS,
   environmentRestart: LIFECYCLE_TIMEOUT_MS,
+  // A scheduled update answers at once; one done now waits for the restart.
+  environmentUpdate: LIFECYCLE_TIMEOUT_MS,
   environmentArchive: LIFECYCLE_TIMEOUT_MS,
   botStart: LIFECYCLE_TIMEOUT_MS,
   botStop: LIFECYCLE_TIMEOUT_MS,

@@ -32,6 +32,7 @@ import { useDrawerState } from '@/lib/use-drawer-state'
 import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
 import { useFleet } from '@/lib/fleet/use-fleet'
+import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { BotView } from '@/components/fleet/BotView'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
 import { ServerView } from '@/components/fleet/ServerView'
@@ -208,6 +209,7 @@ export function DesktopApp() {
   )
   const nav = useMainPanels({ workspaces, setActive, refreshWorkspaces })
   const fleet = useFleet()
+  const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
   const openFleetView = useCallback(
     (view: FleetView) => {
@@ -617,6 +619,7 @@ export function DesktopApp() {
                 onOpenFleetOwnerMemory={() => openFleetView({ kind: 'memory' })}
                 botServerConnected={fleet.state.connection.state === 'connected'}
                 botPendingCount={fleet.state.snapshot.inbox.length}
+                botUpdate={botUpdates.summary.pending ? 'pending' : botUpdates.summary.available ? 'available' : null}
                 onCreateBot={() => {
                   openCreateBot(null)
                   setFleetTabRequest((value) => value + 1)
