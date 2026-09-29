@@ -16,7 +16,10 @@ import {
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_ENVIRONMENT_UPDATES_FEATURE,
   type FleetRoute,
+  fleetBotBlocksUpdate,
+  fleetEnvironmentUpdateRequestSchema,
   fleetArchivedBotSchema,
   fleetArchivedEnvironmentsResponseSchema,
   fleetCreateEnvironmentRequestSchema,
@@ -1222,6 +1225,33 @@ describe('environment contracts', () => {
     )
     expectRoute(routes.environmentUiOpen, 'POST', environmentPath + '/ui/open', fleetUiOpenRequestSchema, null)
     expect(routes.botScreenTicket.body).toBe(fleetScreenTicketRequestSchema)
+  })
+
+  it('reports environment updates, who blocks them, and the routes that schedule or cancel them', () => {
+    expect(FLEET_ENVIRONMENT_UPDATES_FEATURE).toBe('environment-updates')
+    expect(fleetEnvironmentSchema.parse(environment).update).toBeNull()
+    const update = { available: true, pendingSince: '2026-09-29T10:00:00.000Z' }
+    expect(fleetEnvironmentSchema.parse({ ...environment, update }).update).toEqual(update)
+    expect(
+      fleetEnvironmentSchema.parse({ ...environment, update: { available: false, pendingSince: null } }).update
+    ).toEqual({ available: false, pendingSince: null })
+    expect(fleetEnvironmentSchema.safeParse({ ...environment, update: { available: 'yes' } }).success).toBe(false)
+    for (const status of ['working', 'waiting', 'human'] as const) expect(fleetBotBlocksUpdate({ status })).toBe(true)
+    for (const status of ['idle', 'paused', 'setup', 'starting', 'offline'] as const)
+      expect(fleetBotBlocksUpdate({ status })).toBe(false)
+    const routes = FLEET_GATEWAY_ROUTES
+    expectRoute(
+      routes.environmentUpdate,
+      'POST',
+      '/v1/environments/:eid/update',
+      fleetEnvironmentUpdateRequestSchema,
+      fleetEnvironmentSchema
+    )
+    expectRoute(routes.environmentUpdateCancel, 'DELETE', '/v1/environments/:eid/update', null, fleetEnvironmentSchema)
+    for (const when of ['idle', 'now'] as const)
+      expect(fleetEnvironmentUpdateRequestSchema.parse({ when })).toEqual({ when })
+    expect(() => routes.environmentUpdate.body.parse({ when: 'later' })).toThrow()
+    expect(fleetEnvironmentUpdateRequestSchema.safeParse({}).success).toBe(false)
   })
 
   it('mirrors every bot provisioning route on the environment', () => {

@@ -447,6 +447,7 @@ export class Lifecycle {
       compaction: environment.compaction,
       appVersion: instance?.appVersion ?? null,
       capabilities: this.environmentCapabilities(environment.id),
+      update: null,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
