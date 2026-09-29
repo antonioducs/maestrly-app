@@ -41,7 +41,7 @@ import {
   compactionSourceOf,
   ENVIRONMENT_COMPACTION_CHOICE,
 } from '../../src/renderer/lib/fleet/compaction'
-import { environmentCompactionAvailability } from '../../src/renderer/lib/fleet/provisioning'
+import { contextLimitAvailability, environmentCompactionAvailability } from '../../src/renderer/lib/fleet/provisioning'
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
@@ -292,6 +292,21 @@ describe('environment helpers', () => {
       expect(environmentCompactionAvailability(fleet, { ...capable, lifecycle }), lifecycle).toBe('stopped')
     for (const lifecycle of ['creating', 'starting', 'restarting', 'stopping'] as const)
       expect(environmentCompactionAvailability(fleet, { ...capable, lifecycle }), lifecycle).toBe('not-running')
+  })
+
+  it('offers the context limit where the gateway stores it, and asks to restart a running Maestrly that predates it', () => {
+    const controller = (features: string[]) => ({ state: { connection: { features } } }) as unknown as FleetController
+    const current = environment('acme', 'Acme', [], {
+      capabilities: ['provisioning', 'environments', 'environment-compaction', 'context-limit'],
+    })
+    const fleet = controller(['provisioning', 'environments', 'environment-compaction', 'context-limit'])
+    expect(
+      contextLimitAvailability(controller(['provisioning', 'environments', 'environment-compaction']), current)
+    ).toBe('unsupported')
+    expect(contextLimitAvailability(fleet, current)).toBe('ready')
+    expect(contextLimitAvailability(fleet, acme)).toBe('restart-environment')
+    // A stopped environment takes the limit when it starts on the current image.
+    expect(contextLimitAvailability(fleet, { ...acme, lifecycle: 'stopped' })).toBe('ready')
   })
 
   it('tells whether a bot compacts with its own model or its environment default, also from older gateways', () => {

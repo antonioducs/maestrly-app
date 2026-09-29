@@ -188,7 +188,13 @@ describe('bot settings compaction', () => {
     const inheriting = bot({ compaction: modelA, compactionSource: 'environment' })
     const takeOwn = {
       ...botSettingsDraft(inheriting, true),
-      compaction: { modelId: 'prov::model-b', reasoning: null, fastMode: false, intervalThousands: '90' },
+      compaction: {
+        modelId: 'prov::model-b',
+        reasoning: null,
+        fastMode: false,
+        intervalThousands: '90',
+        contextLimitThousands: '',
+      },
     }
     expect(botSettingsPatch(inheriting, takeOwn, true, [])).toEqual({
       compaction: { providerId: 'prov', modelId: 'model-b', reasoning: null, fastMode: false, intervalTokens: 90_000 },
@@ -196,9 +202,33 @@ describe('bot settings compaction', () => {
     // Picking the model it inherits as its own is a change too: it stops following the default.
     const sameAsDefault = {
       ...botSettingsDraft(inheriting, true),
-      compaction: { modelId: 'prov::model-a', reasoning: 'low', fastMode: false, intervalThousands: '120' },
+      compaction: {
+        modelId: 'prov::model-a',
+        reasoning: 'low',
+        fastMode: false,
+        intervalThousands: '120',
+        contextLimitThousands: '',
+      },
     }
     expect(changedBotSettings(inheriting, sameAsDefault, true)).toEqual(['compaction'])
+  })
+
+  it('saves a context limit with the rest of the compaction config and names an invalid one', () => {
+    const own = bot({ compaction: modelA, compactionSource: 'bot' })
+    const draft = botSettingsDraft(own, false)
+    const limited = { ...draft, compaction: { ...draft.compaction, contextLimitThousands: '300' } }
+    expect(changedBotSettings(own, limited, false)).toEqual(['compaction'])
+    expect(botSettingsPatch(own, limited, false, [])).toEqual({
+      compaction: { ...modelA, contextLimitTokens: 300_000 },
+    })
+    const tooSmall = { ...draft, compaction: { ...draft.compaction, contextLimitThousands: '50' } }
+    expect(botSettingsProblems(own, tooSmall, false)).toEqual(['compactionContextLimit'])
+    // A bot that has a limit starts with nothing to save; emptying the field sends the config without it.
+    const withLimit = bot({ compaction: { ...modelA, contextLimitTokens: 300_000 }, compactionSource: 'bot' })
+    const start = botSettingsDraft(withLimit, false)
+    expect(changedBotSettings(withLimit, start, false)).toEqual([])
+    const cleared = { ...start, compaction: { ...start.compaction, contextLimitThousands: '' } }
+    expect(botSettingsPatch(withLimit, cleared, false, [])).toEqual({ compaction: modelA })
   })
 
   it('compares configs field by field and blocks an incomplete one', () => {
@@ -224,7 +254,7 @@ describe('bot settings translations', () => {
       ...['name', 'role', 'instructions', 'ceiling', 'selection', 'compaction', 'talksTo'].map(
         (field) => `botSettings.field.${field}`
       ),
-      ...['name', 'role', 'compactionModel', 'compactionInterval'].map(
+      ...['name', 'role', 'compactionModel', 'compactionInterval', 'compactionContextLimit'].map(
         (problem) => `botSettings.problemField.${problem}`
       ),
       ...[

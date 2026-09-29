@@ -8,9 +8,11 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import {
   compactionFormFrom,
+  compactionIntervalTokens,
   compactionPatch,
   compactionSourceOf,
   ENVIRONMENT_COMPACTION_CHOICE,
+  sameCompactionConfig,
   type CompactionForm,
 } from './compaction'
 import type { Ceiling } from './forms'
@@ -106,17 +108,6 @@ export function rebaseBotSettingsDraft(
   }
 }
 
-function sameCompaction(a: FleetCompactionConfig | null, b: FleetCompactionConfig | null): boolean {
-  if (!a || !b) return a === b
-  return (
-    a.providerId === b.providerId &&
-    a.modelId === b.modelId &&
-    a.reasoning === b.reasoning &&
-    a.fastMode === b.fastMode &&
-    a.intervalTokens === b.intervalTokens
-  )
-}
-
 /**
  * What saving the compaction form would change. Inheriting saves null: the bot then follows its environment's
  * default, whatever it becomes. A form that is not a valid model and interval has no value.
@@ -130,10 +121,10 @@ export function compactionChange(
   const value = inherits ? null : compactionPatch(form)
   const source = compactionSourceOf(bot)
   const dirty = !inheritable
-    ? !sameCompaction(value, bot.compaction)
+    ? !sameCompactionConfig(value, bot.compaction)
     : inherits
       ? source === 'bot'
-      : source !== 'bot' || !sameCompaction(value, bot.compaction)
+      : source !== 'bot' || !sameCompactionConfig(value, bot.compaction)
   return { dirty, valid: inherits || value !== null, inherits, value }
 }
 
@@ -153,7 +144,7 @@ export function changedBotSettings(bot: FleetBot, draft: BotSettingsDraft, inher
   return botSettingsFields.filter((field) => changed[field.id]).map((field) => field.id)
 }
 
-export type BotSettingsProblem = 'name' | 'role' | 'compactionModel' | 'compactionInterval'
+export type BotSettingsProblem = 'name' | 'role' | 'compactionModel' | 'compactionInterval' | 'compactionContextLimit'
 
 /** What keeps the draft from being saved, in page order. */
 export function botSettingsProblems(
@@ -166,7 +157,13 @@ export function botSettingsProblems(
   if (draft.role.length > FLEET_ROLE_MAX) problems.push('role')
   const compaction = compactionChange(bot, draft.compaction, inheritable)
   if (compaction.dirty && !compaction.valid)
-    problems.push(draft.compaction.modelId ? 'compactionInterval' : 'compactionModel')
+    problems.push(
+      !draft.compaction.modelId
+        ? 'compactionModel'
+        : compactionIntervalTokens(draft.compaction) === null
+          ? 'compactionInterval'
+          : 'compactionContextLimit'
+    )
   return problems
 }
 

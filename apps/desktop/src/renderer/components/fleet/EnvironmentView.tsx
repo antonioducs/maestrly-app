@@ -10,7 +10,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { compactionFormFrom, compactionModelLabel, compactionPatch, compactionSourceOf } from '@/lib/fleet/compaction'
+import {
+  compactionFormFrom,
+  compactionModelLabel,
+  compactionPatch,
+  compactionSourceOf,
+  sameCompactionConfig,
+} from '@/lib/fleet/compaction'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   createKeyWatcher,
@@ -25,6 +31,7 @@ import {
 import { gb } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
+  contextLimitAvailability,
   environmentCompactionAvailability,
   environmentJoinAvailability,
   environmentJoinHint,
@@ -582,6 +589,7 @@ function EnvironmentCompaction({
   const { t, i18n } = useTranslation('fleet')
   const availability = environmentCompactionAvailability(fleet, environment)
   const ready = availability === 'ready'
+  const contextLimit = contextLimitAvailability(fleet, environment)
   const current = environment.compaction
   // Null until the models of this environment are listed.
   const [options, setOptions] = useState<FleetSelectionOption[] | null>(null)
@@ -591,7 +599,14 @@ function EnvironmentCompaction({
   const [error, setError] = useState('')
   useEffect(() => {
     setForm(compactionFormFrom(current))
-  }, [current?.providerId, current?.modelId, current?.reasoning, current?.fastMode, current?.intervalTokens])
+  }, [
+    current?.providerId,
+    current?.modelId,
+    current?.reasoning,
+    current?.fastMode,
+    current?.intervalTokens,
+    current?.contextLimitTokens,
+  ])
   useEffect(() => {
     if (!ready) return
     let alive = true
@@ -611,7 +626,7 @@ function EnvironmentCompaction({
   }, [environment.id, ready, optionsKey])
   if (availability === 'unsupported') return null
   const value = compactionPatch(form)
-  const dirty = JSON.stringify(value) !== JSON.stringify(current)
+  const dirty = !sameCompactionConfig(value, current)
   const users = bots.filter((bot) => compactionSourceOf(bot) === 'environment').map((bot) => bot.name)
   async function save() {
     if (!value || !dirty || busy) return
@@ -648,6 +663,7 @@ function EnvironmentCompaction({
             }}
             options={options ?? []}
             idPrefix="fleet-environment-compaction"
+            contextLimit={contextLimit === 'unsupported' ? undefined : contextLimit}
           />
           {options?.length === 0 && (
             <p className="text-xs text-muted-foreground">{t('environment.compaction.noModels')}</p>

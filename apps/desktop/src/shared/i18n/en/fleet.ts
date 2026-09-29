@@ -521,6 +521,7 @@ export default {
     },
 
     usageTooltip: '{{quality}} context usage. Cost is an estimate.',
+    usageLimited: 'Window capped at {{limit}} in the bot settings.',
     measured: 'Measured',
     estimated: 'Estimated',
     attachmentError: {
@@ -778,6 +779,7 @@ export default {
       role: 'role',
       compactionModel: 'compaction model',
       compactionInterval: 'summary interval',
+      compactionContextLimit: 'maximum context window',
     },
     compactionModelRequired: 'Choose a compaction model.',
     saveBar: {
@@ -806,11 +808,17 @@ export default {
       default: 'Default',
       interval: 'Prepare a summary every (thousand tokens)',
       intervalInvalid: 'Enter a whole number from 10 to 1000.',
+      contextLimit: 'Maximum context window (thousand tokens)',
+      contextLimitPlaceholder: "Model's window",
+      contextLimitHint:
+        'Applies to any model the bot uses; a model with a smaller window keeps its own. The bot compacts at 90% of it.',
+      contextLimitInvalid: 'Enter a whole number from {{min}} to {{max}}, or leave it empty.',
+      contextLimitRestart: 'Restart the environment for its bots to apply the maximum window.',
       removedAccount: 'removed account',
       environmentDefault: 'Environment default · {{model}}',
       environmentDefaultUnset: 'Environment default · not set yet',
       editEnvironmentDefault: 'Edit environment default',
-      inheritNote: 'Reasoning and interval follow the environment default.',
+      inheritNote: 'Reasoning, interval, and maximum window follow the environment default.',
       becomesDefault: 'Also becomes the default of {{environment}}; its other bots start using it.',
       problem: {
         missing: 'Choose a model before this bot can start.',

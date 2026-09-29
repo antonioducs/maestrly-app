@@ -3,7 +3,12 @@ import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentOf } from '@/lib/fleet/selectors'
-import { botProvisioningKey, provisioningAvailability, useBotProvisioning } from '@/lib/fleet/provisioning'
+import {
+  botProvisioningKey,
+  contextLimitAvailability,
+  provisioningAvailability,
+  useBotProvisioning,
+} from '@/lib/fleet/provisioning'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
@@ -12,6 +17,7 @@ import {
   FLEET_INSTRUCTIONS_MAX,
   FLEET_NAME_MAX,
   FLEET_ROLE_MAX,
+  FLEET_COMPACTION_LIMITS,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   type FleetBot,
   type FleetSelectionOption,
@@ -160,6 +166,8 @@ export function BotSettings({
   }, [provisioningKey, provisioning.refresh])
   // With environment defaults, a bot without a model of its own shows its environment's default as its choice.
   const inheritable = shared && fleet.state.connection.features.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE)
+  // The Maestrly that applies the limit is the environment's when it is listed, else the bot's own.
+  const contextLimit = contextLimitAvailability(fleet, environment ?? bot)
 
   const base = botSettingsDraft(bot, inheritable)
   const baseKey = JSON.stringify(base)
@@ -400,7 +408,12 @@ export function BotSettings({
         ? t('botSettings.roleTooLong', { max: FLEET_ROLE_MAX })
         : problem === 'compactionModel'
           ? t('botSettings.compactionModelRequired')
-          : t('botSettings.compaction.intervalInvalid')
+          : problem === 'compactionContextLimit'
+            ? t('botSettings.compaction.contextLimitInvalid', {
+                min: FLEET_COMPACTION_LIMITS.contextLimitTokensMin / 1_000,
+                max: FLEET_COMPACTION_LIMITS.contextLimitTokensMax / 1_000,
+              })
+            : t('botSettings.compaction.intervalInvalid')
   const nameError = problems.includes('name') && (nameTouched || showErrors) ? problemText('name') : ''
   const roleError = problems.includes('role') ? problemText('role') : ''
   const list = new Intl.ListFormat(i18n.language, { type: 'conjunction' })
@@ -622,6 +635,7 @@ export function BotSettings({
                   idPrefix="fleet-compaction"
                   leading={compactionLeading}
                   dense
+                  contextLimit={contextLimit === 'unsupported' ? undefined : contextLimit}
                 />
                 {compaction.inherits && (
                   <p className="text-xs text-muted-foreground">

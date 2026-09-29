@@ -17,7 +17,13 @@ import { BackgroundCompactionStatus } from '@/components/chat/BackgroundCompacti
 import { botChatComposerSource } from '@/components/chat/chat-composer-source'
 import { backgroundCompactionState, compactionProgress } from '@/lib/fleet/compaction'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
-import { formatFleetUsage, selectionPatch, validateAttachments } from '@/lib/fleet/composer'
+import {
+  fleetUsageLimit,
+  formatFleetTokens,
+  formatFleetUsage,
+  selectionPatch,
+  validateAttachments,
+} from '@/lib/fleet/composer'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
 import { environmentOf } from '@/lib/fleet/selectors'
@@ -252,6 +258,7 @@ export function BotComposer({
     bot.usage?.contextUsedTokens != null && bot.usage.contextWindowTokens
       ? bot.usage.contextUsedTokens / bot.usage.contextWindowTokens
       : null
+  const usageLimit = bot.usage ? fleetUsageLimit(bot.usage, bot.compaction) : null
   return (
     <>
       <ChatComposer
@@ -355,11 +362,17 @@ export function BotComposer({
               {usage && (
                 <ChatContextMeterDisplay
                   text={usage}
-                  title={t('composer.usageTooltip', {
-                    quality:
-                      bot.usage?.contextQuality === 'measured' ? t('composer.measured') : t('composer.estimated'),
-                  })}
+                  title={
+                    t('composer.usageTooltip', {
+                      quality:
+                        bot.usage?.contextQuality === 'measured' ? t('composer.measured') : t('composer.estimated'),
+                    }) +
+                    (usageLimit !== null
+                      ? ' ' + t('composer.usageLimited', { limit: formatFleetTokens(usageLimit) })
+                      : '')
+                  }
                   pct={usagePct}
+                  activeLimit={usageLimit !== null}
                 />
               )}
             </div>
