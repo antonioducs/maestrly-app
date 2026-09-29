@@ -18,6 +18,11 @@ describe('injectBridge', () => {
     expect(inject('<!DOCTYPE html><p>x</p>')).toBe(`<!DOCTYPE html>${tag}<p>x</p>`)
     expect(inject('<p>x</p>')).toBe(`${tag}<p>x</p>`)
   })
+
+  it('encodes a user-controlled bridge URL before placing it in an HTML attribute', () => {
+    const injected = injectBridge('<head></head>', '/c/ID" onerror="alert(1)')
+    expect(injected).toBe('<head><script src="/c/ID%22%20onerror=%22alert(1)"></script></head>')
+  })
 })
 
 describe('deviceInfo', () => {

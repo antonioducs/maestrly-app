@@ -7,7 +7,7 @@ const DOCTYPE = /<!doctype[^>]*>/i
  * handlers are registered before any of the page's own scripts run.
  */
 export function injectBridge(html: string, bridgeSrc: string): string {
-  const tag = `<script src="${bridgeSrc}"></script>`
+  const tag = `<script src="${encodeURI(bridgeSrc)}"></script>`
   for (const pattern of [HEAD, HTML, DOCTYPE]) {
     const match = pattern.exec(html)
     if (match) {
