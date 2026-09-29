@@ -90,6 +90,38 @@ describe('fleet renderer wiring', () => {
     expect(resources.en.fleet.botServer.panel.update).toBe('Update bots')
     expect(resources['pt-BR'].fleet.botServer.panel.update).toBe('Atualizar bots')
   })
+  it('schedules, forces and cancels an environment update from its view, naming the bots it waits for', () => {
+    const view = source('components/fleet/EnvironmentView.tsx')
+    for (const text of [
+      'environmentUpdateState(',
+      'updateBlockers(',
+      "fleetEnvironmentUpdate(environment.id, 'now')",
+      "fleet.updateEnvironment(environment.id, 'idle')",
+      'fleet.cancelEnvironmentUpdate(environment.id)',
+      "t('updates.cancel')",
+      "t('updates.pendingTitle')",
+      "t('updates.nextStart')",
+      "'updateNow'",
+    ])
+      expect(view, text).toContain(text)
+    for (const catalog of [resources.en.fleet, resources['pt-BR'].fleet]) {
+      for (const status of ['working', 'waiting', 'human'] as const)
+        expect(catalog.updates.busy[status]).toEqual(expect.any(String))
+      for (const key of [
+        'pendingTitle',
+        'pendingNote',
+        'waitingSince',
+        'updateNow',
+        'cancel',
+        'confirmNowTitle',
+        'confirmNow_one',
+        'confirmNow_other',
+        'confirmNowIdle',
+        'nextStart',
+      ] as const)
+        expect(catalog.updates[key], key).toEqual(expect.any(String))
+    }
+  })
   it('compares Mac and bot versions and displays the gateway independently', () => {
     const server = source('components/fleet/ServerView.tsx')
     expect(server).toContain('botsWithDifferentVersion(bots, version)')

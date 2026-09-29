@@ -387,6 +387,22 @@ export default {
       'The server runs Maestrly {{server}}, older than this app ({{app}}). Update both server images as the bot fleet guide describes.',
     failed: 'Could not schedule the update of {{names}}. Try again.',
     unsupported: 'This server cannot schedule updates yet. Update the server first.',
+    pendingTitle: 'Update scheduled',
+    pendingNote:
+      'The environment restarts on the new version as soon as none of its bots is busy. Messages you send still arrive; scheduled routines are skipped and messages between bots wait until then.',
+    waitingSince: 'Waiting since {{time}}',
+    busy: {
+      working: '{{name}} is working',
+      waiting: '{{name}} is waiting for your answer',
+      human: "You control {{name}}'s screen",
+    },
+    updateNow: 'Update now',
+    cancel: 'Cancel update',
+    confirmNowTitle: 'Update {{name}} now?',
+    confirmNow_one: 'What {{bots}} is doing is interrupted, and every bot in this environment restarts.',
+    confirmNow_other: 'What {{bots}} are doing is interrupted, and every bot in this environment restarts.',
+    confirmNowIdle: 'Every bot in this environment restarts: {{bots}}.',
+    nextStart: 'Updates the next time it starts.',
   },
   activity: {
     tool: '{{tool}} {{target}}',

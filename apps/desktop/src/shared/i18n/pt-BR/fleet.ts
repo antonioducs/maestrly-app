@@ -388,6 +388,22 @@ export default {
       'O servidor roda a Maestrly {{server}}, mais antiga que este app ({{app}}). Atualize as duas imagens do servidor como o guia de bots descreve.',
     failed: 'Não foi possível agendar a atualização de {{names}}. Tente de novo.',
     unsupported: 'Este servidor ainda não agenda atualizações. Atualize o servidor primeiro.',
+    pendingTitle: 'Atualização agendada',
+    pendingNote:
+      'O ambiente reinicia na versão nova assim que nenhum bot dele estiver ocupado. Suas mensagens continuam chegando; rotinas agendadas são puladas e mensagens entre bots esperam até lá.',
+    waitingSince: 'Aguardando desde {{time}}',
+    busy: {
+      working: '{{name}} está trabalhando',
+      waiting: '{{name}} está aguardando sua resposta',
+      human: 'Você está controlando a tela de {{name}}',
+    },
+    updateNow: 'Atualizar agora',
+    cancel: 'Cancelar atualização',
+    confirmNowTitle: 'Atualizar {{name}} agora?',
+    confirmNow_one: 'O que {{bots}} está fazendo é interrompido, e todos os bots deste ambiente reiniciam.',
+    confirmNow_other: 'O que {{bots}} estão fazendo é interrompido, e todos os bots deste ambiente reiniciam.',
+    confirmNowIdle: 'Todos os bots deste ambiente reiniciam: {{bots}}.',
+    nextStart: 'Atualiza na próxima vez que iniciar.',
   },
   activity: {
     tool: '{{tool}} {{target}}',
