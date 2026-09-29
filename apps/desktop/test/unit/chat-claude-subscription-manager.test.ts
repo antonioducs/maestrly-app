@@ -52,6 +52,7 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       AWS_SECRET_ACCESS_KEY: 'must-not-reach-claude',
     }),
     resolveExecutable: () => '/safe/bin/claude',
+    retainExecutable: () => null,
     ensureDirectory: vi.fn(async () => {}),
     removeDirectory: vi.fn(async (directory) => {
       for (const file of [...files.keys()]) {
@@ -694,6 +695,67 @@ describe('Claude subscription manager', () => {
     await expect(manager.status({ refresh: true })).resolves.toMatchObject({
       state: 'ready',
       authenticated: true,
+    })
+  })
+
+  describe('with a managed runtime selection', () => {
+    function probingQueryFactory() {
+      const close = vi.fn()
+      const queryFactory = vi.fn((_params: { options?: { pathToClaudeCodeExecutable?: string } }) => ({
+        initializationResult: async () => ({
+          account: {
+            apiProvider: 'firstParty',
+            email: 'dev@example.com',
+            organization: 'org-1',
+            subscriptionType: 'max',
+          },
+        }),
+        supportedModels: async () => [{ value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus' }],
+        close,
+      }))
+      return { queryFactory, close }
+    }
+
+    it('runs each query on the executable it retained and releases it once when the query closes', () => {
+      const { queryFactory } = probingQueryFactory()
+      const release = vi.fn()
+      const retainExecutable = vi.fn(() => ({ path: '/managed/2.1.290/claude', release }))
+      const { manager } = fixture({ queryFactory: queryFactory as never, retainExecutable })
+
+      const query = manager.createQuery({ prompt: '' })
+      expect(queryFactory.mock.calls[0][0].options?.pathToClaudeCodeExecutable).toBe('/managed/2.1.290/claude')
+      expect(release).not.toHaveBeenCalled()
+      query.close()
+      query.close()
+      expect(release).toHaveBeenCalledTimes(1)
+    })
+
+    it('releases the retained executable when the query cannot be created', () => {
+      const release = vi.fn()
+      const { manager } = fixture({
+        queryFactory: vi.fn(() => {
+          throw new Error('spawn failed')
+        }) as never,
+        retainExecutable: () => ({ path: '/managed/2.1.290/claude', release }),
+      })
+      expect(() => manager.createQuery({ prompt: '' })).toThrow('spawn failed')
+      expect(release).toHaveBeenCalledTimes(1)
+    })
+
+    it('drops what the previous runtime reported when the runtime changes', async () => {
+      const { queryFactory } = probingQueryFactory()
+      const { manager } = fixture({ queryFactory: queryFactory as never })
+      await manager.status({ refresh: true })
+      await manager.listModels()
+      const probes = queryFactory.mock.calls.length
+      manager.observeModelContextWindow('claude-opus-5-5', 200_000)
+      expect(manager.getObservedModelContextWindow('claude-opus-5-5')).toBe(200_000)
+
+      manager.runtimeChanged()
+      expect(manager.getObservedModelContextWindow('claude-opus-5-5')).toBeUndefined()
+      expect(manager.peekStatus()).toBeNull()
+      await manager.listModels()
+      expect(queryFactory.mock.calls.length).toBeGreaterThan(probes)
     })
   })
 })

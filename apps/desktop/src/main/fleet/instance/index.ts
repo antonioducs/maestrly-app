@@ -1,4 +1,5 @@
 import { app, type BrowserWindow } from 'electron'
+import { startBotRuntimes } from '../../runtime-assets/bot-runtimes'
 import { broadcast } from '../../window-ipc'
 import { holdScreenFocus, setScreenFocusOwner, showWindow } from '../../screen-focus'
 import { createInstanceControlServer } from './server'
@@ -85,8 +86,10 @@ export async function startBotInstanceMode(
         else if (owner && !window.isDestroyed() && window.isVisible()) window.focus()
       }),
   })
+  let stopRuntimes = () => {}
   try {
     await environment.start()
+    stopRuntimes = startBotRuntimes({ botStatuses: () => environment.botStatuses() })
     const server = createInstanceControlServer(config, environment)
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -96,10 +99,12 @@ export async function startBotInstanceMode(
       })
     })
     window.on('closed', async () => {
+      stopRuntimes()
       server.close()
       await environment.dispose()
     })
   } catch (error) {
+    stopRuntimes()
     await environment.dispose()
     throw error
   }

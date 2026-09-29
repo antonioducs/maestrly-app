@@ -17,6 +17,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk'
 import { app } from 'electron'
 import { resolveClaude } from './resolve-claude'
+import { botClaudeRuntime, type RetainedClaudeExecutable } from './runtime-selection'
+import { isBotMode } from '../../fleet/instance/config'
 import { spawnCli } from '../../platform'
 import {
   CLAUDE_AUTHENTICATION_REQUIRED_MESSAGE,
@@ -113,6 +115,11 @@ export interface ClaudeSubscriptionManagerDependencies {
   getHomeDirectory: () => string
   getProcessEnvironment: () => NodeJS.ProcessEnv
   resolveExecutable: () => string
+  /**
+   * The executable one query runs on, held until the query closes; null to use `resolveExecutable`. Bots use it so
+   * a Claude Code update never replaces the binary under a running turn.
+   */
+  retainExecutable: () => RetainedClaudeExecutable | null
   ensureDirectory: (directory: string) => Promise<void>
   removeDirectory: (directory: string) => Promise<void>
   readTextFile: (file: string) => Promise<string>
@@ -216,7 +223,8 @@ const DEFAULT_DEPENDENCIES: ClaudeSubscriptionManagerDependencies = {
   getUserDataPath: () => app.getPath('userData'),
   getHomeDirectory: () => os.homedir(),
   getProcessEnvironment: () => process.env,
-  resolveExecutable: resolveClaude,
+  resolveExecutable: () => (isBotMode() ? botClaudeRuntime().current().path : resolveClaude()),
+  retainExecutable: () => (isBotMode() ? botClaudeRuntime().retain() : null),
   ensureDirectory: ensurePrivateDirectory,
   removeDirectory: (directory) => rm(directory, { recursive: true, force: true }),
   readTextFile: (file) => readFile(file, 'utf8'),
@@ -1043,20 +1051,35 @@ export class ClaudeSubscriptionManager {
         : modelPicker
           ? { ...(incomingSettings ?? {}), modelPicker }
           : incomingSettings
-    const created = this.dependencies.queryFactory({
-      prompt: params.prompt,
-      options: {
-        ...params.options,
-        ...(settings !== undefined ? { settings } : {}),
-        abortController,
-        pathToClaudeCodeExecutable: this.dependencies.resolveExecutable(),
-        env: environment,
-        ...(process.platform === 'win32' ? { spawnClaudeCodeProcess: spawnClaudeCodeOnWindows } : {}),
-      },
-    })
+    const executable = this.dependencies.retainExecutable() ?? {
+      path: this.dependencies.resolveExecutable(),
+      release: () => {},
+    }
+    let created: Query
+    try {
+      created = this.dependencies.queryFactory({
+        prompt: params.prompt,
+        options: {
+          ...params.options,
+          ...(settings !== undefined ? { settings } : {}),
+          abortController,
+          pathToClaudeCodeExecutable: executable.path,
+          env: environment,
+          ...(process.platform === 'win32' ? { spawnClaudeCodeProcess: spawnClaudeCodeOnWindows } : {}),
+        },
+      })
+    } catch (error) {
+      executable.release()
+      throw error
+    }
     const originalClose = created.close.bind(created)
+    let released = false
     created.close = () => {
       this.activeQueries.delete(created)
+      if (!released) {
+        released = true
+        executable.release()
+      }
       originalClose()
     }
     this.activeQueries.set(created, abortController)
@@ -1321,6 +1344,17 @@ export class ClaudeSubscriptionManager {
     this.authenticationRequiredListeners.clear()
   }
 
+  /**
+   * The Claude Code binary changed: what the previous one reported (its status, models, efforts and observed context
+   * windows) no longer holds. Running queries keep their own binary and are not interrupted.
+   */
+  runtimeChanged(): void {
+    this.cachedStatus = null
+    this.invalidateModelCache()
+    this.invalidateUsageCache()
+    this.observedContextWindows.clear()
+  }
+
   invalidateModels(): void {
     this.invalidateModelCache()
   }
@@ -1354,6 +1388,12 @@ onClaudeRemoteCatalogChanged(() => {
   for (const manager of instances.values()) manager.invalidateModels()
   broadcast('models:catalog-changed')
 })
+
+/** After a Claude Code switch, every account rediscovers its models and the renderer reloads them. */
+export function notifyClaudeRuntimeChanged(): void {
+  for (const manager of instances.values()) manager.runtimeChanged()
+  broadcast('models:catalog-changed')
+}
 
 export function resetClaudeSubscriptionManagerForTests(): void {
   for (const manager of instances.values()) manager.dispose()

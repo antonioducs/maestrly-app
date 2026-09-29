@@ -246,6 +246,11 @@ export class EnvironmentRuntime {
     for (const bot of this.registry.values()) if (bot.primaryConversationId === conversationId) return bot
     return null
   }
+  /** The status of every installed bot, read now. */
+  botStatuses(): Promise<FleetInstanceStatus[]> {
+    return Promise.all(this.bots().map((bot) => bot.status()))
+  }
+
   async environmentStatus(): Promise<FleetInstanceEnvironmentStatus> {
     const bots = await Promise.all(
       this.bots().map(async (bot) => ({ botId: bot.botId, slot: bot.slot, status: await bot.status() }))
