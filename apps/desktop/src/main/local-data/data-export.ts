@@ -6,6 +6,7 @@ import type { ChatUsage } from '../../shared/chat'
 import type { LocalMemory } from '../../shared/memory'
 import { listLocalMemories } from '../memory/local-memory-service'
 
+import { prepareArtifactsExport } from '../artifacts'
 import { exportOwnedAssets, safeAssetId, type ExportedAsset } from './export-assets'
 
 export const EXPORT_SCHEMA_VERSION = 7
@@ -153,7 +154,13 @@ export async function buildExportBundle(): Promise<ExportBundle> {
     omissions.push('Could not read app settings.')
   }
 
-  const assets = await exportOwnedAssets(omissions)
+  const cleanupArtifacts = await prepareArtifactsExport(omissions)
+  let assets: ExportedAsset[]
+  try {
+    assets = await exportOwnedAssets(omissions)
+  } finally {
+    await cleanupArtifacts().catch(() => {})
+  }
   for (const conv of exportedConversations) {
     const id = (conv.conversation as { id: string }).id
     for (const message of conv.messages) {

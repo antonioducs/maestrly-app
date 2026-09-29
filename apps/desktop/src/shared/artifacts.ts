@@ -19,3 +19,56 @@ export interface ArtifactHostStatus {
   storageBytes?: number
   quotaBytes?: number
 }
+
+export type ArtifactVisibility = 'private' | 'people' | 'link'
+
+export interface ArtifactListItem {
+  id: string
+  title: string
+  description: string
+  currentVersion: number
+  versionCount: number
+  visibility: ArtifactVisibility
+  createdAt: number
+  updatedAt: number
+  host: 'local'
+  /** The originating conversation; `exists` is false once it was deleted, with its last known title. */
+  conversation: { id: string; title: string | null; exists: boolean } | null
+}
+
+export interface ArtifactVersionView {
+  number: number
+  summary: string
+  createdAt: number
+  fileCount: number
+  totalBytes: number
+}
+
+export interface ArtifactDetailView extends ArtifactListItem {
+  versions: ArtifactVersionView[]
+}
+
+/** What the chat card needs from an `artifact_create` or `artifact_update` result. */
+export interface ArtifactToolResult {
+  id: string
+  title: string
+  version: number
+}
+
+const ARTIFACT_ID = /^[A-Za-z0-9_-]{22}$/
+const MAX_CARD_TITLE_CHARS = 200
+
+export function parseArtifactToolResult(text: string): ArtifactToolResult | null {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const result = value as { ok?: unknown; artifact?: { id?: unknown; title?: unknown; version?: unknown } } | null
+  const artifact = result?.ok === true ? result.artifact : undefined
+  if (!artifact || typeof artifact.id !== 'string' || !ARTIFACT_ID.test(artifact.id)) return null
+  if (typeof artifact.title !== 'string') return null
+  if (typeof artifact.version !== 'number' || !Number.isInteger(artifact.version) || artifact.version < 1) return null
+  return { id: artifact.id, title: artifact.title.slice(0, MAX_CARD_TITLE_CHARS), version: artifact.version }
+}

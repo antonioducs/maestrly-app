@@ -1044,6 +1044,15 @@ export function getBrowserStateForScope(convId: string, ownerScopeId: string): B
   return projectBrowserState(convId, d, tabs, tabs[0]?.id ?? null)
 }
 
+/** Asks the renderer to open this conversation's drawer on its Browser tab, as terminal focus does. */
+export function focusBrowserDrawer(convId: string): void {
+  if (typeof windowIpc.sendToConversation === 'function') {
+    windowIpc.sendToConversation(convId, 'drawer:browser-focus', { convId }, { panel: 'browser' })
+  } else {
+    windowIpc.broadcast('drawer:browser-focus', { convId })
+  }
+}
+
 export function emitBrowserState(convId: string): void {
   if (!drawers.has(convId)) return
   // Broadcast chrome updates filtered by convId, including floating browsers in background conversations

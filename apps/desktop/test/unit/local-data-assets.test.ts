@@ -6,6 +6,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({ userData: '' }))
 vi.mock('electron', () => ({ app: { getPath: () => h.userData, getVersion: () => 'test' } }))
+import { setArtifactsService } from '../../src/main/artifacts'
+import type { ArtifactsService } from '../../src/main/artifacts/service'
 import { buildExportBundle } from '../../src/main/local-data/data-export'
 import { exportOwnedAssets } from '../../src/main/local-data/export-assets'
 import { getDb } from '../../src/main/store'
@@ -135,4 +137,30 @@ it('does not follow a symlinked app-owned root', async () => {
   const omissions: string[] = []
   expect(await exportOwnedAssets(omissions)).toEqual([])
   expect(omissions).toEqual(['Could not export app-owned asset root chat-attachment-images.'])
+})
+
+it('exports an artifacts snapshot with its blobs and removes the snapshot afterwards', async () => {
+  const blob = `artifacts/blobs/ab/${'ab'.repeat(32)}`
+  await write('artifacts/artifacts.sqlite', 'live database')
+  await write(blob, 'page bytes')
+  const prepareExport = vi.fn(async (target: string) => {
+    await fs.mkdir(target, { recursive: true })
+    await fs.writeFile(path.join(target, 'artifacts.sqlite'), 'snapshot')
+    return true
+  })
+  setArtifactsService({ prepareExport } as unknown as ArtifactsService)
+  const bundle = await buildExportBundle()
+  expect(prepareExport).toHaveBeenCalledWith(path.join(h.userData, 'artifacts', 'export'))
+  expect(bundle.assets.map((asset) => asset.path).sort()).toEqual([blob, 'artifacts/export/artifacts.sqlite'])
+  expect(bundle.assets.every((asset) => asset.owner.kind === 'app')).toBe(true)
+  expect(bundle.omissions).toEqual([])
+  await expect(fs.access(path.join(h.userData, 'artifacts', 'export'))).rejects.toThrow()
+
+  setArtifactsService({
+    prepareExport: vi.fn(async () => {
+      throw new Error('host unavailable')
+    }),
+  } as unknown as ArtifactsService)
+  const failed = await buildExportBundle()
+  expect(failed.omissions).toEqual(['Could not export artifacts.'])
 })

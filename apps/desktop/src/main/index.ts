@@ -1,5 +1,6 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isBotMode } from './fleet/instance/config'
@@ -17,6 +18,7 @@ import {
   nativeTheme,
   screen,
   session,
+  shell,
   type MenuItemConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -168,6 +170,13 @@ import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetClientService } from './fleet/client/service'
+import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
+import { ArtifactHostProcess, forkArtifactHostWorker } from './artifacts/host-process'
+import { registerArtifactsIpc } from './artifacts/ipc'
+import { ArtifactsService } from './artifacts/service'
+import { getArtifactSettings, setArtifactSettings } from './artifacts/settings'
+import { createConversationFileScope } from './conversation-file-scope'
+import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
 import { embeddedRunnerHost } from './platform/runner-host'
@@ -219,8 +228,38 @@ function placeEnvironmentScreen(window: BrowserWindow): void {
   window.setBounds(environmentScreenBounds(screen.getPrimaryDisplay().bounds))
 }
 
+// The artifact host utility process; created once the store is ready.
+let artifactHost: ArtifactHostProcess | null = null
+
+function initArtifacts(): void {
+  artifactHost = new ArtifactHostProcess({
+    fork: forkArtifactHostWorker,
+    dataDir: artifactsDataDir,
+    settings: getArtifactSettings,
+    onStatus: (status) => broadcast('artifacts:status', status),
+    onEvent: () => broadcast('artifacts:changed'),
+  })
+  setArtifactsService(
+    new ArtifactsService({
+      host: artifactHost,
+      settings: getArtifactSettings,
+      saveSettings: setArtifactSettings,
+      getConversation,
+      resolveDirectory: async (conversation, relative) =>
+        (await (await createConversationFileScope(conversation)).resolveBridgePath(relative)).target,
+      openExternal: (url) => shell.openExternal(url),
+      openInDrawer: (convId, url, activate) => {
+        createBrowserTab(convId, url, { activate })
+        if (activate) focusBrowserDrawer(convId)
+      },
+      emitStatus: (status) => broadcast('artifacts:status', status),
+    })
+  )
+}
+
 async function stopAllLiveWork(): Promise<void> {
   await botHost.stop()
+  await artifactHost?.stop()
   await cancelProjectSetupsAndWait?.()
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
@@ -687,6 +726,7 @@ function registerIpc(): void {
   registerFleetInstallerIpc(reg)
   registerFleetClientIpc(reg)
   registerFleetInstanceIpc(reg)
+  registerArtifactsIpc(reg, { service: getArtifactsService })
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),
@@ -769,6 +809,7 @@ app.whenReady().then(async () => {
 
   // Startup reads the local profile directly; it does not depend on an account or a hosted service.
   initStore()
+  initArtifacts()
   await migrateAllLegacyMemories()
   initMemoryIndexService()
 
@@ -870,6 +911,9 @@ app.whenReady().then(async () => {
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
+  // Existing artifacts are served again at launch; a first artifact starts the host on demand.
+  if (getArtifactSettings().hostEnabled && existsSync(path.join(artifactsDataDir(), 'artifacts.sqlite')))
+    void getArtifactsService().start()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show()
@@ -987,7 +1031,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     if (!platformRunnerStopping) {
       platformRunnerStopping = true
-      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop()]).finally(() => {
+      void Promise.allSettled([embeddedRunnerHost.stop(), botHost.stop(), artifactHost?.stop()]).finally(() => {
         platformRunnerStopped = true
         platformRunnerStopping = false
         app.quit()

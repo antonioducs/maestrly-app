@@ -22,6 +22,7 @@ import { platformApi } from './api-platform'
 import { botApi } from './api-bot'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
+import { artifactsApi } from './api-artifacts'
 
 export type {
   ConversationBranchInfo,
@@ -131,6 +132,7 @@ export type * from './api-workspace'
 export type * from './api-platform'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
+export type * from './api-artifacts'
 
 const api = {
   ...ptyApi,
@@ -155,6 +157,7 @@ const api = {
   ...botApi,
   ...fleetApi,
   ...fleetInstallerApi,
+  ...artifactsApi,
 }
 
 contextBridge.exposeInMainWorld('api', api)

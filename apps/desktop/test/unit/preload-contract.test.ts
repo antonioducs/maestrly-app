@@ -26,6 +26,7 @@ import { platformApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
+import { artifactsApi } from '../../src/preload/api-artifacts'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -63,6 +64,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetInstallerApi', fleetInstallerApi],
+  ['artifactsApi', artifactsApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -226,9 +228,46 @@ describe('preload API — exposure', () => {
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('fleet:installer:status', onSpy.mock.calls.at(-1)?.[1])
   })
+  it('forwards artifact calls to their channels in argument order', async () => {
+    const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
+    const settings = { hostEnabled: true, port: 4010, quotaGb: 2 }
+    await artifacts.list()
+    await artifacts.detail('artifact')
+    await artifacts.remove('artifact')
+    await artifacts.openExternal('artifact', 2)
+    await artifacts.openInConversation('conversation', 'artifact', 3)
+    await artifacts.status()
+    await artifacts.start()
+    await artifacts.getSettings()
+    await artifacts.setSettings(settings)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['artifacts:list'],
+      ['artifacts:detail', 'artifact'],
+      ['artifacts:delete', 'artifact'],
+      ['artifacts:open-external', 'artifact', 2],
+      ['artifacts:open-in-conversation', 'conversation', 'artifact', 3],
+      ['artifacts:status'],
+      ['artifacts:start'],
+      ['artifacts:settings-get'],
+      ['artifacts:settings-set', settings],
+    ])
+    for (const [subscribe, channel] of [
+      ['onChanged', 'artifacts:changed'],
+      ['onStatus', 'artifacts:status'],
+    ] as const) {
+      const off = artifacts[subscribe](vi.fn()) as () => void
+      expect(onSpy).toHaveBeenLastCalledWith(channel, expect.any(Function))
+      off()
+      expect(removeListenerSpy).toHaveBeenLastCalledWith(channel, onSpy.mock.calls.at(-1)?.[1])
+    }
+    const off = api.onDrawerBrowserFocus(vi.fn()) as () => void
+    expect(onSpy).toHaveBeenLastCalledWith('drawer:browser-focus', expect.any(Function))
+    off()
+  })
+
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(486)
+    expect(keys).toHaveLength(488)
     expect(keys.sort()).toMatchSnapshot()
   })
 

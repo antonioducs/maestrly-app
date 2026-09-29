@@ -16,7 +16,10 @@ export type BundleFile = { path: string; bytes: Uint8Array }
 const MAX_CONVERSATION_TITLE_CHARS = 300
 const MAX_REF_CHARS = 128
 
-const bundleFile = z.object({ path: z.string().min(1).max(MAX_PATH_CHARS), bytes: z.instanceof(Uint8Array) })
+const bundleFile = z.object({
+  path: z.string().min(1).max(MAX_PATH_CHARS),
+  bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array, 'Expected file bytes'),
+})
 const textEdit = z.object({
   path: z.string().min(1).max(MAX_PATH_CHARS),
   oldText: z.string().min(1),
