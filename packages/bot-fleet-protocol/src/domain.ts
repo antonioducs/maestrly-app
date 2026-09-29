@@ -154,6 +154,17 @@ export const fleetCompactionConfigSchema = fleetSelectionSchema.extend({
     .int()
     .min(FLEET_COMPACTION_LIMITS.intervalTokensMin)
     .max(FLEET_COMPACTION_LIMITS.intervalTokensMax),
+  /**
+   * The most context the bot's conversation may use, whatever its model: it compacts at 90% of this or of its model's
+   * window, whichever is smaller. Absent or null: its model's window. Configs from before the limit have none.
+   */
+  contextLimitTokens: z
+    .number()
+    .int()
+    .min(FLEET_COMPACTION_LIMITS.contextLimitTokensMin)
+    .max(FLEET_COMPACTION_LIMITS.contextLimitTokensMax)
+    .nullable()
+    .optional(),
 })
 export type FleetCompactionConfig = z.infer<typeof fleetCompactionConfigSchema>
 /** A compaction in progress or just finished, as the desktop composer shows it next to the context meter. */

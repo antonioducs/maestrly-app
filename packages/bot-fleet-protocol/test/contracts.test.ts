@@ -12,6 +12,7 @@ import {
   FLEET_BOT_ENV,
   FLEET_BOT_EGRESS_MODES,
   FLEET_GATEWAY_ENV,
+  FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_ENVIRONMENT_LIMITS,
@@ -1043,6 +1044,52 @@ describe('environment contracts', () => {
       null,
       fleetSelectionsResponseSchema
     )
+  })
+
+  it('lets a compaction config cap the conversation context window, absent meaning the model window', () => {
+    const compaction = {
+      providerId: 'prov_test',
+      modelId: 'model-a',
+      reasoning: null,
+      fastMode: false,
+      intervalTokens: 100_000,
+    }
+    expect(FLEET_CONTEXT_LIMIT_FEATURE).toBe('context-limit')
+    // Configs stored and sent before the limit parse unchanged.
+    expect(fleetCompactionConfigSchema.parse(compaction)).toEqual(compaction)
+    for (const contextLimitTokens of [
+      null,
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMin,
+      300_000,
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMax,
+    ])
+      expect(fleetCompactionConfigSchema.parse({ ...compaction, contextLimitTokens }).contextLimitTokens).toBe(
+        contextLimitTokens
+      )
+    for (const contextLimitTokens of [
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMin - 1,
+      FLEET_COMPACTION_LIMITS.contextLimitTokensMax + 1,
+      150_000.5,
+      0,
+    ])
+      expect(
+        fleetCompactionConfigSchema.safeParse({ ...compaction, contextLimitTokens }).success,
+        String(contextLimitTokens)
+      ).toBe(false)
+    const limited = { ...compaction, contextLimitTokens: 300_000 }
+    expect(fleetPatchBotRequestSchema.parse({ compaction: limited })).toEqual({ compaction: limited })
+    expect(fleetPatchEnvironmentRequestSchema.parse({ compaction: limited })).toEqual({ compaction: limited })
+    expect(
+      fleetInstanceProfileSchema.parse({
+        botId: 'scout',
+        name: 'Scout',
+        instructions: '',
+        ceiling: 'ask',
+        selection: null,
+        compaction: limited,
+        gateway: { peersEnabled: false },
+      }).compaction
+    ).toEqual(limited)
   })
 
   it('creates a bot in an existing or a new environment, never both, and accepts older requests', () => {
