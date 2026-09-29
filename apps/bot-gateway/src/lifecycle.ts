@@ -463,6 +463,7 @@ export class Lifecycle {
         available: this.imageOutdated.get(environment.id) ?? false,
         pendingSince: environment.updateRequestedAt,
       },
+      runtimes: null,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,

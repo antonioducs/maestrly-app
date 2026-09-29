@@ -114,6 +114,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     appVersion: '1.0.0',
     capabilities: ['provisioning', 'environments'],
     update: null,
+    runtimes: null,
     botIds: [],
     createdAt: at,
     updatedAt: at,

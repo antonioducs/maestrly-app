@@ -19,7 +19,11 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
+  FLEET_RUNTIME_IDS,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   type FleetRoute,
+  fleetRuntimeInfoSchema,
+  fleetRuntimesCheckResponseSchema,
   fleetBotBlocksUpdate,
   fleetEnvironmentUpdateRequestSchema,
   fleetArchivedBotSchema,
@@ -1346,6 +1350,44 @@ describe('environment contracts', () => {
       expect(fleetEnvironmentUpdateRequestSchema.parse({ when })).toEqual({ when })
     expect(() => routes.environmentUpdate.body.parse({ when: 'later' })).toThrow()
     expect(fleetEnvironmentUpdateRequestSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('reports the runtime versions of an environment and the routes that check them', () => {
+    expect(FLEET_RUNTIME_UPDATES_FEATURE).toBe('runtime-updates')
+    expect(FLEET_RUNTIME_IDS).toEqual(['claude-code', 'codex'])
+    expect(fleetEnvironmentSchema.parse(environment).runtimes).toBeNull()
+    expect(fleetInstanceStatusSchema.parse(status).runtimes).toBeNull()
+    const claude = {
+      id: 'claude-code',
+      version: '2.1.285',
+      source: 'image',
+      automatic: true,
+      state: 'available',
+      availableVersion: '2.1.290',
+      lastCheckedAt: '2026-09-29T10:00:00.000Z',
+      error: null,
+    } as const
+    expect(fleetRuntimeInfoSchema.parse(claude)).toEqual(claude)
+    expect(fleetEnvironmentSchema.parse({ ...environment, runtimes: [claude] }).runtimes).toEqual([claude])
+    expect(fleetInstanceStatusSchema.parse({ ...status, runtimes: [claude] }).runtimes).toEqual([claude])
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, state: 'unknown' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, id: 'copilot' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, source: 'system' }).success).toBe(false)
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.runtimesCheck,
+      'POST',
+      '/v1/runtimes/check',
+      null,
+      fleetRuntimesCheckResponseSchema
+    )
+    expect(fleetRuntimesCheckResponseSchema.parse({ ok: true })).toEqual({ ok: true })
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.environmentRuntimesCheck,
+      'POST',
+      '/v1/environments/:eid/runtimes/check',
+      null,
+      fleetEnvironmentSchema
+    )
   })
 
   it('mirrors every bot provisioning route on the environment', () => {

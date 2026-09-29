@@ -162,6 +162,25 @@ export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
 export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
 /** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
 export const FLEET_REASONING_QUERY = 'reasoning'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: an environment reports the versions of its Claude Code and
+ * Codex runtimes and can be asked to check for newer releases.
+ */
+export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
+export const FLEET_RUNTIME_IDS = ['claude-code', 'codex'] as const
+/** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
+export const FLEET_RUNTIME_STATES = [
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'downloading',
+  'verifying',
+  'installing',
+  'validating',
+  'rolling-back',
+  'failed',
+] as const
 /** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
 export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
 /**

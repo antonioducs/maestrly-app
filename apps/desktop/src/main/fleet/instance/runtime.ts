@@ -913,6 +913,7 @@ export class BotRuntime {
       ceiling: this.stored?.profile.ceiling ?? 'ask',
       profile: this.stored ? { botId: this.stored.profile.botId, name: this.stored.profile.name } : null,
       conversationId: this.primaryConversationId,
+      runtimes: null,
       turn: {
         state: this.cancelling ? 'cancelling' : this.turning ? 'running' : 'idle',
         startedAt: this.turnStartedAt,
