@@ -25,6 +25,7 @@ import { SettingsProvider } from '@/lib/use-settings'
 import { OnboardingProvider } from '@/lib/use-onboarding'
 import { UpdateProvider } from '@/lib/use-update'
 import { SettingsView } from '@/components/SettingsView'
+import { ArtifactsCenter } from '@/components/artifacts/ArtifactsCenter'
 import { OnboardingFlow } from '@/components/OnboardingFlow'
 import { AboutModal } from '@/components/AboutModal'
 import { useDrawerState } from '@/lib/use-drawer-state'
@@ -234,6 +235,8 @@ export function DesktopApp() {
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,
+    artifactsOpen,
+    setArtifactsOpen,
     settingsSection,
     onboardingOpen,
     setOnboardingOpen,
@@ -633,6 +636,7 @@ export function DesktopApp() {
                   setCreateBot(false)
                   setProjectMemoryWs(null)
                   setSettingsOpen(false)
+                  setArtifactsOpen(false)
                   setOnboardingOpen(false)
                 }}
                 onOpenProjectMemory={(wsId) => {
@@ -641,6 +645,7 @@ export function DesktopApp() {
                   setCreateBot(false)
                   setProjectNotesWs(null)
                   setSettingsOpen(false)
+                  setArtifactsOpen(false)
                   setOnboardingOpen(false)
                 }}
                 onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
@@ -703,6 +708,13 @@ export function DesktopApp() {
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onAddProject={requestProject}
                   onClose={() => setSettingsOpen(false)}
+                />
+              )}
+              {artifactsOpen && (
+                <ArtifactsCenter
+                  onClose={() => setArtifactsOpen(false)}
+                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                  onOpenSettings={() => openSettings('artifacts')}
                 />
               )}
               {fleetView?.kind === 'bot' && fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId) && (

@@ -18,6 +18,7 @@ import { useSettings } from '@/lib/use-settings'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
+import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
 import { QuestionCard } from './QuestionCard'
@@ -446,6 +447,8 @@ function Part({
       return toolPart.toolCallId === latestTodoId ? <TodoCard part={toolPart} /> : null
     if (toolPart.toolName === 'start_conversations')
       return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolPart.toolName === 'artifact_create' || toolPart.toolName === 'artifact_update')
+      return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')
       return (
         <SubagentCard

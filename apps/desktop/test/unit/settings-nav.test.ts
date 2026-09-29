@@ -22,6 +22,7 @@ describe('settings navigation', () => {
       'usage',
       'appearance',
       'tools',
+      'artifacts',
       'execution',
       'privacy',
       'updates',

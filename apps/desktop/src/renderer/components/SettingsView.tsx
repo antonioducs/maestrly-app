@@ -42,6 +42,7 @@ import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
+import { ArtifactsSettings } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 interface Props {
@@ -380,6 +381,7 @@ export function SettingsView({
             {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
 
             {section === 'platform' && <PlatformSection />}
+            {section === 'artifacts' && <ArtifactsSettings />}
             {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
             {section === 'bots' && (
               <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />

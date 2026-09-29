@@ -33,6 +33,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     if (!projectMemoryWs) setFocusMemoryId(undefined)
   }, [projectMemoryWs])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [fleetView, setFleetView] = useState<FleetView | null>(null)
   const [createBot, setCreateBot] = useState(false)
   // The environment a new bot joins when created from its environment view; null offers a new environment.
@@ -55,6 +56,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setFleetView(null)
       setCreateBot(false)
       setSettingsOpen(false)
+      setArtifactsOpen(false)
       setOnboardingOpen(false)
       setFocusMemoryId(detail.memoryId)
       setFocusMemoryRequest((value) => value + 1)
@@ -76,6 +78,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
       setSettingsOpen(false)
+      setArtifactsOpen(false)
       setOnboardingOpen(false)
       setActive(conversation)
     }
@@ -88,6 +91,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs ||
     projectMemoryWs ||
     (settingsOpen ? 'settings' : null) ||
+    (artifactsOpen ? 'artifacts' : null) ||
     (onboardingOpen ? 'onboarding' : null) ||
     (fleetView ? 'fleet' : null) ||
     (createBot ? 'fleet-create' : null)
@@ -100,6 +104,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         setProjectNotesWs(null)
         setProjectMemoryWs(null)
         setSettingsOpen(false)
+        setArtifactsOpen(false)
         setOnboardingOpen(false)
         setFleetView(null)
         setCreateBot(false)
@@ -112,6 +117,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     async (conversation: Conversation) => {
       await refreshWorkspaces()
       setSettingsOpen(false)
+      setArtifactsOpen(false)
       if (onboardingOpenRef.current) {
         window.api.setOnboardingDone(true)
         setOnboardingOpen(false)
@@ -131,13 +137,30 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
     setOnboardingOpen(false)
+    setArtifactsOpen(false)
     setSettingsOpen(true)
   }, [])
+
+  const openArtifacts = useCallback(() => {
+    setFleetView(null)
+    setCreateBot(false)
+    setProjectNotesWs(null)
+    setProjectMemoryWs(null)
+    setOnboardingOpen(false)
+    setSettingsOpen(false)
+    setArtifactsOpen(true)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('maestrly:open-artifacts', openArtifacts)
+    return () => window.removeEventListener('maestrly:open-artifacts', openArtifacts)
+  }, [openArtifacts])
 
   const openOnboarding = useCallback(() => {
     setProjectNotesWs(null)
     setProjectMemoryWs(null)
     setSettingsOpen(false)
+    setArtifactsOpen(false)
     setFleetView(null)
     setCreateBot(false)
     setOnboardingOpen(true)
@@ -163,6 +186,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
       setSettingsOpen(false)
+      setArtifactsOpen(false)
       setOnboardingOpen(false)
       setFleetView(null)
       setCreateBot(false)
@@ -173,6 +197,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   const openCreateBot = useCallback((environmentId: string | null = null) => {
     setCreateBotEnvironmentId(environmentId)
+    setArtifactsOpen(false)
     setCreateBot(true)
   }, [])
 
@@ -181,6 +206,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
       setSettingsOpen(false)
+      setArtifactsOpen(false)
       setOnboardingOpen(false)
       setCreateBot(false)
       setActive(null)
@@ -205,6 +231,9 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     setProjectMemoryWs,
     settingsOpen,
     setSettingsOpen,
+    artifactsOpen,
+    setArtifactsOpen,
+    openArtifacts,
     settingsSection,
     onboardingOpen,
     setOnboardingOpen,
