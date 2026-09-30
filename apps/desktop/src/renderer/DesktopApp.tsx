@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useTranslation } from 'react-i18next'
 import { PanelRight, PanelLeft, MessagesSquare, ScanSearch } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
+import { setComposerPrefill } from '@/lib/composer-prefill'
 import type { Conversation, Workspace, FloatTab, ReviewLoopInfo } from '../preload'
 import { cn } from '@/lib/utils'
 import { findActivePairedReviewLoop } from '@/lib/review-loop-split'
@@ -272,6 +273,37 @@ export function DesktopApp() {
       creatingChatRef.current = false
       setCreatingChat(false)
     }
+  }, [handleCreated, handleSelect])
+
+  // A new conversation for a given request, such as a suggestion in the Artifacts center: it opens with the request
+  // in its composer, ready to edit and send, and with Maestrly tools on when the request needs them.
+  useEffect(() => {
+    const onRequest = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: unknown; appTools?: unknown; settle?: () => void }>).detail
+      const prompt = typeof detail?.prompt === 'string' ? detail.prompt.trim() : ''
+      if (!prompt) return
+      if (creatingChatRef.current) return detail.settle?.()
+      creatingChatRef.current = true
+      setCreatingChat(true)
+      void (async () => {
+        try {
+          const conversation = await window.api.createStandaloneConversation()
+          if (detail.appTools === true)
+            await window.api.chatSetConvTools(conversation.id, { app: true }).catch(() => undefined)
+          setComposerPrefill(conversation.id, prompt)
+          await handleCreated(conversation)
+          handleSelect(conversation)
+        } catch (error) {
+          alert(i18n.t('ui:app.createChatFailed', { error: String(error) }))
+        } finally {
+          creatingChatRef.current = false
+          setCreatingChat(false)
+          detail.settle?.()
+        }
+      })()
+    }
+    window.addEventListener('maestrly:new-chat-with-prompt', onRequest)
+    return () => window.removeEventListener('maestrly:new-chat-with-prompt', onRequest)
   }, [handleCreated, handleSelect])
 
   const [chatGptFloating, setChatGptFloating] = useState(false)

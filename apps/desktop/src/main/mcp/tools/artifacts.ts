@@ -5,6 +5,26 @@ import type { ArtifactChange, ArtifactsService } from '../../artifacts/service'
 import { RepositoryScopeError } from '../../repository-scope'
 import { err, type McpToolContext, ok } from './context'
 
+/** Turns a failed artifact operation into what the agent is told, never leaking more than the error's own message. */
+export function artifactToolFailure(t: McpToolContext['t'], resolveService: () => ArtifactsService) {
+  return (error: unknown) => {
+    if (error instanceof RepositoryScopeError)
+      return err(t('errors.artifacts.directoryRefused', { message: error.message }))
+    if (!(error instanceof ArtifactHostError)) {
+      console.error('[artifacts] tool failed:', error instanceof Error ? error.message : String(error))
+      return err(t('errors.artifacts.internal'))
+    }
+    if (error.code === 'host_unavailable') {
+      const reason = error.details?.reason
+      if (reason === 'disabled') return err(t('errors.artifacts.hostDisabled'))
+      if (reason === 'port_in_use')
+        return err(t('errors.artifacts.portInUse', { port: resolveService().getSettings().port }))
+      return err(t('errors.artifacts.hostUnavailable'))
+    }
+    return err(t(`errors.artifacts.${error.code}`, { ...error.details, message: error.message }))
+  }
+}
+
 const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/
 const encoder = new TextEncoder()
 
@@ -45,22 +65,7 @@ export function registerArtifactTools(
     return { files: decoded }
   }
 
-  function failure(error: unknown) {
-    if (error instanceof RepositoryScopeError)
-      return err(t('errors.artifacts.directoryRefused', { message: error.message }))
-    if (!(error instanceof ArtifactHostError)) {
-      console.error('[artifacts] tool failed:', error instanceof Error ? error.message : String(error))
-      return err(t('errors.artifacts.internal'))
-    }
-    if (error.code === 'host_unavailable') {
-      const reason = error.details?.reason
-      if (reason === 'disabled') return err(t('errors.artifacts.hostDisabled'))
-      if (reason === 'port_in_use')
-        return err(t('errors.artifacts.portInUse', { port: resolveService().getSettings().port }))
-      return err(t('errors.artifacts.hostUnavailable'))
-    }
-    return err(t(`errors.artifacts.${error.code}`, { ...error.details, message: error.message }))
-  }
+  const failure = artifactToolFailure(t, resolveService)
 
   const published = (result: { detail: { id: string; title: string; currentVersion: number }; skipped: string[] }) =>
     ok(

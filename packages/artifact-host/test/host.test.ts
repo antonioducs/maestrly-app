@@ -91,6 +91,32 @@ describe('openArtifactHost', () => {
     ])
   })
 
+  it('takes the owner’s name, within the name limit', async () => {
+    const host = await openArtifactHost({ dataDir, port: 0, quotaBytes: DEFAULT_QUOTA_BYTES, ownerName: ' Antonio ' })
+    hosts.push(host)
+    expect((await host.admin.status()).artifactCount).toBe(0)
+    const error = await openArtifactHost({
+      dataDir: path.join(root, 'other'),
+      port: 0,
+      quotaBytes: DEFAULT_QUOTA_BYTES,
+      ownerName: 'x'.repeat(61),
+    }).catch((reason: unknown) => reason)
+    expect((error as ArtifactHostError).code).toBe('invalid_input')
+  })
+
+  it('announces sharing changes as changes', async () => {
+    const events: ArtifactHostEvent[] = []
+    const host = await open(0, (event) => events.push(event))
+    const { id } = await host.admin.create(input)
+    events.length = 0
+    await host.admin.createInvite(id, { name: 'Maria' })
+    await host.admin.setSharing(id, { visibility: 'people' })
+    expect(events).toEqual([
+      { type: 'changed', artifactId: id },
+      { type: 'changed', artifactId: id },
+    ])
+  })
+
   it('rejects an invalid configuration', async () => {
     const error = await openArtifactHost({ dataDir: '', port: -1, quotaBytes: 0 }).catch((reason: unknown) => reason)
     expect((error as ArtifactHostError).code).toBe('invalid_input')

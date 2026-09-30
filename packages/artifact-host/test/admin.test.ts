@@ -42,6 +42,9 @@ function input(overrides: Partial<CreateArtifactInput> = {}): CreateArtifactInpu
   }
 }
 
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 4, 5])
+
 async function errorOf(promise: Promise<unknown>): Promise<ArtifactHostError> {
   try {
     await promise
@@ -199,6 +202,62 @@ describe('ArtifactAdmin', () => {
     expect((await admin.list({ conversationId: 'c1' })).map((item) => item.id)).toEqual([a.id])
     expect(await admin.list()).toHaveLength(2)
     expect(await admin.status()).toEqual({ artifactCount: 2, storageBytes: 27, quotaBytes: 1024 * 1024 })
+  })
+
+  it('stores a thumbnail per version and serves the newest one up to a version', async () => {
+    const admin = makeAdmin()
+    const { id } = await admin.create(input())
+    expect(await admin.getThumbnail(id)).toBeNull()
+    await admin.setThumbnail(id, 1, PNG)
+    expect(onChange).toHaveBeenLastCalledWith(id)
+    await admin.update({
+      id,
+      baseVersion: 1,
+      change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'Hello', newText: 'Hi' }] },
+    })
+    // Version 2 has no thumbnail yet: the card keeps showing version 1's.
+    expect(await admin.getThumbnail(id)).toMatchObject({ version: 1, contentType: 'image/png' })
+    await admin.setThumbnail(id, 2, JPEG)
+    const current = await admin.getThumbnail(id)
+    expect(current).toMatchObject({ version: 2, contentType: 'image/jpeg' })
+    expect([...current!.bytes]).toEqual([...JPEG])
+    expect(await admin.getThumbnail(id, 1)).toMatchObject({ version: 1 })
+    expect((await admin.get(id))!.thumbnailVersion).toBe(2)
+    expect(await admin.getThumbnail('A'.repeat(22))).toBeNull()
+  })
+
+  it('replaces a version thumbnail and removes thumbnails with their artifact', async () => {
+    const admin = makeAdmin()
+    const { id } = await admin.create(input())
+    const before = blobs.listAll().length
+    await admin.setThumbnail(id, 1, PNG)
+    await admin.setThumbnail(id, 1, JPEG)
+    expect(blobs.listAll()).toHaveLength(before + 1)
+    await admin.delete(id)
+    expect(blobs.listAll()).toHaveLength(0)
+  })
+
+  it('refuses thumbnails that are not images, too large, over quota, or for missing versions', async () => {
+    const admin = makeAdmin()
+    const { id } = await admin.create(input())
+    expect((await errorOf(admin.setThumbnail(id, 1, utf8('<svg/>')))).code).toBe('unsupported_type')
+    expect((await errorOf(admin.setThumbnail(id, 1, new Uint8Array()))).code).toBe('invalid_input')
+    const huge = new Uint8Array(512 * 1024 + 1)
+    huge.set(PNG)
+    expect((await errorOf(admin.setThumbnail(id, 1, huge))).code).toBe('file_too_large')
+    expect((await errorOf(admin.setThumbnail(id, 9, PNG))).code).toBe('not_found')
+    expect((await errorOf(admin.setThumbnail('A'.repeat(22), 1, PNG))).code).toBe('not_found')
+    const tight = makeAdmin({ quotaBytes: 28 })
+    expect((await errorOf(tight.setThumbnail(id, 1, JPEG))).code).toBe('quota_exceeded')
+    expect(await admin.getThumbnail(id)).toBeNull()
+  })
+
+  it('reports the storage each artifact uses', async () => {
+    const admin = makeAdmin()
+    const { id } = await admin.create(input())
+    expect((await admin.list()).find((item) => item.id === id)!.storageBytes).toBe(27)
+    await admin.setThumbnail(id, 1, PNG)
+    expect((await admin.get(id))!.storageBytes).toBe(27 + PNG.byteLength)
   })
 
   it('mints single-use owner tickets for existing artifacts', async () => {

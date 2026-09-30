@@ -142,10 +142,10 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
 
     // A free port keeps parallel runs and a developer's own Maestrly from colliding on 4010.
     const port = await freePort()
-    await page.evaluate(
-      (port) => (window as any).api.artifacts.setSettings({ hostEnabled: true, port, quotaGb: 2 }),
-      port
-    )
+    await page.evaluate(async (port) => {
+      const artifacts = (window as any).api.artifacts
+      await artifacts.setSettings({ ...(await artifacts.getSettings()), hostEnabled: true, port, quotaGb: 2 })
+    }, port)
 
     const provider = await api('chatAddProvider', {
       name: 'Artifact fixture',
@@ -180,6 +180,40 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
     expect(result).toMatchObject({ ok: true, artifact: { title: 'Probe', version: 1 } })
     const artifactId = result.artifact.id as string
 
+    // The desktop renders the new version offscreen and keeps a preview of it; the preview shows the page, not a
+    // blank frame.
+    await expect
+      .poll(
+        async () =>
+          (
+            (await page.evaluate(() => (window as any).api.artifacts.list())) as Array<{
+              id: string
+              thumbnailVersion: number | null
+            }>
+          ).find((item) => item.id === artifactId)?.thumbnailVersion,
+        { timeout: 45_000 }
+      )
+      .toBe(1)
+    const preview = await page.evaluate(async (id) => {
+      const thumbnail = await (window as any).api.artifacts.thumbnail(id)
+      const image = new Image()
+      image.src = thumbnail.dataUrl
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0)
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+      let dark = 0
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i]! < 80 && pixels[i + 1]! < 80 && pixels[i + 2]! < 80) dark++
+      return { type: thumbnail.dataUrl.slice(0, 15), version: thumbnail.version, width: image.naturalWidth, dark }
+    }, artifactId)
+    expect(preview).toMatchObject({ type: 'data:image/jpeg', version: 1, width: 640 })
+    // The heading's dark text, on the page's white background.
+    expect(preview.dark).toBeGreaterThan(50)
+
     // The card opens the owner view in this conversation's drawer browser.
     const card = page.getByTestId('artifact-card').last()
     await expect(card).toContainText('Probe')
@@ -189,7 +223,8 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
       const deadline = Date.now() + 20_000
       while (Date.now() < deadline) {
         for (const contents of webContents.getAllWebContents()) {
-          if (!contents.getURL().includes(`/a/${id}`)) continue
+          // The offscreen thumbnail capture also shows this artifact; only the drawer counts here.
+          if (contents.isOffscreen() || !contents.getURL().includes(`/a/${id}`)) continue
           const frame = contents.mainFrame.framesInSubtree.find((candidate) => candidate.url.includes('/c/'))
           if (!frame) continue
           const heading = await frame
@@ -234,18 +269,42 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
     expect(probe.viewerUrl).not.toContain('#o=')
     expect(probe.contentUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/c/`))
 
-    // The Artifacts center lists the artifact, with its conversation, and deletes it.
+    // The Artifacts center shows the artifact as a card with its preview and conversation, and details it.
     await page.getByTestId('sidebar-artifacts').click()
     const center = page.getByTestId('artifacts-center')
     await expect(center).toBeVisible()
-    const row = center.locator(`[data-testid="artifact-row"][data-artifact-id="${artifactId}"]`)
-    await expect(row).toContainText('Probe')
-    await expect(row).toContainText('Artifacts')
-    await row.getByTestId('artifact-delete').click()
-    await page.getByRole('dialog').getByRole('button', { name: 'Delete' }).click()
-    await expect(row).toHaveCount(0)
-    await expect(center).toContainText('No artifacts yet')
+    const centerCard = center.locator(`[data-testid="artifact-card"][data-artifact-id="${artifactId}"]`)
+    await expect(centerCard).toContainText('Probe')
+    await expect(centerCard).toContainText('Artifacts')
+    await expect(centerCard.getByTestId('artifact-thumbnail')).toBeVisible()
+    await expect(center.getByTestId('artifacts-host-chip')).toContainText(`127.0.0.1:${port}`)
+    await centerCard.getByTestId('artifact-card-select').click()
+    const detail = center.getByTestId('artifact-detail')
+    await expect(detail).toContainText('Probe')
+    await expect(detail.getByTestId('artifact-versions')).toContainText('v1')
+    await page.keyboard.press('Escape')
+    await expect(detail).toHaveCount(0)
+
+    // Deleting it from the card menu removes it, and its content URL stops working.
+    await centerCard.getByTestId('artifact-menu').click()
+    await page.getByTestId('artifact-delete').click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete artifact' }).click()
+    await expect(centerCard).toHaveCount(0)
+    await expect(center.getByTestId('artifacts-empty')).toContainText('No artifacts yet')
     expect((await fetch(probe.contentUrl)).status).toBe(404)
+
+    // A suggested request opens a new conversation with the request in its composer and Maestrly tools on.
+    const before = new Set(
+      ((await api('listStandaloneConversations')) as Array<{ id: string }>).map((conversation) => conversation.id)
+    )
+    await center.getByTestId('artifact-suggestion').first().click()
+    await expect(center).toHaveCount(0)
+    await expect(page.locator('.chat-input:visible').first()).toContainText('clickable prototype of a sign-in screen')
+    const created = ((await api('listStandaloneConversations')) as Array<{ id: string }>).find(
+      (conversation) => !before.has(conversation.id)
+    )
+    expect(created).toBeTruthy()
+    expect((await api('chatGetConvTools', created!.id)).app).toBe(true)
   } finally {
     await app?.close().catch(() => {})
     await new Promise((resolve) => model.close(resolve))

@@ -175,6 +175,17 @@ describe('public server', () => {
     expect(reply.headers['cache-control']).toBe('no-store')
     const state = JSON.parse(reply.body)
     expect(state.identity).toEqual({ kind: 'owner' })
+    expect(state).toMatchObject({ ownerName: '', can: { comment: true, resolve: true } })
+    // Without a public address the owner's link is the one they opened, on this computer.
+    expect(state.sharing).toEqual({
+      visibility: 'private',
+      link: `http://127.0.0.1:${port}/a/${id}`,
+      local: true,
+      linkExpiresAt: null,
+      people: [],
+      peopleCount: 0,
+      requests: 0,
+    })
     expect(state.artifact).toMatchObject({ id, title: 'Probe', currentVersion: 1 })
     expect(state.artifact.versions).toEqual([{ number: 1, createdAt: clock.now(), summary: '' }])
   })

@@ -20,6 +20,15 @@ export interface ArtifactRecord {
   visibility: Visibility
   createdAt: number
   updatedAt: number
+  /** Bytes of the distinct files and thumbnails of every version; blobs shared with other artifacts count here too. */
+  storageBytes: number
+  /** The newest version with a thumbnail, or null when no version has one. */
+  thumbnailVersion: number | null
+  /** Events (new devices, access requests, declined invitations, comments) the owner has not seen yet. */
+  unseenEvents: number
+  pendingRequests: number
+  /** Comment threads that are neither resolved nor deleted. */
+  openComments: number
 }
 
 export type NewArtifact = Pick<
@@ -40,6 +49,14 @@ export interface FileRecord {
   sha256: string
   bytes: number
   contentType: string
+}
+
+export interface ThumbnailRecord {
+  version: number
+  sha256: string
+  contentType: string
+  bytes: number
+  createdAt: number
 }
 
 export interface VersionRecord {
@@ -87,7 +104,17 @@ export interface ArtifactListFilter {
 
 type Row = Record<string, unknown>
 
-const ARTIFACT_COLUMNS = `a.*, (SELECT COUNT(*) FROM versions v WHERE v.artifact_id = a.id) AS version_count`
+const ARTIFACT_COLUMNS = `a.*,
+  (SELECT COUNT(*) FROM versions v WHERE v.artifact_id = a.id) AS version_count,
+  (SELECT COALESCE(SUM(u.bytes), 0) FROM (
+    SELECT sha256, bytes FROM version_files WHERE artifact_id = a.id
+    UNION SELECT sha256, bytes FROM thumbnails WHERE artifact_id = a.id
+  ) u) AS storage_bytes,
+  (SELECT MAX(t.version) FROM thumbnails t WHERE t.artifact_id = a.id) AS thumbnail_version,
+  (SELECT COUNT(*) FROM events e WHERE e.artifact_id = a.id AND e.seen_at IS NULL) AS unseen_events,
+  (SELECT COUNT(*) FROM access_requests r WHERE r.artifact_id = a.id AND r.status = 'pending') AS pending_requests,
+  (SELECT COUNT(*) FROM comments c WHERE c.artifact_id = a.id AND c.parent_id IS NULL AND c.status = 'open'
+     AND c.deleted_at IS NULL) AS open_comments`
 const FILTER_COLUMNS: Record<keyof ArtifactListFilter, string> = {
   ownerKind: 'owner_kind',
   ownerId: 'owner_id',
@@ -109,6 +136,11 @@ const toArtifact = (row: Row): ArtifactRecord => ({
   visibility: row.visibility as Visibility,
   createdAt: row.created_at as number,
   updatedAt: row.updated_at as number,
+  storageBytes: row.storage_bytes as number,
+  thumbnailVersion: (row.thumbnail_version as number | null) ?? null,
+  unseenEvents: row.unseen_events as number,
+  pendingRequests: row.pending_requests as number,
+  openComments: row.open_comments as number,
 })
 
 const toVersion = (row: Row): VersionRecord => ({
@@ -129,7 +161,7 @@ const toFile = (row: Row): FileRecord => ({
   contentType: row.content_type as string,
 })
 
-const toSession = (row: Row): SessionRecord => ({
+export const toSession = (row: Row): SessionRecord => ({
   id: row.id as string,
   artifactId: row.artifact_id as string,
   principalId: (row.principal_id as string | null) ?? null,
@@ -272,19 +304,63 @@ export class ArtifactStore {
     return transaction(this.db, () => this.db.prepare('DELETE FROM artifacts WHERE id = ?').run(id).changes > 0)
   }
 
+  /** Stores the thumbnail of a version and returns the blob of the one it replaced, if any. */
+  setThumbnail(id: string, version: number, thumbnail: Omit<ThumbnailRecord, 'version'>): string | null {
+    return transaction(this.db, () => {
+      const previous = this.db
+        .prepare('SELECT sha256 FROM thumbnails WHERE artifact_id = ? AND version = ?')
+        .get(id, version) as Row | undefined
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO thumbnails (artifact_id, version, sha256, content_type, bytes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(id, version, thumbnail.sha256, thumbnail.contentType, thumbnail.bytes, thumbnail.createdAt)
+      return previous ? (previous.sha256 as string) : null
+    })
+  }
+
+  /** The thumbnail of the newest version up to `maxVersion` that has one. */
+  getThumbnail(id: string, maxVersion: number): ThumbnailRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM thumbnails WHERE artifact_id = ? AND version <= ? ORDER BY version DESC LIMIT 1')
+      .get(id, maxVersion) as Row | undefined
+    return row
+      ? {
+          version: row.version as number,
+          sha256: row.sha256 as string,
+          contentType: row.content_type as string,
+          bytes: row.bytes as number,
+          createdAt: row.created_at as number,
+        }
+      : null
+  }
+
   blobsOf(id: string): string[] {
-    return (this.db.prepare('SELECT DISTINCT sha256 FROM version_files WHERE artifact_id = ?').all(id) as Row[]).map(
-      (row) => row.sha256 as string
-    )
+    return (
+      this.db
+        .prepare(
+          'SELECT sha256 FROM version_files WHERE artifact_id = ? UNION SELECT sha256 FROM thumbnails WHERE artifact_id = ?'
+        )
+        .all(id, id) as Row[]
+    ).map((row) => row.sha256 as string)
   }
 
   isBlobReferenced(sha: string): boolean {
-    return this.db.prepare('SELECT 1 FROM version_files WHERE sha256 = ? LIMIT 1').get(sha) !== undefined
+    return (
+      this.db
+        .prepare(
+          'SELECT 1 FROM version_files WHERE sha256 = ? UNION ALL SELECT 1 FROM thumbnails WHERE sha256 = ? LIMIT 1'
+        )
+        .get(sha, sha) !== undefined
+    )
   }
 
   referencedBlobs(): Set<string> {
     return new Set(
-      (this.db.prepare('SELECT DISTINCT sha256 FROM version_files').all() as Row[]).map((row) => row.sha256 as string)
+      (this.db.prepare('SELECT sha256 FROM version_files UNION SELECT sha256 FROM thumbnails').all() as Row[]).map(
+        (row) => row.sha256 as string
+      )
     )
   }
 

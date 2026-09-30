@@ -6,6 +6,8 @@ export function useArtifacts() {
   const [items, setItems] = useState<ArtifactListItem[]>([])
   const [status, setStatus] = useState<ArtifactHostStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  // Whether the last list came from the host: without it, an empty list says nothing about what is stored.
+  const [listed, setListed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -13,10 +15,12 @@ export function useArtifacts() {
       const [list, current] = await Promise.all([window.api.artifacts.list(), window.api.artifacts.status()])
       setItems(list)
       setStatus(current)
+      setListed(true)
       setError(null)
     } catch (reason) {
       // The list needs the host: when it cannot start, the status explains why.
       setItems([])
+      setListed(false)
       setStatus(await window.api.artifacts.status().catch(() => null))
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -37,5 +41,5 @@ export function useArtifacts() {
     }
   }, [refresh])
 
-  return { items, status, loading, error, refresh }
+  return { items, status, loading, listed, error, refresh }
 }

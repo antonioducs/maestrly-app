@@ -172,11 +172,13 @@ process that receives only its configuration and holds no app credentials. It
 is not a sandbox: it runs as the same user with full Node.js access, and it
 isolates crashes and keeps secrets out of its memory.
 
-The host listens on `127.0.0.1` only and refuses requests whose `Host` is not a
-loopback name on its port, which blocks DNS rebinding. Artifact IDs and tokens
-carry at least 128 random bits and are stored as SHA-256 digests. A missing,
-deleted, or inaccessible artifact answers the same 404, and responses ask
-crawlers not to index them.
+The host listens on `127.0.0.1` only and refuses requests whose `Host` is
+neither a loopback name on its port nor the public address the owner configured,
+which blocks DNS rebinding. Other people reach it only through a proxy the owner
+runs, such as Tailscale Serve. Artifact IDs and tokens carry at least 128 random
+bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
+expired artifact, and one that is not shared with whoever asks, answer the same
+404, and responses ask crawlers not to index them.
 
 The owner signs in with a single-use ticket that the desktop mints, which
 expires after 60 seconds and travels in the URL fragment, so it never reaches
@@ -185,6 +187,62 @@ using it. The resulting session cookie is `HttpOnly`, `SameSite=Strict`, and
 scoped to that artifact's API path. The viewer's API accepts writes only with
 the exact origin, a custom header, and a JSON body. The viewer cannot share,
 delete, or change access; those actions exist only in the desktop.
+
+Sharing is decided by one rule, checked on every API request and on every content
+file: the owner always enters; a private artifact blocks everyone else; an
+invited or approved person enters within the invitation's expiry; a guest enters
+only through a link that has not expired. Revoking a person deletes them with
+their link's digest and their sessions, so nothing of theirs can be presented
+again. Revoking a person or making the artifact private therefore takes effect on
+the next request, including for content already open.
+
+- **Personal links** carry a 256-bit token in the URL fragment. The viewer
+  removes it from the address bar, shows who is being invited, and exchanges it
+  for a session only after the visitor confirms, so link scanners and previews
+  join nothing. The host stores the token's digest; the desktop keeps the token
+  itself encrypted with `safeStorage`, or only in memory when that is
+  unavailable, so the owner can copy the link again.
+- **Access requests** are tied to the asking browser by a random secret in an
+  `HttpOnly`, `SameSite=Strict` cookie scoped to the artifact's API, stored as a
+  digest. Approval creates the session when that browser next checks its
+  request. Names and messages are length-limited, shown as text, and the owner
+  confirms the name.
+- **Access codes** are stored with scrypt and a salt of their own. A browser
+  waits 15 minutes after five wrong codes, and an artifact accepts 100 attempts
+  per hour. Changing the code ends guest sessions.
+- **Request limits** apply per host, per artifact, and per session, in memory.
+  They do not use client addresses, since requests arrive through a proxy.
+- The host stores a coarse device label, never an IP address or a raw user
+  agent, and logs no URL, header, or body.
+
+Comments are text written by people outside the app, so they are treated as
+untrusted everywhere. The viewer and the desktop render them as plain text,
+never as HTML or Markdown, with length limits on bodies, names, and quotes.
+Comments are typed, listed, and drawn as pins in the viewer shell, above the
+page's frame and never inside it: the frame keeps its opaque origin and cannot
+read them. The shell sends the frame only what to find, which is the page's own
+text (a quote) or a place in it (an element selector and a point in its box),
+with comment IDs; never a name or a comment's text. The frame's script reports
+where those are and what the reader selected, and paints the active passage with
+the CSS Custom Highlight API without changing the page. In comment mode that
+script, which runs before the page's own scripts, keeps clicks from reaching the
+page. Messages from the frame are hints: the shell validates and caps them,
+shows them as text, and the host checks every anchor again. A viewer sees
+whether a comment is its own, never the internal ID of its author. Which
+conversations a reader has read is kept in their browser's storage for the
+host's origin, which the page's opaque origin cannot reach.
+
+The owner's viewer shows who can open the page (the visibility, the page's link,
+people's names and device counts, and how many access requests wait), read-only:
+it has no control that changes access.
+
+An agent receives comments only when it asks for them or when the owner chooses
+**Send to conversation**, which fills the message box without sending. The
+`artifact_comments` result starts with a notice that the comments come from
+outside the conversation and are feedback, not instructions, and carries them as
+JSON inside an envelope in which every `<` is escaped, so a comment cannot close
+it or pose as the host. No comment starts an agent turn by itself, and an agent
+can only reply to and resolve threads of artifacts in its own scope.
 
 Artifact content is served from a separate path carrying an HMAC-signed
 capability bound to the session, the artifact, the version, and an expiry of 12
@@ -195,11 +253,22 @@ the viewer, submit forms, or register service workers. Network access is limited
 to its own files and a fixed allowlist of CDNs. Messages from content to the
 viewer are validated, capped, and rendered as text.
 
+After each publication the desktop renders the new version for a preview, in
+an offscreen window that is never shown. It loads the owner view through a fresh
+single-use ticket, like any other opening, so the page runs under the same
+sandbox and Content Security Policy. The window uses an in-memory partition of
+its own that grants no permission, opens no window, allows no download, and lets
+no top-level navigation leave the host. After the capture the desktop ends that
+owner session and clears the partition. Only the resulting image reaches the
+desktop, which stores it through the host's admin interface after checking its
+format and size.
+
 The drawer browser partition is shared with the agent's browser tools, so an
 agent browsing there acts with the owner's artifact session. That grants no
 more than the artifact tools already do. Agents can read and write only the
-artifacts of their own project or standalone conversation, and cannot delete or
-share them.
+artifacts of their own project or standalone conversation. No agent tool
+deletes an artifact, shares it, invites people, approves requests, or changes
+who can open it.
 
 ## Bot server access
 

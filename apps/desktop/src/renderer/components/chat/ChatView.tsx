@@ -17,6 +17,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Pencil, ArrowDown } from 'lucide-react'
+import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPrefill } from '@/lib/composer-prefill'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { cn } from '@/lib/utils'
@@ -253,7 +254,21 @@ export function ChatView({
     (reviewLoop.driver === 'chatgpt-web'
       ? isReviewLoopConversationReserved(reviewLoop.status)
       : reviewLoop.status !== 'finished' && reviewLoop.status !== 'cancelled' && reviewLoop.status !== 'interrupted')
-  const [draft, setDraft] = useState('')
+  // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
+  const [draft, setDraft] = useState(() => peekComposerPrefill(conversationId) ?? '')
+  useEffect(() => clearComposerPrefill(conversationId), [conversationId])
+  // Text offered while this conversation is already on screen joins what is being written; nothing is sent.
+  useEffect(() => {
+    const onDraft = (event: Event) => {
+      if ((event as CustomEvent<{ conversationId?: string }>).detail?.conversationId !== conversationId) return
+      const offered = peekComposerPrefill(conversationId)
+      if (offered === undefined) return
+      clearComposerPrefill(conversationId)
+      setDraft((current) => joinDraft(current, offered))
+    }
+    window.addEventListener(COMPOSER_DRAFT_EVENT, onDraft)
+    return () => window.removeEventListener(COMPOSER_DRAFT_EVENT, onDraft)
+  }, [conversationId])
 
   // Promoted attachments are handled by ChatComposer.
   const [draftMentions, setDraftMentions] = useState<StructuredAgentMentionDraft[]>([])

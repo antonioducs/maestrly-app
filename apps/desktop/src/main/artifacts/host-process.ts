@@ -6,6 +6,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  ARTIFACT_EVENT_KINDS,
   type ArtifactAdmin,
   ArtifactHostError,
   type ArtifactHostEvent,
@@ -60,8 +61,10 @@ const unavailable = (reason: ArtifactHostProblem) =>
   new ArtifactHostError('host_unavailable', `The artifact host is unavailable (${reason})`, { reason })
 
 function isHostEvent(value: unknown): value is ArtifactHostEvent {
-  const event = value as Partial<ArtifactHostEvent> | null
-  return event?.type === 'changed' && typeof event.artifactId === 'string'
+  const event = value as { type?: unknown; artifactId?: unknown; kind?: unknown } | null
+  if (typeof event?.artifactId !== 'string') return false
+  if (event.type === 'changed') return true
+  return event.type === 'activity' && (ARTIFACT_EVENT_KINDS as readonly unknown[]).includes(event.kind)
 }
 
 export class ArtifactHostProcess {
@@ -194,7 +197,8 @@ export class ArtifactHostProcess {
           dataDir: this.deps.dataDir(),
           port: settings.port,
           quotaBytes: settings.quotaGb * 1024 ** 3,
-          publicOrigins: [],
+          publicOrigins: settings.publicAddress ? [settings.publicAddress] : [],
+          ownerName: settings.ownerName,
         },
       })
     })

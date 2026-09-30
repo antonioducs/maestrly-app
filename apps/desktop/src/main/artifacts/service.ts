@@ -11,14 +11,27 @@ import {
   ArtifactHostError,
   type ArtifactSummary,
   type BundleFile,
+  type CommentView,
   isTextPath,
   MAX_TEXT_READ_BYTES,
   readBundleDirectory,
   type TextEdit,
 } from '@maestrly/artifact-host'
-import type { ArtifactDetailView, ArtifactHostStatus, ArtifactListItem, ArtifactSettings } from '../../shared/artifacts'
+import type {
+  ArtifactCommentView,
+  ArtifactDetailView,
+  ArtifactEventView,
+  ArtifactHostStatus,
+  ArtifactListItem,
+  ArtifactRemoveResult,
+  ArtifactSettings,
+  ArtifactSharingPatch,
+  ArtifactSharingView,
+  ArtifactThumbnailView,
+} from '../../shared/artifacts'
 import type { Conversation } from '../../shared/conversation'
 import type { ArtifactHostProcess } from './host-process'
+import type { InviteVault } from './invite-vault'
 
 export type ToolBundleInput = { files?: BundleFile[]; directory?: string }
 
@@ -29,17 +42,38 @@ export type ArtifactChange =
 
 export interface ArtifactsServiceDeps {
   host: Pick<ArtifactHostProcess, 'ensureStarted' | 'status' | 'stop' | 'restart'>
+  /** The tokens of personal links, kept so the owner can copy a link again. */
+  vault: InviteVault
   settings: () => ArtifactSettings
   saveSettings: (input: unknown) => ArtifactSettings
   getConversation: (id: string) => Conversation | undefined
+  /** The name of a project, or undefined once it was removed. */
+  workspaceName: (id: string) => string | undefined
   /** Resolves a folder relative to the conversation's files, refusing anything outside them. */
   resolveDirectory: (conversation: Conversation, relative: string) => Promise<string>
   openExternal: (url: string) => Promise<void>
   openInDrawer: (convId: string, url: string, activate: boolean) => void
   emitStatus: (status: ArtifactHostStatus) => void
+  /** Asks for a preview image of a version; the capture runs later and may not happen. */
+  requestThumbnail?: (id: string, version: number) => void
 }
 
 const LOCAL_OWNER = { kind: 'local', id: 'local' } as const
+/** Pages of 200 comments: more than an artifact's 2,000 comments need. */
+const MAX_COMMENT_PAGES = 20
+
+/** What the app shows of a comment: the author's internal ID stays in the host. */
+const toCommentView = (comment: CommentView): ArtifactCommentView => ({
+  id: comment.id,
+  version: comment.version,
+  parentId: comment.parentId,
+  author: { kind: comment.author.kind, name: comment.author.name, verified: comment.author.verified },
+  body: comment.body,
+  place: comment.anchor?.quote ? 'passage' : comment.anchor?.point ? 'spot' : 'page',
+  quote: comment.anchor?.quote?.exact ?? null,
+  status: comment.status,
+  createdAt: comment.createdAt,
+})
 const notFound = (message = 'Artifact not found') => new ArtifactHostError('not_found', message)
 
 export class ArtifactsService {
@@ -95,6 +129,7 @@ export class ArtifactsService {
       createdBy: 'agent',
       files,
     })
+    this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
     return { detail, skipped }
   }
 
@@ -123,6 +158,7 @@ export class ArtifactsService {
       conversationTitle: conversation.name,
       change,
     })
+    this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
     return { detail, skipped }
   }
 
@@ -153,6 +189,38 @@ export class ArtifactsService {
     return { text: new TextDecoder().decode(bytes), truncated }
   }
 
+  /**
+   * What people wrote on an artifact, for an agent. The caller hands it to the model as untrusted data: a comment is
+   * feedback from someone outside the conversation, never an instruction.
+   */
+  async commentsForConversation(
+    convId: string,
+    id: string,
+    filter: { status?: 'open' | 'all'; version?: number; cursor?: string }
+  ): Promise<{ comments: CommentView[]; nextCursor: string | null; currentVersion: number }> {
+    const admin = await this.admin()
+    const artifact = await this.scoped(admin, this.conversation(convId), id)
+    const page = await admin.listComments(id, {
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.version === undefined ? {} : { version: filter.version }),
+      ...(filter.cursor === undefined ? {} : { cursor: filter.cursor }),
+    })
+    return { ...page, currentVersion: artifact.currentVersion }
+  }
+
+  /** An agent's reply, stored as written by the owner's agent. */
+  async replyForConversation(convId: string, id: string, commentId: string, body: string): Promise<CommentView> {
+    const admin = await this.admin()
+    await this.scoped(admin, this.conversation(convId), id)
+    return admin.addComment(id, { author: 'agent', body, parentId: commentId })
+  }
+
+  async resolveForConversation(convId: string, id: string, commentId: string): Promise<void> {
+    const admin = await this.admin()
+    await this.scoped(admin, this.conversation(convId), id)
+    await admin.setCommentResolved(id, commentId, true)
+  }
+
   async listForConversation(convId: string, scope: 'conversation' | 'project'): Promise<ArtifactSummary[]> {
     const conversation = this.conversation(convId)
     const admin = await this.admin()
@@ -173,6 +241,14 @@ export class ArtifactsService {
       createdAt: artifact.createdAt,
       updatedAt: artifact.updatedAt,
       host: 'local',
+      project: artifact.workspaceId
+        ? { id: artifact.workspaceId, name: this.deps.workspaceName(artifact.workspaceId) ?? null }
+        : null,
+      storageBytes: artifact.storageBytes,
+      thumbnailVersion: artifact.thumbnailVersion,
+      unseenEvents: artifact.unseenEvents,
+      pendingRequests: artifact.pendingRequests,
+      openComments: artifact.openComments,
       conversation: artifact.conversationId
         ? {
             id: artifact.conversationId,
@@ -184,7 +260,32 @@ export class ArtifactsService {
   }
 
   async listAll(): Promise<ArtifactListItem[]> {
-    return (await (await this.admin()).list()).map((artifact) => this.toListItem(artifact))
+    const items = (await (await this.admin()).list()).map((artifact) => this.toListItem(artifact))
+    // Artifacts published before thumbnails existed, or whose capture failed, get one once they are listed.
+    for (const item of items)
+      if (item.thumbnailVersion !== item.currentVersion) this.deps.requestThumbnail?.(item.id, item.currentVersion)
+    return items
+  }
+
+  async thumbnail(id: string, version?: number): Promise<ArtifactThumbnailView | null> {
+    const image = await (await this.admin()).getThumbnail(id, version)
+    if (!image) return null
+    return {
+      version: image.version,
+      dataUrl: `data:${image.contentType};base64,${Buffer.from(image.bytes).toString('base64')}`,
+    }
+  }
+
+  /**
+   * The owner view of one version, for the thumbnail capture; its ticket works once and within a minute. It asks for
+   * the page alone, so comment pins stay out of the preview.
+   */
+  async thumbnailSourceUrl(id: string, version: number): Promise<string> {
+    return this.ownerUrl(await this.admin(), id, version, true)
+  }
+
+  async saveThumbnail(id: string, version: number, image: Uint8Array): Promise<void> {
+    await (await this.admin()).setThumbnail(id, version, image)
   }
 
   async detail(id: string): Promise<ArtifactDetailView | null> {
@@ -202,15 +303,153 @@ export class ArtifactsService {
     }
   }
 
-  async remove(id: string): Promise<boolean> {
-    return (await this.admin()).delete(id)
+  async remove(id: string): Promise<ArtifactRemoveResult> {
+    const admin = await this.admin()
+    const before = (await admin.status()).storageBytes
+    // The personal links die with the artifact; their tokens must not outlive it.
+    const people = await admin.getSharing(id).then(
+      (sharing) => sharing.people,
+      () => []
+    )
+    const removed = await admin.delete(id)
+    if (removed) for (const person of people) this.deps.vault.remove(person.id)
+    const after = (await admin.status()).storageBytes
+    return { removed, freedBytes: Math.max(0, before - after) }
+  }
+
+  private localBase(): string {
+    return `http://127.0.0.1:${this.deps.host.status().port}`
+  }
+
+  /** A personal link. The token travels in the fragment, which never reaches a server log. */
+  private inviteUrl(id: string, token: string): string {
+    return `${this.deps.settings().publicAddress || this.localBase()}/a/${id}#i=${token}`
+  }
+
+  private async sharingView(admin: ArtifactAdmin, id: string): Promise<ArtifactSharingView> {
+    return this.toSharingView(await admin.getSharing(id))
+  }
+
+  private toSharingView(sharing: Awaited<ReturnType<ArtifactAdmin['getSharing']>>): ArtifactSharingView {
+    return {
+      visibility: sharing.visibility,
+      linkExpiresAt: sharing.linkExpiresAt,
+      hasAccessCode: sharing.hasAccessCode,
+      commentsEnabled: sharing.commentsEnabled,
+      people: sharing.people.map((person) => ({
+        id: person.id,
+        kind: person.kind,
+        name: person.name,
+        createdAt: person.createdAt,
+        inviteExpiresAt: person.inviteExpiresAt,
+        linkAvailable: person.kind === 'invited' && this.deps.vault.get(person.id) !== null,
+        devices: person.devices,
+      })),
+      requests: sharing.requests,
+      publicBase: this.deps.settings().publicAddress || null,
+      localBase: this.localBase(),
+    }
+  }
+
+  /** Who can open an artifact. Only the owner's interface reaches this and the operations below, never an agent. */
+  async sharing(id: string): Promise<ArtifactSharingView> {
+    return this.sharingView(await this.admin(), id)
+  }
+
+  async setSharing(id: string, patch: ArtifactSharingPatch): Promise<ArtifactSharingView> {
+    return this.toSharingView(await (await this.admin()).setSharing(id, patch))
+  }
+
+  async createInvite(id: string, name: string): Promise<{ principalId: string; link: string }> {
+    const { principalId, token } = await (await this.admin()).createInvite(id, { name })
+    this.deps.vault.save(principalId, token)
+    return { principalId, link: this.inviteUrl(id, token) }
+  }
+
+  /** The person's link again, or null when its token is no longer stored and the link can only be reset. */
+  async inviteLink(id: string, principalId: string): Promise<string | null> {
+    const { people } = await (await this.admin()).getSharing(id)
+    const person = people.find((candidate) => candidate.id === principalId)
+    if (person?.kind !== 'invited') return null
+    const token = this.deps.vault.get(principalId)
+    return token ? this.inviteUrl(id, token) : null
+  }
+
+  async resetInvite(id: string, principalId: string): Promise<string> {
+    const { token } = await (await this.admin()).resetInvite(id, principalId)
+    this.deps.vault.save(principalId, token)
+    return this.inviteUrl(id, token)
+  }
+
+  async revokePerson(id: string, principalId: string): Promise<void> {
+    await (await this.admin()).revokePerson(id, principalId)
+    this.deps.vault.remove(principalId)
+  }
+
+  async revokeDevice(id: string, sessionId: string): Promise<void> {
+    await (await this.admin()).revokeDevice(id, sessionId)
+  }
+
+  async revokeAllSessions(id: string): Promise<void> {
+    await (await this.admin()).revokeAllSessions(id)
+  }
+
+  async decideRequest(id: string, requestId: string, decision: { approve: boolean; name?: string }): Promise<void> {
+    await (await this.admin()).decideAccessRequest(id, requestId, decision)
+  }
+
+  async events(artifactId?: string): Promise<ArtifactEventView[]> {
+    return (await this.admin()).listEvents(artifactId === undefined ? {} : { artifactId })
+  }
+
+  async markSeen(artifactId?: string): Promise<void> {
+    await (await this.admin()).markEventsSeen(artifactId)
+  }
+
+  /** Every comment of an artifact, in the order they were written. */
+  async comments(id: string): Promise<ArtifactCommentView[]> {
+    const admin = await this.admin()
+    const all: ArtifactCommentView[] = []
+    let cursor: string | undefined
+    // The host pages comments; the limit on comments per artifact bounds the loop.
+    for (let page = 0; page < MAX_COMMENT_PAGES; page++) {
+      const result = await admin.listComments(id, cursor ? { cursor } : {})
+      all.push(...result.comments.map(toCommentView))
+      if (!result.nextCursor) break
+      cursor = result.nextCursor
+    }
+    return all
+  }
+
+  /** The owner's reply to a thread, written in the app instead of the viewer. */
+  async replyComment(id: string, commentId: string, body: string): Promise<ArtifactCommentView> {
+    return toCommentView(await (await this.admin()).addComment(id, { author: 'owner', body, parentId: commentId }))
+  }
+
+  async resolveComment(id: string, commentId: string, resolved: boolean): Promise<void> {
+    await (await this.admin()).setCommentResolved(id, commentId, resolved)
+  }
+
+  async deleteComment(id: string, commentId: string): Promise<void> {
+    await (await this.admin()).deleteComment(id, commentId)
+  }
+
+  /** Events the owner has not seen, across artifacts. It never starts the host: a stopped host has nothing new. */
+  async unseenCount(): Promise<number> {
+    if (this.deps.host.status().state !== 'running') return 0
+    try {
+      const artifacts = await (await this.admin()).list()
+      return artifacts.reduce((sum, artifact) => sum + artifact.unseenEvents, 0)
+    } catch {
+      return 0
+    }
   }
 
   /** The owner's URL: the single-use ticket travels in the fragment, which never reaches a server log. */
-  private async ownerUrl(admin: ArtifactAdmin, id: string, version?: number): Promise<string> {
+  private async ownerUrl(admin: ArtifactAdmin, id: string, version?: number, preview = false): Promise<string> {
     const { ticket } = await admin.mintOwnerTicket(id)
     const port = this.deps.host.status().port
-    return `http://127.0.0.1:${port}/a/${id}#o=${ticket}${version ? `&v=${version}` : ''}`
+    return `http://127.0.0.1:${port}/a/${id}#o=${ticket}${version ? `&v=${version}` : ''}${preview ? '&preview=1' : ''}`
   }
 
   async openExternal(id: string, version?: number): Promise<void> {
@@ -249,7 +488,12 @@ export class ArtifactsService {
     const before = this.deps.settings()
     const after = this.deps.saveSettings(input)
     const state = this.deps.host.status().state
-    const changed = before.port !== after.port || before.quotaGb !== after.quotaGb
+    // The host reads these when it starts, so changing any of them takes a restart.
+    const changed =
+      before.port !== after.port ||
+      before.quotaGb !== after.quotaGb ||
+      before.publicAddress !== after.publicAddress ||
+      before.ownerName !== after.ownerName
     if (!after.hostEnabled) await this.deps.host.stop()
     else if ((changed && state !== 'stopped') || (!before.hostEnabled && after.hostEnabled))
       await this.deps.host.restart()

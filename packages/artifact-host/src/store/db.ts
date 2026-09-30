@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS version_files (
   FOREIGN KEY (artifact_id, version) REFERENCES versions(artifact_id, number) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS version_files_blob ON version_files (sha256);
+CREATE TABLE IF NOT EXISTS thumbnails (
+  artifact_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (artifact_id, version),
+  FOREIGN KEY (artifact_id, version) REFERENCES versions(artifact_id, number) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS thumbnails_blob ON thumbnails (sha256);
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
@@ -57,6 +68,54 @@ CREATE TABLE IF NOT EXISTS sessions (
   revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS sessions_artifact ON sessions (artifact_id);
+CREATE INDEX IF NOT EXISTS sessions_principal ON sessions (principal_id);
+CREATE TABLE IF NOT EXISTS principals (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('invited', 'approved', 'guest')),
+  name TEXT NOT NULL DEFAULT '',
+  invite_token_hash TEXT UNIQUE,
+  invite_expires_at INTEGER,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS principals_artifact ON principals (artifact_id);
+CREATE TABLE IF NOT EXISTS access_requests (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  browser_secret_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'expired')),
+  principal_id TEXT,
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS access_requests_artifact ON access_requests (artifact_id, status);
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('device_added', 'access_requested', 'invite_declined', 'comment_added')),
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  seen_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS events_unseen ON events (artifact_id, seen_at);
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('owner', 'agent', 'invited', 'approved', 'guest')),
+  principal_id TEXT,
+  author_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  anchor_json TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS comments_artifact ON comments (artifact_id, created_at);
 CREATE TABLE IF NOT EXISTS owner_tickets (
   token_hash TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,

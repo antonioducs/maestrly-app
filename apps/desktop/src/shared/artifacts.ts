@@ -4,9 +4,27 @@ export interface ArtifactSettings {
   hostEnabled: boolean
   port: number
   quotaGb: number
+  /** Where other people reach the host, as an origin (`https://mac.example`); empty while there is none. */
+  publicAddress: string
+  /** The name people see when an artifact is shared with them. */
+  ownerName: string
+  /** How long a new "anyone with the link" share lasts, in days; null for no expiry. */
+  linkExpiryDays: number | null
 }
 
-export const DEFAULT_ARTIFACT_SETTINGS: ArtifactSettings = { hostEnabled: true, port: 4010, quotaGb: 2 }
+export const DEFAULT_ARTIFACT_SETTINGS: ArtifactSettings = {
+  hostEnabled: true,
+  port: 4010,
+  quotaGb: 2,
+  publicAddress: '',
+  ownerName: '',
+  linkExpiryDays: 30,
+}
+
+export const MAX_ARTIFACT_NAME_CHARS = 60
+export const MIN_ACCESS_CODE_CHARS = 6
+export const MAX_ACCESS_CODE_CHARS = 64
+export const MAX_LINK_EXPIRY_DAYS = 365
 
 export type ArtifactHostState = 'stopped' | 'starting' | 'running' | 'error'
 export type ArtifactHostProblem = 'disabled' | 'port_in_use' | 'storage' | 'crashed'
@@ -34,6 +52,114 @@ export interface ArtifactListItem {
   host: 'local'
   /** The originating conversation; `exists` is false once it was deleted, with its last known title. */
   conversation: { id: string; title: string | null; exists: boolean } | null
+  /** The project it was published in; null for standalone conversations. `name` is null once the project is gone. */
+  project: { id: string; name: string | null } | null
+  /** Space its versions and thumbnails take; content shared with other artifacts counts for each of them. */
+  storageBytes: number
+  /** The newest version with a preview image, or null while none was captured. */
+  thumbnailVersion: number | null
+  /** New devices, access requests, declined invitations and comments the owner has not seen yet. */
+  unseenEvents: number
+  pendingRequests: number
+  /** Comment threads that are neither resolved nor deleted. */
+  openComments: number
+}
+
+export const MAX_ARTIFACT_COMMENT_CHARS = 4000
+
+export type ArtifactCommentAuthorKind = 'owner' | 'agent' | 'invited' | 'approved' | 'guest'
+
+/** A comment as the owner sees it in the app. A reply carries its thread's ID and version. */
+export interface ArtifactCommentView {
+  id: string
+  version: number
+  parentId: string | null
+  /** Guests are unverified: nobody confirmed the name they typed. */
+  author: { kind: ArtifactCommentAuthorKind; name: string; verified: boolean }
+  body: string
+  /** What the thread is about: a passage of the page, a spot on it, or the whole page. */
+  place: 'passage' | 'spot' | 'page'
+  /** The passage the thread is about, when it is anchored to one. */
+  quote: string | null
+  status: 'open' | 'resolved'
+  createdAt: number
+}
+
+export type ArtifactPersonKind = 'invited' | 'approved' | 'guest'
+
+/** One browser a person joined with; the label is coarse ("Safari/iPhone"). */
+export interface ArtifactDeviceView {
+  id: string
+  label: string
+  createdAt: number
+  lastSeenAt: number
+}
+
+export interface ArtifactPersonView {
+  id: string
+  kind: ArtifactPersonKind
+  name: string
+  createdAt: number
+  inviteExpiresAt: number | null
+  /** Whether the personal link can be shown again; otherwise it can only be reset. */
+  linkAvailable: boolean
+  devices: ArtifactDeviceView[]
+}
+
+export interface ArtifactAccessRequestView {
+  id: string
+  name: string
+  message: string
+  createdAt: number
+}
+
+export interface ArtifactSharingView {
+  visibility: ArtifactVisibility
+  linkExpiresAt: number | null
+  hasAccessCode: boolean
+  commentsEnabled: boolean
+  people: ArtifactPersonView[]
+  requests: ArtifactAccessRequestView[]
+  /** The configured public address, or null when links only work on this computer. */
+  publicBase: string | null
+  localBase: string
+}
+
+export interface ArtifactSharingPatch {
+  visibility?: ArtifactVisibility
+  linkExpiresAt?: number | null
+  /** A new access code, or null to remove it. */
+  accessCode?: string | null
+  commentsEnabled?: boolean
+}
+
+export type ArtifactEventKind = 'device_added' | 'access_requested' | 'invite_declined' | 'comment_added'
+
+export interface ArtifactEventView {
+  id: string
+  artifactId: string
+  kind: ArtifactEventKind
+  data: Record<string, string | number>
+  createdAt: number
+  seen: boolean
+}
+
+/** Something that just happened on a shared artifact. */
+export interface ArtifactActivity {
+  artifactId: string
+  kind: ArtifactEventKind
+}
+
+/** A version's preview image, ready for an `<img>`. It may show an earlier version than the one asked for. */
+export interface ArtifactThumbnailView {
+  version: number
+  dataUrl: string
+}
+
+export interface ArtifactRemoveResult {
+  removed: boolean
+  /** Storage released; less than the artifact's size when other artifacts share its content. */
+  freedBytes: number
 }
 
 export interface ArtifactVersionView {

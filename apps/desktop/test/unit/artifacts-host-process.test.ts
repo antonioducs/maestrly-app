@@ -68,7 +68,7 @@ describe('ArtifactHostProcess', () => {
     expect(children).toHaveLength(1)
     expect(last().sent[0]).toEqual({
       type: 'init',
-      config: { dataDir: '/data/artifacts', port: 4010, quotaBytes: 2 * 1024 ** 3, publicOrigins: [] },
+      config: { dataDir: '/data/artifacts', port: 4010, quotaBytes: 2 * 1024 ** 3, publicOrigins: [], ownerName: '' },
     })
     expect(host.status().state).toBe('starting')
     last().reply({ type: 'ready', port: 4010 })
@@ -159,7 +159,30 @@ describe('ArtifactHostProcess', () => {
     await start
     last().reply({ type: 'event', event: { type: 'changed', artifactId: 'A'.repeat(22) } })
     last().reply({ type: 'event', event: { type: 'other' } })
-    expect(events).toEqual([{ type: 'changed', artifactId: 'A'.repeat(22) }])
+    last().reply({ type: 'event', event: { type: 'activity', artifactId: 'A'.repeat(22), kind: 'access_requested' } })
+    last().reply({ type: 'event', event: { type: 'activity', artifactId: 'A'.repeat(22), kind: 'made_up' } })
+    last().reply({ type: 'event', event: { type: 'activity', kind: 'device_added' } })
+    expect(events).toEqual([
+      { type: 'changed', artifactId: 'A'.repeat(22) },
+      { type: 'activity', artifactId: 'A'.repeat(22), kind: 'access_requested' },
+    ])
+  })
+
+  it('tells the worker the public address and the owner’s name', async () => {
+    const { host, last } = harness({ publicAddress: 'https://mac.tail1234.ts.net', ownerName: 'Antonio' })
+    const start = host.ensureStarted()
+    expect(last().sent[0]).toEqual({
+      type: 'init',
+      config: {
+        dataDir: '/data/artifacts',
+        port: 4010,
+        quotaBytes: 2 * 1024 ** 3,
+        publicOrigins: ['https://mac.tail1234.ts.net'],
+        ownerName: 'Antonio',
+      },
+    })
+    last().reply({ type: 'ready', port: 4010 })
+    await start
   })
 
   it('reports status transitions', async () => {
