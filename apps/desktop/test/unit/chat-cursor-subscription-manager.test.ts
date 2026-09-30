@@ -4,7 +4,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentOptions, LocalAgentStore, SDKAgent, SDKUser } from '@cursor/sdk'
+import { CURSOR_SDK_VERSION } from '../../src/main/chat/cursor-sdk/platform'
 import {
+  CURSOR_SUBSCRIPTION_PLATFORM,
   CursorSubscriptionAccountChangedError,
   CursorSubscriptionManager,
   cursorIdentityFingerprint,
@@ -266,6 +268,10 @@ describe('Cursor subscription manager', () => {
       rmSync(first.userDataPath, { recursive: true, force: true })
       rmSync(second.userDataPath, { recursive: true, force: true })
     }
+  })
+
+  it('reports the pinned SDK version in platform diagnostics', () => {
+    expect(CURSOR_SUBSCRIPTION_PLATFORM.version).toBe(CURSOR_SDK_VERSION)
   })
 
   it('treats the SDK missing-agent deletion result as already cleaned', async () => {

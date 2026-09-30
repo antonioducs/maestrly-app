@@ -23,7 +23,10 @@ async function tarFixture(
 ): Promise<string> {
   const pack = tar.pack()
   const chunks: Buffer[] = []
-  pack.on('data', (chunk) => chunks.push(chunk))
+  pack.on('data', (chunk) => {
+    if (!Buffer.isBuffer(chunk)) throw new TypeError('Expected a binary archive chunk')
+    chunks.push(chunk)
+  })
   for (const entry of entries) {
     await new Promise<void>((resolve, reject) =>
       pack.entry(

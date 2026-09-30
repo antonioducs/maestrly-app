@@ -197,9 +197,12 @@ Signed publication follows [Releasing](releasing.md).
 
 ## Cursor SDK packaging and checks
 
-Cursor is pinned to `@cursor/sdk` 1.0.31. Postinstall fetches the host helper;
+Cursor is pinned to `@cursor/sdk` 1.0.34. Postinstall fetches the host helper;
 `fetch-cursor-sdk-platform.mjs` verifies its npm archive against a committed
-SHA-512 pin before extraction. Update the runtime platform hash table and the
+SHA-512 pin before extraction. The fetcher resolves the SDK the way
+`apps/desktop` does, so npm may hoist it to the root `node_modules` or nest it
+in `apps/desktop/node_modules`; helpers are installed beside the resolved SDK
+and its version must match the pin. Update the runtime platform hash table and the
 fetcher's pins together when upgrading. The package wrapper stages only the
 selected target helper, restores the host helper after cross-builds, and runs
 `verify-packaged-cursor-sdk.mjs` on unpacked apps and installers. Native binaries

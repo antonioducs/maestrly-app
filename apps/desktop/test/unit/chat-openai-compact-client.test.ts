@@ -152,6 +152,40 @@ describe('OpenAI standalone compaction', () => {
     expect(input.at(-1)).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'continue daqui' }] })
   })
 
+  it('preserves native assistant items when materializing a compaction window', async () => {
+    const input = await materializeOpenAIResponsesInput({
+      modelId: 'gpt-5.4',
+      rawPrefix: [retained, checkpoint],
+      messages: [
+        { role: 'user', content: 'Continue.' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'text',
+              text: 'Same.',
+              providerOptions: { openai: { itemId: 'msg_compact', phase: 'commentary' } },
+            },
+          ],
+        },
+        { role: 'user', content: 'Next.' },
+      ],
+    })
+    expect(input).toEqual([
+      retained,
+      checkpoint,
+      expect.objectContaining({ role: 'user' }),
+      {
+        type: 'message',
+        role: 'assistant',
+        id: 'msg_compact',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text: 'Same.' }],
+      },
+      expect.objectContaining({ role: 'user' }),
+    ])
+  })
+
   it('materializes function_call/function_call_output pairs without redeclaring the tool', async () => {
     const input = await materializeOpenAIResponsesInput({
       modelId: 'gpt-5.6-sol',

@@ -1,9 +1,9 @@
 /**
  * Cursor SDK platform-package targets.
  *
- * @cursor/sdk@1.0.31 optionalDependencies ship native helpers per platform:
+ * @cursor/sdk@1.0.34 optionalDependencies ship native helpers per platform:
  *   bin/rg, bin/cursorsandbox, vendor/tree-sitter*
- * There is NO @cursor/sdk-win32-arm64 on npm for 1.0.31 — Windows ARM is a
+ * There is NO @cursor/sdk-win32-arm64 on npm for 1.0.34 — Windows ARM is a
  * hard product gap unless Cursor publishes it or we fall back to x64 emulation.
  *
  * Same host-only optionalDependency problem as GitHub Copilot: cross-build
@@ -64,24 +64,24 @@ const TARGETS: readonly CursorSdkPlatformTarget[] = [
     materializedId: 'win-arm64',
     supported: false,
     notes:
-      'Package does not exist on npm for @cursor/sdk@1.0.31 (404). Product must refuse win-arm64 or document x64-emulation fallback if/when viable.',
+      'Package does not exist on npm for @cursor/sdk@1.0.34 (404). Product must refuse win-arm64 or document x64-emulation fallback if/when viable.',
   },
 ]
 
 /** Pinned SDK version. Keep in sync with package.json. */
-export const CURSOR_SDK_VERSION = '1.0.31'
+export const CURSOR_SDK_VERSION = '1.0.34'
 
 /**
  * Integrity hashes for platform optional packages at CURSOR_SDK_VERSION
- * (`npm view @cursor/sdk-<plat>@1.0.31 dist.integrity`, 2026-09-18).
+ * (`npm view @cursor/sdk-<plat>@1.0.34 dist.integrity`, checked against downloaded bytes 2026-09-30).
  * Verified npm tarball integrity used for target materialization.
  */
 export const CURSOR_SDK_PLATFORM_INTEGRITY: Readonly<Record<string, string>> = {
-  'mac-arm64': 'sha512-i6INDIQhV7xDeFKfND0yr/SOwv4uJthPMfXXvNpZapO+IbJTx30aPzJVMBqdksvDHyn/cekJB/92Jkz+a5K8Ow==',
-  'mac-x64': 'sha512-vCmrGykwflJNAAr4RVY4UlZ+F0fmUF+WCR8zFzP4Jl1Da2b8Oh1rxrVLbIbleS1/LKsX/OPbTQNRL0SEER95Sg==',
-  'linux-arm64': 'sha512-BHTwumfhWjTy0k41+KaaXfTm3MGu6WEYU76FmXqc/r1+ynuQroqfBKWyfH4XBcx3uzyaZJQLxNB9BBbs8yHUig==',
-  'linux-x64': 'sha512-y+ahiKQvEISUn9y6z75jwKjLQkrJ/nY7ehL1Vi9X8zdbjz14fiEtMTICAHccTiTq5cf6dZjXC5QfPdJRat6dhg==',
-  'win-x64': 'sha512-5ti4AwUz8kh5ovM86K/fTiHmVGL6jk1faQkTCX08lcCxFSlUDwpeyhn90pWsbNFQ4Vy2PttqEjanV6895p13eA==',
+  'mac-arm64': 'sha512-V8ocCa606x3It1Be/2qSOxL3iXow9dgNiOX71cQORAQt7c8i6g+/hFw4KpOz/cUn4RZ8zv1S87ZyLy+c+AJ9eQ==',
+  'mac-x64': 'sha512-luq4CjDveDFoIo5pcP9Vrwp+yCMM4sMr2AVO7UqHpDskKUaQEX6iHOHjqYP6jkUMzFbf1fXkEYyBJlhKCGmdxg==',
+  'linux-arm64': 'sha512-o0/EOyl5WadSqg7oFx7bfsnYh6XLaw3g6BeNqYav2Al85Qzk/AgLZHbjs1unBPBpQos54+goEbgrfZuST1mzyA==',
+  'linux-x64': 'sha512-5i2g8OCSnjiTQfhwV42y5Xpa4sAzwWEIs+oO47iG4QUXWuymrjnjZcQynAtsNkpZ7bzBaYT/0/geW08IJ7zuLg==',
+  'win-x64': 'sha512-yn3V3ueSqbQWj+uaJp/lRFHaVmMgpJqQdI4MLv416Jgm5kfffrVTo7/ffjFu/CGhVUTvkPaifMXvI+zFhx3oOw==',
 }
 
 export function listCursorSdkPlatformTargets(): readonly CursorSdkPlatformTarget[] {

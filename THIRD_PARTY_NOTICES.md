@@ -37,7 +37,7 @@ and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
 
 ## ws
 
-The bot gateway includes [ws](https://github.com/websockets/ws) 8.21.3 for
+The bot gateway includes [ws](https://github.com/websockets/ws) 8.22.0 for
 WebSocket communication. It is licensed under the MIT License.
 
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
@@ -180,7 +180,7 @@ are in
 
 ## Cursor SDK
 
-Maestrly packages `@cursor/sdk` 1.0.31 and one matching supported native helper
+Maestrly packages `@cursor/sdk` 1.0.34 and one matching supported native helper
 package. These are proprietary Anysphere components, separate from Maestrly's
 MIT-licensed source. The upstream license is reproduced verbatim in
 [`cursor-sdk-LICENSE.md`](apps/desktop/resources/licenses/cursor-sdk-LICENSE.md);

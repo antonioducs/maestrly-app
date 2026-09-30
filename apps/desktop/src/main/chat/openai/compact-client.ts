@@ -7,6 +7,11 @@ import { getApiKey } from '../credentials'
 import { buildOpenAIProviderFingerprint, ChatConfigError } from '../provider'
 import { toOpenAILedgerValue } from './ledger'
 import { prependOpenAIRawResponseItems } from './raw-input'
+import {
+  claimOpenAIResponsesReplay,
+  restoreOpenAIAssistantTextReplay,
+  withOpenAIResponsesReplay,
+} from './replay-middleware'
 import type { OpenAICanonicalCompactionWindow, OpenAILedgerObject, OpenAILedgerValue } from './types'
 
 export interface OpenAICompactUsage {
@@ -138,7 +143,10 @@ export async function materializeOpenAIResponsesInput(args: {
   let captured: OpenAILedgerValue[] | null = null
   const captureFetch: typeof globalThis.fetch = async (_input, init) => {
     if (typeof init?.body !== 'string') throw new OpenAICompactError('OpenAI SDK produced a non-JSON request body')
-    const body = jsonObject(JSON.parse(init.body), '$.responsesRequest')
+    const body = restoreOpenAIAssistantTextReplay(
+      jsonObject(JSON.parse(init.body), '$.responsesRequest'),
+      claimOpenAIResponsesReplay()
+    )
     const withPrefix = args.rawPrefix?.length ? prependOpenAIRawResponseItems(body, args.rawPrefix) : body
     if (!Array.isArray(withPrefix.input)) throw new OpenAICompactError('OpenAI SDK request is missing input items')
     captured = withPrefix.input
@@ -164,7 +172,7 @@ export async function materializeOpenAIResponsesInput(args: {
     fetch: captureFetch,
   })
   await generateText({
-    model: captureProvider.responses(args.modelId),
+    model: withOpenAIResponsesReplay(captureProvider.responses(args.modelId)),
     messages: [...args.messages],
     abortSignal: args.signal,
     maxRetries: 0,

@@ -22,8 +22,8 @@ WORKDIR /app
 ENV NODE_ENV=production MAESTRLY_GATEWAY_DATA_DIR=/data
 ENV MAESTRLY_GATEWAY_VERSION=$MAESTRLY_VERSION
 COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=dependencies /app/apps/bot-gateway/package.json apps/bot-gateway/package.json
-COPY --from=dependencies /app/packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
+COPY --from=dependencies /app/apps/bot-gateway apps/bot-gateway
+COPY --from=dependencies /app/packages/bot-fleet-protocol packages/bot-fleet-protocol
 COPY --from=build /app/apps/bot-gateway/dist apps/bot-gateway/dist
 COPY --from=build /app/packages/bot-fleet-protocol/dist packages/bot-fleet-protocol/dist
 COPY deploy/bot-fleet/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint
