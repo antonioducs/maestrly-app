@@ -34,6 +34,9 @@ audio, so local speech-to-text is the bridge. The message is the transcription.
 | Auto-send | A "Send automatically" switch in the microphone menu, on by default. When it is off, or the composer cannot send, the text goes to the draft as today. |
 | First Metal load | A warm-up transcription runs right after the model installs, so shader compilation (about 17 s once) does not delay the first dictation. |
 | Engine isolation | The worker talks to whisper.cpp through a small local interface, so the addon can later be replaced by a self-built binary without touching callers. |
+| Supported platforms | macOS 15+ on Apple silicon (the addon's `LC_BUILD_VERSION` minimum is 15.0), Windows x64, Linux x64 with glibc 2.34+ (the addon requires `GLIBC_2.34`). These are the local ML runtime targets. |
+| Unsupported systems | Main reports support before anything is downloaded; the microphone shows why dictation is unavailable and never offers the model download. |
+| Model asset version | `large-v3-turbo-q5` (runtime versions must match `^[A-Za-z0-9.]+(?:-[A-Za-z0-9.]+)*$`). |
 
 ## Spike evidence
 
@@ -139,6 +142,11 @@ flowchart LR
   downloads no longer happen inside the worker.
 - New `chat:asr-warm` IPC starts the worker and loads both models. The renderer
   calls it when recording starts, and once after the model installs.
+- New `chat:asr-support` IPC returns `{ supported: true }` or
+  `{ supported: false, reason: 'platform' | 'os-version' }`. It is `platform` for
+  hosts without a local ML runtime target and `os-version` on macOS older than 15
+  (Darwin kernel major below 24). Linux glibc is not probed; an addon load failure
+  there surfaces as `unavailable`.
 - `chat:transcribe` accepts `{ language }`, validated in main against
   `pt | en | auto`, and returns `{ text }` or `{ error: 'silent' | 'model-missing' | 'unavailable' }`.
 - On first start of the new worker, the unused
@@ -181,6 +189,7 @@ flowchart LR
 
 | Situation | Behavior |
 | --- | --- |
+| Unsupported system | Microphone disabled with a tooltip naming the requirement (macOS 15 or later, or an unsupported platform). |
 | Model not installed | Download card; no recording starts. |
 | Download fails, is cancelled, or hash mismatches | Existing runtime-asset states (`failed`, `corrupt`); the card offers Retry. |
 | Not enough disk space | Existing disk preflight error in the card. |
@@ -221,5 +230,7 @@ flowchart LR
 - Memory use of the loaded model was not measured; expect several hundred MB above
   the 574 MB file. The existing reclaimer stops the idle worker, and reloading
   takes about 0.3 s once shaders are compiled.
+- Dictation stops working on macOS 12–14, where today's `whisper-base` path runs.
+  A self-built addon with a lower deployment target would restore it if needed.
 - Hugging Face CDN hostnames can change. The downloader allows `*.hf.co`, and a new
   host outside it fails closed with a clear download error.
