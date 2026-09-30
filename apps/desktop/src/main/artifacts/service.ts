@@ -18,14 +18,18 @@ import {
 } from '@maestrly/artifact-host'
 import type {
   ArtifactDetailView,
+  ArtifactEventView,
   ArtifactHostStatus,
   ArtifactListItem,
   ArtifactRemoveResult,
   ArtifactSettings,
+  ArtifactSharingPatch,
+  ArtifactSharingView,
   ArtifactThumbnailView,
 } from '../../shared/artifacts'
 import type { Conversation } from '../../shared/conversation'
 import type { ArtifactHostProcess } from './host-process'
+import type { InviteVault } from './invite-vault'
 
 export type ToolBundleInput = { files?: BundleFile[]; directory?: string }
 
@@ -36,6 +40,8 @@ export type ArtifactChange =
 
 export interface ArtifactsServiceDeps {
   host: Pick<ArtifactHostProcess, 'ensureStarted' | 'status' | 'stop' | 'restart'>
+  /** The tokens of personal links, kept so the owner can copy a link again. */
+  vault: InviteVault
   settings: () => ArtifactSettings
   saveSettings: (input: unknown) => ArtifactSettings
   getConversation: (id: string) => Conversation | undefined
@@ -191,6 +197,8 @@ export class ArtifactsService {
         : null,
       storageBytes: artifact.storageBytes,
       thumbnailVersion: artifact.thumbnailVersion,
+      unseenEvents: artifact.unseenEvents,
+      pendingRequests: artifact.pendingRequests,
       conversation: artifact.conversationId
         ? {
             id: artifact.conversationId,
@@ -245,9 +253,117 @@ export class ArtifactsService {
   async remove(id: string): Promise<ArtifactRemoveResult> {
     const admin = await this.admin()
     const before = (await admin.status()).storageBytes
+    // The personal links die with the artifact; their tokens must not outlive it.
+    const people = await admin.getSharing(id).then(
+      (sharing) => sharing.people,
+      () => []
+    )
     const removed = await admin.delete(id)
+    if (removed) for (const person of people) this.deps.vault.remove(person.id)
     const after = (await admin.status()).storageBytes
     return { removed, freedBytes: Math.max(0, before - after) }
+  }
+
+  private localBase(): string {
+    return `http://127.0.0.1:${this.deps.host.status().port}`
+  }
+
+  /** A personal link. The token travels in the fragment, which never reaches a server log. */
+  private inviteUrl(id: string, token: string): string {
+    return `${this.deps.settings().publicAddress || this.localBase()}/a/${id}#i=${token}`
+  }
+
+  private async sharingView(admin: ArtifactAdmin, id: string): Promise<ArtifactSharingView> {
+    return this.toSharingView(await admin.getSharing(id))
+  }
+
+  private toSharingView(sharing: Awaited<ReturnType<ArtifactAdmin['getSharing']>>): ArtifactSharingView {
+    return {
+      visibility: sharing.visibility,
+      linkExpiresAt: sharing.linkExpiresAt,
+      hasAccessCode: sharing.hasAccessCode,
+      commentsEnabled: sharing.commentsEnabled,
+      people: sharing.people.map((person) => ({
+        id: person.id,
+        kind: person.kind,
+        name: person.name,
+        createdAt: person.createdAt,
+        inviteExpiresAt: person.inviteExpiresAt,
+        revoked: person.revokedAt !== null,
+        linkAvailable:
+          person.kind === 'invited' && person.revokedAt === null && this.deps.vault.get(person.id) !== null,
+        devices: person.devices,
+      })),
+      requests: sharing.requests,
+      publicBase: this.deps.settings().publicAddress || null,
+      localBase: this.localBase(),
+    }
+  }
+
+  /** Who can open an artifact. Only the owner's interface reaches this and the operations below, never an agent. */
+  async sharing(id: string): Promise<ArtifactSharingView> {
+    return this.sharingView(await this.admin(), id)
+  }
+
+  async setSharing(id: string, patch: ArtifactSharingPatch): Promise<ArtifactSharingView> {
+    return this.toSharingView(await (await this.admin()).setSharing(id, patch))
+  }
+
+  async createInvite(id: string, name: string): Promise<{ principalId: string; link: string }> {
+    const { principalId, token } = await (await this.admin()).createInvite(id, { name })
+    this.deps.vault.save(principalId, token)
+    return { principalId, link: this.inviteUrl(id, token) }
+  }
+
+  /** The person's link again, or null when its token is no longer stored and the link can only be reset. */
+  async inviteLink(id: string, principalId: string): Promise<string | null> {
+    const { people } = await (await this.admin()).getSharing(id)
+    const person = people.find((candidate) => candidate.id === principalId)
+    if (person?.kind !== 'invited' || person.revokedAt !== null) return null
+    const token = this.deps.vault.get(principalId)
+    return token ? this.inviteUrl(id, token) : null
+  }
+
+  async resetInvite(id: string, principalId: string): Promise<string> {
+    const { token } = await (await this.admin()).resetInvite(id, principalId)
+    this.deps.vault.save(principalId, token)
+    return this.inviteUrl(id, token)
+  }
+
+  async revokePerson(id: string, principalId: string): Promise<void> {
+    await (await this.admin()).revokePerson(id, principalId)
+    this.deps.vault.remove(principalId)
+  }
+
+  async revokeDevice(id: string, sessionId: string): Promise<void> {
+    await (await this.admin()).revokeDevice(id, sessionId)
+  }
+
+  async revokeAllSessions(id: string): Promise<void> {
+    await (await this.admin()).revokeAllSessions(id)
+  }
+
+  async decideRequest(id: string, requestId: string, decision: { approve: boolean; name?: string }): Promise<void> {
+    await (await this.admin()).decideAccessRequest(id, requestId, decision)
+  }
+
+  async events(artifactId?: string): Promise<ArtifactEventView[]> {
+    return (await this.admin()).listEvents(artifactId === undefined ? {} : { artifactId })
+  }
+
+  async markSeen(artifactId?: string): Promise<void> {
+    await (await this.admin()).markEventsSeen(artifactId)
+  }
+
+  /** Events the owner has not seen, across artifacts. It never starts the host: a stopped host has nothing new. */
+  async unseenCount(): Promise<number> {
+    if (this.deps.host.status().state !== 'running') return 0
+    try {
+      const artifacts = await (await this.admin()).list()
+      return artifacts.reduce((sum, artifact) => sum + artifact.unseenEvents, 0)
+    } catch {
+      return 0
+    }
   }
 
   /** The owner's URL: the single-use ticket travels in the fragment, which never reaches a server log. */
@@ -293,7 +409,12 @@ export class ArtifactsService {
     const before = this.deps.settings()
     const after = this.deps.saveSettings(input)
     const state = this.deps.host.status().state
-    const changed = before.port !== after.port || before.quotaGb !== after.quotaGb
+    // The host reads these when it starts, so changing any of them takes a restart.
+    const changed =
+      before.port !== after.port ||
+      before.quotaGb !== after.quotaGb ||
+      before.publicAddress !== after.publicAddress ||
+      before.ownerName !== after.ownerName
     if (!after.hostEnabled) await this.deps.host.stop()
     else if ((changed && state !== 'stopped') || (!before.hostEnabled && after.hostEnabled))
       await this.deps.host.restart()

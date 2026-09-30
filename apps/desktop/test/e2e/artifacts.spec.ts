@@ -142,10 +142,10 @@ test('publishes, isolates, lists and deletes an artifact', async () => {
 
     // A free port keeps parallel runs and a developer's own Maestrly from colliding on 4010.
     const port = await freePort()
-    await page.evaluate(
-      (port) => (window as any).api.artifacts.setSettings({ hostEnabled: true, port, quotaGb: 2 }),
-      port
-    )
+    await page.evaluate(async (port) => {
+      const artifacts = (window as any).api.artifacts
+      await artifacts.setSettings({ ...(await artifacts.getSettings()), hostEnabled: true, port, quotaGb: 2 })
+    }, port)
 
     const provider = await api('chatAddProvider', {
       name: 'Artifact fixture',

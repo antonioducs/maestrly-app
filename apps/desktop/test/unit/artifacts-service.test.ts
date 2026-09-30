@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { type ArtifactHost, ArtifactHostError, openArtifactHost } from '@maestrly/artifact-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { InviteVault } from '../../src/main/artifacts/invite-vault'
 import { ArtifactsService } from '../../src/main/artifacts/service'
 import { deleteConversation, getConversation, insertConversation } from '../../src/main/store'
 import { type ArtifactHostStatus, type ArtifactSettings, DEFAULT_ARTIFACT_SETTINGS } from '../../src/shared/artifacts'
@@ -36,6 +37,19 @@ function makeDeps() {
 }
 let deps: ReturnType<typeof makeDeps>
 let service: ArtifactsService
+let vault: InviteVault
+
+/** Joins an artifact the way the viewer does after "Continue as …", and returns what the host answered. */
+async function join(link: string): Promise<number> {
+  const url = new URL(link)
+  const origin = `http://127.0.0.1:${host.port}`
+  const response = await fetch(`${origin}${url.pathname}/api/session/invite`, {
+    method: 'POST',
+    headers: { origin, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+    body: JSON.stringify({ token: new URLSearchParams(url.hash.slice(1)).get('i') }),
+  })
+  return response.status
+}
 
 function standalone(name = 'Standalone chat'): StandaloneConversation {
   const conversation: StandaloneConversation = {
@@ -75,7 +89,17 @@ beforeEach(async () => {
   settings = { ...DEFAULT_ARTIFACT_SETTINGS }
   hostState = 'running'
   deps = makeDeps()
+  const stored = new Map<string, string>()
+  vault = new InviteVault({
+    get: (key) => stored.get(key) ?? null,
+    set: (key, value) => {
+      stored.set(key, value)
+      return true
+    },
+    remove: (key) => stored.delete(key),
+  })
   service = new ArtifactsService({
+    vault,
     host: deps.host,
     settings: () => settings,
     saveSettings: (input) => {
@@ -215,9 +239,141 @@ describe('ArtifactsService', () => {
   it('applies settings to the running host', async () => {
     await service.setSettings({ ...settings, port: 5000 })
     expect(deps.host.restart).toHaveBeenCalledTimes(1)
+    await service.setSettings({ ...settings, ownerName: 'Antonio' })
+    expect(deps.host.restart).toHaveBeenCalledTimes(2)
+    await service.setSettings({ ...settings, publicAddress: 'https://mac.example' })
+    expect(deps.host.restart).toHaveBeenCalledTimes(3)
+    // The default link expiry only matters to the desktop.
+    await service.setSettings({ ...settings, linkExpiryDays: 7 })
+    expect(deps.host.restart).toHaveBeenCalledTimes(3)
     await service.setSettings({ ...settings, hostEnabled: false })
     expect(deps.host.stop).toHaveBeenCalledTimes(1)
     expect(deps.emitStatus).toHaveBeenCalled()
+  })
+
+  it('invites a person with a link it can show again', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Shared', files: page })
+    const id = detail.id
+    await service.setSharing(id, { visibility: 'people' })
+    const invite = await service.createInvite(id, 'Maria')
+    expect(invite.link).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${id}#i=[A-Za-z0-9_-]{43}$`))
+    expect(await service.inviteLink(id, invite.principalId)).toBe(invite.link)
+
+    const view = await service.sharing(id)
+    expect(view).toMatchObject({
+      visibility: 'people',
+      hasAccessCode: false,
+      commentsEnabled: true,
+      requests: [],
+      publicBase: null,
+      localBase: 'http://127.0.0.1:4010',
+    })
+    expect(view.people).toEqual([
+      expect.objectContaining({
+        id: invite.principalId,
+        kind: 'invited',
+        name: 'Maria',
+        revoked: false,
+        linkAvailable: true,
+        devices: [],
+      }),
+    ])
+    expect(JSON.stringify(view)).not.toContain(invite.link.split('#i=')[1])
+
+    // Without the stored token the link cannot be shown again, only reset.
+    vault.remove(invite.principalId)
+    expect(await service.inviteLink(id, invite.principalId)).toBeNull()
+    expect((await service.sharing(id)).people[0]?.linkAvailable).toBe(false)
+    const fresh = await service.resetInvite(id, invite.principalId)
+    expect(fresh).not.toBe(invite.link)
+    expect(await service.inviteLink(id, invite.principalId)).toBe(fresh)
+    expect(await join(invite.link)).toBe(404)
+    expect(await join(fresh)).toBe(204)
+  })
+
+  it('builds links on the public address when there is one', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Public', files: page })
+    settings = { ...settings, publicAddress: 'https://mac.tail1234.ts.net' }
+    const invite = await service.createInvite(detail.id, 'Maria')
+    expect(invite.link.startsWith(`https://mac.tail1234.ts.net/a/${detail.id}#i=`)).toBe(true)
+    expect(await service.sharing(detail.id)).toMatchObject({
+      publicBase: 'https://mac.tail1234.ts.net',
+      localBase: 'http://127.0.0.1:4010',
+    })
+  })
+
+  it('never hands out a link through another artifact', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const first = await service.create(conversation.id, { title: 'First', files: page })
+    const second = await service.create(conversation.id, { title: 'Second', files: page })
+    const invite = await service.createInvite(first.detail.id, 'Maria')
+    expect(await service.inviteLink(second.detail.id, invite.principalId)).toBeNull()
+    expect((await errorOf(service.resetInvite(second.detail.id, invite.principalId))).code).toBe('not_found')
+    expect(await service.inviteLink(first.detail.id, invite.principalId)).toBe(invite.link)
+  })
+
+  it('shows devices and events, and forgets links with the person or the artifact', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Watched', files: page })
+    const id = detail.id
+    await service.setSharing(id, { visibility: 'people' })
+    const maria = await service.createInvite(id, 'Maria')
+    const ana = await service.createInvite(id, 'Ana')
+    expect(await join(maria.link)).toBe(204)
+
+    const mariaOf = async () => (await service.sharing(id)).people.find((item) => item.id === maria.principalId)
+    const person = await mariaOf()
+    expect(person?.devices).toEqual([expect.objectContaining({ label: expect.any(String) })])
+    expect(await service.unseenCount()).toBe(1)
+    expect((await service.listAll())[0]).toMatchObject({ unseenEvents: 1, pendingRequests: 0 })
+    expect(await service.events(id)).toEqual([
+      expect.objectContaining({ artifactId: id, kind: 'device_added', seen: false }),
+    ])
+    await service.markSeen(id)
+    expect(await service.unseenCount()).toBe(0)
+    expect((await service.events())[0]?.seen).toBe(true)
+
+    await service.revokeDevice(id, person!.devices[0]!.id)
+    expect((await mariaOf())?.devices).toEqual([])
+    await service.revokePerson(id, maria.principalId)
+    expect(vault.get(maria.principalId)).toBeNull()
+    expect(await mariaOf()).toMatchObject({ revoked: true, linkAvailable: false })
+    await service.revokeAllSessions(id)
+
+    expect(vault.get(ana.principalId)).not.toBeNull()
+    await service.remove(id)
+    expect(vault.get(ana.principalId)).toBeNull()
+  })
+
+  it('decides access requests', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Asked', files: page })
+    const id = detail.id
+    await service.setSharing(id, { visibility: 'people' })
+    const origin = `http://127.0.0.1:${host.port}`
+    const asked = await fetch(`${origin}/a/${id}/api/access-requests`, {
+      method: 'POST',
+      headers: { origin, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+      body: JSON.stringify({ name: 'João', message: 'Please' }),
+    })
+    expect(asked.status).toBe(202)
+    const [request] = (await service.sharing(id)).requests
+    expect(request).toMatchObject({ name: 'João', message: 'Please' })
+    expect((await service.listAll())[0]).toMatchObject({ pendingRequests: 1, unseenEvents: 1 })
+    await service.decideRequest(id, request!.id, { approve: true, name: 'João Silva' })
+    const view = await service.sharing(id)
+    expect(view.requests).toEqual([])
+    expect(view.people).toEqual([
+      expect.objectContaining({ kind: 'approved', name: 'João Silva', linkAvailable: false }),
+    ])
+  })
+
+  it('counts nothing, and starts nothing, while the host is not running', async () => {
+    hostState = 'stopped'
+    expect(await service.unseenCount()).toBe(0)
+    expect(deps.host.ensureStarted).not.toHaveBeenCalled()
   })
 
   it('asks for a thumbnail of every version it publishes, and of listed artifacts that lack one', async () => {

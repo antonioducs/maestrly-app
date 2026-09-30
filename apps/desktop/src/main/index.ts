@@ -172,7 +172,10 @@ import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetClientService } from './fleet/client/service'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
+import { createArtifactEventHandler } from './artifacts/activity'
+import { playSound } from './platform'
 import { ArtifactHostProcess, forkArtifactHostWorker } from './artifacts/host-process'
+import { InviteVault } from './artifacts/invite-vault'
 import { registerArtifactsIpc } from './artifacts/ipc'
 import { ArtifactsService } from './artifacts/service'
 import { captureArtifactThumbnail } from './artifacts/thumbnail-capture'
@@ -240,11 +243,12 @@ function initArtifacts(): void {
     dataDir: artifactsDataDir,
     settings: getArtifactSettings,
     onStatus: (status) => broadcast('artifacts:status', status),
-    onEvent: () => broadcast('artifacts:changed'),
+    onEvent: createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound }),
   })
   let thumbnails: ThumbnailQueue | null = null
   const service = new ArtifactsService({
     host: artifactHost,
+    vault: new InviteVault(),
     settings: getArtifactSettings,
     saveSettings: setArtifactSettings,
     getConversation,

@@ -232,7 +232,7 @@ describe('preload API — exposure', () => {
   })
   it('forwards artifact calls to their channels in argument order', async () => {
     const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
-    const settings = { hostEnabled: true, port: 4010, quotaGb: 2 }
+    const settings = { hostEnabled: true, port: 4010, quotaGb: 2, publicAddress: '', ownerName: '', linkExpiryDays: 30 }
     await artifacts.list()
     await artifacts.detail('artifact')
     await artifacts.remove('artifact')
@@ -242,6 +242,18 @@ describe('preload API — exposure', () => {
     await artifacts.start()
     await artifacts.getSettings()
     await artifacts.setSettings(settings)
+    await artifacts.sharing('artifact')
+    await artifacts.setSharing('artifact', { visibility: 'people' })
+    await artifacts.createInvite('artifact', 'Maria')
+    await artifacts.inviteLink('artifact', 'person')
+    await artifacts.resetInvite('artifact', 'person')
+    await artifacts.revokePerson('artifact', 'person')
+    await artifacts.revokeDevice('artifact', 'device')
+    await artifacts.revokeAllSessions('artifact')
+    await artifacts.decideRequest('artifact', 'request', { approve: true, name: 'João' })
+    await artifacts.events('artifact')
+    await artifacts.markSeen('artifact')
+    await artifacts.unseenCount()
     expect(invokeSpy.mock.calls).toEqual([
       ['artifacts:list'],
       ['artifacts:detail', 'artifact'],
@@ -252,10 +264,23 @@ describe('preload API — exposure', () => {
       ['artifacts:start'],
       ['artifacts:settings-get'],
       ['artifacts:settings-set', settings],
+      ['artifacts:sharing-get', 'artifact'],
+      ['artifacts:sharing-set', 'artifact', { visibility: 'people' }],
+      ['artifacts:invite-create', 'artifact', 'Maria'],
+      ['artifacts:invite-link', 'artifact', 'person'],
+      ['artifacts:invite-reset', 'artifact', 'person'],
+      ['artifacts:person-revoke', 'artifact', 'person'],
+      ['artifacts:device-revoke', 'artifact', 'device'],
+      ['artifacts:sessions-revoke', 'artifact'],
+      ['artifacts:request-decide', 'artifact', 'request', { approve: true, name: 'João' }],
+      ['artifacts:events', 'artifact'],
+      ['artifacts:events-seen', 'artifact'],
+      ['artifacts:unseen-count'],
     ])
     for (const [subscribe, channel] of [
       ['onChanged', 'artifacts:changed'],
       ['onStatus', 'artifacts:status'],
+      ['onActivity', 'artifacts:activity'],
     ] as const) {
       const off = artifacts[subscribe](vi.fn()) as () => void
       expect(onSpy).toHaveBeenLastCalledWith(channel, expect.any(Function))
