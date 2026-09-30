@@ -94,6 +94,8 @@ describe('ArtifactStore', () => {
       updatedAt: 1000,
       storageBytes: 3,
       thumbnailVersion: null,
+      unseenEvents: 0,
+      pendingRequests: 0,
     })
     expect(store.getArtifact('missing')).toBeNull()
     expect(store.countArtifacts()).toBe(1)

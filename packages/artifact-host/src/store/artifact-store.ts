@@ -24,6 +24,9 @@ export interface ArtifactRecord {
   storageBytes: number
   /** The newest version with a thumbnail, or null when no version has one. */
   thumbnailVersion: number | null
+  /** Events (new devices, access requests, declined invitations, comments) the owner has not seen yet. */
+  unseenEvents: number
+  pendingRequests: number
 }
 
 export type NewArtifact = Pick<
@@ -105,7 +108,9 @@ const ARTIFACT_COLUMNS = `a.*,
     SELECT sha256, bytes FROM version_files WHERE artifact_id = a.id
     UNION SELECT sha256, bytes FROM thumbnails WHERE artifact_id = a.id
   ) u) AS storage_bytes,
-  (SELECT MAX(t.version) FROM thumbnails t WHERE t.artifact_id = a.id) AS thumbnail_version`
+  (SELECT MAX(t.version) FROM thumbnails t WHERE t.artifact_id = a.id) AS thumbnail_version,
+  (SELECT COUNT(*) FROM events e WHERE e.artifact_id = a.id AND e.seen_at IS NULL) AS unseen_events,
+  (SELECT COUNT(*) FROM access_requests r WHERE r.artifact_id = a.id AND r.status = 'pending') AS pending_requests`
 const FILTER_COLUMNS: Record<keyof ArtifactListFilter, string> = {
   ownerKind: 'owner_kind',
   ownerId: 'owner_id',
@@ -129,6 +134,8 @@ const toArtifact = (row: Row): ArtifactRecord => ({
   updatedAt: row.updated_at as number,
   storageBytes: row.storage_bytes as number,
   thumbnailVersion: (row.thumbnail_version as number | null) ?? null,
+  unseenEvents: row.unseen_events as number,
+  pendingRequests: row.pending_requests as number,
 })
 
 const toVersion = (row: Row): VersionRecord => ({
@@ -149,7 +156,7 @@ const toFile = (row: Row): FileRecord => ({
   contentType: row.content_type as string,
 })
 
-const toSession = (row: Row): SessionRecord => ({
+export const toSession = (row: Row): SessionRecord => ({
   id: row.id as string,
   artifactId: row.artifact_id as string,
   principalId: (row.principal_id as string | null) ?? null,

@@ -68,6 +68,39 @@ CREATE TABLE IF NOT EXISTS sessions (
   revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS sessions_artifact ON sessions (artifact_id);
+CREATE INDEX IF NOT EXISTS sessions_principal ON sessions (principal_id);
+CREATE TABLE IF NOT EXISTS principals (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('invited', 'approved', 'guest')),
+  name TEXT NOT NULL DEFAULT '',
+  invite_token_hash TEXT UNIQUE,
+  invite_expires_at INTEGER,
+  revoked_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS principals_artifact ON principals (artifact_id);
+CREATE TABLE IF NOT EXISTS access_requests (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  message TEXT NOT NULL DEFAULT '',
+  browser_secret_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'expired')),
+  principal_id TEXT,
+  created_at INTEGER NOT NULL,
+  decided_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS access_requests_artifact ON access_requests (artifact_id, status);
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('device_added', 'access_requested', 'invite_declined', 'comment_added')),
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  seen_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS events_unseen ON events (artifact_id, seen_at);
 CREATE TABLE IF NOT EXISTS owner_tickets (
   token_hash TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
