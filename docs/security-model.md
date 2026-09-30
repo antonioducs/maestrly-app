@@ -218,14 +218,23 @@ the next request, including for content already open.
 Comments are text written by people outside the app, so they are treated as
 untrusted everywhere. The viewer and the desktop render them as plain text,
 never as HTML or Markdown, with length limits on bodies, names, and quotes.
-Comments are typed and listed in the viewer shell, never inside the page: the
-page's frame keeps its opaque origin and cannot read them. The shell sends the
-frame only the quotes to highlight, which are the page's own text, and the
-frame's script paints them with the CSS Custom Highlight API without changing
-the page. Messages from the frame, such as the current selection, are hints: the
-shell validates and caps them, shows them as text, and the host checks every
-anchor again. A viewer sees whether a comment is its own, never the internal ID
-of its author.
+Comments are typed, listed, and drawn as pins in the viewer shell, above the
+page's frame and never inside it: the frame keeps its opaque origin and cannot
+read them. The shell sends the frame only what to find, which is the page's own
+text (a quote) or a place in it (an element selector and a point in its box),
+with comment IDs; never a name or a comment's text. The frame's script reports
+where those are and what the reader selected, and paints the active passage with
+the CSS Custom Highlight API without changing the page. In comment mode that
+script, which runs before the page's own scripts, keeps clicks from reaching the
+page. Messages from the frame are hints: the shell validates and caps them,
+shows them as text, and the host checks every anchor again. A viewer sees
+whether a comment is its own, never the internal ID of its author. Which
+conversations a reader has read is kept in their browser's storage for the
+host's origin, which the page's opaque origin cannot reach.
+
+The owner's viewer shows who can open the page (the visibility, the page's link,
+people's names and device counts, and how many access requests wait), read-only:
+it has no control that changes access.
 
 An agent receives comments only when it asks for them or when the owner chooses
 **Send to conversation**, which fills the message box without sending. The

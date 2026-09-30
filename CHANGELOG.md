@@ -18,11 +18,13 @@ User-visible changes by version. Downloads are on
   and the sidebar counts new activity. Sharing needs a public address that you
   provide, such as Tailscale Serve. See
   [Sharing](docs/artifacts.md#sharing).
-- People who can open a shared artifact can comment on a passage of the page.
-  You read, answer, and resolve comments in **Artifacts**, agents can read and
-  answer them with Maestrly tools, and **Send to conversation** puts the open
-  comments in the conversation's message box. See
-  [Comments](docs/artifacts.md#comments).
+- People who can open a shared artifact can comment on a passage or a spot of the
+  page. Comments appear as pins on the page, with previews, conversations
+  beside them, and a list; the viewer's top bar also gains version steps, page
+  widths, and full screen. You read, answer, and resolve comments in
+  **Artifacts**, agents can read and answer them with Maestrly tools, and **Send
+  to conversation** puts the open comments in the conversation's message box.
+  See [Comments](docs/artifacts.md#comments).
 - Experimental: see a bot's reasoning in its conversation, like in chats, once
   its bot server and environment are updated. Older bot servers and computers
   keep working without it.

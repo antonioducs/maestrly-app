@@ -21,7 +21,7 @@ edit and send. The agent uses these tools:
 | `artifact_get` | Reads an artifact's versions and files, or the text of one file. |
 | `artifact_list` | Lists the conversation's artifacts, or the whole project's. |
 | `artifact_open` | Opens an artifact in the conversation's browser drawer. |
-| `artifact_comments` | Reads the [comments](#comments) people left: each thread with the passage it quotes, its version, its author, and its replies. Open threads by default. |
+| `artifact_comments` | Reads the [comments](#comments) people left: each thread with the passage it quotes or the element it was placed on, its version, its author, and its replies. Open threads by default. |
 | `artifact_comment_reply` | Replies to a thread on your behalf. The reply is shown as written by your agent. |
 | `artifact_comment_resolve` | Marks a thread as resolved. |
 
@@ -45,15 +45,22 @@ artifacts.
   of which opens in your browser. From a card or its details you can also go to
   the conversation, share the artifact, or delete it.
 
-The page opens in a viewer that shows its title, a version picker, who you are
-on that page, and **Leave**, which ends the browser's session on it. When you
-open an artifact from Maestrly, the link carries a single-use ticket that expires
-after 60 seconds and is removed from the address bar immediately.
+The page opens in a viewer. Its top bar shows the title and who published it,
+the version on screen (step back and forth, or choose one from a list that shows
+each version's summary and open comments), the page width (full, tablet, or
+phone), **Comment** and the list of comments, **Share** for you, **⋯** (reload,
+full screen, copy a link to the version on screen), and your avatar. The avatar
+says who you are on that page and offers **Leave on this device**, which ends
+the browser's session on it. Viewing an earlier version shows a notice with a
+way back to the current one. When you open an artifact from Maestrly, the link
+carries a single-use ticket that expires after 60 seconds and is removed from the
+address bar immediately.
 
 ### Previews
 
 After each publication, Maestrly renders the new version in a hidden window on
-this computer and keeps an image of it as the card's preview. Until then, and if
+this computer and keeps an image of it as the card's preview, without comments.
+Until then, and if
 a page never finishes loading, the card shows an outline instead. Rendering runs
 the page's scripts and loads what it loads, including libraries and fonts from
 the allowed CDNs, even if you never open the page yourself.
@@ -178,19 +185,31 @@ can open it. Hosting on a bot server is planned.
 
 ## Comments
 
-Whoever can open a shared artifact can comment on it, in the viewer's
-**Comments** panel. Selecting text in the page shows a **Comment** button; the
-comment is anchored to that passage and to the version on screen, and the
-passage is highlighted while its thread is open. **Comment on the page** adds a
-comment that is not tied to a passage. People reply to a thread, and delete
-their own comments. Resolving and reopening threads is yours, or an agent's on
-your behalf, and you can delete any comment. Deleting the comment that starts a
-thread deletes its replies.
+Whoever can open a shared artifact can comment on it, as in a design tool. Each
+conversation appears as a pin on the page, with the author's face and how many
+messages it has; a red dot marks what is new since you last read it. Pointing
+at a pin previews the comment and highlights its passage, and clicking it opens
+the conversation beside it, where you reply, step to the previous or next
+conversation, and, as the owner, resolve it.
 
-When a later version changes or removes a commented passage, the thread stays
-with the version it was written on: under the version on screen it is marked
-**Not found in this version**, and threads from other versions are listed
-separately with their version number.
+To comment, select text in the page and choose **Comment**, or turn on
+**Comment** in the top bar (or press **C**) and click a spot on the page or
+select a passage. While comment mode is on, clicks in the page place comments
+and do not reach its links or buttons; **Esc** turns it off. A comment belongs
+to the version on screen and to its passage or spot. **Comment on the page**, at
+the bottom of the list, adds one about the whole page. People reply to a thread,
+and delete their own comments. Resolving and reopening threads is yours, or an
+agent's on your behalf, and you can delete any comment. Deleting the comment that
+starts a thread deletes its replies.
+
+The list of comments, next to **Comment**, shows the open or resolved
+conversations of the version on screen, then those of other versions with their
+version number; choosing one from another version shows that version. Pins
+scrolled out of sight are counted at the top or bottom of the page. When a later
+version changes or removes a commented passage or spot, the thread stays with
+the version it was written on; on the version on screen it is marked as not
+found. The viewer checks for new comments every 30 seconds while it is open, and
+remembers in your browser which conversations you read.
 
 Names in comments follow how each person got in. Invited and approved people
 carry the name you confirmed. A guest types a name before the first comment, and

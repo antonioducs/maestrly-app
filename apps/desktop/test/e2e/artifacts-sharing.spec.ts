@@ -76,7 +76,7 @@ test('shares an artifact with invited people, approved requests and guests', asy
     expect(((await owner.artifacts('sharing', id)).people as Array<{ devices: unknown[] }>)[0]!.devices).toEqual([])
     await mariaPage.getByRole('button', { name: 'Continue as Maria' }).click()
     await expect(heading(mariaPage)).toHaveText('Shared probe')
-    await expect(mariaPage.locator('.chip')).toHaveText('Maria ✓')
+    await expect(mariaPage.locator('.identity')).toHaveAttribute('aria-label', 'You: Maria, invited by Antonio')
 
     // 3. The owner sees Maria's device and a new event, which the detail panel marks as seen.
     await expect(dialog.getByTestId('artifact-person-devices').locator('li')).toHaveCount(1)
@@ -119,7 +119,7 @@ test('shares an artifact with invited people, approved requests and guests', asy
     await request.getByTestId('artifact-request-approve').click()
     await expect(detail.getByTestId('artifact-request')).toHaveCount(0)
     await expect(heading(joaoPage)).toHaveText('Shared probe', { timeout: 10_000 })
-    await expect(joaoPage.locator('.chip')).toHaveText('João Silva ✓')
+    await expect(joaoPage.locator('.identity')).toHaveAttribute('aria-label', 'You: João Silva, approved by Antonio')
     await page.keyboard.press('Escape')
 
     // 6. With a link for anyone behind an access code, a guest gets in only with the right code.
@@ -136,7 +136,7 @@ test('shares an artifact with invited people, approved requests and guests', asy
     await guestPage.getByLabel('Access code').fill('letmein1')
     await guestPage.getByRole('button', { name: 'View page' }).click()
     await expect(heading(guestPage)).toHaveText('Shared probe')
-    await expect(guestPage.locator('.chip')).toHaveText('Guest')
+    await expect(guestPage.locator('.identity')).toHaveAttribute('aria-label', 'You: guest')
 
     // 7. Private again: nobody but the owner reaches the page, whatever they held before.
     await choose('private')
