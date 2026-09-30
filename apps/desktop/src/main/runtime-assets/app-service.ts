@@ -390,7 +390,9 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   await Promise.all(
     entries
       .filter((entry) =>
-        /^\.tmp-(?:codex-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model)-/.test(entry)
+        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model)-/.test(
+          entry
+        )
       )
       .map((entry) => rm(path.join(root, entry), { recursive: true, force: true }))
   )

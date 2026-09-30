@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,7 @@ vi.mock('../../src/main/chat/codex-subscription/runtime-resolver', () => ({
 }))
 
 import {
+  cleanupOrphanRuntimeAssetTemps,
   imageRuntimeBaseline,
   resetRuntimeAssetAppServiceForTests,
   runtimeAssetInfo,
@@ -92,6 +93,16 @@ describe('runtime asset app service in a bot', () => {
     await runtimeUpdates('claude-code-runtime').setAutomatic(false)
     resetRuntimeAssetAppServiceForTests()
     expect((await runtimeAssetInfo('claude-code-runtime')).update?.automatic).toBe(false)
+  })
+
+  it('removes the staging folder an interrupted Claude Code download left behind', async () => {
+    const root = path.join(state.userData, 'runtime-assets')
+    await mkdir(path.join(root, '.tmp-claude-code-runtime-0b2f', 'staging'), { recursive: true })
+    await mkdir(path.join(root, '.tmp-codex-runtime-9c1d'), { recursive: true })
+    await mkdir(path.join(root, 'claude-code-runtime', 'versions'), { recursive: true })
+    await mkdir(path.join(root, '.tmp-unknown-1a2b'), { recursive: true })
+    await cleanupOrphanRuntimeAssetTemps()
+    expect((await readdir(root)).sort()).toEqual(['.tmp-unknown-1a2b', 'claude-code-runtime'])
   })
 
   it('schedules checks for both runtimes', async () => {
