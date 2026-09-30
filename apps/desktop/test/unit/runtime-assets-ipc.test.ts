@@ -96,7 +96,7 @@ describe('runtime asset IPC', () => {
     await expect(reads.get('runtime-assets:status')?.({}, 'codex-runtime')).resolves.toMatchObject({
       id: 'codex-runtime',
     })
-    await expect(reads.get('runtime-assets:list')?.({})).resolves.toHaveLength(4)
+    await expect(reads.get('runtime-assets:list')?.({})).resolves.toHaveLength(5)
     expect(mocks.service.install).not.toHaveBeenCalled()
     expect(mocks.service.repair).not.toHaveBeenCalled()
   })

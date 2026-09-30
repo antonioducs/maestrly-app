@@ -3,6 +3,7 @@ import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES } from '../../src/shared/runtim
 import {
   RUNTIME_ASSET_REGISTRY,
   RUNTIME_TARGET_IDS,
+  WHISPER_MODEL_FILE,
   hostRuntimeTarget,
   type RuntimeAssetDefinition,
   type RuntimeTargetId,
@@ -10,7 +11,13 @@ import {
 
 describe('runtime asset registry', () => {
   it('exposes immutable known IDs and every lifecycle state', () => {
-    expect(RUNTIME_ASSET_IDS).toEqual(['codex-runtime', 'github-copilot-runtime', 'tunnel-client', 'local-ml-runtime'])
+    expect(RUNTIME_ASSET_IDS).toEqual([
+      'codex-runtime',
+      'github-copilot-runtime',
+      'tunnel-client',
+      'local-ml-runtime',
+      'whisper-model',
+    ])
     expect(RUNTIME_ASSET_STATES).toEqual([
       'not-installed',
       'downloading',
@@ -104,6 +111,30 @@ describe('runtime asset registry', () => {
         expect(target?.maxDownloadBytes, `${id}/${targetId}`).toBeGreaterThanOrEqual(size)
         expect(target?.unpackedBytes, `${id}/${targetId}`).toBeGreaterThan(0)
       }
+  })
+
+  it('pins the Whisper model as one Hugging Face file for every local ML target', () => {
+    const model = RUNTIME_ASSET_REGISTRY['whisper-model']
+    expect(model.version).toBe('large-v3-turbo-q5')
+    expect(Object.keys(model.targets).sort()).toEqual(
+      Object.keys(RUNTIME_ASSET_REGISTRY['local-ml-runtime'].targets).sort()
+    )
+    for (const target of Object.values(model.targets)) {
+      expect(target).toMatchObject({
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin',
+        archive: 'file',
+        fileName: WHISPER_MODEL_FILE,
+        hash: {
+          algorithm: 'sha256',
+          encoding: 'hex',
+          digest: '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2',
+        },
+        downloadBytes: 574_041_195,
+        maxDownloadBytes: 574_041_195,
+        unpackedBytes: 574_041_195,
+        criticalPaths: [WHISPER_MODEL_FILE],
+      })
+    }
   })
 
   it('maps supported hosts and rejects unsupported targets', () => {

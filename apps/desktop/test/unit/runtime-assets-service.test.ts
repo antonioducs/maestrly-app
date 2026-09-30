@@ -42,6 +42,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'github-copilot-runtime': empty('github-copilot-runtime'),
     'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
+    'whisper-model': empty('whisper-model'),
   }
 }
 
@@ -94,7 +95,7 @@ describe('RuntimeAssetService', () => {
     expect(marker).toMatchObject({ schema: 1, id: 'tunnel-client', version: '1.0.0', criticalPaths: ['bin/tool'] })
     expect(marker.files.map((file: { path: string }) => file.path)).toEqual(['bin/tool', 'README'])
     expect(marker.files[0].sha256).toMatch(/^[a-f0-9]{64}$/)
-    expect(await service.list()).toHaveLength(4)
+    expect(await service.list()).toHaveLength(5)
   })
 
   it('installs a single-file asset without extraction and verifies it', async () => {
