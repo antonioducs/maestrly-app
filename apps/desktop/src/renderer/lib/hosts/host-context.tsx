@@ -14,6 +14,23 @@ export function hostApi(hostId: HostId): HostApi {
   return api
 }
 
+const lazyApis = new Map<HostId, HostApi>()
+
+/**
+ * A host API that reaches the preload on first use, not when it is obtained: a component gets it while rendering,
+ * and rendering must not touch the bridge (components also render where there is no window, as in static markup).
+ */
+function lazyHostApi(hostId: HostId): HostApi {
+  let api = lazyApis.get(hostId)
+  if (!api) {
+    api = new Proxy({} as HostApi, {
+      get: (_target, member) => hostApi(hostId)[member as keyof HostApi],
+    })
+    lazyApis.set(hostId, api)
+  }
+  return api
+}
+
 const HostContext = createContext<HostId>(LOCAL_HOST_ID)
 
 /** Everything rendered inside talks to this host's backend; outside any provider, the host is this computer. */
@@ -25,5 +42,5 @@ export const useHostId = (): HostId => useContext(HostContext)
 
 export function useHostApi(): HostApi {
   const hostId = useHostId()
-  return useMemo(() => hostApi(hostId), [hostId])
+  return useMemo(() => lazyHostApi(hostId), [hostId])
 }
