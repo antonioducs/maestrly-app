@@ -361,8 +361,21 @@ export class SharingStore {
     ).map(toEvent)
   }
 
-  markSeen(artifactId: string | undefined, now: number): void {
-    if (artifactId === undefined) this.db.prepare('UPDATE events SET seen_at = ? WHERE seen_at IS NULL').run(now)
-    else this.db.prepare('UPDATE events SET seen_at = ? WHERE seen_at IS NULL AND artifact_id = ?').run(now, artifactId)
+  /** The artifacts that have events the owner has not seen. */
+  unseenArtifacts(): string[] {
+    return (this.db.prepare('SELECT DISTINCT artifact_id FROM events WHERE seen_at IS NULL').all() as Row[]).map(
+      (row) => row.artifact_id as string
+    )
+  }
+
+  /** Returns how many events became seen. */
+  markSeen(artifactId: string | undefined, now: number): number {
+    const result =
+      artifactId === undefined
+        ? this.db.prepare('UPDATE events SET seen_at = ? WHERE seen_at IS NULL').run(now)
+        : this.db
+            .prepare('UPDATE events SET seen_at = ? WHERE seen_at IS NULL AND artifact_id = ?')
+            .run(now, artifactId)
+    return Number(result.changes)
   }
 }

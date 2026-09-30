@@ -232,7 +232,9 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
 
     async markEventsSeen(artifactId) {
       if (artifactId !== undefined) fields(artifactId)
-      sharing.markSeen(artifactId, clock())
+      const affected = artifactId === undefined ? sharing.unseenArtifacts() : [artifactId]
+      // Announced only when something changed, so a listener that marks events seen on every change settles.
+      if (sharing.markSeen(artifactId, clock()) > 0) for (const id of affected) deps.onChange?.(id)
     },
   }
 }
