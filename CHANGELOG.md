@@ -7,6 +7,24 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- Agents can publish web pages as artifacts, such as prototypes, reports, and
+  dashboards, with Maestrly tools on. Each change becomes a new version.
+  **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
+  its versions, and the conversation it came from; pages open only on this
+  computer, in an isolated frame. See [Artifacts](docs/artifacts.md).
+- Share an artifact with other people: personal links that show every device
+  that joins, access requests you approve, or a link for anyone with an optional
+  access code and expiry. You can revoke a device, a person, or every session,
+  and the sidebar counts new activity. Sharing needs a public address that you
+  provide, such as Tailscale Serve. See
+  [Sharing](docs/artifacts.md#sharing).
+- People who can open a shared artifact can comment on a passage or a spot of the
+  page. Comments appear as pins on the page, with previews, conversations
+  beside them, and a list; the viewer's top bar also gains version steps, page
+  widths, and full screen. You read, answer, and resolve comments in
+  **Artifacts**, agents can read and answer them with Maestrly tools, and **Send
+  to conversation** puts the open comments in the conversation's message box.
+  See [Comments](docs/artifacts.md#comments).
 - Experimental: see a bot's reasoning in its conversation, like in chats, once
   its bot server and environment are updated. Older bot servers and computers
   keep working without it.

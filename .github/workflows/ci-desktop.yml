@@ -65,6 +65,9 @@ jobs:
       - name: Install Electron system libraries
         if: runner.os == 'Linux'
         run: npx playwright install-deps chromium
+      # Artifact sharing is tested with visitors in an ordinary browser, outside the Electron app.
+      - name: Install the visitor browser
+        run: npm exec --workspace @maestrly/desktop -- playwright install chromium
       - name: Test Electron on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a npm run test:e2e

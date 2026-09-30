@@ -1,18 +1,57 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { gateFor, resolveAccess } from '../access.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
+import { createCommentService } from '../comments.js'
 import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
 import { digest, newSecretToken, randomId } from '../ids.js'
-import { CAPABILITY_TTL_MS, MAX_API_BODY_BYTES, OWNER_SESSION_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from '../limits.js'
-import { ARTIFACT_HEADER, SESSION_COOKIE, type ViewerState } from '../shell/contract.js'
+import {
+  CAPABILITY_TTL_MS,
+  GUEST_SESSION_TTL_MS,
+  OWNER_SESSION_TTL_MS,
+  PERSON_SESSION_TTL_MS,
+  SESSION_TOUCH_INTERVAL_MS,
+} from '../limits.js'
+import { type ActivityRecorder, createActivityRecorder } from '../sharing-admin.js'
+import {
+  ARTIFACT_HEADER,
+  SESSION_COOKIE,
+  VISITOR_COOKIE,
+  type ViewerGate,
+  type ViewerIdentity,
+  type ViewerSharing,
+  type ViewerState,
+} from '../shell/contract.js'
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
 import type { BlobStore } from '../store/blobs.js'
+import { CommentStore } from '../store/comment-store.js'
+import { type PrincipalRecord, type SharingFields, SharingStore } from '../store/sharing-store.js'
 import { signCapability, verifyCapability } from './capability.js'
+import { createCommentRoutes } from './comment-routes.js'
 import { deviceInfo } from './device-info.js'
-import { API_HEADERS, contentHeaders, shellHeaders } from './headers.js'
+import { contentHeaders, shellHeaders } from './headers.js'
 import { injectBridge } from './inject-bridge.js'
+import { createRateLimiter } from './rate-limit.js'
+import {
+  type ApiContext,
+  apiForbidden,
+  apiNotFound,
+  cookie,
+  isJsonContent,
+  JS_TYPE,
+  json,
+  LONGEST_COOKIE_SECONDS,
+  MAX_COOKIE_TOKEN_CHARS,
+  noContent,
+  notFound,
+  readCookie,
+  readJson,
+  send,
+  text,
+} from './respond.js'
 import { shellDocument } from './shell-document.js'
+import { createVisitorRoutes } from './visitor-routes.js'
 
 export interface PublicServerDeps {
   store: ArtifactStore
@@ -22,6 +61,13 @@ export interface PublicServerDeps {
   port: number
   host?: string
   publicOrigins?: readonly string[]
+  /** People, requests and events; opened on the store's database when not given. */
+  sharing?: SharingStore
+  /** The owner's display name, shown to the people an artifact is shared with. */
+  ownerName?: string
+  recordActivity?: ActivityRecorder
+  onChange?: (artifactId: string) => void
+  maxComments?: number
 }
 
 export interface PublicServer {
@@ -31,15 +77,13 @@ export interface PublicServer {
 
 const SHELL_ASSET = /^\/_maestrly\/shell\/([0-9a-f]{16})\/([a-z0-9-]+\.(?:js|css))$/
 const VIEWER = /^\/a\/([A-Za-z0-9_-]{22})$/
-const API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/(state|frame|session|session\/owner)$/
+const API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/([a-z]+(?:[/-][a-z]+)*)$/
+const COMMENT_API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/comments\/([A-Za-z0-9_-]{22})(?:\/(replies|resolve))?$/
 const CONTENT = /^\/c\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.*)$/
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]']
-const MAX_COOKIE_TOKEN_CHARS = 100
-const MAX_DRAIN_BYTES = 1024 * 1024
+/** People listed by name in the owner's viewer; the rest are counted. */
+const MAX_SHARED_PEOPLE_SHOWN = 8
 const BRIDGE_PATH = '_maestrly/bridge.js'
-const JSON_TYPE = 'application/json; charset=utf-8'
-const TEXT_TYPE = 'text/plain; charset=utf-8'
-const JS_TYPE = 'text/javascript; charset=utf-8'
 
 /**
  * Maps the request's Host to the origin it is allowed to use: loopback names on the listening port, or a configured
@@ -64,99 +108,252 @@ export function allowedOrigin(
   return null
 }
 
-type Body = { ok: true; value: unknown } | { ok: false; status: 400 | 413 }
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
-function readJson(req: http.IncomingMessage): Promise<Body> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = []
-    let size = 0
-    let tooLarge = false
-    req.on('data', (chunk: Buffer) => {
-      size += chunk.length
-      if (size > MAX_API_BODY_BYTES) tooLarge = true
-      if (size > MAX_DRAIN_BYTES) req.destroy()
-      if (!tooLarge) chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (tooLarge) return resolve({ ok: false, status: 413 })
-      try {
-        resolve({ ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) })
-      } catch {
-        resolve({ ok: false, status: 400 })
-      }
-    })
-    req.on('error', () => resolve({ ok: false, status: 400 }))
-    // A destroyed request emits neither `end` nor `error`; settling twice is a no-op.
-    req.on('close', () => resolve({ ok: false, status: tooLarge ? 413 : 400 }))
-  })
-}
-
-function readCookie(req: http.IncomingMessage, name: string): string | null {
-  const header = req.headers.cookie
-  if (!header) return null
-  for (const part of header.split(';')) {
-    const eq = part.indexOf('=')
-    if (eq < 0 || part.slice(0, eq).trim() !== name) continue
-    const value = part.slice(eq + 1).trim()
-    return value.length > 0 && value.length <= MAX_COOKIE_TOKEN_CHARS ? value : null
+function originOf(address: string | undefined): string | null {
+  try {
+    return address ? new URL(address).origin : null
+  } catch {
+    return null
   }
-  return null
 }
 
-const isJsonContent = (value: string | undefined): boolean => /^application\/json\s*(?:;|$)/i.test(value ?? '')
-
-function send(res: http.ServerResponse, status: number, headers: Record<string, string>, body?: string | Buffer): void {
-  const payload = body === undefined ? undefined : typeof body === 'string' ? Buffer.from(body) : body
-  res.writeHead(status, { ...headers, ...(payload ? { 'content-length': String(payload.byteLength) } : {}) })
-  res.end(payload)
+interface Route {
+  method: Method
+  /** A read that changes something: it must come from the viewer's own script, like a write. */
+  viewerOnly?: boolean
+  handle: (ctx: ApiContext) => void
 }
 
-const json = (res: http.ServerResponse, status: number, body: unknown, extra: Record<string, string> = {}) =>
-  send(res, status, { ...API_HEADERS, 'content-type': JSON_TYPE, ...extra }, JSON.stringify(body))
-const apiNotFound = (res: http.ServerResponse) => json(res, 404, { error: 'not_found' })
-const apiForbidden = (res: http.ServerResponse) => json(res, 403, { error: 'forbidden' })
-const text = (res: http.ServerResponse, status: number, body: string) =>
-  send(res, status, { ...API_HEADERS, 'content-type': TEXT_TYPE }, body)
-const notFound = (res: http.ServerResponse) => text(res, 404, 'Not found')
+/** Routes by method and action, such as `POST frame`. */
+const routeKey = (method: string, action: string): string => `${method} ${action}`
 
 export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const { store, blobs, clock } = deps
   const publicOrigins = deps.publicOrigins ?? []
+  const publicBase = originOf(publicOrigins[0])
+  const sharing = deps.sharing ?? new SharingStore(store.db)
+  const ownerName = deps.ownerName ?? ''
+  const onChange = deps.onChange ?? (() => {})
+  const record = deps.recordActivity ?? createActivityRecorder({ sharing, clock, onChange })
+  const limiter = createRateLimiter(clock)
   let port = deps.port
-
-  const sessionCookie = (id: string, origin: string, token: string, maxAge: number) =>
-    `${SESSION_COOKIE}=${token}; Path=/a/${id}/api; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${
-      origin.startsWith('https:') ? '; Secure' : ''
-    }`
 
   function currentSession(req: http.IncomingMessage, id: string, now: number): SessionRecord | null {
     const token = readCookie(req, SESSION_COOKIE)
-    if (!token) return null
-    const session = store.findSessionByToken(digest(token), id, now)
-    if (!session) return null
-    if (now - session.lastSeenAt > SESSION_TOUCH_INTERVAL_MS)
-      store.touchSession(session.id, now, now + OWNER_SESSION_TTL_MS)
-    return session
+    return token ? store.findSessionByToken(digest(token), id, now) : null
   }
+
+  /** When a session ends if unused, and the date it cannot outlive: an invitation's or a link's expiry. */
+  function lifetime(principal: PrincipalRecord | null, fields: SharingFields, now: number) {
+    if (!principal) return { expiresAt: now + OWNER_SESSION_TTL_MS, cap: null }
+    const guest = principal.kind === 'guest'
+    const cap = guest ? fields.linkExpiresAt : principal.inviteExpiresAt
+    const sliding = now + (guest ? GUEST_SESSION_TTL_MS : PERSON_SESSION_TTL_MS)
+    return { expiresAt: cap === null ? sliding : Math.min(sliding, cap), cap }
+  }
+
+  function startSession(ctx: ApiContext, principal: PrincipalRecord | null): { cookie: string; device: string } {
+    const token = newSecretToken()
+    const info = deviceInfo(ctx.req.headers['user-agent'])
+    const device = `${info.browser}/${info.os}`
+    const { expiresAt, cap } = lifetime(principal, ctx.sharing, ctx.now)
+    store.createSession({
+      id: randomId(),
+      artifactId: ctx.artifactId,
+      principalId: principal?.id ?? null,
+      tokenHash: digest(token),
+      deviceLabel: device,
+      createdAt: ctx.now,
+      expiresAt,
+    })
+    const maxAge = !principal
+      ? OWNER_SESSION_TTL_MS / 1000
+      : cap === null
+        ? LONGEST_COOKIE_SECONDS
+        : Math.max(1, Math.ceil((cap - ctx.now) / 1000))
+    return { cookie: cookie(SESSION_COOKIE, ctx.artifactId, ctx.origin, token, maxAge), device }
+  }
+
+  function identityOf(ctx: ApiContext): ViewerIdentity {
+    if (ctx.access?.kind !== 'person') return { kind: 'owner' }
+    const { principal } = ctx.access
+    return principal.kind === 'guest'
+      ? { kind: 'guest', name: principal.name || null }
+      : { kind: principal.kind, name: principal.name }
+  }
+
+  /**
+   * Who can open the page, for the owner's viewer. It is read-only: sharing changes only in Maestrly. Links use the
+   * public address when there is one, so what the owner copies works for the people they send it to.
+   */
+  function sharingSummary(ctx: ApiContext): ViewerSharing {
+    const people: ViewerSharing['people'] = []
+    let peopleCount = 0
+    for (const person of sharing.listPrincipals(ctx.artifactId)) {
+      const devices = sharing.listSessions(ctx.artifactId, person.id, ctx.now).length
+      // A guest is one device; once it is gone there is nobody left to show.
+      if (person.kind === 'guest' && devices === 0) continue
+      peopleCount++
+      if (people.length < MAX_SHARED_PEOPLE_SHOWN) people.push({ name: person.name, kind: person.kind, devices })
+    }
+    return {
+      visibility: ctx.sharing.visibility,
+      link: `${publicBase ?? ctx.origin}/a/${ctx.artifactId}`,
+      local: publicBase === null,
+      linkExpiresAt: ctx.sharing.linkExpiresAt,
+      people,
+      peopleCount,
+      requests: sharing.listPendingRequests(ctx.artifactId, ctx.now).length,
+    }
+  }
+
+  /** How this browser's access request stands, for a visitor who is not in yet. */
+  function pendingRequest(ctx: ApiContext): 'pending' | 'denied' | null {
+    if (!ctx.visitor) return null
+    sharing.expireRequests(ctx.now)
+    const request = sharing.findRequestByBrowser(ctx.artifactId, digest(ctx.visitor))
+    if (request?.status === 'denied') return 'denied'
+    if (request?.status === 'pending') return 'pending'
+    if (request?.status !== 'approved' || !request.principalId) return null
+    // Approved, but this browser has not collected its session yet: it keeps waiting until it asks for it.
+    return sharing.getPrincipal(request.principalId) ? 'pending' : null
+  }
+
+  const routes = new Map<string, Route>()
+  const route = (method: Method, action: string, handle: Route['handle'], viewerOnly = false): void => {
+    routes.set(routeKey(method, action), { method, viewerOnly, handle })
+  }
+
+  const core: Record<string, Route> = {
+    state: {
+      method: 'GET',
+      handle(ctx) {
+        const artifact = ctx.access ? store.getArtifact(ctx.artifactId) : null
+        if (!artifact) {
+          const gate = gateFor(ctx.sharing, ctx.now)
+          if (!gate) return apiNotFound(ctx.res)
+          const closed: ViewerGate = { gate: { ...gate, pending: pendingRequest(ctx) }, ownerName }
+          return json(ctx.res, 200, closed)
+        }
+        const state: ViewerState = {
+          artifact: {
+            id: artifact.id,
+            title: artifact.title,
+            currentVersion: artifact.currentVersion,
+            versions: store.listVersions(artifact.id).map((version) => ({
+              number: version.number,
+              createdAt: version.createdAt,
+              summary: version.summary,
+            })),
+          },
+          identity: identityOf(ctx),
+          ownerName,
+          can: { comment: ctx.sharing.commentsEnabled, resolve: ctx.access?.kind === 'owner' },
+          ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
+        }
+        json(ctx.res, 200, state)
+      },
+    },
+
+    frame: {
+      method: 'POST',
+      handle(ctx) {
+        if (!ctx.access) return apiNotFound(ctx.res)
+        const version = ctx.body.version
+        if (typeof version !== 'number' || !Number.isInteger(version) || version < 1)
+          return json(ctx.res, 400, { error: 'invalid_version' })
+        const stored = store.getVersion(ctx.artifactId, version)
+        if (!stored) return apiNotFound(ctx.res)
+        const expiresAt = ctx.now + CAPABILITY_TTL_MS
+        // Bind the capability to the stored artifact the session belongs to, never to the request path.
+        const capability = signCapability(
+          { a: ctx.artifactId, v: stored.number, s: ctx.access.session.id, e: expiresAt },
+          deps.capabilityKey
+        )
+        const entry = stored.entry.split('/').map(encodeURIComponent).join('/')
+        json(ctx.res, 200, { url: `/c/${capability}/${entry}`, expiresAt })
+      },
+    },
+
+    // Leave: ends this device's session, whoever it belongs to.
+    session: {
+      method: 'DELETE',
+      handle(ctx) {
+        if (ctx.session) {
+          store.revokeSession(ctx.session.id, ctx.now)
+          onChange(ctx.artifactId)
+        }
+        noContent(ctx.res, { 'set-cookie': cookie(SESSION_COOKIE, ctx.artifactId, ctx.origin, '', 0) })
+      },
+    },
+
+    'session/owner': {
+      method: 'POST',
+      handle(ctx) {
+        const ticket = ctx.body.ticket
+        if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > MAX_COOKIE_TOKEN_CHARS)
+          return apiNotFound(ctx.res)
+        if (store.consumeOwnerTicket(digest(ticket), ctx.now) !== ctx.artifactId) return apiNotFound(ctx.res)
+        noContent(ctx.res, { 'set-cookie': startSession(ctx, null).cookie })
+      },
+    },
+  }
+
+  for (const [action, entry] of Object.entries(core)) route(entry.method, action, entry.handle)
+
+  const visitorRoutes = createVisitorRoutes({ sharing, limiter, ownerName, record, onChange, startSession })
+  const visitorMethods: Record<string, Method> = {
+    'invite/preview': 'POST',
+    'invite/decline': 'POST',
+    'session/invite': 'POST',
+    'session/code': 'POST',
+    'session/name': 'PUT',
+    'access-requests': 'POST',
+    'access-requests/current': 'GET',
+  }
+  for (const [action, method] of Object.entries(visitorMethods))
+    route(method, action, visitorRoutes[action]!, action === 'access-requests/current')
+
+  const commentRoutes = createCommentRoutes({
+    comments: createCommentService({
+      store,
+      comments: new CommentStore(store.db),
+      clock,
+      maxComments: deps.maxComments,
+      onChange,
+      record,
+    }),
+    ownerName,
+  })
+  route('GET', 'comments', commentRoutes.list)
+  route('POST', 'comments', commentRoutes.create)
+  route('POST', 'comments/:id/replies', commentRoutes.reply)
+  route('POST', 'comments/:id/resolve', commentRoutes.resolve)
+  route('DELETE', 'comments/:id', commentRoutes.remove)
 
   async function handleApi(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     id: string,
     action: string,
-    origin: string
+    origin: string,
+    params: { commentId: string | null; query: URLSearchParams }
   ): Promise<void> {
     const method = req.method ?? 'GET'
-    const expected: Record<string, string> = { state: 'GET', frame: 'POST', session: 'DELETE', 'session/owner': 'POST' }
-    if (expected[action] !== method && !(action === 'state' && method === 'HEAD')) return apiNotFound(res)
+    const found = routes.get(routeKey(method === 'HEAD' ? 'GET' : method, action))
+    if (!found || (method === 'HEAD' && found.viewerOnly)) return apiNotFound(res)
 
-    if (method === 'POST' || method === 'DELETE') {
+    const fromViewer = req.headers[ARTIFACT_HEADER] === '1'
+    if (method !== 'GET' && method !== 'HEAD') {
       // The shell's own fetches are the only legitimate writers: exact origin, custom header, and JSON bodies.
-      if (req.headers.origin !== origin || req.headers[ARTIFACT_HEADER] !== '1') return apiForbidden(res)
-      if (method === 'POST' && !isJsonContent(req.headers['content-type'])) return apiForbidden(res)
-    }
+      if (req.headers.origin !== origin || !fromViewer) return apiForbidden(res)
+      if (method !== 'DELETE' && !isJsonContent(req.headers['content-type'])) return apiForbidden(res)
+    } else if (found.viewerOnly && !fromViewer) return apiForbidden(res)
+    if (!limiter.allow('host', '')) return json(res, 429, { error: 'rate_limited' })
+
     let body: Record<string, unknown> = {}
-    if (method === 'POST') {
+    if (method === 'POST' || method === 'PUT') {
       const parsed = await readJson(req)
       if (!parsed.ok) return json(res, parsed.status, { error: parsed.status === 413 ? 'too_large' : 'invalid_json' })
       if (typeof parsed.value !== 'object' || parsed.value === null) return json(res, 400, { error: 'invalid_json' })
@@ -164,67 +361,32 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     }
 
     const now = clock()
-    if (action === 'session/owner') {
-      const ticket = body.ticket
-      if (typeof ticket !== 'string' || ticket.length === 0 || ticket.length > MAX_COOKIE_TOKEN_CHARS)
-        return apiNotFound(res)
-      if (store.consumeOwnerTicket(digest(ticket), now) !== id || !store.getArtifact(id)) return apiNotFound(res)
-      const token = newSecretToken()
-      const device = deviceInfo(req.headers['user-agent'])
-      store.createSession({
-        id: randomId(),
-        artifactId: id,
-        principalId: null,
-        tokenHash: digest(token),
-        deviceLabel: `${device.browser}/${device.os}`,
-        createdAt: now,
-        expiresAt: now + OWNER_SESSION_TTL_MS,
-      })
-      return send(res, 204, {
-        ...API_HEADERS,
-        'set-cookie': sessionCookie(id, origin, token, OWNER_SESSION_TTL_MS / 1000),
-      })
-    }
+    const artifact = store.getArtifact(id)
+    const fields = artifact ? sharing.getSharing(artifact.id) : null
+    if (!artifact || !fields) return apiNotFound(res)
+    if (!limiter.allow('artifact', artifact.id)) return json(res, 429, { error: 'rate_limited' })
 
-    if (action === 'session') {
-      const session = currentSession(req, id, now)
-      if (session) store.revokeSession(session.id, now)
-      return send(res, 204, { ...API_HEADERS, 'set-cookie': sessionCookie(id, origin, '', 0) })
-    }
+    const session = currentSession(req, artifact.id, now)
+    if (session && !limiter.allow('session', session.id)) return json(res, 429, { error: 'rate_limited' })
+    const principal = session?.principalId ? sharing.getPrincipal(session.principalId) : null
+    const access = resolveAccess(fields, session, principal, now)
+    if (access && now - access.session.lastSeenAt > SESSION_TOUCH_INTERVAL_MS)
+      store.touchSession(access.session.id, now, lifetime(principal, fields, now).expiresAt)
 
-    const session = currentSession(req, id, now)
-    const artifact = session ? store.getArtifact(id) : null
-    if (!session || !artifact) return apiNotFound(res)
-
-    if (action === 'state') {
-      const state: ViewerState = {
-        artifact: {
-          id: artifact.id,
-          title: artifact.title,
-          currentVersion: artifact.currentVersion,
-          versions: store
-            .listVersions(id)
-            .map((version) => ({ number: version.number, createdAt: version.createdAt, summary: version.summary })),
-        },
-        identity: { kind: 'owner' },
-      }
-      return json(res, 200, state)
-    }
-
-    // frame
-    const version = body.version
-    if (typeof version !== 'number' || !Number.isInteger(version) || version < 1)
-      return json(res, 400, { error: 'invalid_version' })
-    const record = store.getVersion(artifact.id, version)
-    if (!record) return apiNotFound(res)
-    const expiresAt = now + CAPABILITY_TTL_MS
-    // Bind the capability to the stored artifact the session belongs to, never to the request path.
-    const capability = signCapability(
-      { a: artifact.id, v: record.number, s: session.id, e: expiresAt },
-      deps.capabilityKey
-    )
-    const entry = record.entry.split('/').map(encodeURIComponent).join('/')
-    return json(res, 200, { url: `/c/${capability}/${entry}`, expiresAt })
+    found.handle({
+      req,
+      res,
+      artifactId: artifact.id,
+      origin,
+      now,
+      body,
+      sharing: fields,
+      session,
+      access,
+      visitor: readCookie(req, VISITOR_COOKIE),
+      commentId: params.commentId,
+      query: params.query,
+    })
   }
 
   async function handleContent(
@@ -238,7 +400,11 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (!grant) return notFound(res)
     const session = store.findSessionById(grant.s, now)
     if (!session || session.artifactId !== grant.a) return notFound(res)
-    if (!store.getArtifact(grant.a) || !store.getVersion(grant.a, grant.v)) return notFound(res)
+    // Checked on every file, so revoking a person or making the artifact private cuts the content at once.
+    const fields = sharing.getSharing(grant.a)
+    const principal = session.principalId ? sharing.getPrincipal(session.principalId) : null
+    if (!fields || !resolveAccess(fields, session, principal, now)) return notFound(res)
+    if (!store.getVersion(grant.a, grant.v)) return notFound(res)
 
     let filePath: string
     try {
@@ -299,8 +465,22 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (VIEWER.test(pathname) && reading)
       return send(res, 200, { ...shellHeaders(origin), 'content-type': 'text/html; charset=utf-8' }, shellDocument())
 
+    const search = new URLSearchParams(query >= 0 ? url.slice(query + 1) : '')
     const api = API.exec(pathname)
-    if (api) return handleApi(req, res, api[1]!, api[2]!, origin)
+    if (api) return handleApi(req, res, api[1]!, api[2]!, origin, { commentId: null, query: search })
+    const commentApi = COMMENT_API.exec(pathname)
+    if (commentApi)
+      return handleApi(
+        req,
+        res,
+        commentApi[1]!,
+        commentApi[3] ? `comments/:id/${commentApi[3]}` : 'comments/:id',
+        origin,
+        {
+          commentId: commentApi[2]!,
+          query: search,
+        }
+      )
 
     const content = CONTENT.exec(pathname)
     if (content && reading) return handleContent(res, content[1]!, content[2]!, origin)
@@ -310,7 +490,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error: unknown) => {
-      // Never log request details: URLs and headers can carry capabilities and session tokens.
+      // Never log request details: URLs, headers and bodies can carry capabilities, tokens and access codes.
       console.error('[artifact-host] request failed:', error instanceof Error ? error.message : String(error))
       if (!res.headersSent) text(res, 500, 'Internal error')
       else res.destroy()

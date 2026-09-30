@@ -37,6 +37,7 @@
   --color-status-ready: var(--status-ready);
   --color-status-waiting: var(--status-waiting);
   --color-status-error: var(--status-error);
+  --color-artifact-warn: var(--artifact-warn);
 }
 
 :root {
@@ -79,6 +80,7 @@
   --status-ready: #5bd6a0;
   --status-waiting: #EDEAE3;
   --status-error: #ff7a85;
+  --artifact-warn: #f2b45c;
 }
 
 /* Default border color. In the base layer: unlayered, it outranked every `border-<color>` utility (Tailwind v4 puts
@@ -680,4 +682,241 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 
 .chat-input:focus {
   outline: none;
+}
+
+/* ---------- artifacts center ---------- */
+.artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 26px 18px;
+}
+
+/* Sheets behind a preview, one per earlier version up to three. */
+.artifact-stack-layer {
+  position: absolute;
+  left: var(--inset);
+  right: var(--inset);
+  top: calc(var(--lift) * -1);
+  height: 30px;
+  border: 0.5px solid rgba(237, 234, 227, var(--edge));
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: rgba(237, 234, 227, var(--fill));
+}
+.artifact-stack-layer[data-depth='1'] {
+  --inset: 7px;
+  --lift: 5px;
+  --edge: 0.34;
+  --fill: 0.16;
+}
+.artifact-stack-layer[data-depth='2'] {
+  --inset: 14px;
+  --lift: 10px;
+  --edge: 0.22;
+  --fill: 0.09;
+}
+.artifact-stack-layer[data-depth='3'] {
+  --inset: 21px;
+  --lift: 15px;
+  --edge: 0.13;
+  --fill: 0.045;
+}
+
+.artifact-thumb {
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.artifact-card:hover .artifact-thumb {
+  border-color: rgba(237, 234, 227, 0.26);
+}
+.artifact-card.is-selected .artifact-thumb {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.artifact-arrived .artifact-thumb {
+  animation: artifact-arrive 2.4s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.artifact-open {
+  translate: -50% -40%;
+  opacity: 0;
+}
+.artifact-card:hover .artifact-open,
+.artifact-open:focus-visible,
+.artifact-open.is-busy {
+  translate: -50% -50%;
+  opacity: 1;
+}
+
+.artifact-page-placeholder {
+  background: linear-gradient(180deg, rgba(237, 234, 227, 0.05), rgba(237, 234, 227, 0.02));
+}
+.artifact-page-chrome {
+  display: flex;
+  gap: 5px;
+  padding: 10px 12px;
+  box-shadow: inset 0 -0.5px 0 0 var(--border);
+}
+.artifact-page-chrome i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(237, 234, 227, 0.2);
+}
+.artifact-page-lines {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+}
+.artifact-page-lines i {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(237, 234, 227, 0.08);
+}
+.artifact-page-lines i:nth-child(1) {
+  width: 46%;
+  height: 12px;
+  background: rgba(237, 234, 227, 0.14);
+}
+.artifact-page-lines i:nth-child(3) {
+  width: 78%;
+}
+.artifact-page-lines i:nth-child(4) {
+  width: 62%;
+}
+
+.artifact-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 560px;
+  margin: 28px auto 0;
+  text-align: center;
+}
+.artifact-state.is-entering {
+  animation: artifact-rise 280ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+.artifact-enter {
+  animation: artifact-rise 260ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+
+/* The empty state's version stack, fanned out with nothing published on top. */
+.artifact-illustration-sheet {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(237, 234, 227, 0.12);
+  border-radius: 12px;
+  background: rgba(237, 234, 227, 0.03);
+}
+.artifact-illustration-sheet.is-back2 {
+  --to: translate(-22px, -22px) rotate(-3deg);
+  --tag-right: 84px;
+  transform: var(--to);
+  opacity: 0.5;
+}
+.artifact-illustration-sheet.is-back1 {
+  --to: translate(-11px, -11px) rotate(-1.5deg);
+  --tag-right: 48px;
+  transform: var(--to);
+  opacity: 0.75;
+}
+.artifact-illustration-sheet.is-front {
+  --to: none;
+  border: 1.5px dashed rgba(237, 234, 227, 0.32);
+  background: rgba(20, 20, 22, 0.7);
+}
+.artifact-illustration-sheet.is-muted {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.is-entering .artifact-illustration-sheet {
+  animation: artifact-fan 700ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+}
+.is-entering .artifact-illustration-sheet.is-back1 {
+  animation-delay: 60ms;
+}
+.is-entering .artifact-illustration-sheet.is-front {
+  animation-delay: 120ms;
+}
+.artifact-illustration-tag {
+  position: absolute;
+  top: -9px;
+  right: var(--tag-right, 14px);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #1e1e21;
+  color: var(--muted-foreground);
+  font: 10.5px/18px 'SF Mono', ui-monospace, Menlo, monospace;
+  box-shadow: 0 0 0 0.5px var(--border-strong);
+}
+
+.artifact-shimmer {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: artifact-shimmer 1.3s linear infinite;
+}
+
+.artifact-timeline::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--border-strong);
+}
+
+.artifact-sheet {
+  animation: artifact-slide 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes artifact-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes artifact-fan {
+  from {
+    transform: none;
+    opacity: 0;
+  }
+  to {
+    transform: var(--to);
+  }
+}
+@keyframes artifact-arrive {
+  0%,
+  40% {
+    box-shadow:
+      0 0 0 2px var(--primary),
+      0 0 26px rgba(237, 234, 227, 0.35);
+  }
+}
+@keyframes artifact-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes artifact-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-enter,
+  .artifact-state.is-entering,
+  .is-entering .artifact-illustration-sheet,
+  .artifact-arrived .artifact-thumb,
+  .artifact-sheet,
+  .artifact-shimmer {
+    animation: none;
+  }
+  .artifact-open {
+    transition: none;
+  }
 }

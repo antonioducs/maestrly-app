@@ -21,3 +21,28 @@ export const OWNER_SESSION_TTL_MS = 30 * 24 * HOUR_MS
 export const SESSION_TOUCH_INTERVAL_MS = HOUR_MS
 export const CAPABILITY_TTL_MS = 12 * HOUR_MS
 export const MAX_API_BODY_BYTES = 64 * 1024
+/** A preview image of one version, captured by the desktop after publishing. */
+export const MAX_THUMBNAIL_BYTES = 512 * 1024
+/** People's names, the owner's included. */
+export const MAX_NAME_CHARS = 60
+export const MAX_REQUEST_MESSAGE_CHARS = 280
+export const MAX_PENDING_REQUESTS = 20
+export const MAX_DEVICES_PER_PRINCIPAL = 10
+/** Guests signed in to one artifact at a time; each guest is one browser. */
+export const MAX_GUESTS_PER_ARTIFACT = 200
+/** Beyond it, the oldest events the owner already saw are dropped first. */
+export const MAX_EVENTS_PER_ARTIFACT = 500
+export const MIN_ACCESS_CODE_CHARS = 6
+export const MAX_ACCESS_CODE_CHARS = 64
+export const ACCESS_REQUEST_TTL_MS = 24 * HOUR_MS
+/** Sliding lifetime of an invited or approved person's device, capped by the invitation's expiry. */
+export const PERSON_SESSION_TTL_MS = 90 * 24 * HOUR_MS
+/** Sliding lifetime of a guest's device, capped by the link's expiry. */
+export const GUEST_SESSION_TTL_MS = 30 * 24 * HOUR_MS
+export const VISITOR_COOKIE_TTL_MS = 30 * 24 * HOUR_MS
+/** Comments of one artifact that were not deleted, replies included. */
+export const MAX_COMMENTS_PER_ARTIFACT = 2000
+export const MAX_COMMENT_CHARS = 4000
+/** The quoted passage a comment is anchored to, and the text kept before and after it to find it again. */
+export { MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS, MAX_SELECTOR_CHARS } from './shell/contract.js'
+export const COMMENTS_PAGE_SIZE = 200

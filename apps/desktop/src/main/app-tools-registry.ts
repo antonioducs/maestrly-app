@@ -11,6 +11,7 @@ import { registerBoardTools } from './mcp/tools/board'
 import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
 import { registerArtifactTools } from './mcp/tools/artifacts'
+import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
 import { isBotMode } from './fleet/instance/config'
 
 /**
@@ -43,7 +44,10 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   registerMemoryTools(ctx)
   registerDebugTools(ctx)
   // Bots publish to their bot server (a later phase), never to a host on the machine running them.
-  if (!isBotMode()) registerArtifactTools(ctx)
+  if (!isBotMode()) {
+    registerArtifactTools(ctx)
+    registerArtifactCommentTools(ctx)
+  }
   if (conversation?.scope !== 'standalone') registerBoardTools(ctx)
   registerBotModeTools(ctx)
   return server

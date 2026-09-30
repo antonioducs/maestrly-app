@@ -1,8 +1,17 @@
+import { z } from 'zod'
 import { contentTypeFor, isTextPath, normalizeBundlePath, validateBundle } from './bundle-paths.js'
+import {
+  type CommentAnchor,
+  type CommentListInput,
+  type CommentView,
+  commentAnchorSchema,
+  commentBody,
+  createCommentService,
+} from './comments.js'
 import { applyEdits } from './edits.js'
 import { ArtifactHostError } from './errors.js'
 import { digest, isArtifactId, newArtifactId, newSecretToken } from './ids.js'
-import { MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
+import { MAX_NAME_CHARS, MAX_THUMBNAIL_BYTES, MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
 import {
   type ArtifactDetail,
   type ArtifactFileInfo,
@@ -14,14 +23,18 @@ import {
   createArtifactInput,
   type HostStatusInfo,
   parseInput,
+  type ThumbnailImage,
   type UpdateArtifactInput,
   updateArtifactInput,
 } from './schemas.js'
+import { createSharingAdmin, type SharingAdmin } from './sharing-admin.js'
 import type { ArtifactStore, FileRecord } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
+import { CommentStore } from './store/comment-store.js'
+import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 
 /** The owner's interface to a host: used in-process, or across a process boundary through `rpc.ts`. */
-export interface ArtifactAdmin {
+export interface ArtifactAdmin extends SharingAdmin {
   status(): Promise<HostStatusInfo>
   create(input: CreateArtifactInput): Promise<ArtifactDetail>
   update(input: UpdateArtifactInput): Promise<ArtifactDetail>
@@ -30,8 +43,22 @@ export interface ArtifactAdmin {
   listFiles(id: string, version?: number): Promise<ArtifactFileInfo[]>
   readFile(id: string, version: number, path: string): Promise<{ bytes: Uint8Array; contentType: string } | null>
   delete(id: string): Promise<boolean>
+  /** Stores the preview image of a version (PNG, JPEG or WebP), replacing an earlier one. */
+  setThumbnail(id: string, version: number, image: Uint8Array): Promise<void>
+  /** The preview of the newest version up to `version` (the current one by default) that has one. */
+  getThumbnail(id: string, version?: number): Promise<ThumbnailImage | null>
   mintOwnerTicket(id: string): Promise<{ ticket: string; expiresAt: number }>
   snapshot(targetFile: string): Promise<void>
+  /** Comments in the order they were written, a page at a time. */
+  listComments(id: string, filter?: CommentListInput): Promise<{ comments: CommentView[]; nextCursor: string | null }>
+  /** A comment by the owner or, on the owner's behalf, by an agent. With `parentId` it is a reply. */
+  addComment(
+    id: string,
+    input: { author: 'owner' | 'agent'; version?: number; body: string; anchor?: CommentAnchor; parentId?: string }
+  ): Promise<CommentView>
+  setCommentResolved(id: string, commentId: string, resolved: boolean): Promise<void>
+  /** Deletes a comment; deleting the one that starts a thread deletes its replies too. */
+  deleteComment(id: string, commentId: string): Promise<void>
 }
 
 export interface ArtifactAdminDeps {
@@ -41,13 +68,49 @@ export interface ArtifactAdminDeps {
   quotaBytes: number
   maxVersions?: number
   onChange?: (artifactId: string) => void
+  /** People, requests and events; opened on the store's database when not given. */
+  sharing?: SharingStore
+  /** Called for every event recorded for the owner, such as a new device or an access request. */
+  onActivity?: (artifactId: string, kind: ArtifactEventKind) => void
+  /** The owner's display name, stored with the comments the owner and their agents write. */
+  ownerName?: string
+  maxComments?: number
 }
 
+const adminComment = z
+  .object({
+    author: z.enum(['owner', 'agent']),
+    version: z.number().int().min(1).optional(),
+    body: commentBody,
+    anchor: commentAnchorSchema.optional(),
+    parentId: z.string().optional(),
+  })
+  .strict()
+
 const notFound = () => new ArtifactHostError('not_found', 'Artifact not found')
+
+/** Recognizes the image formats a thumbnail may use from their signatures, never from a declared type. */
+export function thumbnailContentType(bytes: Uint8Array): string | null {
+  const starts = (...signature: number[]) => signature.every((byte, index) => bytes[index] === byte)
+  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
+  if (starts(0xff, 0xd8, 0xff)) return 'image/jpeg'
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to))
+  if (bytes.byteLength >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp'
+  return null
+}
 
 export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   const { store, blobs, clock } = deps
   const maxVersions = deps.maxVersions ?? MAX_VERSIONS_PER_ARTIFACT
+  const sharing = deps.sharing ?? new SharingStore(store.db)
+  const comments = createCommentService({
+    store,
+    comments: new CommentStore(store.db),
+    clock,
+    maxComments: deps.maxComments,
+    onChange: deps.onChange,
+  })
+  const ownerName = (deps.ownerName ?? '').trim().slice(0, MAX_NAME_CHARS)
 
   // Writes run one at a time, so deleting unreferenced blobs never races a version that is about to reference them.
   let queue: Promise<unknown> = Promise.resolve()
@@ -58,6 +121,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   }
 
   const detail = (id: string): ArtifactDetail | null => {
+    sharing.expireRequests(clock())
     const artifact = store.getArtifact(id)
     if (!artifact) return null
     return {
@@ -124,6 +188,25 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   }
 
   return {
+    ...createSharingAdmin({ store, sharing, clock, onChange: deps.onChange }),
+
+    async listComments(id, filter) {
+      return comments.list(id, filter)
+    },
+
+    async addComment(id, raw) {
+      const { author, ...input } = parseInput(adminComment, raw)
+      return comments.add(id, { kind: author, name: ownerName, principalId: null }, input)
+    },
+
+    async setCommentResolved(id, commentId, resolved) {
+      comments.setResolved(id, commentId, resolved)
+    },
+
+    async deleteComment(id, commentId) {
+      comments.remove(id, commentId)
+    },
+
     async status() {
       return { artifactCount: store.countArtifacts(), storageBytes: blobs.totalBytes(), quotaBytes: deps.quotaBytes }
     },
@@ -215,6 +298,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
     },
 
     async list(filter = {}) {
+      sharing.expireRequests(clock())
       return store.listArtifacts(parseInput(artifactListFilter, filter))
     },
 
@@ -249,6 +333,48 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         deps.onChange?.(id)
         return true
       })
+    },
+
+    setThumbnail(id, version, image) {
+      return exclusive(async () => {
+        if (!isArtifactId(id) || !Number.isInteger(version) || !store.getVersion(id, version)) throw notFound()
+        if (!(image instanceof Uint8Array) || image.byteLength === 0)
+          throw new ArtifactHostError('invalid_input', 'A thumbnail needs image bytes')
+        if (image.byteLength > MAX_THUMBNAIL_BYTES)
+          throw new ArtifactHostError('file_too_large', `A thumbnail cannot exceed ${MAX_THUMBNAIL_BYTES} bytes`)
+        const contentType = thumbnailContentType(image)
+        if (!contentType)
+          throw new ArtifactHostError('unsupported_type', 'A thumbnail must be a PNG, JPEG or WebP image')
+        const sha = BlobStore.sha256(image)
+        if (!blobs.has(sha) && blobs.totalBytes() + image.byteLength > deps.quotaBytes)
+          throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
+        const fresh = !blobs.has(sha)
+        await blobs.put(image)
+        let previous: string | null
+        try {
+          previous = store.setThumbnail(id, version, {
+            sha256: sha,
+            contentType,
+            bytes: image.byteLength,
+            createdAt: clock(),
+          })
+        } catch (error) {
+          if (fresh) await discard([sha])
+          throw error
+        }
+        if (previous && previous !== sha) await discard([previous])
+        deps.onChange?.(id)
+      })
+    },
+
+    async getThumbnail(id, version) {
+      const artifact = isArtifactId(id) ? store.getArtifact(id) : null
+      if (!artifact) return null
+      const max = version ?? artifact.currentVersion
+      if (!Number.isInteger(max)) return null
+      const thumbnail = store.getThumbnail(id, max)
+      const bytes = thumbnail ? await blobs.read(thumbnail.sha256) : null
+      return thumbnail && bytes ? { version: thumbnail.version, contentType: thumbnail.contentType, bytes } : null
     },
 
     async mintOwnerTicket(id) {

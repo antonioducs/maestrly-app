@@ -2,14 +2,19 @@ import { z } from 'zod'
 import { ArtifactHostError } from './errors.js'
 import { ARTIFACT_ID_PATTERN } from './ids.js'
 import {
+  MAX_ACCESS_CODE_CHARS,
   MAX_DESCRIPTION_CHARS,
   MAX_EDITS,
+  MAX_EVENTS_PER_ARTIFACT,
   MAX_FILES_PER_VERSION,
+  MAX_NAME_CHARS,
   MAX_PATH_CHARS,
   MAX_SUMMARY_CHARS,
   MAX_TITLE_CHARS,
+  MIN_ACCESS_CODE_CHARS,
 } from './limits.js'
-import type { ArtifactRecord, VersionAuthor } from './store/artifact-store.js'
+import type { ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
+import type { ArtifactEventKind, EventData, PrincipalKind } from './store/sharing-store.js'
 
 export type BundleFile = { path: string; bytes: Uint8Array }
 
@@ -103,6 +108,85 @@ export interface ArtifactFileInfo {
   bytes: number
   contentType: string
   text: boolean
+}
+
+export interface ThumbnailImage {
+  /** The version the image shows, which may be older than the one asked for. */
+  version: number
+  contentType: string
+  bytes: Uint8Array
+}
+
+/** A person's name as shown to others: one line, without control characters. */
+export const personName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_NAME_CHARS)
+  .regex(/^\P{Cc}*$/u, 'Use a single line of text')
+
+export const sharingPatch = z
+  .object({
+    visibility: z.enum(['private', 'people', 'link']).optional(),
+    linkExpiresAt: z.number().int().nullable().optional(),
+    accessCode: z.string().min(MIN_ACCESS_CODE_CHARS).max(MAX_ACCESS_CODE_CHARS).nullable().optional(),
+    commentsEnabled: z.boolean().optional(),
+  })
+  .strict()
+
+export const inviteInput = z.object({ name: personName, expiresAt: z.number().int().nullable().optional() }).strict()
+export const requestDecision = z.object({ approve: z.boolean(), name: personName.optional() }).strict()
+export const eventsFilter = z
+  .object({
+    artifactId: artifactId.optional(),
+    unseenOnly: z.boolean().optional(),
+    limit: z.number().int().min(1).max(MAX_EVENTS_PER_ARTIFACT).optional(),
+  })
+  .strict()
+
+export type SharingPatch = z.input<typeof sharingPatch>
+
+/** One browser a person joined with; the label is coarse ("Safari/iPhone"), never a raw user agent. */
+export interface DeviceView {
+  id: string
+  label: string
+  createdAt: number
+  lastSeenAt: number
+}
+
+export interface PersonView {
+  id: string
+  kind: PrincipalKind
+  name: string
+  createdAt: number
+  inviteExpiresAt: number | null
+  devices: DeviceView[]
+}
+
+export interface AccessRequestView {
+  id: string
+  name: string
+  message: string
+  createdAt: number
+}
+
+/** Who can open an artifact, as the owner sees it. It never carries tokens, digests or the access code. */
+export interface SharingView {
+  visibility: Visibility
+  linkExpiresAt: number | null
+  hasAccessCode: boolean
+  commentsEnabled: boolean
+  people: PersonView[]
+  requests: AccessRequestView[]
+}
+
+export interface ArtifactEventView {
+  id: string
+  artifactId: string
+  kind: ArtifactEventKind
+  data: EventData
+  createdAt: number
+  seen: boolean
 }
 
 export interface HostStatusInfo {
