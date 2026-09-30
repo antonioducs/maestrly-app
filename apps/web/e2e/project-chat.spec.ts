@@ -1,5 +1,5 @@
 import { expect,test } from '@playwright/test'
-import type { ProjectChatSnapshot,ProjectChatEvent } from '@maestrly/protocol'
+import { chatCreateSchema,type ProjectChatSnapshot,type ProjectChatEvent } from '@maestrly/protocol'
 import { applyProjectChatEvent } from '@maestrly/client-sdk'
 import { translate,type Locale } from '../src/i18n/index.js'
 
@@ -20,7 +20,9 @@ test('project chat streams parts, retains history and accepts decisions in the w
     if(path.endsWith('/chat/destinations'))return route.fulfill({json:[{runnerId:runner,name:'Maestrly Studio',online:true,personal:true,inventory:{capability:'chat:interactive:v1',enabled:true,models:[{id:'fixture',label:'Fixture',providerLabel:'Maestrly account',efforts:['low','high'],fastMode:true},{id:'plain',label:'Plain',providerLabel:'Local account',efforts:[],fastMode:false}],conversationSettings:{version:1,modes:['agent','ask'],permissionModes:['ask','auto','full'],operatorLimits:{commands:true,web:false,appTools:true,mcp:true,push:false}},workspaces:[{projectId:project,key:'workspace',label:'maestrly',branches:['main']}],integrations:{skills:true,memory:true,mcp:true}}}]})
     if(path.endsWith('/chat/sessions')){
       if(req.method()==='POST'){
-        created=true;createBody=req.postDataJSON();state={...state,session:{...state.session,...createBody}}
+        createBody=req.postDataJSON()
+        if(!chatCreateSchema.safeParse(createBody).success)return route.fulfill({status:400,json:{code:'BAD_REQUEST',message:'Request validation failed.',requestId:'fixture'}})
+        created=true;state={...state,session:{...state.session,...createBody}}
         return route.fulfill({json:state.session})
       }
       return route.fulfill({json:{items:created?[state.session]:[],nextCursor:null}})
@@ -110,4 +112,49 @@ test('project chat streams parts, retains history and accepts decisions in the w
   await expect(page.getByRole('combobox',{name:L('Model'),exact:true})).toContainText('Plain')
   await page.getByRole('button',{name:L('Close chat'),exact:true}).click()
   await expect(page.getByRole('dialog',{name:L('Project chat')})).toHaveCount(0)
+})
+
+test('project chat opened before boards load starts a project-level conversation',async({page},info)=>{
+  const L=(key:string)=>translate(key,info.project.name as Locale),org=crypto.randomUUID(),project=crypto.randomUUID(),board=crypto.randomUUID(),sessionId=crypto.randomUUID(),runner=crypto.randomUUID(),now=new Date().toISOString()
+  let releaseBoards=()=>{}
+  const boardsGate=new Promise<void>(resolve=>{releaseBoards=resolve})
+  const createBodies:unknown[]=[]
+  let session:ProjectChatSnapshot['session']|null=null
+  await page.route('**/api/**',async route=>{
+    const req=route.request(),path=new URL(req.url()).pathname
+    if(path.endsWith('/get-session'))return route.fulfill({json:{user:{id:'owner',name:'Ada Lovelace',email:'ada@example.test'}}})
+    if(path==='/api/v1/organizations')return route.fulfill({json:[{id:org,name:'Maestrly',role:'owner'}]})
+    if(path.endsWith('/projects'))return route.fulfill({json:[{id:project,organizationId:org,name:'Launch control',currentRole:'maintainer'}]})
+    if(path.endsWith('/boards')){await boardsGate;return route.fulfill({json:[{id:board,projectId:project,name:'Delivery board'}]})}
+    if(path.endsWith('/boards/'+board))return route.fulfill({json:{board:{id:board,projectId:project,name:'Delivery board'},columns:[],cards:[]}})
+    if(path.endsWith('/chat/destinations'))return route.fulfill({json:[{runnerId:runner,name:'Maestrly Studio',online:true,personal:true,inventory:{capability:'chat:interactive:v1',enabled:true,models:[{id:'fixture',label:'Fixture',providerLabel:'Maestrly account',efforts:[],fastMode:false}],workspaces:[{projectId:project,key:'workspace',label:'maestrly',branches:['main']}],integrations:{skills:true,memory:true,mcp:true}}}]})
+    if(path.endsWith('/chat/sessions')){
+      if(req.method()==='POST'){
+        const body=req.postDataJSON();createBodies.push(body)
+        const parsed=chatCreateSchema.safeParse(body)
+        if(!parsed.success)return route.fulfill({status:400,json:{code:'BAD_REQUEST',message:'Request validation failed.',requestId:'fixture'}})
+        session={...parsed.data,id:sessionId,organizationId:org,projectId:project,ownerUserId:'owner',version:1,archivedAt:null,createdAt:now,updatedAt:now}
+        return route.fulfill({json:session})
+      }
+      return route.fulfill({json:{items:session?[session]:[],nextCursor:null}})
+    }
+    if(session&&path.endsWith('/sessions/'+sessionId))return route.fulfill({json:{session,messages:[],interactions:[],turn:null,cursor:0,more:false}})
+    if(path.endsWith('/events'))return route.fulfill({contentType:'text/event-stream',body:': ready\n\n'})
+    return route.fulfill({json:[]})
+  })
+  const boardsRequested=page.waitForRequest(req=>new URL(req.url()).pathname.endsWith('/projects/'+project+'/boards'))
+  try{
+    await page.goto('/')
+    await boardsRequested
+    await page.getByRole('button',{name:L('Project chat'),exact:true}).click()
+    await page.getByRole('button',{name:L('Start conversation'),exact:true}).click()
+    await expect.poll(()=>createBodies.length).toBe(1)
+    expect(createBodies[0]).toMatchObject({runnerId:runner,workspaceKey:'workspace',baseBranch:'main',boardId:null,cardId:null})
+    expect(chatCreateSchema.safeParse(createBodies[0]).success).toBe(true)
+    await expect(page.getByRole('textbox',{name:L('Message the project')})).toBeVisible()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    const boardsLoaded=page.waitForResponse(res=>new URL(res.url()).pathname.endsWith('/projects/'+project+'/boards'))
+    releaseBoards()
+    await boardsLoaded
+  }finally{releaseBoards()}
 })
