@@ -172,11 +172,13 @@ process that receives only its configuration and holds no app credentials. It
 is not a sandbox: it runs as the same user with full Node.js access, and it
 isolates crashes and keeps secrets out of its memory.
 
-The host listens on `127.0.0.1` only and refuses requests whose `Host` is not a
-loopback name on its port, which blocks DNS rebinding. Artifact IDs and tokens
-carry at least 128 random bits and are stored as SHA-256 digests. A missing,
-deleted, or inaccessible artifact answers the same 404, and responses ask
-crawlers not to index them.
+The host listens on `127.0.0.1` only and refuses requests whose `Host` is
+neither a loopback name on its port nor the public address the owner configured,
+which blocks DNS rebinding. Other people reach it only through a proxy the owner
+runs, such as Tailscale Serve. Artifact IDs and tokens carry at least 128 random
+bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
+expired artifact, and one that is not shared with whoever asks, answer the same
+404, and responses ask crawlers not to index them.
 
 The owner signs in with a single-use ticket that the desktop mints, which
 expires after 60 seconds and travels in the URL fragment, so it never reaches
@@ -185,6 +187,32 @@ using it. The resulting session cookie is `HttpOnly`, `SameSite=Strict`, and
 scoped to that artifact's API path. The viewer's API accepts writes only with
 the exact origin, a custom header, and a JSON body. The viewer cannot share,
 delete, or change access; those actions exist only in the desktop.
+
+Sharing is decided by one rule, checked on every API request and on every content
+file: the owner always enters; a private artifact blocks everyone else; an
+invited or approved person enters while not revoked and within the invitation's
+expiry; a guest enters only through a link that has not expired. Revoking a
+person or making the artifact private therefore takes effect on the next request,
+including for content already open.
+
+- **Personal links** carry a 256-bit token in the URL fragment. The viewer
+  removes it from the address bar, shows who is being invited, and exchanges it
+  for a session only after the visitor confirms, so link scanners and previews
+  join nothing. The host stores the token's digest; the desktop keeps the token
+  itself encrypted with `safeStorage`, or only in memory when that is
+  unavailable, so the owner can copy the link again.
+- **Access requests** are tied to the asking browser by a random secret in an
+  `HttpOnly`, `SameSite=Strict` cookie scoped to the artifact's API, stored as a
+  digest. Approval creates the session when that browser next checks its
+  request. Names and messages are length-limited, shown as text, and the owner
+  confirms the name.
+- **Access codes** are stored with scrypt and a salt of their own. A browser
+  waits 15 minutes after five wrong codes, and an artifact accepts 100 attempts
+  per hour. Changing the code ends guest sessions.
+- **Request limits** apply per host, per artifact, and per session, in memory.
+  They do not use client addresses, since requests arrive through a proxy.
+- The host stores a coarse device label, never an IP address or a raw user
+  agent, and logs no URL, header, or body.
 
 Artifact content is served from a separate path carrying an HMAC-signed
 capability bound to the session, the artifact, the version, and an expiry of 12
@@ -208,8 +236,9 @@ format and size.
 The drawer browser partition is shared with the agent's browser tools, so an
 agent browsing there acts with the owner's artifact session. That grants no
 more than the artifact tools already do. Agents can read and write only the
-artifacts of their own project or standalone conversation, and cannot delete or
-share them.
+artifacts of their own project or standalone conversation. No agent tool
+deletes an artifact, shares it, invites people, approves requests, or changes
+who can open it.
 
 ## Bot server access
 

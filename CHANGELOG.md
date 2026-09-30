@@ -12,6 +12,12 @@ User-visible changes by version. Downloads are on
   **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
   its versions, and the conversation it came from; pages open only on this
   computer, in an isolated frame. See [Artifacts](docs/artifacts.md).
+- Share an artifact with other people: personal links that show every device
+  that joins, access requests you approve, or a link for anyone with an optional
+  access code and expiry. You can revoke a device, a person, or every session,
+  and the sidebar counts new activity. Sharing needs a public address that you
+  provide, such as Tailscale Serve. See
+  [Sharing](docs/artifacts.md#sharing).
 - Experimental: see a bot's reasoning in its conversation, like in chats, once
   its bot server and environment are updated. Older bot servers and computers
   keep working without it.

@@ -2,8 +2,8 @@
 
 An artifact is a web page (HTML, CSS, JavaScript, and assets) that an agent
 publishes for you. Every change creates a new version, and earlier versions are
-kept. Maestrly serves artifacts from this computer, and only to this computer,
-while the app is open.
+kept. Maestrly serves artifacts from this computer while the app is open. An
+artifact is private until you [share](#sharing) it.
 
 ## Asking for an artifact
 
@@ -39,12 +39,12 @@ standalone. Agents cannot delete or share artifacts.
   and sort by update, creation, title, or storage used. Selecting a card opens
   its details: where it came from, the storage it uses, and every version, each
   of which opens in your browser. From a card or its details you can also go to
-  the conversation or delete the artifact.
+  the conversation, share the artifact, or delete it.
 
-The page opens in a viewer that shows its title, a version picker, and **Leave**,
-which ends the browser's session on that page. Only you can open artifacts in
-this version: each opening uses a single-use ticket that expires after 60
-seconds and is removed from the address bar immediately.
+The page opens in a viewer that shows its title, a version picker, who you are
+on that page, and **Leave**, which ends the browser's session on it. When you
+open an artifact from Maestrly, the link carries a single-use ticket that expires
+after 60 seconds and is removed from the address bar immediately.
 
 ### Previews
 
@@ -65,6 +65,13 @@ offers the fix: turn hosting on, choose another port if the port is in use, or
 restart the host after repeated failures. Nothing is deleted in those cases.
 Turning hosting off stops the host: agents cannot publish, and existing artifacts
 do not open until you turn it on again.
+
+The host never listens on another network interface. For other people to reach a
+shared artifact, you expose the host yourself and tell Maestrly the address in
+**Settings → Artifacts → Public address**: for example, the HTTPS address of
+[Tailscale Serve](https://tailscale.com/kb/1312/serve) pointed at the host's
+port. Maestrly builds shared links on that address and accepts requests sent to
+it. Without a public address, links work only on this computer.
 
 ## Isolation
 
@@ -100,5 +107,64 @@ reset.
 
 ## Sharing
 
-Artifacts cannot be shared with other people yet. Personal links, comments, and
-hosting on a bot server are planned.
+**Share**, on a card's menu or in its details, sets who can open an artifact:
+
+| Who can open | What it means |
+| --- | --- |
+| **Private** | Only you, on this computer. This is how every artifact starts. |
+| **People you invite** | Each person opens it with a personal link, or asks for access and waits for your approval. |
+| **Anyone with the link** | Whoever has the link opens it as a guest, until the link expires. Invited people keep their access. |
+
+Links work while Maestrly is open and this computer is awake, and reach other
+people only through the [public address](#hosting) you set.
+
+### Personal links
+
+Type a name and choose **Create link**: Maestrly copies a link that belongs to
+that person. When they open it, the viewer says who invited them and under which
+name, and nothing happens until they choose **Continue as** that name. If the
+link reached someone else, **I'm not** that person tells you so. Each browser
+that continues becomes one of the person's devices, up to 10, and stays signed in
+for 90 days after its last visit.
+
+Under **People** you see each person's devices, as a label such as "Safari on
+iPhone", and when each was last seen. You can remove one device, revoke the
+person, which ends every device and the link at once, or copy the link again.
+Maestrly keeps the link encrypted with the operating-system keyring; where that
+is unavailable, the link is kept only until you quit, and afterward **Reset
+link** issues a new one that replaces it.
+
+### Access requests
+
+Someone who opens a shared artifact's address without a personal link can type a
+name and a short message and ask for access. The request appears in the
+artifact's details, where you confirm or correct the name before you **Approve**
+or **Deny**. The page opens in the browser that asked as soon as you approve. A
+request waits for 24 hours, and an artifact holds up to 20 waiting requests.
+Maestrly plays the permission sound when a request arrives.
+
+### Anyone with the link
+
+With **Anyone with the link**, the artifact's address opens the page for guests.
+You can set an access code of at least 6 characters, which guests type first;
+after five wrong codes a browser waits 15 minutes. The link stops working for
+guests after 7, 30 (the default, which you can change in **Settings →
+Artifacts**), or 90 days, or never. Guests are signed in for up to 30 days,
+appear under **People** while they are, and are shown as unverified because
+nobody confirmed their name. Changing or removing the code signs guests out.
+
+### What you see, and what is kept
+
+The **Artifacts** entry in the sidebar counts what you have not seen yet: a new
+device, an access request, a declined invitation. Opening the artifact's details
+shows this recent activity and clears the count. **Revoke all sessions** signs
+everyone out of an artifact on every device, you included; personal links still
+work afterward. Making an artifact private blocks everyone else at once without
+forgetting them, so sharing it again restores their access.
+
+For each person Maestrly keeps the name, a coarse device label, and when each
+device joined and was last seen. It keeps no IP address and no raw browser
+identification. Deleting the artifact deletes all of it.
+
+Agents cannot share an artifact, invite people, approve requests, or change who
+can open it. Comments and hosting on a bot server are planned.
