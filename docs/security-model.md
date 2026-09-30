@@ -190,10 +190,11 @@ delete, or change access; those actions exist only in the desktop.
 
 Sharing is decided by one rule, checked on every API request and on every content
 file: the owner always enters; a private artifact blocks everyone else; an
-invited or approved person enters while not revoked and within the invitation's
-expiry; a guest enters only through a link that has not expired. Revoking a
-person or making the artifact private therefore takes effect on the next request,
-including for content already open.
+invited or approved person enters within the invitation's expiry; a guest enters
+only through a link that has not expired. Revoking a person deletes them with
+their link's digest and their sessions, so nothing of theirs can be presented
+again. Revoking a person or making the artifact private therefore takes effect on
+the next request, including for content already open.
 
 - **Personal links** carry a 256-bit token in the URL fragment. The viewer
   removes it from the address bar, shows who is being invited, and exchanges it

@@ -99,7 +99,6 @@ export interface ArtifactPersonView {
   name: string
   createdAt: number
   inviteExpiresAt: number | null
-  revoked: boolean
   /** Whether the personal link can be shown again; otherwise it can only be reset. */
   linkAvailable: boolean
   devices: ArtifactDeviceView[]

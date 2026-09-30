@@ -306,7 +306,7 @@ export function ShareDialog({
                 onRevokeDevice={(_person, device) => void act(() => window.api.artifacts.revokeDevice(id, device.id))}
                 onRevokePerson={(person) => void act(() => window.api.artifacts.revokePerson(id, person.id))}
               />
-              {sharing.visibility === 'private' && sharing.people.some((person) => !person.revoked) && (
+              {sharing.visibility === 'private' && sharing.people.length > 0 && (
                 <p className="mt-2 text-xs text-muted-foreground">{t('artifacts.share.privateNote')}</p>
               )}
             </Section>

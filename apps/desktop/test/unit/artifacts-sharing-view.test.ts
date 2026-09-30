@@ -34,7 +34,6 @@ const person = (overrides: Partial<ArtifactPersonView>): ArtifactPersonView => (
   name: 'Maria',
   createdAt: NOW,
   inviteExpiresAt: null,
-  revoked: false,
   linkAvailable: true,
   devices: [],
   ...overrides,
@@ -117,13 +116,12 @@ describe('deviceLabel', () => {
 })
 
 describe('sharingSummary', () => {
-  it('counts the people who still have access and their devices', () => {
+  it('counts the people an artifact is shared with and their devices', () => {
     expect(sharingSummary([])).toEqual({ people: 0, devices: 0 })
     expect(
       sharingSummary([
         person({ devices: [{ id: 'd1', label: '', createdAt: NOW, lastSeenAt: NOW }] }),
         person({ id: 'p2', kind: 'approved', devices: [] }),
-        person({ id: 'p3', revoked: true }),
         person({
           id: 'p4',
           kind: 'guest',

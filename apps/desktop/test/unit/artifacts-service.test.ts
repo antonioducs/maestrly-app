@@ -274,7 +274,6 @@ describe('ArtifactsService', () => {
         id: invite.principalId,
         kind: 'invited',
         name: 'Maria',
-        revoked: false,
         linkAvailable: true,
         devices: [],
       }),
@@ -339,7 +338,9 @@ describe('ArtifactsService', () => {
     expect((await mariaOf())?.devices).toEqual([])
     await service.revokePerson(id, maria.principalId)
     expect(vault.get(maria.principalId)).toBeNull()
-    expect(await mariaOf()).toMatchObject({ revoked: true, linkAvailable: false })
+    expect((await service.sharing(id)).people.map((item) => item.id)).toEqual([ana.principalId])
+    expect(await service.inviteLink(id, maria.principalId)).toBeNull()
+    expect(await join(maria.link)).toBe(404)
     await service.revokeAllSessions(id)
 
     expect(vault.get(ana.principalId)).not.toBeNull()

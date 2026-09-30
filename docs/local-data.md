@@ -191,8 +191,9 @@ For shared artifacts, `artifacts.sqlite` also holds the people each one is share
 with (their names, the digests of their personal links, and a coarse label and
 the last visit of each device), pending access requests, the scrypt hash of an
 access code, up to 500 recent events per artifact, and the comments left on it
-(author name, text, the quoted passage, and the version). Deleting an artifact
-deletes them. The tokens of personal links are kept outside that database, in
+(author name, text, the quoted passage, and the version). Revoking a person
+deletes their row, link digest, and devices. Deleting an artifact deletes all of
+it. The tokens of personal links are kept outside that database, in
 the application settings, encrypted with the operating-system keyring; without
 it they stay in memory until the app quits. Exports do not include them, so after
 restoring an export personal links must be reset.

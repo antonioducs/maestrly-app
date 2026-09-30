@@ -53,8 +53,7 @@ export function eventText(t: TFn, event: ArtifactEventView): string {
   return t(`artifacts.events.${event.kind}`, { name })
 }
 
-/** The people who can open the artifact right now, and the devices they use. */
+/** The people an artifact is shared with, and the devices they use. */
 export function sharingSummary(people: readonly ArtifactPersonView[]): { people: number; devices: number } {
-  const active = people.filter((person) => !person.revoked)
-  return { people: active.length, devices: active.reduce((sum, person) => sum + person.devices.length, 0) }
+  return { people: people.length, devices: people.reduce((sum, person) => sum + person.devices.length, 0) }
 }

@@ -91,11 +91,12 @@ test('shares an artifact with invited people, approved requests and guests', asy
     await page.keyboard.press('Escape')
     await expect(detail).toHaveCount(0)
 
-    // 4. Revoking Maria cuts her off at once: her browser is back to asking for access, without the page.
+    // 4. Revoking Maria removes her from the list and cuts her off at once: her browser is back to asking for
+    // access, without the page.
     await openShare()
     await dialog.getByTestId('artifact-person-revoke').click()
     await dialog.getByRole('button', { name: 'Revoke', exact: true }).click()
-    await expect(dialog.getByTestId('artifact-person')).toContainText('Access revoked')
+    await expect(dialog.getByTestId('artifact-person')).toHaveCount(0)
     await closeShare()
     await mariaPage.reload()
     await expect(mariaPage.getByRole('heading', { name: 'Ask Antonio for access' })).toBeVisible()

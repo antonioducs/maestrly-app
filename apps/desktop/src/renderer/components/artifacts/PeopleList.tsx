@@ -5,7 +5,6 @@ import type { ArtifactDeviceView, ArtifactPersonView } from '../../../shared/art
 import { Button } from '@/components/ui/button'
 import { relativeTime } from '@/components/sidebar/relative-time'
 import { useLocale } from '@/lib/i18n'
-import { cn } from '@/lib/utils'
 import { deviceLabel } from './sharing-view'
 
 type Pending = { personId: string; action: 'reset' | 'revoke' }
@@ -70,11 +69,9 @@ export function PeopleList({
 
   if (!people.length) return <p className="py-1 text-xs text-muted-foreground">{t('artifacts.share.noPeople')}</p>
 
-  // People who can still open the page come first; revoked ones stay as a record.
-  const ordered = [...people].sort((a, b) => Number(a.revoked) - Number(b.revoked))
   return (
     <ul className="grid gap-1.5" data-testid="artifact-people">
-      {ordered.map((person) => {
+      {people.map((person) => {
         const name = person.name || t('artifacts.share.guestUnnamed')
         const asking = pending?.personId === person.id ? pending.action : null
         return (
@@ -85,19 +82,12 @@ export function PeopleList({
           >
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
-                <p
-                  className={cn(
-                    'truncate text-[13px] font-medium text-foreground',
-                    person.revoked && 'text-muted-foreground line-through'
-                  )}
-                >
-                  {name}
-                </p>
+                <p className="truncate text-[13px] font-medium text-foreground">{name}</p>
                 <p className="truncate text-[11.5px] text-muted-foreground">
-                  {person.revoked ? t('artifacts.share.revoked') : t(`artifacts.share.kind.${person.kind}`)}
+                  {t(`artifacts.share.kind.${person.kind}`)}
                 </p>
               </div>
-              {!person.revoked && person.kind === 'invited' && (
+              {person.kind === 'invited' && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -112,52 +102,49 @@ export function PeopleList({
                   {person.linkAvailable ? t('artifacts.share.copyLink') : t('artifacts.share.resetLink')}
                 </Button>
               )}
-              {!person.revoked && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-muted-foreground hover:text-destructive"
-                  disabled={busy}
-                  data-testid="artifact-person-revoke"
-                  aria-label={`${t('artifacts.share.revokePerson')}: ${name}`}
-                  onClick={() => setPending({ personId: person.id, action: 'revoke' })}
-                >
-                  <UserX className="size-3.5" /> {t('artifacts.share.revokePerson')}
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-muted-foreground hover:text-destructive"
+                disabled={busy}
+                data-testid="artifact-person-revoke"
+                aria-label={`${t('artifacts.share.revokePerson')}: ${name}`}
+                onClick={() => setPending({ personId: person.id, action: 'revoke' })}
+              >
+                <UserX className="size-3.5" /> {t('artifacts.share.revokePerson')}
+              </Button>
             </div>
-            {!person.revoked &&
-              (person.devices.length ? (
-                <ul className="mt-2 grid gap-1" data-testid="artifact-person-devices">
-                  {person.devices.map((device) => {
-                    const label = deviceLabel(t, device.label)
-                    return (
-                      <li key={device.id} className="flex items-center gap-2 text-xs text-foreground/75">
-                        <Laptop className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {label}
-                          <span className="text-muted-foreground">
-                            {' · '}
-                            {t('artifacts.share.lastSeen', { when: relativeTime(locale, device.lastSeenAt) })}
-                          </span>
+            {person.devices.length ? (
+              <ul className="mt-2 grid gap-1" data-testid="artifact-person-devices">
+                {person.devices.map((device) => {
+                  const label = deviceLabel(t, device.label)
+                  return (
+                    <li key={device.id} className="flex items-center gap-2 text-xs text-foreground/75">
+                      <Laptop className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {label}
+                        <span className="text-muted-foreground">
+                          {' · '}
+                          {t('artifacts.share.lastSeen', { when: relativeTime(locale, device.lastSeenAt) })}
                         </span>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-50"
-                          aria-label={t('artifacts.share.revokeDevice', { device: label })}
-                          title={t('artifacts.share.revokeDevice', { device: label })}
-                          onClick={() => onRevokeDevice(person, device)}
-                        >
-                          <X className="size-3.5" aria-hidden="true" />
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : (
-                <p className="mt-1.5 text-xs text-muted-foreground">{t('artifacts.share.noDevices')}</p>
-              ))}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-white/[0.08] hover:text-foreground disabled:opacity-50"
+                        aria-label={t('artifacts.share.revokeDevice', { device: label })}
+                        title={t('artifacts.share.revokeDevice', { device: label })}
+                        onClick={() => onRevokeDevice(person, device)}
+                      >
+                        <X className="size-3.5" aria-hidden="true" />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="mt-1.5 text-xs text-muted-foreground">{t('artifacts.share.noDevices')}</p>
+            )}
             {asking && (
               <InlineConfirm
                 text={

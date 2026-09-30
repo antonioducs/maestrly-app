@@ -132,8 +132,9 @@ that continues becomes one of the person's devices, up to 10, and stays signed i
 for 90 days after its last visit.
 
 Under **People** you see each person's devices, as a label such as "Safari on
-iPhone", and when each was last seen. You can remove one device, revoke the
-person, which ends every device and the link at once, or copy the link again.
+iPhone", and when each was last seen. You can remove one device, copy the link
+again, or revoke the person. Revoking ends the link and every device at once and
+removes the person from the list; to let them back in, create a new link.
 Maestrly keeps the link encrypted with the operating-system keyring; where that
 is unavailable, the link is kept only until you quit, and afterward **Reset
 link** issues a new one that replaces it.
@@ -168,7 +169,9 @@ forgetting them, so sharing it again restores their access.
 
 For each person Maestrly keeps the name, a coarse device label, and when each
 device joined and was last seen. It keeps no IP address and no raw browser
-identification. Deleting the artifact deletes all of it.
+identification. Revoking a person deletes what is kept about them, except the
+name on the comments they wrote and in the recent activity. Deleting the artifact
+deletes all of it.
 
 Agents cannot share an artifact, invite people, approve requests, or change who
 can open it. Hosting on a bot server is planned.

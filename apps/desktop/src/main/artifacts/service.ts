@@ -338,9 +338,7 @@ export class ArtifactsService {
         name: person.name,
         createdAt: person.createdAt,
         inviteExpiresAt: person.inviteExpiresAt,
-        revoked: person.revokedAt !== null,
-        linkAvailable:
-          person.kind === 'invited' && person.revokedAt === null && this.deps.vault.get(person.id) !== null,
+        linkAvailable: person.kind === 'invited' && this.deps.vault.get(person.id) !== null,
         devices: person.devices,
       })),
       requests: sharing.requests,
@@ -368,7 +366,7 @@ export class ArtifactsService {
   async inviteLink(id: string, principalId: string): Promise<string | null> {
     const { people } = await (await this.admin()).getSharing(id)
     const person = people.find((candidate) => candidate.id === principalId)
-    if (person?.kind !== 'invited' || person.revokedAt !== null) return null
+    if (person?.kind !== 'invited') return null
     const token = this.deps.vault.get(principalId)
     return token ? this.inviteUrl(id, token) : null
   }
