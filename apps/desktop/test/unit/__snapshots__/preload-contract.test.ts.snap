@@ -276,6 +276,8 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "fleetRestoreArchivedBot",
   "fleetRestoreArchivedEnvironment",
   "fleetRunRoutine",
+  "fleetScreenClipboardRead",
+  "fleetScreenClipboardWrite",
   "fleetScreenClose",
   "fleetScreenOpen",
   "fleetScreenSend",

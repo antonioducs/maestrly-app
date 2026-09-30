@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import type { WebContents } from 'electron'
+import { clipboard, type WebContents } from 'electron'
 import type { FleetApiClient } from '../../src/main/fleet/client/api'
 import { FleetScreenBridge } from '../../src/main/fleet/client/screen-bridge'
 
@@ -29,6 +29,10 @@ class FakeSocket extends EventTarget {
 }
 class Owner extends EventEmitter {
   messages: { channel: string; payload: unknown }[] = []
+  focused = true
+  isFocused(): boolean {
+    return this.focused
+  }
   destroyed = false
   isDestroyed(): boolean {
     return this.destroyed
@@ -43,6 +47,76 @@ class Owner extends EventEmitter {
 }
 
 describe('fleet screen bridge', () => {
+  it('reads clipboard only for a focused sender owning an open control session', async () => {
+    const socket = new FakeSocket()
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=test' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => socket as unknown as WebSocket
+    )
+    const fake = new Owner()
+    const owner = fake as unknown as WebContents
+    const read = vi.spyOn(clipboard, 'readText').mockReturnValue('host text')
+    try {
+      const { channelId } = await bridge.openScreen(owner, 'bot', 'control')
+      expect(() => bridge.readClipboard(owner, channelId)).toThrow()
+      socket.open()
+      expect(() => bridge.readClipboard(new Owner() as unknown as WebContents, channelId)).toThrow()
+      fake.focused = false
+      expect(() => bridge.readClipboard(owner, channelId)).toThrow()
+      fake.focused = true
+      fake.destroyed = true
+      expect(() => bridge.readClipboard(owner, channelId)).toThrow()
+      fake.destroyed = false
+      expect(read).not.toHaveBeenCalled()
+      expect(bridge.readClipboard(owner, channelId)).toBe('host text')
+      read.mockReturnValueOnce('a'.repeat(1_048_577))
+      expect(() => bridge.readClipboard(owner, channelId)).toThrow('Invalid clipboard text')
+      bridge.close(owner, channelId)
+      expect(() => bridge.readClipboard(owner, channelId)).toThrow()
+      const view = await bridge.openScreen(owner, 'bot', 'view')
+      socket.open()
+      expect(() => bridge.readClipboard(owner, view.channelId)).toThrow()
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('writes only bounded text from an open control channel owned by the sender', async () => {
+    const socket = new FakeSocket()
+    const api = {
+      origin: 'https://fleet.example',
+      call: async () => ({ path: '/v1/screen?ticket=clipboard' }),
+    } as unknown as FleetApiClient
+    const bridge = new FleetScreenBridge(
+      () => api,
+      () => socket as unknown as WebSocket
+    )
+    const owner = new Owner() as unknown as WebContents
+    const other = new Owner() as unknown as WebContents
+    const write = vi.spyOn(clipboard, 'writeText')
+    try {
+      const { channelId } = await bridge.openScreen(owner, 'bot', 'control')
+      expect(() => bridge.writeClipboard(owner, channelId, 'before open')).toThrow()
+      socket.open()
+      expect(() => bridge.writeClipboard(other, channelId, 'wrong owner')).toThrow()
+      expect(() => bridge.writeClipboard(owner, channelId, 123)).toThrow()
+      expect(() => bridge.writeClipboard(owner, channelId, 'a'.repeat(1_048_577))).toThrow()
+      bridge.writeClipboard(owner, channelId, 'copied text')
+      expect(write).toHaveBeenCalledWith('copied text')
+      bridge.close(owner, channelId)
+      expect(() => bridge.writeClipboard(owner, channelId, 'stale')).toThrow()
+      const view = await bridge.openScreen(owner, 'bot', 'view')
+      socket.open()
+      expect(() => bridge.writeClipboard(owner, view.channelId, 'view only')).toThrow()
+    } finally {
+      write.mockRestore()
+    }
+  })
   it('relays binary data both ways, reports close codes, enforces ownership and cap', async () => {
     const sockets: FakeSocket[] = []
     const urls: string[] = []

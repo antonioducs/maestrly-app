@@ -57,6 +57,7 @@ export function EnvironmentScreen({ environment, fleet }: { environment: FleetEn
         container={target}
         label={t('environment.region', { name: environment.name })}
         interactive={controlling}
+        clipboardError={screen.clipboardError}
       >
         {shaded && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 text-white">

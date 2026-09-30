@@ -333,6 +333,10 @@ export const fleetApi = {
   fleetScreenSend: (channelId: string, data: ArrayBuffer): Promise<void> =>
     ipcRenderer.invoke('fleet:screenSend', channelId, data),
   fleetScreenClose: (channelId: string): Promise<void> => ipcRenderer.invoke('fleet:screenClose', channelId),
+  fleetScreenClipboardRead: (channelId: string): Promise<string> =>
+    ipcRenderer.invoke('fleet:screenClipboardRead', channelId),
+  fleetScreenClipboardWrite: (channelId: string, text: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:screenClipboardWrite', channelId, text),
   onFleetEvent: (cb: (event: FleetGatewayEvent) => void): (() => void) => subscribe('fleet:event', cb),
   onFleetConnection: (cb: (view: FleetConnectionView) => void): (() => void) => subscribe('fleet:connection', cb),
   onFleetScreenData: (cb: (data: FleetScreenData) => void): (() => void) => subscribe('fleet:screen:data', cb),

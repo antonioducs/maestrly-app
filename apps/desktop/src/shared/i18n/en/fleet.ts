@@ -642,6 +642,12 @@ export default {
     giveBack: 'Give back to {{name}}',
     region: '{{name}}’s screen',
     viewHint: 'Just watching. Take control to click and type.',
+    clipboard: {
+      readFailed: 'Could not read your clipboard. Try pasting again.',
+      unsupportedText: 'This bot’s screen cannot paste emoji or characters outside Latin-1 yet. Nothing was pasted.',
+      tooLarge: 'This text is too large for the screen clipboard. Copy a smaller section (up to 1 MB).',
+      writeFailed: 'Could not copy the bot’s text to your clipboard. Try copying again.',
+    },
     stopped: 'This bot is stopped.',
     starting: 'This bot is starting…',
     paused: 'This bot is paused.',

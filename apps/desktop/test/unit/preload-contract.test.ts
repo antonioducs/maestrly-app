@@ -230,8 +230,15 @@ describe('preload API — exposure', () => {
   })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(489)
+    expect(keys).toHaveLength(491)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('routes copied screen text through the main process with its channel id', async () => {
+    await api.fleetScreenClipboardRead('screen-channel')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardRead', 'screen-channel')
+    await api.fleetScreenClipboardWrite('screen-channel', 'copied text')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardWrite', 'screen-channel', 'copied text')
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {

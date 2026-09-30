@@ -10,7 +10,7 @@ import {
 const mocks = vi.hoisted(() => ({
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
-  screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn() },
+  screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
 }))
 vi.mock('../../src/main/fleet/client/service', () => ({
   fleetClientService: {
@@ -182,6 +182,13 @@ describe('fleet IPC validation', () => {
     expect(() => invoke('fleet:botAction', 'bot', 'delete')).toThrow()
     expect(() => invoke('fleet:resolveInteraction', 'bot', 'id', { kind: 'permission', reply: 'forever' })).toThrow()
     expect(() => invoke('fleet:screenSend', 'channel', 'text')).toThrow()
+    expect(() => invoke('fleet:screenClipboardRead', '')).toThrow()
+    mocks.screens.readClipboard.mockReturnValueOnce('host text')
+    expect(invoke('fleet:screenClipboardRead', 'channel')).toBe('host text')
+    expect(mocks.screens.readClipboard).toHaveBeenCalledWith({}, 'channel')
+    expect(() => invoke('fleet:screenClipboardWrite', '', 'text')).toThrow()
+    invoke('fleet:screenClipboardWrite', 'channel', 'copied text')
+    expect(mocks.screens.writeClipboard).toHaveBeenCalledWith({}, 'channel', 'copied text')
     expect(mocks.call).not.toHaveBeenCalled()
     await invoke('fleet:createBot', { name: 'Valid', instructions: '', ceiling: 'ask', talksTo: [] })
     expect(mocks.call).toHaveBeenCalledWith('botsCreate', {
