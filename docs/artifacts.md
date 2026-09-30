@@ -21,11 +21,15 @@ edit and send. The agent uses these tools:
 | `artifact_get` | Reads an artifact's versions and files, or the text of one file. |
 | `artifact_list` | Lists the conversation's artifacts, or the whole project's. |
 | `artifact_open` | Opens an artifact in the conversation's browser drawer. |
+| `artifact_comments` | Reads the [comments](#comments) people left: each thread with the passage it quotes, its version, its author, and its replies. Open threads by default. |
+| `artifact_comment_reply` | Replies to a thread on your behalf. The reply is shown as written by your agent. |
+| `artifact_comment_resolve` | Marks a thread as resolved. |
 
-Reading and listing never ask for permission. Publishing, updating, and opening
-follow the conversation's permission mode. An agent reaches only the artifacts
-of its own project, or of its own conversation when that conversation is
-standalone. Agents cannot delete or share artifacts.
+Reading, listing, and reading comments never ask for permission. Publishing,
+updating, opening, replying, and resolving follow the conversation's permission
+mode. An agent reaches only the artifacts of its own project, or of its own
+conversation when that conversation is standalone. Agents cannot delete or share
+artifacts.
 
 ## Opening artifacts
 
@@ -167,4 +171,40 @@ device joined and was last seen. It keeps no IP address and no raw browser
 identification. Deleting the artifact deletes all of it.
 
 Agents cannot share an artifact, invite people, approve requests, or change who
-can open it. Comments and hosting on a bot server are planned.
+can open it. Hosting on a bot server is planned.
+
+## Comments
+
+Whoever can open a shared artifact can comment on it, in the viewer's
+**Comments** panel. Selecting text in the page shows a **Comment** button; the
+comment is anchored to that passage and to the version on screen, and the
+passage is highlighted while its thread is open. **Comment on the page** adds a
+comment that is not tied to a passage. People reply to a thread, and delete
+their own comments. Resolving and reopening threads is yours, or an agent's on
+your behalf, and you can delete any comment. Deleting the comment that starts a
+thread deletes its replies.
+
+When a later version changes or removes a commented passage, the thread stays
+with the version it was written on: under the version on screen it is marked
+**Not found in this version**, and threads from other versions are listed
+separately with their version number.
+
+Names in comments follow how each person got in. Invited and approved people
+carry the name you confirmed. A guest types a name before the first comment, and
+it is shown as unverified. Your own comments carry the name set in **Settings →
+Artifacts → Your name**, and replies written by an agent are marked as your
+agent's.
+
+In Maestrly, a card shows how many threads are open, and new comments count in
+the sidebar. The artifact's details list every thread with its passage, author,
+and version, where you reply, resolve, reopen, and delete without opening the
+viewer. **Send to conversation** puts the open threads, quoted, in the message
+box of the conversation the artifact came from, for you to edit and send; it
+sends nothing by itself. An agent can also read comments with
+`artifact_comments`. Either way the agent is told that other people wrote the
+comments and that they are feedback to evaluate, not instructions. A comment
+never starts an agent by itself.
+
+**Share → Comments** turns commenting off for an artifact: existing comments stay
+readable and nobody can add more from the viewer. An artifact holds up to 2,000
+comments of up to 4,000 characters each.

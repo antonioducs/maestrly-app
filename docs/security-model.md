@@ -214,6 +214,26 @@ including for content already open.
 - The host stores a coarse device label, never an IP address or a raw user
   agent, and logs no URL, header, or body.
 
+Comments are text written by people outside the app, so they are treated as
+untrusted everywhere. The viewer and the desktop render them as plain text,
+never as HTML or Markdown, with length limits on bodies, names, and quotes.
+Comments are typed and listed in the viewer shell, never inside the page: the
+page's frame keeps its opaque origin and cannot read them. The shell sends the
+frame only the quotes to highlight, which are the page's own text, and the
+frame's script paints them with the CSS Custom Highlight API without changing
+the page. Messages from the frame, such as the current selection, are hints: the
+shell validates and caps them, shows them as text, and the host checks every
+anchor again. A viewer sees whether a comment is its own, never the internal ID
+of its author.
+
+An agent receives comments only when it asks for them or when the owner chooses
+**Send to conversation**, which fills the message box without sending. The
+`artifact_comments` result starts with a notice that the comments come from
+outside the conversation and are feedback, not instructions, and carries them as
+JSON inside an envelope in which every `<` is escaped, so a comment cannot close
+it or pose as the host. No comment starts an agent turn by itself, and an agent
+can only reply to and resolve threads of artifacts in its own scope.
+
 Artifact content is served from a separate path carrying an HMAC-signed
 capability bound to the session, the artifact, the version, and an expiry of 12
 hours. Its responses carry a sandbox Content Security Policy without
