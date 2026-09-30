@@ -69,6 +69,15 @@ describe('comment routes', () => {
     expect((await h.admin.get(id))?.openComments).toBe(1)
   })
 
+  it('takes comments placed on a spot of the page', async () => {
+    const point = { selector: 'body > p:nth-of-type(1)', rx: 0.4, ry: 0.5 }
+    const created = await post(maria, 'Here?', { anchor: { point } })
+    expect(created.status).toBe(201)
+    expect(created.json.anchor).toEqual({ point })
+    expect((await post(maria, 'Both', { anchor: { point, quote } })).status).toBe(400)
+    expect((await post(maria, 'Off the box', { anchor: { point: { ...point, rx: 2 } } })).status).toBe(400)
+  })
+
   it('records the owner’s comments and replies as the owner’s, without an event', async () => {
     const top = await post(owner, 'From the owner')
     expect(top.json).toMatchObject({ author: { kind: 'owner', name: 'Antonio', verified: true, self: true } })

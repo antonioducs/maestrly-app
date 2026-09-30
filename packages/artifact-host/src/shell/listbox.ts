@@ -1,164 +1,124 @@
-// A custom single-select listbox (never a native <select>), styled like the app's Select.
+// A custom single-select listbox (never a native <select>), shown in a popover below its button.
+import { type Child, h, put } from './dom.js'
+import { icon } from './icons.js'
+import { closePopover, togglePopover } from './popover.js'
 
 export interface ListboxItem {
   value: string
+  /** A short mark before the label, such as "v3". */
+  badge?: string
   label: string
-  hint?: string
+  /** A small tag after the label, such as "current". */
+  tag?: string
+  /** A second, quieter line. */
+  meta?: string
 }
 
 export interface ListboxOptions {
   label: string
-  items: ListboxItem[]
-  value: string
+  className?: string
+  /** What the button shows for the chosen item. */
+  trigger: (item: ListboxItem | undefined) => Child
+  /** The button's accessible name for the chosen item. */
+  triggerLabel: (item: ListboxItem | undefined) => string
   onChange(value: string): void
 }
 
 let sequence = 0
 
-export function createListbox(options: ListboxOptions): HTMLElement {
+export function createListbox(options: ListboxOptions): {
+  button: HTMLButtonElement
+  update(items: ListboxItem[], value: string): void
+} {
   const id = `listbox-${++sequence}`
-  const { items } = options
-  let selected = Math.max(
-    0,
-    items.findIndex((item) => item.value === options.value)
-  )
-  let active = selected
-
-  const root = document.createElement('div')
-  root.className = 'listbox'
-
-  const button = document.createElement('button')
-  button.type = 'button'
-  button.className = 'listbox-trigger'
-  button.setAttribute('aria-haspopup', 'listbox')
-  button.setAttribute('aria-expanded', 'false')
-  button.setAttribute('aria-controls', `${id}-list`)
-  const buttonText = document.createElement('span')
-  const chevron = document.createElement('span')
-  chevron.className = 'listbox-chevron'
-  chevron.setAttribute('aria-hidden', 'true')
-  button.append(buttonText, chevron)
-
-  const list = document.createElement('ul')
-  list.id = `${id}-list`
-  list.className = 'listbox-menu'
-  list.setAttribute('role', 'listbox')
-  list.setAttribute('aria-label', options.label)
-  list.tabIndex = -1
-  list.hidden = true
-
-  const rows = items.map((item, index) => {
-    const row = document.createElement('li')
-    row.id = `${id}-option-${index}`
-    row.className = 'listbox-option'
-    row.setAttribute('role', 'option')
-    const label = document.createElement('span')
-    label.textContent = item.label
-    row.append(label)
-    if (item.hint) {
-      const hint = document.createElement('span')
-      hint.className = 'listbox-hint'
-      hint.textContent = item.hint
-      row.append(hint)
-    }
-    row.addEventListener('mousemove', () => {
-      if (active !== index) {
-        active = index
-        render()
-      }
-    })
-    row.addEventListener('click', () => choose(index))
-    return row
+  let items: ListboxItem[] = []
+  let value = ''
+  const button = h('button', {
+    type: 'button',
+    class: options.className ?? 'listbox-trigger',
+    'aria-haspopup': 'listbox',
+    'aria-expanded': 'false',
   })
-  list.append(...rows)
-  root.append(button, list)
 
-  function render(): void {
-    const current = items[selected]
-    buttonText.textContent = current?.label ?? ''
-    button.setAttribute('aria-label', `${options.label}: ${current?.label ?? ''}`)
-    rows.forEach((row, index) => {
-      row.setAttribute('aria-selected', String(index === selected))
-      row.classList.toggle('active', index === active)
-    })
-    if (!list.hidden && rows[active]) {
-      list.setAttribute('aria-activedescendant', rows[active].id)
-      rows[active].scrollIntoView({ block: 'nearest' })
+  function build(popover: HTMLElement): HTMLElement {
+    let active = Math.max(
+      0,
+      items.findIndex((item) => item.value === value)
+    )
+    const list = h('ul', { class: 'options', role: 'listbox', tabindex: '0', 'aria-label': options.label })
+    const rows = items.map((item, index) =>
+      h(
+        'li',
+        {
+          id: `${id}-${index}`,
+          class: 'option',
+          role: 'option',
+          'aria-selected': String(item.value === value),
+          onclick: () => choose(index),
+          onpointermove: () => {
+            if (active === index) return
+            active = index
+            paint()
+          },
+        },
+        item.badge !== undefined && h('span', { class: 'option-badge' }, item.badge),
+        h(
+          'span',
+          { class: 'option-text' },
+          h('span', { class: 'option-label' }, item.label, item.tag && h('em', { class: 'option-tag' }, item.tag)),
+          item.meta && h('span', { class: 'option-meta' }, item.meta)
+        ),
+        item.value === value && icon('check', 15)
+      )
+    )
+    list.append(...rows)
+    function paint(): void {
+      rows.forEach((row, index) => row.classList.toggle('is-active', index === active))
+      const row = rows[active]
+      if (!row) return
+      list.setAttribute('aria-activedescendant', row.id)
+      row.scrollIntoView({ block: 'nearest' })
     }
-  }
-
-  function onOutside(event: Event): void {
-    if (!root.contains(event.target as Node)) close(false)
-  }
-
-  function open(): void {
-    if (!list.hidden || items.length === 0) return
-    active = selected
-    list.hidden = false
-    button.setAttribute('aria-expanded', 'true')
-    document.addEventListener('pointerdown', onOutside, true)
-    render()
-    list.focus()
-  }
-
-  function close(returnFocus: boolean): void {
-    if (list.hidden) return
-    list.hidden = true
-    list.removeAttribute('aria-activedescendant')
-    button.setAttribute('aria-expanded', 'false')
-    document.removeEventListener('pointerdown', onOutside, true)
-    render()
-    if (returnFocus) button.focus()
-  }
-
-  function choose(index: number): void {
-    const changed = index !== selected
-    selected = index
-    close(true)
-    if (changed && items[index]) options.onChange(items[index].value)
-  }
-
-  button.addEventListener('click', () => (list.hidden ? open() : close(true)))
-  button.addEventListener('keydown', (event) => {
-    if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) {
+    function choose(index: number): void {
+      const item = items[index]
+      closePopover()
+      if (item && item.value !== value) options.onChange(item.value)
+    }
+    list.addEventListener('keydown', (event) => {
+      const last = rows.length - 1
+      if (event.key === 'ArrowDown') active = Math.min(last, active + 1)
+      else if (event.key === 'ArrowUp') active = Math.max(0, active - 1)
+      else if (event.key === 'Home') active = 0
+      else if (event.key === 'End') active = last
+      else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        return choose(active)
+      } else if (event.key === 'Tab') return closePopover(false)
+      else return
       event.preventDefault()
-      open()
-    }
-  })
-  list.addEventListener('keydown', (event) => {
-    const last = items.length - 1
-    switch (event.key) {
-      case 'ArrowDown':
-        active = Math.min(last, active + 1)
-        break
-      case 'ArrowUp':
-        active = Math.max(0, active - 1)
-        break
-      case 'Home':
-        active = 0
-        break
-      case 'End':
-        active = last
-        break
-      case 'Enter':
-      case ' ':
-        event.preventDefault()
-        choose(active)
-        return
-      case 'Escape':
-        event.preventDefault()
-        close(true)
-        return
-      case 'Tab':
-        close(false)
-        return
-      default:
-        return
-    }
+      paint()
+    })
+    popover.append(list)
+    queueMicrotask(paint)
+    return list
+  }
+
+  button.addEventListener('click', () => togglePopover(button, 'listbox-popover', build, 'center'))
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
     event.preventDefault()
-    render()
+    togglePopover(button, 'listbox-popover', build, 'center')
   })
 
-  render()
-  return root
+  return {
+    button,
+    update(nextItems, nextValue) {
+      items = nextItems
+      value = nextValue
+      const current = items.find((item) => item.value === value)
+      button.replaceChildren()
+      put(button, options.trigger(current), icon('down', 14))
+      button.setAttribute('aria-label', options.triggerLabel(current))
+    },
+  }
 }

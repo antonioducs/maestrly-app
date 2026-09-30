@@ -18,6 +18,8 @@ describe('parseFragment', () => {
   it('reads the tokens and the version a link carries', () => {
     expect(parseFragment('#i=abc&v=2')).toEqual({ invite: 'abc', version: 2 })
     expect(parseFragment('#o=ticket')).toEqual({ owner: 'ticket' })
+    expect(parseFragment('#o=ticket&v=3&preview=1')).toEqual({ owner: 'ticket', version: 3, preview: true })
+    expect(parseFragment('#preview=yes')).toEqual({})
     expect(parseFragment('')).toEqual({})
     expect(parseFragment('#')).toEqual({})
   })

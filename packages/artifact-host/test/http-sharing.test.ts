@@ -177,6 +177,41 @@ describe('personal links', () => {
   })
 })
 
+describe('the owner’s view of sharing', () => {
+  it('summarizes who can open the page, for the owner only, with the public link', async () => {
+    const shared = await startHarness({ publicOrigins: ['https://mac.example/'] })
+    try {
+      const api = `/a/${shared.id}/api`
+      await shared.admin.setSharing(shared.id, { visibility: 'people' })
+      const { token } = await shared.admin.createInvite(shared.id, { name: 'Maria' })
+      // People are listed in the order they were invited.
+      shared.clock.advance(1000)
+      await shared.admin.createInvite(shared.id, { name: 'Ana' })
+      const maria = shared.browser()
+      expect((await maria.send('POST', `${api}/session/invite`, { token })).status).toBe(204)
+      await shared.browser().send('POST', `${api}/access-requests`, { name: 'João' })
+
+      const owner = await shared.owner()
+      expect((await owner.get(`${api}/state`)).json.sharing).toEqual({
+        visibility: 'people',
+        link: `https://mac.example/a/${shared.id}`,
+        local: false,
+        linkExpiresAt: null,
+        people: [
+          { name: 'Maria', kind: 'invited', devices: 1 },
+          { name: 'Ana', kind: 'invited', devices: 0 },
+        ],
+        peopleCount: 2,
+        requests: 1,
+      })
+      // Nobody else learns who the page is shared with.
+      expect((await maria.get(`${api}/state`)).json).not.toHaveProperty('sharing')
+    } finally {
+      await shared.close()
+    }
+  })
+})
+
 describe('the gate', () => {
   it('shows what a visitor may do, and nothing about the artifact', async () => {
     const visitor = h.browser()

@@ -7,6 +7,8 @@ export interface LinkFragment {
   /** A personal link's token. */
   invite?: string
   version?: number
+  /** The page alone, without comments: what the desktop captures for a preview image. */
+  preview?: boolean
 }
 
 export type EntryScreen =
@@ -31,6 +33,7 @@ export function parseFragment(hash: string): LinkFragment {
   if (owner) fragment.owner = owner
   if (invite) fragment.invite = invite
   if (/^[1-9]\d{0,8}$/.test(version)) fragment.version = Number(version)
+  if (params.get('preview') === '1') fragment.preview = true
   return fragment
 }
 

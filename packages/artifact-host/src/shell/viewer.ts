@@ -1,13 +1,20 @@
-// The viewer shell: who is viewing, the version picker and the sandboxed content frame. Every text reaches the DOM
-// through `textContent`; nothing coming from the API or the frame is parsed as HTML.
+// The viewer shell: the top bar, the page in a sandboxed frame, and the comments pinned above it. Every text reaches
+// the DOM as text; nothing coming from the API or the frame is parsed as HTML.
 import { type ArtifactApi, createApi } from './api.js'
-import { createComments } from './comments.js'
-import { CONTENT_SANDBOX, type FrameResponse, parseBridgeMessage, type ViewerState } from './contract.js'
-import { button, element } from './dom.js'
+import { createBar, type Viewport } from './bar.js'
+import { type CommentsController, createComments } from './comments.js'
+import {
+  type BridgeMessage,
+  CONTENT_SANDBOX,
+  type FrameResponse,
+  parseBridgeMessage,
+  type ViewerState,
+} from './contract.js'
+import { copyText, h, toast } from './dom.js'
 import { showEntry } from './gate.js'
 import { entryScreen, hasAccess, type LinkFragment, parseFragment } from './gate-model.js'
 import { format, pickLocale, type ShellKey } from './i18n.js'
-import { createListbox } from './listbox.js'
+import { closePopover, popoverOpen } from './popover.js'
 
 const VIEWER_PATH = /^\/a\/([A-Za-z0-9_-]{22})$/
 const languages = navigator.languages?.length ? navigator.languages : [navigator.language]
@@ -18,113 +25,182 @@ const app = document.getElementById('app') as HTMLElement
 document.documentElement.lang = locale
 
 function showMessage(title: string, detail?: string): void {
-  const box = element('main', 'message')
-  box.append(element('h1', undefined, title))
-  if (detail) box.append(element('p', undefined, detail))
-  app.replaceChildren(box)
+  app.replaceChildren(h('main', { class: 'message' }, h('h1', {}, title), detail && h('p', {}, detail)))
   document.title = title
 }
 
 const unavailable = () => showMessage(t('notAvailable'), t('notAvailableDetail'))
 
-const guestLabel = (name: string | null): string => (name ? t('unverified', { name }) : t('guest'))
-
-/** Who the viewer is here: the owner, a person the owner confirmed, or a guest whose name nobody checked. */
-function identityChip(state: ViewerState): HTMLElement {
-  const { identity } = state
-  if (identity.kind === 'owner') return element('span', 'chip', t('owner'))
-  if (identity.kind === 'guest') return element('span', 'chip', guestLabel(identity.name))
-  const chip = element('span', 'chip verified', t('verified', { name: identity.name }))
-  const owner = state.ownerName || t('theOwner')
-  chip.title = t(identity.kind === 'invited' ? 'invitedBy' : 'approvedBy', { owner })
-  return chip
-}
-
-function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: number): void {
+function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: number, preview: boolean): void {
   const { artifact } = state
+  const current = artifact.currentVersion
+  let version = initialVersion
+  let viewport: Viewport = 'desktop'
+  let full = false
+  let comments: CommentsController | null = null
   document.title = artifact.title
 
-  const header = element('header', 'bar')
-  const title = element('h1', 'title', artifact.title)
-  title.title = artifact.title
-  const versions = [...artifact.versions].sort((a, b) => b.number - a.number)
-  const picker = createListbox({
-    label: t('versionsLabel'),
-    value: String(initialVersion),
-    items: versions.map((version) => ({
-      value: String(version.number),
-      label: t('version', { n: version.number }),
-      hint: version.number === artifact.currentVersion ? t('current') : undefined,
-    })),
-    onChange: (value) => void load(Number(value)),
+  const frame = h('iframe', {
+    class: 'content',
+    sandbox: CONTENT_SANDBOX,
+    referrerpolicy: 'no-referrer',
+    title: artifact.title,
   })
-  const identity = element('div', 'identity')
-  const leave = button(t('leave'), 'button', async () => {
-    leave.disabled = true
-    await api.write('session', 'DELETE').catch(() => undefined)
-    showMessage(t('left'), t('leftDetail'))
-  })
-  const chip = identityChip(state)
-  identity.append(chip, leave)
+  // Pins live in the viewer, above the frame: the page never receives names or comment text.
+  const overlay = h('div', { class: 'overlay' })
+  const failure = h(
+    'div',
+    { class: 'frame-failure', role: 'alert', hidden: true },
+    h('p', {}, t('pageFailed')),
+    h('button', { type: 'button', class: 'button', onclick: () => void load(version) }, t('retry'))
+  )
+  const device = h('div', { class: 'device' }, frame, overlay, failure)
+  const float = h('div', { class: 'float' })
+  const exitFull = h(
+    'button',
+    { type: 'button', class: 'exit-full', hidden: true, onclick: () => setFull(false) },
+    t('exitFullScreen'),
+    h('kbd', {}, 'Esc')
+  )
+  float.append(exitFull)
+  const stage = h('main', { class: 'stage', 'data-viewport': viewport }, device, float)
+  const list = h('aside', { class: 'list', 'aria-label': t('listTitle'), hidden: true })
+  const notice = h('div', { class: 'notice', role: 'status', hidden: true })
 
-  const banner = element('div', 'banner')
-  banner.setAttribute('role', 'status')
-  banner.hidden = true
-
-  const frame = element('iframe', 'content')
-  frame.setAttribute('sandbox', CONTENT_SANDBOX)
-  frame.setAttribute('referrerpolicy', 'no-referrer')
-  frame.title = artifact.title
-
-  const comments = createComments({
-    api,
+  const bar = createBar({
     t,
     locale,
     state,
-    frame,
-    version: initialVersion,
-    onNamed: (name) => {
-      chip.textContent = guestLabel(name)
+    comments: !preview,
+    onVersion: (next) => setVersion(next),
+    onViewport: (next) => {
+      viewport = next
+      stage.dataset.viewport = next
+      sync()
+    },
+    onToggleCommenting: () => comments?.setCommenting(!comments.commenting),
+    onToggleList: () => comments?.setList(!comments.listOpen),
+    onReload: () => void load(version),
+    onFullScreen: () => setFull(true),
+    onCopyVersionLink: async () => {
+      const base = state.sharing?.link ?? `${location.origin}${location.pathname}`
+      toast((await copyText(`${base}#v=${version}`)) ? t('versionLinkCopied', { n: version }) : t('copyFailed'))
+    },
+    onLeave: async () => {
+      await api.write('session', 'DELETE').catch(() => undefined)
+      showMessage(t('left'), t('leftDetail'))
     },
   })
-  header.append(title, picker, comments.toggle, identity)
-  // The frame and the button that floats over a selection share one box; the panel sits beside it.
-  const stage = element('div', 'stage')
-  stage.append(frame, comments.action)
-  const workspace = element('div', 'workspace')
-  workspace.append(stage, comments.panel)
 
-  app.replaceChildren(header, banner, workspace)
+  app.replaceChildren(bar.root, notice, h('div', { class: 'workspace' }, stage, list))
 
-  const showBanner = (text: string, retry?: () => void) => {
-    banner.replaceChildren(element('span', undefined, text))
-    if (retry) banner.append(button(t('retry'), 'button', retry))
-    banner.hidden = false
+  function sync(): void {
+    bar.update({
+      version,
+      viewport,
+      commenting: comments?.commenting ?? false,
+      listOpen: comments?.listOpen ?? false,
+      openCounts: comments?.openCounts() ?? new Map(),
+    })
+    notice.hidden = version === current
+    if (notice.hidden) return
+    const summary = artifact.versions.find((item) => item.number === version)?.summary
+    notice.replaceChildren(
+      h(
+        'span',
+        {},
+        summary
+          ? t('noticeVersionSummary', { n: version, total: current, summary })
+          : t('noticeVersion', { n: version, total: current })
+      ),
+      h('button', { type: 'button', class: 'notice-action', onclick: () => setVersion(current) }, t('noticeAction'))
+    )
   }
 
-  window.addEventListener('message', (event) => {
-    if (event.source !== frame.contentWindow) return
-    const message = parseBridgeMessage(event.data)
-    if (!message) return
-    if (message.type === 'error') showBanner(t('pageError', { message: message.message }))
-    else comments.handle(message)
-  })
+  function setFull(on: boolean): void {
+    full = on
+    document.body.classList.toggle('is-full', on)
+    exitFull.hidden = !on
+    comments?.relayout()
+  }
 
-  async function load(version: number): Promise<void> {
-    banner.hidden = true
-    comments.setVersion(version)
+  async function load(number: number): Promise<void> {
+    failure.hidden = true
     try {
-      const response = await api.write('frame', 'POST', { version })
+      const response = await api.write('frame', 'POST', { version: number })
       if (!response.ok) throw new Error(String(response.status))
       const body = (await response.json()) as Partial<FrameResponse>
       if (typeof body.url !== 'string' || !body.url.startsWith('/c/')) throw new Error('Unexpected frame response')
       frame.src = body.url
     } catch {
-      showBanner(t('notAvailable'), () => void load(version))
+      failure.hidden = false
     }
   }
 
-  void load(initialVersion)
+  function setVersion(next: number): void {
+    if (next < 1 || next > current || next === version) return
+    version = next
+    closePopover(false)
+    comments?.setVersion(next)
+    sync()
+    void load(next)
+  }
+
+  if (!preview)
+    comments = createComments({
+      api,
+      t,
+      locale,
+      state,
+      frame,
+      stage,
+      overlay,
+      float,
+      list,
+      version,
+      onChange: sync,
+      onShowVersion: setVersion,
+    })
+
+  function onKey(key: string): void {
+    if (key === 'Escape') {
+      if (popoverOpen()) closePopover()
+      else if (comments?.escape()) return
+      else if (full) setFull(false)
+    } else if (key === 'c') comments?.setCommenting(!comments.commenting)
+    else if (key === 'f') setFull(!full)
+  }
+
+  function onMessage(message: BridgeMessage): void {
+    if (message.type === 'error') toast(t('pageError', { message: message.message }))
+    else if (message.type === 'key') onKey(message.key)
+    else {
+      if (message.type === 'pointer') closePopover(false)
+      comments?.handle(message)
+    }
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== frame.contentWindow) return
+    const message = parseBridgeMessage(event.data)
+    if (message) onMessage(message)
+  })
+  window.addEventListener('keydown', (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return
+    const typing = event.target instanceof Element && event.target.closest('input, textarea') !== null
+    if (event.key === 'Escape') onKey('Escape')
+    else if (!typing && (event.key === 'c' || event.key === 'f')) onKey(event.key)
+  })
+  // A press beside the page, around it, closes the conversation that is open.
+  stage.addEventListener('pointerdown', (event) => {
+    if (event.target === stage || event.target === float) comments?.escape()
+  })
+  // The page measures itself when its frame changes size; asking again covers a frame the browser is not painting.
+  new ResizeObserver(() => comments?.relayout()).observe(device)
+  device.addEventListener('transitionend', () => comments?.relayout())
+
+  sync()
+  void load(version)
 }
 
 /** Shows the page, or what this browser may do to get to it. */
@@ -134,7 +210,12 @@ async function open(api: ArtifactApi, fragment: LinkFragment, note?: string): Pr
   if (screen.screen === 'unavailable') return unavailable()
   if (screen.screen === 'viewer' && hasAccess(state)) {
     const known = state.artifact.versions.some((version) => version.number === fragment.version)
-    return renderViewer(api, state, known && fragment.version ? fragment.version : state.artifact.currentVersion)
+    return renderViewer(
+      api,
+      state,
+      known && fragment.version ? fragment.version : state.artifact.currentVersion,
+      fragment.preview === true
+    )
   }
   if (screen.screen === 'viewer') return unavailable()
   const stay: LinkFragment = { version: fragment.version }

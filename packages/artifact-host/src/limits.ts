@@ -44,6 +44,5 @@ export const VISITOR_COOKIE_TTL_MS = 30 * 24 * HOUR_MS
 export const MAX_COMMENTS_PER_ARTIFACT = 2000
 export const MAX_COMMENT_CHARS = 4000
 /** The quoted passage a comment is anchored to, and the text kept before and after it to find it again. */
-export { MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS } from './shell/contract.js'
-export const MAX_SELECTOR_CHARS = 300
+export { MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS, MAX_SELECTOR_CHARS } from './shell/contract.js'
 export const COMMENTS_PAGE_SIZE = 200

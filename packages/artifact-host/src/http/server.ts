@@ -20,6 +20,7 @@ import {
   VISITOR_COOKIE,
   type ViewerGate,
   type ViewerIdentity,
+  type ViewerSharing,
   type ViewerState,
 } from '../shell/contract.js'
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
@@ -80,6 +81,8 @@ const API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/([a-z]+(?:[/-][a-z]+)*)$/
 const COMMENT_API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/comments\/([A-Za-z0-9_-]{22})(?:\/(replies|resolve))?$/
 const CONTENT = /^\/c\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.*)$/
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]']
+/** People listed by name in the owner's viewer; the rest are counted. */
+const MAX_SHARED_PEOPLE_SHOWN = 8
 const BRIDGE_PATH = '_maestrly/bridge.js'
 
 /**
@@ -107,6 +110,14 @@ export function allowedOrigin(
 
 type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
+function originOf(address: string | undefined): string | null {
+  try {
+    return address ? new URL(address).origin : null
+  } catch {
+    return null
+  }
+}
+
 interface Route {
   method: Method
   /** A read that changes something: it must come from the viewer's own script, like a write. */
@@ -120,6 +131,7 @@ const routeKey = (method: string, action: string): string => `${method} ${action
 export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const { store, blobs, clock } = deps
   const publicOrigins = deps.publicOrigins ?? []
+  const publicBase = originOf(publicOrigins[0])
   const sharing = deps.sharing ?? new SharingStore(store.db)
   const ownerName = deps.ownerName ?? ''
   const onChange = deps.onChange ?? (() => {})
@@ -171,6 +183,31 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       : { kind: principal.kind, name: principal.name }
   }
 
+  /**
+   * Who can open the page, for the owner's viewer. It is read-only: sharing changes only in Maestrly. Links use the
+   * public address when there is one, so what the owner copies works for the people they send it to.
+   */
+  function sharingSummary(ctx: ApiContext): ViewerSharing {
+    const people: ViewerSharing['people'] = []
+    let peopleCount = 0
+    for (const person of sharing.listPrincipals(ctx.artifactId)) {
+      const devices = sharing.listSessions(ctx.artifactId, person.id, ctx.now).length
+      // A guest is one device; once it is gone there is nobody left to show.
+      if (person.kind === 'guest' && devices === 0) continue
+      peopleCount++
+      if (people.length < MAX_SHARED_PEOPLE_SHOWN) people.push({ name: person.name, kind: person.kind, devices })
+    }
+    return {
+      visibility: ctx.sharing.visibility,
+      link: `${publicBase ?? ctx.origin}/a/${ctx.artifactId}`,
+      local: publicBase === null,
+      linkExpiresAt: ctx.sharing.linkExpiresAt,
+      people,
+      peopleCount,
+      requests: sharing.listPendingRequests(ctx.artifactId, ctx.now).length,
+    }
+  }
+
   /** How this browser's access request stands, for a visitor who is not in yet. */
   function pendingRequest(ctx: ApiContext): 'pending' | 'denied' | null {
     if (!ctx.visitor) return null
@@ -213,6 +250,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
           identity: identityOf(ctx),
           ownerName,
           can: { comment: ctx.sharing.commentsEnabled, resolve: ctx.access?.kind === 'owner' },
+          ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
         }
         json(ctx.res, 200, state)
       },

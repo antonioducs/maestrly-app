@@ -97,6 +97,14 @@ describe('comments', () => {
     expect((await admin.listComments(other)).comments).toEqual([])
   })
 
+  it('stores a comment placed on a spot of the page', async () => {
+    const point = { selector: '#chart > rect:nth-of-type(2)', rx: 0.25, ry: 1 }
+    const created = await comment('Split this by region?', { anchor: { point } })
+    expect(created.anchor).toEqual({ point })
+    expect((await admin.listComments(id)).comments[0]?.anchor).toEqual({ point })
+    expect(await openComments()).toBe(1)
+  })
+
   it('records the agent as its own kind of author, under the owner’s name', async () => {
     const created = await admin.addComment(id, { author: 'agent', version: 1, body: 'Fixed in the next version.' })
     expect(created.author).toEqual({ kind: 'agent', name: 'Antonio', verified: true, principalId: null })
@@ -114,6 +122,12 @@ describe('comments', () => {
       { body: 'ok', anchor: { quote: { ...quote, suffix: 'x'.repeat(65) } } },
       { body: 'ok', anchor: { hint: { selector: 'x'.repeat(301) } } },
       { body: 'ok', anchor: { quote, extra: true } },
+      { body: 'ok', anchor: { point: { selector: 'p', rx: 1.5, ry: 0 } } },
+      { body: 'ok', anchor: { point: { selector: 'p', rx: 0.5, ry: -0.1 } } },
+      { body: 'ok', anchor: { point: { selector: '', rx: 0, ry: 0 } } },
+      { body: 'ok', anchor: { point: { selector: 'x'.repeat(301), rx: 0, ry: 0 } } },
+      { body: 'ok', anchor: { point: { selector: 'p', rx: 0.5 } } },
+      { body: 'ok', anchor: { quote, point: { selector: 'p', rx: 0.5, ry: 0.5 } } },
       { body: 'ok', version: 0 },
       { body: 'ok', version: 1.5 },
       { body: 'ok', author: 'guest' },

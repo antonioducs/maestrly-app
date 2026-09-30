@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { ArtifactHostError } from './errors.js'
 import { isArtifactId, randomId } from './ids.js'
-import { COMMENTS_PAGE_SIZE, MAX_COMMENT_CHARS, MAX_COMMENTS_PER_ARTIFACT, MAX_SELECTOR_CHARS } from './limits.js'
+import { COMMENTS_PAGE_SIZE, MAX_COMMENT_CHARS, MAX_COMMENTS_PER_ARTIFACT } from './limits.js'
 import { parseInput } from './schemas.js'
 import type { ActivityRecorder } from './sharing-admin.js'
-import { type CommentAnchor, MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS } from './shell/contract.js'
+import { type CommentAnchor, MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS, MAX_SELECTOR_CHARS } from './shell/contract.js'
 import type { ArtifactStore } from './store/artifact-store.js'
 import type { CommentAuthorKind, CommentRecord, CommentStore } from './store/comment-store.js'
 
@@ -54,12 +54,21 @@ export const commentAnchorSchema: z.ZodType<CommentAnchor> = z
       .object({ exact: z.string().min(1).max(MAX_QUOTE_CHARS), prefix: context, suffix: context })
       .strict()
       .optional(),
+    point: z
+      .object({
+        selector: z.string().min(1).max(MAX_SELECTOR_CHARS),
+        rx: z.number().min(0).max(1),
+        ry: z.number().min(0).max(1),
+      })
+      .strict()
+      .optional(),
     hint: z
       .object({ selector: z.string().min(1).max(MAX_SELECTOR_CHARS) })
       .strict()
       .optional(),
   })
   .strict()
+  .refine((anchor) => !(anchor.quote && anchor.point), 'Anchor a comment to a passage or to a spot, not both')
 
 export const commentBody = z.string().trim().min(1).max(MAX_COMMENT_CHARS)
 
