@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type {
   LocalMemory,
   LocalMemoryStatus,
@@ -70,6 +71,7 @@ export function ProjectMemoryView({
   onClose,
 }: Props) {
   const { t, i18n } = useTranslation('ui')
+  const api = useHostApi()
   const appliedFocus = useRef<string | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [section, setSection] = useState<Section>('all')
@@ -92,11 +94,11 @@ export function ProjectMemoryView({
     setError('')
     try {
       const [isEnabled, localRows, sharedResult, indexStatus, legacyBackups] = await Promise.all([
-        window.api.getMemoryEnabled(workspaceId),
-        window.api.listMemories(workspaceId, { limit: 500 }),
-        window.api.listSharedMemories(workspaceId),
-        window.api.getMemoryIndexStatus(workspaceId),
-        window.api.listLegacyMemoryBackups(workspaceId),
+        api.getMemoryEnabled(workspaceId),
+        api.listMemories(workspaceId, { limit: 500 }),
+        api.listSharedMemories(workspaceId),
+        api.getMemoryIndexStatus(workspaceId),
+        api.listLegacyMemoryBackups(workspaceId),
       ])
       setEnabled(isEnabled)
       setLocal(localRows as LocalMemory[])
@@ -109,7 +111,7 @@ export function ProjectMemoryView({
     } finally {
       setLoading(false)
     }
-  }, [workspaceId])
+  }, [workspaceId, api])
 
   useEffect(() => {
     const request = `${workspaceId}:${focusMemoryRequest}:${focusMemoryId}`
@@ -123,17 +125,17 @@ export function ProjectMemoryView({
   useEffect(() => void reload(), [reload])
   useEffect(
     () =>
-      window.api.onMemoryChanged((event) => {
+      api.onMemoryChanged((event) => {
         if (event.workspaceId === workspaceId) void reload()
       }),
-    [reload, workspaceId]
+    [reload, workspaceId, api]
   )
   useEffect(
     () =>
-      window.api.onMemoryIndexStatus((next) => {
+      api.onMemoryIndexStatus((next) => {
         if (next.workspaceId === workspaceId) setStatus(next)
       }),
-    [workspaceId]
+    [workspaceId, api]
   )
 
   const localVisible = useMemo(() => {
@@ -175,18 +177,18 @@ export function ProjectMemoryView({
   const toggle = () => {
     const next = !enabled
     setEnabled(next)
-    window.api.setMemoryEnabled(workspaceId, next)
+    api.setMemoryEnabled(workspaceId, next)
   }
 
   const exportData = async () => {
-    const data = (await window.api.exportMemories(workspaceId)) as { json: string; markdown: string }
+    const data = (await api.exportMemories(workspaceId)) as { json: string; markdown: string }
     downloadText(`${workspaceName}-memories.json`, data.json, 'application/json')
     downloadText(`${workspaceName}-memories.md`, data.markdown, 'text/markdown')
   }
 
   const rebuild = async () => {
     setStatus((current) => (current ? { ...current, state: 'indexing' } : current))
-    await window.api.rebuildMemoryIndex(workspaceId)
+    await api.rebuildMemoryIndex(workspaceId)
     await reload()
   }
 
@@ -300,7 +302,7 @@ export function ProjectMemoryView({
                     className="ml-auto hover:text-destructive"
                     onClick={async () => {
                       if (!window.confirm(t('projectMemory.removeBackupConfirm'))) return
-                      await window.api.removeLegacyMemoryBackup(workspaceId, backup.path, true)
+                      await api.removeLegacyMemoryBackup(workspaceId, backup.path, true)
                       await reload()
                     }}
                   >
@@ -493,6 +495,7 @@ function LocalMemoryEditor({
   onDeleted?: () => void | Promise<void>
 }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [title, setTitle] = useState(memory?.title ?? '')
   const [content, setContent] = useState(memory?.content ?? '')
   const [type, setType] = useState<MemoryType>(memory?.type ?? 'reference')
@@ -521,8 +524,8 @@ function LocalMemoryEditor({
         .map((tag) => tag.trim())
         .filter(Boolean)
       const result = memory
-        ? await window.api.updateMemory(workspaceId, memory.id, { title, content, type, scope, tags: tagList, pinned })
-        : await window.api.createMemory({
+        ? await api.updateMemory(workspaceId, memory.id, { title, content, type, scope, tags: tagList, pinned })
+        : await api.createMemory({
             workspaceId,
             title,
             content,
@@ -608,7 +611,7 @@ function LocalMemoryEditor({
             size="sm"
             variant="outline"
             onClick={async () => {
-              await window.api.archiveMemory(workspaceId, memory.id)
+              await api.archiveMemory(workspaceId, memory.id)
               await onSaved(memory)
             }}
           >
@@ -621,7 +624,7 @@ function LocalMemoryEditor({
             size="sm"
             variant="outline"
             onClick={async () => {
-              await window.api.restoreMemory(workspaceId, memory.id)
+              await api.restoreMemory(workspaceId, memory.id)
               await onSaved(memory)
             }}
           >
@@ -632,9 +635,7 @@ function LocalMemoryEditor({
           <Button
             size="sm"
             variant="outline"
-            onClick={async () =>
-              setPromotion(await window.api.previewMemoryPromotion({ workspaceId, memoryId: memory.id }))
-            }
+            onClick={async () => setPromotion(await api.previewMemoryPromotion({ workspaceId, memoryId: memory.id }))}
           >
             <Share2 className="mr-1 size-3.5" />
             {t('projectMemory.promote')}
@@ -647,7 +648,7 @@ function LocalMemoryEditor({
             className="text-destructive"
             onClick={async () => {
               if (!window.confirm(t('projectMemory.forgetConfirm'))) return
-              await window.api.forgetMemory(workspaceId, memory.id, true)
+              await api.forgetMemory(workspaceId, memory.id, true)
               await onDeleted?.()
             }}
           >
@@ -673,7 +674,7 @@ function LocalMemoryEditor({
             <Button
               size="sm"
               onClick={async () => {
-                const result = await window.api.promoteMemory({ workspaceId, memoryId: memory.id })
+                const result = await api.promoteMemory({ workspaceId, memoryId: memory.id })
                 setPromotion(null)
                 if (result.gitIgnored) window.alert(t('projectMemory.gitIgnoredWarning'))
                 await onSaved(memory)
@@ -693,6 +694,7 @@ function LocalMemoryEditor({
 
 function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memory: SharedKnowledgeDocument }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   return (
     <article className="mx-auto max-w-3xl">
       <div className="flex items-start gap-2 hairline-b pb-3">
@@ -703,11 +705,7 @@ function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memo
           </div>
           {memory.scope && <div className="mt-1 text-[10px] text-muted-foreground">scope: {memory.scope}</div>}
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => window.api.openSharedMemory(workspaceId, memory.relativePath)}
-        >
+        <Button size="sm" variant="outline" onClick={() => api.openSharedMemory(workspaceId, memory.relativePath)}>
           <ExternalLink className="mr-1 size-3.5" />
           {t('projectMemory.openSource')}
         </Button>

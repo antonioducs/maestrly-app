@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent } from '@/components/ui/dropdown-menu'
 import { PageTree } from '@/components/notes/PageTree'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { NotesScope, PageMeta } from '../../../preload'
 
 const PAGE_EMOJIS = [
@@ -111,6 +112,7 @@ interface Doc {
 
 function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
 
   const [revealed, setRevealed] = useState(visible)
   useEffect(() => {
@@ -145,8 +147,8 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
   const commitTitle = useCallback(async () => {
     titleFocused.current = false
     const id = selectedRef.current
-    if (id) await window.api.renameNotePage(scope, scopeId, id, { title: titleDraftRef.current })
-  }, [scope, scopeId])
+    if (id) await api.renameNotePage(scope, scopeId, id, { title: titleDraftRef.current })
+  }, [scope, scopeId, api])
 
   const staleExternal = useRef<string | null>(null)
 
@@ -162,7 +164,7 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
   useEffect(() => {
     let alive = true
     const saved = readOpenState(scope, scopeId)
-    window.api.listNotePages(scope, scopeId).then((pgs) => {
+    api.listNotePages(scope, scopeId).then((pgs) => {
       if (!alive) return
       setPages(pgs)
       const restore = saved && pgs.some((p) => p.id === saved.pageId) ? saved : null
@@ -175,7 +177,7 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
     return () => {
       alive = false
     }
-  }, [scope, scopeId])
+  }, [scope, scopeId, api])
 
   useEffect(() => {
     if (selectedId) writeOpenPage(selectedId)
@@ -197,13 +199,13 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
     }
     let alive = true
     setStale(false)
-    window.api.readNotePage(scope, scopeId, selectedId).then((content) => {
+    api.readNotePage(scope, scopeId, selectedId).then((content) => {
       if (alive) setDoc((d) => ({ content, version: d.version + 1, loaded: true }))
     })
     return () => {
       alive = false
     }
-  }, [scope, scopeId, selectedId])
+  }, [scope, scopeId, selectedId, api])
 
   useEffect(() => {
     if (titleFocused.current) return
@@ -212,7 +214,7 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
   }, [selectedId, pages])
 
   useEffect(() => {
-    return window.api.onNotesState((s) => {
+    return api.onNotesState((s) => {
       if (s.scope !== scope || s.id !== scopeId) return
       if (s.type === 'tree') {
         setPages(s.pages)
@@ -235,9 +237,9 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
         }
       }
     })
-  }, [scope, scopeId])
+  }, [scope, scopeId, api])
 
-  const flush = () => saveQueue.flush((pageId, md) => window.api.writeNotePage(scope, scopeId, pageId, md))
+  const flush = () => saveQueue.flush((pageId, md) => api.writeNotePage(scope, scopeId, pageId, md))
   const prepareMemoryEviction = useCallback(async () => {
     clearTimeout(saveTimer.current)
     const id = selectedRef.current
@@ -292,19 +294,19 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
   }
 
   const create = async (parentId: string | null) => {
-    const p = await window.api.createNotePage(scope, scopeId, { title: t('notes.untitled'), parentId })
+    const p = await api.createNotePage(scope, scopeId, { title: t('notes.untitled'), parentId })
     if (p) selectPage(p.id)
   }
 
   const remove = (id: string) => setPendingDelete(id)
   const confirmDelete = () => {
-    if (pendingDelete) window.api.deleteNotePage(scope, scopeId, pendingDelete)
+    if (pendingDelete) api.deleteNotePage(scope, scopeId, pendingDelete)
     setPendingDelete(null)
   }
   const move = (id: string, parentId: string | null, order: number) =>
-    window.api.moveNotePage(scope, scopeId, id, parentId, order)
+    api.moveNotePage(scope, scopeId, id, parentId, order)
   const doMerge = async () => {
-    const r = await window.api.mergeNotes(scopeId)
+    const r = await api.mergeNotes(scopeId)
     setMsg(r.message)
     setTimeout(() => setMsg(null), 4000)
   }
@@ -317,12 +319,12 @@ function NotesPanelImpl({ scope, scopeId, showMerge, visible = true }: Props) {
     staleExternal.current = null
     if (ext != null) setDoc((d) => ({ content: ext, version: d.version + 1, loaded: true }))
     else
-      window.api
+      api
         .readNotePage(scope, scopeId, selectedId)
         .then((c) => setDoc((d) => ({ content: c, version: d.version + 1, loaded: true })))
   }
   const setEmoji = (emoji: string | null) => {
-    if (selectedId) window.api.renameNotePage(scope, scopeId, selectedId, { emoji })
+    if (selectedId) api.renameNotePage(scope, scopeId, selectedId, { emoji })
     setEmojiOpen(false)
   }
   const selectedPage = pages.find((p) => p.id === selectedId)

@@ -5,6 +5,7 @@ import { diffLines } from 'diff'
 import { Check, MessageSquarePlus, Trash2, Pencil, BookOpen, GitCompare, Sparkles, SquarePlus } from 'lucide-react'
 import type { PlanReceived, PlanDecision, PlanDecisionResponse } from '../../preload'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { Button } from '@/components/ui/button'
 import { MarkdownViewer, type CommentCtx } from '@/components/MarkdownViewer'
 import { planDecisionError } from '@/lib/plan-decision'
@@ -28,6 +29,7 @@ function planHash(text: string): string {
 
 export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [text, setText] = useState(plan.plan)
   const [feedback, setFeedback] = useState('')
   const [mode, setMode] = useState<Mode>('read')
@@ -47,7 +49,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     setBusy(false)
     setDecisionError(null)
     setEditingLine(null)
-    void window.api.getPlanDraft(plan.agentId).then((raw) => {
+    void api.getPlanDraft(plan.agentId).then((raw) => {
       if (!alive) return
       const draft = raw as {
         version?: number
@@ -70,7 +72,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
         )
         return
       }
-      window.api.savePlanDraft(plan.agentId, null)
+      api.savePlanDraft(plan.agentId, null)
       setText(plan.plan)
       setFeedback('')
       setLineComments({})
@@ -79,7 +81,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
     return () => {
       alive = false
     }
-  }, [currentHash, plan.agentId, plan.plan, plan.previousPlan, plan.version])
+  }, [currentHash, plan.agentId, plan.plan, plan.previousPlan, plan.version, api])
 
   const commentList = useMemo(
     () =>
@@ -92,7 +94,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
   const canRevise = !!feedback.trim() || edited || commentList.length > 0
 
   const persistDraft = useCallback(() => {
-    window.api.savePlanDraft(plan.agentId, {
+    api.savePlanDraft(plan.agentId, {
       version: plan.version,
       planHash: currentHash,
       text,
@@ -100,7 +102,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
       lineComments,
       mode,
     })
-  }, [currentHash, feedback, lineComments, mode, plan.agentId, plan.version, text])
+  }, [currentHash, feedback, lineComments, mode, plan.agentId, plan.version, text, api])
 
   const decide = async (d: PlanDecision) => {
     setBusy(true)
@@ -113,7 +115,7 @@ export function PlanPanel({ plan, onDecide, onOpenFile }: Props) {
         setDecisionError(error)
         return false
       }
-      window.api.savePlanDraft(plan.agentId, null)
+      api.savePlanDraft(plan.agentId, null)
       return true
     } catch (error) {
       setBusy(false)

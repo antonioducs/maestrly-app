@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import type { MultiReviewData, ReviewData, ReviewError } from '../../preload'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { Button } from '@/components/ui/button'
 import { ConflictResolver } from '@/components/ConflictResolver'
 
@@ -42,6 +43,7 @@ const ERROR_HINT_KEY: Record<ReviewError, string> = {
 
 export function ReviewPanel({ convId, visible, onOpenFile, onOpenUrl }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [data, setData] = useState<MultiReviewData | null>(null)
   const [loading, setLoading] = useState(false)
   const [sub, setSub] = useState<Sub>('diff')
@@ -59,7 +61,7 @@ export function ReviewPanel({ convId, visible, onOpenFile, onOpenUrl }: Props) {
     const my = ++reqId.current
     setLoading(true)
     try {
-      const d = await window.api.getReview(convId)
+      const d = await api.getReview(convId)
       if (my === reqId.current) {
         setData(d)
         setRepoIdx(0)

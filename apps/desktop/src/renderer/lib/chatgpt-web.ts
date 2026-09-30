@@ -44,7 +44,7 @@ export type ChatGptWebCompanionLifecycleApi = Pick<
 
 export async function startChatGptWebCompanion(
   conversationId: string,
-  api: ChatGptWebCompanionLifecycleApi = window.api
+  api: ChatGptWebCompanionLifecycleApi
 ): Promise<ChatGptWebStartOutcome> {
   const result = await api.chatGptWebCompanionStart(conversationId)
   if (!result.ok || !result.kickoff) throw new Error(result.error || 'session-not-found')
@@ -71,7 +71,7 @@ export async function restartChatGptWebCompanion(
   conversationId: string,
   capabilities: ChatGptWebCapabilities,
   reviewLoopActive: boolean,
-  api: ChatGptWebCompanionLifecycleApi = window.api
+  api: ChatGptWebCompanionLifecycleApi
 ): Promise<ChatGptWebRestartOutcome> {
   if (reviewLoopActive) throw new Error('review-loop-active')
   const ended = await api.chatGptWebCompanionEnd(conversationId)

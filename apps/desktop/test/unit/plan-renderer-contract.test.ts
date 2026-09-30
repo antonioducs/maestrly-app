@@ -16,8 +16,8 @@ describe('plan decision failure in the renderer', () => {
     const host = source('src/renderer/panel.tsx')
     const panel = source('src/renderer/components/PlanPanel.tsx')
 
-    expect(host).toContain('onDecide={(d) => window.api.decidePlan(conv, d)}')
-    expect(host).not.toContain('onDecide={(d) => void window.api.decidePlan(conv, d)}')
+    expect(host).toContain('onDecide={(d) => api.decidePlan(conv, d)}')
+    expect(host).not.toContain('onDecide={(d) => void api.decidePlan(conv, d)}')
     expect(panel).toContain('setBusy(false)')
     expect(panel).toContain("t('panel.planDecisionFailed', { error: decisionError })")
   })

@@ -11,25 +11,29 @@ import { BrowserChrome } from '@/components/BrowserChrome'
 import { TerminalTabs } from '@/components/TerminalTabs'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { i18n, initRendererI18n } from './lib/i18n'
+import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
 import type { PlanReceived } from '../preload'
+import { LOCAL_HOST_ID } from '../shared/host-key'
 import './styles.css'
 
 const params = new URLSearchParams(location.search)
 const panel = params.get('panel') ?? ''
 const conv = params.get('conv') ?? ''
+const host = params.get('host') ?? LOCAL_HOST_ID
 
 function PlanPanelHost({ conv }: { conv: string }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [plan, setPlan] = useState<PlanReceived | null>(null)
   useEffect(() => {
     let alive = true
-    void window.api.getPendingPlan(conv).then((p) => {
+    void api.getPendingPlan(conv).then((p) => {
       if (alive && p) setPlan(p)
     })
-    const offR = window.api.onPlanReceived((p) => {
+    const offR = api.onPlanReceived((p) => {
       if (p.agentId === conv) setPlan(p)
     })
-    const offC = window.api.onPlanCleared(({ agentId }) => {
+    const offC = api.onPlanCleared(({ agentId }) => {
       if (agentId === conv) setPlan(null)
     })
     return () => {
@@ -37,7 +41,7 @@ function PlanPanelHost({ conv }: { conv: string }) {
       offR()
       offC()
     }
-  }, [conv])
+  }, [conv, api])
   if (!plan) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
@@ -48,8 +52,8 @@ function PlanPanelHost({ conv }: { conv: string }) {
   return (
     <PlanPanel
       plan={plan}
-      onDecide={(d) => window.api.decidePlan(conv, d)}
-      onOpenFile={(filePath, line) => void window.api.openPlanFile(conv, filePath, line)}
+      onDecide={(d) => api.decidePlan(conv, d)}
+      onOpenFile={(filePath, line) => void api.openPlanFile(conv, filePath, line)}
     />
   )
 }
@@ -72,6 +76,7 @@ function TerminalPanelHost({ conv }: { conv: string }) {
 }
 
 function PanelRoot() {
+  const api = useHostApi()
   switch (panel) {
     case 'notes':
       return <NotesPanel key={conv} scope="conv" scopeId={conv} showMerge visible />
@@ -80,7 +85,7 @@ function PanelRoot() {
         <ReviewPanel
           convId={conv}
           visible
-          onOpenFile={(path, line) => void window.api.openPlanFile(conv, path, line)}
+          onOpenFile={(path, line) => void api.openPlanFile(conv, path, line)}
           onOpenUrl={(url) => void window.api.openExternalUrl(url)}
         />
       )
@@ -101,7 +106,9 @@ void initRendererI18n().finally(() => {
       <I18nextProvider i18n={i18n}>
         <ErrorBoundary>
           <div className="h-screen w-screen bg-surface text-foreground">
-            <PanelRoot />
+            <HostProvider hostId={host}>
+              <PanelRoot />
+            </HostProvider>
           </div>
         </ErrorBoundary>
       </I18nextProvider>

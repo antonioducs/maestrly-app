@@ -33,6 +33,7 @@ import type { ChatGptWebCapabilitiesInfo } from '../../shared/chat'
 import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
@@ -109,6 +110,7 @@ export function Drawer({
   chatGptWebEnabled,
 }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const tabDefs = mainTabDefs(t)
   const convId = activeConv?.id ?? null
   const setTab = onTabChange
@@ -165,7 +167,7 @@ export function Drawer({
       window.api.drawerReattach(convId, t)
       return
     }
-    if (t === 'browser') window.api.drawerEnsureBrowser(convId)
+    if (t === 'browser') api.drawerEnsureBrowser(convId)
     if (t === 'vscode') {
       if (!activeConv) return
       void window.api
@@ -222,16 +224,16 @@ export function Drawer({
           | undefined) ?? null
       )
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptSession(null))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [convId, chatGptWebEnabled])
+  }, [convId, chatGptWebEnabled, api])
 
   useEffect(() => {
     setChatGptError(null)
@@ -249,7 +251,7 @@ export function Drawer({
     }
     let alive = true
     setChatGptCapabilities(null)
-    void window.api
+    void api
       .chatGptWebCapabilities(convId)
       .then((value) => {
         if (alive) setChatGptCapabilities(value)
@@ -260,15 +262,15 @@ export function Drawer({
     return () => {
       alive = false
     }
-  }, [convId, chatGptWebEnabled, chatGptSessionActive])
+  }, [convId, chatGptWebEnabled, chatGptSessionActive, api])
 
   const startCompanion = async (): Promise<void> => {
     if (!convId || chatGptStarting || !chatGptCapabilities?.editable) return
     setChatGptStarting(true)
     setChatGptError(null)
     try {
-      const saved = await window.api.chatGptWebSetCapabilities(convId, chatGptCapabilities.capabilities)
-      const result = await startChatGptWebCompanion(convId)
+      const saved = await api.chatGptWebSetCapabilities(convId, chatGptCapabilities.capabilities)
+      const result = await startChatGptWebCompanion(convId, api)
       setChatGptCapabilities({ ...saved, editable: false })
       setChatGptPromptCopied(result.promptCopied)
     } catch (cause) {
@@ -287,13 +289,12 @@ export function Drawer({
       const capabilities = chatGptCapabilities.capabilities
 
       const result = await restartChatGptWebCompanion(convId, capabilities, chatGptReviewLoopActive, {
-        chatGptWebCompanionStart: (conversationId) => window.api.chatGptWebCompanionStart(conversationId),
-        chatGptWebCompanionCopyPrompt: (conversationId) => window.api.chatGptWebCompanionCopyPrompt(conversationId),
-        chatGptWebCompanionOpen: (conversationId) => window.api.chatGptWebCompanionOpen(conversationId),
-        chatGptWebSetCapabilities: (conversationId, value) =>
-          window.api.chatGptWebSetCapabilities(conversationId, value),
+        chatGptWebCompanionStart: (conversationId) => api.chatGptWebCompanionStart(conversationId),
+        chatGptWebCompanionCopyPrompt: (conversationId) => api.chatGptWebCompanionCopyPrompt(conversationId),
+        chatGptWebCompanionOpen: (conversationId) => api.chatGptWebCompanionOpen(conversationId),
+        chatGptWebSetCapabilities: (conversationId, value) => api.chatGptWebSetCapabilities(conversationId, value),
         chatGptWebCompanionEnd: async (conversationId) => {
-          const ended = await window.api.chatGptWebCompanionEnd(conversationId)
+          const ended = await api.chatGptWebCompanionEnd(conversationId)
           previousSessionEnded = ended.ok
           return ended
         },
@@ -305,7 +306,7 @@ export function Drawer({
       const detail = cause instanceof Error ? cause.message : String(cause)
       if (previousSessionEnded) {
         try {
-          setChatGptCapabilities(await window.api.chatGptWebCapabilities(convId))
+          setChatGptCapabilities(await api.chatGptWebCapabilities(convId))
         } catch {}
       }
       setChatGptError(
@@ -322,7 +323,7 @@ export function Drawer({
     if (!convId) return
     setChatGptError(null)
     try {
-      setChatGptCapabilities(await window.api.chatGptWebCapabilities(convId))
+      setChatGptCapabilities(await api.chatGptWebCapabilities(convId))
       setChatGptAccessOpen(true)
     } catch (cause) {
       setChatGptError(cause instanceof Error ? cause.message : String(cause))
@@ -333,7 +334,7 @@ export function Drawer({
     if (!convId || chatGptCopying) return
     setChatGptCopying(true)
     try {
-      const result = await window.api.chatGptWebCompanionCopyPrompt(convId)
+      const result = await api.chatGptWebCompanionCopyPrompt(convId)
       setChatGptPromptCopied(result.ok)
     } catch {
       setChatGptPromptCopied(false)
@@ -396,8 +397,8 @@ export function Drawer({
   }, [tab, suspended, paletteOpen, convId, visible, floating, chatGptSessionActive, chatGptAccessOpen])
 
   useEffect(() => {
-    if (visible && tab === 'browser' && convId) window.api.drawerEnsureBrowser(convId)
-  }, [visible, tab, convId])
+    if (visible && tab === 'browser' && convId) api.drawerEnsureBrowser(convId)
+  }, [visible, tab, convId, api])
 
   useEffect(() => {
     if (visible && tab === 'vscode' && activeConv) {

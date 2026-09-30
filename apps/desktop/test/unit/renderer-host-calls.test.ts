@@ -14,17 +14,6 @@ const hostMembers = new Set(Object.keys(makeHostApi(noop)))
 
 // Files and directories not migrated yet. Entries are only ever removed.
 const PENDING: string[] = [
-  'components/Drawer.tsx',
-  'components/BrowserChrome.tsx',
-  'components/ShellTerminalView.tsx',
-  'components/TerminalTabs.tsx',
-  'components/PopupOverlay.tsx',
-  'components/PlanPanel.tsx',
-  'components/ReviewPanel.tsx',
-  'components/notes',
-  'components/ProjectMemoryView.tsx',
-  'components/ProjectNotesView.tsx',
-  'panel.tsx',
   'DesktopApp.tsx',
   'BotInstanceApp.tsx',
   'components/sidebar',

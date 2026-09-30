@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { openChatGptWebAppSettings, startChatGptWebCompanion } from '../../src/renderer/lib/chatgpt-web'
+import {
+  type ChatGptWebCompanionLifecycleApi,
+  openChatGptWebAppSettings,
+  startChatGptWebCompanion,
+} from '../../src/renderer/lib/chatgpt-web'
 import {
   applyNormalAttention,
   applyChatGptTurnCompleted,
@@ -12,20 +16,21 @@ import {
 
 afterEach(() => vi.unstubAllGlobals())
 
+/** The host members a case stubs; the flow must not need the others. */
+const lifecycleApi = (members: Record<string, unknown>) => members as unknown as ChatGptWebCompanionLifecycleApi
+
 describe('shared companion enablement flow', () => {
   it('starts sessions, copies prompts and opens matching views', async () => {
     const start = vi.fn(async () => ({ ok: true, kickoff: 'prompt-seguro', pairingRequired: true }))
     const open = vi.fn(async () => ({ ok: true }))
     const copy = vi.fn(async () => ({ ok: true }))
-    vi.stubGlobal('window', {
-      api: {
-        chatGptWebCompanionStart: start,
-        chatGptWebCompanionCopyPrompt: copy,
-        chatGptWebCompanionOpen: open,
-      },
+    const api = lifecycleApi({
+      chatGptWebCompanionStart: start,
+      chatGptWebCompanionCopyPrompt: copy,
+      chatGptWebCompanionOpen: open,
     })
 
-    await expect(startChatGptWebCompanion('conv-1')).resolves.toEqual({ pairingRequired: true, promptCopied: true })
+    await expect(startChatGptWebCompanion('conv-1', api)).resolves.toEqual({ pairingRequired: true, promptCopied: true })
     expect(start).toHaveBeenCalledWith('conv-1')
     expect(copy).toHaveBeenCalledWith('conv-1')
     expect(open).toHaveBeenCalledWith('conv-1')
@@ -34,19 +39,17 @@ describe('shared companion enablement flow', () => {
   it('resumes paired conversations without copying again', async () => {
     const copy = vi.fn()
     const open = vi.fn(async () => ({ ok: true }))
-    vi.stubGlobal('window', {
-      api: {
-        chatGptWebCompanionStart: vi.fn(async () => ({
-          ok: true,
-          kickoff: 'prompt-seguro',
-          pairingRequired: false,
-        })),
-        chatGptWebCompanionCopyPrompt: copy,
-        chatGptWebCompanionOpen: open,
-      },
+    const api = lifecycleApi({
+      chatGptWebCompanionStart: vi.fn(async () => ({
+        ok: true,
+        kickoff: 'prompt-seguro',
+        pairingRequired: false,
+      })),
+      chatGptWebCompanionCopyPrompt: copy,
+      chatGptWebCompanionOpen: open,
     })
 
-    await expect(startChatGptWebCompanion('conv-resume')).resolves.toEqual({
+    await expect(startChatGptWebCompanion('conv-resume', api)).resolves.toEqual({
       pairingRequired: false,
       promptCopied: true,
     })
@@ -56,19 +59,17 @@ describe('shared companion enablement flow', () => {
 
   it('opens ChatGPT after clipboard failure and leaves UI retry available', async () => {
     const open = vi.fn(async () => ({ ok: true }))
-    vi.stubGlobal('window', {
-      api: {
-        chatGptWebCompanionStart: vi.fn(async () => ({
-          ok: true,
-          kickoff: 'prompt-seguro',
-          pairingRequired: true,
-        })),
-        chatGptWebCompanionCopyPrompt: vi.fn(async () => ({ ok: false, error: 'clipboard-failed' })),
-        chatGptWebCompanionOpen: open,
-      },
+    const api = lifecycleApi({
+      chatGptWebCompanionStart: vi.fn(async () => ({
+        ok: true,
+        kickoff: 'prompt-seguro',
+        pairingRequired: true,
+      })),
+      chatGptWebCompanionCopyPrompt: vi.fn(async () => ({ ok: false, error: 'clipboard-failed' })),
+      chatGptWebCompanionOpen: open,
     })
 
-    await expect(startChatGptWebCompanion('conv-copy-fail')).resolves.toEqual({
+    await expect(startChatGptWebCompanion('conv-copy-fail', api)).resolves.toEqual({
       pairingRequired: true,
       promptCopied: false,
     })
@@ -77,13 +78,11 @@ describe('shared companion enablement flow', () => {
 
   it('does not open views when session start fails', async () => {
     const open = vi.fn()
-    vi.stubGlobal('window', {
-      api: {
-        chatGptWebCompanionStart: vi.fn(async () => ({ ok: false, error: 'not-configured' })),
-        chatGptWebCompanionOpen: open,
-      },
+    const api = lifecycleApi({
+      chatGptWebCompanionStart: vi.fn(async () => ({ ok: false, error: 'not-configured' })),
+      chatGptWebCompanionOpen: open,
     })
-    await expect(startChatGptWebCompanion('conv-2')).rejects.toThrow('not-configured')
+    await expect(startChatGptWebCompanion('conv-2', api)).rejects.toThrow('not-configured')
     expect(open).not.toHaveBeenCalled()
   })
 })

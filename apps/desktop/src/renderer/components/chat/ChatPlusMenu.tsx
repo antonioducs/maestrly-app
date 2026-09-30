@@ -209,7 +209,7 @@ export function ChatPlusMenu({
         const saved = await api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities)
         setCompanionCapabilities(saved)
       }
-      await startChatGptWebCompanion(conversationId)
+      await startChatGptWebCompanion(conversationId, api)
       setActivePanel(null)
     } catch (cause) {
       setCompanionError(cause instanceof Error ? cause.message : String(cause))

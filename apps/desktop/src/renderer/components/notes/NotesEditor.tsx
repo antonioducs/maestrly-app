@@ -10,7 +10,8 @@ import { Plugin, PluginKey } from '@milkdown/prose/state'
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/prose/view'
 import { renderMermaid, mermaidError } from '@/lib/mermaid'
 import { i18n } from '@/lib/i18n'
-import type { NotesScope } from '../../../preload'
+import { useHostApi } from '@/lib/hosts/host-context'
+import type { HostApi, NotesScope } from '../../../preload'
 import {
   notesSearchPlugin,
   setSearch,
@@ -75,6 +76,7 @@ const ACCEPTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'im
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 async function persistNoteImage(
+  api: HostApi,
   scope: NotesScope,
   id: string,
   file: File,
@@ -90,7 +92,7 @@ async function persistNoteImage(
     return null
   }
   try {
-    const res = await window.api.uploadNoteImage(scope, id, file.type, await file.arrayBuffer())
+    const res = await api.uploadNoteImage(scope, id, file.type, await file.arrayBuffer())
     if (res.ok) return res.relPath
     onError(res.error)
   } catch {
@@ -100,6 +102,7 @@ async function persistNoteImage(
 }
 
 async function filesToImageNodes(
+  api: HostApi,
   files: File[],
   schema: Schema,
   scope: NotesScope,
@@ -109,7 +112,7 @@ async function filesToImageNodes(
   const nodes: ProseNode[] = []
   for (const file of files) {
     if (!file.type.startsWith('image/')) continue
-    const rel = await persistNoteImage(scope, id, file, onError)
+    const rel = await persistNoteImage(api, scope, id, file, onError)
     if (!rel) continue
     const node = schema.nodes['image']?.createAndFill({
       src: rel,
@@ -177,6 +180,7 @@ function readScrollTop(targets: HTMLElement[]): number {
 }
 
 export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope, initialScrollTop, onScroll }: Props) {
+  const api = useHostApi()
   const rootRef = useRef<HTMLDivElement>(null)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -268,12 +272,12 @@ export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope
                 onUpload: async (file: File): Promise<string> => {
                   const s = imageScopeRef.current
                   if (!s) return ''
-                  return (await persistNoteImage(s.scope, s.id, file, (m) => showImgError.current(m))) ?? ''
+                  return (await persistNoteImage(api, s.scope, s.id, file, (m) => showImgError.current(m))) ?? ''
                 },
                 proxyDomURL: async (url: string): Promise<string> => {
                   const s = imageScopeRef.current
                   if (!url || !s || /^(https?:|data:|blob:)/i.test(url)) return url
-                  return (await window.api.readNoteAsset(s.scope, s.id, url)) || url
+                  return (await api.readNoteAsset(s.scope, s.id, url)) || url
                 },
               },
             }
@@ -304,7 +308,7 @@ export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope
           uploader: async (files: FileList, schema: Schema): Promise<ProseNode[]> => {
             const s = imageScopeRef.current
             if (!s) return []
-            return filesToImageNodes(Array.from(files), schema, s.scope, s.id, (m) => showImgError.current(m))
+            return filesToImageNodes(api, Array.from(files), schema, s.scope, s.id, (m) => showImgError.current(m))
           },
         }))
       })
@@ -343,7 +347,7 @@ export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope
             }
             view.dispatch(view.state.tr.setMeta(imagePastePluginKey, addPlaceholder))
             void (async () => {
-              const nodes = await filesToImageNodes(files, view.state.schema, s.scope, s.id, (m) =>
+              const nodes = await filesToImageNodes(api, files, view.state.schema, s.scope, s.id, (m) =>
                 showImgError.current(m)
               )
               if (view.isDestroyed) return
@@ -418,7 +422,7 @@ export function NotesEditor({ pageId, value, onChange, onFocusChange, imageScope
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [api])
 
   useEffect(() => {
     const v = viewRef.current

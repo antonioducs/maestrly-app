@@ -13,6 +13,7 @@ import {
   sanitizeOpenTabs,
   tabAvailableInContext,
 } from '@/lib/drawer-tabs'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 const MIN_DRAWER = 360
 
@@ -27,6 +28,7 @@ type UseDrawerStateParams = {
 }
 
 export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerStateParams) {
+  const api = useHostApi()
   const shortcutOs = window.api.platformInfo.os
   const [drawerShortcutLabel, setDrawerShortcutLabel] = useState(() =>
     formatAccelerator(defaultDrawerShortcut(shortcutOs), shortcutOs)
@@ -50,16 +52,16 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     const apply = (status: { enabled: boolean }) => {
       if (alive) setChatGptWebEnabled(status.enabled)
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptWebEnabled(false))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const [drawerOpenByConv, setDrawerOpenByConv] = useState<Record<string, boolean>>({})
   const drawerOpen = active ? (drawerOpenByConv[active.id] ?? false) : false
@@ -83,9 +85,12 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const drawerTabRef = useRef(drawerTabByConv)
   drawerTabRef.current = drawerTabByConv
 
-  const persistOpenTabs = useCallback((id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
-    window.api.setConvOpenTabs(id, tabs, activeTab)
-  }, [])
+  const persistOpenTabs = useCallback(
+    (id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
+      api.setConvOpenTabs(id, tabs, activeTab)
+    },
+    [api]
+  )
 
   /** Adds the tab to the bar when needed, activates it and persists the set. */
   const openDrawerTab = useCallback(
@@ -189,16 +194,19 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
 
   const mainTabOrderRef = useRef(mainTabOrderByConv)
   mainTabOrderRef.current = mainTabOrderByConv
-  const reorderMainTabs = useCallback((from: number, to: number) => {
-    const id = activeRef.current?.id
-    if (!id) return
-    const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
-    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
-    const next = reorderVisibleTabs(full, visible, from, to)
-    if (next === full) return
-    window.api.setConvMainTabOrder(id, next)
-    setMainTabOrderByConv((prev) => ({ ...prev, [id]: next }))
-  }, [])
+  const reorderMainTabs = useCallback(
+    (from: number, to: number) => {
+      const id = activeRef.current?.id
+      if (!id) return
+      const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
+      const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
+      const next = reorderVisibleTabs(full, visible, from, to)
+      if (next === full) return
+      api.setConvMainTabOrder(id, next)
+      setMainTabOrderByConv((prev) => ({ ...prev, [id]: next }))
+    },
+    [api]
+  )
 
   const forgetConvDrawerState = useCallback((id: string) => {
     const drop = <T>(prev: Record<string, T>): Record<string, T> => {
@@ -238,21 +246,21 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   }, [])
 
   useEffect(() => {
-    const offFocus = window.api.onDrawerTerminalFocus(({ convId }) => {
+    const offFocus = api.onDrawerTerminalFocus(({ convId }) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'terminal')
     })
     return () => {
       offFocus()
     }
-  }, [openDrawerTab])
+  }, [openDrawerTab, api])
 
   useEffect(() => {
-    return window.api.onChatGptWebOpen((convId) => {
+    return api.onChatGptWebOpen((convId) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'chatgpt')
     })
-  }, [openDrawerTab])
+  }, [openDrawerTab, api])
 
   useEffect(() => {
     return window.api.onDebugEnsureVscode((convId) => {
