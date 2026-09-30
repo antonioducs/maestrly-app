@@ -27,6 +27,7 @@ import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
+import { hostFsApi } from '../../src/preload/api-host-fs'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -70,6 +71,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['fleetApi', fleetApi],
   ['fleetInstallerApi', fleetInstallerApi],
   ['hostsApi', hostsApi],
+  ['hostFsApi', hostFsApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -237,7 +239,7 @@ describe('preload API — exposure', () => {
   })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(490)
+    expect(keys).toHaveLength(493)
     expect(keys.sort()).toMatchSnapshot()
   })
 

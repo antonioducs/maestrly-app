@@ -123,6 +123,7 @@ export type * from './api-platform'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
 export type * from './api-hosts'
+export type * from './api-host-fs'
 
 /** This computer's app, window and devices: never routed to another host. */
 const localApi = {

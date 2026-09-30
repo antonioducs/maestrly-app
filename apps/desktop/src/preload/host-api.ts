@@ -3,6 +3,7 @@ import { botApi, makeBotApi } from './api-bot'
 import { chatApi, makeChatApi } from './api-chat'
 import { conversationMigrationApi, makeConversationMigrationApi } from './api-conversation-migration'
 import { drawerHostApi, makeDrawerHostApi } from './api-drawer'
+import { hostFsApi, makeHostFsApi } from './api-host-fs'
 import { localDataApi, makeLocalDataApi } from './api-local-data'
 import { makeMemoryApi, memoryApi } from './api-memory'
 import { makeNotesApi, notesApi } from './api-notes'
@@ -35,6 +36,7 @@ export function makeHostApi(ipcRenderer: IpcTransport) {
     ...makeChatApi(ipcRenderer),
     ...makePlatformApi(ipcRenderer),
     ...makeBotApi(ipcRenderer),
+    ...makeHostFsApi(ipcRenderer),
   }
 }
 export type HostApi = ReturnType<typeof makeHostApi>
@@ -57,4 +59,5 @@ export const localHostApi: HostApi = {
   ...chatApi,
   ...platformApi,
   ...botApi,
+  ...hostFsApi,
 }
