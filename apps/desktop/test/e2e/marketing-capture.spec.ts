@@ -462,10 +462,14 @@ test('captures the integrated desktop product surfaces', async () => {
     await expect(win.getByTitle(/Chat mode/)).toBeFocused()
 
     const toolMessage = win.locator('[data-msg-id="marketing-assistant-2"]')
-    await toolMessage.getByRole('button').filter({ hasText: 'bash' }).click()
+    // The command sits in the answer's activity line: open it, then the step.
+    await toolMessage.getByTitle('Show what the agent did').click()
+    const step = toolMessage.getByRole('button').filter({ hasText: 'npm run typecheck' })
+    await step.click()
     await expect(toolMessage.getByText('Arguments', { exact: true })).toBeVisible()
     await capture(win, 'tool-calls.png')
-    await toolMessage.getByRole('button').filter({ hasText: 'bash' }).click()
+    await step.click()
+    await toolMessage.getByTitle('Hide what the agent did').click()
 
     await win.getByTitle('Toggle drawer').click()
     // Drawer tabs open on demand: pick Review from the "+" palette instead of an always-present tab.

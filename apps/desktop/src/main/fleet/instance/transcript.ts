@@ -5,6 +5,7 @@ import {
   FLEET_TOOL_OUTPUT_MAX,
   FLEET_TODO_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
+  FLEET_REASONING_TEXT_MAX,
   compareFleetTranscriptItems,
   fleetTranscriptItemSchema,
   type FleetTranscriptItem,
@@ -231,7 +232,19 @@ export function projectMessages(
     for (const [index, part] of message.parts.entries()) {
       const id = linked && index === 0 ? linked.itemId : `${message.id}:${index}`
       const time = at(message.createdAt)
-      if (part.type === 'reasoning') continue
+      if (part.type === 'reasoning') {
+        // Readers that did not ask for reasoning never get these items (`transcript-reasoning`).
+        if (message.role === 'assistant' && part.text.trim())
+          items.push({
+            kind: 'reasoning',
+            id,
+            at: time,
+            text: short(part.text, FLEET_REASONING_TEXT_MAX),
+            truncated: part.text.length > FLEET_REASONING_TEXT_MAX,
+            streaming: !message.finishReason && !message.error,
+          })
+        continue
+      }
       if (part.type === 'compaction') {
         const runtime = part.strategy?.endsWith('-native') === true
         items.push({

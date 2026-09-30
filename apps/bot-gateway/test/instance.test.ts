@@ -117,3 +117,32 @@ describe('instance client', () => {
     }
   })
 })
+
+describe('transcript reasoning', () => {
+  const at = '2026-09-29T10:00:00.000Z'
+  const reasoning = { kind: 'reasoning', id: 'm:0', at, text: 'Thinking', truncated: false, streaming: false }
+
+  it('asks a bot for reasoning items only for a device that asked for them', async () => {
+    const page = { items: [reasoning], before: null }
+    const origin = await instance({
+      'GET /v1/bots/alpha/transcript?limit=200&reasoning=1': json(200, page),
+      'GET /v1/bots/alpha/transcript?before=m%3A5&limit=20': json(200, { items: [], before: null }),
+    })
+    const client = new InstanceClient('work', 'control', origin).forBot('alpha', true)
+    expect(await client.transcript(undefined, 200, true)).toEqual(page)
+    expect(await client.transcript('m:5', 20)).toEqual({ items: [], before: null })
+  })
+
+  it('reads the event stream with reasoning items, which the gateway passes on to devices that ask', async () => {
+    const event = { seq: 1, at, botId: 'alpha', type: 'transcript.upsert', item: reasoning }
+    const origin = await instance({
+      'GET /v1/events?since=0&reasoning=1': (res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.end('id: 1\nevent: fleet\ndata: ' + JSON.stringify(event) + '\n\n')
+      },
+    })
+    const received = []
+    for await (const value of new InstanceClient('work', 'control', origin).events(0)) received.push(value)
+    expect(received).toEqual([event])
+  })
+})

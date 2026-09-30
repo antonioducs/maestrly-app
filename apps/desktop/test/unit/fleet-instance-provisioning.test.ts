@@ -234,7 +234,7 @@ it('upserts MCP servers and projects names instead of secret values', () => {
   expect(() => removeBotMcpServer(first.target!)).toThrow('does not exist')
 })
 
-it('advertises provisioning, environments and environment compaction in runtime status', async () => {
+it('advertises provisioning, environments, environment compaction and transcript reasoning in runtime status', async () => {
   const runtime = Object.create(BotRuntime.prototype) as BotRuntime
   Object.assign(runtime, {
     refreshAccounts: async () => {},
@@ -255,6 +255,7 @@ it('advertises provisioning, environments and environment compaction in runtime 
     'environments',
     'environment-compaction',
     'context-limit',
+    'transcript-reasoning',
   ])
 })
 

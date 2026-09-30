@@ -1,5 +1,6 @@
-import { Bell, BellOff, Bot, CheckCircle2, Languages, Volume2, VolumeX } from 'lucide-react'
+import { Bell, BellOff, Bot, CheckCircle2, Languages, ListCollapse, Volume2, VolumeX } from 'lucide-react'
 import { LOCALES, LOCALE_LABELS, type SupportedLocale } from '../../../shared/locale'
+import { AGENT_ACTIVITY_MODES, setAgentActivityMode, useAgentActivityMode } from '../../lib/agent-activity-preference'
 import {
   SOUND_EVENTS,
   SOUND_VOICES,
@@ -45,6 +46,44 @@ export function LanguageSection({
           >
             {locale === loc && <CheckCircle2 className="size-3.5" />}
             {LOCALE_LABELS[loc]}
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+export function AgentActivitySection({ t }: { t: TFn }) {
+  const mode = useAgentActivityMode()
+  return (
+    <section className="flex flex-col gap-3 border-t border-border pt-6">
+      <div>
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <ListCollapse className="size-4 text-muted-foreground" /> {t('settings.agentActivity.heading')}
+        </h2>
+        <p className="mt-0.5 text-[12px] text-muted-foreground">{t('settings.agentActivity.desc')}</p>
+      </div>
+      <div className="grid gap-1.5 sm:grid-cols-2">
+        {AGENT_ACTIVITY_MODES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setAgentActivityMode(option)}
+            aria-pressed={mode === option}
+            className={cn(
+              'flex items-start gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors',
+              mode === option
+                ? 'border-primary/50 bg-primary/10 text-foreground'
+                : 'border-border bg-white/[0.02] text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <CheckCircle2 className={cn('mt-0.5 size-4 shrink-0', mode === option ? 'opacity-100' : 'opacity-0')} />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">{t(`settings.agentActivity.${option}`)}</span>
+              <span className="block text-[11px] leading-snug text-muted-foreground">
+                {t(`settings.agentActivity.${option}Desc`)}
+              </span>
+            </span>
           </button>
         ))}
       </div>

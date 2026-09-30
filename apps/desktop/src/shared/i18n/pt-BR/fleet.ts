@@ -477,6 +477,7 @@ export default {
     loadOlder: 'Carregar anteriores',
     retry: 'Tentar novamente',
     working: 'Trabalhando…',
+    noOutput: 'Sem saída',
     wroteTo: 'Escreveu para {{bot}}',
     delivered: 'Entregue',
     notDelivered: 'Aguardando entrega',

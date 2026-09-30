@@ -294,9 +294,14 @@ async function fixture(conversationId: string, data: { records?: QueuedInput[]; 
     images,
     publish: (item) => published.push(item),
   })
-  /** The page the runtime cut from the whole transcript before: every message projected and sorted. */
-  const reference = (before: string | null, limit: number) => {
-    const native = projectChatMessages(listChatMessages(conversationId), queue.all(), (part) => images.toolRefs(part))
+  /**
+   * The page the runtime cut from the whole transcript before: every message projected and sorted, `reasoning` items
+   * only for a reader that asks for them.
+   */
+  const reference = (before: string | null, limit: number, reasoning = false) => {
+    const native = projectChatMessages(listChatMessages(conversationId), queue.all(), (part) =>
+      images.toolRefs(part)
+    ).filter((item) => reasoning || item.kind !== 'reasoning')
     const queued: FleetTranscriptItem[] = queue.list().map((entry) => ({
       kind: 'user',
       id: entry.itemId,
@@ -327,25 +332,35 @@ describe('bot transcript pages', () => {
       const conversationId = newConversation()
       const data = generate(conversationId, seed, 70)
       const { live, reference } = await fixture(conversationId, data)
-      for (const limit of [1, 2, 7, 50, 200, 500]) {
-        let before: string | null = null
-        let pages = 0
-        do {
-          const expected = reference(before, limit)
-          const actual = await live.page(before, limit)
-          expect(actual, `seed ${seed}, limit ${limit}, before ${before}`).toEqual(expected)
-          before = actual.before
-          pages++
-        } while (before && (limit > 2 || pages < 40))
-      }
+      for (const reasoning of [false, true])
+        for (const limit of [1, 2, 7, 50, 200, 500]) {
+          let before: string | null = null
+          let pages = 0
+          do {
+            const expected = reference(before, limit, reasoning)
+            const actual = await live.page(before, limit, reasoning)
+            expect(actual, `seed ${seed}, reasoning ${reasoning}, limit ${limit}, before ${before}`).toEqual(expected)
+            before = actual.before
+            pages++
+          } while (before && (limit > 2 || pages < 40))
+        }
     }
+  })
+
+  it('pages the reasoning of generated turns only for a reader that asks for it', async () => {
+    const conversationId = newConversation()
+    const { live } = await fixture(conversationId, generate(conversationId, 14, 70))
+    const kinds = async (reasoning: boolean) => (await live.page(null, 500, reasoning)).items.map((item) => item.kind)
+    // The generated conversation has reasoning; without asking, none of it comes.
+    expect(await kinds(true)).toContain('reasoning')
+    expect(await kinds(false)).not.toContain('reasoning')
   })
 
   it('takes any cursor the whole transcript takes, and gives the newest page for one that is gone', async () => {
     const conversationId = newConversation()
     const data = generate(conversationId, 21, 60)
     const { live, reference } = await fixture(conversationId, data)
-    const everything = reference(null, 500).items.map((item) => item.id)
+    const everything = reference(null, 500, true).items.map((item) => item.id)
     const cursors = [
       ...everything.filter((_, index) => index % 3 === 0),
       'missing:3',
@@ -363,7 +378,9 @@ describe('bot transcript pages', () => {
       cursors.push(`${native.id}:${index}`)
     }
     for (const cursor of cursors)
-      for (const limit of [1, 5, 40]) expect(await live.page(cursor, limit), cursor).toEqual(reference(cursor, limit))
+      for (const reasoning of [false, true])
+        for (const limit of [1, 5, 40])
+          expect(await live.page(cursor, limit, reasoning), cursor).toEqual(reference(cursor, limit, reasoning))
   })
 
   it('reads only the newest messages a page needs, however long the conversation', async () => {

@@ -447,6 +447,14 @@ export default {
       heading: 'Idioma',
       desc: 'Idioma da interface do app. Vale para todas as janelas na hora.',
     },
+    agentActivity: {
+      heading: 'Atividade do agente',
+      desc: 'Como as conversas com agentes e bots mostram o raciocínio, os comandos e as buscas por trás de cada resposta.',
+      compact: 'Compacta',
+      compactDesc: 'Uma linha por resposta, que você pode expandir.',
+      expanded: 'Expandida',
+      expandedDesc: 'Cada passo em um cartão próprio.',
+    },
     tabs: {
       heading: 'Abas da gaveta',
       desc: 'Ordem padrão das abas da gaveta. Conversas novas começam com ela; as que já existem mantêm a que você ajustou. Arraste para reordenar.',

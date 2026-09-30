@@ -7,12 +7,27 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- Experimental: see a bot's reasoning in its conversation, like in chats, once
+  its bot server and environment are updated. Older bot servers and computers
+  keep working without it.
+- Choose how conversations show agent activity in **Settings → Appearance &
+  sound → Agent activity**: **Compact** (the default) or **Expanded**, which
+  shows every reasoning block and tool card as before.
 - Experimental: see when bots can be updated and update them in one click with
   **Update bots**. Maestrly updates the bot server it installed, then each
   environment restarts on the new image once none of its bots is working,
   waiting for you, or under your control, even while your computer is off. An
   environment's view shows what its update waits for and offers **Update now**
   and **Cancel update**.
+
+### Changed
+
+- Fold the reasoning, commands, searches, and other tool steps behind each
+  answer into one activity line in chats, workspaces, subagent transcripts, and
+  bot conversations. While the agent works, the line shows its current step;
+  afterwards it summarizes what it did, including steps that failed or that you
+  denied. Open it to see every step and its details. The answer, questions,
+  plans, generated images, and tool screenshots stay in view.
 
 ### Fixed
 

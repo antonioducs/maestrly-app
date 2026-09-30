@@ -20,6 +20,7 @@ import {
   FLEET_SCREEN,
   FLEET_TODO_LIMITS,
   FLEET_TOOL_OUTPUT_MAX,
+  FLEET_REASONING_TEXT_MAX,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -463,6 +464,17 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     images: z.array(fleetImageRefSchema).max(FLEET_IMAGE_LIMITS.attachmentsMax).default([]),
   }),
   z.object({ ...transcriptBase, kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
+  /**
+   * The model's reasoning (`transcript-reasoning`): sent only to readers that ask for it, cut at
+   * `FLEET_REASONING_TEXT_MAX` (`truncated`).
+   */
+  z.object({
+    ...transcriptBase,
+    kind: z.literal('reasoning'),
+    text: z.string().max(FLEET_REASONING_TEXT_MAX),
+    truncated: z.boolean(),
+    streaming: z.boolean(),
+  }),
   z.object({
     ...transcriptBase,
     kind: z.literal('tool'),

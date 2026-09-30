@@ -15,7 +15,10 @@ import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, Chevr
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
+import { useAgentActivityMode } from '@/lib/agent-activity-preference'
+import { chatActivitySegments } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
+import { ChatAgentActivity } from './ChatAgentActivity'
 import { ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
 import { SubagentCard } from './SubagentCard'
@@ -592,6 +595,8 @@ const Bubble = memo(function Bubble({
   canEdit,
   isEditing,
   latestTodoId,
+  compact,
+  live,
   agents,
   onStartEdit,
   onCancelEdit,
@@ -607,6 +612,10 @@ const Bubble = memo(function Bubble({
   isEditing: boolean
 
   latestTodoId: string | null
+  /** Fold the reasoning and tool calls into an activity line (the compact agent-activity view). */
+  compact: boolean
+  /** This is the assistant message the running turn is writing. */
+  live: boolean
 
   agents?: SubagentAgentDto[] | null
   onStartEdit: (id: string, text: string) => void
@@ -691,7 +700,9 @@ const Bubble = memo(function Bubble({
         ))}
 
         {bodyText.trim() && (
-          <div className="whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-white/[0.05] px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground">
+          // Only paragraphs and list items keep line breaks: on the whole bubble, the line endings Markdown leaves
+          // between blocks showed as blank lines.
+          <div className="break-words rounded-xl border border-white/[0.06] bg-white/[0.05] px-3.5 py-2.5 text-[15px] leading-relaxed text-foreground [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap">
             <MarkdownViewer
               markdown={bodyText}
               onOpenMention={onOpenMention}
@@ -719,7 +730,8 @@ const Bubble = memo(function Bubble({
             )}
           </div>
         )}
-        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+        {/* Sits in the gap under the bubble (the list pulls the next message up by its height), shown on hover. */}
+        <div className="-mt-1 flex h-5 items-center justify-end gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [&_button]:p-[3px]">
           <CopyButton text={text} />
           {canEdit && (
             <button
@@ -750,35 +762,54 @@ const Bubble = memo(function Bubble({
     (part): part is Extract<MessagePart, { type: 'tool' }> => part.type === 'tool' && part.toolName === 'delegate'
   )
   const firstDelegateId = delegateParts[0]?.toolCallId
+  const renderPart = (p: MessagePart, i: number) =>
+    p.type === 'tool' && p.toolName === 'delegate' ? (
+      p.toolCallId === firstDelegateId ? (
+        <OrchestrationRun
+          key="maestro-orchestration-run"
+          parts={delegateParts}
+          conversationId={message.conversationId}
+          messageId={message.id}
+          onOpenMention={onOpenMention}
+        />
+      ) : null
+    ) : (
+      <Part
+        key={p.type === 'tool' ? p.toolCallId : `${p.type}-${i}`}
+        part={p}
+        latestTodoId={latestTodoId}
+        conversationId={message.conversationId}
+        messageId={message.id}
+        onOpenImage={onOpenImage}
+        onOpenMention={onOpenMention}
+        searchQuery={searchQuery}
+        currentSearchMatch={currentSearchMatch}
+      />
+    )
 
   const body = (
     <>
       <MemorySourcesChip message={message} variant="used" onOpenMention={onOpenMention} />
-      {message.parts.map((p, i) =>
-        p.type === 'tool' && p.toolName === 'delegate' ? (
-          p.toolCallId === firstDelegateId ? (
-            <OrchestrationRun
-              key="maestro-orchestration-run"
-              parts={delegateParts}
-              conversationId={message.conversationId}
-              messageId={message.id}
-              onOpenMention={onOpenMention}
-            />
-          ) : null
-        ) : (
-          <Part
-            key={p.type === 'tool' ? p.toolCallId : `${p.type}-${i}`}
-            part={p}
-            latestTodoId={latestTodoId}
-            conversationId={message.conversationId}
-            messageId={message.id}
-            onOpenImage={onOpenImage}
-            onOpenMention={onOpenMention}
-            searchQuery={searchQuery}
-            currentSearchMatch={currentSearchMatch}
-          />
-        )
-      )}
+      {compact
+        ? chatActivitySegments(message.parts, live).map((segment) =>
+            segment.kind === 'activity' ? (
+              <ChatAgentActivity
+                key="agent-activity"
+                message={message}
+                steps={segment.steps}
+                live={live}
+                writing={segment.writing}
+                waitingAnswer={segment.waitingAnswer}
+                onOpenImage={onOpenImage}
+                onOpenMention={onOpenMention}
+                searchQuery={searchQuery}
+                currentSearchMatch={currentSearchMatch}
+              />
+            ) : (
+              renderPart(segment.part, segment.index)
+            )
+          )
+        : message.parts.map(renderPart)}
       {message.error && (
         <div
           role={
@@ -942,6 +973,21 @@ export const ChatMessageList = memo(function ChatMessageList({
   for (const m of visibleMessages)
     for (const p of m.parts) if (p.type === 'tool' && p.toolName === 'todo_write') latestTodoId = p.toolCallId
 
+  const compact = useAgentActivityMode() === 'compact'
+  // The running turn writes the newest assistant message until it finishes; a steering message may follow it.
+  let liveMessageId: string | null = null
+  if (streaming)
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+      const m = visibleMessages[i]
+      if (m.role !== 'assistant') continue
+      if (m.finishReason == null && !m.error && m.responseDurationMs == null) liveMessageId = m.id
+      break
+    }
+  const liveMessage = liveMessageId ? visibleMessages.find((m) => m.id === liveMessageId) : undefined
+  // The live activity line replaces the "generating" footer; a plain answer still streaming keeps the footer.
+  const liveLine =
+    compact && !!liveMessage && chatActivitySegments(liveMessage.parts, true).some((s) => s.kind === 'activity')
+
   const nearBottomRef = useRef(true)
   const prevVisibleRef = useRef(false)
 
@@ -1063,6 +1109,9 @@ export const ChatMessageList = memo(function ChatMessageList({
           data-msg-id={m.id}
           className={cn(
             'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
+            // A user message's hover actions fill the gap before the next message instead of adding a row. The
+            // margin sits on this element: its content visibility clips whatever overflows it.
+            m.role === 'user' && editingId !== m.id && '-mb-5',
             highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
           )}
           style={
@@ -1076,6 +1125,8 @@ export const ChatMessageList = memo(function ChatMessageList({
             canEdit={!readOnly && !streaming && m.id === lastUserId}
             isEditing={editingId === m.id}
             latestTodoId={latestTodoId}
+            compact={compact}
+            live={m.id === liveMessageId}
             agents={agents}
             onStartEdit={onStartEdit}
             onCancelEdit={onCancelEdit}
@@ -1088,7 +1139,7 @@ export const ChatMessageList = memo(function ChatMessageList({
           />
         </div>
       ))}
-      {streaming && (
+      {streaming && !liveLine && (
         <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
           {t('messages.generating')}

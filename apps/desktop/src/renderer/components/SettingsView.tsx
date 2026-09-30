@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
 import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
-import { LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
+import { AgentActivitySection, LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
@@ -366,6 +366,7 @@ export function SettingsView({
             {section === 'usage' && <UsagePanel />}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
+            {section === 'appearance' && <AgentActivitySection t={t} />}
 
             {section === 'tools' && (
               <TabOrderSection
