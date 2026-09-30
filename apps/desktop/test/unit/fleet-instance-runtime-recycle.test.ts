@@ -102,6 +102,36 @@ describe('RuntimeRecycleScheduler', () => {
     expect(recycle).toHaveBeenCalledTimes(2)
   })
 
+  it('gives recycle the uses read before the bots were seen idle', async () => {
+    const order: string[] = []
+    let uses = 0
+    const recycle = vi.fn(async (unusedSince: number) => {
+      order.push('recycle')
+      return unusedSince === uses
+    })
+    const scheduler = new RuntimeRecycleScheduler({
+      uses: () => {
+        order.push('uses')
+        return uses
+      },
+      statuses: async () => {
+        order.push('statuses')
+        // A turn takes a connection right after its bot reported idle.
+        uses += 1
+        return [idle()]
+      },
+      recycle,
+      intervalMs: 30_000,
+    })
+    scheduler.request()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(order).toEqual(['uses', 'statuses', 'recycle'])
+    expect(recycle).toHaveBeenLastCalledWith(0)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(recycle).toHaveBeenLastCalledWith(1)
+    scheduler.dispose()
+  })
+
   it('stops checking once disposed', async () => {
     const busy = { ...idle(), pending: [{} as RecycleStatus['pending'][number]] }
     const { scheduler, recycle, set } = harness([busy])

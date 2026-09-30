@@ -453,6 +453,8 @@ export class CodexSubscriptionManager {
   private lastError: Error | null = null
   private cacheGeneration = 0
   private connectionGeneration = 0
+  /** Every client handed out so far; see `connectionUses`. */
+  private handouts = 0
   private disposed = false
 
   constructor(dependencies: Partial<CodexSubscriptionManagerDependencies> = {}) {
@@ -528,7 +530,7 @@ export class CodexSubscriptionManager {
     // while the directory still represents pre-wipe state.
     while (this.resetPromise) await this.resetPromise
     if (this.disposed) throw new CodexAppServerClosedError('Codex subscription manager is disposed')
-    if (this.client?.state === 'ready') return this.client
+    if (this.client?.state === 'ready') return this.handOut(this.client)
     if (this.client) {
       const staleClient = this.client
       this.lastError = staleClient.failure
@@ -539,7 +541,7 @@ export class CodexSubscriptionManager {
       await staleClient.close().catch(() => undefined)
       this.releaseRuntimeLease()
     }
-    if (this.clientPromise) return this.clientPromise
+    if (this.clientPromise) return this.handOut(await this.clientPromise)
 
     const generation = ++this.connectionGeneration
     const abort = new AbortController()
@@ -548,7 +550,7 @@ export class CodexSubscriptionManager {
     this.clientPromise = promise
 
     try {
-      return await promise
+      return this.handOut(await promise)
     } finally {
       if (this.clientPromise === promise) this.clientPromise = null
       if (this.connectAbort === abort) this.connectAbort = null
@@ -820,17 +822,48 @@ export class CodexSubscriptionManager {
 
   /** The executable of the open app-server connection; null while none is open. */
   get connectedRuntimePath(): string | null {
-    return this.client ? (this.runtime?.executablePath ?? null) : null
+    return this.connectedRuntime?.executablePath ?? null
+  }
+
+  /** The runtime the open app-server connection runs; null while none is open. */
+  get connectedRuntime(): CodexRuntimeResolution | null {
+    return this.client ? this.runtime : null
+  }
+
+  /**
+   * Whether an app-server connection is being established. Its runtime may have been selected before an update
+   * activated another one, and `connectedRuntime` only knows it once the handshake ends: until then, whether it is
+   * stale cannot be told.
+   */
+  get connecting(): boolean {
+    return this.clientPromise !== null
+  }
+
+  /**
+   * How many times a client was handed out. Read before checking that no work runs, then given to
+   * `recycleConnection`, it tells whether work that started since then could be holding the connection.
+   */
+  get connectionUses(): number {
+    return this.handouts
+  }
+
+  /** Counted in the same tick the caller receives the client, so a recycle racing the handout sees it. */
+  private handOut(client: CodexAppServerClient): CodexAppServerClient {
+    this.handouts += 1
+    return client
   }
 
   /**
    * Closes the app-server connection so the next request starts the runtime now selected, after an update. Callers
-   * make sure no turn runs; a pending login, a connection being established or a local reset makes it answer false
-   * (try later). The closed connection is not reported as a failure.
+   * make sure no work held the connection when `connectionUses` read `unusedSince`: a client handed out since then,
+   * a pending login, a connection being established or a local reset makes it answer false (try later). The check
+   * and the close happen in the same tick, so work that starts after it gets a new connection. The closed
+   * connection is not reported as a failure.
    */
-  async recycleConnection(): Promise<boolean> {
+  async recycleConnection(unusedSince?: number): Promise<boolean> {
     if (this.disposed) return true
     if (this.resetPromise || this.clientPromise) return false
+    if (unusedSince !== undefined && this.handouts !== unusedSince) return false
     if ([...this.loginRecords.values()].some((record) => record.completion === null)) return false
     const active = this.client
     if (!active) return true
@@ -1408,15 +1441,31 @@ export function listCodexSubscriptionManagers(): CodexSubscriptionManager[] {
   return [...instances.values()]
 }
 
+/** How many clients each account handed out, read before checking that no work runs; see `recycleCodexConnections`. */
+export type CodexConnectionUses = ReadonlyMap<CodexSubscriptionManager, number>
+
+export function codexConnectionUses(): CodexConnectionUses {
+  return new Map([...instances.values()].map((manager) => [manager, manager.connectionUses]))
+}
+
 /**
  * Recycles the idle connections of every account whose runtime `stale` rejects, after a Codex update; true when none
- * is left on the old runtime.
+ * is left on the old runtime. A connection handed out since `unusedSince` was read (an account created since then
+ * counts from zero) is kept for now: work that started after the bots were seen idle may hold it. A connection
+ * still being established answers false too: it may end up on the old runtime, so it is checked again later.
  */
-export async function recycleCodexConnections(stale: (runtimePath: string) => boolean = () => true): Promise<boolean> {
+export async function recycleCodexConnections(
+  stale: (runtimePath: string) => boolean = () => true,
+  unusedSince?: CodexConnectionUses
+): Promise<boolean> {
+  // Every check and close runs in this one tick (recycleConnection awaits only after closing).
   const results = await Promise.all(
     [...instances.values()].map((manager) => {
+      if (manager.connecting) return false
       const runtimePath = manager.connectedRuntimePath
-      return runtimePath && stale(runtimePath) ? manager.recycleConnection() : true
+      return runtimePath && stale(runtimePath)
+        ? manager.recycleConnection(unusedSince ? (unusedSince.get(manager) ?? 0) : undefined)
+        : true
     })
   )
   return results.every(Boolean)

@@ -2684,6 +2684,8 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         id: 'claude-code',
         version: '2.1.285',
         source: 'image',
+        // Installed, but a bot's task still runs the image's version.
+        pendingVersion: '2.1.290',
         automatic: true,
         state: 'up-to-date',
         availableVersion: null,
@@ -2706,8 +2708,12 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     const claudeRow = runtimesSection.locator('[data-fleet-runtime="claude-code"]')
     await expect(claudeRow).toContainText('v2.1.285 · da imagem do bot')
     await expect(claudeRow).toContainText('Atualizado')
+    await expect(claudeRow.locator('[data-fleet-runtime-pending]')).toHaveText(
+      'v2.1.290 instalada: cada bot passa a usá-la quando terminar a tarefa atual'
+    )
     const codexRow = runtimesSection.locator('[data-fleet-runtime="codex"]')
     await expect(codexRow).toContainText('v0.160.0 · atualizado')
+    await expect(codexRow.locator('[data-fleet-runtime-pending]')).toHaveCount(0)
     await expect(codexRow).toContainText('v0.161.0 disponível')
     await expect(codexRow).toContainText('Atualização automática desligada')
     const check = runtimesSection.getByRole('button', { name: 'Verificar atualizações' })

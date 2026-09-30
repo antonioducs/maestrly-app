@@ -311,6 +311,11 @@ export default {
       note: 'Os bots atualizam sozinhos, entre uma tarefa e outra, nunca abaixo da versão da imagem.',
       name: { 'claude-code': 'Claude Code', codex: 'Codex' },
       source: { image: 'da imagem do bot', managed: 'atualizado' },
+      pending: {
+        'claude-code': 'v{{version}} instalada: cada bot passa a usá-la quando terminar a tarefa atual',
+        codex:
+          'v{{version}} instalada: os bots passam a usá-la quando nenhum estiver trabalhando, esperando por você ou compactando',
+      },
       state: {
         idle: 'Aguardando a primeira verificação',
         checking: 'Verificando…',

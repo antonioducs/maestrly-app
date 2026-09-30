@@ -17,11 +17,17 @@ export function blocksRuntimeRecycle(status: RecycleStatus): boolean {
   )
 }
 
-export interface RuntimeRecycleSchedulerDependencies {
+export interface RuntimeRecycleSchedulerDependencies<Uses = undefined> {
+  /**
+   * Which connections were handed out so far, read just before `statuses`. Work that starts after the bots were seen
+   * idle, while `recycle` still runs, changes it: `recycle` compares it in the same tick it closes a connection and
+   * keeps any connection handed out since.
+   */
+  readonly uses?: () => Uses
   /** Every bot of the environment, read now. */
   readonly statuses: () => Promise<readonly RecycleStatus[]>
   /** Closes idle connections so the next request starts the runtime now selected; false to try again later. */
-  readonly recycle: () => Promise<boolean>
+  readonly recycle: (unusedSince: Uses) => Promise<boolean>
   readonly intervalMs?: number
   readonly log?: (message: string, error?: unknown) => void
 }
@@ -30,13 +36,13 @@ export interface RuntimeRecycleSchedulerDependencies {
  * Recycles long-lived runtime connections (Codex app-servers) after an update, once no bot of the environment is
  * working, so an update never interrupts a turn. Checks when requested, then every interval until it succeeds.
  */
-export class RuntimeRecycleScheduler {
-  private readonly dependencies: RuntimeRecycleSchedulerDependencies
+export class RuntimeRecycleScheduler<Uses = undefined> {
+  private readonly dependencies: RuntimeRecycleSchedulerDependencies<Uses>
   private timer: ReturnType<typeof setInterval> | null = null
   private attempt: Promise<void> | null = null
   private disposed = false
 
-  constructor(dependencies: RuntimeRecycleSchedulerDependencies) {
+  constructor(dependencies: RuntimeRecycleSchedulerDependencies<Uses>) {
     this.dependencies = dependencies
   }
 
@@ -58,9 +64,10 @@ export class RuntimeRecycleScheduler {
 
   private async runCheck(): Promise<void> {
     try {
+      const uses = this.dependencies.uses?.() as Uses
       const statuses = await this.dependencies.statuses()
       if (this.disposed || statuses.some(blocksRuntimeRecycle)) return
-      if (await this.dependencies.recycle()) this.stop()
+      if (await this.dependencies.recycle(uses)) this.stop()
     } catch (error) {
       ;(this.dependencies.log ?? ((message, cause) => console.warn(`[runtime-recycle] ${message}`, cause ?? '')))(
         'Unable to recycle runtime connections',

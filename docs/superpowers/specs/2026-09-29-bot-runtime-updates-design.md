@@ -60,12 +60,15 @@ within hours. The Mac shows which runtime versions each environment runs and can
   than the image, holding a runtime asset lease on it. Each query retains the selection it started with.
 - **Codex selection.** In bot mode, the Codex manager resolves the managed install when it is strictly newer than the
   image and leases it. After an activation that leaves old connections behind, a scheduler recycles the Codex
-  connections once every bot of the environment is idle, checking every 30 s.
+  connections once every bot of the environment is idle, checking every 30 s. A connection still being established
+  may have selected the old version before the activation, so the scheduler keeps retrying until its handshake ends
+  and its version can be checked.
 
 ### Part 2: versions on the Mac
 
-- Each bot status reports `runtimes`: per runtime, version, source (`image` or `managed`), automatic flag, update
-  state, available version, last check and error.
+- Each bot status reports `runtimes`: per runtime, the version in use, its source (`image` or `managed`), the
+  installed version waiting for work in progress to end, automatic flag, update state, available version, last check
+  and error.
 - The gateway keeps the latest report per environment and projects it as `FleetEnvironment.runtimes`, emitting
   `environment.updated` when it changes. A new gateway route forwards "check now" to the environment's instance.
 - The environment view on the Mac shows a "Claude Code and Codex" section with each version and **Check for
@@ -74,8 +77,11 @@ within hours. The Mac shows which runtime versions each environment runs and can
 ## Protocol (version 1, additive)
 
 - Feature `runtime-updates`: in `/v1/meta` (gateway) and in instance capabilities.
-- `FleetRuntimeInfo`: `{ id: 'claude-code' | 'codex', version, source: 'image' | 'managed', automatic, state,
-  availableVersion, lastCheckedAt, error }`, with `state` from the runtime asset update states.
+- `FleetRuntimeInfo`: `{ id: 'claude-code' | 'codex', version, source: 'image' | 'managed', pendingVersion, automatic,
+  state, availableVersion, lastCheckedAt, error }`, with `state` from the runtime asset update states. `version` and
+  `source` are what the bots run: a running Claude Code query, or an open Codex connection, keeps the version it
+  started with. `pendingVersion` is the installed version they switch to once that work ends; null when none waits,
+  and by default for an image that predates it.
 - `FleetEnvironment.runtimes` and `FleetInstanceStatus.runtimes`: arrays, nullable, default `null` (a gateway or image
   that predates the feature).
 - Instance `POST /v1/runtimes/check` answers `{ ok: true }` at once; the checks continue in the background.

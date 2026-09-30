@@ -40,6 +40,8 @@ interface Handle {
 export class ClaudeRuntimeSelection {
   private readonly dependencies: ClaudeRuntimeSelectionDependencies
   private handle: Handle | null = null
+  /** Replaced selections that queries started before the switch still run. */
+  private readonly retiredInUse = new Set<Handle>()
   private queue: Promise<unknown> = Promise.resolve()
 
   constructor(dependencies: ClaudeRuntimeSelectionDependencies) {
@@ -53,6 +55,14 @@ export class ClaudeRuntimeSelection {
 
   current(): ClaudeExecutable {
     return this.currentHandle().executable
+  }
+
+  /**
+   * The executables the bot runs now: the current one, and any a switch replaced while queries that started on it
+   * are still running. Never selects one (empty before the first query or refresh).
+   */
+  inUse(): ClaudeExecutable[] {
+    return [...(this.handle ? [this.handle] : []), ...this.retiredInUse].map((handle) => handle.executable)
   }
 
   retain(): RetainedClaudeExecutable {
@@ -97,12 +107,15 @@ export class ClaudeRuntimeSelection {
     }
     this.handle = { executable: target, lease, refs: 0, retired: false }
     previous.retired = true
+    if (previous.refs > 0) this.retiredInUse.add(previous)
     this.releaseIfUnused(previous)
     return true
   }
 
   private releaseIfUnused(handle: Handle): void {
-    if (!handle.retired || handle.refs > 0 || !handle.lease) return
+    if (!handle.retired || handle.refs > 0) return
+    this.retiredInUse.delete(handle)
+    if (!handle.lease) return
     const lease = handle.lease
     handle.lease = null
     lease.release()

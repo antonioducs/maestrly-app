@@ -26,7 +26,8 @@ User-visible changes by version. Downloads are on
   Components** shows the versions and offers manual checks; servers can turn
   automatic checks off with `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`.
 - Experimental: an environment's view shows the Claude Code and Codex versions
-  its bots run, where each comes from, and **Check for updates**.
+  its bots run, where each comes from, an installed version still waiting for
+  work in progress to end, and **Check for updates**.
 
 ### Changed
 

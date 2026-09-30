@@ -329,10 +329,18 @@ export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema
 /** One runtime of an environment (Claude Code or Codex): the version in use and its release channel. */
 export const fleetRuntimeInfoSchema = z.object({
   id: z.enum(FLEET_RUNTIME_IDS),
-  /** Null when the runtime is neither shipped by the image nor installed. */
+  /**
+   * The version the bots run now, which work in progress may keep after another was installed. Null when the runtime
+   * is neither shipped by the image nor installed.
+   */
   version: z.string().max(40).nullable(),
   /** `image`: the version the bot image ships; `managed`: a newer release the environment installed on its own. */
   source: z.enum(['image', 'managed']),
+  /**
+   * The version the bots switch to once their work in progress ends (Codex: once none of them is working); null
+   * when they already run the selected version, or for an image that predates it.
+   */
+  pendingVersion: z.string().max(40).nullable().default(null),
   automatic: z.boolean(),
   state: z.enum(FLEET_RUNTIME_STATES),
   availableVersion: z.string().max(40).nullable(),

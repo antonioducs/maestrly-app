@@ -1367,9 +1367,14 @@ describe('environment contracts', () => {
       lastCheckedAt: '2026-09-29T10:00:00.000Z',
       error: null,
     } as const
-    expect(fleetRuntimeInfoSchema.parse(claude)).toEqual(claude)
-    expect(fleetEnvironmentSchema.parse({ ...environment, runtimes: [claude] }).runtimes).toEqual([claude])
-    expect(fleetInstanceStatusSchema.parse({ ...status, runtimes: [claude] }).runtimes).toEqual([claude])
+    // An image that predates the pending version reports none.
+    const reported = { ...claude, pendingVersion: null }
+    expect(fleetRuntimeInfoSchema.parse(claude)).toEqual(reported)
+    expect(fleetEnvironmentSchema.parse({ ...environment, runtimes: [claude] }).runtimes).toEqual([reported])
+    expect(fleetInstanceStatusSchema.parse({ ...status, runtimes: [claude] }).runtimes).toEqual([reported])
+    const switching = { ...claude, id: 'codex', version: '0.155.1', pendingVersion: '0.160.0' } as const
+    expect(fleetRuntimeInfoSchema.parse(switching)).toEqual(switching)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, pendingVersion: 'x'.repeat(41) }).success).toBe(false)
     expect(fleetRuntimeInfoSchema.safeParse({ ...claude, state: 'unknown' }).success).toBe(false)
     expect(fleetRuntimeInfoSchema.safeParse({ ...claude, id: 'copilot' }).success).toBe(false)
     expect(fleetRuntimeInfoSchema.safeParse({ ...claude, source: 'system' }).success).toBe(false)

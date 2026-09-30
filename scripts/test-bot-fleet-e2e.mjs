@@ -822,10 +822,17 @@ async function main() {
     const claude = reported.find((runtime) => runtime.id === 'claude-code')
     const codex = reported.find((runtime) => runtime.id === 'codex')
     assert.deepEqual(
-      { version: claude?.version, source: claude?.source, state: claude?.state, checked: claude?.lastCheckedAt },
-      { version: claudeCodeVersion, source: 'image', state: 'idle', checked: null }
+      {
+        version: claude?.version,
+        source: claude?.source,
+        pending: claude?.pendingVersion,
+        state: claude?.state,
+        checked: claude?.lastCheckedAt,
+      },
+      { version: claudeCodeVersion, source: 'image', pending: null, state: 'idle', checked: null }
     )
     assert.equal(codex?.source, 'image')
+    assert.equal(codex.pendingVersion, null)
     assert.match(codex?.version ?? '', /^\d+\.\d+\.\d+$/)
     assert.equal(codex.lastCheckedAt, null)
     const env = JSON.parse((await docker(['inspect', '-f', '{{json .Config.Env}}', name])).stdout)

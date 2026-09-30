@@ -50,6 +50,11 @@ export function EnvironmentRuntimes({ environment, fleet }: { environment: Fleet
                 {runtime.version ? `v${runtime.version}` : '—'} · {t(`environment.runtimes.source.${runtime.source}`)}
               </span>
             </p>
+            {runtime.pendingVersion && (
+              <p className="text-xs text-muted-foreground" data-fleet-runtime-pending>
+                {t(`environment.runtimes.pending.${runtime.id}`, { version: runtime.pendingVersion })}
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               {state(runtime)} ·{' '}
               {runtime.lastCheckedAt

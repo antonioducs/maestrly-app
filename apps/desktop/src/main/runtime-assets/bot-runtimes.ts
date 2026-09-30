@@ -2,7 +2,11 @@ import type { FleetInstanceStatus } from '@maestrly/bot-fleet-protocol'
 import { notifyClaudeRuntimeChanged } from '../chat/claude-agent-sdk/manager'
 import { botClaudeRuntime } from '../chat/claude-agent-sdk/runtime-selection'
 import { resolveBotCodexRuntime } from '../chat/codex-subscription/bot-runtime'
-import { listCodexSubscriptionManagers, recycleCodexConnections } from '../chat/codex-subscription/manager'
+import {
+  codexConnectionUses,
+  listCodexSubscriptionManagers,
+  recycleCodexConnections,
+} from '../chat/codex-subscription/manager'
 import { isBotMode } from '../fleet/instance/config'
 import { RuntimeRecycleScheduler } from '../fleet/instance/runtime-recycle'
 import { onRuntimeUpdateChanged } from './app-service'
@@ -41,13 +45,24 @@ export function startBotRuntimes(options: BotRuntimesOptions): () => void {
       .catch((error: unknown) => log('Unable to select the Claude Code runtime', error))
 
   const codex = new RuntimeRecycleScheduler({
+    // A turn that starts after the bots were seen idle, while the runtime is still being resolved, keeps its
+    // connection: recycling compares these uses in the same tick it closes one.
+    uses: codexConnectionUses,
     statuses: options.botStatuses,
-    recycle: async () => recycleCodexConnections(await staleCodexRuntime()),
+    recycle: async (unusedSince) => {
+      const recycled = await recycleCodexConnections(await staleCodexRuntime(), unusedSince)
+      // Bot statuses report the Codex their connections run: the old one is gone now.
+      if (recycled) options.onRuntimesChanged?.()
+      return recycled
+    },
   })
   const recycleCodexIfStale = () =>
     void staleCodexRuntime()
       .then((stale) => {
         const outdated = listCodexSubscriptionManagers().some((manager) => {
+          // A connection being established may have selected the old runtime before this update, and no update
+          // event follows its handshake: the scheduler keeps retrying until it can be checked.
+          if (manager.connecting) return true
           const runtimePath = manager.connectedRuntimePath
           return runtimePath !== null && stale(runtimePath)
         })

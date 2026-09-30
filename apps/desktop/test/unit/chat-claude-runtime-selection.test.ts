@@ -79,6 +79,29 @@ describe('ClaudeRuntimeSelection', () => {
     expect(leases[1].release).not.toHaveBeenCalled()
   })
 
+  it('lists the versions in use: the current one, and a replaced one until its last query ends', async () => {
+    const { selection, setManaged } = harness({ version: '2.1.290' })
+    expect(selection.inUse()).toEqual([])
+    await selection.refresh()
+    const managed = { path: managedPath('2.1.290'), version: '2.1.290', source: 'managed' }
+    expect(selection.inUse()).toEqual([managed])
+
+    const first = selection.retain()
+    const second = selection.retain()
+    setManaged(null)
+    await selection.refresh()
+    expect(selection.inUse()).toEqual([IMAGE, managed])
+    first.release()
+    expect(selection.inUse()).toEqual([IMAGE, managed])
+    second.release()
+    expect(selection.inUse()).toEqual([IMAGE])
+
+    // A switch nothing was running on leaves only the new one.
+    setManaged('2.1.291')
+    await selection.refresh()
+    expect(selection.inUse().map((executable) => executable.version)).toEqual(['2.1.291'])
+  })
+
   it('does not over-release when one turn releases twice', async () => {
     const { selection, leases, setManaged } = harness({ version: '2.1.290' })
     await selection.refresh()
