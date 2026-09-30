@@ -251,6 +251,9 @@ function fakeGateway(host: () => LaunchedHost | null) {
 // reaches the host through a bridge ticket of the gateway, and follows the environment as it stops and starts.
 test('server page sets up workspaces, and the sidebar follows the host through the gateway', async () => {
   test.setTimeout(240_000)
+  // A workspaces host is the app in a Linux container; this test runs one on the machine itself, which the host's
+  // shell and folders allow on Linux and macOS only.
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-server-')))
   const workspacesRoot = path.join(root, 'srv')
   await mkdir(workspacesRoot)

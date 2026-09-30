@@ -10,6 +10,9 @@ const HOST_ID = 'direct/host'
 // person's desktop connected straight to it (the development-only direct host). No gateway, Docker or account.
 test('remote host: mixed sidebar, a chat turn and a terminal that run on the host', async () => {
   test.setTimeout(240_000)
+  // A workspaces host is the app in a Linux container; this test runs one on the machine itself, which the host's
+  // shell and folders allow on Linux and macOS only.
+  test.skip(process.platform === 'win32', 'The host side runs on Linux and macOS.')
   await access(path.join(desktop, 'out/main/index.js'))
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'maestrly-remote-hosts-')))
   const workspacesRoot = path.join(root, 'srv')
