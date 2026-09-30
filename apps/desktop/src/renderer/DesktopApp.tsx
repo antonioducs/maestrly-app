@@ -140,6 +140,15 @@ export function DesktopApp() {
   const remoteHosts = useMemo(() => hosts.filter((host) => host.remote), [hosts])
   const hostViews = useMemo(() => new Map<HostId, HostView>(hosts.map((host) => [host.id, host])), [hosts])
   const [remote, setRemote] = useState<Record<HostId, RemoteHostShell>>({})
+  // This app's version, to say which of the two to update when a host runs another one.
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  useEffect(() => {
+    if (remoteHosts.length === 0 || appVersion !== null) return
+    void window.api
+      .getAppInfo()
+      .then((info) => setAppVersion(info.version))
+      .catch(() => undefined)
+  }, [remoteHosts.length, appVersion])
   const remoteRef = useRef(remote)
   remoteRef.current = remote
   const onRemoteChange = useCallback((shell: RemoteHostShell) => {
@@ -805,6 +814,7 @@ export function DesktopApp() {
                 onAddWorkspace={() => void requestProject()}
                 hostSections={hostSections}
                 localHost={hosts[0]}
+                appVersion={appVersion}
                 onRemoveWorkspace={(id) =>
                   onHost(
                     id,

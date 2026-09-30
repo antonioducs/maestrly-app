@@ -177,6 +177,30 @@ bot gets its gateway token again when the gateway installs it, and the
 environment keeps the control token and keyring password the container already
 had.
 
+## Remote workspaces data
+
+A [workspaces environment](remote-workspaces.md) keeps a whole Maestrly profile
+on the server, not on this computer:
+
+| Data | Where it is kept |
+| --- | --- |
+| The host's profile: conversations, messages, memory, notes, settings, model accounts and their keys, skills, MCP servers, and the agent's browser profile | The environment's home volume, `maestrly-env-<id>-home`, mounted at `/home/bot`. Secrets are encrypted with the keyring of the environment, as in a bot environment. |
+| Files of plain chats and worktrees of conversations | The same home volume, inside the profile |
+| Workspaces added from the server's **Workspaces** folder | That folder of the server itself (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`; `/srv/maestrly` on a VPS that Maestrly set up), as ordinary files owned by uid 1000 |
+| The environment's record and kind | The gateway's database (`environments.kind`, schema 9) |
+
+This computer keeps only what it needs to show the host: its own id for the
+paired server (`fleet.serverId`, removed when you disconnect the server) and,
+for each conversation of the host you opened, the drawer's width and open
+state for as long as the window runs. Conversations, messages, and files of
+the host are never stored here. The drawer tabs a conversation has open are
+kept by the host, with the conversation.
+
+Archiving a workspaces environment removes its container and keeps its home
+volume; deleting it forever removes the volume and everything in the host's
+profile. Neither touches the files under the server's **Workspaces** folder.
+Back up that folder and the environment's home volume to keep both.
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

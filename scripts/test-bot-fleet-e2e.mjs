@@ -2319,6 +2319,16 @@ async function main() {
       (await docker(['image', 'inspect', image, '--format', '{{.Size}}'])).stdout.trim(),
     ])
   )
+  // A workspaces environment, in a Compose project and containers of its own: the gateway bridges a paired computer
+  // to the Maestrly that hosts chats and workspaces there. It removes what it creates.
+  const workspaces = await run(process.execPath, [path.join(root, 'scripts/test-bot-fleet-workspaces.mjs')])
+  const workspacesSummary = JSON.parse(workspaces.stdout.trim().split('\n').at(-1))
+  pass(
+    'workspaces host',
+    workspacesSummary.checks +
+      ' checks: server mode with the workspaces folder mounted, no bots, the bridge through the gateway, a chat turn ' +
+      "driving the host's browser, a host terminal, and revocation"
+  )
   // Browser keyboard focus between the screens of one environment, in a container of its own. That test always removes
   // its own container and volume, even with --keep, and saves its report under .bot-fleet-local/focus/.
   const focus = await run(process.execPath, [path.join(root, 'scripts/test-bot-fleet-focus.mjs')])

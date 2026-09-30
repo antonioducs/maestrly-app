@@ -250,6 +250,63 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   keyring password and each bot's gateway token in plaintext in its database;
   host root and anyone who controls the Docker socket can read them.
 
+## Remote workspaces
+
+A bot server can run one **workspaces environment**: a container with a full
+Maestrly, in server mode, that hosts the owner's chats and workspaces instead of
+bots. A paired computer drives it through a **bridge**: see
+[remote workspaces](remote-workspaces.md).
+
+- **A paired computer controls the host as a window controls its own
+  computer.** Over the bridge, the computer's renderers call the host's IPC
+  handlers, the same ones a Maestrly window reaches on its own machine. That
+  includes reading and writing the host's files, running commands in its
+  terminals, using its model accounts, and changing its settings. Pairing
+  already grants authority over every environment of the server, so the bridge
+  adds no new principal; it widens what a paired device can do in that one
+  environment. Pair only computers you control, and revoke a lost one.
+- **The bridge is authenticated by the gateway, not by the host.** A computer
+  asks the gateway for a ticket with its device token. The ticket is random,
+  bound to the device and the environment, valid for 30 seconds, and spent by
+  its first use. The gateway then forwards the WebSocket handshake to the
+  environment's control server with the environment's control token, which
+  never leaves the gateway and the container, and passes bytes both ways
+  without reading them. A device holds at most eight bridges. Revoking a
+  device discards its tickets and closes its bridges; stopping or archiving
+  the environment closes every bridge to it.
+- **The host refuses what belongs to a desktop.** For a computer's renderer it
+  refuses channels that drive a window, native views, sound, updates, the bot
+  fleet client and its installer, and the microphone, and channels whose
+  effect is on the host's own desktop: opening a file, a folder, or a PDF in a
+  desktop app, native folder dialogs, and exporting or resetting data. The
+  list is `apps/desktop/src/shared/host-channels.ts`, and a test checks every
+  channel of the preload against it.
+- **The host sees only its own folders.** Workspaces are added from the
+  environment's home folder and, when the server names one, from a single
+  server directory mounted at the same path (`MAESTRLY_GATEWAY_WORKSPACES_ROOT`;
+  `/srv/maestrly` on a VPS that Maestrly set up). The folder browser resolves
+  symbolic links before checking a path against those folders. No request can
+  mount another directory of the server: mounts are fixed when the container
+  is created. The container has no Docker socket and no `sudo`, and runs as
+  uid 1000 under the same egress guard and seccomp profile as a bot
+  environment. An agent there can still read and change everything in those
+  folders, as on any computer it runs on.
+- **Both ends must run the same version.** The computer's renderer calls the
+  host's functions directly, so the host refuses a computer of another app
+  version or bridge protocol and says which version it runs. It never
+  downgrades itself.
+- **Several computers share one host.** Every paired computer sees the same
+  conversations, receives the same streams, and can answer the same permission
+  requests, questions, and plans. There is no per-computer or per-workspace
+  isolation inside a host: use separate servers for work that must stay apart.
+- **Workspaces and bots do not share a container**, and the gateway refuses to
+  place a bot in a workspaces environment. They do share the Docker host and
+  the fleet network, like any two environments.
+
+A development or test build, never a packaged one, also accepts
+`MAESTRLY_DEV_DIRECT_HOST`, which connects it straight to a host's control
+server with that host's control token.
+
 ## MCP, skills, and memory
 
 The optional personal bot endpoint runs inside Desktop and binds to loopback by

@@ -167,6 +167,19 @@ async function reply(req) {
     if (tools.length === 1) return validatedTool(req, 'browser_read_text', {})
     return { text: 'E2E-COOKIE-SEEN value=' + (/E2E-COOKIE-VALUE:([A-Za-z0-9-]+)/.exec(last)?.[1] ?? 'unreadable') }
   }
+  // A workspaces host drives its own browser: it opens a page of the local site, reads it and takes a picture of it.
+  if (text.includes('E2E-HOST-BROWSER')) {
+    const url = field(text, 'url')
+    const { tools, last } = turn(messages, 'E2E-HOST-BROWSER')
+    if (tools.length === 0) return validatedTool(req, 'browser_navigate', { url })
+    if (tools.length === 1) return validatedTool(req, 'browser_read_text', {})
+    if (tools.length === 2)
+      return last.includes('E2E-COOKIE-VALUE:')
+        ? validatedTool(req, 'browser_screenshot', {})
+        : { text: 'E2E-HOST-BROWSER-UNREAD ' + last.slice(0, 200) }
+    // The screenshot's note says where the page is scrolled; a failed capture says why instead.
+    return { text: /Scroll y=\d+\/\d+/.test(last) ? 'E2E-HOST-BROWSER-OK' : 'E2E-HOST-BROWSER-NO-SCREENSHOT ' + last.slice(0, 200) }
+  }
   if (text.includes('E2E-ALIVE')) return { text: 'E2E-ALIVE-OK tag=' + field(text, 'tag') }
   // A turn that stays busy for a while, so something else can happen during it.
   if (text.includes('E2E-SLOW')) {

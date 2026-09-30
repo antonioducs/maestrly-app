@@ -128,6 +128,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Platform security](docs/platform-security.md)
 - [Delegating work to an external agent](docs/grok-connector.md)
 - [Remote bots on your own server](docs/bot-fleet.md)
+- [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
 - [Backup and restore](docs/backup-restore.md)
 
 ## License
