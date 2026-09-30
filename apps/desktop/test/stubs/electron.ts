@@ -45,9 +45,10 @@ export const contextBridge = {
   exposeInMainWorld: (_key: string, _api: unknown): void => {},
 }
 
+// Electron 44: the main-process clipboard is asynchronous and no longer available to renderers or preload.
 export const clipboard = {
-  readText: (): string => '',
-  writeText: (_text: string): void => {},
+  readText: (): Promise<string> => Promise.resolve(''),
+  writeText: (_text: string): Promise<void> => Promise.resolve(),
 }
 
 export class BrowserWindow {

@@ -1,5 +1,6 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
+import { shouldStartHidden, wasLaunchedAtLogin } from './platform/login-item'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
@@ -479,10 +480,15 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+// Set once at startup and consumed by the first window; later windows come from explicit reveals.
+let startHiddenAtLogin = false
+
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
+  const startHidden = startHiddenAtLogin
+  startHiddenAtLogin = false
   mainWindow = new BrowserWindow({
-    show: !isBotMode(),
+    show: !isBotMode() && !startHidden,
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -759,6 +765,7 @@ if (!app.requestSingleInstanceLock()) {
     const win = BrowserWindow.getAllWindows()[0]
     if (win) {
       if (win.isMinimized()) win.restore()
+      if (!win.isVisible()) win.show()
       win.focus()
     }
   })
@@ -853,6 +860,7 @@ app.whenReady().then(async () => {
     console.warn(`[conversation-migration] ${migrationRecoveries.length} incomplete operation(s) recovered.`)
   }
   setupApplicationMenu()
+  startHiddenAtLogin = !isBotMode() && shouldStartHidden(executorSettings(), wasLaunchedAtLogin())
   await createWindow()
 
   conversationMigrationService.replayIncomplete()

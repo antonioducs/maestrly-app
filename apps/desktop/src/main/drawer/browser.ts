@@ -42,6 +42,7 @@ import { applyLayout } from './layout'
 import { layoutFloatingTab } from './float'
 import { focusViewInMain } from './popup'
 import { setDrawerPlacementPerformance } from './performance'
+import { refreshUnthrottledBrowserRendering } from './browser-rendering'
 
 type WindowOpenHandler = Parameters<WebContents['setWindowOpenHandler']>[0]
 
@@ -137,6 +138,46 @@ function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<Na
   })
 }
 
+// The first callback runs while the renderer builds the frame that paints the current document state. The second
+// runs only after that frame was produced, because Blink may begin the next main frame before submitting the last.
+const RENDERED_FRAMES_SCRIPT =
+  'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))'
+
+/**
+ * Chromium keeps serving the surface it last received until the renderer submits a new frame. After a scroll, or
+ * after a hidden parked tab is shown by the capture host, an immediate capture can therefore return stale pixels.
+ * WebFrameMain is used because WebContents.executeJavaScript waits for loading to stop. A disposed or crashed frame
+ * has no newer paint to wait for, so evaluation failures fall through to the capture itself.
+ */
+function waitForRendererPaint(wc: WebContents, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (complete: () => void) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      complete()
+    }
+    const onAbort = () => finish(() => reject(new Error('browser surface capture canceled')))
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    let painted: Promise<unknown>
+    try {
+      painted = wc.mainFrame.executeJavaScript(RENDERED_FRAMES_SCRIPT)
+    } catch {
+      finish(() => resolve())
+      return
+    }
+    void painted.then(
+      () => finish(() => resolve()),
+      () => finish(() => resolve())
+    )
+  })
+}
+
 function viewIsPresented(owner: BrowserWindow | null, bounds: Rectangle): boolean {
   if (!owner || owner.isDestroyed() || !owner.isVisible()) return false
   const host = owner.getContentBounds()
@@ -206,6 +247,7 @@ async function captureBrowserView(
       } catch (error) {
         throw new Error(`screenshot surface preparation failed: ${String((error as Error)?.message ?? error)}`)
       }
+      await waitForRendererPaint(wc, signal)
       captured = await capturePresentedFrame(wc, signal)
     } catch (error) {
       captureError = error
@@ -570,6 +612,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   }
   wc.on('did-navigate', navPersist)
   wc.on('did-navigate-in-page', navPersist)
+  wc.on('dom-ready', () => refreshUnthrottledBrowserRendering(wc))
   wc.on('did-start-loading', emit)
   wc.on('did-stop-loading', emit)
   wc.on('page-title-updated', emit)

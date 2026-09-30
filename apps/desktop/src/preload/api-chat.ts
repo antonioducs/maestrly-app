@@ -1,5 +1,5 @@
 import type { MemorySettings } from '../shared/memory'
-import { clipboard, ipcRenderer } from 'electron'
+import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type {
   ChatConfig,
@@ -260,33 +260,12 @@ export const chatApi = {
   chatGptWebCompanionPrompt: (conversationId: string): Promise<{ ok: boolean; kickoff?: string | null }> =>
     ipcRenderer.invoke('chat:chatgpt-web:companion-prompt', { conversationId }),
 
-  chatGptWebCompanionCopyPrompt: async (conversationId: string): Promise<{ ok: boolean; error?: string }> => {
-    const result = (await ipcRenderer.invoke('chat:chatgpt-web:companion-prompt', { conversationId })) as {
-      ok: boolean
-      kickoff?: string | null
-    }
-    if (!result.ok || !result.kickoff) return { ok: false, error: 'session-not-found' }
-    try {
-      clipboard.writeText(result.kickoff)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  },
+  // Electron 44 keeps the clipboard out of preload; main copies without returning the value to the renderer.
+  chatGptWebCompanionCopyPrompt: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:chatgpt-web:companion-copy-prompt', { conversationId }),
 
-  chatGptWebCompanionCopySessionKey: async (conversationId: string): Promise<{ ok: boolean; error?: string }> => {
-    const result = (await ipcRenderer.invoke('chat:chatgpt-web:companion-session-key', { conversationId })) as {
-      ok: boolean
-      sessionKey?: string | null
-    }
-    if (!result.ok || !result.sessionKey) return { ok: false, error: 'session-not-found' }
-    try {
-      clipboard.writeText(result.sessionKey)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  },
+  chatGptWebCompanionCopySessionKey: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:chatgpt-web:companion-copy-session-key', { conversationId }),
 
   chatGptWebCompanionOpen: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:chatgpt-web:companion-open', { conversationId }),

@@ -183,12 +183,19 @@ describe('fleet IPC validation', () => {
     expect(() => invoke('fleet:resolveInteraction', 'bot', 'id', { kind: 'permission', reply: 'forever' })).toThrow()
     expect(() => invoke('fleet:screenSend', 'channel', 'text')).toThrow()
     expect(() => invoke('fleet:screenClipboardRead', '')).toThrow()
-    mocks.screens.readClipboard.mockReturnValueOnce('host text')
-    expect(invoke('fleet:screenClipboardRead', 'channel')).toBe('host text')
+    mocks.screens.readClipboard.mockResolvedValueOnce('host text')
+    await expect(invoke('fleet:screenClipboardRead', 'channel')).resolves.toBe('host text')
     expect(mocks.screens.readClipboard).toHaveBeenCalledWith({}, 'channel')
+    mocks.screens.readClipboard.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    await expect(invoke('fleet:screenClipboardRead', 'channel')).rejects.toThrow('Clipboard unavailable')
     expect(() => invoke('fleet:screenClipboardWrite', '', 'text')).toThrow()
-    invoke('fleet:screenClipboardWrite', 'channel', 'copied text')
+    mocks.screens.writeClipboard.mockResolvedValueOnce(undefined)
+    await expect(invoke('fleet:screenClipboardWrite', 'channel', 'copied text')).resolves.toBeUndefined()
     expect(mocks.screens.writeClipboard).toHaveBeenCalledWith({}, 'channel', 'copied text')
+    mocks.screens.writeClipboard.mockRejectedValueOnce(new Error('Clipboard unavailable'))
+    await expect(invoke('fleet:screenClipboardWrite', 'channel', 'failed copy')).rejects.toThrow(
+      'Clipboard unavailable'
+    )
     expect(mocks.call).not.toHaveBeenCalled()
     await invoke('fleet:createBot', { name: 'Valid', instructions: '', ceiling: 'ask', talksTo: [] })
     expect(mocks.call).toHaveBeenCalledWith('botsCreate', {

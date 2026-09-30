@@ -1148,19 +1148,22 @@ describe('preload API — chat pagination (#559)', () => {
       conversationId: 'conv-web',
     })
 
-    invokeSpy.mockResolvedValueOnce({ ok: true, kickoff: 'safe-prompt' })
-    await api.chatGptWebCompanionCopyPrompt('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-prompt', {
+    // Main writes the clipboard; preload only relays the result and never receives the copied value.
+    invokeSpy.mockResolvedValueOnce({ ok: true })
+    await expect(api.chatGptWebCompanionCopyPrompt('conv-web')).resolves.toEqual({ ok: true })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-prompt', {
       conversationId: 'conv-web',
     })
-    expect(clipboardWriteSpy).toHaveBeenCalledWith('safe-prompt')
 
-    invokeSpy.mockResolvedValueOnce({ ok: true, sessionKey: 'safe-session-key' })
-    await api.chatGptWebCompanionCopySessionKey('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-session-key', {
+    invokeSpy.mockResolvedValueOnce({ ok: false, error: 'session-not-found' })
+    await expect(api.chatGptWebCompanionCopySessionKey('conv-web')).resolves.toEqual({
+      ok: false,
+      error: 'session-not-found',
+    })
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-session-key', {
       conversationId: 'conv-web',
     })
-    expect(clipboardWriteSpy).toHaveBeenCalledWith('safe-session-key')
+    expect(clipboardWriteSpy).not.toHaveBeenCalled()
 
     api.chatGptWebCompanionOpen('conv-web')
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-open', {

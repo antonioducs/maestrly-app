@@ -68,7 +68,7 @@ Get installers and SHA-256 checksums from [GitHub Releases](https://github.com/a
 
 | Platform | Packages |
 | --- | --- |
-| macOS arm64 | Signed and notarized DMG and ZIP |
+| macOS 13 or later, arm64 | Signed and notarized DMG and ZIP |
 | Linux x64 | AppImage and DEB |
 | Windows x64 | NSIS installer |
 
