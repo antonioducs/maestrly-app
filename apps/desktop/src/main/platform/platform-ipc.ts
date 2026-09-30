@@ -1,6 +1,7 @@
 import {isE2E} from '../test-mode'
 import { app } from 'electron'
 import { executorSettings, saveExecutorSettings, desktopExecutions } from './executor-settings'
+import { applyExecutorLoginItem } from './login-item'
 import { listChatExecutionModels } from '../chat/service'
 import { getConversation } from '../store'
 import { broadcast } from '../window-ipc'
@@ -52,7 +53,7 @@ export function registerPlatformIpc(reg: IpcRegistrar): void {
   reg.mhandle('platform:executor-save', async (_event, input: unknown) => {
     await embeddedRunnerHost.stop()
     const value = saveExecutorSettings(input)
-    if (app.isPackaged && !isE2E()) app.setLoginItemSettings({ openAtLogin: value.autoStart, openAsHidden: value.background })
+    if (app.isPackaged && !isE2E()) applyExecutorLoginItem(value)
     return value
   })
   reg.handle('platform:executor-providers', () =>

@@ -58,7 +58,7 @@ describe("a bot's own Maestrly window", () => {
 
   it("drops the menu bar from a bot's settings window: File → Quit restarts the bot's app mid-turn", () => {
     const main = source('main/index.ts')
-    expect(main).toMatch(/show: !isBotMode\(\),[\s\S]*if \(isBotMode\(\)\) mainWindow\.removeMenu\(\)/)
+    expect(main).toMatch(/show: !isBotMode\(\) && !startHidden,[\s\S]*if \(isBotMode\(\)\) mainWindow\.removeMenu\(\)/)
   })
 
   it('shows one section without a section list, the chosen tabs only, and Maestrly tools locked on', () => {
