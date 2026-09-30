@@ -20,7 +20,9 @@ function fail(message) {
 }
 
 rmSync(out, { recursive: true, force: true })
-const tsc = createRequire(import.meta.url).resolve('typescript/bin/tsc')
+const compilerManifest = createRequire(import.meta.url).resolve('typescript/package.json')
+const compilerPackage = JSON.parse(readFileSync(compilerManifest, 'utf8'))
+const tsc = path.resolve(path.dirname(compilerManifest), compilerPackage.bin.tsc)
 const compiled = spawnSync(process.execPath, [tsc, '-p', path.join(root, 'tsconfig.shell.json')], { stdio: 'inherit' })
 if (compiled.status !== 0) fail('the shell does not compile')
 
