@@ -233,6 +233,7 @@ function fakeEnvironment() {
     addApiKeyAccount: vi.fn(async (_value: FleetAddApiKeyAccountRequest) => ({ providerId: 'prov_test' })),
     removeAccount: vi.fn(async (_providerId: string) => {}),
     open: vi.fn(async (_target: FleetUiOpenRequest['target']) => {}),
+    checkRuntimes: vi.fn(() => {}),
   }
   const typed: InstanceEnvironment = environment
   const bot: InstanceBot = bots.get('alpha')!
@@ -390,6 +391,21 @@ describe('instance control HTTP', () => {
     })
   })
 
+  it('starts runtime checks in the background and answers at once', async () => {
+    expect(INSTANCE_CAPABILITIES).toContain('runtime-updates')
+    const { base, environment } = await setup()
+    const denied = await fetch(base + '/v1/runtimes/check', {
+      method: 'POST',
+      headers: { [FLEET_PROTOCOL_HEADER]: '1' },
+    })
+    expect(denied.status).toBe(401)
+    expect(environment.checkRuntimes).not.toHaveBeenCalled()
+    const checked = await send(base, 'POST', '/v1/runtimes/check')
+    expect(checked.status).toBe(200)
+    expect(await checked.json()).toEqual({ ok: true })
+    expect(environment.checkRuntimes).toHaveBeenCalledTimes(1)
+  })
+
   it("lists the environment's models for its default compaction model", async () => {
     expect(INSTANCE_CAPABILITIES).toEqual([
       'provisioning',
@@ -397,6 +413,7 @@ describe('instance control HTTP', () => {
       'environment-compaction',
       'context-limit',
       'transcript-reasoning',
+      'runtime-updates',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

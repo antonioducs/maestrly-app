@@ -19,6 +19,17 @@ type UpdateAction = 'check' | 'update' | 'rollback' | 'automatic'
 
 const buttonCls = 'rounded border border-border px-2 py-0.5 text-[11px] disabled:opacity-50'
 
+/** In a bot, the runtime its image ships is in use until a newer managed installation replaces it. */
+function providedActive(asset: RuntimeAssetInfo): boolean {
+  return asset.provided?.active === true
+}
+
+function displayedVersion(asset: RuntimeAssetInfo): string {
+  return providedActive(asset) && asset.provided
+    ? asset.provided.version
+    : (asset.status.version ?? asset.availableVersion)
+}
+
 /**
  * Independent release controls for an updatable runtime. They describe only the release channel: update errors
  * never mark the installed version as broken, and activation never restarts Maestrly or interrupts open work.
@@ -38,7 +49,7 @@ function RuntimeAssetUpdatePanel({
   // Optimistic value while the preference is persisted in the main process.
   const [automaticDraft, setAutomaticDraft] = useState<boolean | null>(null)
   const update = asset.update
-  if (!update || asset.status.state !== 'ready') return null
+  if (!update || (asset.status.state !== 'ready' && !providedActive(asset))) return null
 
   const active = isRuntimeAssetUpdateActive(update.state)
   const locked = active || busy !== null
@@ -72,7 +83,7 @@ function RuntimeAssetUpdatePanel({
     <div className="mt-2 flex flex-col gap-1.5 border-t border-border/60 pt-2">
       <div className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
         <span className="text-foreground">
-          {t('settings.componentUpdateInstalled', { version: asset.status.version })}
+          {t('settings.componentUpdateInstalled', { version: displayedVersion(asset) })}
         </span>
         {update.availableVersion ? (
           <span className="text-indigo-300">
@@ -196,14 +207,18 @@ export function RuntimeComponentsSettings() {
       {assets.map((asset) => {
         const active = ['downloading', 'verifying', 'installing', 'removing'].includes(asset.status.state)
         const updating = asset.update ? isRuntimeAssetUpdateActive(asset.update.state) : false
+        const provided = providedActive(asset)
         return (
           <div key={asset.id} className="rounded-md border border-border px-2.5 py-2" data-runtime-asset={asset.id}>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] font-medium text-foreground">{t(`settings.componentName_${asset.id}`)}</p>
                 <p className="text-[11px] text-muted-foreground">
-                  {t(`settings.componentRequiredBy_${asset.id}`)} · {t(`settings.componentState_${asset.status.state}`)}{' '}
-                  · v{asset.status.version ?? asset.availableVersion} ·{' '}
+                  {t(`settings.componentRequiredBy_${asset.id}`)} ·{' '}
+                  {provided && asset.status.state === 'not-installed'
+                    ? t('settings.componentProvidedByImage')
+                    : t(`settings.componentState_${asset.status.state}`)}{' '}
+                  · v{displayedVersion(asset)} ·{' '}
                   {t('settings.componentSizes', {
                     download: formatBytes(asset.downloadBytes),
                     installed: formatBytes(asset.status.diskUsageBytes || asset.unpackedBytes),
@@ -242,7 +257,7 @@ export function RuntimeComponentsSettings() {
                 >
                   {asset.status.state === 'corrupt' ? t('settings.componentRepair') : t('settings.componentRetry')}
                 </button>
-              ) : (
+              ) : provided ? null : (
                 <button
                   className={buttonCls}
                   disabled={busy === asset.id || asset.downloadBytes === 0}

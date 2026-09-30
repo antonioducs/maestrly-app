@@ -4,15 +4,14 @@ import type {
   RuntimeAssetUpdateInfo,
   RuntimeAssetUpdateState,
 } from '../../shared/runtime-assets'
-import { CODEX_COMPATIBILITY_REVISION } from './codex-compatibility'
-import type { CodexReleaseStore } from './codex-release-store'
-import { compareStableVersions } from './codex-releases'
+import { compareStableVersions, isStableRuntimeVersion } from './npm-registry'
 import type { RuntimeAssetDefinition, RuntimeTargetId } from './registry'
+import type { RuntimeReleaseProfile } from './release-profile'
+import type { RuntimeReleaseStore } from './release-store'
 import { RuntimeAssetUpdateError, type RuntimeAssetService, type RuntimeAssetUpdateProgress } from './service'
 
-const ID = 'codex-runtime' as const
-export const CODEX_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000
-export const CODEX_UPDATE_INITIAL_DELAY_MS = 60_000
+export const RUNTIME_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60_000
+export const RUNTIME_UPDATE_INITIAL_DELAY_MS = 60_000
 
 /**
  * Failures attributable to the release itself. Only these exclude a version from automatic installation; network,
@@ -30,11 +29,20 @@ type ServicePort = Pick<
   | 'previousInstallation'
   | 'leasedInstallations'
   | 'pointedVersions'
+  | 'remove'
 >
 
-export interface CodexUpdateControllerOptions {
+/** A runtime provided outside the service, such as the one in a bot image. */
+export interface RuntimeBaseline {
+  readonly version: string
+}
+
+export interface RuntimeUpdateControllerOptions {
+  readonly profile: RuntimeReleaseProfile
+  /** Compatibility contract a release is validated against; older accepted releases are revalidated. */
+  readonly compatibilityRevision: number
   readonly service: ServicePort
-  readonly store: CodexReleaseStore
+  readonly store: RuntimeReleaseStore
   readonly target: RuntimeTargetId
   readonly embedded: RuntimeAssetDefinition
   readonly discover: (target: RuntimeTargetId, signal: AbortSignal) => Promise<RuntimeAssetDefinition>
@@ -44,8 +52,13 @@ export interface CodexUpdateControllerOptions {
     signal: AbortSignal
   ) => Promise<void>
   readonly onChanged?: () => void
-  /** Background checks run only in packaged production builds; development and E2E stay manual. */
+  /** Whether `start()` schedules background checks; development and E2E builds stay manual. */
   readonly schedule?: boolean
+  /**
+   * Runtime provided outside the service (a bot image). It counts as installed and is never downgraded: releases
+   * install only when newer than both it and the managed installation.
+   */
+  readonly baseline?: () => Promise<RuntimeBaseline | null>
   readonly initialDelayMs?: number
   readonly intervalMs?: number
   readonly now?: () => Date
@@ -76,14 +89,15 @@ function errorCode(error: unknown): PublicUpdateError {
 }
 
 /**
- * Orchestrates Codex releases independently of Maestrly releases: manual and scheduled checks, installation of a
- * newer stable release beside the active one, validation before activation, and rollback. Default policy is
- * notify-only; automatic installation is opt-in and never applies to a component the user has not installed.
- * Operations are single-flight and publish snapshots through `onChanged`; open connections keep their leased
- * runtime, so activation never interrupts running work.
+ * Orchestrates the releases of one runtime independently of Maestrly releases: manual and scheduled checks,
+ * installation of a newer stable release beside the active one, validation before activation, and rollback. The
+ * store decides the default policy; automatic installation never applies to a component that is not installed,
+ * unless a baseline provides it. Operations are single-flight and publish snapshots through `onChanged`; open
+ * connections keep their leased runtime, so activation never interrupts running work.
  */
-export class CodexUpdateController {
-  private readonly options: CodexUpdateControllerOptions
+export class RuntimeUpdateController {
+  private readonly options: RuntimeUpdateControllerOptions
+  private readonly id: RuntimeReleaseProfile['id']
   private readonly now: () => Date
   private readonly intervalMs: number
   private operation: Operation | null = null
@@ -94,10 +108,49 @@ export class CodexUpdateController {
   private intervalTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
 
-  constructor(options: CodexUpdateControllerOptions) {
+  constructor(options: RuntimeUpdateControllerOptions) {
     this.options = options
+    this.id = options.profile.id
     this.now = options.now ?? (() => new Date())
-    this.intervalMs = options.intervalMs ?? CODEX_UPDATE_CHECK_INTERVAL_MS
+    this.intervalMs = options.intervalMs ?? RUNTIME_UPDATE_CHECK_INTERVAL_MS
+  }
+
+  private async baselineVersion(): Promise<string | null> {
+    if (!this.options.baseline) return null
+    try {
+      const baseline = await this.options.baseline()
+      return baseline && isStableRuntimeVersion(baseline.version) ? baseline.version : null
+    } catch (error) {
+      this.log('Unable to read the provided runtime version', error)
+      return null
+    }
+  }
+
+  /** The version in use: the newer of the managed installation and the baseline; null when neither exists. */
+  async effectiveVersion(): Promise<string | null> {
+    const status = await this.options.service.status(this.id).catch(() => null)
+    const managed = status?.state === 'ready' ? (status.version ?? null) : null
+    const baseline = await this.baselineVersion()
+    if (!managed) return baseline
+    if (!baseline) return managed
+    return isNewer(baseline, managed) ? baseline : managed
+  }
+
+  /** A managed installation the baseline caught up with is never used again; it is removed once nothing leases it. */
+  private async removeShadowed(): Promise<void> {
+    const baseline = await this.baselineVersion()
+    if (!baseline) return
+    const { service } = this.options
+    const status = await service.status(this.id).catch(() => null)
+    if (status?.state !== 'ready' || !status.version || isNewer(status.version, baseline)) return
+    if (service.leasedInstallations(this.id).length > 0) return
+    try {
+      await service.remove(this.id)
+      this.log(`Removed ${this.options.profile.label} ${status.version}: the provided ${baseline} is not older`)
+      this.changed()
+    } catch (error) {
+      this.log('Unable to remove a runtime the baseline replaced', error)
+    }
   }
 
   private changed(): void {
@@ -109,10 +162,7 @@ export class CodexUpdateController {
   }
 
   private log(message: string, error?: unknown): void {
-    ;(this.options.log ?? ((text, cause) => console.warn(`[codex-runtime-updates] ${text}`, cause ?? '')))(
-      message,
-      error
-    )
+    ;(this.options.log ?? ((text, cause) => console.warn(`[${this.id}-updates] ${text}`, cause ?? '')))(message, error)
   }
 
   private setProgress(progress: Progress | null): void {
@@ -126,7 +176,7 @@ export class CodexUpdateController {
     let automatic = false
     let lastCheckedAt: string | undefined
     let candidate: RuntimeAssetDefinition | null = null
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       automatic = store.automatic
       lastCheckedAt = store.lastCheckedAt
@@ -135,14 +185,15 @@ export class CodexUpdateController {
     } catch {
       // Unavailable metadata only hides release details; the installation status reports its own failure.
     }
-    const status = await service.status(ID).catch(() => null)
-    const installed = status?.state === 'ready' ? status.version : undefined
+    const status = await service.status(this.id).catch(() => null)
+    const managed = status?.state === 'ready' ? status.version : undefined
+    const installed = (await this.effectiveVersion()) ?? undefined
     const availableVersion = isNewer(candidate?.version, installed) ? candidate?.version : undefined
-    const previous = installed ? await service.previousInstallation(ID).catch(() => null) : null
+    const previous = managed ? await service.previousInstallation(this.id).catch(() => null) : null
     // "Back" only: after a rollback the newer version stays installed but is offered as an explicit update.
-    const rollbackVersion = previous && isNewer(installed, previous.version) ? previous.version : undefined
+    const rollbackVersion = previous && isNewer(managed, previous.version) ? previous.version : undefined
     const restartRequired = Boolean(
-      status?.path && service.leasedInstallations(ID).some((leased) => leased.path !== status.path)
+      status?.path && service.leasedInstallations(this.id).some((leased) => leased.path !== status.path)
     )
     const state: RuntimeAssetUpdateState =
       this.progress?.state ??
@@ -230,13 +281,13 @@ export class CodexUpdateController {
    */
   update(): Promise<RuntimeAssetUpdateInfo> {
     return this.run('update', async (signal) => {
-      const status = await this.options.service.status(ID)
-      if (status.state !== 'ready' || !status.version) {
+      const installed = await this.effectiveVersion()
+      if (!installed) {
         this.lastError = 'not-installed'
         return
       }
       const latest = await this.discover(signal)
-      if (!latest || !isNewer(latest.version, status.version)) return
+      if (!latest || !isNewer(latest.version, installed)) return
       await this.installCandidate(latest, signal)
     })
   }
@@ -250,14 +301,14 @@ export class CodexUpdateController {
         signal,
         validate: (installationPath, definition, validationSignal) =>
           this.options.validate(installationPath, definition, validationSignal),
-        commit: (definition) => store.accept(definition, CODEX_COMPATIBILITY_REVISION),
+        commit: (definition) => store.accept(definition, this.options.compatibilityRevision),
         onProgress: (progress) => this.setProgress(this.mapProgress(progress, target?.downloadBytes)),
       })
       store.clearRejection(candidate.version)
     } catch (error) {
       const code = signal.aborted ? 'cancelled' : errorCode(error)
       this.lastError = code
-      this.log(`Codex ${candidate.version} was not activated (${code})`, error)
+      this.log(`${this.options.profile.label} ${candidate.version} was not activated (${code})`, error)
       if (RELEASE_FAILURES.has(code)) store.reject(candidate.version, 'failed')
     } finally {
       await this.prune()
@@ -277,14 +328,14 @@ export class CodexUpdateController {
   rollback(): Promise<RuntimeAssetUpdateInfo> {
     return this.run('rollback', async () => {
       const { service, store } = this.options
-      const before = await service.status(ID)
-      const previous = await service.previousInstallation(ID)
+      const before = await service.status(this.id)
+      const previous = await service.previousInstallation(this.id)
       if (before.state !== 'ready' || !previous || !isNewer(before.version, previous.version)) {
         this.lastError = 'rollback-unavailable'
         return
       }
       this.setProgress({ state: 'rolling-back' })
-      await service.rollback(ID)
+      await service.rollback(this.id)
       if (before.version) store.reject(before.version, 'rollback')
       await this.prune()
     })
@@ -301,11 +352,11 @@ export class CodexUpdateController {
   cancel(): boolean {
     let cancelled = false
     if (this.operation) {
-      this.operation.controller.abort(new Error('Codex runtime update cancelled'))
+      this.operation.controller.abort(new Error(`${this.options.profile.label} runtime update cancelled`))
       cancelled = true
     }
     if (this.initialInstall) {
-      this.initialInstall.controller.abort(new Error('Codex runtime installation cancelled'))
+      this.initialInstall.controller.abort(new Error(`${this.options.profile.label} runtime installation cancelled`))
       cancelled = true
     }
     return cancelled
@@ -332,9 +383,9 @@ export class CodexUpdateController {
 
   private async performInitialInstall(signal: AbortSignal): Promise<RuntimeAssetStatus> {
     const { service, store, embedded } = this.options
-    const current = await service.status(ID)
+    const current = await service.status(this.id)
     if (current.state === 'ready') return current
-    if (current.path) return service.install(ID, signal)
+    if (current.path) return service.install(this.id, signal)
 
     let candidate: RuntimeAssetDefinition | null = null
     try {
@@ -344,7 +395,7 @@ export class CodexUpdateController {
       if (signal.aborted) throw signal.reason ?? error
       this.log('Release check before installation failed; installing the embedded version', error)
     }
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       rejected = store.rejected()
     } catch {
@@ -356,18 +407,21 @@ export class CodexUpdateController {
           signal,
           validate: (installationPath, definition, validationSignal) =>
             this.options.validate(installationPath, definition, validationSignal),
-          commit: (definition) => store.accept(definition, CODEX_COMPATIBILITY_REVISION),
+          commit: (definition) => store.accept(definition, this.options.compatibilityRevision),
         })
         this.changed()
         return installed
       } catch (error) {
         if (signal.aborted) throw signal.reason ?? error
         const code = errorCode(error)
-        this.log(`Codex ${candidate.version} could not be installed (${code}); using the embedded version`, error)
+        this.log(
+          `${this.options.profile.label} ${candidate.version} could not be installed (${code}); using the embedded version`,
+          error
+        )
         if (RELEASE_FAILURES.has(code)) store.reject(candidate.version, 'failed')
       }
     }
-    const installed = await service.install(ID, signal)
+    const installed = await service.install(this.id, signal)
     this.changed()
     return installed
   }
@@ -378,30 +432,30 @@ export class CodexUpdateController {
    */
   async revalidateIfStale(): Promise<void> {
     const { service, store } = this.options
-    const status = await service.status(ID).catch(() => null)
+    const status = await service.status(this.id).catch(() => null)
     if (status?.state !== 'ready' || !status.version || !status.path) return
-    let release: ReturnType<CodexReleaseStore['acceptedRelease']> = null
+    let release: ReturnType<RuntimeReleaseStore['acceptedRelease']> = null
     try {
       release = store.acceptedRelease(status.version)
     } catch {
       return
     }
-    if (!release || release.compatibilityRevision >= CODEX_COMPATIBILITY_REVISION) return
+    if (!release || release.compatibilityRevision >= this.options.compatibilityRevision) return
     const accepted = release
     const version = status.version
     const expectedPath = status.path
     await this.run('revalidate', async (signal) => {
       this.setProgress({ state: 'validating' })
-      const lease = await service.acquireLease(ID, expectedPath)
+      const lease = await service.acquireLease(this.id, expectedPath)
       try {
         await this.options.validate(lease.path, accepted.definition, signal)
-        store.markValidated(version, CODEX_COMPATIBILITY_REVISION)
+        store.markValidated(version, this.options.compatibilityRevision)
       } catch (error) {
         if (signal.aborted) throw error
-        this.log(`Codex ${version} no longer passes the compatibility contract`, error)
+        this.log(`${this.options.profile.label} ${version} no longer passes the compatibility contract`, error)
         store.reject(version, 'failed')
-        const previous = await service.previousInstallation(ID).catch(() => null)
-        if (previous) await service.rollback(ID)
+        const previous = await service.previousInstallation(this.id).catch(() => null)
+        if (previous) await service.rollback(this.id)
         else this.lastError = 'incompatible'
       } finally {
         lease.release()
@@ -414,8 +468,8 @@ export class CodexUpdateController {
     const { service, store } = this.options
     try {
       const keep = [
-        ...(await service.pointedVersions(ID)),
-        ...service.leasedInstallations(ID).map((installation) => installation.version),
+        ...(await service.pointedVersions(this.id)),
+        ...service.leasedInstallations(this.id).map((installation) => installation.version),
       ]
       store.prune(keep)
     } catch (error) {
@@ -423,18 +477,21 @@ export class CodexUpdateController {
     }
   }
 
-  /** One background cycle: only for an installed component; installs only when automatic updates are enabled. */
+  /**
+   * One background cycle: only for an installed (or provided) component; installs only when automatic updates are
+   * enabled.
+   */
   async cycle(force: boolean): Promise<void> {
     if (this.disposed) return
-    const { service, store } = this.options
-    const status = await service.status(ID).catch(() => null)
-    if (status?.state !== 'ready' || !status.version) return
+    const { store } = this.options
+    if (!(await this.effectiveVersion())) return
+    await this.removeShadowed()
     await this.revalidateIfStale()
     await this.check(force)
     await this.prune()
     let automatic = false
     let candidate: RuntimeAssetDefinition | null = null
-    let rejected: ReturnType<CodexReleaseStore['rejected']> = null
+    let rejected: ReturnType<RuntimeReleaseStore['rejected']> = null
     try {
       automatic = store.automatic
       candidate = store.candidate()
@@ -443,8 +500,8 @@ export class CodexUpdateController {
       return
     }
     if (!automatic || this.lastError || !candidate || this.disposed) return
-    const current = await service.status(ID).catch(() => null)
-    if (current?.state !== 'ready' || !isNewer(candidate.version, current.version)) return
+    const current = await this.effectiveVersion()
+    if (!current || !isNewer(candidate.version, current)) return
     if (rejected?.version === candidate.version) return
     await this.update()
   }
@@ -456,7 +513,7 @@ export class CodexUpdateController {
       void this.cycle(false)
       this.intervalTimer = setInterval(() => void this.cycle(true), this.intervalMs)
       this.intervalTimer.unref?.()
-    }, this.options.initialDelayMs ?? CODEX_UPDATE_INITIAL_DELAY_MS)
+    }, this.options.initialDelayMs ?? RUNTIME_UPDATE_INITIAL_DELAY_MS)
     this.startupTimer.unref?.()
   }
 

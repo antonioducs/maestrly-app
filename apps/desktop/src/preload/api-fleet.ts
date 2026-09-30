@@ -235,6 +235,9 @@ export const fleetApi = {
   /** Cancels an update that waits for the environment's bots. */
   fleetEnvironmentUpdateCancel: (environmentId: string): Promise<FleetEnvironment> =>
     ipcRenderer.invoke('fleet:environmentUpdateCancel', environmentId),
+  /** Asks the environment to check for Claude Code and Codex releases; gateways with `runtime-updates` only. */
+  fleetEnvironmentRuntimesCheck: (environmentId: string): Promise<FleetEnvironment> =>
+    ipcRenderer.invoke('fleet:environmentRuntimesCheck', environmentId),
   fleetPatchEnvironment: (environmentId: string, patch: FleetPatchEnvironmentRequest): Promise<FleetEnvironment> =>
     ipcRenderer.invoke('fleet:patchEnvironment', environmentId, patch),
   /** Empty for gateways without environments. */

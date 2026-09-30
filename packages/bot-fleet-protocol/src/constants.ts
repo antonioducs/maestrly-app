@@ -71,6 +71,8 @@ export const FLEET_GATEWAY_ENV = {
   botMemory: 'MAESTRLY_GATEWAY_BOT_MEMORY',
   botEgress: 'MAESTRLY_GATEWAY_BOT_EGRESS',
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
+  /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
+  botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
   timezone: 'TZ',
 } as const
 
@@ -85,10 +87,15 @@ export const FLEET_BOT_ENV = {
   gatewayToken: 'MAESTRLY_BOT_GATEWAY_TOKEN',
   environmentId: 'MAESTRLY_ENVIRONMENT_ID',
   egress: 'MAESTRLY_BOT_EGRESS',
+  runtimeUpdates: 'MAESTRLY_BOT_RUNTIME_UPDATES',
 } as const
 
 export const FLEET_BOT_EGRESS_MODES = ['open', 'public'] as const
 export type FleetBotEgress = (typeof FLEET_BOT_EGRESS_MODES)[number]
+
+/** Whether bots check for and install new Claude Code and Codex releases on their own. */
+export const FLEET_BOT_RUNTIME_UPDATE_MODES = ['auto', 'off'] as const
+export type FleetBotRuntimeUpdates = (typeof FLEET_BOT_RUNTIME_UPDATE_MODES)[number]
 
 export const FLEET_SCREEN_CLOSE_CODES = {
   released: 4001,
@@ -155,6 +162,25 @@ export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
 export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
 /** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
 export const FLEET_REASONING_QUERY = 'reasoning'
+/**
+ * Gateway feature (`/v1/meta`) and instance capability: an environment reports the versions of its Claude Code and
+ * Codex runtimes and can be asked to check for newer releases.
+ */
+export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
+export const FLEET_RUNTIME_IDS = ['claude-code', 'codex'] as const
+/** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
+export const FLEET_RUNTIME_STATES = [
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'downloading',
+  'verifying',
+  'installing',
+  'validating',
+  'rolling-back',
+  'failed',
+] as const
 /** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
 export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
 /**

@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import enChat from '../../src/shared/i18n/en/chat'
+import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
+import { RUNTIME_ASSET_IDS } from '../../src/shared/runtime-assets'
 
 const apiSettings = readFileSync(
   new URL('../../src/renderer/components/chat/ApiKeySettings.tsx', import.meta.url),
@@ -71,6 +74,17 @@ describe('managed runtime renderer contract', () => {
     expect(componentSettings).toContain('update.restartRequired')
     expect(componentSettings).toContain('disabled={locked}')
     expect(componentSettings).not.toMatch(/relaunch|app\.quit|restartApp/)
+  })
+
+  it('names every runtime and the image-provided state in both catalogs', () => {
+    for (const catalog of [enChat.settings, ptBrChat.settings] as Record<string, unknown>[]) {
+      for (const id of RUNTIME_ASSET_IDS) {
+        expect(catalog[`componentName_${id}`], id).toEqual(expect.any(String))
+        expect(catalog[`componentRequiredBy_${id}`], id).toEqual(expect.any(String))
+      }
+      expect(catalog.componentProvidedByImage).toEqual(expect.any(String))
+    }
+    expect(componentSettings).toContain("t('settings.componentProvidedByImage')")
   })
 
   it('requires an explicit tunnel-client install before tunnel creation', () => {

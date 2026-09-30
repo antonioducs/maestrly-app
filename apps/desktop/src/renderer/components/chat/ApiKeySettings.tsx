@@ -890,7 +890,8 @@ function SubscriptionProviderCard({
     setBusy('login')
     setActionError(null)
     try {
-      if (runtimeId && runtime?.status.state !== 'ready') {
+      // A bot's image runtime needs no install; a managed one does.
+      if (runtimeId && runtime?.status.state !== 'ready' && runtime?.provided?.active !== true) {
         runtimeInstallInProgressRef.current = true
         try {
           const installed =
@@ -1000,7 +1001,7 @@ function SubscriptionProviderCard({
   const identity = status?.username ?? status?.email
   const runtimeActive =
     runtime !== null && ['downloading', 'verifying', 'installing', 'removing'].includes(runtime.status.state)
-  const runtimeReady = !runtimeId || runtime?.status.state === 'ready'
+  const runtimeReady = !runtimeId || runtime?.status.state === 'ready' || runtime?.provided?.active === true
 
   const refreshAll = async () => {
     const next = await refreshStatus(true)

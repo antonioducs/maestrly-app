@@ -119,6 +119,16 @@ automatically only when the user enables it. Development and E2E runs never
 check in the background. Conversations already open keep their runtime until
 Maestrly restarts.
 
+Bots also manage Claude Code this way (`claude-code-runtime`, listed only in
+bot mode). `CLAUDE_CODE_PINNED_VERSION` and its per-target hashes in
+`registry.ts` must match the `claudeCodeVersion` of the pinned
+`@anthropic-ai/claude-agent-sdk`; the registry test fails when they drift, so
+update both whenever the SDK moves. Its checks live in
+`runtime-assets/claude-code-compatibility.ts`, with
+`CLAUDE_CODE_COMPATIBILITY_REVISION`. Bot images keep the SDK-bundled binary as
+the floor, and `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` keeps a local fleet
+from downloading releases.
+
 The compatibility check lives in `runtime-assets/codex-compatibility.ts`.
 Increase `CODEX_COMPATIBILITY_REVISION` when the app starts depending on a new
 Codex contract, so independently installed releases are validated again. The

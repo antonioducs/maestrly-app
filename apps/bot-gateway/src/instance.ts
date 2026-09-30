@@ -166,6 +166,10 @@ export class InstanceClient {
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus> {
     return this.call('environmentStatus')
   }
+  /** Starts the environment's runtime checks; they run in the background there. */
+  runtimesCheck(): Promise<{ ok: true }> {
+    return this.call('runtimesCheck')
+  }
   /** The model options of the environment's accounts, for its default compaction model (`environment-compaction`). */
   environmentSelections() {
     return this.call('environmentSelections')

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeAssetId, RuntimeAssetInfo, RuntimeAssetState } from '../../src/shared/runtime-assets'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 
@@ -33,6 +33,15 @@ const mocks = vi.hoisted(() => {
     })
   let changedEmitter: ((info: RuntimeAssetInfo) => void) | undefined
   const snapshot = { state: 'idle', automatic: false, restartRequired: false }
+  const updates = {
+    installInitial: vi.fn(async () => ({ id: 'codex-runtime', state: 'ready' })),
+    check: vi.fn(async () => snapshot),
+    update: vi.fn(async () => snapshot),
+    rollback: vi.fn(async () => snapshot),
+    setAutomatic: vi.fn(async () => snapshot),
+    cancel: vi.fn(() => true),
+    prune: vi.fn(async () => undefined),
+  }
   return {
     states,
     changedEmitter: () => changedEmitter,
@@ -47,22 +56,15 @@ const mocks = vi.hoisted(() => {
       remove: operation('not-installed'),
       cancel: vi.fn(() => false),
     },
-    updates: {
-      installInitial: vi.fn(async () => ({ id: 'codex-runtime', state: 'ready' })),
-      check: vi.fn(async () => snapshot),
-      update: vi.fn(async () => snapshot),
-      rollback: vi.fn(async () => snapshot),
-      setAutomatic: vi.fn(async () => snapshot),
-      cancel: vi.fn(() => true),
-      prune: vi.fn(async () => undefined),
-    },
+    updates,
+    runtimeUpdates: vi.fn((_id: RuntimeAssetId) => updates),
   }
 })
 
 vi.mock('../../src/main/runtime-assets/app-service', () => ({
   runtimeAssetInfo: mocks.info,
   runtimeAssetService: () => mocks.service,
-  codexRuntimeUpdates: () => mocks.updates,
+  runtimeUpdates: mocks.runtimeUpdates,
   setRuntimeAssetChangedEmitter: mocks.setEmitter,
 }))
 
@@ -83,6 +85,7 @@ describe('runtime asset IPC', () => {
     emitChanged.mockClear()
     Object.values(mocks.service).forEach((fn) => fn.mockClear())
     Object.values(mocks.updates).forEach((fn) => fn.mockClear())
+    mocks.runtimeUpdates.mockClear()
     const reg = {
       handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
       mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
@@ -90,6 +93,36 @@ describe('runtime asset IPC', () => {
       mon: vi.fn(),
     } as unknown as IpcRegistrar
     registerRuntimeAssetIpc(reg, { emitChanged })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('hides the Claude Code runtime outside bots', async () => {
+    const listed = (await reads.get('runtime-assets:list')?.({})) as RuntimeAssetInfo[]
+    expect(listed.map((info) => info.id)).not.toContain('claude-code-runtime')
+    for (const [handlers, channel] of [
+      [reads, 'status'],
+      [mutations, 'install'],
+      [mutations, 'update'],
+      [mutations, 'check-update'],
+      [mutations, 'set-auto-update'],
+    ] as const) {
+      await expect(
+        Promise.resolve().then(() => handlers.get(`runtime-assets:${channel}`)?.({}, 'claude-code-runtime', true))
+      ).rejects.toThrow('Unknown runtime asset id')
+    }
+    expect(mocks.runtimeUpdates).not.toHaveBeenCalled()
+  })
+
+  it('lists the Claude Code runtime in bots and routes its updates to its own controller', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const listed = (await reads.get('runtime-assets:list')?.({})) as RuntimeAssetInfo[]
+    expect(listed.map((info) => info.id)).toContain('claude-code-runtime')
+    await mutations.get('runtime-assets:update')?.({}, 'claude-code-runtime')
+    expect(mocks.runtimeUpdates).toHaveBeenCalledWith('claude-code-runtime')
+    expect(mocks.updates.update).toHaveBeenCalledTimes(1)
   })
 
   it('list and status are read-only and never install or download', async () => {
@@ -135,6 +168,7 @@ describe('runtime asset IPC', () => {
       id: 'codex-runtime',
     })
     expect(mocks.updates[method]).toHaveBeenCalledWith(...args)
+    expect(mocks.runtimeUpdates).toHaveBeenCalledWith('codex-runtime')
     expect(emitChanged).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'codex-runtime' }))
   })
 
@@ -145,6 +179,7 @@ describe('runtime asset IPC', () => {
         Promise.resolve().then(() => mutations.get(`runtime-assets:${operation}`)?.({}, 'tunnel-client', true))
       ).rejects.toThrow(/not supported for tunnel-client/)
       expect(Object.values(mocks.updates).some((fn) => fn.mock.calls.length > 0)).toBe(false)
+      expect(mocks.runtimeUpdates).not.toHaveBeenCalled()
     }
   )
 

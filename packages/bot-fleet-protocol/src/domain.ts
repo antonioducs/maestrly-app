@@ -21,6 +21,8 @@ import {
   FLEET_TODO_LIMITS,
   FLEET_TOOL_OUTPUT_MAX,
   FLEET_REASONING_TEXT_MAX,
+  FLEET_RUNTIME_IDS,
+  FLEET_RUNTIME_STATES,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -324,6 +326,31 @@ export const fleetEnvironmentUpdateSchema = z.object({
 })
 export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema>
 
+/** One runtime of an environment (Claude Code or Codex): the version in use and its release channel. */
+export const fleetRuntimeInfoSchema = z.object({
+  id: z.enum(FLEET_RUNTIME_IDS),
+  /**
+   * The version the bots run now, which work in progress may keep after another was installed. Null when the runtime
+   * is neither shipped by the image nor installed.
+   */
+  version: z.string().max(40).nullable(),
+  /** `image`: the version the bot image ships; `managed`: a newer release the environment installed on its own. */
+  source: z.enum(['image', 'managed']),
+  /**
+   * The version the bots switch to once their work in progress ends (Codex: once none of them is working); null
+   * when they already run the selected version, or for an image that predates it.
+   */
+  pendingVersion: z.string().max(40).nullable().default(null),
+  automatic: z.boolean(),
+  state: z.enum(FLEET_RUNTIME_STATES),
+  availableVersion: z.string().max(40).nullable(),
+  lastCheckedAt: fleetTimestampSchema.nullable(),
+  /** A desktop error code of the last check or update. */
+  error: z.string().max(40).nullable(),
+})
+export type FleetRuntimeInfo = z.infer<typeof fleetRuntimeInfoSchema>
+export const fleetRuntimesSchema = z.array(fleetRuntimeInfoSchema).max(4)
+
 /**
  * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
  * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
@@ -342,6 +369,8 @@ export const fleetEnvironmentSchema = z.object({
   capabilities: z.array(z.string().max(40)).max(20).default([]),
   /** Null when the gateway predates environment updates. */
   update: fleetEnvironmentUpdateSchema.nullable().default(null),
+  /** Null when the gateway or the environment's image predates runtime reports. */
+  runtimes: fleetRuntimesSchema.nullable().default(null),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,

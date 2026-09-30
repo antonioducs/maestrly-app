@@ -392,6 +392,17 @@ connections keep the version they leased, and the previous version remains
 available for an offline rollback. Checks are notify-only by default; automatic
 installation is opt-in and skips versions that failed or were rolled back.
 
+Bots update Claude Code the same way, only inside fleet environments. They read
+the `latest` version document of `@anthropic-ai/claude-code` and the platform
+package it declares for the environment's architecture, and accept a release
+only when the package names and versions agree, the tarball is the canonical
+npm URL, SHA-512 integrity is published, and the extracted size is within a
+limit. Validation runs the downloaded binary for its version and starts an
+Agent SDK session in a temporary profile that receives only operational
+environment variables, never an account, API key, or setting of the bot. A bot
+never uses a release older than the one its image ships. Bot checks are
+automatic by default and can be turned off per server.
+
 The electron-builder base configuration is an allowlist. Source trees, private
 environment files, unrelated build output, and unstaged runtime families must
 not be packaged. GitHub Actions are pinned to immutable commits. Dependency

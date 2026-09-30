@@ -707,6 +707,8 @@ async function main() {
     MAESTRLY_GATEWAY_PORT: String(port),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
     MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
+    // Bots must not download Claude Code or Codex releases during the test.
+    MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off',
   }
   await compose(['up', '-d', '--no-build'])
   const meta = await poll('gateway /v1/meta', () => request('GET', '/v1/meta'), 30000)
@@ -804,6 +806,39 @@ async function main() {
     [...containers].sort()
   )
   pass('two bot containers', 'running, setup, appVersion ' + version + '; one maestrly-env-* container each, slot 1')
+  // Each environment reports the Claude Code and Codex its image ships. The server turned automatic checks off, so
+  // neither runtime was ever checked or replaced.
+  const claudeCodeVersion = JSON.parse(
+    readFileSync(path.join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'), 'utf8')
+  ).claudeCodeVersion
+  for (const [environmentId, name] of [
+    [devEnvId, containers[0]],
+    [scoutEnvId, containers[1]],
+  ]) {
+    const reported = await poll(environmentId + ' runtimes', async () => {
+      const environment = await request('GET', '/v1/environments/' + environmentId)
+      return environment.runtimes?.length === 2 && environment.runtimes
+    })
+    const claude = reported.find((runtime) => runtime.id === 'claude-code')
+    const codex = reported.find((runtime) => runtime.id === 'codex')
+    assert.deepEqual(
+      {
+        version: claude?.version,
+        source: claude?.source,
+        pending: claude?.pendingVersion,
+        state: claude?.state,
+        checked: claude?.lastCheckedAt,
+      },
+      { version: claudeCodeVersion, source: 'image', pending: null, state: 'idle', checked: null }
+    )
+    assert.equal(codex?.source, 'image')
+    assert.equal(codex.pendingVersion, null)
+    assert.match(codex?.version ?? '', /^\d+\.\d+\.\d+$/)
+    assert.equal(codex.lastCheckedAt, null)
+    const env = JSON.parse((await docker(['inspect', '-f', '{{json .Config.Env}}', name])).stdout)
+    assert.ok(env.includes('MAESTRLY_BOT_RUNTIME_UPDATES=off'))
+  }
+  pass('runtime versions', 'Claude Code ' + claudeCodeVersion + ' and Codex from the image, reported and never checked')
   const egressContainer = containers[1]
   assert.equal(
     (await docker(['inspect', '-f', '{{.Config.User}} {{json .HostConfig.CapAdd}}', egressContainer])).stdout.trim(),

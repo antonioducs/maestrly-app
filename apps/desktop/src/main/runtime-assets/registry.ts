@@ -1,5 +1,7 @@
 import type { RuntimeAssetId } from '../../shared/runtime-assets'
 import localMlManifest from '../../../runtime-assets/local-ml/manifest.json'
+import { NPM_REGISTRY_ORIGIN } from './npm-registry'
+import type { RuntimeArtifactMetadata } from './release-profile'
 
 export type RuntimeTargetId = 'mac-arm64' | 'mac-x64' | 'linux-arm64' | 'linux-x64' | 'win-arm64' | 'win-x64'
 export type ArchiveFormat = 'tar.gz' | 'zip' | 'file'
@@ -146,7 +148,7 @@ export const CODEX_TARGET_LAYOUT: Readonly<
   >
 )
 
-export const CODEX_NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
+export const CODEX_NPM_REGISTRY_ORIGIN = NPM_REGISTRY_ORIGIN
 
 /** Canonical tarball URL of one official Codex platform artifact; dynamic releases must match it exactly. */
 export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {
@@ -191,6 +193,72 @@ const codexTargets = targetRecord(codex, ([id, , , digest]) =>
     unpackedBytes: codexUnpackedBytes[id as RuntimeTargetId],
   })
 )
+/**
+ * Claude Code the installed Agent SDK bundles (its package.json `claudeCodeVersion`): the version a bot image ships,
+ * and the minimum a bot's managed installation may run. Managed only on the Linux targets bots run on.
+ */
+export const CLAUDE_CODE_PINNED_VERSION = '2.1.285'
+export type ClaudeCodeTargetId = 'linux-arm64' | 'linux-x64'
+export const CLAUDE_CODE_TARGET_LAYOUT: Readonly<Record<ClaudeCodeTargetId, { readonly suffix: string }>> =
+  Object.freeze({
+    'linux-arm64': Object.freeze({ suffix: 'linux-arm64' }),
+    'linux-x64': Object.freeze({ suffix: 'linux-x64' }),
+  })
+
+export function isClaudeCodeTarget(id: RuntimeTargetId): id is ClaudeCodeTargetId {
+  return Object.hasOwn(CLAUDE_CODE_TARGET_LAYOUT, id)
+}
+
+/** Canonical tarball URL of one official Claude Code platform package; dynamic releases must match it exactly. */
+export function claudeCodeArtifactUrl(version: string, id: ClaudeCodeTargetId): string {
+  const { suffix } = CLAUDE_CODE_TARGET_LAYOUT[id]
+  return `${NPM_REGISTRY_ORIGIN}/@anthropic-ai/claude-code-${suffix}/-/claude-code-${suffix}-${version}.tgz`
+}
+
+/** One Claude Code target: the package holds the native `claude` binary next to its package.json. */
+export function createClaudeCodeTarget(
+  id: ClaudeCodeTargetId,
+  version: string,
+  metadata: RuntimeArtifactMetadata
+): RuntimeAssetTarget {
+  return Object.freeze({
+    id,
+    url: claudeCodeArtifactUrl(version, id),
+    archive: 'tar.gz' as const,
+    hash: Object.freeze({ algorithm: 'sha512' as const, digest: metadata.sha512Base64, encoding: 'base64' as const }),
+    downloadBytes: metadata.downloadBytes,
+    maxDownloadBytes: metadata.maxDownloadBytes,
+    unpackedBytes: metadata.unpackedBytes,
+    stripPrefix: 'package',
+    criticalPaths: Object.freeze(['claude', 'package.json']),
+    executablePath: 'claude',
+  })
+}
+
+/** npm metadata of the pinned `@anthropic-ai/claude-code-<platform>` packages; archive sizes measured. */
+const claudeCodePins: Readonly<Record<ClaudeCodeTargetId, RuntimeArtifactMetadata>> = {
+  'linux-arm64': {
+    sha512Base64: 'vAvIr+MVnm5IrSq8KoJrZkoG3BFpLvVEqfrx15w7hWW+gcSYHPvN33lfkzXvs5L8MYXxNW0Ae86MLiCH+x4ldQ==',
+    downloadBytes: 107_804_240,
+    maxDownloadBytes: downloadCap(107_804_240),
+    unpackedBytes: 239_723_082,
+  },
+  'linux-x64': {
+    sha512Base64: '6qNST8qKemr+rD9zvUEwEq0UtWt0E5Js8bkbjh13/LM62FiGWcN6IqiJPxybJ2FNd+I3liXq6JYNv/vrGnmAow==',
+    downloadBytes: 107_536_804,
+    maxDownloadBytes: downloadCap(107_536_804),
+    unpackedBytes: 240_328_450,
+  },
+}
+const claudeCodeTargets = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(claudeCodePins) as ClaudeCodeTargetId[]).map((id) => [
+      id,
+      createClaudeCodeTarget(id, CLAUDE_CODE_PINNED_VERSION, claudeCodePins[id]),
+    ])
+  ) as Partial<Record<RuntimeTargetId, RuntimeAssetTarget>>
+)
+
 const copilotTargets = targetRecord(copilot, ([id, suffix, digest]) => ({
   id: id as RuntimeTargetId,
   url: `https://registry.npmjs.org/@github/copilot-${suffix}/-/copilot-${suffix}-1.0.71.tgz`,
@@ -261,6 +329,11 @@ const whisperModelTargets = Object.freeze(
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
   'codex-runtime': Object.freeze({ id: 'codex-runtime', version: CODEX_PINNED_VERSION, targets: codexTargets }),
+  'claude-code-runtime': Object.freeze({
+    id: 'claude-code-runtime',
+    version: CLAUDE_CODE_PINNED_VERSION,
+    targets: claudeCodeTargets,
+  }),
   'github-copilot-runtime': Object.freeze({ id: 'github-copilot-runtime', version: '1.0.71', targets: copilotTargets }),
   'tunnel-client': Object.freeze({ id: 'tunnel-client', version: '0.0.10', targets: tunnelTargets }),
   'local-ml-runtime': Object.freeze({

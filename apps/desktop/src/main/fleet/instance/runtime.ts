@@ -104,6 +104,7 @@ import {
   type StoredProfile,
 } from './registry'
 import { inspectSubagentProfile } from '../../chat/subagent-profile-ipc'
+import { fleetRuntimeInfo } from './runtimes'
 import {
   getConversationSubagentProfileRules,
   setConversationSubagentProfilesEnabled,
@@ -913,6 +914,7 @@ export class BotRuntime {
       ceiling: this.stored?.profile.ceiling ?? 'ask',
       profile: this.stored ? { botId: this.stored.profile.botId, name: this.stored.profile.name } : null,
       conversationId: this.primaryConversationId,
+      runtimes: await fleetRuntimeInfo().catch(() => null),
       turn: {
         state: this.cancelling ? 'cancelling' : this.turning ? 'running' : 'idle',
         startedAt: this.turnStartedAt,
@@ -931,6 +933,11 @@ export class BotRuntime {
     if (this.disposed) return
     this.events.publish({ ...event, botId: this.botId })
   }
+  /** The environment's runtimes changed: publish a status carrying them. */
+  runtimesChanged(): void {
+    this.changed()
+  }
+
   private changed(): void {
     if (this.statusTimer || this.disposed) return
     this.statusTimer = setTimeout(() => {

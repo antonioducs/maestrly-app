@@ -4,11 +4,23 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
-import { validateCodexRuntime } from '../../src/main/runtime-assets/codex-compatibility'
-import { CodexReleaseStore } from '../../src/main/runtime-assets/codex-release-store'
-import { compareStableVersions, discoverCodexRelease } from '../../src/main/runtime-assets/codex-releases'
-import { CodexUpdateController } from '../../src/main/runtime-assets/codex-updates'
-import { RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from '../../src/main/runtime-assets/registry'
+import { validateClaudeCodeRuntime } from '../../src/main/runtime-assets/claude-code-compatibility'
+import { discoverClaudeCodeRelease } from '../../src/main/runtime-assets/claude-code-releases'
+import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from '../../src/main/runtime-assets/codex-compatibility'
+import {
+  CODEX_RELEASE_PROFILE,
+  compareStableVersions,
+  discoverCodexRelease,
+} from '../../src/main/runtime-assets/codex-releases'
+import { RuntimeReleaseStore } from '../../src/main/runtime-assets/release-store'
+import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-updates'
+import {
+  CLAUDE_CODE_PINNED_VERSION,
+  RUNTIME_ASSET_REGISTRY,
+  claudeCodeArtifactUrl,
+  hostRuntimeTarget,
+} from '../../src/main/runtime-assets/registry'
+import { bundledClaudeCandidate } from '../../src/main/chat/claude-agent-sdk/resolve-claude'
 import { RuntimeAssetService } from '../../src/main/runtime-assets/service'
 import { RUNTIME_ASSET_IDS, type RuntimeAssetId } from '../../src/shared/runtime-assets'
 
@@ -23,9 +35,10 @@ suite('managed provider runtime assets real smoke', () => {
   })
 
   const targetId = hostRuntimeTarget()
-  // Local ML runtime and the voice model have no executable to smoke.
+  // Local ML runtime and the voice model have no executable to smoke; Claude Code is managed only on the Linux
+  // targets bots run on.
   const providerIds = RUNTIME_ASSET_IDS.filter(
-    (id) => id !== 'local-ml-runtime' && id !== 'whisper-model'
+    (id) => id !== 'local-ml-runtime' && id !== 'whisper-model' && RUNTIME_ASSET_REGISTRY[id].targets[targetId]
   ) as RuntimeAssetId[]
   for (const id of providerIds) {
     it(
@@ -58,7 +71,8 @@ suite('managed provider runtime assets real smoke', () => {
       const userDataPath = path.join(temporary, 'codex-updates')
       let persisted: string | null = null
       const embedded = RUNTIME_ASSET_REGISTRY['codex-runtime']
-      const store = new CodexReleaseStore({
+      const store = new RuntimeReleaseStore({
+        profile: CODEX_RELEASE_PROFILE,
         storage: {
           read: () => persisted,
           write: (value) => {
@@ -72,7 +86,9 @@ suite('managed provider runtime assets real smoke', () => {
         userDataPath,
         acceptedDefinition: (id, version) => (id === 'codex-runtime' ? store.acceptedDefinition(version) : null),
       })
-      const controller = new CodexUpdateController({
+      const controller = new RuntimeUpdateController({
+        profile: CODEX_RELEASE_PROFILE,
+        compatibilityRevision: CODEX_COMPATIBILITY_REVISION,
         service,
         store,
         target: targetId,
@@ -111,4 +127,20 @@ suite('managed provider runtime assets real smoke', () => {
     },
     15 * 60_000
   )
+
+  it('discovers the latest official Claude Code release for bots', async () => {
+    const latest = await discoverClaudeCodeRelease('linux-x64')
+    expect(compareStableVersions(latest.version, CLAUDE_CODE_PINNED_VERSION)).toBeGreaterThanOrEqual(0)
+    expect(latest.targets['linux-x64']?.url).toBe(claudeCodeArtifactUrl(latest.version, 'linux-x64'))
+  }, 60_000)
+
+  it('validates the Claude Code binary the Agent SDK bundles without credentials', async () => {
+    const bundled = bundledClaudeCandidate()
+    expect(bundled, 'The Agent SDK platform package is not installed').toBeTruthy()
+    await validateClaudeCodeRuntime(
+      path.dirname(bundled!),
+      { id: 'claude-code-runtime', version: CLAUDE_CODE_PINNED_VERSION, targets: {} },
+      new AbortController().signal
+    )
+  }, 90_000)
 })

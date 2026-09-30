@@ -7,6 +7,7 @@ import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_IMAGE_LIMITS,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
@@ -239,6 +240,7 @@ export async function publicRoute(
             FLEET_ENVIRONMENT_UPDATES_FEATURE,
             FLEET_CONTEXT_LIMIT_FEATURE,
             FLEET_TRANSCRIPT_REASONING_FEATURE,
+            FLEET_RUNTIME_UPDATES_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -297,6 +299,14 @@ export async function publicRoute(
       }
     case 'environmentUpdateCancel':
       return { body: await ctx.lifecycle.cancelUpdate(eid) }
+    case 'environmentRuntimesCheck': {
+      requireEnvironment(ctx, eid)
+      const client = ctx.lifecycle.environmentInstance(eid)
+      if (!ctx.lifecycle.environment(eid)?.capabilities.includes(FLEET_RUNTIME_UPDATES_FEATURE))
+        throw new GatewayError('CONFLICT', 'Restart this environment to update it before checking its runtimes.')
+      await client.runtimesCheck()
+      return { body: requireEnvironment(ctx, eid) }
+    }
     case 'environmentArchive':
       return { body: await ctx.lifecycle.archiveEnvironment(eid) }
     case 'archivedEnvironmentsList':
