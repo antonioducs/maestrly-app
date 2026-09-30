@@ -38,6 +38,7 @@ import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn
 import { sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
+import { registerHostsIpc } from './remote-host/client/ipc'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -713,6 +714,7 @@ function registerIpc(): void {
   registerFleetInstanceIpc(reg)
 
   registerHostFsIpc(reg, { roots: hostFsRoots })
+  registerHostsIpc(reg)
 
   registerSettingsIpc(reg, {
     applySoundSettings: (s) => registry.setSoundSettings(s),

@@ -239,8 +239,55 @@ describe('preload API — exposure', () => {
   })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(493)
+    expect(keys).toHaveLength(496)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('relays the API of a remote host through this computer’s main process', async () => {
+    const hostId = 'server-1/workspaces'
+    const remote = hostsApi.hostApi(hostId)
+    // One object per host, with the members this computer's own host API has.
+    expect(hostsApi.hostApi(hostId)).toBe(remote)
+    expect(Object.keys(remote).sort()).toEqual(Object.keys(hostsApi.hostApi('local')).sort())
+
+    await remote.listWorkspaces(true)
+    expect(invokeSpy).toHaveBeenLastCalledWith('host:invoke', hostId, 'workspace:list', [true])
+    remote.setWorkspaceCollapsed('ws-1', true)
+    expect(sendSpy).toHaveBeenLastCalledWith('host:send', hostId, 'workspace:set-collapsed', ['ws-1', true])
+
+    // Every host shares one listener; an event reaches only the subscribers of its host and channel.
+    const here = vi.fn()
+    const there = vi.fn()
+    const stopHere = remote.onStatus(here)
+    const stopThere = hostsApi.hostApi('server-1/other').onStatus(there)
+    const relays = onSpy.mock.calls.filter(([channel]) => channel === 'host:event')
+    expect(relays).toHaveLength(1)
+    const relay = relays[0][1] as (event: unknown, ...args: unknown[]) => void
+    expect(onSpy.mock.calls.some(([channel]) => channel === 'agent:status')).toBe(false)
+    const status = { agentId: 'conv-1', status: 'working' }
+    relay({}, hostId, 'agent:status', [status])
+    relay({}, hostId, 'agent:other', [status])
+    expect(here).toHaveBeenCalledExactlyOnceWith(status)
+    expect(there).not.toHaveBeenCalled()
+    stopHere()
+    relay({}, hostId, 'agent:status', [status])
+    expect(here).toHaveBeenCalledTimes(1)
+    stopThere()
+  })
+
+  it('lists hosts, follows their changes and dials one again', async () => {
+    await hostsApi.hostsList()
+    expect(invokeSpy).toHaveBeenLastCalledWith('hosts:list')
+    await hostsApi.hostsRetry('server-1/workspaces')
+    expect(invokeSpy).toHaveBeenLastCalledWith('hosts:retry', 'server-1/workspaces')
+    const changed = vi.fn()
+    const off = hostsApi.onHostsChanged(changed)
+    const [channel, listener] = onSpy.mock.calls.at(-1) as [string, (event: unknown, hosts: unknown) => void]
+    expect(channel).toBe('hosts:changed')
+    listener({}, [{ id: 'local' }])
+    expect(changed).toHaveBeenCalledWith([{ id: 'local' }])
+    off()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('hosts:changed', listener)
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {

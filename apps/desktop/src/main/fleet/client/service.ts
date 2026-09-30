@@ -63,6 +63,23 @@ export class FleetClientService {
   private generation = 0
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  private readonly listeners = new Set<() => void>()
+
+  /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => void this.listeners.delete(listener)
+  }
+
+  private changed(): void {
+    for (const listener of [...this.listeners]) {
+      try {
+        listener()
+      } catch {
+        /* A listener's failure must not stop the fleet client. */
+      }
+    }
+  }
 
   start(): void {
     if (isHeadlessInstance()) return
@@ -92,6 +109,7 @@ export class FleetClientService {
   private setConnection(patch: Partial<FleetConnectionView>): void {
     this.connection = { ...this.connection, ...patch }
     broadcast('fleet:connection', this.connection)
+    this.changed()
   }
 
   getConnection(): FleetConnectionView {
@@ -277,6 +295,7 @@ export class FleetClientService {
       }
     }
     broadcast('fleet:event', event)
+    this.changed()
   }
 
   private dropEnvironment(environmentId: string): void {
