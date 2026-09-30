@@ -23,7 +23,10 @@ suite('managed provider runtime assets real smoke', () => {
   })
 
   const targetId = hostRuntimeTarget()
-  const providerIds = RUNTIME_ASSET_IDS.filter((id) => id !== 'local-ml-runtime') as RuntimeAssetId[]
+  // Local ML runtime and the voice model have no executable to smoke.
+  const providerIds = RUNTIME_ASSET_IDS.filter(
+    (id) => id !== 'local-ml-runtime' && id !== 'whisper-model'
+  ) as RuntimeAssetId[]
   for (const id of providerIds) {
     it(
       `installs, verifies and executes ${id} outside the app bundle`,

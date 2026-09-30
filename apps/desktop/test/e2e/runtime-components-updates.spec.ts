@@ -137,6 +137,7 @@ test('manages independent Codex runtime updates without marking the installation
       other('github-copilot-runtime'),
       other('tunnel-client'),
       other('local-ml-runtime'),
+      other('whisper-model'),
     ])
     replace('runtime-assets:status', (_event, id: string) => (id === 'codex-runtime' ? codex() : other(id)))
     replace('runtime-assets:check-update', () => {

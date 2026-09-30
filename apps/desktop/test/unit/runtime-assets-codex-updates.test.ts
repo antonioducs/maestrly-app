@@ -68,6 +68,7 @@ function harness(options: { schedule?: boolean; storage?: ReturnType<typeof memo
       'github-copilot-runtime': empty('github-copilot-runtime'),
       'tunnel-client': empty('tunnel-client'),
       'local-ml-runtime': empty('local-ml-runtime'),
+      'whisper-model': empty('whisper-model'),
     },
     target: 'mac-arm64',
     downloader,

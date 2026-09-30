@@ -12,6 +12,7 @@ import { ChatContextMeterDisplay } from '@/components/chat/ChatContextMeter'
 import { ChatReasoningPicker } from '@/components/chat/ChatReasoningPicker'
 import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { ChatMicButton } from '@/components/chat/ChatMicButton'
+import { appendDictation } from '@/lib/dictation'
 import { ContextCompactionStatus } from '@/components/chat/ContextCompactionStatus'
 import { BackgroundCompactionStatus } from '@/components/chat/BackgroundCompactionStatus'
 import { botChatComposerSource } from '@/components/chat/chat-composer-source'
@@ -296,7 +297,12 @@ export function BotComposer({
         }}
         micSlot={
           <ChatMicButton
-            onTranscribed={(text) => setDraft((previous) => (previous.trim() ? `${previous.trimEnd()} ${text}` : text))}
+            onTranscribed={(text) => setDraft((previous) => appendDictation(previous, text))}
+            onAutoSend={(text) => {
+              if (busy || locked) return false
+              void send(appendDictation(draft, text))
+              return true
+            }}
             disabled={locked || busy}
           />
         }

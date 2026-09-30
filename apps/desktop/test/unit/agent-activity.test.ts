@@ -99,6 +99,17 @@ describe('chat message segments', () => {
     expect(segments.map((segment) => (segment.kind === 'part' ? segment.index : 'a'))).toEqual([0, 'a', 4, 6])
   })
 
+  it('keeps a published artifact as its own card instead of folding it into the activity', () => {
+    for (const toolName of ['artifact_create', 'artifact_update', 'mcp__maestrly__artifact_create']) {
+      const parts: MessagePart[] = [
+        tool('read-1', 'read', { path: 'a.ts' }),
+        tool('art-1', toolName, { title: 'Probe' }),
+        text('t', 'Published.'),
+      ]
+      expect(kinds(chatActivitySegments(parts, false)), toolName).toEqual(['activity[read]', toolName, 'text'])
+    }
+  })
+
   it('leaves a message without steps as it is, with a live line only while nothing shows yet', () => {
     const answer = [text('t', 'Hello')]
     expect(kinds(chatActivitySegments(answer, false))).toEqual(['text'])

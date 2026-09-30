@@ -143,6 +143,28 @@ Models are obtained separately and remain subject to their own model-card
 licenses and terms. See
 [`apps/desktop/runtime-assets/local-ml/README.md`](apps/desktop/runtime-assets/local-ml/README.md).
 
+For voice dictation the archive also contains:
+
+- the [whisper.cpp](https://github.com/ggml-org/whisper.cpp) N-API addon from
+  [`@fugood/node-whisper-<platform>-<arch>`](https://www.npmjs.com/package/@fugood/whisper.node)
+  1.1.3, MIT License, Copyright (c) 2025 ggml / whisper.cpp contributors, Jhen-Jie
+  Hong, and Hans Chen. It statically links whisper.cpp and ggml, MIT License,
+  Copyright (c) 2023-2026 The ggml authors. The platform packages ship no license
+  file, so the texts are distributed as
+  [`whisper-node-MIT.txt`](apps/desktop/resources/licenses/whisper-node-MIT.txt) and
+  [`whisper-cpp-MIT.txt`](apps/desktop/resources/licenses/whisper-cpp-MIT.txt);
+- the [Silero VAD](https://github.com/snakers4/silero-vad) v6.2.0 model in GGML
+  format (`ggml-silero-v6.2.0.bin` from
+  [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad)), MIT
+  License, Copyright (c) 2020-present Silero Team, distributed as
+  [`silero-vad-MIT.txt`](apps/desktop/resources/licenses/silero-vad-MIT.txt).
+
+The speech model, OpenAI Whisper large-v3-turbo (MIT License, Copyright (c) 2022
+OpenAI) in the GGML format published by
+[ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), is not
+distributed with Maestrly. It is downloaded from Hugging Face only when the user
+chooses to install it for dictation.
+
 ## unpdf and PDF.js
 
 Maestrly packages [`unpdf`](https://github.com/unjs/unpdf) 1.8.1 (MIT,

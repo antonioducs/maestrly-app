@@ -25,12 +25,9 @@ if (offline) {
 }
 env.cacheDir = cacheDir
 await mkdir(cacheDir, { recursive: true })
-for (const [task, model] of [
-  ['feature-extraction', 'Xenova/all-MiniLM-L6-v2'],
-  ['automatic-speech-recognition', 'Xenova/whisper-base'],
-]) {
-  console.log(`[local-ml-models] Preparing ${model}`)
-  const instance = await pipeline(task, model)
-  await instance.dispose()
-}
-console.log(`[local-ml-models] Both models loaded successfully from ${cacheDir}`)
+// The speech model is the separate whisper-model runtime asset, not a Transformers.js model.
+const model = 'Xenova/all-MiniLM-L6-v2'
+console.log(`[local-ml-models] Preparing ${model}`)
+const instance = await pipeline('feature-extraction', model)
+await instance.dispose()
+console.log(`[local-ml-models] Embedding model loaded successfully from ${cacheDir}`)

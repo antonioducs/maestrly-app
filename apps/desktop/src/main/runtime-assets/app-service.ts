@@ -131,6 +131,10 @@ const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 're
     displayName: 'Local ML runtime',
     requiredBy: 'Local AI features',
   },
+  'whisper-model': {
+    displayName: 'Voice model',
+    requiredBy: 'Voice dictation',
+  },
 }
 
 async function directoryBytes(root: string): Promise<number> {
@@ -227,7 +231,9 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   }
   await Promise.all(
     entries
-      .filter((entry) => /^\.tmp-(?:codex-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime)-/.test(entry))
+      .filter((entry) =>
+        /^\.tmp-(?:codex-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model)-/.test(entry)
+      )
       .map((entry) => rm(path.join(root, entry), { recursive: true, force: true }))
   )
 }

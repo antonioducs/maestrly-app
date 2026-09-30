@@ -42,6 +42,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'github-copilot-runtime': empty('github-copilot-runtime'),
     'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
+    'whisper-model': empty('whisper-model'),
   }
 }
 
@@ -94,7 +95,34 @@ describe('RuntimeAssetService', () => {
     expect(marker).toMatchObject({ schema: 1, id: 'tunnel-client', version: '1.0.0', criticalPaths: ['bin/tool'] })
     expect(marker.files.map((file: { path: string }) => file.path)).toEqual(['bin/tool', 'README'])
     expect(marker.files[0].sha256).toMatch(/^[a-f0-9]{64}$/)
-    expect(await service.list()).toHaveLength(4)
+    expect(await service.list()).toHaveLength(5)
+  })
+
+  it('installs a single-file asset without extraction and verifies it', async () => {
+    const reg = registry()
+    reg['tunnel-client'] = {
+      ...reg['tunnel-client'],
+      targets: {
+        'mac-arm64': {
+          ...reg['tunnel-client'].targets['mac-arm64']!,
+          archive: 'file',
+          fileName: 'model.bin',
+          criticalPaths: ['model.bin'],
+        },
+      },
+    }
+    const { downloader, availableBytes } = fixtureDependencies()
+    const service = new RuntimeAssetService({
+      userDataPath: userData,
+      registry: reg,
+      target: 'mac-arm64',
+      downloader,
+      availableBytes,
+    })
+    const installed = await service.install('tunnel-client')
+    expect(installed.state).toBe('ready')
+    expect(await readFile(path.join(installed.path!, 'model.bin'), 'utf8')).toBe('fixture')
+    expect(downloader.mock.calls[0]?.[1]).toMatch(/download\.bin$/)
   })
 
   it('is single-flight, exposes progress, and supports cancellation with temp cleanup', async () => {
@@ -115,6 +143,31 @@ describe('RuntimeAssetService', () => {
     expect(deps.downloader).toHaveBeenCalledTimes(1)
     const rootEntries = await readdir(path.join(userData, 'runtime-assets'))
     expect(rootEntries.some((entry) => entry.startsWith('.tmp-'))).toBe(false)
+  })
+
+  it('reports a cancel as cancelled even when the downloader rejects with a generic abort error', async () => {
+    const deps = fixtureDependencies()
+    // Real fetch/stream pipelines reject with an AbortError ("The operation was aborted"), not the abort reason.
+    deps.downloader.mockImplementation(
+      (_target, _destination, options) =>
+        new Promise((_resolve, reject) =>
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true }
+          )
+        )
+    )
+    const service = new RuntimeAssetService({
+      userDataPath: userData,
+      registry: registry(),
+      target: 'mac-arm64',
+      ...deps,
+    })
+    const install = service.install('tunnel-client')
+    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
+    expect(service.cancel('tunnel-client')).toBe(true)
+    await expect(install).resolves.toMatchObject({ state: 'failed', error: 'Runtime asset installation cancelled' })
   })
 
   it('cancels one waiter without aborting a shared install needed by another waiter', async () => {

@@ -1,7 +1,12 @@
 # Local ML runtime and offline models
 
-The runtime is built from the pinned npm lockfile in this directory. RAG and speech recognition
-use Transformers.js, ONNX Runtime, and Sharp. Their licenses remain in the archive.
+The runtime is built from the pinned npm lockfile in this directory. RAG uses
+Transformers.js, ONNX Runtime, and Sharp; their licenses remain in the archive.
+Voice dictation uses the whisper.cpp N-API addon (`@fugood/node-whisper-<platform>-<arch>`,
+only the target's package) and the Silero VAD model committed under `models/`,
+both archived here. The addon's license texts ship with the app under `licenses/`
+because its platform packages contain none; see
+[Third-Party Notices](../../../../THIRD_PARTY_NOTICES.md).
 
 ## Build and package
 
@@ -14,7 +19,8 @@ the system zlib and produce different hashes. The build and
 
 1. Run `npm ci` in the repository root.
 2. Run `node scripts/build-local-ml-runtime.mjs` for the host architecture.
-3. Run `node scripts/smoke-local-ml-runtime.mjs` to load both native libraries.
+3. Run `node scripts/smoke-local-ml-runtime.mjs <archive>` to load the native
+   libraries, including the whisper.cpp addon with the bundled VAD model.
 4. Run `node scripts/package.mjs prod --mac --arm64` (or `--win --x64`,
    `--linux --x64`, and the appropriate architecture for your host).
 
@@ -49,12 +55,23 @@ node scripts/prepare-local-ml-models.mjs --cache-dir /path/to/model-cache
 node scripts/prepare-local-ml-models.mjs --cache-dir /path/to/model-cache --offline
 ```
 
-The second command downloads and loads `Xenova/all-MiniLM-L6-v2` for RAG and
-`Xenova/whisper-base` for transcription; the third checks that both load with remote
-model access disabled. Copy the **contents** of that cache into the target profile's
-`transformers-cache` directory before enabling local AI. Preserve subdirectories.
-Models follow the upstream default revision; review upstream model licenses before
-redistributing a prepared cache. Missing model files require connected setup again.
+The second command downloads and loads `Xenova/all-MiniLM-L6-v2` for RAG; the
+third checks that it loads with remote model access disabled. Copy the **contents**
+of that cache into the target profile's `transformers-cache` directory before
+enabling local AI. Preserve subdirectories. Models follow the upstream default
+revision; review upstream model licenses before redistributing a prepared cache.
+Missing model files require connected setup again.
+
+The dictation model is not a Transformers.js model. It is the `whisper-model`
+runtime asset: `ggml-large-v3-turbo-q5_0.bin` (574,041,195 bytes, SHA-256
+`394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2`), pinned to a
+fixed Hugging Face revision and installed only when the user clicks Download from
+the microphone or in Settings › Maestrly Chat › Components. To prepare an offline machine, install
+it on a connected machine with the same operating system and architecture, then
+copy that profile's whole `runtime-assets/whisper-model` directory into the
+target profile's `runtime-assets` directory while Maestrly is closed. The app
+verifies the copied file against its install marker and the pinned hash before
+using it; copying only the `.bin` file is not recognized.
 
 Profiles are `maestrly-app`, `maestrly-app-beta`, and `maestrly-app-dev` under the OS
 application-data directory; dev instances append their instance ID. Each running

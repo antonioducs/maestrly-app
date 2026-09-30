@@ -13,7 +13,7 @@ import tar from 'tar-stream'
 // Compression must match the pinned manifest; fail before installing dependencies or touching tracked files.
 assertBundledZlib()
 
-export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-1'
+export const LOCAL_ML_RUNTIME_VERSION = '2.17.2-2'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop')
 const hostOs = process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : process.platform
 const hostTarget = `${hostOs}-${process.arch}`
@@ -83,6 +83,16 @@ async function collectPackage(name, fromDirectory = buildRoot, optional = false)
   }
 }
 await collectPackage('@xenova/transformers')
+// Collected explicitly so only the whisper.cpp addon of the requested target enters the archive.
+const whisperPackage = `@fugood/node-whisper-${requestedPlatform}-${requestedArch}`
+await collectPackage(whisperPackage)
+
+// Silero voice-activity model gates dictation against Whisper hallucinating on silence; small, so it ships inside.
+const VAD_MODEL = 'models/ggml-silero-v6.2.0.bin'
+const VAD_SHA256 = '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987'
+const vadSource = path.join(buildRoot, VAD_MODEL)
+const vadDigest = createHash('sha256').update(await readFile(vadSource)).digest('hex')
+if (vadDigest !== VAD_SHA256) throw new Error('Bundled VAD model hash mismatch')
 
 function includeTargetFile(relative) {
   const normalized = relative.replaceAll(path.sep, '/')
@@ -112,6 +122,7 @@ async function visit(directory, archiveDirectory) {
 }
 for (const [relative, directory] of [...packages].sort(([a], [b]) => compareArchiveText(a, b)))
   await visit(directory, relative)
+entries.push({ archive: VAD_MODEL, source: vadSource })
 entries.sort((a, b) => compareArchiveText(a.archive, b.archive))
 const signedMachO =
   requestedPlatform === 'darwin' ? await signMacRuntimeEntries(entries, { cscName: process.env.CSC_NAME }) : []
@@ -221,6 +232,8 @@ previous.targets[requested] = {
     ...nativeCritical,
     'node_modules/sharp/package.json',
     ...sharpCritical,
+    `node_modules/${whisperPackage}/index.node`,
+    VAD_MODEL,
   ],
 }
 await writeFile(manifestPath, `${JSON.stringify(previous, null, 2)}\n`)

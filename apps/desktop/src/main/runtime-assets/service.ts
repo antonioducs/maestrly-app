@@ -143,6 +143,10 @@ export function requiredRuntimeAssetDiskBytes(target: RuntimeAssetTarget): numbe
   return target.maxDownloadBytes + target.unpackedBytes + RUNTIME_ASSET_DISK_SAFETY_MARGIN_BYTES
 }
 
+function downloadFileName(target: RuntimeAssetTarget): string {
+  return target.archive === 'zip' ? 'download.zip' : target.archive === 'file' ? 'download.bin' : 'download.tgz'
+}
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -642,7 +646,7 @@ export class RuntimeAssetService {
       }
       const operation = `.tmp-${id}-${randomUUID()}`
       const temporary = path.join(this.root, operation)
-      const archive = path.join(temporary, `download.${target.archive === 'zip' ? 'zip' : 'tgz'}`)
+      const archive = path.join(temporary, downloadFileName(target))
       const staging = path.join(temporary, 'staging')
       try {
         await mkdir(temporary, { recursive: true, mode: 0o700 })
@@ -678,7 +682,11 @@ export class RuntimeAssetService {
         if (downloaded.digest !== target.hash.digest)
           throw new Error(`Archive hash mismatch (expected ${target.hash.digest}, got ${downloaded.digest})`)
         this.set({ id, state: 'installing', version: definition.version, target: this.target }, true)
-        await this.extract(archive, staging, target.archive, { stripPrefix: target.stripPrefix, signal })
+        await this.extract(archive, staging, target.archive, {
+          stripPrefix: target.stripPrefix,
+          fileName: target.fileName,
+          signal,
+        })
         const files = await manifestFiles(staging)
         for (const critical of target.criticalPaths) {
           if (!files.some((file) => file.path === critical))
@@ -728,7 +736,8 @@ export class RuntimeAssetService {
             state: 'failed',
             version: definition.version,
             target: this.target,
-            error: message(error),
+            // fetch and stream pipelines reject with a generic AbortError; report the cancel reason instead.
+            error: message(signal.aborted ? (signal.reason ?? error) : error),
           },
           true
         )
@@ -805,7 +814,7 @@ export class RuntimeAssetService {
     }
 
     const temporary = path.join(this.root, `.tmp-${id}-${randomUUID()}`)
-    const archive = path.join(temporary, `download.${target.archive === 'zip' ? 'zip' : 'tgz'}`)
+    const archive = path.join(temporary, downloadFileName(target))
     const staging = path.join(temporary, 'staging')
     let phase: RuntimeAssetUpdatePhase = 'downloading'
     try {
@@ -825,7 +834,11 @@ export class RuntimeAssetService {
       }
       phase = 'installing'
       report('installing')
-      await this.extract(archive, staging, target.archive, { stripPrefix: target.stripPrefix, signal })
+      await this.extract(archive, staging, target.archive, {
+        stripPrefix: target.stripPrefix,
+        fileName: target.fileName,
+        signal,
+      })
       const files = await manifestFiles(staging)
       for (const critical of target.criticalPaths) {
         if (!files.some((file) => file.path === critical)) {

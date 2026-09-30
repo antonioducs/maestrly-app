@@ -177,6 +177,22 @@ bot gets its gateway token again when the gateway installs it, and the
 environment keeps the control token and keyring password the container already
 had.
 
+## Voice model
+
+Voice dictation uses a speech model installed only after you confirm its
+download from the microphone or in **Settings › Maestrly Chat › Components**. It
+lives in the profile at `runtime-assets/whisper-model` (547 MB, verified
+against a pinned SHA-256 before use) and can be removed from Components; the
+next dictation offers to download it again. The speech engine and its
+voice-activity model are part of the local ML runtime under
+`runtime-assets/local-ml-runtime`.
+
+Recordings and transcriptions are not stored separately: audio is kept in memory
+only until it is transcribed, and a sent transcription is an ordinary user
+message. Earlier versions cached a smaller model under
+`transformers-cache/Xenova/whisper-base`; the app deletes it the first time
+dictation starts.
+
 ## Artifacts
 
 Artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`

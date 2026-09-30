@@ -3,6 +3,7 @@ export const RUNTIME_ASSET_IDS = [
   'github-copilot-runtime',
   'tunnel-client',
   'local-ml-runtime',
+  'whisper-model',
 ] as const
 
 export type RuntimeAssetId = (typeof RUNTIME_ASSET_IDS)[number]

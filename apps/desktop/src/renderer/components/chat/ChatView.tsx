@@ -101,6 +101,7 @@ import { ContextCompactionStatus } from './ContextCompactionStatus'
 import { BackgroundCompactionStatus } from './BackgroundCompactionStatus'
 import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
+import { appendDictation } from '@/lib/dictation'
 import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { ReviewLoopBanner } from './ReviewLoopBanner'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
@@ -2224,6 +2225,11 @@ export function ChatView({
                 micSlot={
                   <ChatMicButton
                     onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
+                    onAutoSend={(t) => {
+                      if (keyMissing || reviewLoopActive || botBlocked) return false
+                      submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
+                      return true
+                    }}
                     disabled={keyMissing}
                   />
                 }
