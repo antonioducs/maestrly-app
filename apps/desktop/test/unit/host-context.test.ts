@@ -34,8 +34,11 @@ describe('host context', () => {
 
   it('asks the preload for a host API once: each call copies the whole object across the context bridge', async () => {
     const { hostApi } = await load()
-    expect(hostApi('s/e')).toBe(hostApi('s/e'))
-    hostApi('local')
+    const api = hostApi('s/e') as unknown as { tag: string }
+    expect(hostApi('s/e')).toBe(api)
+    expect(hostApiOf).not.toHaveBeenCalled()
+    expect([api.tag, api.tag]).toEqual(['s/e', 's/e'])
+    expect((hostApi('local') as unknown as { tag: string }).tag).toBe('local')
     expect(hostApiOf.mock.calls).toEqual([['s/e'], ['local']])
   })
 
