@@ -180,8 +180,9 @@ had.
 ## Artifacts
 
 Artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
-holds artifacts, versions, and owner sessions, and `blobs/` holds file contents,
-stored once by SHA-256. The directory is owner-only (`0700`), and the database
+holds artifacts, versions, owner sessions, and which preview image belongs to
+each version, and `blobs/` holds file contents and preview images, stored once
+by SHA-256. The directory is owner-only (`0700`), and the database
 and stored files are created `0600`. Only the artifact host process writes there. Artifacts are independent
 of conversations: deleting a conversation keeps its artifacts, and deleting an
 artifact removes its versions and any files no other artifact uses.

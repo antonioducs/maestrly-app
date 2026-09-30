@@ -7,6 +7,11 @@ User-visible changes by version. Downloads are on
 
 ### Added
 
+- Agents can publish web pages as artifacts, such as prototypes, reports, and
+  dashboards, with Maestrly tools on. Each change becomes a new version.
+  **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
+  its versions, and the conversation it came from; pages open only on this
+  computer, in an isolated frame. See [Artifacts](docs/artifacts.md).
 - Experimental: see a bot's reasoning in its conversation, like in chats, once
   its bot server and environment are updated. Older bot servers and computers
   keep working without it.

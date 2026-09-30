@@ -195,6 +195,16 @@ the viewer, submit forms, or register service workers. Network access is limited
 to its own files and a fixed allowlist of CDNs. Messages from content to the
 viewer are validated, capped, and rendered as text.
 
+After each publication the desktop renders the new version for a preview, in
+an offscreen window that is never shown. It loads the owner view through a fresh
+single-use ticket, like any other opening, so the page runs under the same
+sandbox and Content Security Policy. The window uses an in-memory partition of
+its own that grants no permission, opens no window, allows no download, and lets
+no top-level navigation leave the host. After the capture the desktop ends that
+owner session and clears the partition. Only the resulting image reaches the
+desktop, which stores it through the host's admin interface after checking its
+format and size.
+
 The drawer browser partition is shared with the agent's browser tools, so an
 agent browsing there acts with the owner's artifact session. That grants no
 more than the artifact tools already do. Agents can read and write only the

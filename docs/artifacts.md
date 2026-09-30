@@ -9,7 +9,10 @@ while the app is open.
 
 Artifact tools are Maestrly app tools, so they are available when app tools are
 on for the conversation. Ask an agent for a prototype, a report, a dashboard, or
-any other page worth viewing in a browser. The agent uses these tools:
+any other page worth viewing in a browser. While you have no artifacts, the
+Artifacts center suggests a few requests: choosing one opens a new standalone
+conversation with Maestrly tools on and the request in its message box, ready to
+edit and send. The agent uses these tools:
 
 | Tool | What it does |
 | --- | --- |
@@ -28,25 +31,40 @@ standalone. Agents cannot delete or share artifacts.
 
 - **In the chat**: each publication shows a card with the title and version.
   **Open** shows the page in the conversation's browser drawer.
-- **In the Artifacts center**: **Artifacts**, in the sidebar footer, lists every
-  artifact with its versions, the conversation it came from (or "Deleted
-  conversation" and its last title), and the last update. From there you can
-  open any version in your browser, go to the conversation, or delete the
-  artifact.
+- **In the Artifacts center**: **Artifacts**, in the sidebar footer, shows every
+  artifact as a card with a preview of its page. The sheets stacked behind a
+  preview show that earlier versions exist. Each card names the project and the
+  conversation it came from (or "Deleted conversation" and its last title) and
+  when it was last updated. Search by title or description, filter by project,
+  and sort by update, creation, title, or storage used. Selecting a card opens
+  its details: where it came from, the storage it uses, and every version, each
+  of which opens in your browser. From a card or its details you can also go to
+  the conversation or delete the artifact.
 
 The page opens in a viewer that shows its title, a version picker, and **Leave**,
 which ends the browser's session on that page. Only you can open artifacts in
 this version: each opening uses a single-use ticket that expires after 60
 seconds and is removed from the address bar immediately.
 
+### Previews
+
+After each publication, Maestrly renders the new version in a hidden window on
+this computer and keeps an image of it as the card's preview. Until then, and if
+a page never finishes loading, the card shows an outline instead. Rendering runs
+the page's scripts and loads what it loads, including libraries and fonts from
+the allowed CDNs, even if you never open the page yourself.
+
 ## Hosting
 
 The artifact host runs in a separate process and listens only on
 `127.0.0.1`, on the port set in **Settings → Artifacts** (4010 by default). It
 starts when an agent publishes or when you open an artifact, and at launch when
-artifacts exist. If the port is in use, the Artifacts center and the settings
-say so; choose another port there. Turning hosting off stops the host: agents
-cannot publish, and existing artifacts do not open until you turn it on again.
+artifacts exist. The Artifacts center shows the host's state next to its title.
+When the host cannot run, the center says why instead of listing artifacts, and
+offers the fix: turn hosting on, choose another port if the port is in use, or
+restart the host after repeated failures. Nothing is deleted in those cases.
+Turning hosting off stops the host: agents cannot publish, and existing artifacts
+do not open until you turn it on again.
 
 ## Isolation
 
@@ -62,7 +80,8 @@ carries a signed, expiring capability. The page:
 - can open popups, which show their real address.
 
 Loading a library or font from those CDNs reveals your IP address to them, as any
-web page that uses them does.
+web page that uses them does. This also happens when Maestrly renders a new
+version for its preview.
 
 ## Storage and limits
 
@@ -70,8 +89,10 @@ Artifacts are stored under `artifacts/` in the application profile, separately
 from conversations: deleting a conversation keeps its artifacts. A version holds
 up to 500 files, 10 MiB per file and 50 MiB in total, and an artifact keeps up to
 200 versions. The storage limit (2 GB by default) is set in **Settings →
-Artifacts**; new versions fail above it. Files are stored once, however many
-versions or artifacts share them.
+Artifacts**; new versions fail above it, and the Artifacts center warns from 90%
+of it. Files are stored once, however many versions or artifacts share them, so
+deleting an artifact frees only what no other artifact uses. Previews are stored
+with the artifact and count toward the limit.
 
 Deleting an artifact removes all of its versions and files, and its links stop
 working. See [Local data and recovery](local-data.md#artifacts) for export and
