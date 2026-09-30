@@ -322,6 +322,10 @@ export const fleetEnvironmentUpdateSchema = z.object({
 })
 export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema>
 
+/** What an environment runs: bots, or the owner's chats and workspaces driven from their computers. */
+export const fleetEnvironmentKindSchema = z.enum(['bots', 'workspaces'])
+export type FleetEnvironmentKind = z.infer<typeof fleetEnvironmentKindSchema>
+
 /**
  * An environment: one container with one Maestrly, one home folder and one set of accounts, skills, MCP servers and
  * site logins, shared by its bots. Its lifecycle (start, stop, restart, update) acts on all of them.
@@ -329,6 +333,8 @@ export type FleetEnvironmentUpdate = z.infer<typeof fleetEnvironmentUpdateSchema
 export const fleetEnvironmentSchema = z.object({
   id: fleetEnvironmentIdSchema,
   name: fleetNameSchema,
+  /** `bots` from gateways that predate workspaces environments. */
+  kind: fleetEnvironmentKindSchema.default('bots'),
   lifecycle: fleetLifecycleSchema,
   setup: fleetEnvironmentSetupSchema,
   resources: fleetResourcesSchema,

@@ -106,6 +106,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
   return {
     id,
     name,
+    kind: 'bots',
     lifecycle: 'running',
     setup: { step: 'ready', error: null, errorMessage: null },
     resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: null },

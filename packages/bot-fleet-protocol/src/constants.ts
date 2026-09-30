@@ -67,6 +67,8 @@ export const FLEET_GATEWAY_ENV = {
   botMemory: 'MAESTRLY_GATEWAY_BOT_MEMORY',
   botEgress: 'MAESTRLY_GATEWAY_BOT_EGRESS',
   botShm: 'MAESTRLY_GATEWAY_BOT_SHM',
+  /** A directory of the Docker host that the gateway mounts into its workspaces environment at the same path. */
+  workspacesRoot: 'MAESTRLY_GATEWAY_WORKSPACES_ROOT',
   timezone: 'TZ',
 } as const
 
@@ -81,6 +83,10 @@ export const FLEET_BOT_ENV = {
   gatewayToken: 'MAESTRLY_BOT_GATEWAY_TOKEN',
   environmentId: 'MAESTRLY_ENVIRONMENT_ID',
   egress: 'MAESTRLY_BOT_EGRESS',
+  /** Set instead of `mode` in a workspaces environment: the full Maestrly, driven from the owner's computers. */
+  serverMode: 'MAESTRLY_SERVER_MODE',
+  /** The mounted host directory of a workspaces environment, when the gateway has one. */
+  workspacesRoot: 'MAESTRLY_WORKSPACES_ROOT',
 } as const
 
 export const FLEET_BOT_EGRESS_MODES = ['open', 'public'] as const
@@ -150,6 +156,15 @@ export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as con
  * caps its bots' conversations at it; a running image without it ignores the limit until its environment restarts.
  */
 export const FLEET_CONTEXT_LIMIT_FEATURE = 'context-limit'
+/**
+ * Gateway feature (`/v1/meta`): an environment can host workspaces (kind `workspaces`) and paired computers can open a
+ * bridge to it. As an instance capability: the image runs Maestrly in server mode and serves that bridge.
+ */
+export const FLEET_WORKSPACES_HOST_FEATURE = 'workspaces-host'
+/** Where a workspaces environment's control server accepts the bridge, as a WebSocket upgrade. */
+export const FLEET_INSTANCE_BRIDGE_PATH = '/v1/bridge'
+/** A bridge ticket is one-use and short-lived; each paired computer holds a bounded number of bridges. */
+export const FLEET_BRIDGE_LIMITS = { ticketTtlMs: 30_000, perDevice: 8 } as const
 /** Bots per environment, and the range of the container memory limit the owner may set. */
 export const FLEET_ENVIRONMENT_LIMITS = {
   botsMax: 8,

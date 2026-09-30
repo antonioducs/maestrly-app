@@ -984,7 +984,11 @@ describe('environment contracts', () => {
       expect(fleetMemoryLimitSchema.safeParse(bytes).success, String(bytes)).toBe(false)
     for (const bytes of [2 * GiB, 4 * GiB, 64 * GiB]) expect(fleetMemoryLimitSchema.parse(bytes)).toBe(bytes)
     const request = { name: 'Acme', idempotencyKey: key }
-    expect(fleetCreateEnvironmentRequestSchema.parse(request)).toEqual({ ...request, memoryLimitBytes: null })
+    expect(fleetCreateEnvironmentRequestSchema.parse(request)).toEqual({
+      ...request,
+      memoryLimitBytes: null,
+      kind: 'bots',
+    })
     expect(fleetCreateEnvironmentRequestSchema.parse({ ...request, memoryLimitBytes: 4 * GiB }).memoryLimitBytes).toBe(
       4 * GiB
     )

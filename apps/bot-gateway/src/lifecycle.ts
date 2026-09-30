@@ -446,6 +446,7 @@ export class Lifecycle {
     return {
       id: environment.id,
       name: environment.name,
+      kind: 'bots',
       lifecycle: environment.lifecycle,
       setup: environment.setup,
       resources: {

@@ -27,6 +27,7 @@ import {
   fleetBotStatusSchema,
   fleetCeilingSchema,
   fleetEnvironmentIdSchema,
+  fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
@@ -170,6 +171,7 @@ export const fleetCreateEnvironmentRequestSchema = z.object({
   name: fleetNameSchema,
   /** Null uses the gateway's default limit. */
   memoryLimitBytes: fleetMemoryLimitSchema.nullable().default(null),
+  kind: fleetEnvironmentKindSchema.default('bots'),
   idempotencyKey: fleetIdempotencyKeySchema,
 })
 export type FleetCreateEnvironmentRequest = z.infer<typeof fleetCreateEnvironmentRequestSchema>
@@ -460,6 +462,13 @@ export const fleetScreenTicketResponseSchema = z.object({
   expiresAt: fleetTimestampSchema,
 })
 export type FleetScreenTicketResponse = z.infer<typeof fleetScreenTicketResponseSchema>
+/** A one-use ticket to open the bridge of a workspaces environment. */
+export const fleetBridgeTicketResponseSchema = z.object({
+  ticket: fleetIdSchema,
+  path: z.string().regex(/^\/v1\/bridge\?ticket=[A-Za-z0-9_-]+$/),
+  expiresAt: fleetTimestampSchema,
+})
+export type FleetBridgeTicketResponse = z.infer<typeof fleetBridgeTicketResponseSchema>
 export const fleetUiOpenRequestSchema = z.object({ target: z.enum(['accounts', 'main', 'skills', 'mcp']) })
 
 /**
@@ -665,6 +674,8 @@ export const fleetInstanceHealthSchema = z.object({
   protocol: z.literal(FLEET_PROTOCOL_VERSION),
   ready: z.boolean(),
   capabilities: fleetFeaturesSchema,
+  /** A workspaces environment with chat turns running; its scheduled update waits. Absent when unknown. */
+  busy: z.boolean().optional(),
 })
 export type FleetInstanceHealth = z.infer<typeof fleetInstanceHealthSchema>
 export const fleetInstanceHoldRequestSchema = z.object({ reason: z.enum(['takeover', 'paused']) })
@@ -1014,6 +1025,14 @@ export const FLEET_GATEWAY_ROUTES = {
     response: fleetScreenTicketResponseSchema,
   },
   screen: { method: 'GET', path: '/v1/screen', body: null, response: null },
+  environmentBridgeTicket: {
+    method: 'POST',
+    path: '/v1/environments/:eid/bridge-tickets',
+    body: z.object({}).strict(),
+    response: fleetBridgeTicketResponseSchema,
+  },
+  /** The bridge itself: a WebSocket upgrade with a ticket, passed through to the workspaces environment. */
+  bridge: { method: 'GET', path: '/v1/bridge', body: null, response: null },
   botUiOpen: { method: 'POST', path: '/v1/bots/:id/ui/open', body: fleetUiOpenRequestSchema, response: null },
   botConversationCall: {
     method: 'POST',
