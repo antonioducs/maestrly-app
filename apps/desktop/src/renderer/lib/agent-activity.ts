@@ -227,7 +227,14 @@ export function chatToolStep(part: ToolPart, live: boolean): ActivityToolStep<Me
 }
 
 /** Tools that render their own card outside the activity: the person answers or reads them. */
-const PINNED_TOOLS = new Set(['ask_question', 'todo_write', 'start_conversations', 'delegate'])
+const PINNED_TOOLS = new Set([
+  'ask_question',
+  'todo_write',
+  'start_conversations',
+  'delegate',
+  'artifact_create',
+  'artifact_update',
+])
 
 type PartClass = 'step' | 'text' | 'pinned' | 'hidden'
 
