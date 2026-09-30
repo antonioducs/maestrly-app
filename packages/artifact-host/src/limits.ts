@@ -40,3 +40,12 @@ export const PERSON_SESSION_TTL_MS = 90 * 24 * HOUR_MS
 /** Sliding lifetime of a guest's device, capped by the link's expiry. */
 export const GUEST_SESSION_TTL_MS = 30 * 24 * HOUR_MS
 export const VISITOR_COOKIE_TTL_MS = 30 * 24 * HOUR_MS
+/** Comments of one artifact that were not deleted, replies included. */
+export const MAX_COMMENTS_PER_ARTIFACT = 2000
+export const MAX_COMMENT_CHARS = 4000
+/** The quoted passage a comment is anchored to. */
+export const MAX_QUOTE_CHARS = 500
+/** The text kept before and after the quote to find it again. */
+export const MAX_QUOTE_CONTEXT_CHARS = 64
+export const MAX_SELECTOR_CHARS = 300
+export const COMMENTS_PAGE_SIZE = 200

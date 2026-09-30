@@ -66,7 +66,7 @@ export async function openArtifactHost(
     const onChange = (artifactId: string) => options.onEvent?.({ type: 'changed', artifactId })
     const onActivity = (artifactId: string, kind: ArtifactEventKind) =>
       options.onEvent?.({ type: 'activity', artifactId, kind })
-    const admin = createArtifactAdmin({ store, blobs, clock, quotaBytes, sharing, onChange, onActivity })
+    const admin = createArtifactAdmin({ store, blobs, clock, quotaBytes, sharing, onChange, onActivity, ownerName })
     const server = createPublicServer({
       store,
       blobs,

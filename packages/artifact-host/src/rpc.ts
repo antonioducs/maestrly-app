@@ -30,6 +30,10 @@ export const ADMIN_METHODS = [
   'decideAccessRequest',
   'listEvents',
   'markEventsSeen',
+  'listComments',
+  'addComment',
+  'setCommentResolved',
+  'deleteComment',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]
 
 type AdminMethod = (typeof ADMIN_METHODS)[number]

@@ -27,6 +27,8 @@ export interface ArtifactRecord {
   /** Events (new devices, access requests, declined invitations, comments) the owner has not seen yet. */
   unseenEvents: number
   pendingRequests: number
+  /** Comment threads that are neither resolved nor deleted. */
+  openComments: number
 }
 
 export type NewArtifact = Pick<
@@ -110,7 +112,9 @@ const ARTIFACT_COLUMNS = `a.*,
   ) u) AS storage_bytes,
   (SELECT MAX(t.version) FROM thumbnails t WHERE t.artifact_id = a.id) AS thumbnail_version,
   (SELECT COUNT(*) FROM events e WHERE e.artifact_id = a.id AND e.seen_at IS NULL) AS unseen_events,
-  (SELECT COUNT(*) FROM access_requests r WHERE r.artifact_id = a.id AND r.status = 'pending') AS pending_requests`
+  (SELECT COUNT(*) FROM access_requests r WHERE r.artifact_id = a.id AND r.status = 'pending') AS pending_requests,
+  (SELECT COUNT(*) FROM comments c WHERE c.artifact_id = a.id AND c.parent_id IS NULL AND c.status = 'open'
+     AND c.deleted_at IS NULL) AS open_comments`
 const FILTER_COLUMNS: Record<keyof ArtifactListFilter, string> = {
   ownerKind: 'owner_kind',
   ownerId: 'owner_id',
@@ -136,6 +140,7 @@ const toArtifact = (row: Row): ArtifactRecord => ({
   thumbnailVersion: (row.thumbnail_version as number | null) ?? null,
   unseenEvents: row.unseen_events as number,
   pendingRequests: row.pending_requests as number,
+  openComments: row.open_comments as number,
 })
 
 const toVersion = (row: Row): VersionRecord => ({

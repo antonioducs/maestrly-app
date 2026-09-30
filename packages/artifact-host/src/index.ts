@@ -1,6 +1,7 @@
 export type { Access, Gate } from './access.js'
 export { type ArtifactAdmin, thumbnailContentType } from './admin.js'
 export * from './bundle-paths.js'
+export type { CommentAnchor, CommentAuthorKind, CommentListInput, CommentView } from './comments.js'
 export { readBundleDirectory } from './directory.js'
 export type { TextEdit } from './edits.js'
 export * from './errors.js'

@@ -1,8 +1,17 @@
+import { z } from 'zod'
 import { contentTypeFor, isTextPath, normalizeBundlePath, validateBundle } from './bundle-paths.js'
+import {
+  type CommentAnchor,
+  type CommentListInput,
+  type CommentView,
+  commentAnchorSchema,
+  commentBody,
+  createCommentService,
+} from './comments.js'
 import { applyEdits } from './edits.js'
 import { ArtifactHostError } from './errors.js'
 import { digest, isArtifactId, newArtifactId, newSecretToken } from './ids.js'
-import { MAX_THUMBNAIL_BYTES, MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
+import { MAX_NAME_CHARS, MAX_THUMBNAIL_BYTES, MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
 import {
   type ArtifactDetail,
   type ArtifactFileInfo,
@@ -21,6 +30,7 @@ import {
 import { createSharingAdmin, type SharingAdmin } from './sharing-admin.js'
 import type { ArtifactStore, FileRecord } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
+import { CommentStore } from './store/comment-store.js'
 import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 
 /** The owner's interface to a host: used in-process, or across a process boundary through `rpc.ts`. */
@@ -39,6 +49,16 @@ export interface ArtifactAdmin extends SharingAdmin {
   getThumbnail(id: string, version?: number): Promise<ThumbnailImage | null>
   mintOwnerTicket(id: string): Promise<{ ticket: string; expiresAt: number }>
   snapshot(targetFile: string): Promise<void>
+  /** Comments in the order they were written, a page at a time. */
+  listComments(id: string, filter?: CommentListInput): Promise<{ comments: CommentView[]; nextCursor: string | null }>
+  /** A comment by the owner or, on the owner's behalf, by an agent. With `parentId` it is a reply. */
+  addComment(
+    id: string,
+    input: { author: 'owner' | 'agent'; version?: number; body: string; anchor?: CommentAnchor; parentId?: string }
+  ): Promise<CommentView>
+  setCommentResolved(id: string, commentId: string, resolved: boolean): Promise<void>
+  /** Deletes a comment; deleting the one that starts a thread deletes its replies too. */
+  deleteComment(id: string, commentId: string): Promise<void>
 }
 
 export interface ArtifactAdminDeps {
@@ -52,7 +72,20 @@ export interface ArtifactAdminDeps {
   sharing?: SharingStore
   /** Called for every event recorded for the owner, such as a new device or an access request. */
   onActivity?: (artifactId: string, kind: ArtifactEventKind) => void
+  /** The owner's display name, stored with the comments the owner and their agents write. */
+  ownerName?: string
+  maxComments?: number
 }
+
+const adminComment = z
+  .object({
+    author: z.enum(['owner', 'agent']),
+    version: z.number().int().min(1).optional(),
+    body: commentBody,
+    anchor: commentAnchorSchema.optional(),
+    parentId: z.string().optional(),
+  })
+  .strict()
 
 const notFound = () => new ArtifactHostError('not_found', 'Artifact not found')
 
@@ -70,6 +103,14 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   const { store, blobs, clock } = deps
   const maxVersions = deps.maxVersions ?? MAX_VERSIONS_PER_ARTIFACT
   const sharing = deps.sharing ?? new SharingStore(store.db)
+  const comments = createCommentService({
+    store,
+    comments: new CommentStore(store.db),
+    clock,
+    maxComments: deps.maxComments,
+    onChange: deps.onChange,
+  })
+  const ownerName = (deps.ownerName ?? '').trim().slice(0, MAX_NAME_CHARS)
 
   // Writes run one at a time, so deleting unreferenced blobs never races a version that is about to reference them.
   let queue: Promise<unknown> = Promise.resolve()
@@ -148,6 +189,23 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
 
   return {
     ...createSharingAdmin({ store, sharing, clock, onChange: deps.onChange }),
+
+    async listComments(id, filter) {
+      return comments.list(id, filter)
+    },
+
+    async addComment(id, raw) {
+      const { author, ...input } = parseInput(adminComment, raw)
+      return comments.add(id, { kind: author, name: ownerName, principalId: null }, input)
+    },
+
+    async setCommentResolved(id, commentId, resolved) {
+      comments.setResolved(id, commentId, resolved)
+    },
+
+    async deleteComment(id, commentId) {
+      comments.remove(id, commentId)
+    },
 
     async status() {
       return { artifactCount: store.countArtifacts(), storageBytes: blobs.totalBytes(), quotaBytes: deps.quotaBytes }

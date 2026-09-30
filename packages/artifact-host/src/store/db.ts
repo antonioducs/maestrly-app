@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS events (
   seen_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS events_unseen ON events (artifact_id, seen_at);
+CREATE TABLE IF NOT EXISTS comments (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('owner', 'agent', 'invited', 'approved', 'guest')),
+  principal_id TEXT,
+  author_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  anchor_json TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS comments_artifact ON comments (artifact_id, created_at);
 CREATE TABLE IF NOT EXISTS owner_tickets (
   token_hash TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
