@@ -20,24 +20,32 @@ export type RuntimeDownloader = (
   options: DownloadOptions
 ) => Promise<DownloadResult>
 
-const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com'])
+const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com', 'huggingface.co'])
+/** Hugging Face redirects file downloads to regional CDN hosts under hf.co; the pinned hash stays the integrity check. */
+const DEFAULT_HOST_SUFFIXES: readonly string[] = ['.hf.co']
+
+function hostAllowed(hostname: string, hosts: ReadonlySet<string>, suffixes: readonly string[]): boolean {
+  return hosts.has(hostname) || suffixes.some((suffix) => hostname.length > suffix.length && hostname.endsWith(suffix))
+}
 
 export function createHttpsDownloader(
   dependencies: {
     readonly fetch?: typeof fetch
     readonly allowedHosts?: ReadonlySet<string>
+    readonly allowedHostSuffixes?: readonly string[]
     readonly maxRedirects?: number
   } = {}
 ): RuntimeDownloader {
   const fetchImpl = dependencies.fetch ?? fetch
   const hosts = dependencies.allowedHosts ?? DEFAULT_HOSTS
+  const suffixes = dependencies.allowedHostSuffixes ?? (dependencies.allowedHosts ? [] : DEFAULT_HOST_SUFFIXES)
   const maxRedirects = dependencies.maxRedirects ?? 5
   return async (target, destination, options) => {
     let url = target.url
     let response: Response | null = null
     for (let redirect = 0; redirect <= maxRedirects; redirect++) {
       const parsed = new URL(url)
-      if (parsed.protocol !== 'https:' || !hosts.has(parsed.hostname))
+      if (parsed.protocol !== 'https:' || !hostAllowed(parsed.hostname, hosts, suffixes))
         throw new Error(`Download URL is not allowed: ${url}`)
       response = await fetchImpl(url, { signal: options.signal, redirect: 'manual' })
       if (![301, 302, 303, 307, 308].includes(response.status)) break

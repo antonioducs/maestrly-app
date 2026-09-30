@@ -2,7 +2,7 @@ import type { RuntimeAssetId } from '../../shared/runtime-assets'
 import localMlManifest from '../../../runtime-assets/local-ml/manifest.json'
 
 export type RuntimeTargetId = 'mac-arm64' | 'mac-x64' | 'linux-arm64' | 'linux-x64' | 'win-arm64' | 'win-x64'
-export type ArchiveFormat = 'tar.gz' | 'zip'
+export type ArchiveFormat = 'tar.gz' | 'zip' | 'file'
 
 export interface RuntimeAssetTarget {
   readonly id: RuntimeTargetId
@@ -16,6 +16,8 @@ export interface RuntimeAssetTarget {
   /** Expected size of the extracted installation tree. */
   readonly unpackedBytes: number
   readonly stripPrefix?: string
+  /** Installed name of a single-file download; required for, and only used by, archive 'file'. */
+  readonly fileName?: string
   readonly criticalPaths: readonly string[]
   /** Executable used by the release smoke after the service verifies the extracted layout. */
   readonly executablePath?: string

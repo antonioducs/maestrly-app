@@ -97,6 +97,33 @@ describe('RuntimeAssetService', () => {
     expect(await service.list()).toHaveLength(4)
   })
 
+  it('installs a single-file asset without extraction and verifies it', async () => {
+    const reg = registry()
+    reg['tunnel-client'] = {
+      ...reg['tunnel-client'],
+      targets: {
+        'mac-arm64': {
+          ...reg['tunnel-client'].targets['mac-arm64']!,
+          archive: 'file',
+          fileName: 'model.bin',
+          criticalPaths: ['model.bin'],
+        },
+      },
+    }
+    const { downloader, availableBytes } = fixtureDependencies()
+    const service = new RuntimeAssetService({
+      userDataPath: userData,
+      registry: reg,
+      target: 'mac-arm64',
+      downloader,
+      availableBytes,
+    })
+    const installed = await service.install('tunnel-client')
+    expect(installed.state).toBe('ready')
+    expect(await readFile(path.join(installed.path!, 'model.bin'), 'utf8')).toBe('fixture')
+    expect(downloader.mock.calls[0]?.[1]).toMatch(/download\.bin$/)
+  })
+
   it('is single-flight, exposes progress, and supports cancellation with temp cleanup', async () => {
     const deps = fixtureDependencies({ delayDownload: true })
     const service = new RuntimeAssetService({
