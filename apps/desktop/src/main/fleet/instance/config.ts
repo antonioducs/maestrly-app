@@ -27,10 +27,13 @@ export type EnvironmentInstanceConfig = z.infer<typeof schema>
 export type BotInstanceConfig = EnvironmentInstanceConfig
 export const isBotMode = (env: NodeJS.ProcessEnv = process.env): boolean => env[FLEET_BOT_ENV.mode] === '1'
 
-export function parseBotInstanceConfig(env: NodeJS.ProcessEnv = process.env): EnvironmentInstanceConfig | null {
-  if (!isBotMode(env)) return null
+/**
+ * The control server and gateway of an environment's container. Bot environments and workspaces hosts read the same
+ * variables; which of the two a container is comes from its mode variable, checked by the caller.
+ */
+export function parseEnvironmentControl(env: NodeJS.ProcessEnv = process.env): EnvironmentInstanceConfig {
   const result = schema.safeParse({
-    mode: env[FLEET_BOT_ENV.mode],
+    mode: '1',
     environmentId: env[FLEET_BOT_ENV.environmentId] || undefined,
     controlHost: env[FLEET_BOT_ENV.controlHost],
     controlPort: env[FLEET_BOT_ENV.controlPort],
@@ -42,4 +45,8 @@ export function parseBotInstanceConfig(env: NodeJS.ProcessEnv = process.env): En
     'Invalid bot instance environment: ' +
       result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')
   )
+}
+
+export function parseBotInstanceConfig(env: NodeJS.ProcessEnv = process.env): EnvironmentInstanceConfig | null {
+  return isBotMode(env) ? parseEnvironmentControl(env) : null
 }

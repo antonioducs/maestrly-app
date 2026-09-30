@@ -25,6 +25,7 @@ import {
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 import { FleetClientError } from './api'
 import { fleetClientService as fleet } from './service'
 import {
@@ -90,7 +91,7 @@ const updateWhen = fleetEnvironmentUpdateRequestSchema.shape.when
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, fleet)
-  if (process.env.MAESTRLY_BOT_MODE !== '1') {
+  if (!isHeadlessInstance()) {
     fleet.start()
     app.once('will-quit', () => fleet.stop())
   }

@@ -586,6 +586,11 @@ export default {
     version: 'Versão {{version}}',
   },
 
+  serverHost: {
+    title: 'Host de workspaces do Maestrly',
+    description: 'Os chats e workspaces daqui são usados pelo Maestrly no seu computador.',
+  },
+
   update: {
     card: {
       download: 'Baixar atualização',

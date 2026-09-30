@@ -1,9 +1,14 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
 import { executorSettings, recoverDesktopExecutions } from './platform/executor-settings'
+import os from 'node:os'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
+import { isHeadlessInstance, isServerMode } from './remote-host/server/config'
+import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
+import { startServerHostMode } from './remote-host/server/start'
+import { isSupportedLocale } from '../shared/locale'
 import { environmentScreenBounds } from './fleet/instance/window-bounds'
 import { fileURLToPath } from 'node:url'
 import {
@@ -110,6 +115,7 @@ import {
   getSoundSettings,
   getShortcutOpenMode,
   getLocale,
+  setLocaleSetting,
   initLocaleOnFirstRun,
   initOnboardingFlag,
   type ConversationStatus,
@@ -121,6 +127,7 @@ import {
   status as getChatGptWebStatus,
 } from './chat/chatgpt-web/manager'
 import {
+  activeChatRunCount,
   disposeChat,
   getGlobalMaestroOrchestratorProfile,
   primeChatTurnSelection,
@@ -433,7 +440,7 @@ function setupApplicationMenu(): void {
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
   mainWindow = new BrowserWindow({
-    show: !isBotMode(),
+    show: !isHeadlessInstance(),
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -455,8 +462,9 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   })
-  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn.
-  if (isBotMode()) mainWindow.removeMenu()
+  // A bot's window only offers its settings; the app menu's Quit would restart the bot's app mid-turn. A workspaces
+  // host's window is never shown.
+  if (isHeadlessInstance()) mainWindow.removeMenu()
 
   const wc = mainWindow.webContents
   wc.on('console-message', (_e, level, message, line, sourceId) => {
@@ -498,7 +506,7 @@ async function createWindow(): Promise<void> {
   setTerminalPopupFocuser(popupManager.bringTabToTopIfPopup)
   setBroadcastMainWindow(mainWindow)
   // The updater starts only once broadcasts can reach the window, so the first state lands in the UI.
-  if (!isBotMode()) configureUpdateService()
+  if (!isHeadlessInstance()) configureUpdateService()
   registerPerformanceWebContents(wc, { kind: 'app' })
   soundService.setTarget(wc)
   wc.on('did-start-loading', () => soundService.invalidateRenderer(wc))
@@ -535,7 +543,7 @@ async function createWindow(): Promise<void> {
   initTerminalManager(mainWindow)
 
   mainWindow.on('close', (e) => {
-    if (isBotMode() && !backgroundQuit) {
+    if (isHeadlessInstance() && !backgroundQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -554,7 +562,7 @@ async function createWindow(): Promise<void> {
 
   if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    if (!isBotMode()) wc.openDevTools({ mode: 'detach' })
+    if (!isHeadlessInstance()) wc.openDevTools({ mode: 'detach' })
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
@@ -815,7 +823,7 @@ app.whenReady().then(async () => {
 
   conversationMigrationService.replayIncomplete()
   // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  if (!isBotMode()) startRuntimeAssetUpdates()
+  if (!isHeadlessInstance()) startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
@@ -884,6 +892,47 @@ app.whenReady().then(async () => {
       return
     }
   }
+  if (isServerMode() && mainWindow) {
+    const hub = new RemoteUiHub({
+      table: ipcHandlerTable,
+      appVersion: app.getVersion(),
+      hostInfo: () => ({
+        os: 'linux',
+        hostName: os.hostname(),
+        homeDir: os.homedir(),
+        roots: hostFsRoots().map((root) => root.path),
+        // Nobody sees this host's desktop; its editor and browser are not shown on a computer yet.
+        desktopEffects: false,
+        editor: false,
+        browser: false,
+      }),
+      // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
+      // language of the computer that connected last.
+      applyLocale: (locale) => {
+        if (!isSupportedLocale(locale) || locale === getLocale()) return
+        setMainLocale(setLocaleSetting(locale))
+      },
+      log: (level, message) => console.error(JSON.stringify({ component: 'remote-host', level, message })),
+    })
+    try {
+      await startServerHostMode(mainWindow, {
+        hub,
+        busy: () => activeChatRunCount() > 0,
+        closeConversation: (id) => stopConversationLive(id),
+        purgeConversation: (id) => deleteConversation(id),
+      })
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          component: 'remote-host',
+          level: 'error',
+          message: error instanceof Error ? error.message : 'Startup failed',
+        })
+      )
+      app.exit(1)
+      return
+    }
+  }
   recoverDesktopExecutions()
   const executor = executorSettings()
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
@@ -897,7 +946,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (isBotMode()) return
+  if (isHeadlessInstance()) return
   flushPendingBrowserPersists()
   floatingManager.flushPendingFloatPersists()
   floatingManager.disposeAll()

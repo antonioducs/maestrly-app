@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { BotInstanceApp } from './BotInstanceApp'
 import { DesktopApp } from './DesktopApp'
+import { ServerHostApp } from './ServerHostApp'
 
 export function App() {
   useEffect(() => {
@@ -10,6 +11,8 @@ export function App() {
     root.classList.toggle('is-linux', os === 'linux')
     root.classList.toggle('is-mac', os === 'mac')
   }, [])
+  // A workspaces host shows a status page: its chats and workspaces are used from the owner's computers.
+  if (window.api.platformInfo.serverMode) return <ServerHostApp />
   // A bot's own Maestrly only offers its settings; the full desktop never runs inside a bot.
   return window.api.platformInfo.botMode ? <BotInstanceApp /> : <DesktopApp />
 }

@@ -6,6 +6,7 @@ import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
   FLEET_MESSAGE_BODY_MAX,
   FLEET_PROTOCOL_HEADER,
@@ -107,7 +108,15 @@ export interface InstanceBot {
 export interface InstanceEnvironment {
   /** The environment's event stream; each bot event names its bot. */
   readonly events: InstanceEvents
-  health(): { ok: true; appVersion: string; protocol: 1; ready: boolean; capabilities: readonly string[] }
+  health(): {
+    ok: true
+    appVersion: string
+    protocol: 1
+    ready: boolean
+    capabilities: readonly string[]
+    /** Only a workspaces host reports it: chat turns are running. */
+    busy?: boolean
+  }
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus>
   /** The models of the environment's accounts, freshly read; `current` is null, an environment has no selection. */
   selections(): Promise<{ options: FleetSelectionOption[]; current: null }>
@@ -336,7 +345,16 @@ type Handler = (request: { params: Record<string, string>; url: URL; input: unkn
  * apps display is separate. A bot's screens need that bot's takeover for control, and its controls end when its
  * takeover does; the environment screen needs none.
  */
-export function createInstanceControlServer(config: BotInstanceConfig, environment: InstanceEnvironment): http.Server {
+/** Takes over an authenticated upgrade of the bridge path; a workspaces host passes its remote UI hub. */
+export interface BridgeUpgrade {
+  handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void
+}
+
+export function createInstanceControlServer(
+  config: BotInstanceConfig,
+  environment: InstanceEnvironment,
+  options: { bridge?: BridgeUpgrade } = {}
+): http.Server {
   const tunnels = new Set<Tunnel>()
   const end = (tunnel: Tunnel): void => {
     if (tunnel.ended) return
@@ -530,6 +548,11 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       if (!authorized(request.headers.authorization, config.controlToken))
         return fail(401, 'UNAUTHORIZED', 'Invalid control credentials.')
       const url = new URL(request.url ?? '/', 'http://localhost')
+      if (options.bridge && request.method === 'GET' && url.pathname === FLEET_INSTANCE_BRIDGE_PATH) {
+        if (request.headers.upgrade?.toLowerCase() !== 'websocket')
+          return fail(400, 'INVALID_REQUEST', 'WebSocket upgrade required.')
+        return options.bridge.handleUpgrade(request, socket, head)
+      }
       const screen = request.method === 'GET' ? screenFor(url.pathname) : null
       if (!screen) return fail(404, 'NOT_FOUND', 'Route not found.')
       if (

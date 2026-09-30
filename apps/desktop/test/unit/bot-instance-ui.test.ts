@@ -13,6 +13,15 @@ afterEach(() => {
 })
 
 describe("a bot's own Maestrly window", () => {
+  it('tells the renderer it hosts workspaces from the server mode environment', async () => {
+    vi.stubEnv(FLEET_BOT_ENV.serverMode, '1')
+    vi.resetModules()
+    expect((await import('../../src/preload/api-app')).appApi.platformInfo.serverMode).toBe(true)
+    vi.stubEnv(FLEET_BOT_ENV.serverMode, '')
+    vi.resetModules()
+    expect((await import('../../src/preload/api-app')).appApi.platformInfo.serverMode).toBe(false)
+  })
+
   it('tells the renderer it runs inside a bot from the bot mode environment', async () => {
     vi.stubEnv(FLEET_BOT_ENV.mode, '1')
     vi.resetModules()
@@ -34,9 +43,14 @@ describe("a bot's own Maestrly window", () => {
   })
 
   it('mounts only the settings in a bot, never the chats, workspaces or fleet views', () => {
-    expect(source('renderer/App.tsx')).toContain(
-      'window.api.platformInfo.botMode ? <BotInstanceApp /> : <DesktopApp />'
-    )
+    const app = source('renderer/App.tsx')
+    expect(app).toContain('window.api.platformInfo.botMode ? <BotInstanceApp /> : <DesktopApp />')
+    // A workspaces host is decided first and mounts neither: its window is a status page.
+    expect(app).toContain('if (window.api.platformInfo.serverMode) return <ServerHostApp />')
+    expect(app.indexOf('platformInfo.serverMode')).toBeLessThan(app.indexOf('platformInfo.botMode'))
+    const host = source('renderer/ServerHostApp.tsx')
+    for (const other of ['DesktopApp', 'Sidebar', 'ChatView', 'SettingsView', 'useFleet', 'hostApi'])
+      expect(host).not.toContain(other)
     const bot = source('renderer/BotInstanceApp.tsx')
     expect(bot).toContain('<SettingsView')
     expect(bot).toContain('sections={BOT_INSTANCE_SETTINGS_SECTIONS}')
@@ -58,7 +72,11 @@ describe("a bot's own Maestrly window", () => {
 
   it("drops the menu bar from a bot's settings window: File → Quit restarts the bot's app mid-turn", () => {
     const main = source('main/index.ts')
-    expect(main).toMatch(/show: !isBotMode\(\),[\s\S]*if \(isBotMode\(\)\) mainWindow\.removeMenu\(\)/)
+    // A bot and a workspaces host share the hidden, menu-less window; `isHeadlessInstance` is true in bot mode.
+    expect(main).toMatch(
+      /show: !isHeadlessInstance\(\),[\s\S]*if \(isHeadlessInstance\(\)\) mainWindow\.removeMenu\(\)/
+    )
+    expect(source('main/remote-host/server/config.ts')).toContain('isBotMode(env) || isServerMode(env)')
   })
 
   it('shows one section without a section list, the chosen tabs only, and Maestrly tools locked on', () => {

@@ -58,6 +58,7 @@ import {
   writeInstallRecord,
 } from './store'
 import { SshTunnel, type TunnelOptions } from './tunnel'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 
 /** What the installer needs from an SSH connection. */
 export type InstallerSession = Pick<SshSession, 'exec' | 'forward' | 'onClose' | 'close' | 'hostKey' | 'root'>
@@ -831,9 +832,9 @@ export class FleetInstallerService {
     }
   }
 
-  /** Opens the tunnel of a VPS install at startup; a bot's own Maestrly has no bot server. */
+  /** Opens the tunnel of a VPS install at startup; a bot's or a workspaces host's own Maestrly has no bot server. */
   async start(): Promise<void> {
-    if (this.deps.env.MAESTRLY_BOT_MODE === '1') return
+    if (isHeadlessInstance(this.deps.env)) return
     const record = this.deps.store.readRecord()
     if (record?.mode === 'remote') await this.startTunnel(record)
   }

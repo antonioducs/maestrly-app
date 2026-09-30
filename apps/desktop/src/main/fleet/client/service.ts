@@ -25,6 +25,7 @@ import {
   type TokenPersistence,
 } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 
 export type FleetConnectionView = {
   features: string[]
@@ -64,7 +65,7 @@ export class FleetClientService {
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
 
   start(): void {
-    if (process.env.MAESTRLY_BOT_MODE === '1') return
+    if (isHeadlessInstance()) return
     const settings = readFleetSettings()
     if (settings.url && settings.token) {
       const allowed = isAllowedFleetUrl(settings.url)

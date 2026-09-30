@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { z } from 'zod'
 import type { IpcRegistrar } from '../../ipc-registrar'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 import { fleetInstallerService, type FleetInstallerService } from './service'
 
 const hostName = /^[A-Za-z0-9.-]{1,253}$/
@@ -68,7 +69,7 @@ export function registerFleetInstallerIpc(
     return service.remove()
   })
   reg.mhandle('fleet:installer:cancel', () => service.cancel())
-  if (process.env.MAESTRLY_BOT_MODE !== '1') {
+  if (!isHeadlessInstance()) {
     // Before the fleet client starts, so that its first connection finds the tunnel to a VPS listening.
     void service.start().catch((error: unknown) => console.warn('[bot-server] tunnel start failed:', error))
     app.once('will-quit', () => void service.stop())

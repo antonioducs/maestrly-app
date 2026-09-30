@@ -16,7 +16,7 @@ import { attachHotkeyCapture } from '../hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationScreen } from '../conversation-screen'
-import { isBotMode } from '../fleet/instance/config'
+import { isHeadlessInstance } from '../remote-host/server/config'
 import { centerInArea, clampToArea, insideWindowFrame } from '../fleet/instance/window-bounds'
 import { refocusScreen, setScreenFocusOwner, showWindow } from '../screen-focus'
 import {
@@ -434,7 +434,7 @@ export function hardenBrowserSession(): void {
 function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebContentsView {
   const resourceId = tab.id
   const v = new WebContentsView({
-    webPreferences: { partition: BROWSER_PARTITION, ...(isBotMode() ? { disableDialogs: true } : {}) },
+    webPreferences: { partition: BROWSER_PARTITION, ...(isHeadlessInstance() ? { disableDialogs: true } : {}) },
   })
   v.setBackgroundColor('#0A0A0B')
   v.setBounds(OFFSCREEN)
@@ -460,8 +460,9 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
   })
   // Attach CDP early; Page/DevTools coexist while Runtime/Log/Network capture follows activity leases and
   // tool demand.
-  const dialogs = attachToView(wc, { nativeDialogsDisabled: isBotMode() })
-  if (isBotMode()) {
+  // In a bot or on a workspaces host nobody can answer a native dialog: the page's dialog policy answers instead.
+  const dialogs = attachToView(wc, { nativeDialogsDisabled: isHeadlessInstance() })
+  if (isHeadlessInstance()) {
     // Runtime.evaluate needs a renderer before it can install the current-document override. Bootstrap only an empty
     // document; waiting for CDP before creating that renderer would deadlock the first real navigation.
     const blank = wc.loadURL('about:blank')
@@ -495,7 +496,7 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
             ...popupOptions.webPreferences,
             // Electron's native dialogs are separate GTK windows and bypass the popup's disabled input. They must
             // never block another bot's controlled screen. Native confirmations in bot popups are canceled.
-            ...(isBotMode() ? { disableDialogs: true } : {}),
+            ...(isHeadlessInstance() ? { disableDialogs: true } : {}),
           },
         },
       }
