@@ -727,7 +727,9 @@ app.whenReady().then(async () => {
       const runtimePath = process.env.MAESTRLY_LOCAL_ML_RUNTIME_PATH?.trim()
       if (!runtimePath) throw new Error('MAESTRLY_LOCAL_ML_RUNTIME_PATH is required for packaged local-ML smoke')
       const result = await runMlWorkerNativeSmoke(runtimePath)
-      console.log(`[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes}`)
+      console.log(
+        `[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes} vadSegments=${result.vadSegments}`
+      )
       process.exitCode = 0
     } catch (error) {
       console.error(

@@ -26,6 +26,23 @@ async function verifyExtractedRuntime(temporary) {
     .png()
     .toBuffer()
   if (pixel.length === 0) throw new Error('sharp native smoke returned an empty image')
+  if (typeof runtime.loadWhisper !== 'function' || typeof runtime.vadModelPath !== 'string') {
+    throw new Error('Runtime entry does not export loadWhisper/vadModelPath')
+  }
+  const whisper = runtime.loadWhisper()
+  if (typeof whisper.WhisperContext !== 'function' || typeof whisper.WhisperVadContext !== 'function') {
+    throw new Error('whisper.cpp native addon did not load')
+  }
+  // Loading the bundled VAD model proves both the addon and the archived model path; silence has no speech.
+  const vad = new whisper.WhisperVadContext({ filePath: runtime.vadModelPath, useGpu: false, nThreads: 1 })
+  try {
+    const segments = await vad.detectSpeechData(new ArrayBuffer(32000))
+    if (!Array.isArray(segments) || segments.length !== 0) {
+      throw new Error(`VAD reported speech in one second of silence: ${JSON.stringify(segments)}`)
+    }
+  } finally {
+    await vad.release()
+  }
 }
 
 async function runVerificationChild(temporary) {
@@ -67,7 +84,7 @@ async function main() {
   if (process.argv.length > 3) throw new Error(`Unexpected extra arguments: ${process.argv.slice(3).join(' ')}`)
   const archive =
     process.argv[2] ??
-    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-1-${hostOs}-${process.arch}.tar.gz`)
+    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-2-${hostOs}-${process.arch}.tar.gz`)
   const resolvedArchive = path.resolve(archive)
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'local-ml-smoke-'))
   try {

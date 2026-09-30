@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "2.17.2-1",
+  "version": "2.17.2-2",
   "targets": {
     "mac-arm64": {
-      "sha256": "27f8780e28f728344c243f25030cfc4c7e3cd6c931bb5b96955f239cb8e8d757",
-      "archiveBytes": 40915502,
-      "unpackedBytes": 141329591,
+      "sha256": "81420b6005f370a693179fcaf8310a1a1c1217365cbef3f00550c6232d72315b",
+      "archiveBytes": 43252201,
+      "unpackedBytes": 146566344,
       "criticalPaths": [
         "runtime.mjs",
         "node_modules/@xenova/transformers/package.json",
@@ -13,25 +13,33 @@
         "node_modules/onnxruntime-node/bin/napi-v3/darwin/arm64/onnxruntime_binding.node",
         "node_modules/sharp/package.json",
         "node_modules/@img/sharp-darwin-arm64/lib/sharp-darwin-arm64-0.35.4.node",
-        "node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips-cpp.8.18.6.dylib"
+        "node_modules/@img/sharp-libvips-darwin-arm64/lib/libvips-cpp.8.18.6.dylib",
+        "node_modules/@fugood/node-whisper-darwin-arm64/index.node",
+        "models/ggml-silero-v6.2.0.bin"
       ]
     },
     "linux-x64": {
-      "sha256": "69def4285a4999cd062a5188b412eae9ba40e4de9b28d7f84d228c1eebf1ada3",
-      "archiveBytes": 42650909,
-      "unpackedBytes": 141388618,
+      "sha256": "ff229da7280bda61b0b4aeca30c351999a0ef00943dddb73fa2fcb25c753efbe",
+      "archiveBytes": 51758967,
+      "unpackedBytes": 160125124,
       "criticalPaths": [
         "runtime.mjs",
         "node_modules/@xenova/transformers/package.json",
         "node_modules/onnxruntime-node/bin/napi-v3/linux/x64/libonnxruntime.so.1.14.0",
         "node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node",
-        "node_modules/sharp/package.json"
+        "node_modules/sharp/package.json",
+        "node_modules/@img/sharp-libvips-linux-x64/lib/libvips-cpp.so.8.18.6",
+        "node_modules/@img/sharp-libvips-linuxmusl-x64/lib/libvips-cpp.so.8.18.6",
+        "node_modules/@img/sharp-linux-x64/lib/sharp-linux-x64-0.35.4.node",
+        "node_modules/@img/sharp-linuxmusl-x64/lib/sharp-linuxmusl-x64-0.35.4.node",
+        "node_modules/@fugood/node-whisper-linux-x64/index.node",
+        "models/ggml-silero-v6.2.0.bin"
       ]
     },
     "win-x64": {
-      "sha256": "d5374108a43c62866e5cb350f0b72ea5f56491660da9e92efb11ed27001be183",
-      "archiveBytes": 38825531,
-      "unpackedBytes": 130427312,
+      "sha256": "a405d52f41d2ce0bdc76c491c5447342296145843931a97def07d11d57ee98fe",
+      "archiveBytes": 40860763,
+      "unpackedBytes": 134071112,
       "criticalPaths": [
         "runtime.mjs",
         "node_modules/@xenova/transformers/package.json",
@@ -41,7 +49,9 @@
         "node_modules/sharp/package.json",
         "node_modules/@img/sharp-win32-x64/lib/libvips-42.dll",
         "node_modules/@img/sharp-win32-x64/lib/libvips-cpp-8.18.6.dll",
-        "node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node"
+        "node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64-0.35.4.node",
+        "node_modules/@fugood/node-whisper-win32-x64/index.node",
+        "models/ggml-silero-v6.2.0.bin"
       ]
     }
   }
