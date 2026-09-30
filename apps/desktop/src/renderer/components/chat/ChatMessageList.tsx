@@ -15,6 +15,7 @@ import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, Chevr
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard } from './ConversationDispatchCard'
@@ -116,6 +117,7 @@ function ReviewLoopRoundChrome({
   onToggle?: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
 
   const [metaByModel, setMetaByModel] = useState<Record<string, ChatModelMeta | null>>({})
   const metaByModelRef = useRef(metaByModel)
@@ -139,9 +141,7 @@ function ReviewLoopRoundChrome({
     let alive = true
     Promise.all(
       missing.map(([providerId, modelId]) =>
-        window.api
-          .chatModelMeta(modelId, providerId || undefined)
-          .then((mm) => [`${providerId}\0${modelId}`, mm] as const)
+        api.chatModelMeta(modelId, providerId || undefined).then((mm) => [`${providerId}\0${modelId}`, mm] as const)
       )
     ).then((loaded) => {
       if (alive) setMetaByModel((prev) => ({ ...prev, ...Object.fromEntries(loaded) }))
@@ -149,7 +149,7 @@ function ReviewLoopRoundChrome({
     return () => {
       alive = false
     }
-  }, [modelPairsKey])
+  }, [api, modelPairsKey])
 
   const modelId = message.model?.modelId
   const status = reviewLoopRoundStatus(message)

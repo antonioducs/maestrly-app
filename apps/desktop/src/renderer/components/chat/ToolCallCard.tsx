@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Wrench, Check, X, Loader2, ShieldQuestion, Ban, ImageIcon, TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { toolOutputImages, toolOutputText, type ChatToolImage, type MessagePart } from '../../../shared/chat'
 import { stripMaestroLiveEnvelope } from '../../../shared/maestro-live'
 import { IMAGE_OBJECT_URL_IDLE_MS } from '../../../shared/memory-policy'
@@ -58,6 +59,7 @@ const ToolImagePreview = memo(function ToolImagePreview({
   toolPartId: string
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const containerRef = useRef<HTMLDivElement>(null)
   const awayTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [nearViewport, setNearViewport] = useState(false)
@@ -94,10 +96,7 @@ const ToolImagePreview = memo(function ToolImagePreview({
     let objectUrl: string | null = null
     const controller = new AbortController()
     setState({ status: 'loading' })
-    void withImageFetchSlot(
-      () => window.api.chatToolImage(conversationId, messageId, toolPartId, image.id),
-      controller.signal
-    )
+    void withImageFetchSlot(() => api.chatToolImage(conversationId, messageId, toolPartId, image.id), controller.signal)
       .then((result) => {
         if (!active) return
         if (!result.ok) {
@@ -115,7 +114,7 @@ const ToolImagePreview = memo(function ToolImagePreview({
       controller.abort(new Error('Tool image preview left the viewport.'))
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [conversationId, image.id, messageId, nearViewport, toolPartId])
+  }, [api, conversationId, image.id, messageId, nearViewport, toolPartId])
 
   return (
     <div ref={containerRef} className="flex min-w-0 flex-col gap-1.5 rounded bg-black/30 p-2">

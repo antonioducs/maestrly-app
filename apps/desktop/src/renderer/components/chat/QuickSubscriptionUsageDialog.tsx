@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import type { ChatSubscriptionUsage } from '../../../shared/chat'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { SubscriptionUsagePanel } from './SubscriptionUsagePanel'
 import type { QuickUsageTarget } from './quick-subscription-usage'
 
@@ -21,6 +22,7 @@ export function QuickSubscriptionUsageDialog({
   targets: QuickUsageTarget[]
 }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [snapshots, setSnapshots] = useState<Record<string, ChatSubscriptionUsage>>({})
   const [loading, setLoading] = useState(false)
   const requestRef = useRef(0)
@@ -32,7 +34,7 @@ export function QuickSubscriptionUsageDialog({
       const entries = await Promise.all(
         targets.map(async (target): Promise<[string, ChatSubscriptionUsage]> => {
           try {
-            const usage = await window.api.chatSubscriptionUsage(target.providerKind, force, target.accountId)
+            const usage = await api.chatSubscriptionUsage(target.providerKind, force, target.accountId)
             return [targetKey(target), usage]
           } catch (error) {
             return [
@@ -51,7 +53,7 @@ export function QuickSubscriptionUsageDialog({
       setSnapshots(Object.fromEntries(entries))
       setLoading(false)
     },
-    [targets]
+    [api, targets]
   )
 
   useEffect(() => {

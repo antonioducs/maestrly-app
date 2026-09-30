@@ -23,7 +23,7 @@ describe('PDF attachments in the chat UI', () => {
     const chip = read('../../src/renderer/components/chat/PdfAttachmentChip.tsx')
     expect(read('../../src/renderer/components/chat/ChatMessageList.tsx')).toContain('<PdfAttachmentChip')
     expect(chip).toContain('if (!part.artifactId)')
-    expect(chip).toContain('window.api.chatOpenAttachmentPdf(conversationId, messageId, part.id)')
+    expect(chip).toContain('api.chatOpenAttachmentPdf(conversationId, messageId, part.id)')
     // The saved message replaces the optimistic bubble right after send, so the chip becomes clickable.
     expect(read('../../src/renderer/components/chat/ChatView.tsx')).toContain(
       'imagesSentRef.current = hasArtifactAttachment(atts)'

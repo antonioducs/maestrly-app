@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { estimatedCostOfUsage, usageMetaForModel } from '../../../shared/chat'
 import type { ChatContextSnapshot, ChatHistoryStats, ChatModelMeta } from '../../../shared/chat'
 import { contextMeterReading, formatContextTokens as fmt } from './context-observation'
@@ -48,6 +49,7 @@ export function ChatContextMeter({
   onLimitChange?: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const stats = useMemo(() => {
     let totalIn = 0
     let totalOut = 0
@@ -107,7 +109,7 @@ export function ChatContextMeter({
     if (!open || !canLimit) return
     let alive = true
     const requestId = ++limitRequestRef.current
-    window.api.chatContextLimitGet(providerId as string, modelId as string).then((r) => {
+    api.chatContextLimitGet(providerId as string, modelId as string).then((r) => {
       if (!alive || requestId !== limitRequestRef.current) return
       setInfo(r)
       setDraft(r.limit != null ? String(r.limit) : '')
@@ -115,7 +117,7 @@ export function ChatContextMeter({
     return () => {
       alive = false
     }
-  }, [open, canLimit, providerId, modelId])
+  }, [api, open, canLimit, providerId, modelId])
 
   const ceiling = info ? (info.providerWindow ?? info.catalogWindow) : null
   const parsedDraft = parseLimit(draft)
@@ -127,9 +129,9 @@ export function ChatContextMeter({
     const model = modelId as string
     const requestId = ++limitRequestRef.current
     try {
-      const result = await window.api.chatContextLimitSet(provider, model, value)
+      const result = await api.chatContextLimitSet(provider, model, value)
       if (!result.ok || requestId !== limitRequestRef.current) return
-      const nextInfo = await window.api.chatContextLimitGet(provider, model)
+      const nextInfo = await api.chatContextLimitGet(provider, model)
       if (requestId !== limitRequestRef.current) return
       setInfo(nextInfo)
       setDraft(nextInfo.limit != null ? String(nextInfo.limit) : '')

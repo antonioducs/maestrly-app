@@ -1,10 +1,11 @@
+import type { HostApi } from '../../../preload'
 import type { BotActionName, BotPermissionCeiling, BotServerView, BotSettingsView } from '../../../shared/bot'
 
 /** The saved half of the embedded server: exactly what the connection form edits before sending it back. */
 export type ServerDraft = Pick<BotServerView, 'enabled' | 'host' | 'port' | 'publicUrl'>
 
-export type BotWorkspaceOption = Awaited<ReturnType<typeof window.api.listWorkspaces>>[number]
-export type BotProviderOption = Awaited<ReturnType<typeof window.api.platformExecutorProviders>>[number]
+export type BotWorkspaceOption = Awaited<ReturnType<HostApi['listWorkspaces']>>[number]
+export type BotProviderOption = Awaited<ReturnType<HostApi['platformExecutorProviders']>>[number]
 
 export const BOT_ACTION_NAMES: readonly BotActionName[] = ['chats:read', 'chats:write', 'chats:control', 'chats:answer']
 

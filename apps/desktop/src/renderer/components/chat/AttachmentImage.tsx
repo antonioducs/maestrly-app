@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { MessagePart } from '../../../shared/chat'
 import { IMAGE_OBJECT_URL_IDLE_MS } from '../../../shared/memory-policy'
 import { bytesToObjectUrl, withImageFetchSlot } from '../../lib/binary-image'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 export function AttachmentImage({
   part,
@@ -14,6 +15,7 @@ export function AttachmentImage({
   messageId: string
   onOpenImage?: (src: string, name: string) => void
 }) {
+  const api = useHostApi()
   const [src, setSrc] = useState<string | null>(part.data?.startsWith('data:') ? part.data : (part.previewUrl ?? null))
   const [nearViewport, setNearViewport] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -66,7 +68,7 @@ export function AttachmentImage({
     let active = true
     let objectUrl: string | null = null
     const controller = new AbortController()
-    void withImageFetchSlot(() => window.api.chatAttachmentImage(conversationId, messageId, part.id), controller.signal)
+    void withImageFetchSlot(() => api.chatAttachmentImage(conversationId, messageId, part.id), controller.signal)
       .then((result) => {
         if (!active) return
         if (!result.ok) {
@@ -84,7 +86,7 @@ export function AttachmentImage({
       controller.abort(new Error('Attachment image was unmounted.'))
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [conversationId, messageId, part.artifactId, part.data, part.id, part.previewUrl, nearViewport])
+  }, [api, conversationId, messageId, part.artifactId, part.data, part.id, part.previewUrl, nearViewport])
 
   if (!part.data?.startsWith('data:') && !part.previewUrl && !part.artifactId) return null
   if (failed) return null

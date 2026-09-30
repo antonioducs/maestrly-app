@@ -12,6 +12,9 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown, Check, Loader2, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
+import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import type { HostApi } from '../../../preload'
+import type { HostId } from '../../../shared/host-key'
 import { isChatProviderConnected } from '../../../shared/chat'
 import type { ChatConfig, ChatModelRef } from '../../../shared/chat'
 import type { ChatComposerSource } from './chat-composer-source'
@@ -41,7 +44,7 @@ interface Row {
   modelId: string
 }
 
-let rowsCache: Row[] | null = null
+const rowsCache = new Map<HostId, Row[]>()
 
 /** A bot's models, already filtered by the models its own accounts enable. */
 async function loadBotRows(bot: NonNullable<ChatComposerSource['bot']>, botId: string | undefined): Promise<Row[]> {
@@ -53,19 +56,19 @@ async function loadBotRows(bot: NonNullable<ChatComposerSource['bot']>, botId: s
   }))
 }
 
-async function fetchRows(): Promise<{ config: ChatConfig; rows: Row[] }> {
-  const config = await window.api.chatConfig()
+async function fetchRows(api: HostApi, hostId: HostId): Promise<{ config: ChatConfig; rows: Row[] }> {
+  const config = await api.chatConfig()
   const connected = config.providers.filter(isChatProviderConnected)
   const lists = await Promise.all(
     connected.map((p) =>
-      window.api
+      api
         .chatModels(p.id)
         .then((models) => models.map((m) => ({ providerId: p.id, providerName: p.name, modelId: m })))
         .catch(() => [] as Row[])
     )
   )
   const rows = lists.flat()
-  rowsCache = rows
+  rowsCache.set(hostId, rows)
   return { config, rows }
 }
 
@@ -85,6 +88,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   ref
 ) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
+  const hostId = useHostId()
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const [conversationSel, setConversationSel] = useState<ChatModelRef | null>(null)
   const controlled = conversationId === undefined || !!source?.bot
@@ -92,8 +97,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
-  // The module cache holds this Mac's models; a bot's list comes from the bot only.
-  const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (rowsCache ?? [])))
+  // The module cache holds each host's models; a bot's list comes from the bot only.
+  const [rows, setRows] = useState<Row[]>(() => (source?.bot ? [] : (rowsCache.get(hostId) ?? [])))
   const [loading, setLoading] = useState(false)
   const [hiddenModels, setHiddenModels] = useState<Record<string, string[]> | null>(null)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>()
@@ -125,26 +130,26 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
 
   const load = () => {
     if (source?.bot) return
-    window.api.chatConfig().then(setConfig)
-    if (conversationId) window.api.chatGetSelection(conversationId).then(setConversationSel)
+    api.chatConfig().then(setConfig)
+    if (conversationId) api.chatGetSelection(conversationId).then(setConversationSel)
   }
-  useEffect(load, [conversationId, refreshToken])
+  useEffect(load, [api, conversationId, refreshToken])
 
   useEffect(
     () =>
       source?.bot
         ? () => {}
-        : window.api.onChatModelsCatalogChanged(() => {
-            rowsCache = null
+        : api.onChatModelsCatalogChanged(() => {
+            rowsCache.delete(hostId)
             if (!open) return
-            void fetchRows()
+            void fetchRows(api, hostId)
               .then(({ config: nextConfig, rows: nextRows }) => {
                 setConfig(nextConfig)
                 setRows(nextRows)
               })
               .catch(() => undefined)
           }),
-    [open]
+    [api, hostId, open]
   )
 
   useEffect(() => {
@@ -167,11 +172,11 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
         alive = false
       }
     }
-    const hadCache = rowsCache != null
-    if (hadCache) setRows(rowsCache!)
+    const hadCache = rowsCache.has(hostId)
+    if (hadCache) setRows(rowsCache.get(hostId)!)
     setHiddenModels(null)
     setLoading(true)
-    void window.api
+    void api
       .chatHiddenModels()
       .then((hidden) => {
         if (!alive) return
@@ -183,7 +188,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
         setHiddenModels({})
         if (hadCache) setLoading(false)
       })
-    fetchRows()
+    fetchRows(api, hostId)
       .then(({ config: cfg, rows: next }) => {
         if (!alive) return
         setConfig(cfg)
@@ -195,7 +200,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     return () => {
       alive = false
     }
-  }, [focusSearch, open])
+  }, [api, hostId, focusSearch, open])
 
   // A bot's closed chip needs the provider label of its selection, not only an open menu.
   const botSource = source?.bot
@@ -276,16 +281,16 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
       return
     }
     try {
-      const result = await window.api.chatSetSelection(conversationId, next)
+      const result = await api.chatSetSelection(conversationId, next)
       if (!result.ok) {
-        setConversationSel(await window.api.chatGetSelection(conversationId))
+        setConversationSel(await api.chatGetSelection(conversationId))
         return
       }
       setConversationSel(next)
       setOpen(false)
       onChange?.(next)
     } catch {
-      setConversationSel(await window.api.chatGetSelection(conversationId).catch(() => sel))
+      setConversationSel(await api.chatGetSelection(conversationId).catch(() => sel))
     }
   }
 

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Layers3, RotateCcw, Settings2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 import type {
   ChatSkillGroup,
@@ -79,7 +80,8 @@ export function ChatSkillsMenu({
   /** Shown for a bot with no skills yet, where the menu is the way to reach the bot's own skill settings. */
   emptySkillsLabel?: string
 }) {
-  const source = providedSource ?? localChatComposerSource(conversationId)
+  const api = useHostApi()
+  const source = providedSource ?? localChatComposerSource(api, conversationId)
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<ChatSkillsState>(EMPTY_STATE)
@@ -178,7 +180,7 @@ export function ChatSkillsMenu({
       : [...group.skills, skillName]
     groupMutations.current.add(group.id)
     setBusyGroups((current) => new Set(current).add(group.id))
-    void window.api
+    void api
       .chatSkillGroupUpdate(group.id, { skills })
       .then(changed)
       .finally(() => {

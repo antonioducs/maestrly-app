@@ -19,16 +19,16 @@ describe('managed runtime renderer contract', () => {
     expect(apiSettings).toContain("'codex-subscription': 'codex-runtime'")
     expect(apiSettings).toContain("'github-copilot-subscription': 'github-copilot-runtime'")
     expect(apiSettings).toContain("t('settings.componentInstallAndConnect')")
-    expect(apiSettings).toContain('window.api.runtimeAssetRepair(runtimeId)')
+    expect(apiSettings).toContain('api.runtimeAssetRepair(runtimeId)')
     expect(apiSettings.indexOf('runtimeAssetInstall(runtimeId)')).toBeLessThan(
       apiSettings.indexOf('chatSubscriptionLogin(providerKind, accountId)')
     )
   })
 
   it('re-probes the account slot after install before allowing OAuth/reset', () => {
-    const install = apiSettings.indexOf('window.api.runtimeAssetInstall(runtimeId)')
+    const install = apiSettings.indexOf('api.runtimeAssetInstall(runtimeId)')
     const probe = apiSettings.indexOf('const recovered = await refreshStatus(true)')
-    const login = apiSettings.indexOf('window.api.chatSubscriptionLogin(providerKind, accountId)')
+    const login = apiSettings.indexOf('api.chatSubscriptionLogin(providerKind, accountId)')
 
     expect(install).toBeGreaterThanOrEqual(0)
     expect(probe).toBeGreaterThan(install)
@@ -47,22 +47,22 @@ describe('managed runtime renderer contract', () => {
 
   it('shows all managed components through list/onChanged with install, cancel, repair, and remove actions', () => {
     expect(apiSettings).toContain('<RuntimeComponentsSettings />')
-    expect(componentSettings).toContain('window.api.runtimeAssetList()')
-    expect(componentSettings).toContain('window.api.onRuntimeAssetChanged')
-    expect(componentSettings).toContain('window.api.runtimeAssetInstall(id)')
-    expect(componentSettings).toContain('window.api.runtimeAssetCancel(asset.id)')
-    expect(componentSettings).toContain('window.api.runtimeAssetRepair(id)')
-    expect(componentSettings).toContain('window.api.runtimeAssetRemove(id)')
+    expect(componentSettings).toContain('api.runtimeAssetList()')
+    expect(componentSettings).toContain('api.onRuntimeAssetChanged')
+    expect(componentSettings).toContain('api.runtimeAssetInstall(id)')
+    expect(componentSettings).toContain('api.runtimeAssetCancel(asset.id)')
+    expect(componentSettings).toContain('api.runtimeAssetRepair(id)')
+    expect(componentSettings).toContain('api.runtimeAssetRemove(id)')
   })
 
   it('offers independent release controls only for updatable, installed components', () => {
     expect(componentSettings).toContain('isUpdatableRuntimeAssetId(asset.id)')
     expect(componentSettings).toContain("asset.status.state !== 'ready'")
     for (const call of [
-      'window.api.runtimeAssetCheckUpdate(id)',
-      'window.api.runtimeAssetUpdate(id)',
-      'window.api.runtimeAssetRollback(id)',
-      'window.api.runtimeAssetSetAutoUpdate(id,',
+      'api.runtimeAssetCheckUpdate(id)',
+      'api.runtimeAssetUpdate(id)',
+      'api.runtimeAssetRollback(id)',
+      'api.runtimeAssetSetAutoUpdate(id,',
     ]) {
       expect(componentSettings).toContain(call)
     }

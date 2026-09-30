@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ShieldCheck, Square, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ReviewLoopInfo } from '../../../shared/chat'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 interface Props {
   conversationId: string
@@ -70,6 +71,7 @@ export function ReviewLoopStatusSummary({
 
 export function ReviewLoopBanner({ conversationId, loop, onDismiss }: Props) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [now, setNow] = useState(Date.now())
   const [stopping, setStopping] = useState(false)
   const terminal = TERMINAL.has(loop.status)
@@ -113,7 +115,7 @@ export function ReviewLoopBanner({ conversationId, loop, onDismiss }: Props) {
     if (stopping || terminal) return
     setStopping(true)
     try {
-      await window.api.chatReviewLoopStop(conversationId)
+      await api.chatReviewLoopStop(conversationId)
     } finally {
       setStopping(false)
     }

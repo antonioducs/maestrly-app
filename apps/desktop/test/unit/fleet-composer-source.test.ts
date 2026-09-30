@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import type { HostApi } from '../../src/preload'
 import { botChatComposerSource, localChatComposerSource } from '../../src/renderer/components/chat/chat-composer-source'
 
 const sourceFile = (name: string) => readFileSync(`src/renderer/components/${name}`, 'utf8')
@@ -22,8 +23,8 @@ describe('chat composer data sources', () => {
       chatCompact: vi.fn().mockResolvedValue({ ok: true }),
       chatRetryBackgroundCompaction: vi.fn().mockResolvedValue({ ok: true }),
     }
-    vi.stubGlobal('window', { api })
-    const source = localChatComposerSource('conversation-1')
+    const conversationId = 'conversation-1'
+    const source = localChatComposerSource(api as unknown as HostApi, conversationId)
     await source.chatConfig()
     await source.chatGetConvTools()
     await source.chatSetConvTools({ mcpDisabled: ['mcp'] })
@@ -136,7 +137,7 @@ describe('chat composer data sources', () => {
 
   it('labels a closed bot model chip with the provider label and never shows local models', () => {
     const chip = sourceFile('chat/ChatModelChip.tsx')
-    expect(chip).toContain('source?.bot ? [] : (rowsCache ?? [])')
+    expect(chip).toContain('source?.bot ? [] : (rowsCache.get(hostId) ?? [])')
     expect(chip).toMatch(/if \(!botSource\) return[\s\S]*loadBotRows\(botSource, conversationId\)/)
     expect(chip).toContain('providerName: option.providerLabel')
   })

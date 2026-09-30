@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import type { ChatConfig } from '../../../../shared/chat'
 import type {
@@ -19,6 +20,7 @@ export function ConversationSubagentProfiles({
   onClose: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [payload, setPayload] = useState<ConversationSubagentProfileConfigPayload | null>(null)
   const [catalog, setCatalog] = useState<SubagentProfileCatalog>({ agents: [], categories: [] })
   const [config, setConfig] = useState<ChatConfig | null>(null)
@@ -27,9 +29,9 @@ export function ConversationSubagentProfiles({
     let alive = true
     setPayload(null)
     void Promise.all([
-      window.api.chatSubagentProfilesGetConversation(conversationId),
-      window.api.chatSubagentProfilesCatalog(conversationId),
-      window.api.chatConfig(),
+      api.chatSubagentProfilesGetConversation(conversationId),
+      api.chatSubagentProfilesCatalog(conversationId),
+      api.chatConfig(),
     ]).then(([nextPayload, nextCatalog, nextConfig]) => {
       if (!alive) return
       setPayload(nextPayload)
@@ -39,7 +41,7 @@ export function ConversationSubagentProfiles({
     return () => {
       alive = false
     }
-  }, [conversationId])
+  }, [conversationId, api])
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -75,7 +77,7 @@ export function ConversationSubagentProfiles({
             config={config}
             diagnostics={payload.diagnostics}
             onSave={async (rules) => {
-              const result = await window.api.chatSubagentProfilesSetConversation(conversationId, rules)
+              const result = await api.chatSubagentProfilesSetConversation(conversationId, rules)
               if (!result.ok) return false
               setPayload(result.value)
 
@@ -83,7 +85,7 @@ export function ConversationSubagentProfiles({
               return true
             }}
             onClear={async () => {
-              const result = await window.api.chatSubagentProfilesSetConversation(conversationId, null)
+              const result = await api.chatSubagentProfilesSetConversation(conversationId, null)
               if (result.ok) {
                 setPayload(result.value)
                 notifySubagentProfilesChanged()

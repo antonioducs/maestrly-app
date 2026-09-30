@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot, ChevronRight, PanelRightOpen, TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { toolOutputText, type ChatModelMeta, type MessagePart, type ToolState } from '../../../shared/chat'
 import { stripMaestroLiveEnvelope } from '../../../shared/maestro-live'
 import {
@@ -77,6 +78,7 @@ export const SubagentCard = memo(function SubagentCard({
   messageId: string
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const openSession = useOpenSubagentSession()
   const sessions = useSubagentSessions()
   const [legacyOpen, setLegacyOpen] = useState(false)
@@ -105,11 +107,11 @@ export const SubagentCard = memo(function SubagentCard({
       setPriceMeta(null)
       return
     }
-    void window.api.chatModelMeta(effective.modelId, effective.providerId).then((meta) => alive && setPriceMeta(meta))
+    void api.chatModelMeta(effective.modelId, effective.providerId).then((meta) => alive && setPriceMeta(meta))
     return () => {
       alive = false
     }
-  }, [effective?.modelId, effective?.providerId])
+  }, [api, effective?.modelId, effective?.providerId])
 
   if (!agent || !prompt)
     return display.profile ? (

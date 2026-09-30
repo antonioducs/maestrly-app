@@ -5,6 +5,7 @@ import { Bot, Loader2, PanelRightClose, ShieldCheck, TriangleAlert } from 'lucid
 import type { ChatModelMeta, SubagentSessionSummary, SubagentTranscriptPage } from '../../../shared/chat'
 import type { OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { subagentEffortLabel, subagentRunCost, subagentRunDisplay } from '@/lib/subagent-profile-display'
 import { ChatMessageList } from './ChatMessageList'
 
@@ -40,6 +41,7 @@ export function SubagentSessionPanel({
   onOpenMention?: OpenFileReference
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [page, setPage] = useState<SubagentTranscriptPage | null>(null)
   const [loading, setLoading] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -50,7 +52,7 @@ export function SubagentSessionPanel({
 
   const refresh = () => {
     setLoading((current) => current && page === null)
-    void window.api
+    void api
       .chatSubagentTranscript(conversationId, sessionId, { limit: 1_000 })
       .then((next) => {
         if (activeSessionRef.current !== sessionId) return
@@ -66,7 +68,7 @@ export function SubagentSessionPanel({
     setPage(null)
     setLoading(true)
     refresh()
-    const off = window.api.onChatSubagentSession(conversationId, (event) => {
+    const off = api.onChatSubagentSession(conversationId, (event) => {
       if (event.sessionId !== sessionId) return
       if (refreshTimer.current) return
       refreshTimer.current = setTimeout(() => {
@@ -79,7 +81,7 @@ export function SubagentSessionPanel({
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
       refreshTimer.current = null
     }
-  }, [conversationId, sessionId])
+  }, [api, conversationId, sessionId])
 
   const session = page?.session ?? sessions.find((item) => item.id === sessionId) ?? null
   const live = session != null && isLive(session.status)
@@ -103,18 +105,18 @@ export function SubagentSessionPanel({
     if (!providerId || !modelId) return
     let cancelled = false
     void Promise.all([
-      window.api
+      api
         .chatConfig()
         .then((config) => config.providers.find((provider) => provider.id === providerId)?.name ?? null)
         .catch(() => null),
-      window.api.chatModelMeta(modelId, providerId).catch(() => null),
+      api.chatModelMeta(modelId, providerId).catch(() => null),
     ]).then(([providerName, metadata]) => {
       if (!cancelled) setModelInfo({ providerId, modelId, providerName, metadata })
     })
     return () => {
       cancelled = true
     }
-  }, [providerId, modelId])
+  }, [api, providerId, modelId])
 
   const currentModelInfo = modelInfo?.providerId === providerId && modelInfo?.modelId === modelId ? modelInfo : null
   const display = subagentRunDisplay(undefined, session)

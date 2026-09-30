@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, Loader2 } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import type { ChatGptWebStatusPayload } from '../../../preload'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
@@ -18,6 +19,7 @@ const DEVELOPER_MODE_URL = 'https://chatgpt.com/#settings/SecurityAndLogin'
 
 export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [status, setStatus] = useState<ChatGptWebStatusPayload | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [appName, setAppName] = useState('')
@@ -28,16 +30,16 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
   const [tunnelAsset, setTunnelAsset] = useState<RuntimeAssetInfo | null>(null)
 
   useEffect(() => {
-    void window.api.chatGptWebStatus().then((next) => {
+    void api.chatGptWebStatus().then((next) => {
       setStatus(next)
       setAppName(next.appName)
     })
-    void window.api.chatGptWebChecks().then((result) => setChecks(result.raw))
-    void window.api.runtimeAssetStatus('tunnel-client').then(setTunnelAsset)
-    const offAsset = window.api.onRuntimeAssetChanged((next) => {
+    void api.chatGptWebChecks().then((result) => setChecks(result.raw))
+    void api.runtimeAssetStatus('tunnel-client').then(setTunnelAsset)
+    const offAsset = api.onRuntimeAssetChanged((next) => {
       if (next.id === 'tunnel-client') setTunnelAsset(next)
     })
-    const offStatus = window.api.onChatGptWebStatus((next) => {
+    const offStatus = api.onChatGptWebStatus((next) => {
       setStatus(next)
       setAppName(next.appName)
       onChanged()
@@ -48,12 +50,12 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [api])
 
   if (!status) return null
 
   const toggle = async (enabled: boolean) => {
-    setStatus(await window.api.chatGptWebConfigure({ enabled }))
+    setStatus(await api.chatGptWebConfigure({ enabled }))
     onChanged()
   }
 
@@ -61,7 +63,7 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     setBusy('reset')
     setError(null)
     try {
-      await window.api.chatGptWebBrowserReset()
+      await api.chatGptWebBrowserReset()
       setNote(t('settings.chatgptWebBrowserResetDone'))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -76,9 +78,9 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     setError(null)
     setNote(null)
     try {
-      const probe = await window.api.chatGptWebPrincipals(apiKey.trim())
+      const probe = await api.chatGptWebPrincipals(apiKey.trim())
       if (!probe.ok) throw new Error(probe.error)
-      setStatus(await window.api.chatGptWebConfigure({ apiKey: apiKey.trim() }))
+      setStatus(await api.chatGptWebConfigure({ apiKey: apiKey.trim() }))
       setApiKey('')
       setNote(t('settings.chatgptWebKeySaved', { count: probe.workspaces.length }))
       onChanged()
@@ -94,11 +96,11 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     setError(null)
     setNote(null)
     try {
-      const result = await window.api.chatGptWebCreateTunnel({
+      const result = await api.chatGptWebCreateTunnel({
         name: 'Maestrly',
       })
       if (!result.ok) throw new Error(result.error || 'unknown')
-      setStatus(await window.api.chatGptWebStatus())
+      setStatus(await api.chatGptWebStatus())
       onChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -113,11 +115,11 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     try {
       const next =
         tunnelAsset?.status.state === 'failed' || tunnelAsset?.status.state === 'corrupt'
-          ? await window.api.runtimeAssetRepair('tunnel-client')
-          : await window.api.runtimeAssetInstall('tunnel-client')
+          ? await api.runtimeAssetRepair('tunnel-client')
+          : await api.runtimeAssetInstall('tunnel-client')
       setTunnelAsset(next)
       if (next.status.state !== 'ready') throw new Error(next.status.error || t('settings.componentInstallFailed'))
-      setStatus(await window.api.chatGptWebStatus())
+      setStatus(await api.chatGptWebStatus())
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -131,12 +133,12 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     setNote(null)
     try {
       if (status.probeActive) {
-        await window.api.chatGptWebProbeStop()
+        await api.chatGptWebProbeStop()
       } else {
-        const result = await window.api.chatGptWebProbeStart()
+        const result = await api.chatGptWebProbeStart()
         if (!result.ok) throw new Error(result.error || 'unknown')
       }
-      setStatus(await window.api.chatGptWebStatus())
+      setStatus(await api.chatGptWebStatus())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -149,7 +151,11 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
     setError(null)
     setNote(null)
     try {
-      await openChatGptWebAppSettings(status, window.api, CHATGPT_PLUGINS_URL)
+      await openChatGptWebAppSettings(
+        status,
+        { chatGptWebProbeStart: api.chatGptWebProbeStart, openExternalUrl: window.api.openExternalUrl },
+        CHATGPT_PLUGINS_URL
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -160,9 +166,9 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
   const endAllSessions = async () => {
     setBusy('session')
     for (const session of status.sessions) {
-      await window.api.chatGptWebCompanionEnd(session.conversationId)
+      await api.chatGptWebCompanionEnd(session.conversationId)
     }
-    setStatus(await window.api.chatGptWebStatus())
+    setStatus(await api.chatGptWebStatus())
     setBusy(null)
     onChanged()
   }
@@ -203,7 +209,7 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1">{t('settings.chatgptWebBinaryMissing')}</span>
                     {tunnelAsset && ['downloading', 'verifying', 'installing'].includes(tunnelAsset.status.state) ? (
-                      <button type="button" onClick={() => void window.api.runtimeAssetCancel('tunnel-client')}>
+                      <button type="button" onClick={() => void api.runtimeAssetCancel('tunnel-client')}>
                         {t('settings.componentCancel')}
                       </button>
                     ) : (
@@ -387,7 +393,7 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
                     onChange={(e) => setAppName(e.target.value)}
                     onBlur={() => {
                       if (appName.trim())
-                        void window.api.chatGptWebConfigure({
+                        void api.chatGptWebConfigure({
                           appName: appName.trim(),
                         })
                     }}
@@ -404,7 +410,7 @@ export function ChatGptWebSettings({ onChanged }: { onChanged: () => void }) {
                   placeholder={t('settings.chatgptWebChecksPlaceholder')}
                   value={checks}
                   onChange={(e) => setChecks(e.target.value)}
-                  onBlur={() => void window.api.chatGptWebSetChecks(checks)}
+                  onBlur={() => void api.chatGptWebSetChecks(checks)}
                 />
               </div>
 

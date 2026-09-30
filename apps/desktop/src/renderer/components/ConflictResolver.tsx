@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, GitMerge, Loader2, MessagesSquare } from 'lucide-react'
 import type { ResolveConflictsResult, ResolveConflictsStatus } from '../../preload'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 const STATUS_KEY: Record<ResolveConflictsStatus, string> = {
   resolved: 'conflictResolver.status.resolved',
@@ -23,6 +24,7 @@ type Phase = 'idle' | 'running' | 'done' | 'error'
 
 export function ConflictResolver({ convId, onResolved }: { convId: string; onResolved: () => void }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [phase, setPhase] = useState<Phase>('idle')
   const [msg, setMsg] = useState('')
 
@@ -30,7 +32,7 @@ export function ConflictResolver({ convId, onResolved }: { convId: string; onRes
     setPhase('running')
     setMsg(t('conflictResolver.resolving'))
     try {
-      const result: ResolveConflictsResult = await window.api.resolveConflicts(convId, {})
+      const result: ResolveConflictsResult = await api.resolveConflicts(convId, {})
       setMsg(t(STATUS_KEY[result.status]) ?? result.reason ?? t('conflictResolver.failed'))
       setPhase(result.ok ? 'done' : 'error')
       if (result.ok) onResolved()

@@ -5,6 +5,7 @@ import type { BotSettingsView } from '../../../shared/bot'
 import type { SettingsSection } from '@/components/settings/nav'
 import { Button } from '../ui/button'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { BotSteps, type BotStep } from './BotSteps'
 import { BotServerCard } from './BotServerCard'
 import { BotConnectGuide } from './BotConnectGuide'
@@ -35,6 +36,7 @@ interface Props {
  */
 export function BotSection({ onNavigate, onAddProject }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [view, setView] = useState<BotSettingsView>(emptyBotSettings)
   const [workspaces, setWorkspaces] = useState<BotWorkspaceOption[]>([])
   const [providers, setProviders] = useState<BotProviderOption[]>([])
@@ -53,14 +55,14 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
 
   const reload = useCallback(async () => {
     const [settings, projects, accounts] = await Promise.all([
-      window.api.botSettings(),
-      window.api.listWorkspaces(),
-      window.api.platformExecutorProviders(),
+      api.botSettings(),
+      api.listWorkspaces(),
+      api.platformExecutorProviders(),
     ])
     setView(settings)
     setWorkspaces(projects)
     setProviders(accounts)
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void reload().catch((caught) => setError(String(caught)))
@@ -68,7 +70,7 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
   useEffect(() => {
     let mounted = true
     const timer = setInterval(() => {
-      void window.api
+      void api
         .botSettings()
         .then((value) => {
           if (mounted) setView(value)
@@ -79,7 +81,7 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
       mounted = false
       clearInterval(timer)
     }
-  }, [])
+  }, [api])
   // A request that expired, or was answered elsewhere, takes its draft with it: nothing it collected may
   // ever be carried over to the next bot that happens to ask.
   useEffect(() => {
@@ -150,16 +152,16 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
     void perform(async () => {
       // The person answered this request here, so its setup is closed rather than reported as lost.
       setSetup((current) => (current?.requestId === requestId ? null : current))
-      setView(await window.api.botAuthorize(requestId, approved, connectionId))
+      setView(await api.botAuthorize(requestId, approved, connectionId))
       await reload()
     })
   const submit = (requestId: string, current: BotSetupDraft, mintedId: string) =>
     void perform(async () => {
       const outcome = await approveRequestWithNewBot({
         api: {
-          settings: () => window.api.botSettings(),
-          connect: (input) => window.api.botConnect(input),
-          authorize: (id, approved, connectionId) => window.api.botAuthorize(id, approved, connectionId),
+          settings: () => api.botSettings(),
+          connect: (input) => api.botConnect(input),
+          authorize: (id, approved, connectionId) => api.botAuthorize(id, approved, connectionId),
         },
         draft: current,
         ...(mintedId ? { createdConnectionId: mintedId } : {}),
@@ -191,7 +193,7 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
           disabled={busy}
           onClick={() =>
             void perform(async () => {
-              setView(await window.api.botRefresh())
+              setView(await api.botRefresh())
               await reload()
             })
           }
@@ -222,7 +224,7 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
         onCopy={(address) => copy('endpoint', address)}
         onSave={() =>
           void perform(async () => {
-            await window.api.botConfigureServer({
+            await api.botConfigureServer({
               enabled: config.enabled,
               host: config.host.trim() || defaultServer.host,
               port: config.port,
@@ -326,18 +328,18 @@ export function BotSection({ onNavigate, onAddProject }: Props) {
             onEditWorkspaces={setEditingWorkspaces}
             onSaveWorkspaces={() =>
               void perform(async () => {
-                setView(await window.api.botUpdateWorkspaces(connection.id, editingWorkspaces))
+                setView(await api.botUpdateWorkspaces(connection.id, editingWorkspaces))
                 setEditing(null)
               })
             }
             onSetPermissionCeiling={(ceiling) =>
               void perform(async () => {
-                setView(await window.api.botSetPermissionCeiling(connection.id, ceiling))
+                setView(await api.botSetPermissionCeiling(connection.id, ceiling))
               })
             }
             onRevoke={() =>
               void perform(async () => {
-                setView(await window.api.botRevoke(connection.id))
+                setView(await api.botRevoke(connection.id))
               })
             }
           />

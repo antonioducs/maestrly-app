@@ -6,6 +6,7 @@ import type { ChatConfig, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { startChatGptWebCompanion } from '@/lib/chatgpt-web'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 
@@ -61,7 +62,8 @@ export function ChatPlusMenu({
   manageMcpLabel?: string
 }) {
   const { t } = useTranslation('chat')
-  const source = providedSource ?? localChatComposerSource(conversationId)
+  const api = useHostApi()
+  const source = providedSource ?? localChatComposerSource(api, conversationId)
   const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
   const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
     null
@@ -93,7 +95,7 @@ export function ChatPlusMenu({
       setMcpDisabled(t.mcpDisabled)
     })
     if (!source.bot)
-      window.api.chatGptWebCapabilities(targetConversationId).then((value) => {
+      api.chatGptWebCapabilities(targetConversationId).then((value) => {
         if (conversationIdRef.current === targetConversationId) setCompanionCapabilities(value)
       })
     const profilesRevision = subagentProfilesRevisionRef.current
@@ -110,7 +112,7 @@ export function ChatPlusMenu({
     setSubagentProfilesEnabled(true)
     setSubagentsEnabled(true)
     loadTools()
-  }, [conversationId])
+  }, [api, conversationId])
 
   useEffect(() => {
     if (!activePanel) return
@@ -129,7 +131,7 @@ export function ChatPlusMenu({
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [activePanel])
+  }, [api, activePanel])
 
   useEffect(() => setActivePanel(null), [conversationId])
 
@@ -141,16 +143,16 @@ export function ChatPlusMenu({
       if (!status.enabled) setCompanionError(null)
     }
     if (source.bot) return
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptWebEnabled(false))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const toggleApp = () => {
     const next = !app
@@ -204,7 +206,7 @@ export function ChatPlusMenu({
     setCompanionError(null)
     try {
       if (companionCapabilities?.editable) {
-        const saved = await window.api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities)
+        const saved = await api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities)
         setCompanionCapabilities(saved)
       }
       await startChatGptWebCompanion(conversationId)
@@ -222,9 +224,7 @@ export function ChatPlusMenu({
     setCompanionBusy(true)
     setCompanionError(null)
     try {
-      setCompanionCapabilities(
-        await window.api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities)
-      )
+      setCompanionCapabilities(await api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities))
     } catch (cause) {
       setCompanionError(cause instanceof Error ? cause.message : String(cause))
     } finally {

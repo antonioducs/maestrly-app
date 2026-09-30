@@ -1,4 +1,5 @@
 import type { FleetBot, FleetSelection } from '@maestrly/bot-fleet-protocol'
+import type { HostApi } from '../../../preload'
 import type { FleetConversationOps } from '../../../preload/api-fleet'
 import type { ChatPermMode } from '../../../shared/chat'
 
@@ -19,23 +20,22 @@ export interface ChatComposerSource extends RemoteMethods {
   }
 }
 
-export function localChatComposerSource(conversationId: string): ChatComposerSource {
+export function localChatComposerSource(api: HostApi, conversationId: string): ChatComposerSource {
   return {
-    chatConfig: () => window.api.chatConfig(),
-    chatGetConvTools: () => window.api.chatGetConvTools(conversationId),
-    chatSetConvTools: (patch) => window.api.chatSetConvTools(conversationId, patch),
-    chatSubagentProfilesGetConversation: () => window.api.chatSubagentProfilesGetConversation(conversationId),
+    chatConfig: () => api.chatConfig(),
+    chatGetConvTools: () => api.chatGetConvTools(conversationId),
+    chatSetConvTools: (patch) => api.chatSetConvTools(conversationId, patch),
+    chatSubagentProfilesGetConversation: () => api.chatSubagentProfilesGetConversation(conversationId),
     chatSubagentProfilesSetConversationEnabled: (enabled) =>
-      window.api.chatSubagentProfilesSetConversationEnabled(conversationId, enabled),
-    chatSubagentsSetConversationEnabled: (enabled) =>
-      window.api.chatSubagentsSetConversationEnabled(conversationId, enabled),
-    chatSkillsState: () => window.api.chatSkillsState(conversationId),
-    chatSkillSetOverride: (name, state) => window.api.chatSkillSetOverride(conversationId, name, state),
-    chatSkillResetOverrides: () => window.api.chatSkillResetOverrides(conversationId),
-    chatSkillSetSelection: (selection) => window.api.chatSkillSetSelection(conversationId, selection),
-    chatCommands: () => window.api.chatCommands(conversationId),
-    chatCompact: () => window.api.chatCompact(conversationId),
-    chatBackgroundCompactionRetry: () => window.api.chatRetryBackgroundCompaction(conversationId),
+      api.chatSubagentProfilesSetConversationEnabled(conversationId, enabled),
+    chatSubagentsSetConversationEnabled: (enabled) => api.chatSubagentsSetConversationEnabled(conversationId, enabled),
+    chatSkillsState: () => api.chatSkillsState(conversationId),
+    chatSkillSetOverride: (name, state) => api.chatSkillSetOverride(conversationId, name, state),
+    chatSkillResetOverrides: () => api.chatSkillResetOverrides(conversationId),
+    chatSkillSetSelection: (selection) => api.chatSkillSetSelection(conversationId, selection),
+    chatCommands: () => api.chatCommands(conversationId),
+    chatCompact: () => api.chatCompact(conversationId),
+    chatBackgroundCompactionRetry: () => api.chatRetryBackgroundCompaction(conversationId),
   }
 }
 

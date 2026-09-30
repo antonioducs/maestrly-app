@@ -13,7 +13,42 @@ const noop = { invoke: async () => undefined, send: () => {}, on: () => {}, remo
 const hostMembers = new Set(Object.keys(makeHostApi(noop)))
 
 // Files and directories not migrated yet. Entries are only ever removed.
-const PENDING: string[] = ['.']
+const PENDING: string[] = [
+  'components/Drawer.tsx',
+  'components/BrowserChrome.tsx',
+  'components/ShellTerminalView.tsx',
+  'components/TerminalTabs.tsx',
+  'components/PopupOverlay.tsx',
+  'components/PlanPanel.tsx',
+  'components/ReviewPanel.tsx',
+  'components/notes',
+  'components/ProjectMemoryView.tsx',
+  'components/ProjectNotesView.tsx',
+  'panel.tsx',
+  'DesktopApp.tsx',
+  'BotInstanceApp.tsx',
+  'components/sidebar',
+  'components/settings',
+  'components/SettingsView.tsx',
+  'components/platform',
+  'components/fleet',
+  'components/conversation-migration',
+  'components/local-conversation',
+  'components/NewConversationDialog.tsx',
+  'components/StandardPlanHandoffDialog.tsx',
+  'components/UsagePanel.tsx',
+  'components/OnboardingFlow.tsx',
+  'components/MaestroPlanProfileDialog.tsx',
+  'components/WorkspaceDefaultBranchDialog.tsx',
+  'components/ConversationBranchChip.tsx',
+  'components/ToolPalette.tsx',
+  'components/MarkdownViewer.tsx',
+  'components/AboutModal.tsx',
+  'lib',
+  'project-setup',
+  'main.tsx',
+  'App.tsx',
+]
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -33,7 +68,8 @@ describe('renderer reaches host members only through its host', () => {
     for (const path of files) {
       const file = relative(root, path).split(sep).join('/')
       if (pending(file)) continue
-      for (const match of readFileSync(path, 'utf8').matchAll(/window\.api\.([A-Za-z0-9_]+)/g))
+      // `\s*`: a long call chain puts the member on the line after `window.api`.
+      for (const match of readFileSync(path, 'utf8').matchAll(/window\.api\s*\.([A-Za-z0-9_]+)/g))
         if (hostMembers.has(match[1])) violations.push(`${file}: ${match[1]}`)
     }
     expect(violations).toEqual([])

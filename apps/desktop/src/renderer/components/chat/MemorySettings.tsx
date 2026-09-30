@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { ChatConfig } from '../../../shared/chat'
 import type { MemorySettings as MemorySettingsConfig } from '../../../shared/memory'
 import type { SubagentProfileCandidate } from '../../../shared/subagent-profiles'
@@ -29,6 +30,7 @@ export function MemorySettings({
   locked?: boolean
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const persisted = config.memory ?? DEFAULT_SETTINGS
   const [autoRecall, setAutoRecall] = useState(persisted.autoRecall)
   const [enabled, setEnabled] = useState(persisted.extraction.enabled)
@@ -52,7 +54,7 @@ export function MemorySettings({
     setSaving(true)
     setNote(null)
     try {
-      const result = await window.api.chatSetMemorySettings({
+      const result = await api.chatSetMemorySettings({
         autoRecall,
         extraction: {
           enabled,

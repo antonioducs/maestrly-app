@@ -17,6 +17,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import type { ChatSkillDetail, ChatSkillGroup, ChatSkillSearchHit, ChatSkillsState } from '../../../shared/chat'
 
@@ -86,6 +87,7 @@ function SkillDetailPanel({ detail, onClose }: { detail: ChatSkillDetail; onClos
 
 export function SkillsSettings() {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [state, setState] = useState<ChatSkillsState>({
     skills: [],
     groups: [],
@@ -118,7 +120,7 @@ export function SkillsSettings() {
   const searchRequest = useRef(0)
   const [busyGroups, setBusyGroups] = useState<Set<string>>(new Set())
 
-  const refresh = (): Promise<void> => window.api.chatSkillsState().then(setState)
+  const refresh = (): Promise<void> => api.chatSkillsState().then(setState)
   const notifyChanged = () => window.dispatchEvent(new Event('maestrly:skills-changed'))
   useEffect(() => {
     void refresh()
@@ -136,9 +138,9 @@ export function SkillsSettings() {
     if (!value.trim()) return
     setBusy(value)
     setError('')
-    let res: Awaited<ReturnType<typeof window.api.chatSkillInstall>>
+    let res: Awaited<ReturnType<typeof api.chatSkillInstall>>
     try {
-      res = await window.api.chatSkillInstall({ slug: value, overwrite })
+      res = await api.chatSkillInstall({ slug: value, overwrite })
     } catch (cause) {
       setError(t('settings.skillErrInstall', { error: cause instanceof Error ? cause.message : String(cause) }))
       return
@@ -167,9 +169,9 @@ export function SkillsSettings() {
     const request = ++searchRequest.current
     setSearching(true)
     setError('')
-    let res: Awaited<ReturnType<typeof window.api.chatSkillSearch>>
+    let res: Awaited<ReturnType<typeof api.chatSkillSearch>>
     try {
-      res = await window.api.chatSkillSearch(query)
+      res = await api.chatSkillSearch(query)
     } catch (cause) {
       if (request !== searchRequest.current) return
       setError(t('settings.skillErrSearch', { error: cause instanceof Error ? cause.message : String(cause) }))
@@ -187,7 +189,7 @@ export function SkillsSettings() {
 
   const create = async (): Promise<void> => {
     setError('')
-    const res = await window.api.chatSkillCreate({ name, description })
+    const res = await api.chatSkillCreate({ name, description })
     if (!res.ok) {
       setError(t('settings.skillErrCreate', { error: res.error ?? '' }))
       return
@@ -200,7 +202,7 @@ export function SkillsSettings() {
 
   const createGroup = async (): Promise<void> => {
     setError('')
-    const res = await window.api.chatSkillGroupCreate({ name: groupName, description: groupDescription })
+    const res = await api.chatSkillGroupCreate({ name: groupName, description: groupDescription })
     if (!res.ok) {
       setError(t('settings.skillGroupError', { error: res.error ?? '' }))
       return
@@ -221,7 +223,7 @@ export function SkillsSettings() {
     setBusyGroups((current) => new Set(current).add(group.id))
     setError('')
     try {
-      const res = await window.api.chatSkillGroupUpdate(group.id, patch)
+      const res = await api.chatSkillGroupUpdate(group.id, patch)
       if (!res.ok) {
         setError(t('settings.skillGroupError', { error: res.error ?? '' }))
         return false
@@ -254,17 +256,15 @@ export function SkillsSettings() {
     let suffix = 2
     const existing = new Set(state.groups.map((item) => item.name.toLowerCase()))
     while (existing.has(name.toLowerCase())) name = `${base} ${suffix++}`
-    void window.api
-      .chatSkillGroupCreate({ name, description: group.description, skills: group.skills })
-      .then(async (res) => {
-        if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
-        else await finishMutation()
-      })
+    void api.chatSkillGroupCreate({ name, description: group.description, skills: group.skills }).then(async (res) => {
+      if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
+      else await finishMutation()
+    })
   }
 
   const removeGroup = (group: ChatSkillGroup): void => {
     if (!confirm(t('settings.skillGroupConfirmRemove', { name: group.name }))) return
-    void window.api.chatSkillGroupRemove(group.id).then(async (res) => {
+    void api.chatSkillGroupRemove(group.id).then(async (res) => {
       if (!res.ok) setError(t('settings.skillGroupError', { error: res.error ?? '' }))
       else await finishMutation()
     })
@@ -379,9 +379,7 @@ export function SkillsSettings() {
             <div className="flex items-center gap-2">
               <Toggle
                 on={skill.enabledGlobally}
-                onClick={() =>
-                  void window.api.chatSkillSetEnabled(skill.name, !skill.enabledGlobally).then(finishMutation)
-                }
+                onClick={() => void api.chatSkillSetEnabled(skill.name, !skill.enabledGlobally).then(finishMutation)}
                 label={skill.enabledGlobally ? t('settings.toggleOn') : t('settings.toggleOff')}
               />
               <div className="min-w-0 flex-1">
@@ -418,7 +416,7 @@ export function SkillsSettings() {
               </button>
               <button
                 type="button"
-                onClick={() => void window.api.chatSkillRead(skill.name).then(setDetail)}
+                onClick={() => void api.chatSkillRead(skill.name).then(setDetail)}
                 className="text-muted-foreground hover:text-foreground"
                 title={t('settings.skillView')}
               >
@@ -426,7 +424,7 @@ export function SkillsSettings() {
               </button>
               <button
                 type="button"
-                onClick={() => void window.api.chatSkillReveal(skill.name)}
+                onClick={() => void api.chatSkillReveal(skill.name)}
                 className="text-muted-foreground hover:text-foreground"
                 title={t('settings.skillOpenFolder')}
               >
@@ -436,7 +434,7 @@ export function SkillsSettings() {
                 type="button"
                 onClick={() => {
                   if (confirm(t('settings.skillConfirmRemove', { name: skill.name, dir: skill.dir })))
-                    void window.api.chatSkillRemove(skill.name).then(finishMutation)
+                    void api.chatSkillRemove(skill.name).then(finishMutation)
                 }}
                 className="text-muted-foreground hover:text-destructive"
                 title={t('settings.skillRemove')}

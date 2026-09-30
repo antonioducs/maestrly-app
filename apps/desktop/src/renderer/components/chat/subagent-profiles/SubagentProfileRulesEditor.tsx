@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { SearchSelect } from '@/components/ui/search-select'
 import {
@@ -207,6 +208,7 @@ function RuleMapEditor({
 
 export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics = [], onSave, onClear }: Props) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [rules, setRules] = useState<SubagentProfileRulesV1>(value ?? { version: 1 })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -217,10 +219,10 @@ export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics
   useEffect(() => setRules(value ?? { version: 1 }), [value])
   useEffect(() => {
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
-      window.api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
+      api.onChatSubscriptionStatus(provider, () => setCatalogRevision((revision) => revision + 1))
     )
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
-  }, [])
+  }, [api])
   useEffect(() => {
     setInvalidEffort(false)
     setInvalidFastMode(false)
@@ -239,12 +241,12 @@ export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics
       const fableCandidates = profileCandidates(rules).filter((candidate) =>
         isUnavailableClaudeFable(candidate.providerId, candidate.modelId, [])
       )
-      const catalogRequests = new Map<string, ReturnType<typeof window.api.chatSubagentProfilesModelCatalog>>()
+      const catalogRequests = new Map<string, ReturnType<typeof api.chatSubagentProfilesModelCatalog>>()
       const unavailableModels = await Promise.all(
         fableCandidates.map(async (candidate) => {
           let request = catalogRequests.get(candidate.providerId)
           if (!request) {
-            request = window.api.chatSubagentProfilesModelCatalog(candidate.providerId)
+            request = api.chatSubagentProfilesModelCatalog(candidate.providerId)
             catalogRequests.set(candidate.providerId, request)
           }
           try {
@@ -265,7 +267,7 @@ export function SubagentProfileRulesEditor({ value, catalog, config, diagnostics
       const validations = await Promise.all(
         profileCandidates(rules).map(async (candidate) => {
           if (!isRealSubagentProfileEffort(candidate.effort)) return { effort: false, fastMode: true }
-          const metadata = await window.api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId)
+          const metadata = await api.chatSubagentProfilesModelMeta(candidate.providerId, candidate.modelId)
           return {
             effort: validateSubagentProfileEffort(candidate, metadata).valid,
             fastMode: validateSubagentProfileFastMode(candidate, metadata).valid,

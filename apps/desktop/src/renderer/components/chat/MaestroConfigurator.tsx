@@ -13,6 +13,7 @@ import {
 import type { SubagentProfileModelMetaResult } from '../../../shared/subagent-profile-effort'
 import { subagentProfileEffortIds } from '@/lib/subagent-profile-editor'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { ChatModelChip } from './ChatModelChip'
 import { ChatReasoningPicker } from './ChatReasoningPicker'
 import { FastModeChip } from './ChatFastModeToggle'
@@ -124,6 +125,7 @@ export function MaestroConfigurator({
   onClose: () => void
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [messages, setMessages] = useState<MaestroConfiguratorMessage[]>([])
   const [profile, setProfile] = useState<MaestroConfiguratorProfile>(emptyProfile)
   const [profileMeta, setProfileMeta] = useState<SubagentProfileModelMetaResult | null>(null)
@@ -156,7 +158,7 @@ export function MaestroConfigurator({
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const state = await window.api.chatMaestroConfiguratorState()
+      const state = await api.chatMaestroConfiguratorState()
       setMessages(state.thread.messages)
       setProfile(state.profile ?? emptyProfile())
       setProviderCount(state.catalog.providers.length)
@@ -169,7 +171,7 @@ export function MaestroConfigurator({
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void load()
@@ -179,18 +181,18 @@ export function MaestroConfigurator({
     let alive = true
     setProfileMeta(null)
     if (!profile.providerId || !profile.modelId) return
-    void window.api
+    void api
       .chatSubagentProfilesModelMeta(profile.providerId, profile.modelId)
       .then((value) => alive && setProfileMeta(value))
       .catch(() => alive && setProfileMeta({ status: 'unavailable', meta: null }))
     return () => {
       alive = false
     }
-  }, [profile.providerId, profile.modelId, catalogRevision])
+  }, [api, profile.providerId, profile.modelId, catalogRevision])
 
   useEffect(
     () =>
-      window.api.onChatMaestroConfiguratorEvent((event) => {
+      api.onChatMaestroConfiguratorEvent((event) => {
         if (event.kind === 'reset') {
           terminalTurns.current.clear()
           setMessages([])
@@ -232,29 +234,32 @@ export function MaestroConfigurator({
         setProgress(null)
         setError(friendlyError(event.error))
       }),
-    [friendlyError]
+    [api, friendlyError]
   )
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [messages, streamingText, progress])
 
-  const persistProfile = useCallback((next: MaestroConfiguratorProfile) => {
-    setProfile(next)
-    setError(null)
-    if (!next.providerId || !next.modelId || !next.effort) return
-    const revision = ++profileRevision.current
-    void window.api
-      .chatMaestroConfiguratorSetProfile(next)
-      .then((result) => {
-        if (revision !== profileRevision.current) return
-        if (result.ok) setProfile(result.profile)
-        else setError(result.errors.join(' '))
-      })
-      .catch((reason) => {
-        if (revision === profileRevision.current) setError(reason instanceof Error ? reason.message : String(reason))
-      })
-  }, [])
+  const persistProfile = useCallback(
+    (next: MaestroConfiguratorProfile) => {
+      setProfile(next)
+      setError(null)
+      if (!next.providerId || !next.modelId || !next.effort) return
+      const revision = ++profileRevision.current
+      void api
+        .chatMaestroConfiguratorSetProfile(next)
+        .then((result) => {
+          if (revision !== profileRevision.current) return
+          if (result.ok) setProfile(result.profile)
+          else setError(result.errors.join(' '))
+        })
+        .catch((reason) => {
+          if (revision === profileRevision.current) setError(reason instanceof Error ? reason.message : String(reason))
+        })
+    },
+    [api]
+  )
 
   useEffect(() => {
     if (profile.fastMode !== true || profileMeta?.status !== 'available') return
@@ -268,7 +273,7 @@ export function MaestroConfigurator({
     setProgress(null)
     setStreamingText('')
     try {
-      const result = await window.api.chatMaestroConfiguratorSend({
+      const result = await api.chatMaestroConfiguratorSend({
         text: normalized,
         draft,
         baseHash: hashMaestroConfig(draft),
@@ -288,7 +293,7 @@ export function MaestroConfigurator({
   const reset = async () => {
     if (messages.length > 0 && !window.confirm(t('maestro.configurator.confirmReset'))) return
     try {
-      await window.api.chatMaestroConfiguratorReset()
+      await api.chatMaestroConfiguratorReset()
       setMessages([])
       setActiveTurnId(null)
       setStreamingText('')
@@ -463,7 +468,7 @@ export function MaestroConfigurator({
               <button
                 type="button"
                 aria-label={t('maestro.configurator.stop')}
-                onClick={() => void window.api.chatMaestroConfiguratorCancel(activeTurnId)}
+                onClick={() => void api.chatMaestroConfiguratorCancel(activeTurnId)}
                 className="ml-auto shrink-0 rounded-md bg-red-500/15 p-1.5 text-red-300 hover:bg-red-500/25"
               >
                 <Square className="size-3.5 fill-current" />

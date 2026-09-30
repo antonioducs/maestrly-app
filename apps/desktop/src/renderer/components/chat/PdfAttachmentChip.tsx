@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { MessagePart } from '../../../shared/chat'
 
 const CHIP = 'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] text-foreground'
@@ -20,6 +21,7 @@ export function PdfAttachmentChip({
   messageId: string
 }) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [opening, setOpening] = useState(false)
   const [failed, setFailed] = useState(false)
   const content = (
@@ -42,7 +44,7 @@ export function PdfAttachmentChip({
   const open = async () => {
     setOpening(true)
     try {
-      const result = await window.api.chatOpenAttachmentPdf(conversationId, messageId, part.id)
+      const result = await api.chatOpenAttachmentPdf(conversationId, messageId, part.id)
       setFailed(!result.ok)
     } catch {
       setFailed(true)

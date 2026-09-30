@@ -47,7 +47,7 @@ describe('paired review renderer contract', () => {
   it('picker configures and creates a fresh sibling reviewer before starting the loop', () => {
     expect(picker).not.toContain('chatReviewLoopCompatible(executor.id)')
     expect(picker).toContain('.chatConfig()')
-    expect(picker).toContain('window.api.chatModels(nextProviderId)')
+    expect(picker).toContain('api.chatModels(nextProviderId)')
     expect(picker).toContain('<SelectItem key={provider.id} value={provider.id}>')
     expect(picker).toContain('{provider.name}')
     expect(picker).not.toMatch(/`\$\{provider\.name\} · \$\{provider\.accountLabel\}`/)
@@ -56,7 +56,7 @@ describe('paired review renderer contract', () => {
     expect(picker).toMatch(/`\$\{executor\.name\} · Reviewer`/)
     expect(picker).toContain('chatSetSelection(target.id, { providerId, modelId })')
     expect(picker).toContain('chatSetReasoning(target.id, reasoning)')
-    expect(picker).toContain('window.api.chatSetFastMode(')
+    expect(picker).toContain('api.chatSetFastMode(')
     expect(picker).toContain('modelMeta?.fastModeCapability === true && fastMode')
     expect(picker.indexOf('createSiblingConversation({ sourceConversationId: executor.id })')).toBeLessThan(
       picker.indexOf('chatReviewLoopStart({')
