@@ -1,8 +1,7 @@
 import type { OpenFileReference } from '@/components/MarkdownViewer'
-import { baseToolName, type ActivityStep, type ActivityToolStep } from '@/lib/agent-activity'
+import type { ActivityStep, ActivityToolStep } from '@/lib/agent-activity'
 import { toolOutputImages, type ChatMessage, type MessagePart } from '../../../shared/chat'
 import { AgentActivity } from './AgentActivity'
-import { SubagentCard } from './SubagentCard'
 import { ToolCallDetails, ToolImagePreview } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
@@ -17,6 +16,7 @@ export function ChatAgentActivity({
   live,
   writing,
   waitingAnswer,
+  subagents,
   onOpenImage,
   onOpenMention,
   searchQuery,
@@ -27,6 +27,7 @@ export function ChatAgentActivity({
   live: boolean
   writing: boolean
   waitingAnswer: boolean
+  subagents: { total: number; running: number }
   onOpenImage?: (src: string, name: string) => void
   onOpenMention?: OpenFileReference
   searchQuery?: string
@@ -42,15 +43,6 @@ export function ChatAgentActivity({
     .slice(-THUMBNAILS_MAX)
   const renderToolDetail = (step: ActivityToolStep<MessagePart>) => {
     const part = step.source as ToolPart
-    if (baseToolName(part.toolName) === 'task')
-      return (
-        <SubagentCard
-          part={part}
-          conversationId={conversationId}
-          messageId={message.id}
-          onOpenMention={onOpenMention}
-        />
-      )
     return (
       <div className="min-w-0 max-w-full rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-[13px]">
         <ToolCallDetails part={part} conversationId={conversationId} messageId={message.id} />
@@ -63,6 +55,8 @@ export function ChatAgentActivity({
       live={live}
       writing={writing}
       waitingAnswer={waitingAnswer}
+      runningSubagents={subagents.running}
+      worked={subagents.total > 0}
       durationMs={live ? null : (message.responseDurationMs ?? null)}
       thumbnails={
         images.length > 0 && (

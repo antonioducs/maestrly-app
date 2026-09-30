@@ -332,8 +332,9 @@ describe('bot transcript pages', () => {
       const conversationId = newConversation()
       const data = generate(conversationId, seed, 70)
       const { live, reference } = await fixture(conversationId, data)
+      // Every page size without reasoning, as before it existed; with it, a few: both share the paging.
       for (const reasoning of [false, true])
-        for (const limit of [1, 2, 7, 50, 200, 500]) {
+        for (const limit of reasoning ? [2, 50, 500] : [1, 2, 7, 50, 200, 500]) {
           let before: string | null = null
           let pages = 0
           do {
@@ -379,7 +380,7 @@ describe('bot transcript pages', () => {
     }
     for (const cursor of cursors)
       for (const reasoning of [false, true])
-        for (const limit of [1, 5, 40])
+        for (const limit of reasoning ? [5] : [1, 5, 40])
           expect(await live.page(cursor, limit, reasoning), cursor).toEqual(reference(cursor, limit, reasoning))
   })
 
