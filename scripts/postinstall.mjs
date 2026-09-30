@@ -51,7 +51,22 @@ function runNodeScript(script, args) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+/**
+ * node-pty ships macOS prebuilds whose spawn helper is not executable. While the module runs from those prebuilds,
+ * every terminal then fails to start with "posix_spawnp failed".
+ */
+function ensurePtySpawnHelperExecutable() {
+  if (process.platform === 'win32') return
+  const prebuilds = path.join(root, 'node_modules', 'node-pty', 'prebuilds')
+  if (!fs.existsSync(prebuilds)) return
+  for (const target of fs.readdirSync(prebuilds)) {
+    const helper = path.join(prebuilds, target, 'spawn-helper')
+    if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
+  }
+}
+
 ensureElectron()
 runNodeScript('node_modules/electron-builder/install-app-deps.js', [])
+ensurePtySpawnHelperExecutable()
 
 runNodeScript('scripts/fetch-cursor-sdk-platform.mjs', [])
