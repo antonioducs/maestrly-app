@@ -13,9 +13,12 @@ import {
   FLEET_PROVISIONING_FEATURE,
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
   fleetInstanceEventSchema,
+  fleetReaderWantsReasoning,
+  fleetTranscriptItemReadable,
   fleetScreenSurfaceSchema,
   fleetSubscriptionKindSchema,
   type FleetAccountImportRequest,
@@ -67,14 +70,15 @@ export class InstanceHttpError extends Error {
 /**
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
- * model, and caps each bot's conversation at the context limit of its compaction settings. Its health and every status
- * advertise them.
+ * model, caps each bot's conversation at the context limit of its compaction settings, and sends the model's
+ * reasoning in transcripts to readers that ask for it. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -92,7 +96,8 @@ export interface InstanceBot {
   memories(status: MemoryStatus): Promise<{ memories: FleetBotMemory[] }>
   patchMemory(id: string, patch: FleetBotMemoryPatchRequest): Promise<FleetBotMemory>
   deleteMemory(id: string): Promise<void>
-  transcript(before: string | null, limit: number): Promise<FleetTranscriptPage>
+  /** A page of the transcript; `reasoning` items only when the reader asked for them. */
+  transcript(before: string | null, limit: number, reasoning: boolean): Promise<FleetTranscriptPage>
   image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
@@ -289,6 +294,10 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   if (!/^\d+$/.test(raw)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   const since = Number(raw)
   if (!Number.isSafeInteger(since)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
+  // A gateway that does not read `reasoning` items never gets them: it would fail on the whole stream.
+  const reasoning = fleetReaderWantsReasoning(url.searchParams)
+  const readable = (event: FleetInstanceEvent) =>
+    event.type !== 'transcript.upsert' || fleetTranscriptItemReadable(event.item, reasoning)
   const replay = events.replay(since)
   response.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -297,8 +306,10 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
   })
   if (replay === null)
     response.write(sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null }))
-  else for (const event of replay) response.write(sseFrame(event))
-  const unsubscribe = events.subscribe((event) => response.write(sseFrame(event)))
+  else for (const event of replay) if (readable(event)) response.write(sseFrame(event))
+  const unsubscribe = events.subscribe((event) => {
+    if (readable(event)) response.write(sseFrame(event))
+  })
   const heartbeat = setInterval(() => response.write(': ping\n\n'), 15_000)
   request.on('close', () => {
     unsubscribe()
@@ -424,7 +435,7 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       const limit = raw === null ? 200 : Number(raw)
       if (!Number.isInteger(limit) || limit < 1 || limit > 500)
         throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid transcript limit.')
-      return bot(params).transcript(url.searchParams.get('before'), limit)
+      return bot(params).transcript(url.searchParams.get('before'), limit, fleetReaderWantsReasoning(url.searchParams))
     },
     botImage: ({ params }) => bot(params).image(params.imageId),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),

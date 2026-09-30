@@ -476,6 +476,7 @@ export default {
     loadOlder: 'Load older',
     retry: 'Retry',
     working: 'Working…',
+    noOutput: 'No output',
     wroteTo: 'Wrote to {{bot}}',
     delivered: 'Delivered',
     notDelivered: 'Waiting to deliver',

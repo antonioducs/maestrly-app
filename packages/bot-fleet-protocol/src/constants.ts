@@ -32,6 +32,8 @@ export const FLEET_PEER_MESSAGE_MAX = 4_000
 export const FLEET_TOOL_OUTPUT_MAX = 400
 /** The to-do list a bot keeps with todo_write, shown to the owner as a checklist; longer lists and items are cut. */
 export const FLEET_TODO_LIMITS = { itemsMax: 50, contentMax: 500 } as const
+/** Reasoning shown in the transcript is cut here (the bot keeps all of it). */
+export const FLEET_REASONING_TEXT_MAX = 16_000
 export const FLEET_QUEUE_PREVIEW_MAX = 80
 
 /** Image limits. Attachments match the desktop composer's own limits; reads cover tool screenshots too. */
@@ -145,6 +147,14 @@ export const FLEET_ENVIRONMENT_COMPACTION_FEATURE = 'environment-compaction'
  * environment reports whether its container runs an older image than the configured one.
  */
 export const FLEET_ENVIRONMENT_UPDATES_FEATURE = 'environment-updates'
+/**
+ * Gateway feature (`/v1/meta`) and bot capability (instance health and status): transcripts carry the model's
+ * reasoning as `reasoning` items. A bot and a gateway send them only to a reader that asks with `reasoning=1` on the
+ * transcript and event routes, so an older gateway or Mac never receives an item kind it cannot read.
+ */
+export const FLEET_TRANSCRIPT_REASONING_FEATURE = 'transcript-reasoning'
+/** The query parameter a reader of transcripts and events sets to `1` to receive `reasoning` items. */
+export const FLEET_REASONING_QUERY = 'reasoning'
 /** Bot statuses that a restart of their environment would interrupt: an update waits while any bot has one. */
 export const FLEET_UPDATE_BUSY_STATUSES = ['working', 'waiting', 'human'] as const
 /**

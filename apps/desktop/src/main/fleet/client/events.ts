@@ -1,5 +1,6 @@
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_REASONING_QUERY,
   buildPath,
   fleetGatewayEventSchema,
   type FleetGatewayEvent,
@@ -76,7 +77,9 @@ export class FleetEvents {
       heartbeat = setTimeout(() => controller.abort(), this.heartbeatMs)
     }
     try {
-      const response = await fetch(this.api.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path), {
+      // This app reads `reasoning` items; an older gateway ignores the parameter and sends none.
+      const path = buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, { [FLEET_REASONING_QUERY]: 1 })
+      const response = await fetch(this.api.origin + path, {
         headers: { ...this.api.headers(), Accept: 'text/event-stream' },
         signal: controller.signal,
       })

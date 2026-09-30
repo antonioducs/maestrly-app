@@ -438,6 +438,14 @@ export default {
       heading: 'Language',
       desc: 'Language of the app interface. Applies to all windows immediately.',
     },
+    agentActivity: {
+      heading: 'Agent activity',
+      desc: 'How conversations with agents and bots show the reasoning, commands, and searches behind each answer.',
+      compact: 'Compact',
+      compactDesc: 'One line per answer that you can expand.',
+      expanded: 'Expanded',
+      expandedDesc: 'Every step on its own card.',
+    },
     tabs: {
       heading: 'Drawer tabs',
       desc: 'Default order of the drawer tabs. New conversations start with it; existing ones keep the order you set. Drag to reorder.',

@@ -8,6 +8,8 @@ import {
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
   FLEET_IMAGE_LIMITS,
+  FLEET_TRANSCRIPT_REASONING_FEATURE,
+  fleetReaderWantsReasoning,
   normalizePairingCode,
   type FleetCreateBotRequest,
   type FleetCreateEnvironmentRequest,
@@ -236,6 +238,7 @@ export async function publicRoute(
             FLEET_ENVIRONMENT_COMPACTION_FEATURE,
             FLEET_ENVIRONMENT_UPDATES_FEATURE,
             FLEET_CONTEXT_LIMIT_FEATURE,
+            FLEET_TRANSCRIPT_REASONING_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -411,7 +414,11 @@ export async function publicRoute(
       return {
         body: await ctx.lifecycle
           .instanceFor(id)
-          .transcript(url.searchParams.get('before') ?? undefined, number(url.searchParams.get('limit'), 500, 200)),
+          .transcript(
+            url.searchParams.get('before') ?? undefined,
+            number(url.searchParams.get('limit'), 500, 200),
+            fleetReaderWantsReasoning(url.searchParams)
+          ),
       }
     case 'botImage': {
       const response = await ctx.lifecycle.instanceFor(id).image(params.imageId)
@@ -532,7 +539,9 @@ export async function publicRoute(
         },
       }
     case 'events':
-      ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id)
+      ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id, {
+        reasoning: fleetReaderWantsReasoning(url.searchParams),
+      })
       return { stream: true }
     default:
       throw new GatewayError('NOT_FOUND', 'Route not found')

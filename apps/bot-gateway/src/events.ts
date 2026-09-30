@@ -1,15 +1,18 @@
 import type { ServerResponse } from 'node:http'
-import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import { fleetTranscriptItemReadable, type FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 
 export class EventHub {
   readonly subscribers = new Set<ServerResponse>()
   readonly devices = new Map<ServerResponse, string>()
+  /** Subscribers that asked for `reasoning` transcript items; an older app would drop every one of them. */
+  private readonly reasoningReaders = new WeakSet<ServerResponse>()
   private heartbeat: NodeJS.Timeout | null = null
   private statsTimer: NodeJS.Timeout | null = null
   private readonly lastBotSent = new Map<string, number>()
   private readonly pendingBots = new Map<string, { event: FleetGatewayEvent; timer: NodeJS.Timeout }>()
   constructor(readonly refresh: () => Promise<void>) {}
-  add(response: ServerResponse, lastActivitySeq: number, deviceId?: string) {
+  add(response: ServerResponse, lastActivitySeq: number, deviceId?: string, options: { reasoning?: boolean } = {}) {
+    if (options.reasoning) this.reasoningReaders.add(response)
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -69,6 +72,11 @@ export class EventHub {
     for (const response of this.subscribers) this.send(response, event)
   }
   private send(response: ServerResponse, event: FleetGatewayEvent) {
+    if (
+      event.type === 'transcript.upsert' &&
+      !fleetTranscriptItemReadable(event.item, this.reasoningReaders.has(response))
+    )
+      return
     if (response.destroyed || response.writableLength > 256 * 1024) {
       response.destroy()
       this.subscribers.delete(response)

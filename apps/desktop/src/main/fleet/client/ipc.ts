@@ -22,6 +22,7 @@ import {
   fleetSendMessageRequestSchema,
   fleetImageMediaTypeSchema,
   FLEET_IMAGE_LIMITS,
+  FLEET_REASONING_QUERY,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
@@ -189,7 +190,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.handle('fleet:getTranscript', (_event, botId: unknown, before: unknown, limit: unknown) =>
     fleet.call('botTranscript', {
       params: { id: id.parse(botId) },
-      query: { before: z.string().max(256).nullable().optional().parse(before), limit: optionalLimit.parse(limit) },
+      query: {
+        before: z.string().max(256).nullable().optional().parse(before),
+        limit: optionalLimit.parse(limit),
+        // This app reads `reasoning` items; an older gateway ignores the parameter and sends none.
+        [FLEET_REASONING_QUERY]: 1,
+      },
     })
   )
   reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown, attachments: unknown = []) => {
