@@ -29,7 +29,7 @@ import {
  * `chat:permission:<convId>`. API keys NEVER cross into the renderer (only presence + mode).
  */
 import type { IpcMainInvokeEvent, IpcMainEvent, WebContents } from 'electron'
-import { app, shell, systemPreferences } from 'electron'
+import { app, clipboard, shell, systemPreferences } from 'electron'
 import { ensureRuntimeAsset } from '../runtime-assets/app-service'
 import {
   addProvider,
@@ -10020,11 +10020,23 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (!conversationId) return { ok: false, kickoff: null }
     return { ok: true, kickoff: chatGptWeb.companionPrompt(conversationId) }
   })
-  deps.mhandle('chat:chatgpt-web:companion-session-key', (_e, input?: { conversationId?: string }) => {
+  // Copy in main so neither the prompt nor the session key crosses to the renderer; errors keep `{ ok, error }`.
+  const copyCompanionText = async (text: string | null): Promise<{ ok: boolean; error?: string }> => {
+    if (!text) return { ok: false, error: 'session-not-found' }
+    try {
+      await clipboard.writeText(text)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  deps.mhandle('chat:chatgpt-web:companion-copy-prompt', (_e, input?: { conversationId?: string }) => {
     const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    if (!conversationId) return { ok: false, sessionKey: null }
-    const sessionKey = chatGptWeb.companionSessionKey(conversationId)
-    return { ok: sessionKey !== null, sessionKey }
+    return copyCompanionText(conversationId ? chatGptWeb.companionPrompt(conversationId) : null)
+  })
+  deps.mhandle('chat:chatgpt-web:companion-copy-session-key', (_e, input?: { conversationId?: string }) => {
+    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
+    return copyCompanionText(conversationId ? chatGptWeb.companionSessionKey(conversationId) : null)
   })
   deps.mhandle('chat:chatgpt-web:companion-open', async (_e, input?: { conversationId?: string }) => {
     const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
