@@ -31,6 +31,7 @@ import {
 } from './terminal-manager'
 import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
 import { sendToRemoteMains } from './remote-ui-targets'
+import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -559,18 +560,27 @@ async function createWindow(): Promise<void> {
 }
 
 function registerIpc(): void {
+  // Every handler is also recorded, unguarded: on a host, the bridge runs it for another computer's renderer.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mhandle = (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
+    ipcHandlerTable.record(channel, 'invoke', fn)
     ipcMain.handle(channel, guardHandle(fn))
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mon = (channel: string, fn: (event: IpcMainEvent, ...args: any[]) => void): void => {
+    ipcHandlerTable.record(channel, 'send', fn)
     ipcMain.on(channel, guardOn(fn))
   }
   const reg: IpcRegistrar = {
-    handle: (channel, fn) => ipcMain.handle(channel, fn),
+    handle: (channel, fn) => {
+      ipcHandlerTable.record(channel, 'invoke', fn)
+      ipcMain.handle(channel, fn)
+    },
     mhandle,
-    on: (channel, fn) => void ipcMain.on(channel, fn),
+    on: (channel, fn) => {
+      ipcHandlerTable.record(channel, 'send', fn)
+      ipcMain.on(channel, fn)
+    },
     mon,
   }
 

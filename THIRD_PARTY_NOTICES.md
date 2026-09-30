@@ -37,15 +37,18 @@ and [`novnc-OFL-1.1.txt`](apps/desktop/resources/licenses/novnc-OFL-1.1.txt).
 
 ## ws
 
-The bot gateway includes [ws](https://github.com/websockets/ws) 8.21.3 for
-WebSocket communication. It is licensed under the MIT License.
+The bot gateway and the desktop app include [ws](https://github.com/websockets/ws)
+8.21.3 for WebSocket communication: the gateway for screens and bridges, the
+desktop app for the bridge to a workspaces host. It is licensed under the MIT
+License.
 
 Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com>
 Copyright (c) 2013 Arnout Kazemier and contributors
 Copyright (c) 2016 Luigi Pinca and contributors
 
 The complete license and attribution are distributed with the `ws` package in
-`node_modules/ws/LICENSE` inside the gateway image.
+`node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
+desktop app.
 
 ## ssh2
 
