@@ -52,6 +52,8 @@ mac:
   target:
     - dir
   category: public.app-category.developer-tools
+  # Electron 44 requires macOS 13. Beta, development, and release configurations inherit this minimum.
+  minimumSystemVersion: '13.0.0'
   identity: '-'
   extendInfo:
     NSMicrophoneUsageDescription: Maestrly App uses the microphone for voice dictation processed locally on your computer.

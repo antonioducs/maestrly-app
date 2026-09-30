@@ -5,7 +5,7 @@
 Use Git, Node.js 22.15–22.x, npm 10 or newer, and the committed lockfile.
 Native modules also need the host toolchain when a prebuilt binary is unavailable:
 
-- macOS: Xcode Command Line Tools.
+- macOS 13 or later (required by Electron): Xcode Command Line Tools.
 - Linux: Python 3, `make`, and a C/C++ compiler. On supported Debian/Ubuntu hosts,
   `npx playwright install-deps chromium` installs Electron test libraries.
 - Windows: Python 3 and Visual Studio Build Tools with Desktop development with C++.
@@ -152,9 +152,13 @@ concurrent targets:
 
 | Command | Target |
 | --- | --- |
-| `npm run package` | macOS arm64, ad-hoc signed app |
+| `npm run package` | macOS 13 or later, arm64, ad-hoc signed app |
 | `npm run package:linux` | Linux x64, AppImage and DEB |
 | `npm run package:win` | Windows x64, per-user NSIS installer |
+
+Release staging makes `latest-mac.yml` require `minimumSystemVersion` 22.0.0
+or later (Darwin 22, macOS 13), so installed apps on macOS 12 are not offered
+updates they cannot run.
 
 Beta and additional architecture commands are in [package.json](../package.json).
 Windows/Linux arm64 require compatible native dependencies and are not verified
