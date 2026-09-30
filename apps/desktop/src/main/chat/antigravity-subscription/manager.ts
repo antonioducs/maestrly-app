@@ -22,6 +22,7 @@ import {
   antigravityErrorMessage,
   isAntigravityAuthRequired,
 } from './errors'
+import type { AntigravityHostToolset } from './host-mcp'
 import { type AntigravityModelEntry, parseAntigravityModelOptions } from './models'
 import {
   antigravityAccountRoot,
@@ -53,15 +54,10 @@ export interface AntigravityConnection {
   subscribe(sessionId: string, listener: (update: AcpSessionUpdate) => void): () => void
 }
 
-/** Structural view of a host toolset registered for a live session (see host-mcp.ts). */
-export interface AntigravityToolsetHandle {
-  dispose(): void
-}
-
 export interface AntigravityLiveSession {
   sessionId: string
   generation: number
-  toolset: AntigravityToolsetHandle
+  toolset: AntigravityHostToolset
   toolSignature: string
   instructionHash: string
   modelValue: string | null

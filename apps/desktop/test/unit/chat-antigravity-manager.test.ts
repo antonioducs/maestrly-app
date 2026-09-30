@@ -4,6 +4,7 @@ import {
   AntigravityAccountChangedError,
   AntigravityAuthRequiredError,
 } from '../../src/main/chat/antigravity-subscription/errors'
+import type { AntigravityHostToolset } from '../../src/main/chat/antigravity-subscription/host-mcp'
 import { antigravityTokenPath } from '../../src/main/chat/antigravity-subscription/paths'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
 
@@ -47,9 +48,9 @@ describe('AntigravitySubscriptionManager', () => {
       'gemini-3.6-flash',
       'gemini-3.1-pro',
     ])
-    const [created] = fake.requests('session/new')
-    expect(created?.params).toMatchObject({ mcpServers: [], _meta: { agy: { enabledTools: [] } } })
-    expect((created?.params as { cwd: string }).cwd).toMatch(/[\\/]work$/)
+    const created = fake.requests('session/new')[0]?.params as { cwd: string } | undefined
+    expect(created).toMatchObject({ mcpServers: [], _meta: { agy: { enabledTools: [] } } })
+    expect(created?.cwd).toMatch(/[\\/]work$/)
     await expect.poll(() => fake.requests('session/delete').length).toBe(1)
     await manager.listModels()
     expect(fake.requests('session/new')).toHaveLength(1)
@@ -98,7 +99,7 @@ describe('AntigravitySubscriptionManager', () => {
     manager.setLiveSession('c1', {
       sessionId: 's1',
       generation: first.generation,
-      toolset: { dispose: () => disposed++ },
+      toolset: { dispose: () => disposed++ } as unknown as AntigravityHostToolset,
       toolSignature: 't',
       instructionHash: 'i',
       modelValue: null,
