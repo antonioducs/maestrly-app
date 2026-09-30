@@ -1,5 +1,6 @@
 export default {
   notes: {
+    botTerm: ' Operates on persistent terminals in your bot environment. Read output with terminal_read or terminal_snapshot and report results in the conversation; the owner has no terminal drawer. For one-shot commands prefer your shell tool.',
     drawer:
       " [EMBEDDED browser in this app's right drawer — NOT the system Chrome. Use these tools to view/control the browser of this window.]",
     term: " Operates on the drawer terminals of THIS conversation. Use these for PERSISTENT or interactive processes the user watches live: dev servers, docker compose up, watch modes, TUIs. For ONE-SHOT commands (git, tests, installs, builds, scripts that just finish) prefer your own shell/bash tool — cleaner output and fewer tokens than the terminal's PTY stream.",

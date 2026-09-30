@@ -202,6 +202,8 @@ Until you restart an environment onto the updated bot image, its one bot keeps r
 
 The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the skills installed in the bot's environment and expand when the bot sends the turn.
 
+When a bot tracks multi-step work with `todo_write`, the Conversation tab shows its latest to-do list as a checklist, as desktop chats do. The checklist keeps up to 50 items of up to 500 characters. It needs the desktop app, the gateway, and the environment image from the same release; with an older gateway or image, `todo_write` appears as a plain tool row.
+
 Skills and MCP servers belong to the environment. Manage them in the environment view's **Skills and MCP** section, or take control of the environment's **Screen** tab and change them in its Maestrly window; the composer's manage actions open that screen. Changes affect every bot in the environment; your computer's local configuration remains separate.
 
 The environment screen shows only Maestrly's **Chat** settings: accounts, models and agents, tools and MCP servers, skills, prompts, and components. It has no chats, workspaces, or fleet views, so every conversation with a bot goes through Maestrly on your computer. It stays within tile 0 of the environment display, so it never covers a bot's browser area. Closing the window hides it; the bots keep working in their browser windows.
@@ -455,6 +457,14 @@ input; completed and cancelled are final.
 
 ## What a bot can do
 
+Bot conversations have no Plan review tab and do not expose `review_plan`. When
+you ask for a plan, the bot presents it in the conversation. Authorized work
+proceeds under the configured permissions. Conversation notes (`notes_*`), project
+notes, the embedded debugger (`debug_*`), and `terminal_focus` are unavailable in
+bots because their desktop panels are absent. Persistent terminal commands and
+`todo_write` remain available. Secret-input questions from Codex are refused; use
+owner help for logins instead.
+
 | Tool | Scope |
 | --- | --- |
 | `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own **Apps** screen. |
@@ -473,12 +483,12 @@ A bot cannot directly use your computer's screen, browser, terminal, accounts, o
 | --- | --- | --- |
 | **Ask for approval** | Unprotected reading. | Other edits, commands, new sites, and MCP tools. |
 | **Approve for me** | Reads and edits its own folder, opens sites, and uses MCP tools. | Commands and work outside that folder. |
-| **Full access** | Commands and edits in its environment's container, including files other bots use. | Plan approval still remains yours. |
+| **Full access** | Commands and edits in its environment's container, including files other bots use. | Actions requiring separate authorization. |
 
 The memory writes listed above are explicit bot exemptions. Permanent deletion with
 `memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
-The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
+The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
 
 ## Security and data
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
@@ -304,7 +304,33 @@ describe('MCP app tools inventory', () => {
     workspaceId = ws.id
     convId = makeConversation(ws.id).id
   })
-  afterEach(closeDb)
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    closeDb()
+  })
+
+  it('omits desktop-only app tools from bot catalogs and rejects their calls', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const inventory = await listToolInventory(convId)
+    const names = inventory.map((entry) => entry.name)
+    expect(names.filter((name) => /^(?:notes_|project_notes_|debug_)/.test(name))).toEqual([])
+    expect(names).not.toContain('terminal_focus')
+    expect(names).toEqual(
+      expect.arrayContaining(['terminal_run', 'terminal_read', 'browser_navigate', 'request_owner_help'])
+    )
+    for (const name of ['notes_list_pages', 'project_notes_list_pages', 'debug_status', 'terminal_focus']) {
+      expect(await callAppTool(convId, name, { id: 'missing' })).toMatchObject({ isError: true })
+    }
+    const app = await buildAppTools({ conversationId: convId, mode: 'agent', gate: async () => {} })
+    try {
+      expect(app.tools.debug_status).toBeUndefined()
+      expect(app.tools.terminal_focus).toBeUndefined()
+      expect(app.tools.notes_list_pages).toBeUndefined()
+      expect(app.tools.terminal_run).toBeDefined()
+    } finally {
+      await app.close()
+    }
+  })
 
   it('omits project tools from standalone sessions while retaining generic tools', async () => {
     insertConversation({

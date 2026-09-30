@@ -267,6 +267,27 @@ describe('domain contracts', () => {
     expect(fleetInteractionResolutionSchema.safeParse({ kind: 'permission', reply: 'maybe' }).success).toBe(false)
   })
 
+  it('carries a todo_write checklist on tool items and keeps items without one valid', () => {
+    const tool = { kind: 'tool', id: 't:0', at, name: 'todo_write', target: null, state: 'done', output: null }
+    const todos = [
+      { content: 'Inspect files', status: 'completed' },
+      { content: 'Fix rendering', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' },
+    ]
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos })).toMatchObject({ todos })
+    // Instances that predate the checklist send no todos: the item stays valid and carries none.
+    expect(fleetTranscriptItemSchema.parse(tool)).not.toHaveProperty('todos')
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos: [] })).toMatchObject({ todos: [] })
+    const invalid = [
+      [{ content: '', status: 'pending' }],
+      [{ content: 'x'.repeat(provisioning.FLEET_TODO_LIMITS.contentMax + 1), status: 'pending' }],
+      [{ content: 'Unknown status', status: 'blocked' }],
+      Array.from({ length: provisioning.FLEET_TODO_LIMITS.itemsMax + 1 }, () => todos[2]),
+    ]
+    for (const entries of invalid)
+      expect(fleetTranscriptItemSchema.safeParse({ ...tool, todos: entries }).success).toBe(false)
+  })
+
   it('validates routines and schedule shape without imposing an IANA check in the schema', () => {
     const routine = {
       id: 'r1',

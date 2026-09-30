@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import { resolveCursorHarness } from '../harness/adapters/cursor'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
 import { harnessUltraGuidance } from '../harness/host-contracts'
@@ -134,8 +135,8 @@ export async function buildCursorHarnessContext(
         : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
     : ''
   const conversation = getConversation(args.conversationId)
-  const notes = Boolean(conversation)
-  const allowPlanReview = true
+  const notes = !isBotMode() && Boolean(conversation)
+  const allowPlanReview = !isBotMode()
   const instructions = [
     buildHarnessPrompt({
       harness,
