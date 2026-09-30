@@ -1,33 +1,46 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 import type { DelegationStatusView, DesktopExecutorSettings, DesktopExecutionRecord, DeviceAuthorizationView, EmbeddedRunnerView, PlatformConnectionView, PlatformProjectBinding, RemotePlatformProject } from '../shared/platform'
 
-export const platformApi = {
-  platformWorkspaceLinks: (): Promise<import('../shared/platform').WorkspaceKanbanLink[]> => ipcRenderer.invoke('platform:workspace-links'),
-  platformRefreshWorkspaceLinks: (): Promise<void> => ipcRenderer.invoke('platform:refresh-workspace-links'),
-  onPlatformLinksChanged: (callback: () => void): (() => void) => {
+/** The tray of this computer's app asks its window to open the executor settings. */
+export const platformLocalApi = {
+  onExecutorOpen: (callback: () => void): (() => void) => {
     const listener = () => callback()
-    ipcRenderer.on('platform:links-changed', listener)
-    return () => ipcRenderer.removeListener('platform:links-changed', listener)
+    ipcRenderer.on('executor:open', listener)
+    return () => ipcRenderer.removeListener('executor:open', listener)
   },
-  onExecutorOpen:(callback:()=>void):(()=>void)=>{const listener=()=>callback();ipcRenderer.on('executor:open',listener);return()=>ipcRenderer.removeListener('executor:open',listener)},
-  platformExecutorSettings:():Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-settings'),
-  platformSaveExecutorSettings:(settings:DesktopExecutorSettings):Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-save',settings),
-  platformExecutorProviders:():Promise<Array<{id:string;name:string;models:string[]}>>=>ipcRenderer.invoke('platform:executor-providers'),
-  platformExecutorHistory:():Promise<DesktopExecutionRecord[]>=>ipcRenderer.invoke('platform:executor-history'),
-  platformOpenExecutorConversation:(id:string):Promise<void>=>ipcRenderer.invoke('platform:executor-open',id),
-  platformListConnections: (): Promise<PlatformConnectionView[]> => ipcRenderer.invoke('platform:list-connections'),
-  platformAddConnection: (url: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:add-connection', url),
-  platformBeginDeviceAuthorization: (connectionId: string, clientId: string): Promise<DeviceAuthorizationView> => ipcRenderer.invoke('platform:begin-device-auth', connectionId, clientId),
-  platformPollDeviceAuthorization: (connectionId: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:poll-device-auth', connectionId),
-  platformDisconnect: (connectionId: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:disconnect', connectionId),
-  platformListRemoteProjects: (connectionId: string): Promise<RemotePlatformProject[]> => ipcRenderer.invoke('platform:list-remote-projects', connectionId),
-  platformListProjectBindings: (): Promise<PlatformProjectBinding[]> => ipcRenderer.invoke('platform:list-project-bindings'),
-  platformSetProjectBinding: (binding: PlatformProjectBinding): Promise<void> => ipcRenderer.invoke('platform:set-project-binding', binding),
-  platformRemoveProjectBinding: (workspaceId: string): Promise<void> => ipcRenderer.invoke('platform:remove-project-binding', workspaceId),
-  platformRunnerStatus: (): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-status'),
-  platformDelegationStatus: (): Promise<DelegationStatusView> => ipcRenderer.invoke('platform:delegation-status'),
-  platformRunnerStart: (connectionId: string): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-start', connectionId),
-  platformRunnerStop: (): Promise<void> => ipcRenderer.invoke('platform:runner-stop'),
 }
+
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makePlatformApi(ipcRenderer: IpcTransport) {
+  return {
+    platformWorkspaceLinks: (): Promise<import('../shared/platform').WorkspaceKanbanLink[]> => ipcRenderer.invoke('platform:workspace-links'),
+    platformRefreshWorkspaceLinks: (): Promise<void> => ipcRenderer.invoke('platform:refresh-workspace-links'),
+    onPlatformLinksChanged: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('platform:links-changed', listener)
+      return () => ipcRenderer.removeListener('platform:links-changed', listener)
+    },
+    platformExecutorSettings:():Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-settings'),
+    platformSaveExecutorSettings:(settings:DesktopExecutorSettings):Promise<DesktopExecutorSettings>=>ipcRenderer.invoke('platform:executor-save',settings),
+    platformExecutorProviders:():Promise<Array<{id:string;name:string;models:string[]}>>=>ipcRenderer.invoke('platform:executor-providers'),
+    platformExecutorHistory:():Promise<DesktopExecutionRecord[]>=>ipcRenderer.invoke('platform:executor-history'),
+    platformOpenExecutorConversation:(id:string):Promise<void>=>ipcRenderer.invoke('platform:executor-open',id),
+    platformListConnections: (): Promise<PlatformConnectionView[]> => ipcRenderer.invoke('platform:list-connections'),
+    platformAddConnection: (url: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:add-connection', url),
+    platformBeginDeviceAuthorization: (connectionId: string, clientId: string): Promise<DeviceAuthorizationView> => ipcRenderer.invoke('platform:begin-device-auth', connectionId, clientId),
+    platformPollDeviceAuthorization: (connectionId: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:poll-device-auth', connectionId),
+    platformDisconnect: (connectionId: string): Promise<PlatformConnectionView> => ipcRenderer.invoke('platform:disconnect', connectionId),
+    platformListRemoteProjects: (connectionId: string): Promise<RemotePlatformProject[]> => ipcRenderer.invoke('platform:list-remote-projects', connectionId),
+    platformListProjectBindings: (): Promise<PlatformProjectBinding[]> => ipcRenderer.invoke('platform:list-project-bindings'),
+    platformSetProjectBinding: (binding: PlatformProjectBinding): Promise<void> => ipcRenderer.invoke('platform:set-project-binding', binding),
+    platformRemoveProjectBinding: (workspaceId: string): Promise<void> => ipcRenderer.invoke('platform:remove-project-binding', workspaceId),
+    platformRunnerStatus: (): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-status'),
+    platformDelegationStatus: (): Promise<DelegationStatusView> => ipcRenderer.invoke('platform:delegation-status'),
+    platformRunnerStart: (connectionId: string): Promise<EmbeddedRunnerView> => ipcRenderer.invoke('platform:runner-start', connectionId),
+    platformRunnerStop: (): Promise<void> => ipcRenderer.invoke('platform:runner-stop'),
+  }
+}
+export const platformApi = makePlatformApi(ipcRenderer)
 
 export type PlatformApi = typeof platformApi

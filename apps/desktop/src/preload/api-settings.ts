@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 import type { ShortcutBinding, ShortcutsConfig, ShortcutOs, EffectiveShortcuts } from '../shared/shortcuts'
 import type { SupportedLocale } from '../shared/locale'
 import type { SoundSettings, SoundVoice } from '../shared/sound'
@@ -17,23 +18,11 @@ export interface ShortcutsState {
   openMode: ShortcutOpenMode
 }
 
+/** Preferences of this computer's app: they follow the window, not the profile a conversation runs on. */
 export const settingsApi = {
-  getPreventSleepEnabled: (): Promise<boolean> => ipcRenderer.invoke('power:prevent-sleep-get'),
-  setPreventSleepEnabled: (enabled: boolean): void => ipcRenderer.send('power:prevent-sleep-set', enabled),
-
-  getDefaultPermissionMode: (): Promise<ChatPermMode> => ipcRenderer.invoke('chat:default-permission-mode-get'),
-  setDefaultPermissionMode: (mode: ChatPermMode): void => ipcRenderer.send('chat:default-permission-mode-set', mode),
-
   getOnboardingDone: (): Promise<boolean> => ipcRenderer.invoke('settings:onboarding-get'),
 
   setOnboardingDone: (done: boolean): void => ipcRenderer.send('settings:onboarding-set', done),
-
-  getFreeTerminalShell: (): Promise<string> => ipcRenderer.invoke('settings:free-terminal-shell-get'),
-
-  setFreeTerminalShell: (value: string): void => ipcRenderer.send('settings:free-terminal-shell-set', value),
-
-  testFreeTerminalShell: (value: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('settings:free-terminal-shell-test', value),
 
   getSoundSettings: (): Promise<SoundSettings> => ipcRenderer.invoke('settings:sound-get'),
 
@@ -71,3 +60,22 @@ export const settingsApi = {
     return () => ipcRenderer.removeListener('settings:locale-changed', listener)
   },
 }
+
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makeSettingsHostApi(ipcRenderer: IpcTransport) {
+  return {
+    getPreventSleepEnabled: (): Promise<boolean> => ipcRenderer.invoke('power:prevent-sleep-get'),
+    setPreventSleepEnabled: (enabled: boolean): void => ipcRenderer.send('power:prevent-sleep-set', enabled),
+
+    getDefaultPermissionMode: (): Promise<ChatPermMode> => ipcRenderer.invoke('chat:default-permission-mode-get'),
+    setDefaultPermissionMode: (mode: ChatPermMode): void => ipcRenderer.send('chat:default-permission-mode-set', mode),
+
+    getFreeTerminalShell: (): Promise<string> => ipcRenderer.invoke('settings:free-terminal-shell-get'),
+
+    setFreeTerminalShell: (value: string): void => ipcRenderer.send('settings:free-terminal-shell-set', value),
+
+    testFreeTerminalShell: (value: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('settings:free-terminal-shell-test', value),
+  }
+}
+export const settingsHostApi = makeSettingsHostApi(ipcRenderer)

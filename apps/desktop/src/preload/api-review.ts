@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 
 export interface PrInfo {
   number: number
@@ -82,9 +83,13 @@ export interface ResolveConflictsResult {
   reason?: string
 }
 
-export const reviewApi = {
-  getReview: (convId: string): Promise<MultiReviewData> => ipcRenderer.invoke('review:get', convId),
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makeReviewApi(ipcRenderer: IpcTransport) {
+  return {
+    getReview: (convId: string): Promise<MultiReviewData> => ipcRenderer.invoke('review:get', convId),
 
-  resolveConflicts: (convId: string, opts: ResolveConflictsOpts): Promise<ResolveConflictsResult> =>
-    ipcRenderer.invoke('review:resolve-conflicts', convId, opts),
+    resolveConflicts: (convId: string, opts: ResolveConflictsOpts): Promise<ResolveConflictsResult> =>
+      ipcRenderer.invoke('review:resolve-conflicts', convId, opts),
+  }
 }
+export const reviewApi = makeReviewApi(ipcRenderer)

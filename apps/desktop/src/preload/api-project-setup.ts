@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 import type {
   EmptyRemoteDecision,
   ProjectSetupProgress,
@@ -7,20 +8,24 @@ import type {
 } from '../shared/project-setup'
 import type { Workspace } from './api-workspace'
 
-export const projectSetupApi = {
-  pickProjectDirectory: (purpose: 'open' | 'parent'): Promise<string | null> =>
-    ipcRenderer.invoke('project-setup:pick-directory', purpose),
-  startProjectSetup: (request: ProjectSetupRequest): Promise<ProjectSetupResult<Workspace>> =>
-    ipcRenderer.invoke('project-setup:start', request),
-  cancelProjectSetup: (operationId: string): Promise<boolean> =>
-    ipcRenderer.invoke('project-setup:cancel', operationId),
-  resolveEmptyRemoteProjectSetup: (operationId: string, decision: EmptyRemoteDecision): Promise<boolean> =>
-    ipcRenderer.invoke('project-setup:resolve-empty-remote', { operationId, decision }),
-  onProjectSetupProgress: (callback: (progress: ProjectSetupProgress) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, progress: ProjectSetupProgress): void => {
-      callback(progress)
-    }
-    ipcRenderer.on('project-setup:progress', listener)
-    return () => ipcRenderer.removeListener('project-setup:progress', listener)
-  },
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makeProjectSetupApi(ipcRenderer: IpcTransport) {
+  return {
+    pickProjectDirectory: (purpose: 'open' | 'parent'): Promise<string | null> =>
+      ipcRenderer.invoke('project-setup:pick-directory', purpose),
+    startProjectSetup: (request: ProjectSetupRequest): Promise<ProjectSetupResult<Workspace>> =>
+      ipcRenderer.invoke('project-setup:start', request),
+    cancelProjectSetup: (operationId: string): Promise<boolean> =>
+      ipcRenderer.invoke('project-setup:cancel', operationId),
+    resolveEmptyRemoteProjectSetup: (operationId: string, decision: EmptyRemoteDecision): Promise<boolean> =>
+      ipcRenderer.invoke('project-setup:resolve-empty-remote', { operationId, decision }),
+    onProjectSetupProgress: (callback: (progress: ProjectSetupProgress) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: ProjectSetupProgress): void => {
+        callback(progress)
+      }
+      ipcRenderer.on('project-setup:progress', listener)
+      return () => ipcRenderer.removeListener('project-setup:progress', listener)
+    },
+  }
 }
+export const projectSetupApi = makeProjectSetupApi(ipcRenderer)

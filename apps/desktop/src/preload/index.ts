@@ -1,27 +1,18 @@
 import './floating-strip'
 import { contextBridge } from 'electron'
-import { localDataApi } from './api-local-data'
 import { appApi } from './api-app'
-import { chatApi } from './api-chat'
-import { conversationMigrationApi } from './api-conversation-migration'
+import { chatLocalApi } from './api-chat'
 import { drawerApi } from './api-drawer'
-import { memoryApi } from './api-memory'
-import { notesApi } from './api-notes'
-import { planApi } from './api-plan'
 import { popupApi } from './api-popup'
-import { ptyApi } from './api-pty'
 import { performanceApi } from './api-performance'
-import { runtimeAssetsApi } from './api-runtime-assets'
-import { projectSetupApi } from './api-project-setup'
-import { reviewApi } from './api-review'
 import { settingsApi } from './api-settings'
 import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
-import { workspaceApi } from './api-workspace'
-import { platformApi } from './api-platform'
-import { botApi } from './api-bot'
+import { platformLocalApi } from './api-platform'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
+import { hostsApi } from './api-hosts'
+import { localHostApi } from './host-api'
 
 export type {
   ConversationBranchInfo,
@@ -131,32 +122,27 @@ export type * from './api-workspace'
 export type * from './api-platform'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
+export type * from './api-hosts'
 
-const api = {
-  ...ptyApi,
+/** This computer's app, window and devices: never routed to another host. */
+const localApi = {
+  ...appApi,
   ...performanceApi,
-  ...runtimeAssetsApi,
-  ...workspaceApi,
-  ...conversationMigrationApi,
-  ...projectSetupApi,
-  ...memoryApi,
-  ...notesApi,
   ...drawerApi,
   ...popupApi,
-  ...planApi,
-  ...appApi,
-  ...localDataApi,
-  ...reviewApi,
   ...settingsApi,
   ...soundApi,
   ...updateApi,
-  ...chatApi,
-  ...platformApi,
-  ...botApi,
+  ...chatLocalApi,
+  ...platformLocalApi,
   ...fleetApi,
   ...fleetInstallerApi,
+  ...hostsApi,
 }
+const api = { ...localHostApi, ...localApi }
 
 contextBridge.exposeInMainWorld('api', api)
 
+export type LocalApi = typeof localApi
+export type { HostApi } from './host-api'
 export type Api = typeof api

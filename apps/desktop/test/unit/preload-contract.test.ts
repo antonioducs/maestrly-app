@@ -5,10 +5,10 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as electron from 'electron' // Alias to the same stub instance imported by preload.
 import { localDataApi } from '../../src/preload/api-local-data'
-import { appApi } from '../../src/preload/api-app'
-import { chatApi } from '../../src/preload/api-chat'
+import { appApi, appHostApi } from '../../src/preload/api-app'
+import { chatApi, chatLocalApi } from '../../src/preload/api-chat'
 import { conversationMigrationApi } from '../../src/preload/api-conversation-migration'
-import { drawerApi } from '../../src/preload/api-drawer'
+import { drawerApi, drawerHostApi } from '../../src/preload/api-drawer'
 import { memoryApi } from '../../src/preload/api-memory'
 import { notesApi } from '../../src/preload/api-notes'
 import { planApi } from '../../src/preload/api-plan'
@@ -18,14 +18,15 @@ import { performanceApi } from '../../src/preload/api-performance'
 import { projectSetupApi } from '../../src/preload/api-project-setup'
 import { runtimeAssetsApi } from '../../src/preload/api-runtime-assets'
 import { reviewApi } from '../../src/preload/api-review'
-import { settingsApi } from '../../src/preload/api-settings'
+import { settingsApi, settingsHostApi } from '../../src/preload/api-settings'
 import { soundApi } from '../../src/preload/api-sound'
 import { updateApi } from '../../src/preload/api-update'
 import { workspaceApi } from '../../src/preload/api-workspace'
-import { platformApi } from '../../src/preload/api-platform'
+import { platformApi, platformLocalApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
+import { hostsApi } from '../../src/preload/api-hosts'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -42,6 +43,7 @@ const clipboardWriteSpy = vi.spyOn(electron.clipboard, 'writeText')
 let api: Api
 const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['appApi', appApi],
+  ['appHostApi', appHostApi],
   ['localDataApi', localDataApi],
   ['ptyApi', ptyApi],
   ['performanceApi', performanceApi],
@@ -52,17 +54,22 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['memoryApi', memoryApi],
   ['notesApi', notesApi],
   ['drawerApi', drawerApi],
+  ['drawerHostApi', drawerHostApi],
   ['popupApi', popupApi],
   ['planApi', planApi],
   ['reviewApi', reviewApi],
   ['settingsApi', settingsApi],
+  ['settingsHostApi', settingsHostApi],
   ['soundApi', soundApi],
   ['updateApi', updateApi],
   ['chatApi', chatApi],
+  ['chatLocalApi', chatLocalApi],
   ['platformApi', platformApi],
+  ['platformLocalApi', platformLocalApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
   ['fleetInstallerApi', fleetInstallerApi],
+  ['hostsApi', hostsApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -230,7 +237,7 @@ describe('preload API — exposure', () => {
   })
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(489)
+    expect(keys).toHaveLength(490)
     expect(keys.sort()).toMatchSnapshot()
   })
 

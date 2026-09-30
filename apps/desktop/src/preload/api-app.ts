@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { IpcTransport } from './ipc-transport'
 
 export type PlatformOs = 'mac' | 'win' | 'linux'
 
@@ -12,6 +13,8 @@ export interface PlatformInfo {
   isE2E: boolean
   /** This app is a bot's own Maestrly (`MAESTRLY_BOT_MODE`): its window only offers the settings a bot needs. */
   botMode: boolean
+  /** This app hosts workspaces on a server (`MAESTRLY_SERVER_MODE`): its window only shows a status page. */
+  serverMode: boolean
 }
 
 export interface AppInfo {
@@ -37,31 +40,41 @@ const platformInfo: PlatformInfo = {
   isE2E: process.env.AGENTS_E2E === '1',
   // Same variable as FLEET_BOT_ENV.mode, read by main's isBotMode(); a literal keeps the protocol out of the preload.
   botMode: process.env.MAESTRLY_BOT_MODE === '1',
+  // Same variable as FLEET_BOT_ENV.serverMode, read by main's isServerMode().
+  serverMode: process.env.MAESTRLY_SERVER_MODE === '1',
 }
 
+/** This computer's app and window. */
 export const appApi = {
   platformInfo,
 
   getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
 
-  getOpenTargets: (): Promise<{ terminal: boolean; finder: boolean; vscode: boolean }> =>
-    ipcRenderer.invoke('open:targets'),
-  openExternal: (
-    scope: 'conv' | 'workspace',
-    id: string,
-    target: 'terminal' | 'finder' | 'vscode'
-  ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('open:external', scope, id, target),
-
   openExternalUrl: (url: string): Promise<void> => ipcRenderer.invoke('open:url', url),
 
-  onStatus: (cb: (payload: { agentId: string; status: string }) => void): (() => void) => {
-    const listener = (_event: unknown, payload: { agentId: string; status: string }) => cb(payload)
-    ipcRenderer.on('agent:status', listener)
-    return () => ipcRenderer.removeListener('agent:status', listener)
-  },
   onWindowFullscreen: (cb: (full: boolean) => void): (() => void) => {
     const listener = (_event: unknown, full: boolean) => cb(full)
     ipcRenderer.on('window:fullscreen', listener)
     return () => ipcRenderer.removeListener('window:fullscreen', listener)
   },
 }
+
+// The transport parameter keeps Electron's name on purpose: see ipc-transport.ts.
+export function makeAppHostApi(ipcRenderer: IpcTransport) {
+  return {
+    getOpenTargets: (): Promise<{ terminal: boolean; finder: boolean; vscode: boolean }> =>
+      ipcRenderer.invoke('open:targets'),
+    openExternal: (
+      scope: 'conv' | 'workspace',
+      id: string,
+      target: 'terminal' | 'finder' | 'vscode'
+    ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('open:external', scope, id, target),
+
+    onStatus: (cb: (payload: { agentId: string; status: string }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { agentId: string; status: string }) => cb(payload)
+      ipcRenderer.on('agent:status', listener)
+      return () => ipcRenderer.removeListener('agent:status', listener)
+    },
+  }
+}
+export const appHostApi = makeAppHostApi(ipcRenderer)
