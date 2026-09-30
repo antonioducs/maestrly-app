@@ -16,7 +16,14 @@ import {
   readBundleDirectory,
   type TextEdit,
 } from '@maestrly/artifact-host'
-import type { ArtifactDetailView, ArtifactHostStatus, ArtifactListItem, ArtifactSettings } from '../../shared/artifacts'
+import type {
+  ArtifactDetailView,
+  ArtifactHostStatus,
+  ArtifactListItem,
+  ArtifactRemoveResult,
+  ArtifactSettings,
+  ArtifactThumbnailView,
+} from '../../shared/artifacts'
 import type { Conversation } from '../../shared/conversation'
 import type { ArtifactHostProcess } from './host-process'
 
@@ -32,11 +39,15 @@ export interface ArtifactsServiceDeps {
   settings: () => ArtifactSettings
   saveSettings: (input: unknown) => ArtifactSettings
   getConversation: (id: string) => Conversation | undefined
+  /** The name of a project, or undefined once it was removed. */
+  workspaceName: (id: string) => string | undefined
   /** Resolves a folder relative to the conversation's files, refusing anything outside them. */
   resolveDirectory: (conversation: Conversation, relative: string) => Promise<string>
   openExternal: (url: string) => Promise<void>
   openInDrawer: (convId: string, url: string, activate: boolean) => void
   emitStatus: (status: ArtifactHostStatus) => void
+  /** Asks for a preview image of a version; the capture runs later and may not happen. */
+  requestThumbnail?: (id: string, version: number) => void
 }
 
 const LOCAL_OWNER = { kind: 'local', id: 'local' } as const
@@ -95,6 +106,7 @@ export class ArtifactsService {
       createdBy: 'agent',
       files,
     })
+    this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
     return { detail, skipped }
   }
 
@@ -123,6 +135,7 @@ export class ArtifactsService {
       conversationTitle: conversation.name,
       change,
     })
+    this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
     return { detail, skipped }
   }
 
@@ -173,6 +186,11 @@ export class ArtifactsService {
       createdAt: artifact.createdAt,
       updatedAt: artifact.updatedAt,
       host: 'local',
+      project: artifact.workspaceId
+        ? { id: artifact.workspaceId, name: this.deps.workspaceName(artifact.workspaceId) ?? null }
+        : null,
+      storageBytes: artifact.storageBytes,
+      thumbnailVersion: artifact.thumbnailVersion,
       conversation: artifact.conversationId
         ? {
             id: artifact.conversationId,
@@ -184,7 +202,29 @@ export class ArtifactsService {
   }
 
   async listAll(): Promise<ArtifactListItem[]> {
-    return (await (await this.admin()).list()).map((artifact) => this.toListItem(artifact))
+    const items = (await (await this.admin()).list()).map((artifact) => this.toListItem(artifact))
+    // Artifacts published before thumbnails existed, or whose capture failed, get one once they are listed.
+    for (const item of items)
+      if (item.thumbnailVersion !== item.currentVersion) this.deps.requestThumbnail?.(item.id, item.currentVersion)
+    return items
+  }
+
+  async thumbnail(id: string, version?: number): Promise<ArtifactThumbnailView | null> {
+    const image = await (await this.admin()).getThumbnail(id, version)
+    if (!image) return null
+    return {
+      version: image.version,
+      dataUrl: `data:${image.contentType};base64,${Buffer.from(image.bytes).toString('base64')}`,
+    }
+  }
+
+  /** The owner view of one version, for the thumbnail capture; its ticket works once and within a minute. */
+  async thumbnailSourceUrl(id: string, version: number): Promise<string> {
+    return this.ownerUrl(await this.admin(), id, version)
+  }
+
+  async saveThumbnail(id: string, version: number, image: Uint8Array): Promise<void> {
+    await (await this.admin()).setThumbnail(id, version, image)
   }
 
   async detail(id: string): Promise<ArtifactDetailView | null> {
@@ -202,8 +242,12 @@ export class ArtifactsService {
     }
   }
 
-  async remove(id: string): Promise<boolean> {
-    return (await this.admin()).delete(id)
+  async remove(id: string): Promise<ArtifactRemoveResult> {
+    const admin = await this.admin()
+    const before = (await admin.status()).storageBytes
+    const removed = await admin.delete(id)
+    const after = (await admin.status()).storageBytes
+    return { removed, freedBytes: Math.max(0, before - after) }
   }
 
   /** The owner's URL: the single-use ticket travels in the fragment, which never reaches a server log. */

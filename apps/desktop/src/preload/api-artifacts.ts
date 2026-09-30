@@ -1,11 +1,20 @@
 import { ipcRenderer } from 'electron'
-import type { ArtifactDetailView, ArtifactHostStatus, ArtifactListItem, ArtifactSettings } from '../shared/artifacts'
+import type {
+  ArtifactDetailView,
+  ArtifactHostStatus,
+  ArtifactListItem,
+  ArtifactRemoveResult,
+  ArtifactSettings,
+  ArtifactThumbnailView,
+} from '../shared/artifacts'
 
 export const artifactsApi = {
   artifacts: {
     list: (): Promise<ArtifactListItem[]> => ipcRenderer.invoke('artifacts:list'),
     detail: (id: string): Promise<ArtifactDetailView | null> => ipcRenderer.invoke('artifacts:detail', id),
-    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('artifacts:delete', id),
+    remove: (id: string): Promise<ArtifactRemoveResult> => ipcRenderer.invoke('artifacts:delete', id),
+    thumbnail: (id: string, version?: number): Promise<ArtifactThumbnailView | null> =>
+      ipcRenderer.invoke('artifacts:thumbnail', id, version),
     openExternal: (id: string, version?: number): Promise<void> =>
       ipcRenderer.invoke('artifacts:open-external', id, version),
     openInConversation: (conversationId: string, id: string, version?: number): Promise<void> =>

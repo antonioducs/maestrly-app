@@ -14,6 +14,9 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
   reg.mhandle('artifacts:list', async () => service().listAll())
   reg.mhandle('artifacts:detail', async (_e, id: unknown) => service().detail(artifactId.parse(id)))
   reg.mhandle('artifacts:delete', async (_e, id: unknown) => service().remove(artifactId.parse(id)))
+  reg.mhandle('artifacts:thumbnail', async (_e, id: unknown, number: unknown) =>
+    service().thumbnail(artifactId.parse(id), version.parse(number))
+  )
   reg.mhandle('artifacts:open-external', async (_e, id: unknown, number: unknown) => {
     await service().openExternal(artifactId.parse(id), version.parse(number))
   })

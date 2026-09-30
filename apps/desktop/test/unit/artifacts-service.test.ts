@@ -31,6 +31,7 @@ function makeDeps() {
     openInDrawer: vi.fn((_convId: string, _url: string, _activate: boolean) => {}),
     resolveDirectory: vi.fn(async (_conversation: Conversation, relative: string) => path.join(root, relative)),
     emitStatus: vi.fn((_status: ArtifactHostStatus) => {}),
+    requestThumbnail: vi.fn((_id: string, _version: number) => {}),
   }
 }
 let deps: ReturnType<typeof makeDeps>
@@ -82,6 +83,8 @@ beforeEach(async () => {
       return settings
     },
     getConversation,
+    workspaceName: (id) => (id === 'gone' ? undefined : `Project ${id.slice(0, 4)}`),
+    requestThumbnail: deps.requestThumbnail,
     resolveDirectory: deps.resolveDirectory,
     openExternal: deps.openExternal,
     openInDrawer: deps.openInDrawer,
@@ -215,6 +218,70 @@ describe('ArtifactsService', () => {
     await service.setSettings({ ...settings, hostEnabled: false })
     expect(deps.host.stop).toHaveBeenCalledTimes(1)
     expect(deps.emitStatus).toHaveBeenCalled()
+  })
+
+  it('asks for a thumbnail of every version it publishes, and of listed artifacts that lack one', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Pictured', files: page })
+    expect(deps.requestThumbnail).toHaveBeenLastCalledWith(detail.id, 1)
+    await service.update(conversation.id, {
+      id: detail.id,
+      baseVersion: 1,
+      change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'Hello', newText: 'Hi' }] },
+    })
+    expect(deps.requestThumbnail).toHaveBeenLastCalledWith(detail.id, 2)
+
+    deps.requestThumbnail.mockClear()
+    await service.listAll()
+    expect(deps.requestThumbnail).toHaveBeenCalledWith(detail.id, 2)
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2])
+    await service.saveThumbnail(detail.id, 2, jpeg)
+    deps.requestThumbnail.mockClear()
+    const [item] = await service.listAll()
+    expect(item.thumbnailVersion).toBe(2)
+    expect(deps.requestThumbnail).not.toHaveBeenCalled()
+    expect(await service.thumbnail(detail.id)).toEqual({
+      version: 2,
+      dataUrl: `data:image/jpeg;base64,${Buffer.from(jpeg).toString('base64')}`,
+    })
+    expect(await service.thumbnail(detail.id, 1)).toBeNull()
+  })
+
+  it('gives the thumbnail capture a single-use owner link to one version', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Source', files: page })
+    expect(await service.thumbnailSourceUrl(detail.id, 1)).toMatch(
+      new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}&v=1$`)
+    )
+  })
+
+  it('lists the project, size and preview of each artifact', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    await service.create(conversation.id, { title: 'In a project', files: page })
+    await service.create(standalone().id, { title: 'Standalone', files: page })
+    const items = await service.listAll()
+    expect(items.find((item) => item.title === 'In a project')).toMatchObject({
+      project: { id: workspace.id, name: `Project ${workspace.id.slice(0, 4)}` },
+      storageBytes: 14,
+      thumbnailVersion: null,
+    })
+    expect(items.find((item) => item.title === 'Standalone')!.project).toBeNull()
+  })
+
+  it('reports the storage a deletion frees', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const shared = await service.create(conversation.id, { title: 'Shared', files: page })
+    const alone = await service.create(conversation.id, {
+      title: 'Alone',
+      files: [{ path: 'index.html', bytes: encode('<p>own</p>') }],
+    })
+    const twin = await service.create(conversation.id, { title: 'Twin', files: page })
+    expect(await service.remove(alone.detail.id)).toEqual({ removed: true, freedBytes: 10 })
+    // Identical content stays stored while another artifact uses it.
+    expect(await service.remove(shared.detail.id)).toEqual({ removed: true, freedBytes: 0 })
+    expect(await service.remove(twin.detail.id)).toEqual({ removed: true, freedBytes: 14 })
+    expect(await service.remove(twin.detail.id)).toEqual({ removed: false, freedBytes: 0 })
   })
 
   it('reports storage use while the host runs', async () => {

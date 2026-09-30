@@ -106,6 +106,7 @@ import {
   listAllConversations,
   updateConversationStatus,
   getConversation,
+  getWorkspace,
   getSoundSettings,
   getShortcutOpenMode,
   getLocale,
@@ -174,6 +175,8 @@ import { artifactsDataDir, getArtifactsService, setArtifactsService } from './ar
 import { ArtifactHostProcess, forkArtifactHostWorker } from './artifacts/host-process'
 import { registerArtifactsIpc } from './artifacts/ipc'
 import { ArtifactsService } from './artifacts/service'
+import { captureArtifactThumbnail } from './artifacts/thumbnail-capture'
+import { ThumbnailQueue } from './artifacts/thumbnail-queue'
 import { getArtifactSettings, setArtifactSettings } from './artifacts/settings'
 import { createConversationFileScope } from './conversation-file-scope'
 import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
@@ -239,22 +242,32 @@ function initArtifacts(): void {
     onStatus: (status) => broadcast('artifacts:status', status),
     onEvent: () => broadcast('artifacts:changed'),
   })
-  setArtifactsService(
-    new ArtifactsService({
-      host: artifactHost,
-      settings: getArtifactSettings,
-      saveSettings: setArtifactSettings,
-      getConversation,
-      resolveDirectory: async (conversation, relative) =>
-        (await (await createConversationFileScope(conversation)).resolveBridgePath(relative)).target,
-      openExternal: (url) => shell.openExternal(url),
-      openInDrawer: (convId, url, activate) => {
-        createBrowserTab(convId, url, { activate })
-        if (activate) focusBrowserDrawer(convId)
-      },
-      emitStatus: (status) => broadcast('artifacts:status', status),
-    })
-  )
+  let thumbnails: ThumbnailQueue | null = null
+  const service = new ArtifactsService({
+    host: artifactHost,
+    settings: getArtifactSettings,
+    saveSettings: setArtifactSettings,
+    getConversation,
+    workspaceName: (id) => getWorkspace(id)?.name,
+    requestThumbnail: (id, version) => thumbnails?.request(id, version),
+    resolveDirectory: async (conversation, relative) =>
+      (await (await createConversationFileScope(conversation)).resolveBridgePath(relative)).target,
+    openExternal: (url) => shell.openExternal(url),
+    openInDrawer: (convId, url, activate) => {
+      createBrowserTab(convId, url, { activate })
+      if (activate) focusBrowserDrawer(convId)
+    },
+    emitStatus: (status) => broadcast('artifacts:status', status),
+  })
+  setArtifactsService(service)
+  thumbnails = new ThumbnailQueue({
+    sourceUrl: (id, version) => service.thumbnailSourceUrl(id, version),
+    capture: captureArtifactThumbnail,
+    save: (id, version, image) => service.saveThumbnail(id, version, image),
+    // Only a code: capture errors can carry the owner link, whose fragment holds a ticket.
+    onError: (error) =>
+      console.warn('[artifacts] thumbnail capture failed:', (error as { code?: unknown })?.code ?? 'unknown'),
+  })
 }
 
 async function stopAllLiveWork(): Promise<void> {

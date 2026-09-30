@@ -17,7 +17,8 @@ function setup() {
   const service = {
     listAll: vi.fn(async () => []),
     detail: vi.fn(async () => null),
-    remove: vi.fn(async () => true),
+    remove: vi.fn(async () => ({ removed: true, freedBytes: 0 })),
+    thumbnail: vi.fn(async () => null),
     openExternal: vi.fn(async () => {}),
     openInConversation: vi.fn(async () => ({})),
     status: vi.fn(async () => ({ state: 'stopped', port: 4010 })),
@@ -45,6 +46,7 @@ describe('artifacts IPC', () => {
       'artifacts:settings-set',
       'artifacts:start',
       'artifacts:status',
+      'artifacts:thumbnail',
     ])
     expect(unguarded).toEqual([])
   })
@@ -55,13 +57,18 @@ describe('artifacts IPC', () => {
     await expect(call('artifacts:detail', 42)).rejects.toThrow()
     await expect(call('artifacts:open-external', id, 0)).rejects.toThrow()
     await expect(call('artifacts:open-in-conversation', '', id)).rejects.toThrow()
+    await expect(call('artifacts:thumbnail', 'nope')).rejects.toThrow()
+    await expect(call('artifacts:thumbnail', id, 1.5)).rejects.toThrow()
     expect(service.remove).not.toHaveBeenCalled()
+    expect(service.thumbnail).not.toHaveBeenCalled()
     expect(service.detail).not.toHaveBeenCalled()
     expect(service.openExternal).not.toHaveBeenCalled()
     expect(service.openInConversation).not.toHaveBeenCalled()
 
     await call('artifacts:delete', id)
     expect(service.remove).toHaveBeenCalledWith(id)
+    await call('artifacts:thumbnail', id, 2)
+    expect(service.thumbnail).toHaveBeenCalledWith(id, 2)
     await call('artifacts:open-in-conversation', 'conversation', id, 3)
     expect(service.openInConversation).toHaveBeenCalledWith('conversation', id, 3, {
       checkScope: false,

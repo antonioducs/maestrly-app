@@ -34,6 +34,24 @@ export interface ArtifactListItem {
   host: 'local'
   /** The originating conversation; `exists` is false once it was deleted, with its last known title. */
   conversation: { id: string; title: string | null; exists: boolean } | null
+  /** The project it was published in; null for standalone conversations. `name` is null once the project is gone. */
+  project: { id: string; name: string | null } | null
+  /** Space its versions and thumbnails take; content shared with other artifacts counts for each of them. */
+  storageBytes: number
+  /** The newest version with a preview image, or null while none was captured. */
+  thumbnailVersion: number | null
+}
+
+/** A version's preview image, ready for an `<img>`. It may show an earlier version than the one asked for. */
+export interface ArtifactThumbnailView {
+  version: number
+  dataUrl: string
+}
+
+export interface ArtifactRemoveResult {
+  removed: boolean
+  /** Storage released; less than the artifact's size when other artifacts share its content. */
+  freedBytes: number
 }
 
 export interface ArtifactVersionView {
