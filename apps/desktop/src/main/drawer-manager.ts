@@ -82,6 +82,7 @@ export {
   browserClearCache,
   acquireBrowserForControl,
   acquireBrowserTabForControl,
+  browserControlReady,
   type AcquiredBrowserForControl,
   type AcquiredBrowserTab,
   touchActiveBrowserActivity,

@@ -110,6 +110,7 @@ const h = vi.hoisted(() => {
 vi.mock('../../src/main/drawer-manager', () => ({
   acquireBrowserForControl: h.acquireBrowserForControl,
   acquireBrowserTabForControl: h.acquireBrowserTabForControl,
+  browserControlReady: async () => {},
   getBrowserState: h.getBrowserState,
   getBrowserStateForScope: h.getBrowserStateForScope,
   createBrowserTab: h.createBrowserTab,

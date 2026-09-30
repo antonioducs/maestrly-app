@@ -62,6 +62,14 @@ function loadBrowserUrl(wc: WebContents, url: string): void {
   else load()
 }
 
+/**
+ * Resolves once a browser view can be driven. In a bot or on a workspaces host a new view first loads an empty page to
+ * install its dialog policy; a navigation sent before that page is in place would be replaced by it.
+ */
+export function browserControlReady(wc: WebContents): Promise<void> {
+  return browserDialogReady.get(wc) ?? Promise.resolve()
+}
+
 function enqueueBrowserCapture<T>(wc: WebContents, operation: () => Promise<T>): Promise<T> {
   const previous = browserCaptureTails.get(wc) ?? Promise.resolve()
   const result = previous.catch(() => {}).then(operation)

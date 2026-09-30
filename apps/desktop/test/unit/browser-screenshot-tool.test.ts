@@ -5,6 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 
 vi.mock('../../src/main/drawer-manager', () => ({
   acquireBrowserForControl: vi.fn(),
+  browserControlReady: vi.fn(async () => {}),
   touchActiveBrowserActivity: vi.fn(),
   getBrowserState: vi.fn(() => ({ tabs: [], activeId: null })),
   createBrowserTab: vi.fn(),
