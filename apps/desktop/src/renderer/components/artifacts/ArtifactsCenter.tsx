@@ -27,6 +27,7 @@ import {
 } from './artifacts-view'
 import { HostStatusChip } from './HostStatusChip'
 import { PortDialog } from './PortDialog'
+import { ShareDialog } from './ShareDialog'
 import { useArtifacts } from './use-artifacts'
 
 /** How long a new artifact or version stays marked as new. */
@@ -120,6 +121,7 @@ export function ArtifactsCenter({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [opening, setOpening] = useState<ReadonlySet<string>>(new Set())
   const [confirm, setConfirm] = useState<ArtifactListItem | null>(null)
+  const [shareId, setShareId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [hostBusy, setHostBusy] = useState(false)
@@ -139,6 +141,7 @@ export function ArtifactsCenter({
   const body = centerBody({ loading, status, listed, total: items.length, visible: visible.length })
   const toolbar = body.kind !== 'loading' && body.kind !== 'unavailable' && showToolbar(items.length, query, project)
   const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined
+  const sharing = shareId ? items.find((item) => item.id === shareId) : undefined
 
   // A filter for a project that no longer has artifacts falls back to all of them.
   useEffect(() => {
@@ -513,6 +516,7 @@ export function ArtifactsCenter({
                   opening={isOpening(item.id)}
                   onSelect={() => select(item.id)}
                   onOpen={() => void open(item)}
+                  onShare={() => setShareId(item.id)}
                   onDelete={() => askDelete(item)}
                   onGoToConversation={() => item.conversation && openConversation(item.conversation.id)}
                 />
@@ -529,11 +533,15 @@ export function ArtifactsCenter({
           isOpening={(version) => isOpening(selected.id, version)}
           onOpen={(version) => void open(selected, version)}
           onGoToConversation={() => selected.conversation && openConversation(selected.conversation.id)}
+          onShare={() => setShareId(selected.id)}
           onDelete={() => askDelete(selected)}
           onClose={closeSheet}
           onError={(text) => push({ tone: 'bad', text: t('artifacts.error', { message: text }) })}
+          onNotice={(text) => push({ tone: 'ok', text })}
         />
       )}
+
+      {sharing && <ShareDialog item={sharing} onClose={() => setShareId(null)} onOpenSettings={onOpenSettings} />}
 
       <Notices notices={notices} onDismiss={dismiss} />
 

@@ -7,6 +7,7 @@ import { useSettings } from '@/lib/use-settings'
 import { useOnboarding } from '@/lib/use-onboarding'
 import { SUPPORT_LINKS } from '../../../shared/support'
 import { UpdateCard } from './UpdateCard'
+import { useUnseenArtifactEvents } from '@/components/artifacts/use-artifact-activity'
 import { QuickSubscriptionUsageDialog } from '@/components/chat/QuickSubscriptionUsageDialog'
 import { connectedQuickUsageTargets, type QuickUsageTarget } from '@/components/chat/quick-subscription-usage'
 import {
@@ -35,6 +36,7 @@ export function SidebarFooter({
   const { openSettings } = useSettings()
 
   const { openOnboarding } = useOnboarding()
+  const unseenArtifactEvents = useUnseenArtifactEvents()
   const [usageOpen, setUsageOpen] = useState(false)
   const [usageTargets, setUsageTargets] = useState<QuickUsageTarget[]>([])
   const usageTargetsRequestRef = useRef(0)
@@ -103,6 +105,15 @@ export function SidebarFooter({
       >
         <AppWindow className="size-3.5 shrink-0" />
         <span className="truncate">{t('artifacts.sidebar')}</span>
+        {unseenArtifactEvents > 0 && (
+          <span
+            data-testid="sidebar-artifacts-unseen"
+            aria-label={t('artifacts.events.unseen', { count: unseenArtifactEvents })}
+            className="ml-auto min-w-[18px] rounded-full bg-primary px-1.5 text-center text-[10.5px] font-semibold leading-[18px] text-primary-foreground"
+          >
+            {unseenArtifactEvents > 99 ? '99+' : unseenArtifactEvents}
+          </span>
+        )}
       </button>
 
       <button

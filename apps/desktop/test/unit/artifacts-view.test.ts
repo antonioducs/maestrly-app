@@ -28,6 +28,8 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
     project: { id: 'p1', name: 'Zeta' },
     storageBytes: 10,
     thumbnailVersion: null,
+    unseenEvents: 0,
+    pendingRequests: 0,
     ...overrides,
   }
 }

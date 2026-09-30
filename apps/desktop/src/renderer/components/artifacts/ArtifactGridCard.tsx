@@ -1,5 +1,15 @@
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, Loader2, MessagesSquare, MoreHorizontal, PanelRight, Trash2 } from 'lucide-react'
+import {
+  ArrowUpRight,
+  Link2,
+  Loader2,
+  MessagesSquare,
+  MoreHorizontal,
+  PanelRight,
+  Share2,
+  Trash2,
+  Users,
+} from 'lucide-react'
 import type { ArtifactListItem } from '../../../shared/artifacts'
 import {
   DropdownMenu,
@@ -85,6 +95,7 @@ export function ArtifactGridCard({
   opening,
   onSelect,
   onOpen,
+  onShare,
   onDelete,
   onGoToConversation,
 }: {
@@ -98,12 +109,14 @@ export function ArtifactGridCard({
   opening: boolean
   onSelect: () => void
   onOpen: () => void
+  onShare: () => void
   onDelete: () => void
   onGoToConversation: () => void
 }) {
   const { t } = useTranslation('ui')
   const [locale] = useLocale()
   const conversation = item.conversation
+  const shared = item.visibility !== 'private'
   return (
     <li
       data-testid="artifact-card"
@@ -130,6 +143,14 @@ export function ArtifactGridCard({
           {arrival && (
             <span className="absolute left-2 top-2 rounded-full bg-primary px-2 text-[11px] font-semibold leading-[18px] text-primary-foreground">
               {arrival === 'artifact' ? t('artifacts.card.newArtifact') : t('artifacts.card.newVersion')}
+            </span>
+          )}
+          {item.pendingRequests > 0 && (
+            <span
+              data-testid="artifact-card-requests"
+              className="absolute right-2 top-2 rounded-full bg-artifact-warn px-2 text-[11px] font-semibold leading-[18px] text-black"
+            >
+              {t('artifacts.requests.badge', { count: item.pendingRequests })}
             </span>
           )}
           <span className="absolute bottom-2 right-2 rounded-full bg-black/75 px-1.5 font-mono text-[11px] leading-[18px] text-primary backdrop-blur-sm">
@@ -181,6 +202,9 @@ export function ArtifactGridCard({
               <DropdownMenuItem onSelect={onSelect}>
                 <PanelRight /> {t('artifacts.menu.details')}
               </DropdownMenuItem>
+              <DropdownMenuItem data-testid="artifact-share-open" onSelect={onShare}>
+                <Share2 /> {t('artifacts.menu.share')}
+              </DropdownMenuItem>
               {conversation?.exists && (
                 <DropdownMenuItem onSelect={onGoToConversation}>
                   <MessagesSquare /> {t('artifacts.menu.conversation')}
@@ -199,7 +223,23 @@ export function ArtifactGridCard({
           </p>
         )}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{t('artifacts.card.updated', { when: relativeTime(locale, item.updatedAt) })}</span>
+          <span className="truncate">
+            {t('artifacts.card.updated', { when: relativeTime(locale, item.updatedAt) })}
+          </span>
+          {shared && (
+            <span
+              data-testid="artifact-card-visibility"
+              title={t(`artifacts.visibility.${item.visibility}`)}
+              className="flex shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 text-[11px] leading-[18px] text-foreground/75"
+            >
+              {item.visibility === 'people' ? (
+                <Users className="size-3" aria-hidden="true" />
+              ) : (
+                <Link2 className="size-3" aria-hidden="true" />
+              )}
+              {t(`artifacts.visibility.${item.visibility === 'people' ? 'peopleShort' : 'linkShort'}`)}
+            </span>
+          )}
           {showSize && (
             <span className="ml-auto font-mono text-[11.5px] text-foreground/75">{formatBytes(item.storageBytes)}</span>
           )}
