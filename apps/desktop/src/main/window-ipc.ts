@@ -2,6 +2,7 @@ import type { BrowserWindow, WebContents, IpcMainEvent, IpcMainInvokeEvent } fro
 import { recordIpcSend, registerPerformanceWebContents, unregisterPerformanceWebContents } from './performance/metrics'
 import type { MemoryEvictionReadyPayload } from '../shared/memory-eviction'
 import { PREPARE_EVICTION_TIMEOUT_MS } from './performance/policy'
+import { isRemoteUiTarget, sendToRemoteMains, sendToRemoteUiTargets } from './remote-ui-targets'
 
 /**
  * Safely send to webContents during shutdown. Windows may be destroyed before PTYs/watchers stop
@@ -39,10 +40,7 @@ const panelTargets = new Map<WebContents, PanelTargetMetadata>()
 // Low-frequency application-wide settings/catalog events still need to reach the independent panel
 // renderers (their i18n/model pickers subscribe directly). High-frequency conversation streams
 // stay explicitly directed and never use this exception.
-const PANEL_GLOBAL_CHANNELS = new Set([
-  'settings:locale-changed',
-  'models:catalog-changed',
-])
+const PANEL_GLOBAL_CHANNELS = new Set(['settings:locale-changed', 'models:catalog-changed'])
 
 /** Set mainWindow as the broadcast target during window creation. */
 export function setBroadcastMainWindow(win: BrowserWindow | null): void {
@@ -116,6 +114,16 @@ export function broadcastGlobal(channel: string, payload?: unknown): void {
   for (const [wc, metadata] of [...panelTargets]) {
     if (metadata.global || PANEL_GLOBAL_CHANNELS.has(channel)) sendToTarget(wc, channel, payload)
   }
+  sendToRemoteUiTargets((meta) => meta.role === 'main' || PANEL_GLOBAL_CHANNELS.has(channel), channel, payload)
+}
+
+/**
+ * Main-window events about the profile (statuses, chat settings, plans, memory): this window and the main renderer
+ * of every connected computer. Unlike `broadcastGlobal`, panels and floating strips do not receive them.
+ */
+export function sendToMainTargets(channel: string, payload?: unknown): void {
+  safeWindowSend(broadcastMainWindow, channel, payload)
+  sendToRemoteMains(channel, payload)
 }
 
 /** Compatibility for events that are already global. */
@@ -136,6 +144,14 @@ export function sendToConversation(
       sendToTarget(wc, channel, payload)
     }
   }
+  sendToRemoteUiTargets(
+    (meta) =>
+      meta.role === 'main'
+        ? options.includeMain !== false
+        : meta.convId === convId && (!options.panel || meta.panel === options.panel),
+    channel,
+    payload
+  )
 }
 
 /** Deliver only to a conversation panel, suitable for high-frequency streams. */
@@ -143,6 +159,11 @@ export function sendToPanel(convId: string, panel: string, channel: string, payl
   for (const [wc, metadata] of [...panelTargets]) {
     if (metadata.convId === convId && metadata.panel === panel) sendToTarget(wc, channel, payload)
   }
+  sendToRemoteUiTargets(
+    (meta) => meta.role === 'panel' && meta.convId === convId && meta.panel === panel,
+    channel,
+    payload
+  )
 }
 
 /** Low-frequency event for one panel type without waking unrelated renderers. */
@@ -150,6 +171,12 @@ export function sendToPanelTargets(panel: string, channel: string, payload?: unk
   for (const [wc, metadata] of [...panelTargets]) {
     if (metadata.panel === panel) sendToTarget(wc, channel, payload)
   }
+  sendToRemoteUiTargets((meta) => meta.role === 'panel' && meta.panel === panel, channel, payload)
+}
+
+/** What a registered panel renderer shows, or null for any other WebContents. */
+export function getPanelTargetMetadata(wc: WebContents): PanelTargetMetadata | null {
+  return panelTargets.get(wc) ?? null
 }
 
 export function getPanelTargetCount(): number {
@@ -202,10 +229,11 @@ export function preparePanelMemoryEviction(
 /**
  * Trust IPC only from mainWindow or registered panels/browser chrome with legitimate preload. Embedded
  * browser/VS Code pages have no app preload and are excluded. This shared allowlist protects sensitive
- * mutations but does not replace payload validation in handlers.
+ * mutations but does not replace payload validation in handlers. A renderer of another computer is trusted
+ * while its authenticated bridge keeps it registered.
  */
 export function isTrustedSender(wc: WebContents): boolean {
-  return wc === broadcastMainWindow?.webContents || panelTargets.has(wc)
+  return wc === broadcastMainWindow?.webContents || panelTargets.has(wc) || isRemoteUiTarget(wc)
 }
 
 /**

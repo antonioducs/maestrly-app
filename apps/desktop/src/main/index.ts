@@ -30,6 +30,7 @@ import {
   setTerminalPopupFocuser,
 } from './terminal-manager'
 import { safeWindowSend, setBroadcastMainWindow, broadcast, guardHandle, guardOn, focusMainWindow } from './window-ipc'
+import { sendToRemoteMains } from './remote-ui-targets'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -197,7 +198,11 @@ let mainWindow: BrowserWindow | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 
-const sendToWindow = (channel: string, payload?: unknown): void => safeWindowSend(mainWindow, channel, payload)
+/** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
+const sendToWindow = (channel: string, payload?: unknown): void => {
+  safeWindowSend(mainWindow, channel, payload)
+  sendToRemoteMains(channel, payload)
+}
 
 /** Stop live resources before a local reset without deleting repositories or conversation data. */
 async function stopConversationLive(convId: string): Promise<void> {

@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { safeWindowSend } from './window-ipc'
+import { sendToRemoteMains } from './remote-ui-targets'
 import {
   createLocalMemory,
   getLocalMemory,
@@ -22,10 +23,15 @@ export function initMemoryService(window: BrowserWindow): void {
   disposeChanges?.()
   disposeIndexStatus?.()
   disposeEnabled?.()
-  disposeChanges = onLocalMemoryChange((event) => safeWindowSend(win, 'memory:changed', event))
-  disposeIndexStatus = onMemoryIndexStatus((status) => safeWindowSend(win, 'memory:index-status', status))
+  // Memory events reach the main window and, on a host, the main renderer of each connected computer.
+  const send = (channel: string, payload: unknown): void => {
+    safeWindowSend(win, channel, payload)
+    sendToRemoteMains(channel, payload)
+  }
+  disposeChanges = onLocalMemoryChange((event) => send('memory:changed', event))
+  disposeIndexStatus = onMemoryIndexStatus((status) => send('memory:index-status', status))
   disposeEnabled = onWorkspaceMemoryEnabledChanged(({ workspaceId }) =>
-    safeWindowSend(win, 'memory:changed', { workspaceId, kind: 'enabled-changed' })
+    send('memory:changed', { workspaceId, kind: 'enabled-changed' })
   )
 }
 

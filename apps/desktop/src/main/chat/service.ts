@@ -7,6 +7,15 @@ import { ensureStandaloneConversationDirectory } from '../standalone-conversatio
 import { nameStandaloneConversationFromText } from '../standalone-conversation-title'
 import { autonomousPolicy } from './autonomous'
 import { emitChatHost } from './host-events'
+import {
+  chatSubscribersOf,
+  clearAllChatSubscriptions,
+  sendChatEvent,
+  subscribeChatStream,
+  unsubscribeChatStream,
+} from './stream-subscribers'
+
+export { subscribeChatStream, unsubscribeChatStream } from './stream-subscribers'
 import { isWebManagedConversation, remoteChatPolicy } from './remote-policy'
 import {
   clearHumanTurnOrigin,
@@ -382,6 +391,7 @@ import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
 import { tFor } from '../i18n'
 import { getMainWebContents } from '../window-ipc'
+import { hasRemoteMains, sendToRemoteMains } from '../remote-ui-targets'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
 import { registerMaestroIpc } from './maestro-ipc'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
@@ -430,7 +440,6 @@ import {
   hasImagesToDescribe,
   setImageInterpreter,
 } from './image-interpreter'
-import { recordIpcSend } from '../performance/metrics'
 import {
   previewPreparedActivation,
   commitPreparedActivation,
@@ -548,104 +557,6 @@ function accountGuardedDelegationUsage(
       subagentUsage: [...perModel.values()],
     },
   })
-}
-
-/**
- * Live chat stream subscriptions. The runtime stays in MAIN without requiring a mounted ChatView;
- * only currently subscribed (WebContents, conversationId) pairs receive IPC. Counts are per pair,
- * since one renderer may have multiple consumers of a conversation (including stream and permissions).
- */
-const chatSubscribersByConversation = new Map<string, Map<WebContents, number>>()
-const chatSubscriptionsByWebContents = new Map<WebContents, Map<string, number>>()
-const chatSubscriptionCleanup = new Map<WebContents, () => void>()
-
-function clearChatSubscriptions(wc: WebContents): void {
-  const subscriptions = chatSubscriptionsByWebContents.get(wc)
-  if (!subscriptions) return
-
-  for (const conversationId of subscriptions.keys()) {
-    const subscribers = chatSubscribersByConversation.get(conversationId)
-    subscribers?.delete(wc)
-    if (subscribers?.size === 0) chatSubscribersByConversation.delete(conversationId)
-  }
-  chatSubscriptionsByWebContents.delete(wc)
-  chatSubscriptionCleanup.get(wc)?.()
-  chatSubscriptionCleanup.delete(wc)
-}
-
-/** Registers a stream consumer; each call requires a matching unsubscribe. */
-export function subscribeChatStream(wc: WebContents, conversationId: string): void {
-  if (!conversationId || wc.isDestroyed()) return
-
-  let subscriptions = chatSubscriptionsByWebContents.get(wc)
-  if (!subscriptions) {
-    subscriptions = new Map()
-    chatSubscriptionsByWebContents.set(wc, subscriptions)
-    if (typeof wc.once === 'function') {
-      const onDestroyed = () => clearChatSubscriptions(wc)
-      wc.once('destroyed', onDestroyed)
-      chatSubscriptionCleanup.set(wc, () => wc.removeListener?.('destroyed', onDestroyed))
-    }
-  }
-
-  subscriptions.set(conversationId, (subscriptions.get(conversationId) ?? 0) + 1)
-  let subscribers = chatSubscribersByConversation.get(conversationId)
-  if (!subscribers) {
-    subscribers = new Map()
-    chatSubscribersByConversation.set(conversationId, subscribers)
-  }
-  subscribers.set(wc, (subscribers.get(wc) ?? 0) + 1)
-}
-
-/** Removes only one subscription for this renderer and conversation. */
-export function unsubscribeChatStream(wc: WebContents, conversationId: string): void {
-  const subscriptions = chatSubscriptionsByWebContents.get(wc)
-  const count = subscriptions?.get(conversationId)
-  if (!subscriptions || !count) return
-
-  if (count === 1) subscriptions.delete(conversationId)
-  else subscriptions.set(conversationId, count - 1)
-
-  const subscribers = chatSubscribersByConversation.get(conversationId)
-  if (subscribers) {
-    if (subscribers.get(wc) === 1) subscribers.delete(wc)
-    else subscribers.set(wc, (subscribers.get(wc) ?? 1) - 1)
-    if (subscribers.size === 0) chatSubscribersByConversation.delete(conversationId)
-  }
-
-  if (subscriptions.size === 0) {
-    chatSubscriptionsByWebContents.delete(wc)
-    chatSubscriptionCleanup.get(wc)?.()
-    chatSubscriptionCleanup.delete(wc)
-  }
-}
-
-function hasChatSubscriber(wc: WebContents, conversationId: string): boolean {
-  return (chatSubscribersByConversation.get(conversationId)?.get(wc) ?? 0) > 0
-}
-
-function chatConversationIdFromChannel(channel: string): string | null {
-  if (channel.startsWith('chat:delta:')) return channel.slice('chat:delta:'.length)
-  if (channel.startsWith('chat:permission:')) return channel.slice('chat:permission:'.length)
-  return null
-}
-
-/** Sends render-only events to current consumers and counts only actual sends. */
-function sendChatEvent(wc: WebContents, channel: string, payload: unknown): void {
-  const conversationId = chatConversationIdFromChannel(channel)
-  if (conversationId) emitChatHost(conversationId, channel, payload)
-  if (conversationId !== null && !hasChatSubscriber(wc, conversationId)) return
-  if (wc.isDestroyed()) {
-    if (conversationId !== null) clearChatSubscriptions(wc)
-    return
-  }
-  try {
-    wc.send(channel, payload)
-    recordIpcSend()
-  } catch {
-    // WebContents may be destroyed between the check and send.
-    clearChatSubscriptions(wc)
-  }
 }
 
 interface ActiveRun {
@@ -840,6 +751,9 @@ export interface ChatIpcDeps {
 }
 
 const active = new Map<string, ActiveRun>()
+
+/** Chat turns running now: a host reports itself busy while there are any, and its scheduled update waits. */
+export const activeChatRunCount = (): number => active.size
 const pendingConversationOperations = new Map<string, PendingConversationOperation>()
 
 // Ephemeral Codex helpers may run inside a non-Codex ActiveRun (imagegen/interpreter/compact) or before one
@@ -1282,15 +1196,32 @@ let chatGptWebUnsubscribe: (() => void) | null = null
 let subagentSessionUnsubscribe: (() => void) | null = null
 let pairedReviewLoopCoordinator: ConversationReviewLoopCoordinator | null = null
 
-function broadcastChatGptWebStatus(): void {
+/** Whether a profile event would reach anyone: this app's main window, or the main renderer of a connected computer. */
+function hasMainRenderer(): boolean {
   const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:chatgpt-web:changed', chatGptWebStatusPayload())
-    wc.send('chat:review-loop:changed', neutralReviewLoopSnapshots())
-  } catch {
-    /* Window closed during bridge state transition. */
+  return (!!wc && !wc.isDestroyed()) || hasRemoteMains()
+}
+
+/**
+ * Profile events the main window shows (accounts, review loops, chat settings): this app's window and, on a host,
+ * the main renderer of every connected computer.
+ */
+function sendToMainRenderers(channel: string, ...args: unknown[]): void {
+  const wc = getMainWebContents()
+  if (wc && !wc.isDestroyed()) {
+    try {
+      wc.send(channel, ...args)
+    } catch {
+      /* Window closed during the state transition. */
+    }
   }
+  sendToRemoteMains(channel, args[0])
+}
+
+function broadcastChatGptWebStatus(): void {
+  if (!hasMainRenderer()) return
+  sendToMainRenderers('chat:chatgpt-web:changed', chatGptWebStatusPayload())
+  sendToMainRenderers('chat:review-loop:changed', neutralReviewLoopSnapshots())
 }
 
 function webReviewLoopSnapshots(): ReviewLoopInfo[] {
@@ -1327,13 +1258,8 @@ function neutralReviewLoopSnapshots(): ReviewLoopInfo[] {
 }
 
 function broadcastReviewLoopStatus(_snapshots?: ReviewLoopInfo[]): void {
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:review-loop:changed', neutralReviewLoopSnapshots())
-  } catch {
-    /* Window closed during loop state transition. */
-  }
+  if (!hasMainRenderer()) return
+  sendToMainRenderers('chat:review-loop:changed', neutralReviewLoopSnapshots())
 }
 
 /** Neutral participant lock, with the legacy manager fallback kept for old Web controller tests/adapters. */
@@ -1345,13 +1271,7 @@ function broadcastCodexAuth(status: CodexSubscriptionAuthStatus): void {
   // The dynamic execution catalog comes from the connected account → probe in the background
   // on each DEFAULT account transition. This boundary invalidates model/list calls started under the previous account.
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:codex-subscription:auth-changed', status)
-  } catch {
-    /* Window closed during authentication transition. */
-  }
+  sendToMainRenderers('chat:codex-subscription:auth-changed', status)
 }
 
 /**
@@ -1555,13 +1475,7 @@ function sameSubscriptionAuthStatus(a: ChatSubscriptionAuthStatus, b: ChatSubscr
 
 function broadcastGitHubCopilotAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:github-copilot-subscription:auth-changed', status)
-  } catch {
-    /* window closed during authentication transition */
-  }
+  sendToMainRenderers('chat:github-copilot-subscription:auth-changed', status)
 }
 
 function scheduleGitHubCopilotConfigRefresh(previous: ChatSubscriptionAuthStatus): void {
@@ -1670,13 +1584,7 @@ function claudeAuthSnapshot(accountId: string | null = null): ChatSubscriptionAu
 
 function broadcastClaudeAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:claude-subscription:auth-changed', status)
-  } catch {
-    /* window closed during authentication transition */
-  }
+  sendToMainRenderers('chat:claude-subscription:auth-changed', status)
 }
 
 function scheduleClaudeConfigRefresh(previous: ChatSubscriptionAuthStatus): void {
@@ -1818,13 +1726,7 @@ const cursorAuthStatus = (refresh = false, accountId: string | null = null) => c
 
 function broadcastCursorAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:cursor-subscription:auth-changed', status)
-  } catch {
-    /* window closed during authentication transition */
-  }
+  sendToMainRenderers('chat:cursor-subscription:auth-changed', status)
 }
 
 async function validateCursorModelSelection(
@@ -1852,13 +1754,7 @@ async function validateCursorModelSelection(
 
 function broadcastGrokAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
-  const wc = getMainWebContents()
-  if (!wc || wc.isDestroyed()) return
-  try {
-    wc.send('chat:grok-subscription:auth-changed', status)
-  } catch {
-    /* window closed during authentication transition */
-  }
+  sendToMainRenderers('chat:grok-subscription:auth-changed', status)
 }
 
 function scheduleGrokConfigRefresh(previous: ChatSubscriptionAuthStatus): void {
@@ -2664,7 +2560,7 @@ function patchConvChat(conversationId: string, partial: Record<string, unknown>)
  * rewrites the same values announces nothing, so this can never feed itself.
  */
 export function publishConvChatSettings(conversationId: string): void {
-  getMainWebContents()?.send(`chat:settings:${conversationId}`)
+  sendToMainRenderers(`chat:settings:${conversationId}`)
 }
 
 /**
@@ -8398,13 +8294,10 @@ export async function persistReviewLoopSummary(input: {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
   try {
-    const wc = getMainWebContents()
-    if (wc && !wc.isDestroyed()) {
-      wc.send(
-        input.role ? `chat:review-loop:delivery:${conversationId}` : `chat:chatgpt-web:delivery:${conversationId}`,
-        { messageId }
-      )
-    }
+    sendToMainRenderers(
+      input.role ? `chat:review-loop:delivery:${conversationId}` : `chat:chatgpt-web:delivery:${conversationId}`,
+      { messageId }
+    )
   } catch {
     // Renderer notification is best-effort: the message is ALREADY stored (upsert succeeded). Retry
     // resends the same ID, and the renderer reconciles without duplication.
@@ -8417,7 +8310,7 @@ export function forceReviewLoopAgentMode(conversationId: string): void {
   if (getConversation(conversationId)?.experience === 'maestro') return
   if (modeFor(conversationId) !== 'agent') {
     setChatMode(conversationId, 'agent')
-    getMainWebContents()?.send(`chat:mode:${conversationId}`, 'agent')
+    sendToMainRenderers(`chat:mode:${conversationId}`, 'agent')
   }
 }
 
@@ -8499,9 +8392,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   markInterruptedSubagentSessions()
   if (!subagentSessionUnsubscribe) {
     subagentSessionUnsubscribe = onSubagentSessionChanged((event) => {
-      const subscribers = chatSubscribersByConversation.get(event.conversationId)
-      if (!subscribers) return
-      for (const wc of subscribers.keys()) {
+      for (const wc of chatSubscribersOf(event.conversationId)) {
         if (!wc.isDestroyed()) wc.send(`chat:subagent-session:${event.conversationId}`, event)
       }
     })
@@ -9778,8 +9669,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
         source: 'chatgpt-web',
         createdAt: Date.now(),
       })
-      const wc = getMainWebContents()
-      if (wc && !wc.isDestroyed()) wc.send(`chat:chatgpt-web:delivery:${conversationId}`, { messageId })
+      sendToMainRenderers(`chat:chatgpt-web:delivery:${conversationId}`, { messageId })
     },
     deliverPlan: (conversationId, plan, reviewId, title) => {
       const conv = getConversation(conversationId)
@@ -10455,7 +10345,7 @@ export function disposeChat(): Promise<void> {
     ])
     active.clear()
     pendingConversationOperations.clear()
-    for (const wc of [...chatSubscriptionsByWebContents.keys()]) clearChatSubscriptions(wc)
+    clearAllChatSubscriptions()
     codexAccountUpdatedUnsubscribe?.()
     codexAccountUpdatedUnsubscribe = null
     githubCopilotAuthUpdatedUnsubscribe?.()
