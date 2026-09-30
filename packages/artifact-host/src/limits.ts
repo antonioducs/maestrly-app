@@ -21,3 +21,5 @@ export const OWNER_SESSION_TTL_MS = 30 * 24 * HOUR_MS
 export const SESSION_TOUCH_INTERVAL_MS = HOUR_MS
 export const CAPABILITY_TTL_MS = 12 * HOUR_MS
 export const MAX_API_BODY_BYTES = 64 * 1024
+/** A preview image of one version, captured by the desktop after publishing. */
+export const MAX_THUMBNAIL_BYTES = 512 * 1024

@@ -16,6 +16,8 @@ export const ADMIN_METHODS = [
   'listFiles',
   'readFile',
   'delete',
+  'setThumbnail',
+  'getThumbnail',
   'mintOwnerTicket',
   'snapshot',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]

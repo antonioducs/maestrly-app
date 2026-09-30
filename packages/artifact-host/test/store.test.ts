@@ -49,6 +49,33 @@ afterEach(() => {
 })
 
 describe('ArtifactStore', () => {
+  it('counts shared files once per artifact and includes thumbnails in its storage', () => {
+    store.createArtifact(artifact('A'), version())
+    store.addVersion(
+      'A',
+      version(2000, [
+        { path: 'index.html', sha256: sha('a'), bytes: 3 },
+        { path: 'app.css', sha256: sha('b'), bytes: 5 },
+      ]),
+      1
+    )
+    expect(store.getArtifact('A')).toMatchObject({ storageBytes: 8, thumbnailVersion: null })
+    expect(store.setThumbnail('A', 1, { sha256: sha('t1'), contentType: 'image/jpeg', bytes: 7, createdAt: 2 })).toBe(
+      null
+    )
+    expect(store.getArtifact('A')).toMatchObject({ storageBytes: 15, thumbnailVersion: 1 })
+    expect(store.getThumbnail('A', 2)).toMatchObject({ version: 1, sha256: sha('t1') })
+    expect(store.setThumbnail('A', 1, { sha256: sha('t2'), contentType: 'image/jpeg', bytes: 4, createdAt: 3 })).toBe(
+      sha('t1')
+    )
+    expect(store.blobsOf('A').sort()).toEqual([sha('a'), sha('b'), sha('t2')].sort())
+    expect(store.isBlobReferenced(sha('t2'))).toBe(true)
+    expect(store.isBlobReferenced(sha('t1'))).toBe(false)
+    expect(store.referencedBlobs().has(sha('t2'))).toBe(true)
+    store.deleteArtifact('A')
+    expect(count('thumbnails')).toBe(0)
+  })
+
   it('creates and reads an artifact', () => {
     store.createArtifact(artifact('A'), version())
     expect(store.getArtifact('A')).toEqual({
@@ -65,6 +92,8 @@ describe('ArtifactStore', () => {
       visibility: 'private',
       createdAt: 1000,
       updatedAt: 1000,
+      storageBytes: 3,
+      thumbnailVersion: null,
     })
     expect(store.getArtifact('missing')).toBeNull()
     expect(store.countArtifacts()).toBe(1)

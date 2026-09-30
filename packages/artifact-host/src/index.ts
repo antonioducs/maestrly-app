@@ -1,4 +1,4 @@
-export type { ArtifactAdmin } from './admin.js'
+export { type ArtifactAdmin, thumbnailContentType } from './admin.js'
 export * from './bundle-paths.js'
 export { readBundleDirectory } from './directory.js'
 export type { TextEdit } from './edits.js'
@@ -12,6 +12,7 @@ export {
 export * from './ids.js'
 export * from './limits.js'
 export { ADMIN_METHODS, createAdminClient, type RpcChannel, serveAdmin } from './rpc.js'
+export { ARTIFACT_HEADER } from './shell/contract.js'
 export type {
   ArtifactDetail,
   ArtifactFileInfo,
@@ -21,6 +22,7 @@ export type {
   BundleFile,
   CreateArtifactInput,
   HostStatusInfo,
+  ThumbnailImage,
   UpdateArtifactInput,
 } from './schemas.js'
 export type { OwnerKind, VersionAuthor, Visibility } from './store/artifact-store.js'

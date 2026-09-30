@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS version_files (
   FOREIGN KEY (artifact_id, version) REFERENCES versions(artifact_id, number) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS version_files_blob ON version_files (sha256);
+CREATE TABLE IF NOT EXISTS thumbnails (
+  artifact_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (artifact_id, version),
+  FOREIGN KEY (artifact_id, version) REFERENCES versions(artifact_id, number) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS thumbnails_blob ON thumbnails (sha256);
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,

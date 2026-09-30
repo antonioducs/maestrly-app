@@ -2,7 +2,7 @@ import { contentTypeFor, isTextPath, normalizeBundlePath, validateBundle } from 
 import { applyEdits } from './edits.js'
 import { ArtifactHostError } from './errors.js'
 import { digest, isArtifactId, newArtifactId, newSecretToken } from './ids.js'
-import { MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
+import { MAX_THUMBNAIL_BYTES, MAX_VERSIONS_PER_ARTIFACT, OWNER_TICKET_TTL_MS } from './limits.js'
 import {
   type ArtifactDetail,
   type ArtifactFileInfo,
@@ -14,6 +14,7 @@ import {
   createArtifactInput,
   type HostStatusInfo,
   parseInput,
+  type ThumbnailImage,
   type UpdateArtifactInput,
   updateArtifactInput,
 } from './schemas.js'
@@ -30,6 +31,10 @@ export interface ArtifactAdmin {
   listFiles(id: string, version?: number): Promise<ArtifactFileInfo[]>
   readFile(id: string, version: number, path: string): Promise<{ bytes: Uint8Array; contentType: string } | null>
   delete(id: string): Promise<boolean>
+  /** Stores the preview image of a version (PNG, JPEG or WebP), replacing an earlier one. */
+  setThumbnail(id: string, version: number, image: Uint8Array): Promise<void>
+  /** The preview of the newest version up to `version` (the current one by default) that has one. */
+  getThumbnail(id: string, version?: number): Promise<ThumbnailImage | null>
   mintOwnerTicket(id: string): Promise<{ ticket: string; expiresAt: number }>
   snapshot(targetFile: string): Promise<void>
 }
@@ -44,6 +49,16 @@ export interface ArtifactAdminDeps {
 }
 
 const notFound = () => new ArtifactHostError('not_found', 'Artifact not found')
+
+/** Recognizes the image formats a thumbnail may use from their signatures, never from a declared type. */
+export function thumbnailContentType(bytes: Uint8Array): string | null {
+  const starts = (...signature: number[]) => signature.every((byte, index) => bytes[index] === byte)
+  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
+  if (starts(0xff, 0xd8, 0xff)) return 'image/jpeg'
+  const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to))
+  if (bytes.byteLength >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp'
+  return null
+}
 
 export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   const { store, blobs, clock } = deps
@@ -249,6 +264,48 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         deps.onChange?.(id)
         return true
       })
+    },
+
+    setThumbnail(id, version, image) {
+      return exclusive(async () => {
+        if (!isArtifactId(id) || !Number.isInteger(version) || !store.getVersion(id, version)) throw notFound()
+        if (!(image instanceof Uint8Array) || image.byteLength === 0)
+          throw new ArtifactHostError('invalid_input', 'A thumbnail needs image bytes')
+        if (image.byteLength > MAX_THUMBNAIL_BYTES)
+          throw new ArtifactHostError('file_too_large', `A thumbnail cannot exceed ${MAX_THUMBNAIL_BYTES} bytes`)
+        const contentType = thumbnailContentType(image)
+        if (!contentType)
+          throw new ArtifactHostError('unsupported_type', 'A thumbnail must be a PNG, JPEG or WebP image')
+        const sha = BlobStore.sha256(image)
+        if (!blobs.has(sha) && blobs.totalBytes() + image.byteLength > deps.quotaBytes)
+          throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
+        const fresh = !blobs.has(sha)
+        await blobs.put(image)
+        let previous: string | null
+        try {
+          previous = store.setThumbnail(id, version, {
+            sha256: sha,
+            contentType,
+            bytes: image.byteLength,
+            createdAt: clock(),
+          })
+        } catch (error) {
+          if (fresh) await discard([sha])
+          throw error
+        }
+        if (previous && previous !== sha) await discard([previous])
+        deps.onChange?.(id)
+      })
+    },
+
+    async getThumbnail(id, version) {
+      const artifact = isArtifactId(id) ? store.getArtifact(id) : null
+      if (!artifact) return null
+      const max = version ?? artifact.currentVersion
+      if (!Number.isInteger(max)) return null
+      const thumbnail = store.getThumbnail(id, max)
+      const bytes = thumbnail ? await blobs.read(thumbnail.sha256) : null
+      return thumbnail && bytes ? { version: thumbnail.version, contentType: thumbnail.contentType, bytes } : null
     },
 
     async mintOwnerTicket(id) {

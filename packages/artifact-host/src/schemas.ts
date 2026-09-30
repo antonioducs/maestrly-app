@@ -105,6 +105,13 @@ export interface ArtifactFileInfo {
   text: boolean
 }
 
+export interface ThumbnailImage {
+  /** The version the image shows, which may be older than the one asked for. */
+  version: number
+  contentType: string
+  bytes: Uint8Array
+}
+
 export interface HostStatusInfo {
   artifactCount: number
   storageBytes: number
