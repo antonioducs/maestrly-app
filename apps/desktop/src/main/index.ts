@@ -39,6 +39,7 @@ import { sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
 import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
 import { registerHostsIpc } from './remote-host/client/ipc'
+import { isRemoteConversation } from './drawer-scope'
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
@@ -261,7 +262,8 @@ function cleanupFailedChatGptShortcutRestore(convId: string): void {
 }
 
 function openPopupGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed()) return false
+  // The tools of a remote host's conversation stay docked in the drawer.
+  if (popupManager.isSuppressed() || isRemoteConversation(convId)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {
@@ -288,7 +290,7 @@ function openPopupGuarded(convId: string, tab: FloatTab): boolean {
 }
 
 function openFloatingGuarded(convId: string, tab: FloatTab): boolean {
-  if (popupManager.isSuppressed()) return false
+  if (popupManager.isSuppressed() || isRemoteConversation(convId)) return false
   if (tab === 'chatgpt') {
     if (!isChatGptWebEnabled()) return false
     if (!hasActiveChatGptWebSession(convId)) {

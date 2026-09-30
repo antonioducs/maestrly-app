@@ -16,6 +16,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { HostFolderDialog } from '@/components/HostFolderDialog'
 import type { ProjectSetupDialogState, ProjectSetupMode } from './use-project-setup'
 
 interface Props {
@@ -44,6 +46,9 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
   const [name, setName] = useState('')
   const [remoteUrl, setRemoteUrl] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
+  // A host nobody sits at has no native folder dialog: its folders are browsed in a dialog of this window.
+  const host = useHostInfo()
+  const [browsing, setBrowsing] = useState<'open' | 'parent' | null>(null)
   const result = state.result
 
   useEffect(() => {
@@ -66,9 +71,13 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
     return state.mode === 'create' || remoteUrl.trim().length > 0
   }, [name, parentPath, path, remoteUrl, state.busy, state.mode])
 
+  const picked = (purpose: 'open' | 'parent', selected: string) =>
+    purpose === 'open' ? setPath(selected) : setParentPath(selected)
+
   async function pick(purpose: 'open' | 'parent') {
+    if (!host.desktopEffects) return setBrowsing(purpose)
     const selected = await api.pickProjectDirectory(purpose)
-    if (selected) purpose === 'open' ? setPath(selected) : setParentPath(selected)
+    if (selected) picked(purpose, selected)
   }
 
   function updateRemoteUrl(value: string) {
@@ -276,6 +285,16 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
             </Button>
           </DialogFooter>
         )}
+        {/* Inside this dialog's content, so that using it does not count as a click outside this dialog. */}
+        <HostFolderDialog
+          open={browsing !== null}
+          purpose={browsing ?? 'open'}
+          onPick={(selected) => {
+            if (browsing) picked(browsing, selected)
+            setBrowsing(null)
+          }}
+          onClose={() => setBrowsing(null)}
+        />
       </DialogContent>
     </Dialog>
   )

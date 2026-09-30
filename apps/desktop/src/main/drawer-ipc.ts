@@ -1,4 +1,4 @@
-import { conversationTabAllowed } from './drawer-scope'
+import { conversationTabAllowed, isRemoteConversation } from './drawer-scope'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
 import {
   closeShellTerminal,
@@ -139,7 +139,8 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
 
   // --- detach drawer tabs by reparenting their native views ---
   reg.mon('drawer:detach', (_e, convId: string, tab: FloatTab) => {
-    if (conversationTabAllowed(convId, tab)) floatingManager.detach(convId, tab)
+    // The tools of a remote host's conversation stay docked in the drawer.
+    if (conversationTabAllowed(convId, tab) && !isRemoteConversation(convId)) floatingManager.detach(convId, tab)
   })
   reg.mon('drawer:reattach', (_e, convId: string, tab: FloatTab) => floatingManager.reattach(convId, tab))
   reg.mon('drawer:set-float-bounds', (_e, convId: string, tab: FloatTab, bounds: FloatingBounds) =>
@@ -169,7 +170,7 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     if (conversationTabAllowed(convId, tab)) deps.openPopup(convId, tab)
   })
   reg.mon('popup:open-floating', (_e, convId: string, tab: FloatTab) => {
-    if (!conversationTabAllowed(convId, tab)) return
+    if (!conversationTabAllowed(convId, tab) || isRemoteConversation(convId)) return
     // Release popup placement and stack state before floating-manager reparents the same view.
     if (popupManager.releasePopupForFloating(convId, tab)) floatingManager.detach(convId, tab)
   })

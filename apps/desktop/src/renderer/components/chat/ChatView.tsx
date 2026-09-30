@@ -20,6 +20,7 @@ import { X, Pencil, ArrowDown } from 'lucide-react'
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import {
   applyChatEvent,
@@ -1538,10 +1539,13 @@ export function ChatView({
     return subscribeSubagentProfilesChanged(reloadSubagents)
   }, [reloadSubagents, visible])
 
+  // A file of a server opens in an editor nobody sees: there, a mention stays a reference.
+  const opensFiles = useHostInfo().desktopEffects
   const openMention = useCallback(
-    (relPath: string, startLine?: number, endLine?: number) =>
-      void api.openPlanFile(conversationId, relPath, startLine, endLine),
-    [api, conversationId]
+    (relPath: string, startLine?: number, endLine?: number) => {
+      if (opensFiles) void api.openPlanFile(conversationId, relPath, startLine, endLine)
+    },
+    [api, conversationId, opensFiles]
   )
 
   const [remoteCmds, setRemoteCmds] = useState<{

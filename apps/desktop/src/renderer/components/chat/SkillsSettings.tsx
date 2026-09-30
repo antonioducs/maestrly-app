@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import type { ChatSkillDetail, ChatSkillGroup, ChatSkillSearchHit, ChatSkillsState } from '../../../shared/chat'
 
@@ -86,6 +87,7 @@ function SkillDetailPanel({ detail, onClose }: { detail: ChatSkillDetail; onClos
 }
 
 export function SkillsSettings() {
+  const host = useHostInfo()
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const [state, setState] = useState<ChatSkillsState>({
@@ -422,14 +424,16 @@ export function SkillsSettings() {
               >
                 <Eye className="h-3.5 w-3.5" />
               </button>
-              <button
-                type="button"
-                onClick={() => void api.chatSkillReveal(skill.name)}
-                className="text-muted-foreground hover:text-foreground"
-                title={t('settings.skillOpenFolder')}
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-              </button>
+              {host.desktopEffects && (
+                <button
+                  type="button"
+                  onClick={() => void api.chatSkillReveal(skill.name)}
+                  className="text-muted-foreground hover:text-foreground"
+                  title={t('settings.skillOpenFolder')}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import type { MessagePart } from '../../../shared/chat'
 
 const CHIP = 'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] text-foreground'
@@ -22,6 +23,7 @@ export function PdfAttachmentChip({
 }) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
+  const host = useHostInfo()
   const [opening, setOpening] = useState(false)
   const [failed, setFailed] = useState(false)
   const content = (
@@ -34,7 +36,8 @@ export function PdfAttachmentChip({
       )}
     </>
   )
-  if (!part.artifactId) {
+  // The system viewer of a server opens the file for nobody: there, the attachment is only named.
+  if (!part.artifactId || !host.desktopEffects) {
     return (
       <span className={cn(CHIP, 'border-white/[0.08] bg-white/[0.04]')} title={part.name}>
         {content}

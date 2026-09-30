@@ -6,7 +6,7 @@ import type {
   ProjectSetupRequest,
   ProjectSetupResult,
 } from '../../shared/project-setup'
-import { LOCAL_HOST_ID } from '../../shared/host-key'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import { hostApi } from '../lib/hosts/host-context'
 
 export type ProjectSetupMode = 'open' | 'create' | 'clone'
@@ -32,8 +32,12 @@ interface PendingRequest {
   resolve: (workspace: Workspace | null) => void
 }
 
-export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Promise<Workspace | null>) {
-  const api = hostApi(LOCAL_HOST_ID)
+/** Adds a project to a host: this computer unless another host is given. Ids are the host's own. */
+export function useProjectSetup(
+  reconcileWorkspace: (workspaceId: string) => Promise<Workspace | null>,
+  hostId: HostId = LOCAL_HOST_ID
+) {
+  const api = hostApi(hostId)
   const [state, setState] = useState<ProjectSetupDialogState>({
     open: false,
     mode: 'open',

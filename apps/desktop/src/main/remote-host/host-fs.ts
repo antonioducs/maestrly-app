@@ -2,7 +2,14 @@ import { statSync } from 'node:fs'
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import type { HostFsEntry, HostFsErrorCode, HostFsListing, HostFsListOptions, HostFsRoot } from '../../shared/host-fs'
+import {
+  HOST_FS_ERROR_MESSAGES,
+  type HostFsEntry,
+  type HostFsErrorCode,
+  type HostFsListing,
+  type HostFsListOptions,
+  type HostFsRoot,
+} from '../../shared/host-fs'
 import type { IpcRegistrar } from '../ipc-registrar'
 
 /**
@@ -12,7 +19,7 @@ import type { IpcRegistrar } from '../ipc-registrar'
  */
 const LIST_LIMIT = 2_000
 
-const fail = (code: HostFsErrorCode, message: string): Error => Object.assign(new Error(message), { code })
+const fail = (code: HostFsErrorCode): Error => Object.assign(new Error(HOST_FS_ERROR_MESSAGES[code]), { code })
 
 const errno = (error: unknown): string | undefined => (error as NodeJS.ErrnoException | null)?.code
 
@@ -26,7 +33,7 @@ const within = (target: string, roots: readonly string[]): boolean =>
 
 /** The real path of an existing path, when it is an allowed folder or inside one. */
 async function resolveInside(target: string, roots: readonly string[]): Promise<{ real: string; roots: string[] }> {
-  const outside = () => fail('outside-roots', 'This folder is outside the folders Maestrly can use here.')
+  const outside = () => fail('outside-roots')
   if (typeof target !== 'string' || !path.isAbsolute(target)) throw outside()
   const allowed = await realRoots(roots)
   let real: string
@@ -34,8 +41,7 @@ async function resolveInside(target: string, roots: readonly string[]): Promise<
     real = await realpath(target)
   } catch (error) {
     // A missing path is only reported as missing when its own text is inside a root: nothing leaks about the rest.
-    if (errno(error) === 'ENOENT' && within(path.resolve(target), allowed))
-      throw fail('not-found', 'This folder does not exist.')
+    if (errno(error) === 'ENOENT' && within(path.resolve(target), allowed)) throw fail('not-found')
     throw outside()
   }
   if (!within(real, allowed)) throw outside()
@@ -53,7 +59,7 @@ export async function listHostDirectory(
   try {
     names = await readdir(real)
   } catch (error) {
-    if (errno(error) === 'ENOTDIR') throw fail('not-a-directory', 'This is not a folder.')
+    if (errno(error) === 'ENOTDIR') throw fail('not-a-directory')
     throw error
   }
   const entries: HostFsEntry[] = []
@@ -98,12 +104,12 @@ export async function listHostDirectory(
 export async function createHostDirectory(parent: string, name: string, roots: readonly string[]): Promise<string> {
   const { real } = await resolveInside(parent, roots)
   if (typeof name !== 'string' || !/^[^/\\\0]{1,255}$/.test(name) || name === '.' || name === '..')
-    throw fail('invalid-name', 'This folder name cannot be used.')
+    throw fail('invalid-name')
   const created = path.join(real, name)
   try {
     await mkdir(created)
   } catch (error) {
-    if (errno(error) === 'EEXIST') throw fail('exists', 'A file or folder with this name already exists.')
+    if (errno(error) === 'EEXIST') throw fail('exists')
     throw error
   }
   return created

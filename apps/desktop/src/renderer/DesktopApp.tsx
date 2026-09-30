@@ -7,7 +7,7 @@ import { i18n } from '@/lib/i18n'
 import type { Conversation, Workspace, FloatTab, ReviewLoopInfo } from '../preload'
 import { cn } from '@/lib/utils'
 import { findActivePairedReviewLoop } from '@/lib/review-loop-split'
-import { Sidebar } from '@/components/Sidebar'
+import { Sidebar, type SidebarHostSection } from '@/components/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
 import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
 import { ReviewLoopSplitView } from '@/components/chat/ReviewLoopSplitView'
@@ -47,8 +47,13 @@ import { ConversationMigrationDialog } from '@/components/conversation-migration
 import { MigrationRecoveryGate } from '@/components/conversation-migration/MigrationRecoveryGate'
 import { CHAT_VIEW_COLD_TTL_MS, pruneMountedChatViews } from '@/lib/conversation-mount-lru'
 import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
-import { hostApi } from '@/lib/hosts/host-context'
-import { LOCAL_HOST_ID } from '../shared/host-key'
+import { hostApi, HostProvider } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { type RemoteHostShell, RemoteHostRuntime } from '@/lib/hosts/remote-host-runtime'
+import { hostOfKey, hostTarget, hostWorkspace, isRemoteKey, rawId, shellConversation } from '@/lib/hosts/shell-keys'
+import { HostUnavailableOverlay } from '@/components/HostUnavailableOverlay'
+import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
+import type { HostView } from '../shared/hosts'
 
 export function DesktopApp() {
   const api = hostApi(LOCAL_HOST_ID)
@@ -91,7 +96,11 @@ export function DesktopApp() {
     chatGptWebEnabled,
     drawerShortcutLabel,
   } = drawer
-  const ws = useWorkspaces({ active, setActive, forgetConvDrawerState })
+  // A conversation of the window carries its host in its id (see lib/hosts/shell-keys). What this computer's own
+  // hooks and dialogs take is its conversation only: a remote host's is handled by that host's runtime below.
+  const activeRemote = active !== null && isRemoteKey(active.id)
+  const activeLocal = activeRemote ? null : active
+  const ws = useWorkspaces({ active: activeLocal, setActive, forgetConvDrawerState })
   const {
     workspaces,
     standaloneConversations,
@@ -126,6 +135,46 @@ export function DesktopApp() {
       }),
     [refreshWorkspaces, api]
   )
+  // Remote hosts: what each one lists arrives from its runtime (rendered below), already keyed for the window.
+  const hosts = useHosts()
+  const remoteHosts = useMemo(() => hosts.filter((host) => host.remote), [hosts])
+  const hostViews = useMemo(() => new Map<HostId, HostView>(hosts.map((host) => [host.id, host])), [hosts])
+  const [remote, setRemote] = useState<Record<HostId, RemoteHostShell>>({})
+  const remoteRef = useRef(remote)
+  remoteRef.current = remote
+  const onRemoteChange = useCallback((shell: RemoteHostShell) => {
+    setRemote((previous) => {
+      const known = previous[shell.hostId]
+      // A host that answers again lists from scratch: until it has, what it listed before stays on screen.
+      const next = shell.loaded || !known?.loaded ? shell : { ...known, actions: shell.actions }
+      return { ...previous, [shell.hostId]: next }
+    })
+  }, [])
+  useEffect(() => {
+    const present = new Set(remoteHosts.map((host) => host.id))
+    setRemote((previous) =>
+      Object.keys(previous).every((id) => present.has(id))
+        ? previous
+        : Object.fromEntries(Object.entries(previous).filter(([id]) => present.has(id)))
+    )
+    // A conversation of a host that left (its server was disconnected) is no longer shown.
+    setActive((current) => (current && isRemoteKey(current.id) && !present.has(hostOfKey(current.id)) ? null : current))
+  }, [remoteHosts])
+  const remoteLists = useRef<{ sources: unknown[]; conversations: Conversation[] }>({ sources: [], conversations: [] })
+  const remoteConversations = useMemo(() => {
+    // Statuses of a remote host change far more often than its lists: the list of conversations keeps its identity.
+    const shells = Object.values(remote)
+    const sources = shells.flatMap((shell) => [shell.standaloneConversations, shell.workspaces])
+    const cached = remoteLists.current
+    if (sources.length === cached.sources.length && sources.every((item, index) => item === cached.sources[index]))
+      return cached.conversations
+    const conversations: Conversation[] = shells.flatMap((shell) => [
+      ...shell.standaloneConversations,
+      ...shell.workspaces.flatMap((workspace) => workspace.conversations),
+    ])
+    remoteLists.current = { sources, conversations }
+    return conversations
+  }, [remote])
   const handleConversationExperienceChange = useCallback(
     (conversationId: string, experience: Conversation['experience']) => {
       setActive((current) =>
@@ -138,13 +187,18 @@ export function DesktopApp() {
             : conversation
         )
       )
-      void refreshWorkspaces()
+      if (isRemoteKey(conversationId)) void remoteRef.current[hostOfKey(conversationId)]?.actions.refresh()
+      else void refreshWorkspaces()
     },
     [refreshWorkspaces]
   )
   const allConversations = useMemo(
-    () => [...standaloneConversations, ...workspaces.flatMap((workspace) => workspace.conversations)],
-    [workspaces, standaloneConversations]
+    () => [
+      ...standaloneConversations,
+      ...workspaces.flatMap((workspace) => workspace.conversations),
+      ...remoteConversations,
+    ],
+    [workspaces, standaloneConversations, remoteConversations]
   )
   useEffect(() => {
     setActive((current) => {
@@ -198,16 +252,34 @@ export function DesktopApp() {
       return [...byId.values()]
     })
   }, [allConversations, splitReviewLoop])
-  const projectSetup = useProjectSetup(reconcileWorkspace)
+  // One project setup at a time, on the host it was asked for; its workspaces keep that host's own ids.
+  const [projectHost, setProjectHost] = useState<HostId>(LOCAL_HOST_ID)
+  const projectHostRef = useRef<HostId>(LOCAL_HOST_ID)
+  const reconcileProjectWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const host = projectHostRef.current
+      if (host === LOCAL_HOST_ID) return reconcileWorkspace(workspaceId)
+      const listed = await remoteRef.current[host]?.actions.reconcileWorkspace(hostKey(host, workspaceId))
+      return listed ? hostWorkspace(listed) : null
+    },
+    [reconcileWorkspace]
+  )
+  const projectSetup = useProjectSetup(reconcileProjectWorkspace, projectHost)
   const [focusedWorkspaceId, setFocusedWorkspaceId] = useState<string | null>(null)
-  const requestProject = useCallback(
-    async (options?: ProjectSetupOptions): Promise<Workspace | null> => {
+  const requestProjectOn = useCallback(
+    async (hostId: HostId, options?: ProjectSetupOptions): Promise<Workspace | null> => {
       setFocusedWorkspaceId(null)
+      projectHostRef.current = hostId
+      setProjectHost(hostId)
       const workspace = await projectSetup.requestProject(options)
-      if (workspace) setFocusedWorkspaceId(workspace.id)
+      if (workspace) setFocusedWorkspaceId(hostKey(hostId, workspace.id))
       return workspace
     },
     [projectSetup.requestProject]
+  )
+  const requestProject = useCallback(
+    (options?: ProjectSetupOptions) => requestProjectOn(LOCAL_HOST_ID, options),
+    [requestProjectOn]
   )
   const nav = useMainPanels({ workspaces, setActive, refreshWorkspaces })
   const fleet = useFleet()
@@ -274,6 +346,33 @@ export function DesktopApp() {
     }
   }, [handleCreated, handleSelect, api])
 
+  const [creatingRemoteChat, setCreatingRemoteChat] = useState<HostId | null>(null)
+  const creatingRemoteChatRef = useRef(false)
+  const handleNewRemoteChat = useCallback(
+    async (hostId: HostId) => {
+      const actions = remoteRef.current[hostId]?.actions
+      if (!actions || creatingRemoteChatRef.current) return
+      creatingRemoteChatRef.current = true
+      setCreatingRemoteChat(hostId)
+      try {
+        handleSelect(await actions.newChat())
+      } catch (error) {
+        alert(i18n.t('ui:app.createChatFailed', { error: String(error) }))
+      } finally {
+        creatingRemoteChatRef.current = false
+        setCreatingRemoteChat(null)
+      }
+    },
+    [handleSelect]
+  )
+  const handleRemoteCreated = useCallback(
+    async (hostId: HostId, conversation: Conversation) => {
+      await remoteRef.current[hostId]?.actions.refresh()
+      handleSelect(shellConversation(hostId, conversation))
+    },
+    [handleSelect]
+  )
+
   const [chatGptFloating, setChatGptFloating] = useState(false)
   const [chatGptFloatingVisible, setChatGptFloatingVisible] = useState(false)
   useEffect(() => {
@@ -334,11 +433,18 @@ export function DesktopApp() {
     (chatGptFloatingVisible ? (active?.id ?? null) : null)
   const agents = useAgentStatuses({
     refreshWorkspaces,
-    activeId: active?.id ?? null,
+    activeId: activeLocal?.id ?? null,
     mainOverride,
     chatGptVisibleConversationId,
   })
-  const { statuses, attention, acknowledgeConversation } = agents
+  const { acknowledgeConversation } = agents
+  // What the window shows of every host together: this computer's, and each remote host's under its keys.
+  const statuses = useMemo(
+    () => Object.assign({}, agents.statuses, ...Object.values(remote).map((shell) => shell.statuses)),
+    [agents.statuses, remote]
+  ) as typeof agents.statuses
+  const remoteAttention = useMemo(() => Object.values(remote).flatMap((shell) => [...shell.attention]), [remote])
+  const attention = remoteAttention.length ? new Set([...agents.attention, ...remoteAttention]) : agents.attention
   useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
@@ -356,7 +462,8 @@ export function DesktopApp() {
 
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
-      acknowledgeConversation(conv.id)
+      if (isRemoteKey(conv.id)) remoteRef.current[hostOfKey(conv.id)]?.actions.acknowledgeConversation(conv.id)
+      else acknowledgeConversation(conv.id)
       if (findActivePairedReviewLoop(reviewLoops, conv.id)) {
         setDismissedSplitLoopId(null)
       }
@@ -375,7 +482,14 @@ export function DesktopApp() {
     })
   }, [])
   const plan = usePlans({ openDrawerTab, setDrawerOpenByConv })
-  const { plans, pendingPlanIds } = plan
+  const plans = useMemo(
+    () => Object.assign({}, plan.plans, ...Object.values(remote).map((shell) => shell.plans)) as typeof plan.plans,
+    [plan.plans, remote]
+  )
+  const pendingPlanIds = useMemo(
+    () => new Set([...plan.pendingPlanIds, ...Object.values(remote).flatMap((shell) => [...shell.pendingPlanIds])]),
+    [plan.pendingPlanIds, remote]
+  )
   const [dialogWs, setDialogWs] = useState<string | null>(null)
 
   const [branchDialogWs, setBranchDialogWs] = useState<string | null>(null)
@@ -383,7 +497,7 @@ export function DesktopApp() {
 
   const [openTargets, setOpenTargets] = useState<{ vscode: boolean }>({ vscode: false })
   const migration = useConversationMigration({
-    active,
+    active: activeLocal,
     refreshWorkspaces,
     focusConversation: handleSelect,
   })
@@ -467,6 +581,9 @@ export function DesktopApp() {
 
   useEffect(() => {
     const live = new Set(allConversations.map((c) => c.id))
+    // A remote host's list reaches the window a render after the host answered: a conversation just created or
+    // opened there stays mounted meanwhile.
+    if (active && isRemoteKey(active.id)) live.add(active.id)
     setMountedConvs((prev) => (prev.some((c) => !live.has(c.id)) ? prev.filter((c) => live.has(c.id)) : prev))
     const pruneDead = <T,>(prev: Record<string, T>): Record<string, T> => {
       const dead = Object.keys(prev).filter((id) => !live.has(id))
@@ -501,7 +618,7 @@ export function DesktopApp() {
       }
       return pruneDead(next)
     })
-  }, [allConversations])
+  }, [allConversations, active?.id])
 
   useEffect(
     () => window.api.onWindowFullscreen((full) => document.documentElement.classList.toggle('is-fullscreen', full)),
@@ -514,9 +631,12 @@ export function DesktopApp() {
 
   // Example: window.__sendToActive('\x1b[I')  |  window.__sendToActive('\x1b[200~hello\x1b[201~\r')
   useEffect(() => {
-    ;(window as unknown as { __sendToActive?: (d: string) => void }).__sendToActive = (d) =>
-      active && api.writePty(active.id, d)
-  }, [active, api])
+    ;(window as unknown as { __sendToActive?: (d: string) => void }).__sendToActive = (d) => {
+      if (!active) return
+      const target = hostTarget(active.id)
+      target.api.writePty(target.id, d)
+    }
+  }, [active])
 
   const [aboutOpen, setAboutOpen] = useState(false)
 
@@ -535,6 +655,11 @@ export function DesktopApp() {
   const handleNewSiblingConversation = useCallback(
     async (sourceConvId: string) => {
       try {
+        if (isRemoteKey(sourceConvId)) {
+          const created = await remoteRef.current[hostOfKey(sourceConvId)]?.actions.newSiblingConversation(sourceConvId)
+          if (created) handleSelect(created)
+          return
+        }
         const conv = await api.createSiblingConversation({ sourceConversationId: sourceConvId })
         await refreshWorkspaces()
         handleSelect(conv)
@@ -586,11 +711,58 @@ export function DesktopApp() {
     [allConversations, handleSelect]
   )
 
+  const retryHost = useCallback((hostId: HostId) => void window.api.hostsRetry(hostId), [])
+  const startHost = useCallback(
+    (host: HostView) => {
+      if (host.environment) void fleet.environmentAction(host.environment.id, 'start')
+    },
+    [fleet.environmentAction]
+  )
+  const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
+  const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
+    host,
+    shell: remote[host.id] ?? null,
+    creatingChat: creatingRemoteChat === host.id,
+    onNewChat: () => void handleNewRemoteChat(host.id),
+    onAddWorkspace: () => void requestProjectOn(host.id),
+    onRetry: () => retryHost(host.id),
+    onStart: () => startHost(host),
+    onManage: openServerPage,
+  }))
+  /** Runs an action of the sidebar on the host its conversation or workspace belongs to. */
+  const onHost = (key: string, local: () => unknown, act: (actions: RemoteHostShell['actions']) => unknown): void => {
+    if (!isRemoteKey(key)) void local()
+    else if (remote[hostOfKey(key)]) void act(remote[hostOfKey(key)].actions)
+  }
+  const activeHostId = active ? hostOfKey(active.id) : LOCAL_HOST_ID
+  const activeHost = activeRemote ? (hostViews.get(activeHostId) ?? null) : null
+  const allWorkspaces = [...workspaces, ...Object.values(remote).flatMap((shell) => shell.workspaces)]
+  const dialogHostId = dialogWs ? hostOfKey(dialogWs) : LOCAL_HOST_ID
+  const branchDialogWorkspace = allWorkspaces.find((w) => w.id === branchDialogWs)
+
   return (
     <SettingsProvider openSettings={openSettings}>
       <UpdateProvider>
         <OnboardingProvider isOpen={onboardingOpen} openOnboarding={openOnboarding}>
           <div className="relative flex h-full bg-background text-foreground">
+            {remoteHosts
+              .filter((host) => host.state === 'online')
+              .map((host) => (
+                // One runtime per connection: a host that answers again is listed again from scratch.
+                <RemoteHostRuntime
+                  key={`${host.id}:${host.epoch}`}
+                  hostId={host.id}
+                  active={active}
+                  setActive={setActive}
+                  setMountedConvs={setMountedConvs}
+                  mainOverride={mainOverride}
+                  forgetConvDrawerState={forgetConvDrawerState}
+                  openDrawerTab={openDrawerTab}
+                  setDrawerOpenByConv={setDrawerOpenByConv}
+                  onFocus={handleSelect}
+                  onChange={onRemoteChange}
+                />
+              ))}
             {sidebarOpen && (
               <Sidebar
                 workspaces={workspaces}
@@ -631,7 +803,15 @@ export function DesktopApp() {
                 onToggleArchived={() => setShowArchived((v) => !v)}
                 onSelect={handleSidebarConversationSelect}
                 onAddWorkspace={() => void requestProject()}
-                onRemoveWorkspace={handleRemoveWorkspace}
+                hostSections={hostSections}
+                localHost={hosts[0]}
+                onRemoveWorkspace={(id) =>
+                  onHost(
+                    id,
+                    () => handleRemoveWorkspace(id),
+                    (actions) => actions.removeWorkspace(id)
+                  )
+                }
                 onNewConversation={(wsId) => setDialogWs(wsId)}
                 onOpenProjectNotes={(wsId) => {
                   setProjectNotesWs(wsId)
@@ -651,16 +831,56 @@ export function DesktopApp() {
                 }}
                 onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
                 onOpenAbout={() => setAboutOpen(true)}
-                onRenameConversation={handleRename}
-                onArchiveConversation={handleArchive}
-                onPinConversation={handlePinConversation}
-                onDeleteConversation={handleDelete}
+                onRenameConversation={(conv, name) =>
+                  onHost(
+                    conv.id,
+                    () => handleRename(conv, name),
+                    (actions) => actions.renameConversation(conv, name)
+                  )
+                }
+                onArchiveConversation={(conv, archived) =>
+                  onHost(
+                    conv.id,
+                    () => handleArchive(conv, archived),
+                    (actions) => actions.archiveConversation(conv, archived)
+                  )
+                }
+                onPinConversation={(conv, pinned) =>
+                  isRemoteKey(conv.id)
+                    ? remote[hostOfKey(conv.id)]?.actions.pinConversation(conv, pinned)
+                    : handlePinConversation(conv, pinned)
+                }
+                onDeleteConversation={(conv) =>
+                  onHost(
+                    conv.id,
+                    () => handleDelete(conv),
+                    (actions) => actions.deleteConversation(conv)
+                  )
+                }
                 onMigrateConversation={migration.openMigration}
                 onNewSiblingConversation={handleNewSiblingConversation}
-                onArchiveSiblings={handleArchiveSiblings}
-                onDeleteSiblings={handleDeleteSiblings}
+                onArchiveSiblings={(members, archived) =>
+                  onHost(
+                    members[0]?.id ?? '',
+                    () => handleArchiveSiblings(members, archived),
+                    (actions) => actions.archiveSiblings(members, archived)
+                  )
+                }
+                onDeleteSiblings={(members) =>
+                  onHost(
+                    members[0]?.id ?? '',
+                    () => handleDeleteSiblings(members),
+                    (actions) => actions.deleteSiblings(members)
+                  )
+                }
                 onReorderWorkspaces={handleReorderWorkspaces}
-                onReorderConversations={handleReorderConversations}
+                onReorderConversations={(workspaceId, ids) =>
+                  onHost(
+                    workspaceId,
+                    () => handleReorderConversations(workspaceId, ids),
+                    (actions) => actions.reorderConversations(workspaceId, ids)
+                  )
+                }
                 groups={groups}
                 onCreateGroup={handleCreateGroup}
                 onRenameGroup={handleRenameGroup}
@@ -668,7 +888,13 @@ export function DesktopApp() {
                 onReorderGroups={handleReorderGroups}
                 onToggleGroupCollapsed={handleToggleGroupCollapsed}
                 onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
-                onToggleWorkspaceCollapsed={handleToggleWorkspaceCollapsed}
+                onToggleWorkspaceCollapsed={(id) =>
+                  onHost(
+                    id,
+                    () => handleToggleWorkspaceCollapsed(id),
+                    (actions) => actions.toggleWorkspaceCollapsed(id)
+                  )
+                }
                 onCollapseSidebar={() => setSidebarOpen(false)}
                 openTargets={openTargets}
                 onOpenExternal={(scope, id, target) =>
@@ -685,22 +911,26 @@ export function DesktopApp() {
               style={fullActive && !mainOverride ? { display: 'none' } : undefined}
             >
               {projectNotesWs && (
-                <ProjectNotesView
-                  workspaceId={projectNotesWs}
-                  workspaceName={workspaces.find((w) => w.id === projectNotesWs)?.name ?? ''}
-                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                  onClose={() => setProjectNotesWs(null)}
-                />
+                <HostProvider hostId={hostOfKey(projectNotesWs)}>
+                  <ProjectNotesView
+                    workspaceId={rawId(projectNotesWs)}
+                    workspaceName={allWorkspaces.find((w) => w.id === projectNotesWs)?.name ?? ''}
+                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                    onClose={() => setProjectNotesWs(null)}
+                  />
+                </HostProvider>
               )}
               {projectMemoryWs && (
-                <ProjectMemoryView
-                  workspaceId={projectMemoryWs}
-                  focusMemoryId={focusMemoryId}
-                  focusMemoryRequest={focusMemoryRequest}
-                  workspaceName={workspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
-                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
-                  onClose={() => setProjectMemoryWs(null)}
-                />
+                <HostProvider hostId={hostOfKey(projectMemoryWs)}>
+                  <ProjectMemoryView
+                    workspaceId={rawId(projectMemoryWs)}
+                    focusMemoryId={focusMemoryId}
+                    focusMemoryRequest={focusMemoryRequest}
+                    workspaceName={allWorkspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
+                    onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                    onClose={() => setProjectMemoryWs(null)}
+                  />
+                </HostProvider>
               )}
               {settingsOpen && (
                 <SettingsView
@@ -783,7 +1013,9 @@ export function DesktopApp() {
                     <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
                     {active?.botOrigin && <BotConversationBadge conversation={active} />}
                     {active?.scope === 'project' && (
-                      <ConversationBranchChip conversationId={active.id} status={statuses[active.id]} />
+                      <HostProvider hostId={activeHostId}>
+                        <ConversationBranchChip conversationId={rawId(active.id)} status={statuses[active.id]} />
+                      </HostProvider>
                     )}
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
@@ -792,6 +1024,8 @@ export function DesktopApp() {
                       active.archived === 0 &&
                       !active.isMulti &&
                       !active.botOrigin &&
+                      // A paired review runs two conversations of this computer side by side.
+                      !activeRemote &&
                       !runningReviewLoopForActive && (
                         <Button
                           variant="ghost"
@@ -842,6 +1076,8 @@ export function DesktopApp() {
                           ? { top: 28, bottom: 0, left: `${reviewSplitRatio}%`, right: 0 }
                           : { display: 'none' }
                       : { display: active?.id === c.id ? undefined : 'none' }
+                    const chatHostId = hostOfKey(c.id)
+                    const chatHost = chatHostId === LOCAL_HOST_ID ? null : (hostViews.get(chatHostId) ?? null)
                     return (
                       // Inactive conversations use display:none; terminal views must refit when shown.
 
@@ -854,20 +1090,35 @@ export function DesktopApp() {
                           if (splitRole && active?.id !== c.id) focusReviewPane(c.id)
                         }}
                       >
-                        <ChatView
-                          key={c.id}
-                          conversationId={c.id}
-                          workspaceId={c.workspaceId}
-                          cwd={c.cwd}
-                          experience={c.experience}
-                          botManaged={!!c.botOrigin && c.botManagementState === 'active'}
-                          botConversation={c.botOrigin ? c : undefined}
-                          botName={c.botOrigin?.botName}
-                          onExperienceChange={handleConversationExperienceChange}
-                          visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
-                          status={statuses[c.id] ?? c.status}
-                          onEvictionSafetyChange={onChatEvictionSafetyChange}
-                        />
+                        <HostProvider hostId={chatHostId}>
+                          <ChatView
+                            // A remote host's conversation is loaded again each time the host answers again.
+                            key={chatHost ? `${c.id}@${chatHost.epoch}` : c.id}
+                            conversationId={rawId(c.id)}
+                            workspaceId={c.workspaceId === null ? null : rawId(c.workspaceId)}
+                            cwd={c.cwd}
+                            experience={c.experience}
+                            botManaged={!!c.botOrigin && c.botManagementState === 'active'}
+                            botConversation={c.botOrigin ? c : undefined}
+                            botName={c.botOrigin?.botName}
+                            onExperienceChange={(id, experience) =>
+                              handleConversationExperienceChange(hostKey(chatHostId, id), experience)
+                            }
+                            visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
+                            status={statuses[c.id] ?? c.status}
+                            onEvictionSafetyChange={(id, safe) =>
+                              onChatEvictionSafetyChange(hostKey(chatHostId, id), safe)
+                            }
+                          />
+                        </HostProvider>
+                        {chatHost && (
+                          <HostUnavailableOverlay
+                            host={chatHost}
+                            onRetry={() => retryHost(chatHost.id)}
+                            onStart={() => startHost(chatHost)}
+                            onManage={openServerPage}
+                          />
+                        )}
                       </div>
                     )
                   })}
@@ -906,22 +1157,25 @@ export function DesktopApp() {
                     display: drawerOpen && !mainOverride ? undefined : 'none',
                   }}
                 >
-                  <Drawer
-                    activeConv={active}
-                    visible={drawerOpen && !mainOverride}
-                    suspended={overlaysSuspendNativeViews}
-                    onClose={() => setDrawerOpen(false)}
-                    isFull={fullActive}
-                    onToggleFull={toggleDrawerFull}
-                    activePlan={plans[active.id] ?? null}
-                    tab={drawerTab}
-                    onTabChange={setActiveDrawerTab}
-                    openTabs={openTabs}
-                    onCloseTab={closeDrawerTab}
-                    onReorderOpenTabs={reorderOpenTabs}
-                    catalogOrder={mainTabOrder}
-                    chatGptWebEnabled={chatGptWebEnabled}
-                  />
+                  <HostProvider hostId={activeHostId}>
+                    <Drawer
+                      activeConv={active}
+                      visible={drawerOpen && !mainOverride}
+                      // The panels of a host that is away show nothing useful: the overlay of its chat says why.
+                      suspended={overlaysSuspendNativeViews || (activeHost !== null && activeHost.state !== 'online')}
+                      onClose={() => setDrawerOpen(false)}
+                      isFull={fullActive}
+                      onToggleFull={toggleDrawerFull}
+                      activePlan={plans[active.id] ?? null}
+                      tab={drawerTab}
+                      onTabChange={setActiveDrawerTab}
+                      openTabs={openTabs}
+                      onCloseTab={closeDrawerTab}
+                      onReorderOpenTabs={reorderOpenTabs}
+                      catalogOrder={mainTabOrder}
+                      chatGptWebEnabled={chatGptWebEnabled && !activeRemote}
+                    />
+                  </HostProvider>
                 </div>
               </>
             )}
@@ -937,14 +1191,25 @@ export function DesktopApp() {
               onExecute={() => void migration.execute()}
             />
 
-            <NewConversationDialog
-              workspaceId={dialogWs}
-              workspaces={workspaces}
-              requestProject={requestProject}
-              open={dialogWs !== null}
-              onOpenChange={(o) => !o && setDialogWs(null)}
-              onCreated={handleCreated}
-            />
+            <HostProvider hostId={dialogHostId}>
+              {/* The dialog works with its host's own ids; the window's are turned into them and back. */}
+              <NewConversationDialog
+                workspaceId={dialogWs === null ? null : rawId(dialogWs)}
+                workspaces={
+                  dialogHostId === LOCAL_HOST_ID
+                    ? workspaces
+                    : (remote[dialogHostId]?.workspaces ?? []).map(hostWorkspace)
+                }
+                requestProject={() => requestProjectOn(dialogHostId)}
+                open={dialogWs !== null}
+                onOpenChange={(o) => !o && setDialogWs(null)}
+                onCreated={
+                  dialogHostId === LOCAL_HOST_ID
+                    ? handleCreated
+                    : (conversation) => void handleRemoteCreated(dialogHostId, conversation)
+                }
+              />
+            </HostProvider>
 
             <ReviewLoopPickerDialog
               executor={active}
@@ -954,22 +1219,32 @@ export function DesktopApp() {
               onReviewerCreated={handleReviewerCreated}
             />
 
-            <ProjectSetupDialog
-              state={projectSetup.state}
-              onModeChange={projectSetup.setMode}
-              onStart={projectSetup.start}
-              onResolveEmptyRemote={projectSetup.resolveEmptyRemote}
-              onClose={projectSetup.close}
-            />
+            <HostProvider hostId={projectHost}>
+              <ProjectSetupDialog
+                state={projectSetup.state}
+                onModeChange={projectSetup.setMode}
+                onStart={projectSetup.start}
+                onResolveEmptyRemote={projectSetup.resolveEmptyRemote}
+                onClose={projectSetup.close}
+              />
+            </HostProvider>
 
-            <WorkspaceDefaultBranchDialog
-              workspaceId={branchDialogWs}
-              workspaceName={workspaces.find((w) => w.id === branchDialogWs)?.name}
-              currentDefault={workspaces.find((w) => w.id === branchDialogWs)?.defaultBranch ?? ''}
-              open={branchDialogWs !== null}
-              onOpenChange={(o) => !o && setBranchDialogWs(null)}
-              onSaved={() => void refreshWorkspaces()}
-            />
+            <HostProvider hostId={branchDialogWs ? hostOfKey(branchDialogWs) : LOCAL_HOST_ID}>
+              <WorkspaceDefaultBranchDialog
+                workspaceId={branchDialogWs === null ? null : rawId(branchDialogWs)}
+                workspaceName={branchDialogWorkspace?.name}
+                currentDefault={branchDialogWorkspace?.defaultBranch ?? ''}
+                open={branchDialogWs !== null}
+                onOpenChange={(o) => !o && setBranchDialogWs(null)}
+                onSaved={() =>
+                  onHost(
+                    branchDialogWs ?? '',
+                    () => refreshWorkspaces(),
+                    (actions) => actions.refresh()
+                  )
+                }
+              />
+            </HostProvider>
 
             <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 

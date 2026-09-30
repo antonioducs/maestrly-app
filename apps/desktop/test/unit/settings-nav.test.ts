@@ -26,7 +26,8 @@ describe('settings navigation', () => {
       'privacy',
       'updates',
     ])
-    expect(settingsViewSource).toContain("{section === 'chat' && <MaestrlyChatSection")
+    // The section renders inside the profile of the host chosen in Settings.
+    expect(settingsViewSource).toContain("{section === 'chat' && inProfile(<MaestrlyChatSection")
     expect(settingsViewSource).not.toContain("{section === 'clis' && <MaestrlyChatSection")
   })
 

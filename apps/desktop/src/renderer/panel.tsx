@@ -13,17 +13,21 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { i18n, initRendererI18n } from './lib/i18n'
 import { HostProvider, useHostApi } from '@/lib/hosts/host-context'
 import type { PlanReceived } from '../preload'
-import { LOCAL_HOST_ID } from '../shared/host-key'
+import { hostKey, LOCAL_HOST_ID } from '../shared/host-key'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import './styles.css'
 
 const params = new URLSearchParams(location.search)
 const panel = params.get('panel') ?? ''
 const conv = params.get('conv') ?? ''
 const host = params.get('host') ?? LOCAL_HOST_ID
+// This computer knows the panel's conversation by its host key; the host knows it by `conv`.
+const convKey = hostKey(host, conv)
 
 function PlanPanelHost({ conv }: { conv: string }) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
+  const opensFiles = useHostInfo().desktopEffects
   const [plan, setPlan] = useState<PlanReceived | null>(null)
   useEffect(() => {
     let alive = true
@@ -53,7 +57,10 @@ function PlanPanelHost({ conv }: { conv: string }) {
     <PlanPanel
       plan={plan}
       onDecide={(d) => api.decidePlan(conv, d)}
-      onOpenFile={(filePath, line) => void api.openPlanFile(conv, filePath, line)}
+      // A file of a server opens in an editor nobody sees: there, a path stays a reference.
+      onOpenFile={(filePath, line) => {
+        if (opensFiles) void api.openPlanFile(conv, filePath, line)
+      }}
     />
   )
 }
@@ -65,7 +72,7 @@ function TerminalPanelHost({ conv }: { conv: string }) {
   useEffect(
     () =>
       window.api.onTerminalPanelActivity((state) => {
-        if (state.convId === conv) setFullSpeed(state.fullSpeed)
+        if (state.convId === convKey) setFullSpeed(state.fullSpeed)
       }),
     [conv]
   )
@@ -75,8 +82,15 @@ function TerminalPanelHost({ conv }: { conv: string }) {
   return <TerminalTabs convId={conv} active={fullSpeed} />
 }
 
+/** A panel of a remote host's conversation is mounted again each time the host answers again. */
+function HostPanel() {
+  const info = useHostInfo()
+  return <PanelRoot key={info.epoch} />
+}
+
 function PanelRoot() {
   const api = useHostApi()
+  const opensFiles = useHostInfo().desktopEffects
   switch (panel) {
     case 'notes':
       return <NotesPanel key={conv} scope="conv" scopeId={conv} showMerge visible />
@@ -85,7 +99,9 @@ function PanelRoot() {
         <ReviewPanel
           convId={conv}
           visible
-          onOpenFile={(path, line) => void api.openPlanFile(conv, path, line)}
+          onOpenFile={(path, line) => {
+            if (opensFiles) void api.openPlanFile(conv, path, line)
+          }}
           onOpenUrl={(url) => void window.api.openExternalUrl(url)}
         />
       )
@@ -107,7 +123,7 @@ void initRendererI18n().finally(() => {
         <ErrorBoundary>
           <div className="h-screen w-screen bg-surface text-foreground">
             <HostProvider hostId={host}>
-              <PanelRoot />
+              <HostPanel />
             </HostProvider>
           </div>
         </ErrorBoundary>

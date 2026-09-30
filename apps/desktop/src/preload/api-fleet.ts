@@ -226,6 +226,8 @@ export const fleetApi = {
     environmentId: string,
     action: 'start' | 'stop' | 'restart' | 'archive'
   ): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:environmentAction', environmentId, action),
+  /** Creates the server's workspaces environment: Maestrly running there for the owner's chats and workspaces. */
+  fleetCreateWorkspaces: (): Promise<FleetEnvironment> => ipcRenderer.invoke('fleet:createWorkspaces'),
   /**
    * Moves the environment to the server's bot image: `idle` schedules it for when none of its bots is busy and answers
    * at once; `now` restarts it at once, interrupting its bots. Gateways with `environment-updates` only.

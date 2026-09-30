@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { fleetErrorMessage, isOwnerMemoryFull } from '@/lib/fleet/errors'
 import { hasEnvironments, ownerMemoryScope } from '@/lib/fleet/environments'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { botEnvironments } from '@/lib/fleet/selectors'
 
 export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
   const { t, i18n } = useTranslation('fleet')
@@ -24,7 +25,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
   const [refresh, setRefresh] = useState(0)
   // With environments an entry reaches every bot (global, the default) or the bots of one environment.
   const scoped = hasEnvironments(fleet.state.connection)
-  const environments = fleet.state.snapshot.environments
+  const environments = botEnvironments(fleet.state.snapshot.environments)
   const [scope, setScope] = useState('global')
   const scopeValue = scope !== 'global' && !environments.some((item) => item.id === scope) ? 'global' : scope
   const editTextarea = useRef<HTMLTextAreaElement>(null)

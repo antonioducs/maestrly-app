@@ -8,6 +8,8 @@ import {
   reorderVisibleTabs,
   sanitizeMainOrder,
   sanitizeOpenTabs,
+  tabAvailableInContext,
+  mainTabsForContext,
 } from '../../src/renderer/lib/drawer-tabs'
 
 describe('on-demand open tabs', () => {
@@ -67,5 +69,23 @@ describe('conditional drawer tabs', () => {
 
   it('removes the legacy delegations tab from persisted preferences', () => {
     expect(sanitizeMainOrder(['terminal', 'delegations', 'browser'])).not.toContain('delegations')
+  })
+})
+
+describe("tools of a remote host's conversation", () => {
+  const remote = { id: 'server-1/workspaces#conv-1', scope: 'project' }
+
+  it('offers its panels, and neither the browser nor the editor nor the companion', () => {
+    expect(mainTabsForContext(DEFAULT_MAIN_ORDER, remote, true)).toEqual(['terminal', 'plan', 'review', 'notes'])
+    expect(tabAvailableInContext('browser', remote)).toBe(false)
+    expect(tabAvailableInContext('vscode', { id: remote.id })).toBe(false)
+    expect(tabAvailableInContext('terminal', { id: remote.id })).toBe(true)
+    // A chat has no review, there as here.
+    expect(tabAvailableInContext('review', { ...remote, scope: 'standalone' })).toBe(false)
+  })
+
+  it('drops tabs persisted by the host that this computer cannot show', () => {
+    expect(sanitizeOpenTabs(['browser', 'terminal', 'vscode', 'notes'], remote)).toEqual(['terminal', 'notes'])
+    expect(sanitizeOpenTabs(['browser', 'terminal'], { id: 'conv-1' })).toEqual(['browser', 'terminal'])
   })
 })

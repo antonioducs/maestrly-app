@@ -32,6 +32,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { cn } from '@/lib/utils'
 import { LocalConversationPreview } from '@/components/local-conversation/LocalConversationPreview'
 import { initialLocalConversationFlow, localConversationFlowReducer } from '@/components/local-conversation/flow'
@@ -89,6 +90,7 @@ export function NewConversationDialog({
 }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
+  const host = useHostInfo()
   const [selected, setSelected] = useState<string[]>([])
   const [branchesByWs, setBranchesByWs] = useState<Record<string, Branches>>({})
 
@@ -387,7 +389,7 @@ export function NewConversationDialog({
               recovery={localFlow.step === 'recovery' ? localFlow.recovery : undefined}
               message={localFlow.step === 'preview' ? localFlow.message : undefined}
               onOpenTerminal={
-                localFlow.step === 'recovery'
+                localFlow.step === 'recovery' && host.desktopEffects
                   ? () => void api.openExternal('workspace', selected[0], 'terminal')
                   : undefined
               }

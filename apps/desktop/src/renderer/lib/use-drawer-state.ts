@@ -14,6 +14,7 @@ import {
   tabAvailableInContext,
 } from '@/lib/drawer-tabs'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { hostTarget } from '@/lib/hosts/shell-keys'
 
 const MIN_DRAWER = 360
 
@@ -85,12 +86,11 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const drawerTabRef = useRef(drawerTabByConv)
   drawerTabRef.current = drawerTabByConv
 
-  const persistOpenTabs = useCallback(
-    (id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
-      api.setConvOpenTabs(id, tabs, activeTab)
-    },
-    [api]
-  )
+  // A conversation's drawer tabs are kept by its host, under the host's own id.
+  const persistOpenTabs = useCallback((id: string, tabs: DrawerTab[], activeTab: DrawerTab | null) => {
+    const target = hostTarget(id)
+    target.api.setConvOpenTabs(target.id, tabs, activeTab)
+  }, [])
 
   /** Adds the tab to the bar when needed, activates it and persists the set. */
   const openDrawerTab = useCallback(
@@ -194,19 +194,17 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
 
   const mainTabOrderRef = useRef(mainTabOrderByConv)
   mainTabOrderRef.current = mainTabOrderByConv
-  const reorderMainTabs = useCallback(
-    (from: number, to: number) => {
-      const id = activeRef.current?.id
-      if (!id) return
-      const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
-      const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
-      const next = reorderVisibleTabs(full, visible, from, to)
-      if (next === full) return
-      api.setConvMainTabOrder(id, next)
-      setMainTabOrderByConv((prev) => ({ ...prev, [id]: next }))
-    },
-    [api]
-  )
+  const reorderMainTabs = useCallback((from: number, to: number) => {
+    const id = activeRef.current?.id
+    if (!id) return
+    const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
+    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current)
+    const next = reorderVisibleTabs(full, visible, from, to)
+    if (next === full) return
+    const target = hostTarget(id)
+    target.api.setConvMainTabOrder(target.id, next)
+    setMainTabOrderByConv((prev) => ({ ...prev, [id]: next }))
+  }, [])
 
   const forgetConvDrawerState = useCallback((id: string) => {
     const drop = <T>(prev: Record<string, T>): Record<string, T> => {

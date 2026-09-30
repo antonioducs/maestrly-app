@@ -34,6 +34,7 @@ import { isReviewLoopConversationReserved } from '../../shared/chat'
 import type { DrawerTab } from '../../shared/tool-tabs'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { isRemoteKey } from '@/lib/hosts/shell-keys'
 import { useReorder } from '@/lib/use-reorder'
 import { Button } from '@/components/ui/button'
 import { BrowserChrome } from '@/components/BrowserChrome'
@@ -469,17 +470,21 @@ export function Drawer({
             <RotateCw className={cn('size-4', restarting && 'animate-spin')} />
           </Button>
         )}
-        {tab && DETACHABLE.has(tab) && (tab !== 'chatgpt' || chatGptSessionActive) && (
-          <Button
-            variant={isFloating(tab) ? 'secondary' : 'ghost'}
-            size="icon"
-            className="no-drag size-7 shrink-0"
-            onClick={() => toggleDetach(tab)}
-            title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
-          >
-            {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
-          </Button>
-        )}
+        {/* The tools of a remote host's conversation stay docked here. */}
+        {tab &&
+          DETACHABLE.has(tab) &&
+          !(convId && isRemoteKey(convId)) &&
+          (tab !== 'chatgpt' || chatGptSessionActive) && (
+            <Button
+              variant={isFloating(tab) ? 'secondary' : 'ghost'}
+              size="icon"
+              className="no-drag size-7 shrink-0"
+              onClick={() => toggleDetach(tab)}
+              title={isFloating(tab) ? t('drawer.reattach') : t('drawer.detach')}
+            >
+              {isFloating(tab) ? <PictureInPicture className="size-4" /> : <PictureInPicture2 className="size-4" />}
+            </Button>
+          )}
         <Button
           variant="ghost"
           size="icon"

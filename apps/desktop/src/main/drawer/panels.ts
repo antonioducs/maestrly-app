@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebContentsView } from 'electron'
+import { panelSearch } from '../drawer-scope'
 import { preparePanelMemoryEviction, registerPanelTarget, sendToPanel, unregisterPanelTarget } from '../window-ipc'
 import { resolvePreload } from '../resolve-preload'
 import { attachHotkeyCapture } from '../hotkeys'
@@ -39,7 +40,7 @@ function panelReclaimKey(convId: string, tab: PanelTab): string {
 
 /** Development URL or production file for panel.html with panel/conversation query parameters. */
 function loadPanel(view: WebContentsView, tab: string, convId: string): void {
-  const search = `?panel=${tab}&conv=${encodeURIComponent(convId)}`
+  const search = panelSearch(tab, convId)
   if (process.env.ELECTRON_RENDERER_URL) {
     void view.webContents.loadURL(`${process.env.ELECTRON_RENDERER_URL}/panel.html${search}`)
   } else {

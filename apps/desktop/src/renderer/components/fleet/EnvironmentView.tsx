@@ -48,8 +48,10 @@ import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { CompactionFields } from './CompactionFields'
 import { EnvironmentScreen } from './EnvironmentScreen'
+import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 
-const tabs = ['overview', 'screen'] as const
+const allTabs = ['overview', 'screen'] as const
+const overviewOnly = ['overview'] as const
 /** `update` restarts on a gateway that cannot schedule updates; `updateNow` forces a scheduled one. */
 type Confirm = 'restart' | 'update' | 'updateNow' | 'stop' | 'archive'
 
@@ -70,7 +72,10 @@ export function EnvironmentView({
   onCreateBot: (environmentId: string) => void
 }) {
   const { t } = useTranslation('fleet')
-  const tab = view.tab
+  // A workspaces environment runs Maestrly for the owner's chats and workspaces: it has no bots and no screen.
+  const workspaces = isWorkspacesEnvironment(environment)
+  const tabs: readonly (typeof allTabs)[number][] = workspaces ? overviewOnly : allTabs
+  const tab = workspaces ? 'overview' : view.tab
   const setTab = (next: typeof tab) => onView({ kind: 'environment', environmentId: environment.id, tab: next })
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = tabs.indexOf(tab)
@@ -100,7 +105,9 @@ export function EnvironmentView({
           <div className="min-w-0 shrink-0">
             <h1 className="truncate text-sm font-semibold">{environment.name}</h1>
             <p className="max-w-40 truncate text-xs text-muted-foreground">
-              {t('environment.label')} · {t('environment.botCount', { count: environment.botIds.length })}
+              {workspaces
+                ? t('workspaces.label')
+                : `${t('environment.label')} · ${t('environment.botCount', { count: environment.botIds.length })}`}
             </p>
           </div>
           <button
@@ -114,6 +121,7 @@ export function EnvironmentView({
           <div
             role="tablist"
             aria-label={t('environment.views')}
+            hidden={workspaces}
             className="flex min-w-0 items-center gap-1 rounded-lg border border-border p-0.5"
           >
             {tabs.map((name) => (
@@ -185,6 +193,7 @@ function EnvironmentOverview({
   onArchived: () => void
 }) {
   const { t, i18n } = useTranslation('fleet')
+  const workspaces = isWorkspacesEnvironment(environment)
   const bots = environmentBots(environment, fleet.state.snapshot.bots)
   const running = environment.lifecycle === 'running'
   const stopped = environment.lifecycle === 'stopped' || environment.lifecycle === 'failed'
@@ -292,7 +301,8 @@ function EnvironmentOverview({
   return (
     <section className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mx-auto max-w-3xl space-y-8">
-        <section className="space-y-3" aria-labelledby="fleet-environment-bots">
+        {workspaces && <p className="text-sm text-muted-foreground">{t('workspaces.description')}</p>}
+        <section className="space-y-3" aria-labelledby="fleet-environment-bots" hidden={workspaces}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 id="fleet-environment-bots" className="font-semibold">
               {t('environment.bots')}
@@ -323,14 +333,19 @@ function EnvironmentOverview({
           </div>
           <p className="text-xs text-muted-foreground">{t('environment.sharedNote')}</p>
         </section>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-6">
-          <p className="text-xs text-muted-foreground">{t('environment.sharedConfig')}</p>
+        <div
+          className={`flex flex-wrap items-center justify-between gap-2 ${workspaces ? '' : 'border-t border-border pt-6'}`}
+        >
+          <p className="text-xs text-muted-foreground">
+            {t(workspaces ? 'workspaces.sharedConfig' : 'environment.sharedConfig')}
+          </p>
           <Button size="sm" variant="ghost" disabled={availability !== 'ready' || !running} onClick={lists.refresh}>
             {t('environment.refresh')}
           </Button>
         </div>
+        {/* Siblings need keys of their own: two with one key are duplicated when React matches them by key. */}
         <BotAccountsSection
-          key={environment.id}
+          key={`accounts-${environment.id}`}
           subject={subject}
           lists={lists}
           availability={availability}
@@ -343,30 +358,41 @@ function EnvironmentOverview({
               await fleet.refresh()
             }}
           />
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={screenBusy || !running || oldImage}
-            onClick={() => void logInOnScreen()}
-          >
-            {t('environment.loginOnScreen')}
-          </Button>
-          {oldImage && <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>}
+          {!workspaces && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={screenBusy || !running || oldImage}
+              onClick={() => void logInOnScreen()}
+            >
+              {t('environment.loginOnScreen')}
+            </Button>
+          )}
+          {!workspaces && oldImage && (
+            <p className="text-xs text-muted-foreground">{t('environment.loginNeedsRestart')}</p>
+          )}
           {screenError && (
             <p role="alert" className="text-xs text-destructive">
               {screenError}
             </p>
           )}
         </BotAccountsSection>
-        <BotSkillsMcpSection key={environment.id} subject={subject} lists={lists} availability={availability} />
-        <EnvironmentCompaction
-          key={`compaction-${environment.id}`}
-          environment={environment}
-          bots={bots}
-          fleet={fleet}
-          optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+        <BotSkillsMcpSection
+          key={`skills-${environment.id}`}
+          subject={subject}
+          lists={lists}
+          availability={availability}
         />
-        <section className="space-y-2" aria-labelledby="fleet-environment-screen">
+        {!workspaces && (
+          <EnvironmentCompaction
+            key={`compaction-${environment.id}`}
+            environment={environment}
+            bots={bots}
+            fleet={fleet}
+            optionsKey={JSON.stringify([listsKey, lists.accounts ?? null])}
+          />
+        )}
+        <section className="space-y-2" aria-labelledby="fleet-environment-screen" hidden={workspaces}>
           <h2 id="fleet-environment-screen" className="font-semibold">
             {t('environment.screenTitle')}
           </h2>
@@ -431,7 +457,9 @@ function EnvironmentOverview({
           <h2 id="fleet-environment-lifecycle" className="font-semibold">
             {t('environment.lifecycleTitle')}
           </h2>
-          <p className="text-xs text-muted-foreground">{t('environment.lifecycleNote')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(workspaces ? 'workspaces.lifecycleNote' : 'environment.lifecycleNote')}
+          </p>
           <div className="flex flex-wrap gap-2">
             {stopped ? (
               <Button size="sm" onClick={() => void fleet.environmentAction(environment.id, 'start')}>
@@ -513,9 +541,11 @@ function EnvironmentOverview({
           )}
         </section>
         <section className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 p-4">
-          <p className="text-xs text-muted-foreground">{t('environment.archiveNote')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(workspaces ? 'workspaces.archiveNote' : 'environment.archiveNote')}
+          </p>
           <Button variant="destructive" size="sm" onClick={() => setConfirm('archive')}>
-            {t('environment.archive', { name: environment.name })}
+            {workspaces ? t('workspaces.archive') : t('environment.archive', { name: environment.name })}
           </Button>
         </section>
         {error && (
@@ -535,20 +565,29 @@ function EnvironmentOverview({
                   ? t('updates.confirmNowTitle', { name: environment.name })
                   : confirm === 'stop'
                     ? t('environment.confirmStopTitle', { name: environment.name })
-                    : t('environment.confirmArchiveTitle')
+                    : t(workspaces ? 'workspaces.confirmArchiveTitle' : 'environment.confirmArchiveTitle')
           }
           message={
-            confirm === 'restart'
-              ? t('environment.confirmRestart', { bots: names })
-              : confirm === 'update'
-                ? t('environment.confirmUpdate', { bots: names })
-                : confirm === 'updateNow'
-                  ? blockers.length
-                    ? t('updates.confirmNow', { bots: blockerNames, count: blockers.length })
-                    : t('updates.confirmNowIdle', { bots: names })
+            workspaces
+              ? // No bots to name: what stops is the chats running on the server.
+                confirm === 'restart'
+                ? t('workspaces.confirmRestart')
+                : confirm === 'update' || confirm === 'updateNow'
+                  ? t('workspaces.confirmUpdate')
                   : confirm === 'stop'
-                    ? t('environment.confirmStop', { bots: names })
-                    : t('environment.confirmArchive', { bots: names })
+                    ? t('workspaces.confirmStop')
+                    : t('workspaces.confirmArchive')
+              : confirm === 'restart'
+                ? t('environment.confirmRestart', { bots: names })
+                : confirm === 'update'
+                  ? t('environment.confirmUpdate', { bots: names })
+                  : confirm === 'updateNow'
+                    ? blockers.length
+                      ? t('updates.confirmNow', { bots: blockerNames, count: blockers.length })
+                      : t('updates.confirmNowIdle', { bots: names })
+                    : confirm === 'stop'
+                      ? t('environment.confirmStop', { bots: names })
+                      : t('environment.confirmArchive', { bots: names })
           }
           confirmLabel={
             confirm === 'restart'

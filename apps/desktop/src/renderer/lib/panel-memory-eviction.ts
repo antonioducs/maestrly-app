@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { hostKey } from '../../shared/host-key'
+import { useHostId } from './hosts/host-context'
 
 export function preparePlanPanelMemoryEviction(
   busy: boolean,
@@ -16,9 +18,11 @@ export function usePanelMemoryEviction(
   tab: string,
   prepare: () => Promise<{ safe: boolean; reason?: string }> | { safe: boolean; reason?: string }
 ): void {
+  // This computer's main process names the panel's conversation by its host key; the panel knows its host's id.
+  const key = hostKey(useHostId(), convId)
   useEffect(() => {
     return window.api.onPrepareMemoryEviction((payload) => {
-      if (payload.convId !== convId || payload.tab !== tab) return
+      if (payload.convId !== key || payload.tab !== tab) return
       void Promise.resolve()
         .then(prepare)
         .then((result) => {
@@ -32,5 +36,5 @@ export function usePanelMemoryEviction(
           window.api.memoryEvictionReady({ requestId: payload.requestId, safe: false, reason: 'prepare-failed' })
         })
     })
-  }, [convId, prepare, tab])
+  }, [key, prepare, tab])
 }

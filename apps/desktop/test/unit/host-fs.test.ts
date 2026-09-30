@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createHostDirectory, hostFsRoots, listHostDirectory } from '../../src/main/remote-host/host-fs'
+import { HOST_FS_ERROR_MESSAGES, hostFsErrorCode } from '../../src/shared/host-fs'
 
 let base: string
 let root: string
@@ -92,5 +93,18 @@ describe('host folders', () => {
     ])
     for (const value of ['relative', path.join(root, 'nope'), path.join(root, 'notes.txt')])
       expect(hostFsRoots({ MAESTRLY_WORKSPACES_ROOT: value })).toHaveLength(1)
+  })
+})
+
+describe('host folder refusals across IPC', () => {
+  it('can be told apart by the message, which is all that IPC carries of an error', async () => {
+    const refused = await listHostDirectory(path.join(outside, 'secret'), {}, [root]).catch((error: Error) => error)
+    expect(hostFsErrorCode(refused)).toBe('outside-roots')
+    const exists = await createHostDirectory(root, 'beta', [root]).catch((error: Error) => error)
+    // As Electron and the bridge hand it to a renderer.
+    const wrapped = new Error(`Error invoking remote method 'host:invoke': Error: ${(exists as Error).message}`)
+    expect(hostFsErrorCode(wrapped)).toBe('exists')
+    expect(hostFsErrorCode(new Error('EACCES: permission denied'))).toBeNull()
+    expect(new Set(Object.values(HOST_FS_ERROR_MESSAGES)).size).toBe(Object.keys(HOST_FS_ERROR_MESSAGES).length)
   })
 })

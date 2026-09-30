@@ -23,6 +23,7 @@ import {
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../../preload'
 import type { MenuKit } from '@/components/sidebar/menu-kit'
 import { isApparentlyMigrationEligible } from '@/components/conversation-migration/flow'
+import { isRemoteKey } from '@/lib/hosts/shell-keys'
 
 export interface OpenTargets {
   vscode: boolean
@@ -78,6 +79,8 @@ export function useSidebarMenus({
   const { t } = useTranslation('ui')
 
   const openSubmenu = (scope: 'conv' | 'workspace', id: string, m: MenuKit) => {
+    // Opening a folder in a desktop app of a server shows it to nobody.
+    if (isRemoteKey(id)) return null
     const open = (target: OpenExternalTarget) => (e: MouseEvent) => {
       e.stopPropagation()
       onOpenExternal(scope, id, target)
@@ -154,7 +157,7 @@ export function useSidebarMenus({
         <Pencil /> {t('common.rename')}
       </m.Item>
       {pinItem(conv, isArchived, m)}
-      {isApparentlyMigrationEligible(conv) && (
+      {isApparentlyMigrationEligible(conv) && !isRemoteKey(conv.id) && (
         <m.Item
           onClick={(e: MouseEvent) => {
             e.stopPropagation()
@@ -247,8 +250,9 @@ export function useSidebarMenus({
       {openSubmenu('workspace', ws.id, m)}
       <m.Separator />
 
+      {/* A remote host's workspaces are listed flat in its section. */}
       <m.Sub>
-        <m.SubTrigger>
+        <m.SubTrigger disabled={isRemoteKey(ws.id)}>
           <Layers /> {t('sidebar.moveToGroup')}
         </m.SubTrigger>
         <m.SubContent>

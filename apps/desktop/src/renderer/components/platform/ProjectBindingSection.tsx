@@ -10,6 +10,8 @@ import {
   type ProjectSetupResult,
 } from '../../../shared/project-setup'
 import { useHostApi } from '../../lib/hosts/host-context'
+import { useHostInfo } from '../../lib/hosts/use-hosts'
+import { HostFolderDialog } from '../HostFolderDialog'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 
@@ -243,8 +245,29 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
     chooseWorkspace(workspace.id)
     if (repository) setRepositoryId(repository)
   }
+  // A host nobody sits at has no native folder dialog: its folders are browsed in a dialog of this window.
+  const host = useHostInfo()
+  const [browse, setBrowse] = useState<{ purpose: 'open' | 'parent'; resolve: (path: string | null) => void } | null>(
+    null
+  )
+  const pickFolder = (purpose: 'open' | 'parent'): Promise<string | null> =>
+    host.desktopEffects ? api.pickFolder() : new Promise((resolve) => setBrowse({ purpose, resolve }))
+  const folderDialog = (
+    <HostFolderDialog
+      open={browse !== null}
+      purpose={browse?.purpose ?? 'open'}
+      onPick={(path) => {
+        browse?.resolve(path)
+        setBrowse(null)
+      }}
+      onClose={() => {
+        browse?.resolve(null)
+        setBrowse(null)
+      }}
+    />
+  )
   async function chooseFolder() {
-    const folder = await api.pickFolder()
+    const folder = await pickFolder('open')
     if (!folder) return
     let result = await runSetup({ kind: 'open', path: folder })
     // A plain folder is fine: Git is only an implementation detail of how conversations are isolated.
@@ -255,7 +278,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
     repositories.find((r) => r.id === repositoryId && r.cloneUrl) ?? repositories.find((r) => r.cloneUrl)
   async function cloneRepository() {
     if (!cloneable?.cloneUrl) return
-    const parent = await api.pickFolder()
+    const parent = await pickFolder('parent')
     if (!parent) return
     const result = await runSetup({
       kind: 'clone',
@@ -681,6 +704,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
           ) : null}
         </>
       )}
+      {folderDialog}
     </section>
   )
 }

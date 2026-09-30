@@ -1,3 +1,4 @@
+import { isRemoteHostId, parseHostKey } from '../../shared/host-key'
 import type { DrawerTab } from '../../shared/tool-tabs'
 
 export type { DrawerTab }
@@ -8,7 +9,17 @@ export function mainTabsForFeatures(order: DrawerTab[], chatGptWebEnabled: boole
   return chatGptWebEnabled ? order : order.filter((tab) => tab !== 'chatgpt')
 }
 
+/** The tools a conversation of a remote host shows on this computer; its browser and editor stay on the host. */
+const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'plan', 'review', 'notes'])
+
+/** Whether the window's id of a conversation names one of a remote host. */
+const onRemoteHost = (conv: unknown): boolean => {
+  const id = (conv as { id?: unknown } | null)?.id
+  return typeof id === 'string' && isRemoteHostId(parseHostKey(id).hostId)
+}
+
 export function tabAvailableInContext(tab: DrawerTab, conv: unknown, chatGptWebEnabled = true): boolean {
+  if (!REMOTE_HOST_TABS.has(tab) && onRemoteHost(conv)) return false
   if (tab === 'review' && (conv as { scope?: string } | null)?.scope === 'standalone') return false
   if (tab === 'chatgpt' && !chatGptWebEnabled) return false
   return tab !== 'notes' || Boolean(conv)

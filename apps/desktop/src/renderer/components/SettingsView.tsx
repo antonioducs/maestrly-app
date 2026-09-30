@@ -1,11 +1,14 @@
 /** Desktop preferences and provider integrations. Local performance diagnostics remain available
  * without uploading telemetry or coupling settings to a Maestrly account. */
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Settings, X, PanelLeft } from 'lucide-react'
 import type { ChatPermMode, ShortcutOpenMode } from '../../preload'
 import { UsagePanel } from '@/components/UsagePanel'
-import { useHostApi } from '@/lib/hosts/host-context'
+import { hostApi, HostProvider, useHostApi } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { OptionSelect, SelectOption } from '@/components/ui/option-select'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import { useLocale } from '@/lib/i18n'
 import type { FloatTab } from '../../shared/tool-tabs'
 import {
@@ -45,6 +48,9 @@ import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
+/** The sections about a Maestrly profile, which a host has; the others are this computer's window and app. */
+const PROFILE_SECTIONS: ReadonlySet<SettingsSection> = new Set(['chat', 'bots', 'platform', 'usage', 'execution'])
+
 interface Props {
   fleet?: FleetController
   initialSection?: SettingsSection
@@ -70,6 +76,19 @@ export function SettingsView({
 }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
+  // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
+  // the chosen host; the others are this computer's window and app, whichever host is chosen.
+  const hosts = useHosts()
+  const profileHosts = hosts.filter((host) => !host.remote || host.state === 'online')
+  const [profileHostId, setProfileHostId] = useState<HostId>(LOCAL_HOST_ID)
+  const profileHost = profileHosts.find((host) => host.id === profileHostId) ?? profileHosts[0]
+  const profileApi = hostApi(profileHost.id)
+  const inProfile = (node: ReactNode) => (
+    // Mounted again for another host, and for a host that answers again.
+    <HostProvider key={`${profileHost.id}:${profileHost.epoch}`} hostId={profileHost.id}>
+      {node}
+    </HostProvider>
+  )
   const navItems = sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV
   const showNav = navItems.length > 1
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -103,10 +122,13 @@ export function SettingsView({
   }, [initialSection])
 
   useEffect(() => {
-    api
+    profileApi
       .getDefaultPermissionMode()
       .then(setDefaultPermissionMode)
       .catch(() => {})
+  }, [profileApi])
+
+  useEffect(() => {
     if (isWin) {
       api
         .getFreeTerminalShell()
@@ -221,7 +243,7 @@ export function SettingsView({
 
   const updateDefaultPermissionMode = (mode: ChatPermMode) => {
     setDefaultPermissionMode(mode)
-    api.setDefaultPermissionMode(mode)
+    profileApi.setDefaultPermissionMode(mode)
   }
 
   const selectShell = (id: string) => {
@@ -365,7 +387,28 @@ export function SettingsView({
               section === 'chat' ? 'max-w-6xl' : 'max-w-2xl'
             )}
           >
-            {section === 'usage' && <UsagePanel />}
+            {PROFILE_SECTIONS.has(section) && profileHosts.length > 1 && (
+              <div data-settings-host className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span id="settings-host-label" className="text-[13px] font-medium">
+                  {t('settings.host.label')}
+                </span>
+                <OptionSelect
+                  value={profileHost.id}
+                  onValueChange={setProfileHostId}
+                  aria-labelledby="settings-host-label"
+                  className="h-8 w-60"
+                >
+                  {profileHosts.map((host) => (
+                    <SelectOption key={host.id} value={host.id}>
+                      {host.remote ? host.label || t('sidebar.hostUnnamed') : t('sidebar.hostThisComputer')}
+                    </SelectOption>
+                  ))}
+                </OptionSelect>
+                <p className="basis-full text-xs text-muted-foreground">{t('settings.host.hint')}</p>
+              </div>
+            )}
+
+            {section === 'usage' && inProfile(<UsagePanel />)}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
 
@@ -379,13 +422,18 @@ export function SettingsView({
               />
             )}
 
-            {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
+            {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chat} />)}
 
-            {section === 'platform' && <PlatformSection />}
+            {section === 'platform' && inProfile(<PlatformSection />)}
             {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
-            {section === 'bots' && (
-              <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />
-            )}
+            {section === 'bots' &&
+              inProfile(
+                // Adding a project from here opens this computer's project setup.
+                <BotSection
+                  onNavigate={selectSection}
+                  {...(onAddProject && !profileHost.remote ? { onAddProject } : {})}
+                />
+              )}
 
             {section === 'execution' && (
               <DefaultPermissionSection t={t} mode={defaultPermissionMode} onChange={updateDefaultPermissionMode} />

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
+import { useHostInfo } from '@/lib/hosts/use-hosts'
 import type {
   LocalMemory,
   LocalMemoryStatus,
@@ -693,6 +694,7 @@ function LocalMemoryEditor({
 }
 
 function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memory: SharedKnowledgeDocument }) {
+  const host = useHostInfo()
   const { t } = useTranslation('ui')
   const api = useHostApi()
   return (
@@ -705,10 +707,12 @@ function SharedMemoryDetail({ workspaceId, memory }: { workspaceId: string; memo
           </div>
           {memory.scope && <div className="mt-1 text-[10px] text-muted-foreground">scope: {memory.scope}</div>}
         </div>
-        <Button size="sm" variant="outline" onClick={() => api.openSharedMemory(workspaceId, memory.relativePath)}>
-          <ExternalLink className="mr-1 size-3.5" />
-          {t('projectMemory.openSource')}
-        </Button>
+        {host.desktopEffects && (
+          <Button size="sm" variant="outline" onClick={() => api.openSharedMemory(workspaceId, memory.relativePath)}>
+            <ExternalLink className="mr-1 size-3.5" />
+            {t('projectMemory.openSource')}
+          </Button>
+        )}
       </div>
       {memory.warnings.length > 0 && (
         <div className="my-3 rounded bg-amber-500/[0.08] p-2 text-xs text-amber-100">{memory.warnings.join('\n')}</div>

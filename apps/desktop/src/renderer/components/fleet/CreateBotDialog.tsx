@@ -34,6 +34,7 @@ import { choiceClass } from '@/lib/fleet/choice'
 import { importGroupSize } from '@/lib/fleet/create-bot'
 import { ceilingValues, nextRadioIndex, type Ceiling } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { botEnvironments } from '@/lib/fleet/selectors'
 import { cn } from '@/lib/utils'
 import { BotPeerPicker } from './BotPeerPicker'
 import { ChoiceMark } from './ChoiceMark'
@@ -208,7 +209,7 @@ export function CreateBotDialog({
   const sectionId = (name: string) => `${ids}-${name}`
   // Without the gateway feature the dialog is the one from before environments: every bot gets its own container.
   const environments = hasEnvironments(fleet.state.connection)
-  const listed = fleet.state.snapshot.environments
+  const listed = botEnvironments(fleet.state.snapshot.environments)
   const supportsImport = fleet.state.connection.features.includes('provisioning')
   const { inventory, error: inventoryError } = useMacInventory(open && supportsImport)
   const [where, setWhere] = useState<(typeof placements)[number]>('new')
