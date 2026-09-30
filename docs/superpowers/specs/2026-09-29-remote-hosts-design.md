@@ -186,8 +186,9 @@ Electron's `ipcRenderer`.
   hidden entries on request, 2,000 entries per listing.
 - **Host environment**: implements the instance control API with no bots. Health reports `ready`, the capabilities
   `provisioning`, `environments`, and `workspaces-host`, and `busy` (active chat turns). Environment status reports no
-  bots. Account, sign-in, skill, and MCP provisioning use the same code as a bot environment, extracted into
-  `EnvironmentProvisioning`. Bot and screen routes answer `409 CONFLICT`.
+  bots. Account, sign-in, skill, and MCP provisioning delegate to an `EnvironmentRuntime` with no bots and no displays,
+  the same code a bot environment runs (its broker wiring acts only on bot conversations). Bot, screen, and settings
+  routes answer `409 CONFLICT`.
 - The control server accepts `GET /v1/bridge` with `Upgrade: websocket` after the usual origin, protocol, and
   control-token checks, and hands the socket to the hub.
 
