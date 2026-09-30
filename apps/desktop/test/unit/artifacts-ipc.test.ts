@@ -37,6 +37,10 @@ function setup() {
     events: vi.fn(async () => []),
     markSeen: vi.fn(async () => {}),
     unseenCount: vi.fn(async () => 0),
+    comments: vi.fn(async () => []),
+    replyComment: vi.fn(async () => ({})),
+    resolveComment: vi.fn(async () => {}),
+    deleteComment: vi.fn(async () => {}),
   }
   registerArtifactsIpc(reg, { service: () => service as unknown as ArtifactsService })
   const call = (channel: string, ...args: unknown[]) => guarded.get(channel)!({}, ...args)
@@ -58,6 +62,10 @@ describe('artifacts IPC', () => {
   it('registers every channel behind the trusted-sender guard', () => {
     const { guarded, unguarded } = setup()
     expect([...guarded.keys()].sort()).toEqual([
+      'artifacts:comment-add',
+      'artifacts:comment-delete',
+      'artifacts:comment-resolve',
+      'artifacts:comments',
       'artifacts:delete',
       'artifacts:detail',
       'artifacts:device-revoke',
@@ -118,6 +126,35 @@ describe('artifacts IPC', () => {
     expect(service.setSettings).not.toHaveBeenCalled()
     await call('artifacts:settings-set', { ...settings, port: 5000, publicAddress: 'https://x.example/' })
     expect(service.setSettings).toHaveBeenCalledWith({ ...settings, port: 5000, publicAddress: 'https://x.example' })
+  })
+
+  it('validates comment input before reaching the service', async () => {
+    const { call, service } = setup()
+    const refused: [string, ...unknown[]][] = [
+      ['artifacts:comments', 'nope'],
+      ['artifacts:comment-add', id, person, ''],
+      ['artifacts:comment-add', id, person, '   '],
+      ['artifacts:comment-add', id, person, 'x'.repeat(4001)],
+      ['artifacts:comment-add', id, '../x', 'Reply'],
+      ['artifacts:comment-add', 'nope', person, 'Reply'],
+      ['artifacts:comment-resolve', id, person, 'yes'],
+      ['artifacts:comment-resolve', id, 42, true],
+      ['artifacts:comment-delete', id, ''],
+      ['artifacts:comment-delete', 'nope', person],
+    ]
+    for (const [channel, ...args] of refused) await expect(call(channel, ...args), channel).rejects.toThrow()
+    for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled()
+
+    await call('artifacts:comments', id)
+    expect(service.comments).toHaveBeenCalledWith(id)
+    await call('artifacts:comment-add', id, person, '  Thanks!  ')
+    expect(service.replyComment).toHaveBeenCalledWith(id, person, 'Thanks!')
+    await call('artifacts:comment-resolve', id, person, true)
+    expect(service.resolveComment).toHaveBeenCalledWith(id, person, true)
+    await call('artifacts:comment-resolve', id, person, false)
+    expect(service.resolveComment).toHaveBeenLastCalledWith(id, person, false)
+    await call('artifacts:comment-delete', id, person)
+    expect(service.deleteComment).toHaveBeenCalledWith(id, person)
   })
 
   it('validates sharing input before reaching the service', async () => {

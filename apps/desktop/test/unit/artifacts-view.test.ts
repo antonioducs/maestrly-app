@@ -30,6 +30,7 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
     thumbnailVersion: null,
     unseenEvents: 0,
     pendingRequests: 0,
+    openComments: 0,
     ...overrides,
   }
 }

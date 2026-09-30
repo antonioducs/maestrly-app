@@ -1,6 +1,11 @@
 import { isArtifactId } from '@maestrly/artifact-host'
 import { z } from 'zod'
-import { MAX_ACCESS_CODE_CHARS, MAX_ARTIFACT_NAME_CHARS, MIN_ACCESS_CODE_CHARS } from '../../shared/artifacts'
+import {
+  MAX_ACCESS_CODE_CHARS,
+  MAX_ARTIFACT_COMMENT_CHARS,
+  MAX_ARTIFACT_NAME_CHARS,
+  MIN_ACCESS_CODE_CHARS,
+} from '../../shared/artifacts'
 import type { IpcRegistrar } from '../ipc-registrar'
 import type { ArtifactsService } from './service'
 import { artifactSettingsSchema } from './settings'
@@ -25,6 +30,7 @@ const sharingPatch = z
   })
   .strict()
 const requestDecision = z.object({ approve: z.boolean(), name: personName.optional() }).strict()
+const commentBody = z.string().trim().min(1).max(MAX_ARTIFACT_COMMENT_CHARS)
 
 /** Owner actions from the renderer. Every channel is guarded and validates its input before the service sees it. */
 export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => ArtifactsService }): void {
@@ -83,4 +89,16 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
     await service().markSeen(artifactId.optional().parse(id))
   })
   reg.mhandle('artifacts:unseen-count', async () => service().unseenCount())
+
+  // Comments: the owner reads and answers them in the app.
+  reg.mhandle('artifacts:comments', async (_e, id: unknown) => service().comments(artifactId.parse(id)))
+  reg.mhandle('artifacts:comment-add', async (_e, id: unknown, commentId: unknown, body: unknown) =>
+    service().replyComment(artifactId.parse(id), recordId.parse(commentId), commentBody.parse(body))
+  )
+  reg.mhandle('artifacts:comment-resolve', async (_e, id: unknown, commentId: unknown, resolved: unknown) => {
+    await service().resolveComment(artifactId.parse(id), recordId.parse(commentId), z.boolean().parse(resolved))
+  })
+  reg.mhandle('artifacts:comment-delete', async (_e, id: unknown, commentId: unknown) => {
+    await service().deleteComment(artifactId.parse(id), recordId.parse(commentId))
+  })
 }

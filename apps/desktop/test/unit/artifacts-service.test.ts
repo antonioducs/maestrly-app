@@ -389,6 +389,7 @@ describe('ArtifactsService', () => {
     expect(reply).toMatchObject({ parentId: thread.id, body: 'Yes, checked.', author: { kind: 'agent' } })
     await service.resolveForConversation(conversation.id, id, thread.id)
     expect((await service.commentsForConversation(conversation.id, id, { status: 'open' })).comments).toEqual([])
+    expect((await service.listAll())[0]).toMatchObject({ openComments: 0 })
 
     // Out of scope, the artifact and its comments do not exist.
     for (const attempt of [
@@ -398,6 +399,53 @@ describe('ArtifactsService', () => {
     ])
       expect((await errorOf(attempt)).code).toBe('not_found')
     expect((await service.commentsForConversation(conversation.id, id, { status: 'all' })).comments).toHaveLength(3)
+  })
+
+  it('lets the owner read, answer, resolve and delete comments from the app', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Discussed', files: page })
+    const id = detail.id
+    const thread = await host.admin.addComment(id, {
+      author: 'agent',
+      version: 1,
+      body: 'Should the heading change?',
+      anchor: { quote: { exact: 'Hello', prefix: '', suffix: '' } },
+    })
+    expect((await service.listAll())[0]).toMatchObject({ openComments: 1 })
+    expect(await service.comments(id)).toEqual([
+      {
+        id: thread.id,
+        version: 1,
+        parentId: null,
+        author: { kind: 'agent', name: '', verified: true },
+        body: 'Should the heading change?',
+        quote: 'Hello',
+        status: 'open',
+        createdAt: expect.any(Number),
+      },
+    ])
+
+    const reply = await service.replyComment(id, thread.id, 'Keep it.')
+    expect(reply).toMatchObject({ parentId: thread.id, author: { kind: 'owner' }, body: 'Keep it.', quote: null })
+    expect(JSON.stringify(await service.comments(id))).not.toContain('principalId')
+    await service.resolveComment(id, thread.id, true)
+    expect((await service.comments(id))[0]?.status).toBe('resolved')
+    expect((await service.listAll())[0]).toMatchObject({ openComments: 0 })
+    await service.resolveComment(id, thread.id, false)
+    await service.deleteComment(id, reply.id)
+    expect((await service.comments(id)).map((comment) => comment.id)).toEqual([thread.id])
+    await service.deleteComment(id, thread.id)
+    expect(await service.comments(id)).toEqual([])
+    expect((await errorOf(service.replyComment(id, thread.id, 'Too late'))).code).toBe('not_found')
+  })
+
+  it('reads every page of a long list of comments', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Busy', files: page })
+    for (let n = 0; n < 205; n++) await host.admin.addComment(detail.id, { author: 'owner', version: 1, body: `#${n}` })
+    const all = await service.comments(detail.id)
+    expect(all).toHaveLength(205)
+    expect(all[204]?.body).toBe('#204')
   })
 
   it('counts nothing, and starts nothing, while the host is not running', async () => {

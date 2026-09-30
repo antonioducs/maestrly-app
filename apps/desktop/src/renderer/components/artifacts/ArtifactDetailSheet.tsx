@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, Link2, Loader2, Lock, MessagesSquare, Share2, Trash2, Users, X } from 'lucide-react'
+import { ArrowUpRight, Link2, Loader2, Lock, MessagesSquare, Send, Share2, Trash2, Users, X } from 'lucide-react'
 import type {
   ArtifactAccessRequestView,
+  ArtifactCommentView,
   ArtifactDetailView,
   ArtifactEventView,
   ArtifactListItem,
@@ -11,9 +12,12 @@ import type {
 import { Button } from '@/components/ui/button'
 import { formatBytes } from '@/components/chat/runtime-asset-presentation'
 import { relativeTime } from '@/components/sidebar/relative-time'
+import { offerComposerDraft } from '@/lib/composer-prefill'
 import { useLocale } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AccessRequests } from './AccessRequests'
+import { CommentThreads } from './CommentThreads'
+import { draftFromComments } from './comments-view'
 import { ArtifactThumbnail } from './ArtifactThumbnail'
 import { VersionStack } from './ArtifactGridCard'
 import { eventText, sharingSummary } from './sharing-view'
@@ -52,7 +56,9 @@ export function ArtifactDetailSheet({
   const [detail, setDetail] = useState<ArtifactDetailView | null>(null)
   const [sharing, setSharing] = useState<ArtifactSharingView | null>(null)
   const [events, setEvents] = useState<ArtifactEventView[]>([])
+  const [comments, setComments] = useState<ArtifactCommentView[]>([])
   const [deciding, setDeciding] = useState(false)
+  const [commenting, setCommenting] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
   const errorRef = useRef(onError)
   errorRef.current = onError
@@ -81,14 +87,20 @@ export function ArtifactDetailSheet({
     fresh.current = new Set()
     setSharing(null)
     setEvents([])
+    setComments([])
     const load = () =>
-      Promise.all([window.api.artifacts.sharing(item.id), window.api.artifacts.events(item.id)])
-        .then(([nextSharing, nextEvents]) => {
+      Promise.all([
+        window.api.artifacts.sharing(item.id),
+        window.api.artifacts.events(item.id),
+        window.api.artifacts.comments(item.id),
+      ])
+        .then(([nextSharing, nextEvents, nextComments]) => {
           if (!alive) return
           const unseen = nextEvents.filter((event) => !event.seen)
           for (const event of unseen) fresh.current.add(event.id)
           setSharing(nextSharing)
           setEvents(nextEvents)
+          setComments(nextComments)
           if (unseen.length) void window.api.artifacts.markSeen(item.id).catch(() => {})
         })
         // The artifact may have just been deleted; the list reports what matters.
@@ -115,7 +127,32 @@ export function ArtifactDetailSheet({
     }
   }
 
+  /** Runs one action on a comment; the list reloads through the host's change event. */
+  const onComment = async (action: () => Promise<unknown>): Promise<boolean> => {
+    setCommenting(true)
+    try {
+      await action()
+      setComments(await window.api.artifacts.comments(item.id))
+      return true
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : String(reason))
+      return false
+    } finally {
+      setCommenting(false)
+    }
+  }
+
   const conversation = item.conversation
+  const openComments = comments.filter((comment) => comment.parentId === null && comment.status === 'open').length
+  // Puts the open comments in the conversation's message box, for the owner to edit and send. Nothing is sent here.
+  const sendToConversation = () => {
+    if (!conversation?.exists) return
+    const draft = draftFromComments(t, item.title, comments)
+    if (!draft) return
+    offerComposerDraft(conversation.id, draft)
+    onNotice(t('artifacts.comments.sent'))
+    onGoToConversation()
+  }
   const summary = sharing ? sharingSummary(sharing.people) : null
   const dateFormat = new Intl.DateTimeFormat(locale, {
     day: 'numeric',
@@ -253,6 +290,36 @@ export function ArtifactDetailSheet({
             </>
           )}
         </dl>
+        {comments.length > 0 && (
+          <section className="mb-[22px]" aria-labelledby="artifact-detail-comments">
+            <h3
+              id="artifact-detail-comments"
+              className="mb-2 flex items-baseline justify-between text-xs font-semibold text-foreground/75"
+            >
+              {t('artifacts.comments.title')}
+              <span className="font-normal text-muted-foreground">
+                {t('artifacts.comments.open', { count: openComments })}
+              </span>
+            </h3>
+            <CommentThreads
+              comments={comments}
+              busy={commenting}
+              onReply={(threadId, body) => onComment(() => window.api.artifacts.replyComment(item.id, threadId, body))}
+              onResolve={(threadId, resolved) =>
+                void onComment(() => window.api.artifacts.resolveComment(item.id, threadId, resolved))
+              }
+              onDelete={(commentId) => void onComment(() => window.api.artifacts.deleteComment(item.id, commentId))}
+            />
+            {conversation?.exists && openComments > 0 && (
+              <div className="mt-2.5">
+                <Button size="sm" variant="outline" onClick={sendToConversation} data-testid="artifact-comments-send">
+                  <Send className="size-3.5" /> {t('artifacts.comments.send')}
+                </Button>
+                <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('artifacts.comments.sendHint')}</p>
+              </div>
+            )}
+          </section>
+        )}
         {events.length > 0 && (
           <section className="mb-[22px]" aria-labelledby="artifact-detail-events">
             <h3 id="artifact-detail-events" className="mb-2 text-xs font-semibold text-foreground/75">

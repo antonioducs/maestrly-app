@@ -11,6 +11,7 @@ import {
   MAX_ACCESS_CODE_CHARS,
   MAX_ARTIFACT_NAME_CHARS,
 } from '../../../shared/artifacts'
+import { SettingsSwitch } from '@/components/fleet/SettingsSwitch'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -462,6 +463,21 @@ export function ShareDialog({
                 )}
                 <p className="mt-2 text-xs text-muted-foreground">{t('artifacts.share.awake')}</p>
               </Section>
+            )}
+
+            {sharing.visibility !== 'private' && (
+              <section className="flex items-start justify-between gap-3 py-4 hairline-t">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-foreground/85">{t('artifacts.comments.allow')}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t('artifacts.comments.allowHint')}</p>
+                </div>
+                <SettingsSwitch
+                  checked={sharing.commentsEnabled}
+                  label={t('artifacts.comments.allow')}
+                  disabled={busy}
+                  onChange={() => void patch({ commentsEnabled: !sharing.commentsEnabled })}
+                />
+              </section>
             )}
 
             <section className="py-3 hairline-t">

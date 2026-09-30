@@ -18,6 +18,7 @@ import {
   type TextEdit,
 } from '@maestrly/artifact-host'
 import type {
+  ArtifactCommentView,
   ArtifactDetailView,
   ArtifactEventView,
   ArtifactHostStatus,
@@ -58,6 +59,20 @@ export interface ArtifactsServiceDeps {
 }
 
 const LOCAL_OWNER = { kind: 'local', id: 'local' } as const
+/** Pages of 200 comments: more than an artifact's 2,000 comments need. */
+const MAX_COMMENT_PAGES = 20
+
+/** What the app shows of a comment: the author's internal ID stays in the host. */
+const toCommentView = (comment: CommentView): ArtifactCommentView => ({
+  id: comment.id,
+  version: comment.version,
+  parentId: comment.parentId,
+  author: { kind: comment.author.kind, name: comment.author.name, verified: comment.author.verified },
+  body: comment.body,
+  quote: comment.anchor?.quote?.exact ?? null,
+  status: comment.status,
+  createdAt: comment.createdAt,
+})
 const notFound = (message = 'Artifact not found') => new ArtifactHostError('not_found', message)
 
 export class ArtifactsService {
@@ -232,6 +247,7 @@ export class ArtifactsService {
       thumbnailVersion: artifact.thumbnailVersion,
       unseenEvents: artifact.unseenEvents,
       pendingRequests: artifact.pendingRequests,
+      openComments: artifact.openComments,
       conversation: artifact.conversationId
         ? {
             id: artifact.conversationId,
@@ -386,6 +402,34 @@ export class ArtifactsService {
 
   async markSeen(artifactId?: string): Promise<void> {
     await (await this.admin()).markEventsSeen(artifactId)
+  }
+
+  /** Every comment of an artifact, in the order they were written. */
+  async comments(id: string): Promise<ArtifactCommentView[]> {
+    const admin = await this.admin()
+    const all: ArtifactCommentView[] = []
+    let cursor: string | undefined
+    // The host pages comments; the limit on comments per artifact bounds the loop.
+    for (let page = 0; page < MAX_COMMENT_PAGES; page++) {
+      const result = await admin.listComments(id, cursor ? { cursor } : {})
+      all.push(...result.comments.map(toCommentView))
+      if (!result.nextCursor) break
+      cursor = result.nextCursor
+    }
+    return all
+  }
+
+  /** The owner's reply to a thread, written in the app instead of the viewer. */
+  async replyComment(id: string, commentId: string, body: string): Promise<ArtifactCommentView> {
+    return toCommentView(await (await this.admin()).addComment(id, { author: 'owner', body, parentId: commentId }))
+  }
+
+  async resolveComment(id: string, commentId: string, resolved: boolean): Promise<void> {
+    await (await this.admin()).setCommentResolved(id, commentId, resolved)
+  }
+
+  async deleteComment(id: string, commentId: string): Promise<void> {
+    await (await this.admin()).deleteComment(id, commentId)
   }
 
   /** Events the owner has not seen, across artifacts. It never starts the host: a stopped host has nothing new. */

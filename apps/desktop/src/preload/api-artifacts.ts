@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron'
 import type {
   ArtifactActivity,
+  ArtifactCommentView,
   ArtifactDetailView,
   ArtifactEventView,
   ArtifactHostStatus,
@@ -47,6 +48,13 @@ export const artifactsApi = {
     events: (id?: string): Promise<ArtifactEventView[]> => ipcRenderer.invoke('artifacts:events', id),
     markSeen: (id?: string): Promise<void> => ipcRenderer.invoke('artifacts:events-seen', id),
     unseenCount: (): Promise<number> => ipcRenderer.invoke('artifacts:unseen-count'),
+    comments: (id: string): Promise<ArtifactCommentView[]> => ipcRenderer.invoke('artifacts:comments', id),
+    replyComment: (id: string, commentId: string, body: string): Promise<ArtifactCommentView> =>
+      ipcRenderer.invoke('artifacts:comment-add', id, commentId, body),
+    resolveComment: (id: string, commentId: string, resolved: boolean): Promise<void> =>
+      ipcRenderer.invoke('artifacts:comment-resolve', id, commentId, resolved),
+    deleteComment: (id: string, commentId: string): Promise<void> =>
+      ipcRenderer.invoke('artifacts:comment-delete', id, commentId),
     onChanged: (cb: () => void): (() => void) => {
       const listener = () => cb()
       ipcRenderer.on('artifacts:changed', listener)

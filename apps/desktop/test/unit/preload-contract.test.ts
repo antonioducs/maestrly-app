@@ -254,6 +254,10 @@ describe('preload API — exposure', () => {
     await artifacts.events('artifact')
     await artifacts.markSeen('artifact')
     await artifacts.unseenCount()
+    await artifacts.comments('artifact')
+    await artifacts.replyComment('artifact', 'comment', 'Thanks')
+    await artifacts.resolveComment('artifact', 'comment', true)
+    await artifacts.deleteComment('artifact', 'comment')
     expect(invokeSpy.mock.calls).toEqual([
       ['artifacts:list'],
       ['artifacts:detail', 'artifact'],
@@ -276,6 +280,10 @@ describe('preload API — exposure', () => {
       ['artifacts:events', 'artifact'],
       ['artifacts:events-seen', 'artifact'],
       ['artifacts:unseen-count'],
+      ['artifacts:comments', 'artifact'],
+      ['artifacts:comment-add', 'artifact', 'comment', 'Thanks'],
+      ['artifacts:comment-resolve', 'artifact', 'comment', true],
+      ['artifacts:comment-delete', 'artifact', 'comment'],
     ])
     for (const [subscribe, channel] of [
       ['onChanged', 'artifacts:changed'],

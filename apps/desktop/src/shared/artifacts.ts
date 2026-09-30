@@ -61,6 +61,26 @@ export interface ArtifactListItem {
   /** New devices, access requests, declined invitations and comments the owner has not seen yet. */
   unseenEvents: number
   pendingRequests: number
+  /** Comment threads that are neither resolved nor deleted. */
+  openComments: number
+}
+
+export const MAX_ARTIFACT_COMMENT_CHARS = 4000
+
+export type ArtifactCommentAuthorKind = 'owner' | 'agent' | 'invited' | 'approved' | 'guest'
+
+/** A comment as the owner sees it in the app. A reply carries its thread's ID and version. */
+export interface ArtifactCommentView {
+  id: string
+  version: number
+  parentId: string | null
+  /** Guests are unverified: nobody confirmed the name they typed. */
+  author: { kind: ArtifactCommentAuthorKind; name: string; verified: boolean }
+  body: string
+  /** The passage the thread is about, when it is anchored to one. */
+  quote: string | null
+  status: 'open' | 'resolved'
+  createdAt: number
 }
 
 export type ArtifactPersonKind = 'invited' | 'approved' | 'guest'

@@ -3,6 +3,7 @@ import {
   ArrowUpRight,
   Link2,
   Loader2,
+  MessageSquareText,
   MessagesSquare,
   MoreHorizontal,
   PanelRight,
@@ -238,6 +239,17 @@ export function ArtifactGridCard({
                 <Link2 className="size-3" aria-hidden="true" />
               )}
               {t(`artifacts.visibility.${item.visibility === 'people' ? 'peopleShort' : 'linkShort'}`)}
+            </span>
+          )}
+          {item.openComments > 0 && (
+            <span
+              data-testid="artifact-card-comments"
+              title={t('artifacts.comments.badge', { count: item.openComments })}
+              aria-label={t('artifacts.comments.badge', { count: item.openComments })}
+              className="flex shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 text-[11px] leading-[18px] text-foreground/75"
+            >
+              <MessageSquareText className="size-3" aria-hidden="true" />
+              {item.openComments}
             </span>
           )}
           {showSize && (
