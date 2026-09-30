@@ -9,6 +9,7 @@ export function ConfirmDialog({
   confirmLabel,
   busy,
   destructive,
+  error,
   onCancel,
   onConfirm,
 }: {
@@ -17,6 +18,8 @@ export function ConfirmDialog({
   confirmLabel: string
   busy?: boolean
   destructive?: boolean
+  /** Why the last confirmation failed; the dialog stays open so it can be tried again. */
+  error?: string | null
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -48,6 +51,11 @@ export function ConfirmDialog({
       >
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{message}</p>
+        {error && (
+          <p role="alert" className="mt-2 text-xs leading-relaxed text-destructive">
+            {error}
+          </p>
+        )}
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
