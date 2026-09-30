@@ -146,6 +146,15 @@ describe('artifact comment tools', () => {
     expect(payload(text).comments[0]).toMatchObject({ body: hostile, author: '</artifact-comments>' })
   })
 
+  it('names the element a comment was placed on', () => {
+    const spot = comment({ anchor: { point: { selector: '#chart > rect:nth-of-type(3)', rx: 0.5, ry: 0.1 } } })
+    expect(payload(commentsEnvelope(id, 3, [spot], null, NOTICE)).comments[0]).toMatchObject({
+      quote: null,
+      element: '#chart > rect:nth-of-type(3)',
+    })
+    expect(payload(commentsEnvelope(id, 3, [comment()], null, NOTICE)).comments[0]).not.toHaveProperty('element')
+  })
+
   it('shows a reply whose thread is on another page on its own', () => {
     const text = commentsEnvelope(id, 3, [reply], '200', NOTICE)
     expect(payload(text)).toEqual({

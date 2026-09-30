@@ -85,6 +85,11 @@ function ThreadCard({
           {comment.quote}
         </blockquote>
       )}
+      {comment.place !== 'passage' && (
+        <p className="text-[11.5px] text-muted-foreground">
+          {comment.place === 'spot' ? t('artifacts.comments.onSpot') : t('artifacts.comments.onPage')}
+        </p>
+      )}
       <CommentBody comment={comment} />
       {replies.map((reply) => (
         <div key={reply.id}>

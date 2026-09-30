@@ -56,7 +56,9 @@ export function draftFromComments(t: TFn, title: string, comments: readonly Arti
     const author = draftAuthor(t, comment.author)
     const heading = comment.quote
       ? t('artifacts.comments.draft.threadQuoted', { author, version: comment.version, quote: comment.quote })
-      : t('artifacts.comments.draft.thread', { author, version: comment.version })
+      : comment.place === 'spot'
+        ? t('artifacts.comments.draft.threadSpot', { author, version: comment.version })
+        : t('artifacts.comments.draft.thread', { author, version: comment.version })
     const lines = [`${index + 1}. ${heading}`, indent(comment.body, '   ')]
     for (const reply of replies)
       lines.push(

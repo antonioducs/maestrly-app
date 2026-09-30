@@ -77,6 +77,8 @@ export interface ArtifactCommentView {
   /** Guests are unverified: nobody confirmed the name they typed. */
   author: { kind: ArtifactCommentAuthorKind; name: string; verified: boolean }
   body: string
+  /** What the thread is about: a passage of the page, a spot on it, or the whole page. */
+  place: 'passage' | 'spot' | 'page'
   /** The passage the thread is about, when it is anchored to one. */
   quote: string | null
   status: 'open' | 'resolved'

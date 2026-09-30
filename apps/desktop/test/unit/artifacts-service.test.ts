@@ -420,6 +420,7 @@ describe('ArtifactsService', () => {
         parentId: null,
         author: { kind: 'agent', name: '', verified: true },
         body: 'Should the heading change?',
+        place: 'passage',
         quote: 'Hello',
         status: 'open',
         createdAt: expect.any(Number),
@@ -427,7 +428,24 @@ describe('ArtifactsService', () => {
     ])
 
     const reply = await service.replyComment(id, thread.id, 'Keep it.')
-    expect(reply).toMatchObject({ parentId: thread.id, author: { kind: 'owner' }, body: 'Keep it.', quote: null })
+    expect(reply).toMatchObject({
+      parentId: thread.id,
+      author: { kind: 'owner' },
+      body: 'Keep it.',
+      place: 'page',
+      quote: null,
+    })
+    const spot = await host.admin.addComment(id, {
+      author: 'owner',
+      version: 1,
+      body: 'This heading?',
+      anchor: { point: { selector: 'h1', rx: 0.5, ry: 0.5 } },
+    })
+    expect((await service.comments(id)).find((comment) => comment.id === spot.id)).toMatchObject({
+      place: 'spot',
+      quote: null,
+    })
+    await service.deleteComment(id, spot.id)
     expect(JSON.stringify(await service.comments(id))).not.toContain('principalId')
     await service.resolveComment(id, thread.id, true)
     expect((await service.comments(id))[0]?.status).toBe('resolved')
@@ -486,7 +504,7 @@ describe('ArtifactsService', () => {
     const conversation = makeConversation(makeWorkspace().id)
     const { detail } = await service.create(conversation.id, { title: 'Source', files: page })
     expect(await service.thumbnailSourceUrl(detail.id, 1)).toMatch(
-      new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}&v=1$`)
+      new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}&v=1&preview=1$`)
     )
   })
 

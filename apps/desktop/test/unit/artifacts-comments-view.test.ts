@@ -17,6 +17,7 @@ function comment(overrides: Partial<ArtifactCommentView> = {}): ArtifactCommentV
     parentId: null,
     author: { kind: 'invited', name: 'Maria', verified: true },
     body: `Comment ${sequence}`,
+    place: 'page',
     quote: null,
     status: 'open',
     createdAt: sequence,
@@ -52,16 +53,17 @@ describe('commentAuthor', () => {
 
 describe('draftFromComments', () => {
   it('quotes each open thread with its author, verification, version and passage', () => {
-    const anchored = comment({ quote: 'Total: 40', body: 'The total looks wrong.' })
+    const anchored = comment({ place: 'passage', quote: 'Total: 40', body: 'The total looks wrong.' })
     const reply = comment({
       parentId: anchored.id,
       author: { kind: 'guest', name: 'Ana', verified: false },
       body: 'I see it too.',
     })
     const plain = comment({ author: { kind: 'guest', name: 'Rui', verified: false }, version: 1, body: 'Two\nlines.' })
+    const spot = comment({ place: 'spot', version: 2, body: 'Split this chart by region?' })
     const resolved = comment({ status: 'resolved', body: 'Already handled.' })
     const resolvedReply = comment({ parentId: resolved.id, body: 'Thanks.' })
-    const draft = draftFromComments(t, 'Quarterly report', [anchored, reply, plain, resolved, resolvedReply])
+    const draft = draftFromComments(t, 'Quarterly report', [anchored, reply, plain, spot, resolved, resolvedReply])
     expect(draft).toBe(
       [
         'draft.intro{"title":"Quarterly report"}',
@@ -74,6 +76,9 @@ describe('draftFromComments', () => {
         '2. draft.thread{"author":"unverified{\\"name\\":\\"Rui\\"}","version":1}',
         '   Two',
         '   lines.',
+        '',
+        '3. draft.threadSpot{"author":"Maria","version":2}',
+        '   Split this chart by region?',
         '',
         'draft.outro',
       ].join('\n')

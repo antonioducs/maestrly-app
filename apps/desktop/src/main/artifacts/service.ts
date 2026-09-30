@@ -69,6 +69,7 @@ const toCommentView = (comment: CommentView): ArtifactCommentView => ({
   parentId: comment.parentId,
   author: { kind: comment.author.kind, name: comment.author.name, verified: comment.author.verified },
   body: comment.body,
+  place: comment.anchor?.quote ? 'passage' : comment.anchor?.point ? 'spot' : 'page',
   quote: comment.anchor?.quote?.exact ?? null,
   status: comment.status,
   createdAt: comment.createdAt,
@@ -275,9 +276,12 @@ export class ArtifactsService {
     }
   }
 
-  /** The owner view of one version, for the thumbnail capture; its ticket works once and within a minute. */
+  /**
+   * The owner view of one version, for the thumbnail capture; its ticket works once and within a minute. It asks for
+   * the page alone, so comment pins stay out of the preview.
+   */
   async thumbnailSourceUrl(id: string, version: number): Promise<string> {
-    return this.ownerUrl(await this.admin(), id, version)
+    return this.ownerUrl(await this.admin(), id, version, true)
   }
 
   async saveThumbnail(id: string, version: number, image: Uint8Array): Promise<void> {
@@ -442,10 +446,10 @@ export class ArtifactsService {
   }
 
   /** The owner's URL: the single-use ticket travels in the fragment, which never reaches a server log. */
-  private async ownerUrl(admin: ArtifactAdmin, id: string, version?: number): Promise<string> {
+  private async ownerUrl(admin: ArtifactAdmin, id: string, version?: number, preview = false): Promise<string> {
     const { ticket } = await admin.mintOwnerTicket(id)
     const port = this.deps.host.status().port
-    return `http://127.0.0.1:${port}/a/${id}#o=${ticket}${version ? `&v=${version}` : ''}`
+    return `http://127.0.0.1:${port}/a/${id}#o=${ticket}${version ? `&v=${version}` : ''}${preview ? '&preview=1' : ''}`
   }
 
   async openExternal(id: string, version?: number): Promise<void> {

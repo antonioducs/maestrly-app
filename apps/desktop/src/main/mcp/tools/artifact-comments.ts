@@ -19,6 +19,8 @@ interface EnvelopeThread extends Omit<EnvelopeReply, 'replyTo'> {
   version: number
   status: CommentView['status']
   quote: string | null
+  /** For a comment placed on a spot of the page: the element it was placed on, as a CSS selector. */
+  element?: string
   replies: EnvelopeReply[]
 }
 
@@ -54,6 +56,7 @@ export function commentsEnvelope(
       verified,
       status: comment.status,
       quote: comment.anchor?.quote?.exact ?? null,
+      ...(comment.anchor?.point ? { element: comment.anchor.point.selector } : {}),
       body,
       replies: [],
     }
