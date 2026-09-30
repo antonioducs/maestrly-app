@@ -6,12 +6,16 @@ import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
-import { visibleTranscriptItems } from '@/lib/fleet/forms'
+import { latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
+import { TodoList } from '@/components/chat/TodoCard'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { fleetImageCache, type FleetImageCache } from '@/lib/fleet/image-cache'
 import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
+import { AgentActivity } from '@/components/chat/AgentActivity'
+import { useAgentActivityMode } from '@/lib/agent-activity-preference'
+import { fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
 
 function TranscriptRow({
   bot,
@@ -20,6 +24,7 @@ function TranscriptRow({
   onOpenBot,
   onOpenScreen,
   imageCache,
+  latestTodoId,
 }: {
   bot: FleetBot
   imageCache: FleetImageCache
@@ -27,6 +32,7 @@ function TranscriptRow({
   fleet: FleetController
   onOpenBot: (id: string) => void
   onOpenScreen: () => void
+  latestTodoId: string | null
 }) {
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
@@ -110,6 +116,13 @@ function TranscriptRow({
         <span className="mt-1 block text-xs text-muted-foreground">{at}</span>
       </div>
     )
+  if (item.kind === 'reasoning')
+    return (
+      <div className="max-w-[90%] rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 text-[13px] italic text-muted-foreground">
+        <MarkdownViewer markdown={item.text} />
+        {item.truncated && <p className="mt-2 text-xs not-italic">{t('chat:activity.truncated')}</p>}
+      </div>
+    )
   if (item.kind === 'compaction')
     return (
       <div className="my-1 flex min-w-0 max-w-full flex-col gap-2">
@@ -138,6 +151,9 @@ function TranscriptRow({
         ) : null}
       </div>
     )
+  // An instance that predates the checklist sends no todos; its todo_write keeps the generic row below.
+  if (item.kind === 'tool' && item.name === 'todo_write' && item.todos)
+    return item.id === latestTodoId ? <TodoList todos={item.todos} /> : null
   if (item.kind === 'tool')
     return (
       <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
@@ -182,6 +198,56 @@ function TranscriptRow({
   )
 }
 
+/** A bot turn's reasoning and tool calls, folded into one line like a chat message's. */
+function BotAgentActivity({
+  bot,
+  segment,
+  imageCache,
+}: {
+  bot: FleetBot
+  segment: Extract<FleetActivitySegment, { kind: 'activity' }>
+  imageCache: FleetImageCache
+}) {
+  const { t } = useTranslation('fleet')
+  return (
+    <AgentActivity
+      steps={segment.steps}
+      live={segment.live}
+      writing={segment.writing}
+      waitingYou={segment.live && bot.status === 'waiting'}
+      thumbnails={
+        segment.images.length > 0 && (
+          <BotTranscriptImages botId={bot.id} images={segment.images.slice(-THUMBNAILS_MAX)} cache={imageCache} />
+        )
+      }
+      renderToolDetail={(step) => {
+        const item = step.source
+        if (item.kind !== 'tool') return null
+        return (
+          <div className="min-w-0 rounded-lg border border-border bg-white/[0.02] px-3 py-2 text-xs">
+            {item.output ? (
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[12px] text-foreground/90">
+                {item.output}
+              </pre>
+            ) : (
+              !item.images.length && <p className="text-muted-foreground">{t('transcript.noOutput')}</p>
+            )}
+            <BotTranscriptImages botId={bot.id} images={item.images} cache={imageCache} />
+          </div>
+        )
+      }}
+      reasoningNote={(step) =>
+        step.source.kind === 'reasoning' && step.source.truncated ? (
+          <p className="mt-2 text-xs not-italic">{t('chat:activity.truncated')}</p>
+        ) : null
+      }
+    />
+  )
+}
+
+/** Tool images stay in view under the activity line: the newest few. */
+const THUMBNAILS_MAX = 8
+
 export function BotConversation({
   bot,
   fleet,
@@ -218,6 +284,14 @@ export function BotConversation({
   const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
   const lastItem = transcript?.items.at(-1)
   const runningToolLast = lastItem?.kind === 'tool' && lastItem.state === 'running'
+  const compact = useAgentActivityMode() === 'compact'
+  const visibleItems = visibleTranscriptItems(transcript?.items ?? [])
+  const latestTodoId = latestTodoItemId(visibleItems)
+  const segments: FleetActivitySegment[] = compact
+    ? fleetActivitySegments(visibleItems, { working: bot.status === 'working' || bot.status === 'waiting' })
+    : visibleItems.map((item) => ({ kind: 'item', item }))
+  // A live activity line already says what the bot is doing.
+  const liveLine = segments.some((segment) => segment.kind === 'activity' && segment.live)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div
@@ -256,18 +330,23 @@ export function BotConversation({
               {t('transcript.loadOlder')}
             </button>
           )}
-          {visibleTranscriptItems(transcript?.items ?? []).map((item) => (
-            <TranscriptRow
-              key={item.id}
-              bot={bot}
-              item={item}
-              fleet={fleet}
-              onOpenBot={onOpenBot}
-              onOpenScreen={onOpenScreen}
-              imageCache={imageCache}
-            />
-          ))}
-          {bot.status === 'working' && !runningToolLast && (
+          {segments.map((segment) =>
+            segment.kind === 'activity' ? (
+              <BotAgentActivity key={segment.key} bot={bot} segment={segment} imageCache={imageCache} />
+            ) : (
+              <TranscriptRow
+                key={segment.item.id}
+                bot={bot}
+                item={segment.item}
+                fleet={fleet}
+                onOpenBot={onOpenBot}
+                onOpenScreen={onOpenScreen}
+                imageCache={imageCache}
+                latestTodoId={latestTodoId}
+              />
+            )
+          )}
+          {bot.status === 'working' && !runningToolLast && !liveLine && (
             <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
               {t('transcript.working')}

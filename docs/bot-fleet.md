@@ -139,6 +139,8 @@ The gateway migrates schemas 5, 6 and 7 to 8 in place and refuses databases with
 
 Environment default compaction models need the gateway's `environment-compaction` feature. Desktop apps without it keep choosing a model in each bot's **Settings**; they show a bot that uses its environment's default as that model, and saving it there makes it the bot's own. An environment on an image without the capability keeps working with its default, but choosing the default from the desktop app asks you to restart the environment first. The maximum context window needs the gateway's `context-limit` feature; desktop apps hide the field without it. An environment running an image without the capability keeps its models' windows, and its settings ask you to restart it.
 
+A bot's reasoning appears in its conversation when the gateway has the `transcript-reasoning` feature and the environment's image has the matching capability. Transcripts carry it as `reasoning` items, which the bot and the gateway send only to a reader that asks for them with `reasoning=1` on the transcript and event routes; an older gateway or desktop app never receives them and keeps working as before. Until the gateway and the environment are updated, a conversation shows the bot's tool steps and text without its reasoning.
+
 ## How it connects
 
 ```mermaid
@@ -190,6 +192,12 @@ Each bot has two screen areas, shown in the app with a **Browser** | **Apps** sw
 - **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Browser popups, such as sign-in windows, open inside the bot's area. The main page answers JavaScript dialogs using the bot’s automatic dialog policy, without opening native windows. Native dialogs in popups are suppressed so they cannot interrupt another screen; popup confirmations are canceled.
 - **Apps** is the bot's own Linux desktop. Its `computer_*` tools, its shells, and the programs it starts use this display. Its `BROWSER` opens Chromium with a separate profile for that bot, so these windows open on the right screen; that Chromium profile does not share the cookies of the **Browser** area.
 
+While controlling a screen, click inside it to copy and paste plain text between your computer and the bot. Use **Command+C / Command+V** on macOS, **Ctrl+C / Ctrl+V** on Windows and Linux, or the desktop app's **Edit** menu. Cut also works. For Linux terminals, use **Command+Shift+C / V** on macOS or **Ctrl+Shift+C / V** on Windows and Linux. Clipboard exchange starts only while the controlled screen has focus; a requested copy can finish after you switch to another app. Selecting text in the bot does not update your computer's clipboard, including after copying the same text again or copying with nothing selected; use Copy or Cut explicitly. The screen server disables X11 PRIMARY forwarding (`-noprimary`) and exchanges CLIPBOARD text only. Pasting from your computer also updates the cached bot clipboard, so a later Copy with unchanged text or nothing selected keeps the pasted text even when the server sends no notification. Watching a screen does not share your clipboard. The environment screen works the same way. The first copy from a newly started screen server can take about 15 seconds; later copies are faster. Update both the desktop app and the bot environment to include the clipboard integration, the server startup fix, and PRIMARY filtering. Restart the bot environment after updating so existing screen servers use the new options.
+
+The current screen server supports Latin-1 text (including Portuguese accents), up to 1 MB per transfer. Pasting emoji and other characters outside Latin-1 shows a warning without sending the text, rather than replacing characters. Unicode copied inside the bot may also be limited by its screen server. Files, images, and rich text are not transferred. Your computer's clipboard is read only when you paste; it is not continuously synchronized.
+
+Caps Lock follows your computer's keyboard: letters reach the bot in the case your keyboard types them, including with Shift. The screen server does not forward the Caps Lock key itself (`-skip_lockkeys`), so the bot's own Caps Lock stays off, and apps in the bot do not show a Caps Lock indicator. This needs the updated bot environment; restart the environment after updating.
+
 MCP `stdio` servers belong to the environment and do not receive a bot's display, session bus, or `BROWSER`; neither do GitHub Copilot and Cursor runtimes.
 
 ### Existing bots
@@ -201,6 +209,8 @@ Until you restart an environment onto the updated bot image, its one bot keeps r
 ## Bot conversation controls
 
 The bot Conversation tab uses the same chat composer as desktop chats. Its model and permission controls change the bot's own conversation. The tools menu controls image generation and per-conversation MCP server availability; Maestrly tools always stay on for bots because their browser, screen, and help tools depend on them. The Skills menu controls per-conversation skill selection and overrides. Slash skill commands use the skills installed in the bot's environment and expand when the bot sends the turn.
+
+When a bot tracks multi-step work with `todo_write`, the Conversation tab shows its latest to-do list as a checklist, as desktop chats do. The checklist keeps up to 50 items of up to 500 characters. It needs the desktop app, the gateway, and the environment image from the same release; with an older gateway or image, `todo_write` appears as a plain tool row.
 
 Skills and MCP servers belong to the environment. Manage them in the environment view's **Skills and MCP** section, or take control of the environment's **Screen** tab and change them in its Maestrly window; the composer's manage actions open that screen. Changes affect every bot in the environment; your computer's local configuration remains separate.
 
@@ -263,7 +273,7 @@ The **Server** page shows versions, CPU, memory, disk, and peer messages. With e
 
 While your computer is connected, bots use the **Alert sounds** in **Settings → Appearance & sound**. **Turn ready** or **Turn failed** plays when a bot finishes a message you sent, or the work it resumes after you give back control. **Permission request** plays when a bot needs you, such as a new request in **Awaiting you** or a blocked conversation between bots, whatever started its turn. Routine runs and conversations between bots end silently, and nothing that happened while your computer was off sounds when it reconnects. Turn off **Bot alerts** to silence bots without silencing your own conversations. A gateway or environment image that predates this does not report who started a turn, so every finished turn sounds, routines included, until both are updated.
 
-The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in the environment's settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
+The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows the models hidden in the environment's settings. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. As in chats, each answer shows the bot's reasoning and tool steps as one activity line that follows the current step while the bot works and summarizes them afterwards; open it to see every step, or choose **Expanded** in **Settings → Appearance & sound → Agent activity**. Tool images stay visible under the line. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
 
 ## Bring from your computer
 
@@ -455,6 +465,14 @@ input; completed and cancelled are final.
 
 ## What a bot can do
 
+Bot conversations have no Plan review tab and do not expose `review_plan`. When
+you ask for a plan, the bot presents it in the conversation. Authorized work
+proceeds under the configured permissions. Conversation notes (`notes_*`), project
+notes, the embedded debugger (`debug_*`), and `terminal_focus` are unavailable in
+bots because their desktop panels are absent. Persistent terminal commands and
+`todo_write` remain available. Secret-input questions from Codex are refused; use
+owner help for logins instead.
+
 | Tool | Scope |
 | --- | --- |
 | `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own **Apps** screen. |
@@ -473,12 +491,12 @@ A bot cannot directly use your computer's screen, browser, terminal, accounts, o
 | --- | --- | --- |
 | **Ask for approval** | Unprotected reading. | Other edits, commands, new sites, and MCP tools. |
 | **Approve for me** | Reads and edits its own folder, opens sites, and uses MCP tools. | Commands and work outside that folder. |
-| **Full access** | Commands and edits in its environment's container, including files other bots use. | Plan approval still remains yours. |
+| **Full access** | Commands and edits in its environment's container, including files other bots use. | Actions requiring separate authorization. |
 
 The memory writes listed above are explicit bot exemptions. Permanent deletion with
 `memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
-The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; plan approvals and pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
+The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
 
 ## Security and data
 
@@ -540,7 +558,7 @@ it can refer to the earlier report. Archive the sample owner entry afterward.
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
 - `npm run test:unit --workspace @maestrly/desktop` checks desktop units.
 - `npm run test:e2e --workspace @maestrly/desktop` runs the Electron E2E suite, including `apps/desktop/test/e2e/bot-fleet.spec.ts`, with its usual build and display prerequisites.
-- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real environments, and a deterministic local model. It checks pairing, protocol guards, SSE, accounts, model tool calls on the apps screen, approvals, peer delivery, RFB view and control, takeover, pause, scheduled and bot-created routines, owner and bot memory, and compaction, including a bot's model becoming its environment's default. It then adds a second bot to one environment and checks that no container is created and that the bot inherits the environment's default compaction model, and that changing the default reaches only the bots that inherit it; that both bots run turns at the same time with their own models, type on their own apps screens at the same time, and share site cookies; the placement of the environment screen; that a second control session on the shared display is refused; archiving and restoring one bot; an environment restart; the separation of the two environments; archiving and permanently deleting bots and environments; and an environment update that waits while a bot works, then recreates the container on a newer image with the conversations kept. That last check briefly points the configured bot image's tag at a derived image and tags it back before it passes, or on exit. It saves screen captures under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging. A final focus test uses a separate container and real RFB keyboard input to check popups, native JavaScript dialogs, screen changes and focus restoration. Its report is saved under `.bot-fleet-local/focus/`, and its container and volume are always removed, including with `--keep`.
+- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real environments, and a deterministic local model. It checks pairing, protocol guards, SSE, accounts, model tool calls on the apps screen, approvals, peer delivery, RFB view and control (including Caps Lock typing on an apps screen), takeover, pause, scheduled and bot-created routines, owner and bot memory, and compaction, including a bot's model becoming its environment's default. It then adds a second bot to one environment and checks that no container is created and that the bot inherits the environment's default compaction model, and that changing the default reaches only the bots that inherit it; that both bots run turns at the same time with their own models, type on their own apps screens at the same time, and share site cookies; the placement of the environment screen; that a second control session on the shared display is refused; archiving and restoring one bot; an environment restart; the separation of the two environments; archiving and permanently deleting bots and environments; and an environment update that waits while a bot works, then recreates the container on a newer image with the conversations kept. That last check briefly points the configured bot image's tag at a derived image and tags it back before it passes, or on exit. It saves screen captures under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging. A final focus test uses a separate container and real RFB keyboard input to check popups, native JavaScript dialogs, screen changes and focus restoration. Its report is saved under `.bot-fleet-local/focus/`, and its container and volume are always removed, including with `--keep`.
 - `node scripts/bot-fleet-vnc-probe.mjs <running-bot-container>` checks that the view-only VNC port cannot move the pointer and the control port can, in a container running a bot image from before environments, whose two VNC servers are always on. Current images start VNC servers only while a screen is open; the end-to-end test checks their view and control instead.
 
 In a run of that end-to-end test on a local Linux/arm64 Docker host, with bot images built from this source, synthetic data, the deterministic local model, the default 4 GiB limit, and no screen open, the test measured after memory stopped changing:

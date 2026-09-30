@@ -72,7 +72,8 @@ beforeEach(async () => {
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
-    } else if (req.url === '/v1/events') {
+    } else if (req.url === '/v1/events?reasoning=1') {
+      // Only the stream that asks for `reasoning` transcript items is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
       res.write(': ping\n\nevent: fleet\ndata: {"type":"hello","at":"2026-01-01T00:00:00Z","lastActivitySeq":2}\n\n')
       if (!holdEvents) setTimeout(() => res.end(), 20)

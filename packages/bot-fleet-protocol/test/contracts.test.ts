@@ -50,6 +50,9 @@ import {
   FLEET_COMPACTION_LIMITS,
   FLEET_COMPACTION_SUMMARY_MAX,
   FLEET_CONVERSATION_OPS,
+  FLEET_REASONING_TEXT_MAX,
+  fleetReaderWantsReasoning,
+  fleetTranscriptItemReadable,
   fleetActivitySchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
@@ -265,6 +268,27 @@ describe('domain contracts', () => {
     ).toBe(false)
     expect(fleetInteractionResolutionSchema.parse({ kind: 'question_dismiss' }).kind).toBe('question_dismiss')
     expect(fleetInteractionResolutionSchema.safeParse({ kind: 'permission', reply: 'maybe' }).success).toBe(false)
+  })
+
+  it('carries a todo_write checklist on tool items and keeps items without one valid', () => {
+    const tool = { kind: 'tool', id: 't:0', at, name: 'todo_write', target: null, state: 'done', output: null }
+    const todos = [
+      { content: 'Inspect files', status: 'completed' },
+      { content: 'Fix rendering', status: 'in_progress' },
+      { content: 'Run tests', status: 'pending' },
+    ]
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos })).toMatchObject({ todos })
+    // Instances that predate the checklist send no todos: the item stays valid and carries none.
+    expect(fleetTranscriptItemSchema.parse(tool)).not.toHaveProperty('todos')
+    expect(fleetTranscriptItemSchema.parse({ ...tool, todos: [] })).toMatchObject({ todos: [] })
+    const invalid = [
+      [{ content: '', status: 'pending' }],
+      [{ content: 'x'.repeat(provisioning.FLEET_TODO_LIMITS.contentMax + 1), status: 'pending' }],
+      [{ content: 'Unknown status', status: 'blocked' }],
+      Array.from({ length: provisioning.FLEET_TODO_LIMITS.itemsMax + 1 }, () => todos[2]),
+    ]
+    for (const entries of invalid)
+      expect(fleetTranscriptItemSchema.safeParse({ ...tool, todos: entries }).success).toBe(false)
   })
 
   it('validates routines and schedule shape without imposing an IANA check in the schema', () => {
@@ -483,6 +507,25 @@ describe('routes and helpers', () => {
     ).toBe(false)
     expect(fleetTranscriptItemSchema.safeParse({ ...item, origin: 'other' }).success).toBe(false)
     expect(FLEET_CONVERSATION_OPS).toEqual(expect.arrayContaining(['chatCompact', 'chatBackgroundCompactionRetry']))
+  })
+
+  it('carries reasoning only to readers that ask for it, cut for display', () => {
+    const at = '2026-09-29T10:00:00.000Z'
+    const item = { id: 'm:1', at, kind: 'reasoning', text: 'Checking the tests', truncated: false, streaming: true }
+    expect(fleetTranscriptItemSchema.parse(item)).toEqual(item)
+    expect(fleetGatewayEventSchema.parse({ type: 'transcript.upsert', at, botId: 'alpha', item }).type).toBe(
+      'transcript.upsert'
+    )
+    expect(
+      fleetTranscriptItemSchema.safeParse({ ...item, text: 'x'.repeat(FLEET_REASONING_TEXT_MAX + 1) }).success
+    ).toBe(false)
+    expect(fleetTranscriptItemSchema.safeParse({ ...item, truncated: undefined }).success).toBe(false)
+    expect(fleetReaderWantsReasoning(new URLSearchParams('since=0&reasoning=1'))).toBe(true)
+    for (const query of ['', 'reasoning=0', 'reasoning=true', 'reasoning'])
+      expect(fleetReaderWantsReasoning(new URLSearchParams(query)), query).toBe(false)
+    expect(fleetTranscriptItemReadable(item as { kind: 'reasoning' }, false)).toBe(false)
+    expect(fleetTranscriptItemReadable(item as { kind: 'reasoning' }, true)).toBe(true)
+    expect(fleetTranscriptItemReadable({ kind: 'assistant' }, false)).toBe(true)
   })
 
   it('schedules routines weekly or every N minutes within the limits, and says who created them', () => {

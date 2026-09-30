@@ -8,6 +8,12 @@ describe('memory permission rules', () => {
     expect(ruleEffect('mcp', 'memory_upsert', BYOK_DEFAULT_RULESET)).toBe('ask')
     expect(ruleEffect('mcp', 'some_external_tool', BYOK_DEFAULT_RULESET)).toBe('ask')
   })
+  it('never prompts for artifact reads, but asks before publishing or opening', () => {
+    for (const tool of ['artifact_get', 'artifact_list'])
+      expect(ruleEffect('mcp', tool, BYOK_DEFAULT_RULESET)).toBe('allow')
+    for (const tool of ['artifact_create', 'artifact_update', 'artifact_open'])
+      expect(ruleEffect('mcp', tool, BYOK_DEFAULT_RULESET)).toBe('ask')
+  })
   it('lets a bot write its memory and report routines without prompting, except permanent deletion', () => {
     const bot = [...BYOK_DEFAULT_RULESET, ...BOT_MEMORY_WRITE_RULES]
     for (const tool of [

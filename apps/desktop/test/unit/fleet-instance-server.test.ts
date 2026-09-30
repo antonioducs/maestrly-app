@@ -341,6 +341,29 @@ async function readFrames(response: Response, count: number): Promise<FleetInsta
   }
   return frames().map((frame) => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as FleetInstanceEvent)
 }
+/** Reads a stream's events a few at a time, keeping what arrived beyond the ones asked for. */
+function eventReader(response: Response): (count: number) => Promise<FleetInstanceEvent[]> {
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let text = ''
+  let taken = 0
+  // Only frames already ended by a blank line count.
+  const frames = () =>
+    text
+      .split('\n\n')
+      .slice(0, -1)
+      .filter((frame) => frame.includes('data: '))
+  return async (count) => {
+    while (frames().length < taken + count) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    const next = frames().slice(taken, taken + count)
+    taken += next.length
+    return next.map((frame) => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as FleetInstanceEvent)
+  }
+}
 const ownerInput = (text = 'Hi') => ({ idempotencyKey: randomUUID(), source: 'owner', text })
 
 describe('instance control HTTP', () => {
@@ -368,7 +391,13 @@ describe('instance control HTTP', () => {
   })
 
   it("lists the environment's models for its default compaction model", async () => {
-    expect(INSTANCE_CAPABILITIES).toEqual(['provisioning', 'environments', 'environment-compaction', 'context-limit'])
+    expect(INSTANCE_CAPABILITIES).toEqual([
+      'provisioning',
+      'environments',
+      'environment-compaction',
+      'context-limit',
+      'transcript-reasoning',
+    ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
     expect(response.status).toBe(200)
@@ -542,6 +571,43 @@ describe('instance control HTTP', () => {
     expect((await send(base, 'GET', '/v1/events?since=x')).status).toBe(400)
     expect(events.replay(events.lastSeq + 1)).toBeNull()
   })
+
+  it('streams reasoning items only to a reader that asks for them, replayed or live', async () => {
+    const { base, events } = await setup()
+    const at = '2026-09-29T10:00:00.000Z'
+    const upsert = (kind: 'assistant' | 'reasoning', id: string) =>
+      events.publish({
+        type: 'transcript.upsert',
+        botId: 'alpha',
+        item:
+          kind === 'assistant'
+            ? { kind, id, at, text: 'Answer', streaming: false }
+            : { kind, id, at, text: 'Thinking', truncated: false, streaming: false },
+      })
+    upsert('reasoning', 'm:0')
+    upsert('assistant', 'm:1')
+    const open = async (query: string) => {
+      const controller = new AbortController()
+      const stream = await fetch(base + '/v1/events?since=0' + query, { headers: headers(), signal: controller.signal })
+      return { controller, next: eventReader(stream) }
+    }
+    const plain = await open('')
+    expect(
+      (await plain.next(1)).map((event) => [event.seq, event.type === 'transcript.upsert' && event.item.id])
+    ).toEqual([[2, 'm:1']])
+    const asked = await open('&reasoning=1')
+    expect((await asked.next(2)).map((event) => event.type === 'transcript.upsert' && event.item.kind)).toEqual([
+      'reasoning',
+      'assistant',
+    ])
+    // Live events follow the same rule; the gap a filtered event leaves in the sequence is harmless.
+    upsert('reasoning', 'm:2')
+    upsert('assistant', 'm:3')
+    expect((await plain.next(1)).map((event) => event.seq)).toEqual([4])
+    expect((await asked.next(2)).map((event) => event.seq)).toEqual([3, 4])
+    plain.controller.abort()
+    asked.controller.abort()
+  })
 })
 
 describe('bot routes', () => {
@@ -566,8 +632,17 @@ describe('bot routes', () => {
       status: 200,
     },
     { method: 'DELETE', path: 'memories/m1', call: 'deleteMemory', args: ['m1'], status: 204 },
-    { method: 'GET', path: 'transcript?before=item-9&limit=20', call: 'transcript', args: ['item-9', 20], status: 200 },
-    { method: 'GET', path: 'transcript', call: 'transcript', args: [null, 200], status: 200 },
+    {
+      method: 'GET',
+      path: 'transcript?before=item-9&limit=20',
+      call: 'transcript',
+      args: ['item-9', 20, false],
+      status: 200,
+    },
+    { method: 'GET', path: 'transcript', call: 'transcript', args: [null, 200, false], status: 200 },
+    // Only a reader that asks gets `reasoning` items.
+    { method: 'GET', path: 'transcript?reasoning=1', call: 'transcript', args: [null, 200, true], status: 200 },
+    { method: 'GET', path: 'transcript?reasoning=true', call: 'transcript', args: [null, 200, false], status: 200 },
     { method: 'GET', path: 'images/img-1', call: 'image', args: ['img-1'], status: 200 },
     {
       method: 'POST',

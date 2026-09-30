@@ -1288,6 +1288,27 @@ describe('Cursor subscription runner', () => {
     expect(Object.keys(customTools ?? {})).toContain('review_plan')
   })
 
+  it('omits plan review tools and their advertisement in a bot instance', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    try {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, { cwd })
+      persistUser(conversation.id, 'user-bot-plan', 'Describe the plan.', 1)
+      const manager = new FakeManager()
+      manager.queue(async function* () {
+        yield msg('status', { status: 'FINISHED' })
+      })
+      await runCursorSubscriptionChat(baseArgs(manager, conversation.id, cwd))
+      const options = manager.createCalls[0] as { local?: { customTools?: Record<string, unknown> } }
+      expect(options.local?.customTools).toBeDefined()
+      expect(options.local?.customTools).not.toHaveProperty('review_plan')
+      expect(JSON.stringify(options)).not.toContain('The `review_plan` tool presents a plan')
+      expect(JSON.stringify(options)).not.toContain('The conversation has a Notes tab')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('restricts isolated reviewers to host read-only tools and bypasses reader prompts', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })

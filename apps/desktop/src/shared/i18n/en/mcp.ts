@@ -1,5 +1,6 @@
 export default {
   notes: {
+    botTerm: ' Operates on persistent terminals in your bot environment. Read output with terminal_read or terminal_snapshot and report results in the conversation; the owner has no terminal drawer. For one-shot commands prefer your shell tool.',
     drawer:
       " [EMBEDDED browser in this app's right drawer — NOT the system Chrome. Use these tools to view/control the browser of this window.]",
     term: " Operates on the drawer terminals of THIS conversation. Use these for PERSISTENT or interactive processes the user watches live: dev servers, docker compose up, watch modes, TUIs. For ONE-SHOT commands (git, tests, installs, builds, scripts that just finish) prefer your own shell/bash tool — cleaner output and fewer tokens than the terminal's PTY stream.",
@@ -14,6 +15,57 @@ export default {
   },
 
   tools: {
+    artifact_create: {
+      title: 'Publish artifact',
+      description:
+        "Publishes a self-contained web page (HTML, CSS, JavaScript and assets) as a versioned artifact that the user opens from the chat or the Artifacts center. Pass files inline with `files`, or publish a build output folder with `directory` (relative to this conversation's files). The entry file defaults to index.html. Artifacts are private to the user. Use it for prototypes, reports, dashboards and other pages worth viewing in a browser.",
+      params: {
+        title: 'short title shown to the user',
+        description: 'optional one-line description',
+        files: 'files of the page; pass exactly one of files or directory',
+        filePath: 'relative path such as index.html or assets/app.js',
+        fileContent: 'file content: text, or base64 when encoding is base64',
+        fileEncoding: 'utf8 (default), or base64 for binary files such as images',
+        directory:
+          "folder to publish, relative to this conversation's files (for example dist); hidden files and node_modules are skipped",
+        entry: 'HTML file opened first (default index.html)',
+      },
+    },
+    artifact_update: {
+      title: 'Update artifact',
+      description:
+        "Creates a new version of an artifact; earlier versions are kept. Pass the baseVersion you read. Use `edits` for exact text replacements, `files` and `delete` to add, replace or remove files, or `directory` to replace every file with a folder's content.",
+      params: {
+        id: 'artifact id',
+        baseVersion: 'the current version you are changing (from artifact_get or the last result)',
+        summary: 'short summary of what changed',
+        edits: 'exact replacements applied in order; each oldText must appear exactly once',
+        oldText: 'exact text to replace, with enough context to be unique',
+        files: 'files to add or replace; unchanged files are kept',
+        delete: 'paths of files to remove',
+        directory: "folder whose content replaces every file, relative to this conversation's files",
+        entry: 'new entry HTML file (default: keep the current one)',
+      },
+    },
+    artifact_get: {
+      title: 'Read artifact',
+      description: 'Reads an artifact: its versions and files, or the text of one file with `path`.',
+      params: {
+        id: 'artifact id',
+        version: 'version to read (default: current)',
+        path: 'file to read as text (up to 200 KB)',
+      },
+    },
+    artifact_list: {
+      title: 'List artifacts',
+      description: "Lists this conversation's artifacts, or its whole project's with scope=project.",
+      params: { scope: 'conversation (default) or project' },
+    },
+    artifact_open: {
+      title: 'Open artifact',
+      description: "Opens an artifact for the user in this conversation's browser drawer.",
+      params: { id: 'artifact id', version: 'version to show (default: current)' },
+    },
     // ---------------- BROWSER ----------------
     browser_navigate: {
       title: 'Navigate',
@@ -463,6 +515,10 @@ export default {
   },
 
   returns: {
+    artifacts: {
+      note: 'The user can open it from the chat card or the Artifacts center. To change it, call artifact_update with baseVersion set to this version.',
+      opened: 'Opened "{{title}}" (version {{version}}) in the browser drawer.',
+    },
     browser: {
       navigated: 'Navigated to {{url}}',
       moved: '{{label}} → {{url}}',
@@ -543,6 +599,38 @@ export default {
 
   // Agent-facing errors.
   errors: {
+    artifacts: {
+      inputConflict:
+        'Provide the content in exactly one way: files or directory (artifact_update also accepts edits, or files with delete).',
+      invalidEncoding: '{{path}} is not valid base64.',
+      inlineTooLarge: 'Inline files exceed 5 MiB in total. Write them to a folder and publish it with directory.',
+      directoryRefused: 'The directory cannot be published: {{message}}',
+      hostDisabled: 'Artifact hosting is turned off in Settings → Artifacts.',
+      portInUse: 'Port {{port}} is in use. Change it in Settings → Artifacts.',
+      hostUnavailable: 'The artifact host is unavailable. Check Settings → Artifacts.',
+      internal: 'The artifact operation failed unexpectedly.',
+      invalid_input: 'Invalid input: {{message}}',
+      invalid_path: '{{message}}',
+      unsupported_type:
+        'Unsupported file type: {{path}}. Use web formats such as HTML, CSS, JavaScript, JSON, SVG, images, fonts, audio or video.',
+      duplicate_path: 'Duplicate file path (paths are case-insensitive): {{path}}',
+      too_many_files: 'A version holds at most 500 files.',
+      file_too_large: '{{path}} exceeds 10 MiB.',
+      bundle_too_large: 'A version cannot exceed 50 MiB.',
+      missing_entry: 'The entry file {{path}} is not among the files.',
+      entry_not_html: 'The entry file {{path}} must be an HTML file.',
+      edit_not_found: '{{message}}',
+      edit_ambiguous: '{{message}}. Include more surrounding text so it appears once.',
+      edit_binary: '{{path}} is not a UTF-8 text file.',
+      not_found: 'Not found: {{message}}. Use artifact_list or artifact_get to see what exists.',
+      version_conflict: 'Version {{currentVersion}} is the current version. Read it with artifact_get and try again.',
+      version_limit: 'This artifact reached 200 versions. Publish a new artifact instead.',
+      quota_exceeded:
+        'The artifact storage limit was reached. The user can raise it in Settings → Artifacts or delete artifacts.',
+      port_in_use: 'Port {{port}} is in use. Change it in Settings → Artifacts.',
+      storage: 'The artifact storage failed: {{message}}',
+      host_unavailable: 'The artifact host is unavailable. Check Settings → Artifacts.',
+    },
     memoryInvisibleCharacters: 'memory-content-rejected: remove invisible or bidirectional control characters',
     memoryInstructionInjection:
       'memory-content-rejected: memories cannot store instructions to ignore rules or run downloaded scripts',

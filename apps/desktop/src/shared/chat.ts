@@ -445,6 +445,20 @@ export interface ChatTodo {
   status: 'pending' | 'in_progress' | 'completed'
 }
 
+/** The valid entries of a todo_write input: streamed and failed calls can carry input that never passed validation. */
+export function chatTodosFromInput(input: unknown): ChatTodo[] {
+  const todos = (input as { todos?: unknown } | null)?.todos
+  return (Array.isArray(todos) ? todos : []).filter(
+    (x: unknown): x is ChatTodo =>
+      typeof x === 'object' &&
+      x !== null &&
+      'content' in x &&
+      typeof x.content === 'string' &&
+      'status' in x &&
+      (x.status === 'pending' || x.status === 'in_progress' || x.status === 'completed')
+  )
+}
+
 export type MessagePart =
   | {
       type: 'text'

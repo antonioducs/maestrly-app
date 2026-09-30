@@ -3367,6 +3367,25 @@ describe('Codex subscription runner', () => {
     ])
   })
 
+  it('does not advertise plan review to a bot instance', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    try {
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_bot_plan', 'Describe the implementation plan', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_bot_plan', notifications: [completedNotification('thread_1', 'turn_bot_plan')] })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      await runCodexSubscriptionChat(args)
+      const start = client.startThreadCalls[0] as { dynamicTools: Array<{ name: string }> }
+      expect(start.dynamicTools.map((tool) => tool.name)).not.toContain('review_plan')
+      expect(client.interruptTurnCalls).toHaveLength(0)
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('treats the interrupt triggered by review_plan as clean plan completion', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -3701,6 +3720,123 @@ describe('Codex subscription runner', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it.each(['item/tool/requestUserInput', 'item/tool/requestUserInputAsync'])(
+    'rejects secret native questions from %s in bot mode before broker or UI exposure',
+    async (method) => {
+      vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+      const workspace = makeWorkspace()
+      const conversation = makeConversation(workspace.id, {})
+      persistUser(conversation.id, 'user_bot_secret', 'Ask if needed', 1)
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_bot_secret', notifications: [] })
+      const questionBroker = new QuestionBroker()
+      const ask = vi.spyOn(questionBroker, 'ask').mockResolvedValue([])
+      const events: ChatStreamEvent[] = []
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client, (event) => events.push(event))
+      args.questionBroker = questionBroker
+      const running = runCodexSubscriptionChat(args)
+      try {
+        await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+        await expect(
+          client.serverRequest({
+            id: 'bot_secret_rpc',
+            method,
+            params: {
+              threadId: 'thread_1',
+              turnId: 'turn_bot_secret',
+              itemId: 'bot_secret_question',
+              ...(method === 'item/tool/requestUserInputAsync'
+                ? { question: 'What is the synthetic access token?', isSecret: true }
+                : {
+                    questions: [
+                      { id: 'choice', header: 'Choice', question: 'Which fixture?', options: [] },
+                      {
+                        id: 'token',
+                        header: 'Token',
+                        question: 'What is the synthetic access token?',
+                        isSecret: true,
+                        options: [],
+                      },
+                    ],
+                  }),
+            },
+          })
+        ).rejects.toThrow(/Secret questions are not supported in fleet bot mode/)
+        expect(ask).not.toHaveBeenCalled()
+        expect(questionBroker.pendingFor(conversation.id)).toEqual([])
+        expect(events).not.toContainEqual(expect.objectContaining({ toolCallId: 'bot_secret_question' }))
+        expect(findPendingChatQuestion(assistantMessages(conversation.id))).toBeNull()
+        expect(JSON.stringify(assistantMessages(conversation.id))).not.toContain('synthetic access token')
+      } finally {
+        client.emit(completedNotification('thread_1', 'turn_bot_secret'))
+        await running
+        vi.unstubAllEnvs()
+      }
+    }
+  )
+
+  it.each([
+    { method: 'item/tool/requestUserInput', bot: false, secret: true },
+    { method: 'item/tool/requestUserInputAsync', bot: false, secret: true },
+    { method: 'item/tool/requestUserInput', bot: true, secret: false },
+    { method: 'item/tool/requestUserInputAsync', bot: true, secret: false },
+  ])('preserves $method questions with bot=$bot and secret=$secret', async ({ method, bot, secret }) => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', bot ? '1' : '0')
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_native_question', 'Ask if needed', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({ turnId: 'turn_native_question', notifications: [] })
+    const questionBroker = new QuestionBroker()
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.questionBroker = questionBroker
+    const running = runCodexSubscriptionChat(args)
+    try {
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      const response = client.serverRequest({
+        id: 'native_question_rpc',
+        method,
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_native_question',
+          itemId: 'native_question',
+          ...(method === 'item/tool/requestUserInputAsync'
+            ? { question: 'Which synthetic value?', isSecret: secret }
+            : {
+                questions: [
+                  {
+                    id: 'choice',
+                    header: 'Choice',
+                    question: 'Which synthetic value?',
+                    isSecret: secret,
+                    options: [{ label: 'Fixture', description: 'Use the fixture.' }],
+                  },
+                ],
+              }),
+        },
+      })
+      expect(questionBroker.pendingFor(conversation.id)).toEqual(['native_question'])
+      expect(findPendingChatQuestion(assistantMessages(conversation.id))).toMatchObject({
+        toolCallId: 'native_question',
+        questions: [{ question: 'Which synthetic value?', ...(secret ? { isSecret: true } : {}) }],
+      })
+      questionBroker.reply('native_question', [['synthetic-answer']])
+      await expect(response).resolves.toEqual(
+        method === 'item/tool/requestUserInputAsync'
+          ? { answers: { async: { answers: ['synthetic-answer'] } }, answer: 'synthetic-answer' }
+          : { answers: { choice: { answers: ['synthetic-answer'] } } }
+      )
+      expect(questionBroker.pendingFor(conversation.id)).toEqual([])
+    } finally {
+      client.emit(completedNotification('thread_1', 'turn_native_question'))
+      await running
+      vi.unstubAllEnvs()
+    }
+    const persisted = JSON.stringify(assistantMessages(conversation.id))
+    expect(persisted).toContain(secret ? '••••••' : 'synthetic-answer')
+    if (secret) expect(persisted).not.toContain('synthetic-answer')
   })
 
   it('serverRequest/resolved cancels only the approval with the same JSON-RPC id and saves no rule', async () => {

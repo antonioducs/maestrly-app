@@ -46,6 +46,7 @@ export const contextBridge = {
 }
 
 export const clipboard = {
+  readText: (): string => '',
   writeText: (_text: string): void => {},
 }
 

@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import {autonomousReportTools} from '../autonomous-tools'
 /**
  * Tool registry + Vercel AI SDK adapter. Ported from opencode tool/registry.ts: replaces
@@ -249,6 +250,7 @@ export function builtinToolNamesForMode(mode: ChatBehavior): Set<string> {
       : capabilities === 'plan'
         ? new Set([...READ_ONLY_TOOL_NAMES, PLAN_TOOL_NAME])
         : new Set(READ_ONLY_TOOL_NAMES)
+  if (isBotMode()) selected.delete(PLAN_TOOL_NAME)
   return selected
 }
 
@@ -280,6 +282,7 @@ export function buildTools(opts: {
 }): ToolSet {
   const out: ToolSet = {}
   for (const def of ALL_TOOLS) {
+    if (def.name === PLAN_TOOL_NAME && isBotMode()) continue
     if (opts.enabled && !opts.enabled.has(def.name)) continue
     out[def.name] = toAiTool(def, opts.makeCtx)
   }

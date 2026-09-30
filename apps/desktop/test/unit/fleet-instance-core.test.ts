@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { FLEET_REASONING_TEXT_MAX, FLEET_TODO_LIMITS, type FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
@@ -235,6 +235,8 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/other/chat')).toBe('')
     expect(botIdentityPrompt('/bot/chat')).toContain('# Bot identity\nYour name is Scout.')
     expect(botIdentityPrompt('/bot/chat')).toContain('Track updates.')
+    expect(botIdentityPrompt('/bot/chat')).toContain('Plan review is unavailable')
+    expect(botIdentityPrompt('/bot/chat')).toContain('present it directly in the conversation')
     expect(botIdentityPrompt('/bot/chat')).toContain('Node.js 22')
     expect(botIdentityPrompt('/bot/chat')).toContain('mise use node@20')
     expect(botIdentityPrompt('/bot/chat')).toContain('there is no sudo or Docker')
@@ -629,7 +631,7 @@ describe('transcript projection', () => {
     })
     expect(permissionTool({ action: 'mcp', resources: ['computer_click'] }, [])).toBeNull()
   })
-  it('maps native parts, keeps user metadata, omits reasoning and pages by stable ids', () => {
+  it('maps native parts, keeps user metadata, projects reasoning and pages by stable ids', () => {
     const createdAt = Date.UTC(2026, 0, 1)
     const messages = [
       {
@@ -690,16 +692,46 @@ describe('transcript projection', () => {
       },
     ]
     const items = projectChatMessages(messages, inputs)
-    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'tool', 'question', 'tool'])
+    expect(items.map((item) => item.kind)).toEqual(['user', 'assistant', 'reasoning', 'tool', 'question', 'tool'])
     expect(items[0]).toMatchObject({ id: 'input:stable', kind: 'user', text: 'Original', source: 'routine' })
-    expect(items[2]).toMatchObject({ id: 'assistant-message:2', target: 'example.com/path', state: 'done' })
-    expect(items[4]).toMatchObject({ target: '(10, 20)', state: 'error' })
+    // Reasoning keeps its part's place; readers that did not ask for it never receive it.
+    expect(items[2]).toEqual({
+      kind: 'reasoning',
+      id: 'assistant-message:1',
+      at: new Date(createdAt + 1).toISOString(),
+      text: 'secret',
+      truncated: false,
+      streaming: true,
+    })
+    expect(items[3]).toMatchObject({ id: 'assistant-message:2', target: 'example.com/path', state: 'done' })
+    expect(items[5]).toMatchObject({ target: '(10, 20)', state: 'error' })
     expect(toolTarget({ command: 'x'.repeat(100) })).toHaveLength(80)
     const page = transcriptPage(items, null, 2)
     expect(page.items).toHaveLength(2)
     expect(transcriptPage(items, page.before, 2).items.map((item) => item.id)).toEqual(
-      items.slice(1, 3).map((item) => item.id)
+      items.slice(2, 4).map((item) => item.id)
     )
+  })
+
+  it('projects reasoning of assistant messages only, cut for display and settled once the message ends', () => {
+    const long = 'x'.repeat(FLEET_REASONING_TEXT_MAX + 5)
+    const message = (id: string, role: 'user' | 'assistant', finishReason?: string) =>
+      ({
+        id,
+        conversationId: 'c',
+        role,
+        createdAt: Date.UTC(2026, 0, 1),
+        finishReason,
+        parts: [
+          { type: 'reasoning', id: 'long', text: long },
+          { type: 'reasoning', id: 'blank', text: '  \n' },
+        ],
+      }) as ChatMessage
+    expect(projectChatMessages([message('asked', 'user')])).toEqual([])
+    const [item, ...rest] = projectChatMessages([message('done', 'assistant', 'stop')])
+    expect(rest).toEqual([])
+    expect(item).toMatchObject({ kind: 'reasoning', truncated: true, streaming: false })
+    expect(item.kind === 'reasoning' && item.text).toBe(long.slice(0, FLEET_REASONING_TEXT_MAX))
   })
 })
 
@@ -731,7 +763,7 @@ describe('transcript extras persistence', () => {
 })
 
 describe('additional tool states', () => {
-  it('projects pending, running, denied and awaiting permission without reasoning', () => {
+  it('projects pending, running, denied and awaiting permission, and the reasoning after them', () => {
     const parts = ['pending', 'running', 'denied', 'awaiting-permission'].map((status, index) => ({
       type: 'tool',
       id: String(index),
@@ -750,13 +782,14 @@ describe('additional tool states', () => {
       conversationId: 'c',
       role: 'assistant',
       createdAt: Date.now(),
-      parts: [...parts, { type: 'reasoning', id: 'r', text: 'hidden' }],
+      parts: [...parts, { type: 'reasoning', id: 'r', text: 'thinking' }],
     } as ChatMessage
     expect(projectChatMessages([message]).map((item) => (item.kind === 'tool' ? item.state : item.kind))).toEqual([
       'running',
       'running',
       'error',
       'running',
+      'reasoning',
     ])
     const aborted = {
       ...message,
@@ -773,6 +806,59 @@ describe('additional tool states', () => {
       ],
     } as ChatMessage
     expect(projectChatMessages([aborted])[0]).toMatchObject({ kind: 'tool', state: 'interrupted' })
+  })
+  it('sends the todo_write checklist within protocol limits and no todos for other tools', () => {
+    const tool = (toolCallId: string, toolName: string, input: unknown) => ({
+      type: 'tool',
+      id: toolCallId,
+      toolCallId,
+      toolName,
+      input,
+      state: { status: 'completed', output: 'To-do list (current):\n[x] Inspect files' },
+    })
+    const long = 'x'.repeat(FLEET_TODO_LIMITS.contentMax + 20)
+    const message = {
+      id: 'assistant',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: Date.now(),
+      finishReason: 'stop',
+      parts: [
+        tool('todo', 'todo_write', {
+          todos: [
+            { content: 'Inspect files', status: 'completed' },
+            { content: 'Fix rendering', status: 'in_progress' },
+            { content: 'Unknown status', status: 'blocked' },
+            { content: '', status: 'pending' },
+            null,
+            { content: long, status: 'pending' },
+          ],
+        }),
+        tool('many', 'todo_write', {
+          todos: Array.from({ length: FLEET_TODO_LIMITS.itemsMax + 5 }, (_, index) => ({
+            content: `Step ${index}`,
+            status: 'pending',
+          })),
+        }),
+        tool('partial', 'todo_write', { todos: '[{"content":' }),
+        tool('shell', 'bash', { command: 'npm test' }),
+      ],
+    } as ChatMessage
+    const [todo, many, partial, shell] = projectChatMessages([message])
+    expect(todo).toMatchObject({
+      kind: 'tool',
+      name: 'todo_write',
+      state: 'done',
+      todos: [
+        { content: 'Inspect files', status: 'completed' },
+        { content: 'Fix rendering', status: 'in_progress' },
+        { content: long.slice(0, FLEET_TODO_LIMITS.contentMax), status: 'pending' },
+      ],
+    })
+    expect(many.kind === 'tool' && many.todos).toHaveLength(FLEET_TODO_LIMITS.itemsMax)
+    expect(partial).toMatchObject({ kind: 'tool', todos: [] })
+    expect(shell).toMatchObject({ kind: 'tool', name: 'bash' })
+    expect(shell).not.toHaveProperty('todos')
   })
 })
 

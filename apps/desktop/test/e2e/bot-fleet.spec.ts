@@ -3018,6 +3018,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await expect(surfaces.getByRole('radio', { name: 'Apps' })).toBeDisabled()
     await expect(page.getByText('Reinicie o ambiente para atualizá-lo antes de abrir a tela de apps.')).toBeVisible()
     await expect.poll(() => botTickets('veteran')).toContainEqual({ mode: 'view', surface: 'browser' })
+    // noVNC hides the local pointer on its canvas, since the screen server draws the bot's own pointer into the
+    // frames. A watched screen keeps the local pointer, so hovering it never loses the mouse.
+    const veteranCanvas = page.getByRole('region', { name: 'Tela do Veterano' }).locator('canvas')
+    await expect(veteranCanvas).toHaveCSS('cursor', 'not-allowed')
     await expect(page.getByRole('button', { name: 'Usar a tela do ambiente' })).toHaveCount(0)
     await page.getByRole('button', { name: 'Usar a tela do bot' }).click()
     await expect
@@ -3027,6 +3031,8 @@ test('fleet UI keeps older environment images, stopped environments and refused 
       '/v1/bots/veteran/takeover',
     ])
     await expect.poll(() => botTickets('veteran').at(-1)).toEqual({ mode: 'control', surface: 'browser' })
+    // Under control only the bot's pointer shows, drawn in the frames; a local one would be a second pointer.
+    await expect(veteranCanvas).toHaveCSS('cursor', 'none')
     expect(botTickets('veteran').filter((item) => item.surface !== 'browser')).toEqual([])
     expect(requests.filter((item) => item.key === 'environmentUiOpen')).toHaveLength(0)
 
@@ -3104,6 +3110,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
       .toEqual([{ mode: 'view' }, { mode: 'control' }, { mode: 'view' }])
     await page.waitForTimeout(1000)
     expect(environmentTickets('acme').filter((item) => item.mode === 'control')).toHaveLength(1)
+    await expect(page.getByRole('region', { name: 'Tela do ambiente Acme' }).locator('canvas')).toHaveCSS(
+      'cursor',
+      'not-allowed'
+    )
 
     // Deleting a bot of a shared environment keeps what the environment shares; a refusal says what to do.
     await page.getByRole('button', { name: hostname, exact: true }).click()

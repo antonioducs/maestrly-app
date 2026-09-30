@@ -1,5 +1,6 @@
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
-import { botIdentityPrompt } from '../../fleet/instance/identity'
+import { isBotMode } from '../../fleet/instance/config'
+import { BOT_APP_TOOLS_GUIDANCE, botIdentityPrompt } from '../../fleet/instance/identity'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
@@ -69,6 +70,8 @@ export function hostCapabilitySection(mode: ChatBehavior): string {
 export const HOST_RENDERING = `\n\nRendering: the chat supports full Markdown, including GFM tables and Mermaid DIAGRAMS. For any diagram (flow, architecture, sequence, etc.) use a \`\`\`mermaid block instead of drawing ASCII art — it renders as a real visual diagram.`
 
 export function hostAppToolsSection(appToolsEnabled: boolean, hasNotesTab: boolean, mode: ChatBehavior): string {
+  if (isBotMode())
+    return `\n\nMaestrly app tools: ${appToolsEnabled ? BOT_APP_TOOLS_GUIDANCE : 'Use only tools actually exposed in this turn.'}`
   const capabilityMode = capabilityBehaviorFor(mode)
   const appToolGroups = hasNotesTab ? 'terminal, browser, notes, memory, debug' : 'terminal, browser, memory, debug'
   const appToolPrefixes = hasNotesTab

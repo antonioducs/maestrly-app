@@ -18,6 +18,7 @@ flowchart LR
   Main --> MCP[Configured MCP servers]
   Main --> ML[Local ML utility process]
   Main --> Browser[Embedded browser surfaces]
+  Main --> Artifacts[Artifact host utility process]
 ```
 
 The primary renderer runs with context isolation enabled and Node integration
@@ -39,6 +40,7 @@ separate Linux gateway and desktop containers used by remote bots, see the
 | `src/shared/` | Pure shared code | Types, schemas, i18n catalogs, domain rules, and serialization contracts |
 | `apps/desktop/runtime-assets/` | Package/runtime tooling | Optional Local ML runtime manifests, archives, and model preparation |
 | `resources/` | Packaged assets | Icons, sounds, notices, and target-specific staged resources |
+| `packages/artifact-host/` | Artifact host package | Artifact storage, versions, the loopback HTTP server, and the viewer shell, run in a utility process |
 
 Shared modules must not import Electron, React, or Node-only APIs. Renderer code
 does not receive raw database handles, arbitrary IPC channels, process handles,
@@ -117,6 +119,11 @@ The ChatGPT Web bridge and embedded editor bind to loopback and use random local
 capability tokens. Tokens are not a substitute for operating-system isolation;
 they limit accidental or unrelated local access while the owning process is
 alive.
+
+Agent-published [artifacts](artifacts.md) are served by an artifact host in a
+utility process, on a configurable loopback port. The main process talks to it
+over a typed message channel and never opens its database. Pages render in a
+sandboxed, opaque-origin frame; see the [security model](security-model.md#artifacts).
 
 ## Local ML and package boundaries
 

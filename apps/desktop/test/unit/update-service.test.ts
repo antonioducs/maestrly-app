@@ -106,6 +106,11 @@ function quitHarness() {
         order.push('bot')
       },
     },
+    artifactHost: {
+      stop: async () => {
+        order.push('artifacts')
+      },
+    },
     disposeChat: async () => {
       order.push('chat')
     },
@@ -348,7 +353,7 @@ describe('update-service', () => {
         // Drain the bounded project, runner, chat and memory promise chain.
         for (let i = 0; i < 30; i++) await Promise.resolve()
         expect(fake.quitAndInstall).toHaveBeenCalledOnce()
-        expect(harness.order).toEqual(['projects', 'runner', 'bot', 'chat', 'cleanup', 'memory', 'install'])
+        expect(harness.order).toEqual(['projects', 'runner', 'bot', 'artifacts', 'chat', 'cleanup', 'memory', 'install'])
         expect(harness.cleanup).toHaveBeenCalledOnce()
         if (!immediate) {
           expect(harness.events.every((event) => event.prevented)).toBe(true)

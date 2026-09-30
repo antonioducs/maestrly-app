@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
@@ -119,6 +119,11 @@ const EXPECTED_TOOL_NAMES = [
   'debug_inspect',
   'debug_variables',
   'debug_evaluate',
+  'artifact_create',
+  'artifact_update',
+  'artifact_get',
+  'artifact_list',
+  'artifact_open',
 ] as const
 
 // Board tools register only for linked board or project-chat conversations.
@@ -240,6 +245,15 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('debug_inspect', ['frameId']),
   shape('debug_variables', ['ref'], ['ref']),
   shape('debug_evaluate', ['expression', 'frameId'], ['expression']),
+  shape('artifact_create', ['description', 'directory', 'entry', 'files', 'title'], ['title']),
+  shape(
+    'artifact_update',
+    ['baseVersion', 'delete', 'directory', 'edits', 'entry', 'files', 'id', 'summary'],
+    ['baseVersion', 'id']
+  ),
+  shape('artifact_get', ['id', 'path', 'version'], ['id']),
+  shape('artifact_list', ['scope']),
+  shape('artifact_open', ['id', 'version'], ['id']),
 ]
 
 async function listToolInventory(convId: string, includeDescriptions = false): Promise<ToolShape[]> {
@@ -304,7 +318,33 @@ describe('MCP app tools inventory', () => {
     workspaceId = ws.id
     convId = makeConversation(ws.id).id
   })
-  afterEach(closeDb)
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    closeDb()
+  })
+
+  it('omits desktop-only app tools from bot catalogs and rejects their calls', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const inventory = await listToolInventory(convId)
+    const names = inventory.map((entry) => entry.name)
+    expect(names.filter((name) => /^(?:notes_|project_notes_|debug_)/.test(name))).toEqual([])
+    expect(names).not.toContain('terminal_focus')
+    expect(names).toEqual(
+      expect.arrayContaining(['terminal_run', 'terminal_read', 'browser_navigate', 'request_owner_help'])
+    )
+    for (const name of ['notes_list_pages', 'project_notes_list_pages', 'debug_status', 'terminal_focus']) {
+      expect(await callAppTool(convId, name, { id: 'missing' })).toMatchObject({ isError: true })
+    }
+    const app = await buildAppTools({ conversationId: convId, mode: 'agent', gate: async () => {} })
+    try {
+      expect(app.tools.debug_status).toBeUndefined()
+      expect(app.tools.terminal_focus).toBeUndefined()
+      expect(app.tools.notes_list_pages).toBeUndefined()
+      expect(app.tools.terminal_run).toBeDefined()
+    } finally {
+      await app.close()
+    }
+  })
 
   it('omits project tools from standalone sessions while retaining generic tools', async () => {
     insertConversation({
@@ -371,7 +411,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(77)
+    expect(registered).toHaveLength(82)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -411,5 +451,10 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)
+    expect(appToolAllowed('plan', 'artifact_create')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_get')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_list')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_create')).toBe(false)
+    expect(appToolAllowed('maestro', 'artifact_open')).toBe(false)
   })
 })

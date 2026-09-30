@@ -47,6 +47,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
     'environment-compaction',
     'environment-updates',
     'context-limit',
+    'transcript-reasoning',
   ])
   expect((await (await h.request('GET', '/v1/bots/' + h.bot.id)).json()).capabilities).toEqual(['provisioning'])
 })

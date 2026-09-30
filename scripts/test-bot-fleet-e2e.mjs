@@ -594,8 +594,19 @@ class Rfb {
     }
     return pixelCount
   }
-  pointer(x, y) {
-    this.send(Buffer.from([5, 0, x >> 8, x & 255, y >> 8, y & 255]))
+  pointer(x, y, buttons = 0) {
+    this.send(Buffer.from([5, buttons, x >> 8, x & 255, y >> 8, y & 255]))
+  }
+  key(keysym, down) {
+    const message = Buffer.alloc(8)
+    message[0] = 4
+    message[1] = down ? 1 : 0
+    message.writeUInt32BE(keysym, 4)
+    this.send(message)
+  }
+  tap(keysym) {
+    this.key(keysym, true)
+    this.key(keysym, false)
   }
   async closeCode() {
     await poll('RFB socket close', () => this.closed !== null && this.closed, 10000)
@@ -1809,6 +1820,41 @@ async function main() {
     },
     10000
   )
+  // With Caps Lock on, a Mac viewer (noVNC) sends the lock key on each toggle and letters already capitalised. The
+  // letters keep the viewer's case, Shift included, and the display's own lock stays off.
+  const capsWindow = 'e2e-apps-capslock'
+  await openEventWindow(containers[1], ':1', capsWindow)
+  scoutAppsControl.pointer(300, 300, 1)
+  scoutAppsControl.pointer(300, 300)
+  await poll(
+    capsWindow + ' focused',
+    async () =>
+      (
+        await docker(['exec', '-e', 'DISPLAY=:1', containers[1], 'xdotool', 'getactivewindow', 'getwindowname'], {
+          allowFailure: true,
+        })
+      ).stdout.trim() === capsWindow,
+    10000
+  )
+  const [capsLock, shift] = [0xffe5, 0xffe1]
+  scoutAppsControl.tap(capsLock)
+  scoutAppsControl.tap(0x41)
+  scoutAppsControl.tap(0x42)
+  scoutAppsControl.key(shift, true)
+  scoutAppsControl.tap(0x43)
+  scoutAppsControl.key(shift, false)
+  scoutAppsControl.tap(capsLock)
+  scoutAppsControl.tap(0x64)
+  const capsTyped = await poll(
+    'Caps Lock letters on :1',
+    async () => {
+      const log = await eventWindowLog(containers[1], capsWindow)
+      return log.text.length >= 4 && log
+    },
+    10000
+  )
+  assert.equal(capsTyped.text, 'ABCd', 'Caps Lock on the viewer changed the case of its letters')
+  await docker(['exec', containers[1], 'pkill', '-f', 'xev -name ' + capsWindow], { allowFailure: true })
   await request('POST', '/v1/bots/' + partnerId + '/takeover')
   const partnerAppsControl = await openScreen(await screenTicket(partnerId, 'control', 'apps'))
   partnerAppsControl.pointer(200, 250)
@@ -1878,7 +1924,8 @@ async function main() {
   pass(
     'screens of a shared environment',
     '5 surfaces viewed; environment control without takeover at :0 (50,60); second :0 control 409 and 4003 at use; ' +
-      `apps controls at :1 (300,300) and :2 (200,250) at once; browser controls at :0 (${scoutTile.x + 100},100) and ` +
+      `apps controls at :1 (300,300) and :2 (200,250) at once; Caps Lock typed ${capsTyped.text} at :1; ` +
+      `browser controls at :0 (${scoutTile.x + 100},100) and ` +
       `(${partnerTile.x + 100},100); release closed only that bot's controls; PNG ${environmentPng}`
   )
 

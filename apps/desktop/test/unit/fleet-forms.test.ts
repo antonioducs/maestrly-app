@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { FleetRoutine } from '@maestrly/bot-fleet-protocol'
 import {
   formatUptime,
+  latestTodoItemId,
   visibleTranscriptItems,
   formatTimer,
   nextRadioIndex,
@@ -106,6 +107,24 @@ describe('fleet forms', () => {
     }
     const owner = { ...continuation, id: 'o', source: 'owner' as const }
     expect(visibleTranscriptItems([continuation, owner])).toEqual([owner])
+  })
+  it('picks the latest checklist, skipping other tools and todo_write rows from older instances', () => {
+    const tool = (id: string, name: string, todos?: { content: string; status: 'pending' }[]) => ({
+      kind: 'tool' as const,
+      id,
+      at: '2026-09-23T12:34:56Z',
+      name,
+      target: null,
+      state: 'done' as const,
+      output: null,
+      images: [],
+      ...(todos ? { todos } : {}),
+    })
+    const list = [{ content: 'Run tests', status: 'pending' as const }]
+    expect(latestTodoItemId([])).toBeNull()
+    expect(latestTodoItemId([tool('a', 'todo_write', list), tool('b', 'todo_write', []), tool('c', 'bash')])).toBe('b')
+    expect(latestTodoItemId([tool('a', 'todo_write', list), tool('legacy', 'todo_write')])).toBe('a')
+    expect(latestTodoItemId([tool('legacy', 'todo_write'), tool('c', 'bash', list)])).toBeNull()
   })
   it('wraps ceiling radio keyboard navigation', () => {
     expect(nextRadioIndex(2, 'ArrowRight', 3)).toBe(0)

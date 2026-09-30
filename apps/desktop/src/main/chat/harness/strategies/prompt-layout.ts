@@ -1,3 +1,5 @@
+import { isBotMode } from '../../../fleet/instance/config'
+import { BOT_APP_TOOLS_GUIDANCE } from '../../../fleet/instance/identity'
 import { capabilityBehaviorFor } from '../../../../shared/chat-mode'
 import { renderDesignModePrompt } from '../../design-mode-prompt'
 import { MEMORY_TOOL_GUIDANCE } from '../../memory-tool-guidance'
@@ -63,6 +65,7 @@ ${mode === 'design' ? 'DESIGN MODE uses Agent-equivalent capabilities. It' : 'AG
 }
 
 const appToolsOverlay = (enabled: boolean, hasNotesTab: boolean, mode: OpenAIPromptMode): string => {
+  if (isBotMode()) return enabled ? `# Maestrly app tools\n\n${BOT_APP_TOOLS_GUIDANCE}` : ''
   const capabilityMode = capabilityBehaviorFor(mode)
   const groups = hasNotesTab
     ? 'terminal_*, browser_*, notes_*, memory_*, and debug_*'
@@ -179,7 +182,8 @@ const astraToolPolicy = (input: OpenAIPromptLayoutInput): string => {
   if (input.nativeTools?.localShell) tools.push('Use local_shell for shell commands.')
   if (input.nativeTools?.applyPatch) tools.push('Use apply_patch for manual file edits.')
   if (input.appToolsEnabled) tools.push('Connected app tools may be used when their data is in scope.')
-  if (input.hasNotesTab) tools.push('Project notes are available through the Memory Center contract below.')
+  if (!isBotMode() && input.hasNotesTab)
+    tools.push('Project notes are available through the Memory Center contract below.')
   return tools.length ? `\n\n# Host tools\n\n${tools.join(' ')}` : ''
 }
 

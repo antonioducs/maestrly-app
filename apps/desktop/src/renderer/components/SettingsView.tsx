@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
 import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
-import { LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
+import { AgentActivitySection, LanguageSection, SoundSection } from '@/components/settings/AppearanceSections'
 import { TabOrderSection } from '@/components/settings/TabOrderSection'
 import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
@@ -42,6 +42,7 @@ import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { PlatformSection } from '@/components/platform/PlatformSection'
 import { BotSection } from '@/components/bot/BotSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
+import { ArtifactsSettings } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 interface Props {
@@ -366,6 +367,7 @@ export function SettingsView({
             {section === 'usage' && <UsagePanel />}
 
             {section === 'appearance' && <LanguageSection t={t} locale={locale} setLocale={setLocale} />}
+            {section === 'appearance' && <AgentActivitySection t={t} />}
 
             {section === 'tools' && (
               <TabOrderSection
@@ -380,6 +382,7 @@ export function SettingsView({
             {section === 'chat' && <MaestrlyChatSection t={t} chat={chat} />}
 
             {section === 'platform' && <PlatformSection />}
+            {section === 'artifacts' && <ArtifactsSettings />}
             {section === 'fleet' && fleet && <FleetSettings fleet={fleet} />}
             {section === 'bots' && (
               <BotSection onNavigate={selectSection} {...(onAddProject ? { onAddProject } : {})} />

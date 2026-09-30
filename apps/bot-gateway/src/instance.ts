@@ -3,6 +3,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
+  FLEET_REASONING_QUERY,
   fleetImageMediaTypeSchema,
   buildPath,
   fleetInstanceEventSchema,
@@ -228,8 +229,14 @@ export class InstanceClient {
   removeAccount(providerId: string) {
     return this.call('accountRemove', { providerId })
   }
-  transcript(before?: string, limit = 200) {
-    return this.botCall('transcript', 'botTranscript', {}, { before, limit })
+  /** A page of the bot's transcript; with `reasoning`, the `reasoning` items too (an older bot sends none). */
+  transcript(before?: string, limit = 200, reasoning = false) {
+    return this.botCall(
+      'transcript',
+      'botTranscript',
+      {},
+      { before, limit, [FLEET_REASONING_QUERY]: reasoning ? 1 : undefined }
+    )
   }
   async image(imageId: string): Promise<Response> {
     const path = this.scope?.environments
@@ -287,7 +294,9 @@ export class InstanceClient {
   async *events(since = 0, signal?: AbortSignal) {
     let response: Response
     try {
-      response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.events.path, {}, { since }), {
+      // The gateway reads `reasoning` items and passes them on only to devices that ask for them.
+      const query = { since, [FLEET_REASONING_QUERY]: 1 }
+      response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.events.path, {}, query), {
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
           Authorization: 'Bearer ' + this.controlToken,

@@ -5,6 +5,15 @@ export function visibleTranscriptItems(items: FleetTranscriptItem[]): FleetTrans
   return items.filter((item) => item.kind !== 'user' || item.source !== 'continuation')
 }
 
+/** Like desktop chats, a bot conversation shows only its latest to-do list, where it was last written. */
+export function latestTodoItemId(items: FleetTranscriptItem[]): string | null {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]
+    if (item.kind === 'tool' && item.name === 'todo_write' && item.todos) return item.id
+  }
+  return null
+}
+
 export function formatUptime(milliseconds: number): { days: number; hours: number; minutes: number; long: boolean } {
   const totalMinutes = Math.max(0, Math.floor(milliseconds / 60000))
   const days = Math.floor(totalMinutes / 1440)

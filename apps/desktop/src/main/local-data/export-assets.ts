@@ -75,6 +75,9 @@ export async function exportOwnedAssets(omissions: string[]): Promise<ExportedAs
     await visit(`standalone-chats/${id}`, { kind: 'conversation', id })
   })
   await visit('chat-tool-output', { kind: 'app' }, true)
+  // The artifacts database is exported as the snapshot written by prepareArtifactsExport, next to its blobs.
+  await visit('artifacts/export', { kind: 'app' }, true)
+  await visit('artifacts/blobs', { kind: 'app' }, true)
   await children('workspace-data', async (id) => {
     // Check the intermediate workspace and notebook directories before descending into assets.
     let relative = `workspace-data/${id}`

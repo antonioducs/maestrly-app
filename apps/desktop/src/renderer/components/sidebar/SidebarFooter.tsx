@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Activity, Archive, Settings, HelpCircle, Info, Sparkles, BookOpen, LifeBuoy } from 'lucide-react'
+import { Activity, AppWindow, Archive, Settings, HelpCircle, Info, Sparkles, BookOpen, LifeBuoy } from 'lucide-react'
 import type { WorkspaceWithConversations } from '../../../preload'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
@@ -94,6 +94,16 @@ export function SidebarFooter({
           <span className="truncate">{t('sidebar.usage')}</span>
         </button>
       )}
+
+      <button
+        onClick={() => window.dispatchEvent(new CustomEvent('maestrly:open-artifacts'))}
+        className="no-drag flex shrink-0 items-center gap-2 hairline-t px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground"
+        title={t('artifacts.sidebarTitle')}
+        data-testid="sidebar-artifacts"
+      >
+        <AppWindow className="size-3.5 shrink-0" />
+        <span className="truncate">{t('artifacts.sidebar')}</span>
+      </button>
 
       <button
         onClick={openSettings}

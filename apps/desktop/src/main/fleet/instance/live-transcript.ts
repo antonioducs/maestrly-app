@@ -1,5 +1,6 @@
 import {
   compareFleetTranscriptItems,
+  fleetTranscriptItemReadable,
   type FleetTranscriptItem,
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
@@ -182,18 +183,20 @@ export class LiveTranscript {
    * The `limit` items (1 to 500) just before the item `before`, or the newest ones, and the cursor to the items before
    * them: the page `transcriptPage` would cut from the whole transcript. Every item of a message carries its creation
    * time, so messages are read newest first by that time until the page cannot change: once it starts after the last
-   * message read, whatever order the stamps took against seq.
+   * message read, whatever order the stamps took against seq. `reasoning` items are left out unless asked for.
    */
-  async page(before: string | null, requested: number): Promise<FleetTranscriptPage> {
+  async page(before: string | null, requested: number, reasoning = false): Promise<FleetTranscriptPage> {
     const limit = Math.max(1, Math.min(500, requested))
     const superseded = this.options.extras.questionToolCallIds()
     const outside = [...this.queuedItems(), ...this.options.extras.list()]
     const id = this.options.conversationId()
     if (!id) return transcriptPage(outside, before, limit)
     const inputs = this.options.queue.transcriptInputs()
-    // An unknown cursor (an item gone since) gives the newest page.
-    const cursor = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
-    const accept = (item: FleetTranscriptItem) => !cursor || compareFleetTranscriptItems(item, cursor) < 0
+    // An unknown cursor (an item gone since, or one this reader never gets) gives the newest page.
+    const found = before ? this.cursorItem(id, before, outside, inputs, superseded) : null
+    const cursor = found && fleetTranscriptItemReadable(found, reasoning) ? found : null
+    const accept = (item: FleetTranscriptItem) =>
+      fleetTranscriptItemReadable(item, reasoning) && (!cursor || compareFleetTranscriptItems(item, cursor) < 0)
     const collected = outside.filter(accept)
     // Messages created after the cursor hold only items after it.
     const atOrBefore = cursor ? Date.parse(cursor.at) : Number.MAX_SAFE_INTEGER

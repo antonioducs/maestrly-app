@@ -1,3 +1,4 @@
+import { isBotMode } from '../../fleet/instance/config'
 import { validateStandaloneConversationDirectory } from '../../standalone-conversation-service'
 import os from 'node:os'
 import { z } from 'zod'
@@ -38,7 +39,7 @@ export function registerTerminalTools(ctx: McpToolContext): void {
   }
   // Drawer terminal tools operate only on this conversation's term:<convId>:* IDs. Reject the main agent
   // session and terminals owned by other conversations.
-  const TERM_NOTE = t('notes.term')
+  const TERM_NOTE = t(isBotMode() ? 'notes.botTerm' : 'notes.term')
   /** Validate that the terminal exists and belongs to this conversation; otherwise return an error. */
   const guard = (id: string): string | null => {
     if (workerScope && getShellTerminalOwnerScopeId(convId, id) !== workerScope.id) {
@@ -262,20 +263,22 @@ export function registerTerminalTools(ctx: McpToolContext): void {
     }
   )
 
-  server.registerTool(
-    'terminal_focus',
-    {
-      title: t('tools.terminal_focus.title'),
-      description: t('tools.terminal_focus.description') + TERM_NOTE,
-      inputSchema: { id: z.string().describe(t('tools.terminal_focus.params.id')) },
-    },
-    async ({ id }) => {
-      return runGuarded(id, () => {
-        focusShellTerminal(convId, id)
-        return ok(t('returns.terminal.focused', { id }))
-      })
-    }
-  )
+  if (!isBotMode()) {
+    server.registerTool(
+      'terminal_focus',
+      {
+        title: t('tools.terminal_focus.title'),
+        description: t('tools.terminal_focus.description') + TERM_NOTE,
+        inputSchema: { id: z.string().describe(t('tools.terminal_focus.params.id')) },
+      },
+      async ({ id }) => {
+        return runGuarded(id, () => {
+          focusShellTerminal(convId, id)
+          return ok(t('returns.terminal.focused', { id }))
+        })
+      }
+    )
+  }
 
   server.registerTool(
     'terminal_clear',

@@ -7,6 +7,7 @@ import { editTool, findReplacementMatches, type ReplacementMatch } from '../../s
 import { bashPermissionSavePattern, commandSegments } from '../../src/main/chat/tools/bash'
 import { shouldSkipSearchDir } from '../../src/main/chat/tools/grep'
 import { webfetchPermissionSavePattern } from '../../src/main/chat/tools/webfetch'
+import { buildTools, builtinToolNamesForMode } from '../../src/main/chat/tools'
 import { reviewPlanTool } from '../../src/main/chat/tools/review-plan'
 import { boundText, withFileLock, type ToolContext } from '../../src/main/chat/tools/util'
 
@@ -31,6 +32,7 @@ describe('chat tools', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -181,6 +183,24 @@ describe('chat tools', () => {
     expect(shouldSkipSearchDir('.git')).toBe(true)
     expect(shouldSkipSearchDir('.github')).toBe(false)
     expect(shouldSkipSearchDir('.vscode')).toBe(false)
+  })
+
+  it('does not expose or stage plan review in a bot instance', async () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    for (const mode of ['agent', 'plan', 'ask', 'design'] as const) {
+      expect(builtinToolNamesForMode(mode).has('review_plan')).toBe(false)
+      if (mode === 'agent' || mode === 'design') expect(builtinToolNamesForMode(mode).has('todo_write')).toBe(true)
+    }
+    const submitPlan = vi.fn(() => true)
+    const makeCtx = () => ({ ...ctx(dir), submitPlan })
+    expect(buildTools({ makeCtx }).review_plan).toBeUndefined()
+    expect(buildTools({ makeCtx }).todo_write).toBeDefined()
+    expect(buildTools({ enabled: new Set(['review_plan']), makeCtx }).review_plan).toBeUndefined()
+    expect(await reviewPlanTool.execute({ plan: 'Plan' }, makeCtx())).toEqual({ staged: false })
+    expect(submitPlan).not.toHaveBeenCalled()
+    vi.stubEnv('MAESTRLY_BOT_MODE', '0')
+    expect(builtinToolNamesForMode('agent').has('review_plan')).toBe(true)
+    expect(buildTools({ makeCtx }).review_plan).toBeDefined()
   })
 
   it('submits and releases plans through context', async () => {

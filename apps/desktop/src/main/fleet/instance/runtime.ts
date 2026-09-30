@@ -975,8 +975,8 @@ export class BotRuntime {
     this.publish({ type: 'reset' })
     this.changed()
   }
-  async transcript(before: string | null, limit: number) {
-    return this.live.page(before, limit)
+  async transcript(before: string | null, limit: number, reasoning = false) {
+    return this.live.page(before, limit, reasoning)
   }
   async image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }> {
     const id = this.primaryConversationId
@@ -1373,6 +1373,8 @@ export class BotRuntime {
     if (
       event.kind === 'text-delta' ||
       event.kind === 'text-start' ||
+      event.kind === 'reasoning-delta' ||
+      event.kind === 'reasoning-start' ||
       event.kind === 'tool-state' ||
       event.kind === 'tool-call' ||
       event.kind === 'finish' ||

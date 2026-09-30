@@ -13,7 +13,16 @@ import {
 
 const HOME = '/srv/maestrly-displays-test/home'
 const PROBES = new Set(['prepare-xvfb-display', 'xdpyinfo', 'bash'])
-const VNC_FLAGS = ['-localhost', '-forever', '-shared', '-nopw']
+const VNC_FLAGS = [
+  '-localhost',
+  '-forever',
+  '-shared',
+  '-nopw',
+  '-noprimary',
+  '-env',
+  'X11VNC_AVOID_WINDOWS=never',
+  '-skip_lockkeys',
+]
 const VNC_CURSOR = ['-cursor', 'arrow', '-nocursorshape', '-nocursorpos', '-noxfixes', '-quiet']
 
 function botEnv(botId: string, slot: number): Record<string, string> {
