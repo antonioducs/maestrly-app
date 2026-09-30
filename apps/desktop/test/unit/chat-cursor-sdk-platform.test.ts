@@ -10,7 +10,7 @@ import {
 
 describe('Cursor SDK platform targets', () => {
   it('pins the SDK version', () => {
-    expect(CURSOR_SDK_VERSION).toBe('1.0.31')
+    expect(CURSOR_SDK_VERSION).toBe('1.0.34')
   })
 
   it('lists five supported targets and marks win-arm64 unsupported', () => {
