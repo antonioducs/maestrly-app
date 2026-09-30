@@ -6,6 +6,8 @@ import type {
   ProjectSetupRequest,
   ProjectSetupResult,
 } from '../../shared/project-setup'
+import { LOCAL_HOST_ID } from '../../shared/host-key'
+import { hostApi } from '../lib/hosts/host-context'
 
 export type ProjectSetupMode = 'open' | 'create' | 'clone'
 
@@ -31,6 +33,7 @@ interface PendingRequest {
 }
 
 export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Promise<Workspace | null>) {
+  const api = hostApi(LOCAL_HOST_ID)
   const [state, setState] = useState<ProjectSetupDialogState>({
     open: false,
     mode: 'open',
@@ -47,11 +50,11 @@ export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Pro
 
   useEffect(
     () =>
-      window.api.onProjectSetupProgress((progress) => {
+      api.onProjectSetupProgress((progress) => {
         if (progress.operationId !== operationIdRef.current) return
         setState((current) => ({ ...current, progress }))
       }),
-    []
+    [api]
   )
 
   const closeAndResolve = useCallback((workspace: Workspace | null) => {
@@ -89,7 +92,7 @@ export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Pro
       setState((current) => ({ ...current, request, progress: null, result: null, busy: true }))
       let result: ProjectSetupResult<Workspace>
       try {
-        result = await window.api.startProjectSetup(request)
+        result = await api.startProjectSetup(request)
       } catch {
         result = {
           status: 'error',
@@ -113,41 +116,44 @@ export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Pro
       }
       return result
     },
-    [closeAndResolve, reconcileWorkspace]
+    [closeAndResolve, reconcileWorkspace, api]
   )
 
-  const resolveEmptyRemote = useCallback(async (decision: EmptyRemoteDecision) => {
-    const operationId = operationIdRef.current
-    if (!operationId || inFlightRef.current !== operationId) return
-    inFlightRef.current = `decision:${operationId}`
-    if (decision === 'cancel') {
-      setState((current) => ({
-        ...current,
-        progress: { operationId, phase: 'canceling' },
-        busy: true,
-      }))
-    }
-    try {
-      const accepted = await window.api.resolveEmptyRemoteProjectSetup(operationId, decision)
-      if (!accepted && operationIdRef.current === operationId) {
-        inFlightRef.current = operationId
+  const resolveEmptyRemote = useCallback(
+    async (decision: EmptyRemoteDecision) => {
+      const operationId = operationIdRef.current
+      if (!operationId || inFlightRef.current !== operationId) return
+      inFlightRef.current = `decision:${operationId}`
+      if (decision === 'cancel') {
         setState((current) => ({
           ...current,
-          progress: { operationId, phase: 'awaiting-empty-remote-confirmation' },
+          progress: { operationId, phase: 'canceling' },
           busy: true,
         }))
       }
-    } catch {
-      if (operationIdRef.current === operationId) {
-        inFlightRef.current = operationId
-        setState((current) => ({
-          ...current,
-          progress: { operationId, phase: 'awaiting-empty-remote-confirmation' },
-          busy: true,
-        }))
+      try {
+        const accepted = await api.resolveEmptyRemoteProjectSetup(operationId, decision)
+        if (!accepted && operationIdRef.current === operationId) {
+          inFlightRef.current = operationId
+          setState((current) => ({
+            ...current,
+            progress: { operationId, phase: 'awaiting-empty-remote-confirmation' },
+            busy: true,
+          }))
+        }
+      } catch {
+        if (operationIdRef.current === operationId) {
+          inFlightRef.current = operationId
+          setState((current) => ({
+            ...current,
+            progress: { operationId, phase: 'awaiting-empty-remote-confirmation' },
+            busy: true,
+          }))
+        }
       }
-    }
-  }, [])
+    },
+    [api]
+  )
 
   const close = useCallback(async () => {
     const operationId = operationIdRef.current
@@ -163,7 +169,7 @@ export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Pro
       busy: true,
     }))
     try {
-      const accepted = await window.api.cancelProjectSetup(operationId)
+      const accepted = await api.cancelProjectSetup(operationId)
 
       if (!accepted && operationIdRef.current === operationId) closeRequestedRef.current = false
     } catch {
@@ -172,7 +178,7 @@ export function useProjectSetup(reconcileWorkspace: (workspaceId: string) => Pro
         setState((current) => ({ ...current, progress: null, busy: true }))
       }
     }
-  }, [closeAndResolve])
+  }, [closeAndResolve, api])
 
   return {
     state,

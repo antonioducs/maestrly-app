@@ -144,5 +144,7 @@ const api = { ...localHostApi, ...localApi }
 contextBridge.exposeInMainWorld('api', api)
 
 export type LocalApi = typeof localApi
+/** What the renderer sees on `window.api`: a host's backend is reached with `hostApi(hostId)` instead. */
+export type RendererApi = LocalApi
 export type { HostApi } from './host-api'
 export type Api = typeof api

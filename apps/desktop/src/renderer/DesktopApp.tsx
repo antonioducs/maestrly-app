@@ -47,8 +47,11 @@ import { ConversationMigrationDialog } from '@/components/conversation-migration
 import { MigrationRecoveryGate } from '@/components/conversation-migration/MigrationRecoveryGate'
 import { CHAT_VIEW_COLD_TTL_MS, pruneMountedChatViews } from '@/lib/conversation-mount-lru'
 import { useMemoryAutoReclaim } from '@/lib/use-memory-auto-reclaim'
+import { hostApi } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../shared/host-key'
 
 export function DesktopApp() {
+  const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
   const [active, setActive] = useState<Conversation | null>(null)
   const [reviewLoops, setReviewLoops] = useState<ReviewLoopInfo[]>([])
@@ -118,10 +121,10 @@ export function DesktopApp() {
   } = ws
   useEffect(
     () =>
-      window.api.onPlatformLinksChanged(() => {
+      api.onPlatformLinksChanged(() => {
         void refreshWorkspaces()
       }),
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
   const handleConversationExperienceChange = useCallback(
     (conversationId: string, experience: Conversation['experience']) => {
@@ -176,9 +179,9 @@ export function DesktopApp() {
   }, [splitReviewLoop])
 
   useEffect(() => {
-    void window.api.chatReviewLoopStatuses().then(setReviewLoops)
-    return window.api.onChatReviewLoopChanged(setReviewLoops)
-  }, [])
+    void api.chatReviewLoopStatuses().then(setReviewLoops)
+    return api.onChatReviewLoopChanged(setReviewLoops)
+  }, [api])
 
   // Materialize and pin both existing ChatViews while a paired split is visible.
   useEffect(() => {
@@ -260,7 +263,7 @@ export function DesktopApp() {
     creatingChatRef.current = true
     setCreatingChat(true)
     try {
-      const conversation = await window.api.createStandaloneConversation()
+      const conversation = await api.createStandaloneConversation()
       await handleCreated(conversation)
       handleSelect(conversation)
     } catch (error) {
@@ -269,7 +272,7 @@ export function DesktopApp() {
       creatingChatRef.current = false
       setCreatingChat(false)
     }
-  }, [handleCreated, handleSelect])
+  }, [handleCreated, handleSelect, api])
 
   const [chatGptFloating, setChatGptFloating] = useState(false)
   const [chatGptFloatingVisible, setChatGptFloatingVisible] = useState(false)
@@ -339,7 +342,7 @@ export function DesktopApp() {
   useEffect(() => {
     let mounted = true
     const unsubscribe = window.api.onExecutorOpen(() => openSettings('platform'))
-    void window.api
+    void api
       .platformExecutorSettings()
       .then((settings) => {
         if (mounted && settings.mode === 'team') openSettings('platform')
@@ -349,7 +352,7 @@ export function DesktopApp() {
       mounted = false
       unsubscribe()
     }
-  }, [openSettings])
+  }, [openSettings, api])
 
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
@@ -385,8 +388,8 @@ export function DesktopApp() {
     focusConversation: handleSelect,
   })
   useEffect(() => {
-    window.api.getOpenTargets().then((t) => setOpenTargets({ vscode: t.vscode }))
-  }, [])
+    api.getOpenTargets().then((t) => setOpenTargets({ vscode: t.vscode }))
+  }, [api])
 
   useEffect(() => {
     if (!active) return
@@ -412,12 +415,12 @@ export function DesktopApp() {
   // itself, not only the sidebar: the composer and its notices read this object.
   useEffect(
     () =>
-      window.api.onConversationOpen(({ conversation }) => {
+      api.onConversationOpen(({ conversation }) => {
         if (!conversation?.id) return
         setActive((current) => (current?.id === conversation.id ? conversation : current))
         setMountedConvs((current) => current.map((item) => (item.id === conversation.id ? conversation : item)))
       }),
-    []
+    [api]
   )
 
   useEffect(() => {
@@ -512,8 +515,8 @@ export function DesktopApp() {
   // Example: window.__sendToActive('\x1b[I')  |  window.__sendToActive('\x1b[200~hello\x1b[201~\r')
   useEffect(() => {
     ;(window as unknown as { __sendToActive?: (d: string) => void }).__sendToActive = (d) =>
-      active && window.api.writePty(active.id, d)
-  }, [active])
+      active && api.writePty(active.id, d)
+  }, [active, api])
 
   const [aboutOpen, setAboutOpen] = useState(false)
 
@@ -532,7 +535,7 @@ export function DesktopApp() {
   const handleNewSiblingConversation = useCallback(
     async (sourceConvId: string) => {
       try {
-        const conv = await window.api.createSiblingConversation({ sourceConversationId: sourceConvId })
+        const conv = await api.createSiblingConversation({ sourceConversationId: sourceConvId })
         await refreshWorkspaces()
         handleSelect(conv)
       } catch (e: any) {
@@ -540,7 +543,7 @@ export function DesktopApp() {
         alert(i18n.t('ui:app.alertNewSibling', { error }))
       }
     },
-    [refreshWorkspaces, handleSelect]
+    [refreshWorkspaces, handleSelect, api]
   )
 
   const handleReviewLoopStarted = useCallback(
@@ -669,7 +672,7 @@ export function DesktopApp() {
                 onCollapseSidebar={() => setSidebarOpen(false)}
                 openTargets={openTargets}
                 onOpenExternal={(scope, id, target) =>
-                  void window.api.openExternal(scope, id, target).then((r) => {
+                  void api.openExternal(scope, id, target).then((r) => {
                     if (!r.ok) console.error('[open-external]', target, r.error)
                   })
                 }

@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next'
 import { GitBranch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ConversationBranchInfo, ConversationBranchRepoInfo } from '../../preload'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 
 export function ConversationBranchChip({
@@ -15,15 +16,16 @@ export function ConversationBranchChip({
   className?: string
 }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [info, setInfo] = useState<ConversationBranchInfo | null>(null)
   const requestRef = useRef(0)
   const previousStatusRef = useRef<{ conversationId: string; status?: string }>({ conversationId })
 
   const refresh = useCallback(async () => {
     const request = ++requestRef.current
-    const next = await window.api.getConversationBranchInfo(conversationId).catch(() => null)
+    const next = await api.getConversationBranchInfo(conversationId).catch(() => null)
     if (request === requestRef.current) setInfo(next)
-  }, [conversationId])
+  }, [conversationId, api])
 
   useEffect(() => {
     setInfo(null)

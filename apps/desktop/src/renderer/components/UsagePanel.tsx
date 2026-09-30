@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { BarChart3, RefreshCw, Coins } from 'lucide-react'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { estimatedCostOfUsage, totalTokensOf } from '../../shared/chat'
 import type { ChatModelMeta } from '../../shared/chat'
@@ -35,6 +36,7 @@ interface Row extends UsageModelRow {
 
 export function UsagePanel() {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [stats, setStats] = useState<UnifiedUsageStats | null>(null)
   const [metaByModel, setMetaByModel] = useState<Record<string, ChatModelMeta | null>>({})
   const [providerNames, setProviderNames] = useState<Record<string, string>>({})
@@ -73,20 +75,18 @@ export function UsagePanel() {
   }, [period, customFrom, customTo])
 
   useEffect(() => {
-    void window.api
-      .chatConfig()
-      .then((c) => setProviderNames(Object.fromEntries(c.providers.map((p) => [p.id, p.name]))))
-  }, [])
+    void api.chatConfig().then((c) => setProviderNames(Object.fromEntries(c.providers.map((p) => [p.id, p.name]))))
+  }, [api])
 
   useEffect(() => {
     let alive = true
     setLoading(true)
     const force = forceRef.current
     forceRef.current = false
-    void window.api.usageStats({ ...range, ...(force ? { force: true } : {}) }).then(async (s) => {
+    void api.usageStats({ ...range, ...(force ? { force: true } : {}) }).then(async (s) => {
       const pairs = await Promise.all(
         s.rows.map((r) =>
-          window.api.chatModelMeta(r.modelId, r.providerId).then((mm) => [`${r.providerId}\0${r.modelId}`, mm] as const)
+          api.chatModelMeta(r.modelId, r.providerId).then((mm) => [`${r.providerId}\0${r.modelId}`, mm] as const)
         )
       )
       if (!alive) return
@@ -97,7 +97,7 @@ export function UsagePanel() {
     return () => {
       alive = false
     }
-  }, [range, refreshTick])
+  }, [range, refreshTick, api])
 
   const rows = useMemo((): Row[] => {
     if (!stats) return []

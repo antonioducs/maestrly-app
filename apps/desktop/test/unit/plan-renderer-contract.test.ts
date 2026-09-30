@@ -57,7 +57,7 @@ describe('plan decision failure in the renderer', () => {
     expect(dialog).toContain('<FastModeChip')
     expect(dialog).not.toContain('<select')
     // Starts from the source settings without writing them back.
-    expect(dialog).toContain('window.api.chatGetSelection(sourceConversationId)')
+    expect(dialog).toContain('api.chatGetSelection(sourceConversationId)')
     expect(dialog).not.toMatch(/chatSet(Selection|Reasoning|FastMode|Mode)/)
     // Late metadata for a previous model can neither unlock submission nor show stale choices.
     expect(dialog).toContain('metaGeneration.current === generation')

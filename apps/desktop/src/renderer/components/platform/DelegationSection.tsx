@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Sparkles } from 'lucide-react'
 import type { DelegationStatusView } from '../../../shared/platform'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 /**
  * What this computer currently offers for delegated stages, and what it is running.
@@ -12,13 +13,14 @@ import type { DelegationStatusView } from '../../../shared/platform'
  */
 export function DelegationSection() {
   const { i18n } = useTranslation()
+  const api = useHostApi()
   const L = (en: string, pt: string) => (i18n.language.startsWith('pt') ? pt : en)
   const [status, setStatus] = useState<DelegationStatusView | null>(null)
 
   useEffect(() => {
     let active = true
     const refresh = () =>
-      void window.api
+      void api
         .platformDelegationStatus()
         .then((value) => {
           if (active) setStatus(value)
@@ -32,7 +34,7 @@ export function DelegationSection() {
       active = false
       clearInterval(timer)
     }
-  }, [])
+  }, [api])
 
   const issueText = (issue: string) =>
     ({

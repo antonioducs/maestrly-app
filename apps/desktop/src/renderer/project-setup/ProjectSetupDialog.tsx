@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import { useHostApi } from '@/lib/hosts/host-context'
 import type { ProjectSetupDialogState, ProjectSetupMode } from './use-project-setup'
 
 interface Props {
@@ -37,6 +38,7 @@ function newOperationId(): string {
 
 export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmptyRemote, onClose }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [path, setPath] = useState('')
   const [parentPath, setParentPath] = useState('')
   const [name, setName] = useState('')
@@ -65,7 +67,7 @@ export function ProjectSetupDialog({ state, onModeChange, onStart, onResolveEmpt
   }, [name, parentPath, path, remoteUrl, state.busy, state.mode])
 
   async function pick(purpose: 'open' | 'parent') {
-    const selected = await window.api.pickProjectDirectory(purpose)
+    const selected = await api.pickProjectDirectory(purpose)
     if (selected) purpose === 'open' ? setPath(selected) : setParentPath(selected)
   }
 

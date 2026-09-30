@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { SearchSelect } from '@/components/ui/search-select'
+import { useHostApi } from '@/lib/hosts/host-context'
 import {
   maestroStrategyProfileLabel,
   maestroStrategyProfileOptions,
@@ -28,6 +29,7 @@ interface Props {
 
 export function MaestroPlanProfileDialog({ open, busy, decisionError, onOpenChange, onConfirm }: Props) {
   const { t } = useTranslation('chat')
+  const api = useHostApi()
   const [catalog, setCatalog] = useState<MaestroStrategyProfileCatalog | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -38,7 +40,7 @@ export function MaestroPlanProfileDialog({ open, busy, decisionError, onOpenChan
     setCatalog(null)
     setSelectedId('')
     setLoadError(null)
-    void window.api
+    void api
       .chatMaestroStrategyProfilesList()
       .then((next) => {
         if (!alive) return
@@ -49,7 +51,7 @@ export function MaestroPlanProfileDialog({ open, busy, decisionError, onOpenChan
     return () => {
       alive = false
     }
-  }, [open])
+  }, [open, api])
 
   const options = useMemo(() => maestroStrategyProfileOptions(catalog?.items ?? [], t), [catalog?.items, t])
   const selected = catalog?.items.find((item) => item.id === selectedId)

@@ -9,6 +9,7 @@ import {
   type ProjectSetupRequest,
   type ProjectSetupResult,
 } from '../../../shared/project-setup'
+import { useHostApi } from '../../lib/hosts/host-context'
 import { Button } from '../ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select'
 
@@ -66,6 +67,7 @@ class ProjectSetupFailed extends Error {
 
 export function ProjectBindingSection({ connections }: { connections: PlatformConnectionView[] }) {
   const { i18n, t } = useTranslation('ui')
+  const api = useHostApi()
   const L = (en: string, pt: string) => (i18n.language.startsWith('pt') ? pt : en)
   const id = useId()
   const pickFolderRef = useRef<HTMLButtonElement>(null)
@@ -90,15 +92,15 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
 
   useEffect(
     () =>
-      window.api.onProjectSetupProgress((progress) => {
+      api.onProjectSetupProgress((progress) => {
         if (progress.operationId !== operationRef.current) return
         setPhase({ phase: progress.phase, percent: progress.percent })
         // An empty remote is fine for a fresh project folder; never block on a question here.
         if (progress.phase === 'awaiting-empty-remote-confirmation') {
-          void window.api.resolveEmptyRemoteProjectSetup(progress.operationId, 'initialize-local')
+          void api.resolveEmptyRemoteProjectSetup(progress.operationId, 'initialize-local')
         }
       }),
-    []
+    [api]
   )
   const [error, setError] = useState('')
   const [folderError, setFolderError] = useState('')
@@ -118,9 +120,9 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
     setRemoved(null)
     setEditing(false)
     void Promise.all([
-      window.api.platformListRemoteProjects(connection.id),
-      window.api.listWorkspaces(),
-      window.api.platformListProjectBindings(),
+      api.platformListRemoteProjects(connection.id),
+      api.listWorkspaces(),
+      api.platformListProjectBindings(),
     ])
       .then(([projects, workspaces, bindings]) => {
         if (!active) return
@@ -140,7 +142,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
     return () => {
       active = false
     }
-  }, [connection?.id, revision])
+  }, [connection?.id, revision, api])
 
   if (!connection) return null
   const project = data.projects.find((p) => p.projectId === projectId)
@@ -231,18 +233,18 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
   ): Promise<ProjectSetupResult<Workspace>> {
     const operationId = crypto.randomUUID()
     operationRef.current = operationId
-    const result = await window.api.startProjectSetup({ ...request, operationId } as ProjectSetupRequest)
+    const result = await api.startProjectSetup({ ...request, operationId } as ProjectSetupRequest)
     if (result.status === 'error') throw new ProjectSetupFailed(result.error.code)
     return result
   }
   async function adopt(workspace: Workspace, repository?: string) {
-    const workspaces = await window.api.listWorkspaces()
+    const workspaces = await api.listWorkspaces()
     setData((current) => ({ ...current, workspaces }))
     chooseWorkspace(workspace.id)
     if (repository) setRepositoryId(repository)
   }
   async function chooseFolder() {
-    const folder = await window.api.pickFolder()
+    const folder = await api.pickFolder()
     if (!folder) return
     let result = await runSetup({ kind: 'open', path: folder })
     // A plain folder is fine: Git is only an implementation detail of how conversations are isolated.
@@ -253,7 +255,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
     repositories.find((r) => r.id === repositoryId && r.cloneUrl) ?? repositories.find((r) => r.cloneUrl)
   async function cloneRepository() {
     if (!cloneable?.cloneUrl) return
-    const parent = await window.api.pickFolder()
+    const parent = await api.pickFolder()
     if (!parent) return
     const result = await runSetup({
       kind: 'clone',
@@ -277,7 +279,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
   }
   async function save() {
     if (!connection || !project) return
-    await window.api.platformSetProjectBinding({
+    await api.platformSetProjectBinding({
       workspaceId,
       connectionId: connection.id,
       organizationId: project.organizationId,
@@ -285,7 +287,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
       boardId: project.boards[0].id,
       ...(repositoryId !== WITHOUT_CODE ? { repositoryBindingId: repositoryId } : {}),
     })
-    const bindings = await window.api.platformListProjectBindings()
+    const bindings = await api.platformListProjectBindings()
     setData((current) => ({ ...current, bindings }))
     setRemoved(null)
     setEditing(false)
@@ -613,7 +615,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                       disabled={!!busy}
                       onClick={() =>
                         void act('remove', async () => {
-                          await window.api.platformRemoveProjectBinding(b.workspaceId)
+                          await api.platformRemoveProjectBinding(b.workspaceId)
                           setData((current) => ({
                             ...current,
                             bindings: current.bindings.filter((item) => item.workspaceId !== b.workspaceId),
@@ -664,7 +666,7 @@ export function ProjectBindingSection({ connections }: { connections: PlatformCo
                 disabled={!!busy}
                 onClick={() =>
                   void act('save', async () => {
-                    await window.api.platformSetProjectBinding(removed)
+                    await api.platformSetProjectBinding(removed)
                     setData((current) => ({
                       ...current,
                       bindings: [...current.bindings.filter((b) => b.workspaceId !== removed.workspaceId), removed],

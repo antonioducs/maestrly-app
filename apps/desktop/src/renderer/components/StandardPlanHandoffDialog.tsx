@@ -15,6 +15,7 @@ import {
 import { ChatModelChip } from '@/components/chat/ChatModelChip'
 import { ChatReasoningPicker } from '@/components/chat/ChatReasoningPicker'
 import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -43,6 +44,7 @@ export function StandardPlanHandoffDialog({
   onConfirm,
 }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [selection, setSelection] = useState<ChatModelRef | null>(null)
   const [reasoning, setReasoning] = useState<ChatReasoningEffort>('off')
   const [fastMode, setFastMode] = useState(false)
@@ -60,9 +62,9 @@ export function StandardPlanHandoffDialog({
     setPlacement('shared')
     setMeta(null)
     void Promise.all([
-      window.api.chatGetSelection(sourceConversationId),
-      window.api.chatGetReasoning(sourceConversationId),
-      window.api.chatGetFastMode(sourceConversationId),
+      api.chatGetSelection(sourceConversationId),
+      api.chatGetReasoning(sourceConversationId),
+      api.chatGetFastMode(sourceConversationId),
     ])
       .then(([currentSelection, currentReasoning, currentFast]) => {
         if (!alive) return
@@ -75,21 +77,21 @@ export function StandardPlanHandoffDialog({
     return () => {
       alive = false
     }
-  }, [open, sourceConversationId])
+  }, [open, sourceConversationId, api])
 
   const currentKey = selectionKey(selection)
   useEffect(() => {
     if (!open || !selection) return
     const generation = ++metaGeneration.current
     const key = selectionKey(selection)
-    void window.api
+    void api
       .chatModelMeta(selection.modelId, selection.providerId)
       .catch(() => null)
       .then((value) => {
         // A late answer for a previous model must never unlock submission for the current one.
         if (metaGeneration.current === generation) setMeta({ key, value })
       })
-  }, [open, selection])
+  }, [open, selection, api])
 
   const currentMeta = meta?.key === currentKey ? meta.value : null
   const metaReady = !!selection && meta?.key === currentKey

@@ -12,33 +12,6 @@ const root = fileURLToPath(new URL('../../src/renderer', import.meta.url))
 const noop = { invoke: async () => undefined, send: () => {}, on: () => {}, removeListener: () => {} }
 const hostMembers = new Set(Object.keys(makeHostApi(noop)))
 
-// Files and directories not migrated yet. Entries are only ever removed.
-const PENDING: string[] = [
-  'DesktopApp.tsx',
-  'BotInstanceApp.tsx',
-  'components/sidebar',
-  'components/settings',
-  'components/SettingsView.tsx',
-  'components/platform',
-  'components/fleet',
-  'components/conversation-migration',
-  'components/local-conversation',
-  'components/NewConversationDialog.tsx',
-  'components/StandardPlanHandoffDialog.tsx',
-  'components/UsagePanel.tsx',
-  'components/OnboardingFlow.tsx',
-  'components/MaestroPlanProfileDialog.tsx',
-  'components/WorkspaceDefaultBranchDialog.tsx',
-  'components/ConversationBranchChip.tsx',
-  'components/ToolPalette.tsx',
-  'components/MarkdownViewer.tsx',
-  'components/AboutModal.tsx',
-  'lib',
-  'project-setup',
-  'main.tsx',
-  'App.tsx',
-]
-
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name)
@@ -46,17 +19,13 @@ function sourceFiles(dir: string): string[] {
     return /\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts') ? [path] : []
   })
 }
-const pending = (file: string): boolean =>
-  PENDING.some((entry) => entry === '.' || file === entry || file.startsWith(entry + '/'))
-
 describe('renderer reaches host members only through its host', () => {
-  it('has no window.api host calls outside pending files', () => {
+  it('has no window.api host calls', () => {
     const violations: string[] = []
     const files = sourceFiles(root)
     expect(files.length).toBeGreaterThan(100)
     for (const path of files) {
       const file = relative(root, path).split(sep).join('/')
-      if (pending(file)) continue
       // `\s*`: a long call chain puts the member on the line after `window.api`.
       for (const match of readFileSync(path, 'utf8').matchAll(/window\.api\s*\.([A-Za-z0-9_]+)/g))
         if (hostMembers.has(match[1])) violations.push(`${file}: ${match[1]}`)

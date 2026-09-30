@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Settings, X, PanelLeft } from 'lucide-react'
 import type { ChatPermMode, ShortcutOpenMode } from '../../preload'
 import { UsagePanel } from '@/components/UsagePanel'
+import { useHostApi } from '@/lib/hosts/host-context'
 import { useLocale } from '@/lib/i18n'
 import type { FloatTab } from '../../shared/tool-tabs'
 import {
@@ -68,6 +69,7 @@ export function SettingsView({
   onClose,
 }: Props) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const navItems = sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV
   const showNav = navItems.length > 1
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -101,12 +103,12 @@ export function SettingsView({
   }, [initialSection])
 
   useEffect(() => {
-    window.api
+    api
       .getDefaultPermissionMode()
       .then(setDefaultPermissionMode)
       .catch(() => {})
     if (isWin) {
-      window.api
+      api
         .getFreeTerminalShell()
         .then((v) => {
           const known = WIN_SHELL_IDS.includes(v) && v !== 'custom'
@@ -128,7 +130,7 @@ export function SettingsView({
       .catch(() => {})
 
     return () => {}
-  }, [isWin])
+  }, [isWin, api])
 
   useEffect(() => {
     window.api
@@ -157,16 +159,16 @@ export function SettingsView({
       setChatGptWebEnabled(status.enabled)
       if (!status.enabled) setRecording((current) => (current === 'chatgpt' ? null : current))
     }
-    void window.api
+    void api
       .chatGptWebStatus()
       .then(apply)
       .catch(() => setChatGptWebEnabled(false))
-    const off = window.api.onChatGptWebStatus(apply)
+    const off = api.onChatGptWebStatus(apply)
     return () => {
       alive = false
       off()
     }
-  }, [])
+  }, [api])
 
   const persistShortcuts = (next: EffectiveShortcuts) => {
     setShortcutsState(next)
@@ -219,18 +221,18 @@ export function SettingsView({
 
   const updateDefaultPermissionMode = (mode: ChatPermMode) => {
     setDefaultPermissionMode(mode)
-    window.api.setDefaultPermissionMode(mode)
+    api.setDefaultPermissionMode(mode)
   }
 
   const selectShell = (id: string) => {
     setFreeShell(id)
     setShellTest(null)
-    if (id !== 'custom') window.api.setFreeTerminalShell(id)
-    else if (customShell.trim()) window.api.setFreeTerminalShell(customShell.trim())
+    if (id !== 'custom') api.setFreeTerminalShell(id)
+    else if (customShell.trim()) api.setFreeTerminalShell(customShell.trim())
   }
 
   const commitCustomShell = () => {
-    if (freeShell === 'custom' && customShell.trim()) window.api.setFreeTerminalShell(customShell.trim())
+    if (freeShell === 'custom' && customShell.trim()) api.setFreeTerminalShell(customShell.trim())
   }
 
   const testShell = async () => {
@@ -239,7 +241,7 @@ export function SettingsView({
     setShellTesting(true)
     setShellTest(null)
     try {
-      setShellTest(await window.api.testFreeTerminalShell(value))
+      setShellTest(await api.testFreeTerminalShell(value))
     } catch (e) {
       setShellTest({ ok: false, error: String((e as Error)?.message ?? e) })
     } finally {

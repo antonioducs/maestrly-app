@@ -12,6 +12,8 @@ import {
   findConversation,
   initialConversationMigrationDialog,
 } from '@/components/conversation-migration/flow'
+import { hostApi } from '@/lib/hosts/host-context'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 
 type RecoveryAction = 'continue' | 'rollback'
 
@@ -19,6 +21,7 @@ interface Params {
   active: Conversation | null
   refreshWorkspaces: (includeArchived?: boolean) => Promise<WorkspaceWithConversations[]>
   focusConversation: (conversation: Conversation) => void
+  hostId?: HostId
 }
 
 function cleanIpcError(error: unknown): string {
@@ -28,7 +31,13 @@ function cleanIpcError(error: unknown): string {
   )
 }
 
-export function useConversationMigration({ active, refreshWorkspaces, focusConversation }: Params) {
+export function useConversationMigration({
+  active,
+  refreshWorkspaces,
+  focusConversation,
+  hostId = LOCAL_HOST_ID,
+}: Params) {
+  const api = hostApi(hostId)
   const [dialog, dispatchDialog] = useReducer(conversationMigrationDialogReducer, initialConversationMigrationDialog)
   const dialogRef = useRef(dialog)
   dialogRef.current = dialog
@@ -45,7 +54,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
 
   const reloadRecoveries = useCallback(async () => {
     try {
-      const current = await window.api.listConversationMigrationRecoveries()
+      const current = await api.listConversationMigrationRecoveries()
       setRecoveryError(null)
       setRecoveries(current)
       return current
@@ -54,11 +63,11 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
       setRecoveries([])
       return []
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     let cancelled = false
-    window.api
+    api
       .listConversationMigrationRecoveries()
       .then((current) => {
         if (!cancelled) setRecoveries(current)
@@ -72,7 +81,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [api])
 
   const focusById = useCallback(
     async (conversationId: string, options: { cancelIfActiveChanges?: boolean } = {}): Promise<boolean> => {
@@ -112,7 +121,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
 
   useEffect(
     () =>
-      window.api.onConversationMigrationChanged((event) => {
+      api.onConversationMigrationChanged((event) => {
         const currentDialog = dialogRef.current
         const dialogOperationId = currentDialog.preview?.operationId
         dispatchDialog({ type: 'progress', event })
@@ -128,7 +137,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
           })
         }
       }),
-    [focusById, reconcileTerminalEvent, reloadRecoveries]
+    [focusById, reconcileTerminalEvent, reloadRecoveries, api]
   )
 
   const openMigration = useCallback((conversation: Conversation) => {
@@ -145,7 +154,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
     if (!current.conversation || !branch || current.busy) return
     dispatchDialog({ type: 'prepare-start' })
     try {
-      const preview = await window.api.prepareConversationMigration({
+      const preview = await api.prepareConversationMigration({
         conversationId: current.conversation.id,
         destinationBranch: branch,
       })
@@ -153,20 +162,20 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
     } catch (error) {
       dispatchDialog({ type: 'failure', error: cleanIpcError(error) })
     }
-  }, [])
+  }, [api])
 
   const editDestinationBranch = useCallback(async () => {
     const current = dialogRef.current
     if (!current.open || current.busy || !current.preview) return
     dispatchDialog({ type: 'cancel-start' })
     try {
-      await window.api.cancelConversationMigration({ operationId: current.preview.operationId })
+      await api.cancelConversationMigration({ operationId: current.preview.operationId })
       dispatchDialog({ type: 'edit-branch' })
       await reloadRecoveries()
     } catch (error) {
       dispatchDialog({ type: 'failure', error: cleanIpcError(error) })
     }
-  }, [reloadRecoveries])
+  }, [reloadRecoveries, api])
 
   const closeMigration = useCallback(async () => {
     const current = dialogRef.current
@@ -177,13 +186,13 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
     }
     dispatchDialog({ type: 'cancel-start' })
     try {
-      await window.api.cancelConversationMigration({ operationId: current.preview.operationId })
+      await api.cancelConversationMigration({ operationId: current.preview.operationId })
       dispatchDialog({ type: 'close' })
       await reloadRecoveries()
     } catch (error) {
       dispatchDialog({ type: 'failure', error: cleanIpcError(error) })
     }
-  }, [reloadRecoveries])
+  }, [reloadRecoveries, api])
 
   const toggleIgnored = useCallback((path: string, selected: boolean, sensitive: boolean) => {
     dispatchDialog({ type: 'toggle-ignored', path, selected, sensitive })
@@ -209,7 +218,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
     if (!current.preview || current.busy) return
     dispatchDialog({ type: 'execute-start' })
     try {
-      const result = await window.api.executeConversationMigration({
+      const result = await api.executeConversationMigration({
         operationId: current.preview.operationId,
         selectedIgnoredPaths: current.selectedIgnoredPaths,
         confirmedSensitivePaths: current.confirmedSensitivePaths,
@@ -223,7 +232,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
         dispatchDialog({ type: 'failure', error: cleanIpcError(error) })
       }
     }
-  }, [handleResult, reloadRecoveries])
+  }, [handleResult, reloadRecoveries, api])
 
   const resolveRecovery = useCallback(
     async (recovery: MigrationRecovery, action: RecoveryAction) => {
@@ -233,7 +242,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
       setResolvingRecovery({ operationId: recovery.operationId, action })
       setRecoveryError(null)
       try {
-        const result = await window.api.resolveConversationMigration({
+        const result = await api.resolveConversationMigration({
           operationId: recovery.operationId,
           action,
         })
@@ -252,7 +261,7 @@ export function useConversationMigration({ active, refreshWorkspaces, focusConve
         setResolvingRecovery(null)
       }
     },
-    [focusById, refreshWorkspaces, reloadRecoveries]
+    [focusById, refreshWorkspaces, reloadRecoveries, api]
   )
 
   const retryRecoveries = useCallback(async () => {

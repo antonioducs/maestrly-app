@@ -10,6 +10,8 @@ import {
 } from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import type { SettingsSection } from '@/components/settings/nav'
+import { hostApi } from '@/lib/hosts/host-context'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
@@ -22,9 +24,16 @@ type UseMainPanelsParams = {
   workspaces: WorkspaceWithConversations[]
   setActive: Dispatch<SetStateAction<Conversation | null>>
   refreshWorkspaces: () => Promise<WorkspaceWithConversations[]>
+  hostId?: HostId
 }
 
-export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
+export function useMainPanels({
+  workspaces,
+  setActive,
+  refreshWorkspaces,
+  hostId = LOCAL_HOST_ID,
+}: UseMainPanelsParams) {
+  const api = hostApi(hostId)
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
   const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
@@ -94,7 +103,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   useEffect(
     () =>
-      window.api.onConversationOpen(async ({ conversation, focus }) => {
+      api.onConversationOpen(async ({ conversation, focus }) => {
         await refreshWorkspaces()
         if (!focus) return
         setProjectNotesWs(null)
@@ -105,7 +114,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
         setCreateBot(false)
         setActive(conversation)
       }),
-    [refreshWorkspaces, setActive]
+    [refreshWorkspaces, setActive, api]
   )
 
   const handleCreated = useCallback(

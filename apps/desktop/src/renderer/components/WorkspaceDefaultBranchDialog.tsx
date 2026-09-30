@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { BranchCombo } from '@/components/ui/branch-combo'
+import { useHostApi } from '@/lib/hosts/host-context'
 
 export function WorkspaceDefaultBranchDialog({
   workspaceId,
@@ -30,6 +31,7 @@ export function WorkspaceDefaultBranchDialog({
   onSaved: () => void
 }) {
   const { t } = useTranslation('ui')
+  const api = useHostApi()
   const [draft, setDraft] = useState(currentDefault)
   const [branches, setBranches] = useState<{ local: string[]; remote: string[] } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -41,7 +43,7 @@ export function WorkspaceDefaultBranchDialog({
     setError(null)
     setBranches(null)
     let alive = true
-    window.api
+    api
       .getBranches(workspaceId)
       .then((info) => {
         if (alive) setBranches({ local: info.local, remote: info.remote })
@@ -52,7 +54,7 @@ export function WorkspaceDefaultBranchDialog({
     return () => {
       alive = false
     }
-  }, [open, workspaceId, currentDefault])
+  }, [open, workspaceId, currentDefault, api])
 
   const suggestions = useMemo(() => (branches ? [...new Set([...branches.local, ...branches.remote])] : []), [branches])
   const trimmed = draft.trim()
@@ -62,7 +64,7 @@ export function WorkspaceDefaultBranchDialog({
   const refresh = async () => {
     if (!workspaceId) return
     try {
-      const info = await window.api.fetchBranches(workspaceId)
+      const info = await api.fetchBranches(workspaceId)
       setBranches({ local: info.local, remote: info.remote })
     } catch (e) {
       console.error('[workspace] Failed to fetch branches:', e)
@@ -74,7 +76,7 @@ export function WorkspaceDefaultBranchDialog({
     setBusy(true)
     setError(null)
     try {
-      await window.api.setWorkspaceDefaultBranch(workspaceId, trimmed)
+      await api.setWorkspaceDefaultBranch(workspaceId, trimmed)
       onSaved()
       onOpenChange(false)
     } catch (e) {

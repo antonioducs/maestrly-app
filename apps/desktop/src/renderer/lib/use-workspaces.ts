@@ -2,13 +2,16 @@
  * Reconcile persisted state after mutations while preserving mounted conversations and drawer state. */
 import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useStandaloneChats } from './use-standalone-chats'
+import { hostApi } from '@/lib/hosts/host-context'
 import { i18n } from '@/lib/i18n'
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../preload'
+import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 
 type UseWorkspacesParams = {
   active: Conversation | null
   setActive: Dispatch<SetStateAction<Conversation | null>>
   forgetConvDrawerState: (id: string) => void
+  hostId?: HostId
 }
 
 function reorderByIds<T extends { id: string }>(list: T[], ids: string[]): T[] {
@@ -18,10 +21,16 @@ function reorderByIds<T extends { id: string }>(list: T[], ids: string[]): T[] {
   return [...known, ...unknown]
 }
 
-export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseWorkspacesParams) {
+export function useWorkspaces({
+  active,
+  setActive,
+  forgetConvDrawerState,
+  hostId = LOCAL_HOST_ID,
+}: UseWorkspacesParams) {
+  const api = hostApi(hostId)
   const [workspaces, setWorkspaces] = useState<WorkspaceWithConversations[]>([])
 
-  const standalone = useStandaloneChats()
+  const standalone = useStandaloneChats(hostId)
 
   const [groups, setGroups] = useState<WorkspaceGroup[]>([])
   const [showArchived, setShowArchived] = useState(false)
@@ -34,15 +43,15 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
   const refreshWorkspaces = useCallback(
     async (includeArchived = showArchived) => {
       const [list, gs] = await Promise.all([
-        window.api.listWorkspaces(includeArchived),
-        window.api.listGroups(),
+        api.listWorkspaces(includeArchived),
+        api.listGroups(),
         standalone.refresh(includeArchived),
       ])
       setWorkspaces(list)
       setGroups(gs)
       return list
     },
-    [showArchived, standalone.refresh]
+    [showArchived, standalone.refresh, api]
   )
 
   const reconcileWorkspace = useCallback(
@@ -57,7 +66,7 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
     async (workspaceId: string) => {
       if (!confirm(i18n.t('ui:app.confirmRemoveWorkspace'))) return
       try {
-        await window.api.removeWorkspace(workspaceId)
+        await api.removeWorkspace(workspaceId)
       } catch (e: any) {
         alert(String(e?.message ?? e).replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, ''))
         return
@@ -65,34 +74,34 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
       if (active?.workspaceId === workspaceId) setActive(null)
       await refreshWorkspaces()
     },
-    [active, refreshWorkspaces]
+    [active, refreshWorkspaces, api]
   )
 
   const handleRename = useCallback(
     async (conv: Conversation, name: string) => {
-      await window.api.renameConversation(conv.id, name)
+      await api.renameConversation(conv.id, name)
       if (active?.id === conv.id) setActive({ ...active, name })
       await refreshWorkspaces()
     },
-    [active, refreshWorkspaces]
+    [active, refreshWorkspaces, api]
   )
 
   const handleArchive = useCallback(
     async (conv: Conversation, archived: boolean) => {
-      await window.api.archiveConversation(conv.id, archived)
+      await api.archiveConversation(conv.id, archived)
       if (archived) {
         if (active?.id === conv.id) setActive(null)
         forgetConvDrawerState(conv.id)
       }
       await refreshWorkspaces()
     },
-    [active, refreshWorkspaces, forgetConvDrawerState]
+    [active, refreshWorkspaces, forgetConvDrawerState, api]
   )
 
   const handlePinConversation = useCallback(
     async (conv: Conversation, pinned: boolean) => {
       try {
-        const pinnedAt = await window.api.setConversationPinned(conv.id, pinned)
+        const pinnedAt = await api.setConversationPinned(conv.id, pinned)
         setWorkspaces((wss) =>
           wss.map((w) => ({
             ...w,
@@ -108,7 +117,7 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
         throw e
       }
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
 
   const handleDelete = useCallback(
@@ -126,20 +135,20 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
       setWorkspaces((wss) => wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => c.id !== conv.id) })))
       standalone.setConversations((chats) => chats.filter((chat) => chat.id !== conv.id))
       try {
-        await window.api.deleteConversation(conv.id)
+        await api.deleteConversation(conv.id)
       } catch (error) {
         alert(String(error))
       } finally {
         await refreshWorkspaces()
       }
     },
-    [active, refreshWorkspaces, forgetConvDrawerState]
+    [active, refreshWorkspaces, forgetConvDrawerState, api]
   )
 
   const handleArchiveSiblings = useCallback(
     async (members: Conversation[], archived: boolean) => {
       for (const conv of members) {
-        await window.api.archiveConversation(conv.id, archived)
+        await api.archiveConversation(conv.id, archived)
         if (archived) {
           if (active?.id === conv.id) setActive(null)
           forgetConvDrawerState(conv.id)
@@ -147,7 +156,7 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
       }
       await refreshWorkspaces()
     },
-    [active, refreshWorkspaces, forgetConvDrawerState]
+    [active, refreshWorkspaces, forgetConvDrawerState, api]
   )
 
   const handleDeleteSiblings = useCallback(
@@ -160,74 +169,83 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
       members.forEach((c) => forgetConvDrawerState(c.id))
       setWorkspaces((wss) => wss.map((w) => ({ ...w, conversations: w.conversations.filter((c) => !ids.has(c.id)) })))
       void (async () => {
-        for (const conv of members) await window.api.deleteConversation(conv.id)
+        for (const conv of members) await api.deleteConversation(conv.id)
         await refreshWorkspaces()
       })()
     },
-    [active, refreshWorkspaces, forgetConvDrawerState]
+    [active, refreshWorkspaces, forgetConvDrawerState, api]
   )
 
   const handleReorderWorkspaces = useCallback(
     (ids: string[]) => {
       setWorkspaces((wss) => reorderByIds(wss, ids))
-      window.api.reorderWorkspaces(ids).catch(() => refreshWorkspaces())
+      api.reorderWorkspaces(ids).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
   const handleReorderConversations = useCallback(
     (workspaceId: string, ids: string[]) => {
       setWorkspaces((wss) =>
         wss.map((w) => (w.id === workspaceId ? { ...w, conversations: reorderByIds(w.conversations, ids) } : w))
       )
-      window.api.reorderConversations(workspaceId, ids).catch(() => refreshWorkspaces())
+      api.reorderConversations(workspaceId, ids).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
 
-  const handleCreateGroup = useCallback(async (name: string): Promise<WorkspaceGroup> => {
-    const g = await window.api.createGroup(name)
-    setGroups((gs) => [...gs, g])
-    return g
-  }, [])
+  const handleCreateGroup = useCallback(
+    async (name: string): Promise<WorkspaceGroup> => {
+      const g = await api.createGroup(name)
+      setGroups((gs) => [...gs, g])
+      return g
+    },
+    [api]
+  )
   const handleRenameGroup = useCallback(
     (id: string, name: string) => {
       setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, name } : g)))
-      window.api.renameGroup(id, name).catch(() => refreshWorkspaces())
+      api.renameGroup(id, name).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
   const handleDeleteGroup = useCallback(
     (id: string) => {
       setGroups((gs) => gs.filter((g) => g.id !== id))
       setWorkspaces((wss) => wss.map((w) => (w.groupId === id ? { ...w, groupId: null } : w)))
-      window.api.deleteGroup(id).catch(() => refreshWorkspaces())
+      api.deleteGroup(id).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
   const handleReorderGroups = useCallback(
     (ids: string[]) => {
       setGroups((gs) => reorderByIds(gs, ids))
-      window.api.reorderGroups(ids).catch(() => refreshWorkspaces())
+      api.reorderGroups(ids).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
-  const handleToggleGroupCollapsed = useCallback((id: string) => {
-    const next = !(groupsRef.current.find((g) => g.id === id)?.collapsed ?? false)
-    setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, collapsed: next } : g)))
-    window.api.setGroupCollapsed(id, next) // Optimistic fire-and-forget update.
-  }, [])
+  const handleToggleGroupCollapsed = useCallback(
+    (id: string) => {
+      const next = !(groupsRef.current.find((g) => g.id === id)?.collapsed ?? false)
+      setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, collapsed: next } : g)))
+      api.setGroupCollapsed(id, next) // Optimistic fire-and-forget update.
+    },
+    [api]
+  )
   const handleMoveWorkspaceToGroup = useCallback(
     (wsId: string, groupId: string | null, flatIds: string[]) => {
       setWorkspaces((wss) => reorderByIds(wss, flatIds).map((w) => (w.id === wsId ? { ...w, groupId } : w)))
-      window.api.moveWorkspaceToGroup(wsId, groupId, flatIds).catch(() => refreshWorkspaces())
+      api.moveWorkspaceToGroup(wsId, groupId, flatIds).catch(() => refreshWorkspaces())
     },
-    [refreshWorkspaces]
+    [refreshWorkspaces, api]
   )
-  const handleToggleWorkspaceCollapsed = useCallback((id: string) => {
-    const next = !(workspacesRef.current.find((w) => w.id === id)?.collapsed ?? false)
-    setWorkspaces((wss) => wss.map((w) => (w.id === id ? { ...w, collapsed: next } : w)))
-    window.api.setWorkspaceCollapsed(id, next) // Optimistic update.
-  }, [])
+  const handleToggleWorkspaceCollapsed = useCallback(
+    (id: string) => {
+      const next = !(workspacesRef.current.find((w) => w.id === id)?.collapsed ?? false)
+      setWorkspaces((wss) => wss.map((w) => (w.id === id ? { ...w, collapsed: next } : w)))
+      api.setWorkspaceCollapsed(id, next) // Optimistic update.
+    },
+    [api]
+  )
 
   return {
     workspaces,
@@ -236,7 +254,7 @@ export function useWorkspaces({ active, setActive, forgetConvDrawerState }: UseW
     handleReorderStandaloneConversations: async (ids: string[]) => {
       standalone.setConversations((chats) => reorderByIds(chats, ids))
       try {
-        await window.api.reorderStandaloneConversations(ids)
+        await api.reorderStandaloneConversations(ids)
       } catch {
         await refreshWorkspaces()
       }

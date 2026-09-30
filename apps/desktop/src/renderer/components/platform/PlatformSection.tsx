@@ -6,16 +6,18 @@ import { useTranslation } from 'react-i18next'
 import { ExternalLink, Link2, Server, Unplug } from 'lucide-react'
 import type { DeviceAuthorizationView, PlatformConnectionView } from '../../../shared/platform'
 import { Button } from '../ui/button'
+import { useHostApi } from '../../lib/hosts/host-context'
 
 export function PlatformSection() {
   const { i18n } = useTranslation()
+  const api = useHostApi()
   const L = (en: string, pt: string) => (i18n.language.startsWith('pt') ? pt : en)
   const [connections, setConnections] = useState<PlatformConnectionView[]>([])
   const [url, setUrl] = useState('http://127.0.0.1:14310')
   const [clientId, setClientId] = useState('')
   const [authorization, setAuthorization] = useState<DeviceAuthorizationView | null>(null)
   const [error, setError] = useState('')
-  const reload = () => window.api.platformListConnections().then(setConnections)
+  const reload = () => api.platformListConnections().then(setConnections)
   useEffect(() => {
     void reload()
   }, [])
@@ -27,7 +29,7 @@ export function PlatformSection() {
     const timer = setInterval(() => {
       if (pending) return
       pending = true
-      void window.api
+      void api
         .platformPollDeviceAuthorization(authorization.connectionId)
         .then((result) => {
           if (active && result.state === 'connected') {
@@ -49,11 +51,11 @@ export function PlatformSection() {
       active = false
       clearInterval(timer)
     }
-  }, [authorization])
+  }, [authorization, api])
   async function add() {
     setError('')
     try {
-      await window.api.platformAddConnection(url)
+      await api.platformAddConnection(url)
       await reload()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -65,13 +67,13 @@ export function PlatformSection() {
       setError('Enter the public OAuth client ID registered by this installation.')
       return
     }
-    const pending = await window.api.platformBeginDeviceAuthorization(connectionId, clientId.trim())
+    const pending = await api.platformBeginDeviceAuthorization(connectionId, clientId.trim())
     setAuthorization(pending)
     await window.api.openExternalUrl(pending.verificationUriComplete ?? pending.verificationUri)
   }
   async function poll() {
     if (!authorization) return
-    const result = await window.api.platformPollDeviceAuthorization(authorization.connectionId)
+    const result = await api.platformPollDeviceAuthorization(authorization.connectionId)
     if (result.state === 'connected') setAuthorization(null)
     await reload()
   }
@@ -131,7 +133,7 @@ export function PlatformSection() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void window.api.platformDisconnect(connection.id).then(reload)}
+                onClick={() => void api.platformDisconnect(connection.id).then(reload)}
                 title={L('Disconnect', 'Desconectar')}
               >
                 <Unplug className="size-4" />
