@@ -1,5 +1,6 @@
 import type { MemorySettings } from '../shared/memory'
 import { clipboard, ipcRenderer } from 'electron'
+import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type {
   ChatConfig,
   ChatConvTools,
@@ -737,8 +738,17 @@ export const chatApi = {
 
   chatEnsureMicAccess: (): Promise<{ ok: boolean; status?: string }> => ipcRenderer.invoke('chat:ensure-mic-access'),
 
-  chatTranscribe: (audio: Float32Array): Promise<{ text?: string; error?: string }> =>
-    ipcRenderer.invoke('chat:transcribe', audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength)),
+  chatTranscribe: (
+    audio: Float32Array,
+    options?: { language?: AsrLanguage }
+  ): Promise<{ text?: string; error?: TranscribeError }> =>
+    ipcRenderer.invoke(
+      'chat:transcribe',
+      audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength),
+      options
+    ),
+  chatAsrWarm: (): Promise<boolean> => ipcRenderer.invoke('chat:asr-warm'),
+  chatAsrSupport: (): Promise<AsrSupport> => ipcRenderer.invoke('chat:asr-support'),
 
   chatPrompts: (): Promise<ChatUserPrompt[]> => ipcRenderer.invoke('chat:prompts'),
 

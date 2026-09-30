@@ -17,7 +17,10 @@ afterEach(async () => {
 async function fixture(entries: Array<{ name: string; type?: 'file' | 'symlink' | 'link'; body?: string }>) {
   const pack = tar.pack()
   const chunks: Buffer[] = []
-  pack.on('data', (chunk) => chunks.push(chunk))
+  pack.on('data', (chunk) => {
+    if (!Buffer.isBuffer(chunk)) throw new TypeError('Expected a binary archive chunk')
+    chunks.push(chunk)
+  })
   for (const entry of entries)
     pack.entry({ name: entry.name, type: entry.type ?? 'file', linkname: '../outside' }, entry.body ?? 'content')
   pack.finalize()

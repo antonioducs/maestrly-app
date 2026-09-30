@@ -64,7 +64,6 @@ describe('tool categories and targets', () => {
     expect(toolTarget('webfetch', { url: 'https://www.electronjs.org/docs/latest/api/browser-window?x=1' })).toBe(
       'www.electronjs.org/docs/latest/api/browser-window'
     )
-    expect(toolTarget('task', { agent: 'explore', prompt: 'Map the transcript\nDetails…' })).toBe('Map the transcript')
     expect(toolTarget('github__get_issue', { issue_number: 214 })).toBeNull()
     expect(toolTarget('bash', null)).toBeNull()
     expect(toolTarget('bash', { command: 'x'.repeat(300) })?.length).toBe(120)
@@ -99,20 +98,15 @@ describe('chat message segments', () => {
     expect(segments.map((segment) => (segment.kind === 'part' ? segment.index : 'a'))).toEqual([0, 'a', 4, 6])
   })
 
-  it('keeps a published artifact outside the activity, where its card opens the page', () => {
-    const parts: MessagePart[] = [
-      tool('write', 'write', { path: 'index.html' }),
-      tool('art', 'mcp__maestrly__artifact_create', { title: 'Probe' }),
-      tool('read', 'read', { path: 'index.html' }),
-      tool('upd', 'artifact_update', { id: 'x', baseVersion: 1 }),
-      text('t', 'Published.'),
-    ]
-    expect(kinds(chatActivitySegments(parts, false))).toEqual([
-      'activity[write,read]',
-      'mcp__maestrly__artifact_create',
-      'artifact_update',
-      'text',
-    ])
+  it('keeps a published artifact as its own card instead of folding it into the activity', () => {
+    for (const toolName of ['artifact_create', 'artifact_update', 'mcp__maestrly__artifact_create']) {
+      const parts: MessagePart[] = [
+        tool('read-1', 'read', { path: 'a.ts' }),
+        tool('art-1', toolName, { title: 'Probe' }),
+        text('t', 'Published.'),
+      ]
+      expect(kinds(chatActivitySegments(parts, false)), toolName).toEqual(['activity[read]', toolName, 'text'])
+    }
   })
 
   it('leaves a message without steps as it is, with a live line only while nothing shows yet', () => {
@@ -120,8 +114,23 @@ describe('chat message segments', () => {
     expect(kinds(chatActivitySegments(answer, false))).toEqual(['text'])
     expect(kinds(chatActivitySegments(answer, true))).toEqual(['text'])
     expect(kinds(chatActivitySegments([], true))).toEqual(['activity[]'])
-    expect(kinds(chatActivitySegments([reasoning('r', '  ')], true))).toEqual(['activity[]', 'reasoning'])
+    expect(kinds(chatActivitySegments([reasoning('r', '  ')], true))).toEqual(['reasoning', 'activity[]'])
     expect(kinds(chatActivitySegments([reasoning('r', '  ')], false))).toEqual(['reasoning'])
+  })
+
+  it('keeps the line in place as steps arrive: under what opens the message, above every card', () => {
+    const compaction = { type: 'compaction', id: 'c', text: 'summary' } as MessagePart
+    const todo = tool('todo', 'todo_write', { todos: [] })
+    // Nothing but a plan yet, then a step, then the end of the turn: the line never moves.
+    expect(kinds(chatActivitySegments([compaction, todo], true))).toEqual(['compaction', 'activity[]', 'todo_write'])
+    const stepped = [compaction, todo, tool('b', 'bash', { command: 'ls' })]
+    expect(kinds(chatActivitySegments(stepped, true))).toEqual(['compaction', 'activity[bash]', 'todo_write'])
+    expect(kinds(chatActivitySegments([...stepped, text('t', 'Done.')], false))).toEqual([
+      'compaction',
+      'activity[bash]',
+      'todo_write',
+      'text',
+    ])
   })
 
   it('knows when the answer is streaming or a question waits for the person', () => {
@@ -145,10 +154,35 @@ describe('chat message segments', () => {
     expect(chatToolStep(tool('c', 'bash', {}, { status: 'error', error: 'Aborted' }), false).status).toBe('interrupted')
     expect(chatToolStep(tool('d', 'bash', {}, { status: 'error', error: 'exit 1' }), false).status).toBe('failed')
     expect(chatToolStep(tool('e', 'bash', {}, { status: 'denied' }), false).status).toBe('denied')
-    expect(chatToolStep(tool('f', 'task', { agent: 'explore', prompt: 'Map it' }), false)).toMatchObject({
-      category: 'subagent',
-      agent: 'explore',
-      target: 'Map it',
+  })
+
+  it('keeps subagent cards outside the activity, which still says they run and that the turn worked', () => {
+    const task = (id: string, status: 'running' | 'completed') =>
+      tool(
+        id,
+        'task',
+        { agent: 'explore', prompt: 'Map it' },
+        status === 'running' ? { status } : { status, output: '' }
+      )
+    const parts: MessagePart[] = [
+      reasoning('r', 'Delegating'),
+      task('s1', 'completed'),
+      task('s2', 'running'),
+      tool('rd', 'read', { path: 'a.ts' }),
+      text('t', 'Done.'),
+    ]
+    const live = chatActivitySegments(parts, true)
+    expect(kinds(live)).toEqual(['activity[reasoning,read]', 'task', 'task', 'text'])
+    expect(live[0]).toMatchObject({ subagents: { total: 2, running: 1 } })
+    // A turn that ended runs nothing, whatever state a card was left in.
+    expect(chatActivitySegments(parts, false)[0]).toMatchObject({ subagents: { total: 2, running: 0 } })
+    // Subagents alone are no step: the cards and the answer show as they are, under a live line until text comes.
+    expect(kinds(chatActivitySegments([task('s', 'completed'), text('t', 'Done.')], false))).toEqual(['task', 'text'])
+    const waiting = chatActivitySegments([task('s', 'running')], true)
+    expect(kinds(waiting)).toEqual(['activity[]', 'task'])
+    expect(waiting[0]).toMatchObject({ subagents: { total: 1, running: 1 } })
+    expect(chatActivitySegments([tool('b', 'bash', {})], true)[0]).toMatchObject({
+      subagents: { total: 0, running: 0 },
     })
   })
 
@@ -236,6 +270,12 @@ describe('timeline rows and summary', () => {
       title: 'Check tests',
     })
     expect(activityLive([thinking, step('d', 'read', 'completed')], off)).toEqual({ kind: 'thinking', title: null })
+    // Subagents run in their own cards: the line names them unless a step of its own runs.
+    const delegating = { ...off, runningSubagents: 2 }
+    expect(activityLive([thinking], delegating)).toEqual({ kind: 'subagents', count: 2 })
+    expect(activityLive([], delegating)).toEqual({ kind: 'subagents', count: 2 })
+    expect(activityLive([running], delegating)).toMatchObject({ kind: 'step', step: { id: 'a' } })
+    expect(activityLive([thinking], { ...delegating, writing: true })).toEqual({ kind: 'writing' })
   })
 
   it('finds a search query in reasoning and in-between text only', () => {

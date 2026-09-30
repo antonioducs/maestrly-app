@@ -41,6 +41,7 @@ const environment = (id: string, patch: Partial<FleetEnvironment> = {}): FleetEn
   appVersion: '0.9.3',
   capabilities: ['environments'],
   update: { available: false, pendingSince: null },
+  runtimes: null,
   botIds: [],
   createdAt: at,
   updatedAt: at,

@@ -37,6 +37,15 @@ User-visible changes by version. Downloads are on
   waiting for you, or under your control, even while your computer is off. An
   environment's view shows what its update waits for and offers **Update now**
   and **Cancel update**.
+- Experimental: bots update Claude Code and Codex on their own, without
+  waiting for a Maestrly release. Each environment checks npm every six hours,
+  tests a new release before using it, never interrupts a turn in progress,
+  and never goes below the version its image ships. A bot's **Settings →
+  Components** shows the versions and offers manual checks; servers can turn
+  automatic checks off with `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off`.
+- Experimental: an environment's view shows the Claude Code and Codex versions
+  its bots run, where each comes from, an installed version still waiting for
+  work in progress to end, and **Check for updates**.
 
 ### Changed
 
@@ -45,10 +54,15 @@ User-visible changes by version. Downloads are on
   bot conversations. While the agent works, the line shows its current step;
   afterwards it summarizes what it did, including steps that failed or that you
   denied. Open it to see every step and its details. The answer, questions,
-  plans, generated images, and tool screenshots stay in view.
+  plans, subagents, published artifacts, generated images, and tool screenshots
+  stay in view.
 
 ### Fixed
 
+- Let bots use new Claude models such as Opus 5.5: the bot image now ships
+  Claude Code 2.1.285, so bots see these models as the desktop app does,
+  including the extra high effort, instead of a reduced context window and a
+  request to update Claude Code on every turn.
 - Close only the open list, not the whole dialog, when pressing Escape in a
   searchable dropdown such as the environment choice when creating a bot.
 - Never move a bot server back to an older version when another computer

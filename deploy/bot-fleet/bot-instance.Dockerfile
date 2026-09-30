@@ -83,6 +83,7 @@ ENV PATH=/home/bot/.local/bin:/home/bot/.local/share/mise/shims:/usr/local/sbin:
 COPY --from=build /app/node_modules /opt/maestrly/node_modules
 COPY --from=build /app/apps/desktop/out /opt/maestrly/apps/desktop/out
 COPY --from=build /app/apps/desktop/package.json /opt/maestrly/apps/desktop/package.json
+COPY --from=build /app/apps/desktop/node_modules /opt/maestrly/apps/desktop/node_modules
 COPY --from=build /app/apps/desktop/resources /opt/maestrly/apps/desktop/resources
 COPY --from=build /app/packages /opt/maestrly/packages
 COPY --from=build /app/config /opt/maestrly/config

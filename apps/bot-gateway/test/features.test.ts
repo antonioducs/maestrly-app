@@ -301,6 +301,16 @@ describe('secrets and configuration', () => {
     )
     expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
   })
+  it('reads whether bots update their runtimes on their own, automatically by default', () => {
+    const dir = temp()
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).botRuntimeUpdates).toBe('auto')
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'off' }).botRuntimeUpdates
+    ).toBe('off')
+    expect(() =>
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'never' })
+    ).toThrow()
+  })
 })
 describe('instance link and takeover', () => {
   it('saves and forwards compaction settings and reports setup until configured', async () => {

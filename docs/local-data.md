@@ -142,6 +142,13 @@ data under its bot id:
 | Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
 | Session bus of its apps screen | `~/.cache/maestrly-bots/<botId>/` |
 
+Claude Code and Codex releases a bot downloads on its own live in the
+profile's `runtime-assets/` folder, with the accepted release metadata in the
+`runtimeAssets.claudeCodeReleases` and `runtimeAssets.codexReleases` settings.
+They are shared by the environment's bots and survive container replacement;
+Maestrly keeps the active version, the previous one, and any version a running
+turn still uses, and removes the rest.
+
 Two browsers keep separate data. The browser that a bot drives with `browser_*`
 runs in the environment's Maestrly process, so all bots of the environment share
 its cookies and site logins. Programs on a bot's apps screen open Chromium
@@ -176,6 +183,22 @@ start tries again; the adoption can run again safely. It copies no secrets: the
 bot gets its gateway token again when the gateway installs it, and the
 environment keeps the control token and keyring password the container already
 had.
+
+## Voice model
+
+Voice dictation uses a speech model installed only after you confirm its
+download from the microphone or in **Settings › Maestrly Chat › Components**. It
+lives in the profile at `runtime-assets/whisper-model` (547 MB, verified
+against a pinned SHA-256 before use) and can be removed from Components; the
+next dictation offers to download it again. The speech engine and its
+voice-activity model are part of the local ML runtime under
+`runtime-assets/local-ml-runtime`.
+
+Recordings and transcriptions are not stored separately: audio is kept in memory
+only until it is transcribed, and a sent transcription is an ordinary user
+message. Earlier versions cached a smaller model under
+`transformers-cache/Xenova/whisper-base`; the app deletes it the first time
+dictation starts.
 
 ## Artifacts
 

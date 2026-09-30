@@ -28,6 +28,7 @@ import {
   fleetCeilingSchema,
   fleetEnvironmentIdSchema,
   fleetEnvironmentSchema,
+  fleetRuntimesSchema,
   fleetHostInfoSchema,
   fleetIdSchema,
   fleetIdempotencyKeySchema,
@@ -602,9 +603,13 @@ export const fleetInstanceStatusSchema = z.object({
   usage: fleetUsageSchema.nullable().default(null),
   /** Null from a bot that predates bot compaction: the gateway does not hold it in setup. */
   compaction: fleetCompactionStateSchema.nullable().default(null),
+  /** The environment's runtimes, the same in every bot's status; null from an image that predates runtime reports. */
+  runtimes: fleetRuntimesSchema.nullable().default(null),
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>
+/** The instance starts the checks and answers at once; their results arrive in later statuses. */
+export const fleetRuntimesCheckResponseSchema = z.object({ ok: z.literal(true) })
 /** The aggregate status of an environment instance: one status per installed bot. */
 export const fleetInstanceEnvironmentStatusSchema = z.object({
   environmentId: fleetEnvironmentIdSchema.nullable(),
@@ -861,6 +866,13 @@ export const FLEET_GATEWAY_ROUTES = {
   environmentUpdateCancel: {
     method: 'DELETE',
     path: '/v1/environments/:eid/update',
+    body: null,
+    response: fleetEnvironmentSchema,
+  },
+  /** Asks the environment to check for Claude Code and Codex releases now; gateways with `runtime-updates` only. */
+  environmentRuntimesCheck: {
+    method: 'POST',
+    path: '/v1/environments/:eid/runtimes/check',
     body: null,
     response: fleetEnvironmentSchema,
   },
@@ -1194,6 +1206,8 @@ export const FLEET_INSTANCE_ROUTES = {
     body: null,
     response: fleetInstanceEnvironmentStatusSchema,
   },
+  /** Capability `runtime-updates`: checks for Claude Code and Codex releases in the background. */
+  runtimesCheck: { method: 'POST', path: '/v1/runtimes/check', body: null, response: fleetRuntimesCheckResponseSchema },
   /** Capability `environment-compaction`: the model options of the environment's accounts; `current` is null. */
   environmentSelections: {
     method: 'GET',

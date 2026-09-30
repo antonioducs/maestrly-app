@@ -2,6 +2,7 @@ import { FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
   FLEET_UPDATES_UNSUPPORTED,
+  FLEET_RUNTIME_UPDATES_UNSUPPORTED,
   FLEET_SCREEN_CONFLICT,
   FLEET_SCREEN_OFFLINE,
   FLEET_SCREEN_RESTART_REQUIRED,
@@ -74,6 +75,11 @@ const marked = (marker: string) => (message: string) => message.includes(marker)
 const KNOWN_REFUSALS: KnownRefusal[] = [
   { matches: marked(FLEET_ENVIRONMENTS_UNSUPPORTED), key: 'provisioning.updateServer' },
   { matches: marked(FLEET_UPDATES_UNSUPPORTED), key: 'updates.unsupported' },
+  { matches: marked(FLEET_RUNTIME_UPDATES_UNSUPPORTED), key: 'environment.runtimes.unsupported' },
+  {
+    matches: exactly('Restart this environment to update it before checking its runtimes.'),
+    key: 'environment.runtimes.restart',
+  },
   { matches: exactly('Start the environment to update it'), key: 'errors.environmentNotRunning' },
   { matches: marked(FLEET_SCREEN_CONFLICT), key: 'screen.conflict' },
   { matches: marked(FLEET_SCREEN_RESTART_REQUIRED), key: 'screen.restartEnvironment' },

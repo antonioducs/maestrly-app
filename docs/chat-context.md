@@ -56,6 +56,34 @@ viewer receives a read-only copy named after the attachment, kept in the
 application profile until its message or conversation is deleted or Maestrly
 restarts; changes saved from the viewer never alter the attachment.
 
+## Voice dictation
+
+Click the microphone in a chat or bot composer to speak, and click it again to
+stop; with **Hold to record** on, hold the button while you speak. Speech never
+leaves the computer: Maestrly transcribes it locally with whisper.cpp and the
+Whisper large-v3-turbo model, and a voice-activity check discards recordings with
+no speech, so silence or room noise never becomes a message.
+
+With **Send automatically** on (the default), the transcription is sent as your
+message, after any text already in the composer and together with its
+attachments. During a running turn it is queued or steers the agent, exactly
+like pressing Enter. Turn the switch off in the microphone menu to place the text
+in the composer instead, for example to review it first. When the composer cannot
+send (no provider, or a conversation managed by a bot), the text always goes to
+the composer.
+
+The microphone menu also chooses the dictation language: **App language** (the
+default) transcribes in the language Maestrly is displayed in, which is the most
+accurate choice; **Detect automatically** lets the model identify the language
+and takes about twice as long.
+
+The first click offers to download the voice model once (547 MB). Nothing is
+downloaded before you confirm. The model appears as **Voice model** in
+**Settings › Maestrly Chat › Components**, where it can be removed; see
+[Local data](local-data.md#voice-model). Dictation requires macOS 15 or later on
+Apple silicon, where it uses the GPU, or Windows x64 or Linux x64 (glibc 2.34 or
+later), where it runs on the CPU and is slower.
+
 ## Starting other conversations
 
 A project conversation can start new Standard conversations that keep working on

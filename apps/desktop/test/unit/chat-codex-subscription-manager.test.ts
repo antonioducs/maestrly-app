@@ -669,6 +669,77 @@ describe('CodexSubscriptionManager', () => {
     expect(release).toHaveBeenCalledTimes(1)
   })
 
+  it('recycles an idle connection onto the runtime selected now, without reporting a failure', async () => {
+    const releases = [vi.fn(), vi.fn()]
+    const acquireRuntimeLease = vi.fn(async (runtimePath: string) => ({
+      id: 'codex-runtime' as const,
+      path: runtimePath,
+      release: releases[acquireRuntimeLease.mock.calls.length - 1],
+    }))
+    const resolveRuntime = vi.fn(() => runtime(process.execPath))
+    manager = new CodexSubscriptionManager({
+      resolveRuntime,
+      acquireRuntimeLease,
+      connectClient,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+
+    const first = await manager.getClient()
+    expect(manager.connectedRuntimePath).toBe(process.execPath)
+    await expect(manager.recycleConnection()).resolves.toBe(true)
+    expect(first.state).toBe('closed')
+    expect(releases[0]).toHaveBeenCalledTimes(1)
+    expect(manager.connectedRuntimePath).toBeNull()
+    expect(manager.getStatusSnapshot()).toBeNull()
+
+    const second = await manager.getClient()
+    expect(second).not.toBe(first)
+    expect(resolveRuntime).toHaveBeenCalledTimes(2)
+    expect(releases[1]).not.toHaveBeenCalled()
+    await expect(manager.getStatus()).resolves.toMatchObject({ state: 'ready', error: null })
+    // Nothing to recycle is a success.
+    await manager.dispose()
+    await expect(manager.recycleConnection()).resolves.toBe(true)
+  })
+
+  it('keeps a connection handed out after the idle check, and recycles it once unused since', async () => {
+    manager = new CodexSubscriptionManager({
+      resolveRuntime: () => runtime(process.execPath),
+      acquireRuntimeLease: async (runtimePath) => ({ id: 'codex-runtime', path: runtimePath, release: vi.fn() }),
+      connectClient,
+      getUserDataPath: () => userDataPath,
+      getAppVersion: () => '9.8.7-test',
+    })
+    const idle = await manager.getClient()
+    expect(manager.connectedRuntime).toMatchObject({ executablePath: process.execPath })
+
+    // The bots were seen idle with these uses; a turn then takes the connection before the recycle runs.
+    const unusedSince = manager.connectionUses
+    const turn = await manager.getClient()
+    expect(turn).toBe(idle)
+    await expect(manager.recycleConnection(unusedSince)).resolves.toBe(false)
+    expect(turn.state).toBe('ready')
+    expect(manager.connectedRuntimePath).toBe(process.execPath)
+
+    // Waiting for a client being established counts too.
+    await expect(manager.recycleConnection(manager.connectionUses)).resolves.toBe(true)
+    const connecting = manager.getClient()
+    const waiting = manager.getClient()
+    const beforeConnected = manager.connectionUses
+    await expect(manager.recycleConnection(beforeConnected)).resolves.toBe(false)
+    const [first, second] = await Promise.all([connecting, waiting])
+    expect(second).toBe(first)
+    expect(manager.connectionUses).toBe(beforeConnected + 2)
+    await expect(manager.recycleConnection(beforeConnected)).resolves.toBe(false)
+    expect(first.state).toBe('ready')
+
+    // Once the turn is over and nothing took the connection since the next idle check, it is recycled.
+    await expect(manager.recycleConnection(manager.connectionUses)).resolves.toBe(true)
+    expect(first.state).toBe('closed')
+    expect(manager.connectedRuntime).toBeNull()
+  })
+
   it('releases leases on app-server initialization failure', async () => {
     const release = vi.fn()
     connectClient.mockRejectedValueOnce(new Error('fixture start failed'))

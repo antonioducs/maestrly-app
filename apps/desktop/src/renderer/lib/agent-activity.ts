@@ -29,8 +29,6 @@ export interface ActivityToolStep<S> {
   toolName: string
   category: ActivityCategory
   target: string | null
-  /** The subagent a `task` call runs. */
-  agent: string | null
   status: ActivityStatus
   source: S
 }
@@ -171,10 +169,6 @@ export function toolTarget(toolName: string, input: unknown): string | null {
       const query = str(value.query) ?? str(action?.query) ?? str(queries[0])
       return query ? clip(query, 100) : null
     }
-    case 'subagent': {
-      const prompt = str(value.prompt) ?? str(value.task) ?? str(value.description)
-      return prompt ? clip(firstLine(prompt), 80) : null
-    }
     default:
       return genericTarget(value)
   }
@@ -213,28 +207,33 @@ function chatToolStatus(state: ToolState, live: boolean): ActivityStatus {
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
 export function chatToolStep(part: ToolPart, live: boolean): ActivityToolStep<MessagePart> {
-  const input = part.input as { agent?: unknown } | null | undefined
   return {
     kind: 'tool',
     id: part.toolCallId,
     toolName: part.toolName,
     category: toolCategory(part.toolName),
     target: toolTarget(part.toolName, part.input),
-    agent: typeof input?.agent === 'string' ? input.agent : null,
     status: chatToolStatus(part.state, live),
     source: part,
   }
 }
 
-/** Tools that render their own card outside the activity: the person answers or reads them. */
+/**
+ * Tools that render their own card outside the activity: the person answers or reads them, opens what they
+ * published (an artifact), or, for a subagent, follows its progress and opens its transcript.
+ */
 const PINNED_TOOLS = new Set([
   'ask_question',
   'todo_write',
   'start_conversations',
   'delegate',
+  'task',
   'artifact_create',
   'artifact_update',
 ])
+
+const isSubagentPart = (part: MessagePart): part is ToolPart =>
+  part.type === 'tool' && baseToolName(part.toolName) === 'task'
 
 type PartClass = 'step' | 'text' | 'pinned' | 'hidden'
 
@@ -253,13 +252,16 @@ export type ChatActivitySegment =
       writing: boolean
       /** A question the person has not answered yet. */
       waitingAnswer: boolean
+      /** The message's subagents, whose cards sit outside the activity: how many it ran, and how many run now. */
+      subagents: { total: number; running: number }
     }
   | { kind: 'part'; part: MessagePart; index: number }
 
 /**
- * How an assistant message renders in the compact view, in order: pinned parts before the activity, the activity,
- * the pinned parts it passed (plan, questions, orchestration, images), then the answer. A message with no step
- * renders as it is, with a live line while it has nothing to show yet.
+ * How an assistant message renders in the compact view, in order: what opens the message before the agent acts (a
+ * compaction, imported context), the activity, the cards it passed (plan, questions, subagents, orchestration,
+ * images), then the answer. The activity keeps that place from the first card or step on, so the line does not move
+ * as steps arrive. A message with no step renders as it is, with a live line while it has no answer yet.
  */
 export function chatActivitySegments(parts: readonly MessagePart[], live: boolean): ChatActivitySegment[] {
   const classes = parts.map(classifyPart)
@@ -274,17 +276,29 @@ export function chatActivitySegments(parts: readonly MessagePart[], live: boolea
           part.state.status === 'running' ||
           part.state.status === 'awaiting-permission')
     )
+  const tasks = parts.filter(isSubagentPart)
+  const subagents = {
+    total: tasks.length,
+    running: tasks.filter((part) => chatToolStep(part, live).status === 'running').length,
+  }
   const asParts = (from: number, to: number, keep: (index: number) => boolean = () => true): ChatActivitySegment[] =>
     parts
       .slice(from, to)
       .map((part, offset) => ({ kind: 'part' as const, part, index: from + offset }))
       .filter((segment) => keep(segment.index))
+  const acted = classes.findIndex(
+    (value, index) => value === 'step' || value === 'text' || (value === 'pinned' && parts[index].type === 'tool')
+  )
+  const first = acted < 0 ? parts.length : acted
   if (last < 0) {
     const hasText = classes.includes('text')
     if (!live || hasText) return asParts(0, parts.length)
-    return [{ kind: 'activity', steps: [], writing: false, waitingAnswer }, ...asParts(0, parts.length)]
+    return [
+      ...asParts(0, first),
+      { kind: 'activity', steps: [], writing: false, waitingAnswer, subagents },
+      ...asParts(first, parts.length),
+    ]
   }
-  const first = classes.findIndex((value) => value === 'step' || value === 'text')
   const steps: ActivityStep<MessagePart>[] = []
   for (let index = first; index <= last; index++) {
     const part = parts[index]
@@ -297,7 +311,7 @@ export function chatActivitySegments(parts: readonly MessagePart[], live: boolea
   const writing = live && classes.slice(last + 1).includes('text')
   return [
     ...asParts(0, first, (index) => classes[index] === 'pinned'),
-    { kind: 'activity', steps, writing, waitingAnswer },
+    { kind: 'activity', steps, writing, waitingAnswer, subagents },
     ...asParts(first, last + 1, (index) => classes[index] === 'pinned'),
     ...asParts(last + 1, parts.length),
   ]
@@ -392,11 +406,15 @@ export type ActivityLive<S> =
   | { kind: 'writing' }
   | { kind: 'thinking'; title: string | null }
   | { kind: 'step'; step: ActivityToolStep<S> }
+  | { kind: 'subagents'; count: number }
 
-/** What the live line says: whatever waits for the person first, then the running step. */
+/**
+ * What the live line says: whatever waits for the person first, then the running step, then the subagents running
+ * in their own cards.
+ */
 export function activityLive<S>(
   steps: readonly ActivityStep<S>[],
-  options: { writing: boolean; waitingAnswer: boolean }
+  options: { writing: boolean; waitingAnswer: boolean; runningSubagents?: number }
 ): ActivityLive<S> {
   const tools = steps.filter((step): step is ActivityToolStep<S> => step.kind === 'tool')
   if (tools.some((step) => step.status === 'waiting')) return { kind: 'waiting-permission' }
@@ -404,6 +422,7 @@ export function activityLive<S>(
   if (options.writing) return { kind: 'writing' }
   const running = tools.filter((step) => step.status === 'running')
   if (running.length) return { kind: 'step', step: running[running.length - 1] }
+  if (options.runningSubagents) return { kind: 'subagents', count: options.runningSubagents }
   const last = steps[steps.length - 1]
   return { kind: 'thinking', title: last?.kind === 'reasoning' ? reasoningTitle(last.text, 'last') : null }
 }
@@ -503,7 +522,6 @@ export function fleetActivitySegments(
             toolName: item.name,
             category: toolCategory(item.name),
             target: item.target,
-            agent: null,
             // The bot marks tools a finished turn left open as interrupted; one still running may be paused.
             status: FLEET_STATUS[item.state],
             source: item,

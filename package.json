@@ -75,8 +75,10 @@
     "bot-fleet:dev": "node scripts/bot-fleet-dev.mjs"
   },
   "devDependencies": {
+    "@electron/asar": "4.3.1",
     "@biomejs/biome": "2.5.14",
-    "typescript": "5.9.3"
+    "tar-stream": "3.2.1",
+    "typescript": "7.0.2"
   },
   "repository": {
     "type": "git",

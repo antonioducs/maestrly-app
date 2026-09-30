@@ -1,5 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { net } from 'electron'
+import {
+  claimOpenAIResponsesReplay,
+  type OpenAIAssistantTextReplay,
+  openAIReplayHasNativeIds,
+  restoreOpenAIAssistantTextReplay,
+} from './replay-middleware'
 import type { OpenAILedgerObject, OpenAILedgerValue } from './types'
 
 const rawPrefixStorage = new AsyncLocalStorage<readonly OpenAILedgerValue[]>()
@@ -95,20 +101,25 @@ export function prepareOpenAIResponsesBody(
   }
 }
 
-function patchedBody(body: RequestInit['body'], rawPrefix: readonly OpenAILedgerValue[]): string {
+function patchedBody(
+  body: RequestInit['body'],
+  rawPrefix: readonly OpenAILedgerValue[],
+  replay: readonly OpenAIAssistantTextReplay[] | undefined
+): string {
   if (typeof body !== 'string') {
     throw new OpenAIRawInputError('Cannot replay the canonical OpenAI window: unsupported request body')
   }
+  let parsed: OpenAILedgerValue
   try {
-    const parsed = JSON.parse(body) as OpenAILedgerValue
-    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
-      throw new OpenAIRawInputError('Cannot replay the canonical OpenAI window: request body is not an object')
-    }
-    return JSON.stringify(prepareOpenAIResponsesBody(parsed, rawPrefix))
-  } catch (error) {
-    if (error instanceof OpenAIRawInputError) throw error
+    parsed = JSON.parse(body) as OpenAILedgerValue
+  } catch {
     throw new OpenAIRawInputError('Cannot replay the canonical OpenAI window: request body is not valid JSON')
   }
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new OpenAIRawInputError('Cannot replay the canonical OpenAI window: request body is not an object')
+  }
+  // Native assistant IDs are restored on the SDK input first, so alignment never sees injected or trimmed items.
+  return JSON.stringify(prepareOpenAIResponsesBody(restoreOpenAIAssistantTextReplay(parsed, replay), rawPrefix))
 }
 
 /**
@@ -130,17 +141,18 @@ export const openAIResponsesFetch: typeof globalThis.fetch = async (input, init)
   const rawPrefix = rawPrefixStorage.getStore() ?? []
   const netInput = input instanceof URL ? input.toString() : input
   if (!isResponsesCreate(requestUrl(input))) return net.fetch(netInput, init)
+  const replay = claimOpenAIResponsesReplay()
 
   if (init?.body != null) {
-    return net.fetch(netInput, { ...init, body: patchedBody(init.body, rawPrefix) })
+    return net.fetch(netInput, { ...init, body: patchedBody(init.body, rawPrefix, replay) })
   }
 
   if (typeof Request !== 'undefined' && input instanceof Request && input.method !== 'GET' && input.method !== 'HEAD') {
     const original = await input.clone().text()
-    return net.fetch(new Request(input, { body: patchedBody(original, rawPrefix) }), init)
+    return net.fetch(new Request(input, { body: patchedBody(original, rawPrefix, replay) }), init)
   }
 
-  if (rawPrefix.length > 0) {
+  if (rawPrefix.length > 0 || openAIReplayHasNativeIds(replay)) {
     // The history builder already removed the visual prefix. Sending without the canonical window would lose context.
     throw new OpenAIRawInputError('Cannot replay the canonical OpenAI window: request body is unavailable')
   }

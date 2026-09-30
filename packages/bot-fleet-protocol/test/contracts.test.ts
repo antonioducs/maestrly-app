@@ -11,6 +11,7 @@ import {
 import {
   FLEET_BOT_ENV,
   FLEET_BOT_EGRESS_MODES,
+  FLEET_BOT_RUNTIME_UPDATE_MODES,
   FLEET_GATEWAY_ENV,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -18,7 +19,11 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
+  FLEET_RUNTIME_IDS,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   type FleetRoute,
+  fleetRuntimeInfoSchema,
+  fleetRuntimesCheckResponseSchema,
   fleetBotBlocksUpdate,
   fleetEnvironmentUpdateRequestSchema,
   fleetArchivedBotSchema,
@@ -160,6 +165,9 @@ describe('domain contracts', () => {
     expect(FLEET_BOT_EGRESS_MODES).toEqual(['open', 'public'])
     expect(FLEET_GATEWAY_ENV.botEgress).toBe('MAESTRLY_GATEWAY_BOT_EGRESS')
     expect(FLEET_BOT_ENV.egress).toBe('MAESTRLY_BOT_EGRESS')
+    expect(FLEET_BOT_RUNTIME_UPDATE_MODES).toEqual(['auto', 'off'])
+    expect(FLEET_GATEWAY_ENV.botRuntimeUpdates).toBe('MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES')
+    expect(FLEET_BOT_ENV.runtimeUpdates).toBe('MAESTRLY_BOT_RUNTIME_UPDATES')
   })
   it('preserves structured permission tools in transcript, pending inbox, and events', () => {
     const tool = { name: 'computer_click', target: '(10, 20)' }
@@ -1342,6 +1350,49 @@ describe('environment contracts', () => {
       expect(fleetEnvironmentUpdateRequestSchema.parse({ when })).toEqual({ when })
     expect(() => routes.environmentUpdate.body.parse({ when: 'later' })).toThrow()
     expect(fleetEnvironmentUpdateRequestSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('reports the runtime versions of an environment and the routes that check them', () => {
+    expect(FLEET_RUNTIME_UPDATES_FEATURE).toBe('runtime-updates')
+    expect(FLEET_RUNTIME_IDS).toEqual(['claude-code', 'codex'])
+    expect(fleetEnvironmentSchema.parse(environment).runtimes).toBeNull()
+    expect(fleetInstanceStatusSchema.parse(status).runtimes).toBeNull()
+    const claude = {
+      id: 'claude-code',
+      version: '2.1.285',
+      source: 'image',
+      automatic: true,
+      state: 'available',
+      availableVersion: '2.1.290',
+      lastCheckedAt: '2026-09-29T10:00:00.000Z',
+      error: null,
+    } as const
+    // An image that predates the pending version reports none.
+    const reported = { ...claude, pendingVersion: null }
+    expect(fleetRuntimeInfoSchema.parse(claude)).toEqual(reported)
+    expect(fleetEnvironmentSchema.parse({ ...environment, runtimes: [claude] }).runtimes).toEqual([reported])
+    expect(fleetInstanceStatusSchema.parse({ ...status, runtimes: [claude] }).runtimes).toEqual([reported])
+    const switching = { ...claude, id: 'codex', version: '0.155.1', pendingVersion: '0.160.0' } as const
+    expect(fleetRuntimeInfoSchema.parse(switching)).toEqual(switching)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, pendingVersion: 'x'.repeat(41) }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, state: 'unknown' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, id: 'copilot' }).success).toBe(false)
+    expect(fleetRuntimeInfoSchema.safeParse({ ...claude, source: 'system' }).success).toBe(false)
+    expectRoute(
+      FLEET_INSTANCE_ROUTES.runtimesCheck,
+      'POST',
+      '/v1/runtimes/check',
+      null,
+      fleetRuntimesCheckResponseSchema
+    )
+    expect(fleetRuntimesCheckResponseSchema.parse({ ok: true })).toEqual({ ok: true })
+    expectRoute(
+      FLEET_GATEWAY_ROUTES.environmentRuntimesCheck,
+      'POST',
+      '/v1/environments/:eid/runtimes/check',
+      null,
+      fleetEnvironmentSchema
+    )
   })
 
   it('mirrors every bot provisioning route on the environment', () => {

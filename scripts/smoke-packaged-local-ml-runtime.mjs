@@ -27,7 +27,7 @@ if (!packagedPlatform) throw new Error(`Unsupported packaged local-ML smoke plat
 const runtimeTarget = `${packagedPlatform}-${process.arch}`
 const archive = path.resolve(
   process.argv[3] ??
-    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-1-${runtimeTarget}.tar.gz`)
+    path.join('runtime-assets', 'local-ml', 'archives', `local-ml-runtime-2.17.2-2-${runtimeTarget}.tar.gz`)
 )
 if (process.argv.length > 4) throw new Error(`Unexpected extra arguments: ${process.argv.slice(4).join(' ')}`)
 

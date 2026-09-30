@@ -6,7 +6,7 @@ import path from 'node:path'
 import { gzipSync } from 'node:zlib'
 import tar from 'tar-stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { extractTarGz, extractZip } from '../../src/main/runtime-assets/archive'
+import { extractArchive, extractTarGz, extractZip } from '../../src/main/runtime-assets/archive'
 import { createHttpsDownloader } from '../../src/main/runtime-assets/downloader'
 import type { RuntimeAssetTarget } from '../../src/main/runtime-assets/registry'
 
@@ -23,7 +23,10 @@ async function tarFixture(
 ): Promise<string> {
   const pack = tar.pack()
   const chunks: Buffer[] = []
-  pack.on('data', (chunk) => chunks.push(chunk))
+  pack.on('data', (chunk) => {
+    if (!Buffer.isBuffer(chunk)) throw new TypeError('Expected a binary archive chunk')
+    chunks.push(chunk)
+  })
   for (const entry of entries) {
     await new Promise<void>((resolve, reject) =>
       pack.entry(
@@ -213,5 +216,59 @@ describe('HTTPS downloader', () => {
     await expect(
       downloader(target('x'), path.join(temporary, 'b'), { signal: new AbortController().signal })
     ).rejects.toThrow(/not allowed/i)
+  })
+
+  it('allows Hugging Face and its regional CDN hosts by default', async () => {
+    const body = Buffer.from('model')
+    const fetchMock = vi.fn(async (url: string) =>
+      url.startsWith('https://huggingface.co/')
+        ? new Response(null, { status: 302, headers: { location: 'https://us.aws.cdn.hf.co/xet/abc' } })
+        : new Response(body, { status: 200 })
+    )
+    const downloader = createHttpsDownloader({ fetch: fetchMock as unknown as typeof fetch })
+    const result = await downloader(
+      {
+        ...target(createHash('sha256').update(body).digest('hex')),
+        url: 'https://huggingface.co/o/r/resolve/x/m.bin',
+      },
+      path.join(temporary, 'hf'),
+      { signal: new AbortController().signal }
+    )
+    expect(result.finalUrl).toBe('https://us.aws.cdn.hf.co/xet/abc')
+  })
+
+  it('rejects look-alike Hugging Face hosts', async () => {
+    for (const location of ['https://evilhf.co/x', 'https://hf.co.evil.test/x']) {
+      const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location } }))
+      const downloader = createHttpsDownloader({ fetch: fetchMock as unknown as typeof fetch })
+      await expect(
+        downloader(
+          { ...target('x'), url: 'https://huggingface.co/m.bin' },
+          path.join(temporary, `l-${location.length}`),
+          { signal: new AbortController().signal }
+        )
+      ).rejects.toThrow(/not allowed/i)
+    }
+  })
+})
+
+describe('single-file runtime assets', () => {
+  it('moves the verified download into the declared file name', async () => {
+    const source = path.join(temporary, 'download.bin')
+    await writeFile(source, 'weights')
+    const out = path.join(temporary, 'file-out')
+    await extractArchive(source, out, 'file', { fileName: 'model.bin' })
+    expect(await readFile(path.join(out, 'model.bin'), 'utf8')).toBe('weights')
+    expect(existsSync(source)).toBe(false)
+  })
+
+  it('rejects a missing, nested or escaping file name', async () => {
+    for (const fileName of [undefined, '../model.bin', 'nested/model.bin']) {
+      const source = path.join(temporary, `download-${String(fileName).replace(/\W/g, '')}.bin`)
+      await writeFile(source, 'x')
+      await expect(extractArchive(source, path.join(temporary, 'bad'), 'file', { fileName })).rejects.toThrow(
+        /fileName|unsafe/i
+      )
+    }
   })
 })

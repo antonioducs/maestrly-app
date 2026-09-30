@@ -11,6 +11,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_PROVISIONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
@@ -70,8 +71,9 @@ export class InstanceHttpError extends Error {
 /**
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
  * each addressed by id under `/v1/bots/:botId`, the list of its models for the environment's default compaction
- * model, caps each bot's conversation at the context limit of its compaction settings, and sends the model's
- * reasoning in transcripts to readers that ask for it. Its health and every status advertise them.
+ * model, caps each bot's conversation at the context limit of its compaction settings, sends the model's reasoning
+ * in transcripts to readers that ask for it, and reports the versions of its Claude Code and Codex with checks for
+ * newer ones. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_PROVISIONING_FEATURE,
@@ -79,6 +81,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  FLEET_RUNTIME_UPDATES_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -139,6 +142,8 @@ export interface InstanceEnvironment {
   addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse>
   removeAccount(providerId: string): Promise<void>
   open(target: FleetUiOpenRequest['target']): Promise<void>
+  /** Starts checks for Claude Code and Codex releases in the background; their results arrive in bot statuses. */
+  checkRuntimes(): void
 }
 
 // `botId` defaults to null when the event is parsed: events of the environment itself name no bot.
@@ -379,6 +384,10 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
   const handlers: Partial<Record<RouteKey, Handler>> = {
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
+    runtimesCheck: () => {
+      environment.checkRuntimes()
+      return { ok: true as const }
+    },
     environmentSelections: () => environment.selections(),
     loginStart: ({ input }) => environment.startLogin(input as FleetLoginStartRequest),
     loginGet: ({ params }) => environment.login(params.lid),

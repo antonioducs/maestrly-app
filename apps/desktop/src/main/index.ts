@@ -784,7 +784,9 @@ app.whenReady().then(async () => {
       const runtimePath = process.env.MAESTRLY_LOCAL_ML_RUNTIME_PATH?.trim()
       if (!runtimePath) throw new Error('MAESTRLY_LOCAL_ML_RUNTIME_PATH is required for packaged local-ML smoke')
       const result = await runMlWorkerNativeSmoke(runtimePath)
-      console.log(`[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes}`)
+      console.log(
+        `[packaged-local-ml-smoke] ok: onnx=${result.onnxValue} sharpBytes=${result.sharpBytes} vadSegments=${result.vadSegments}`
+      )
       process.exitCode = 0
     } catch (error) {
       console.error(
@@ -854,8 +856,9 @@ app.whenReady().then(async () => {
   await createWindow()
 
   conversationMigrationService.replayIncomplete()
-  // Codex release checks: delayed, production-only, and never for a component the user has not installed.
-  if (!isBotMode()) startRuntimeAssetUpdates()
+  // Runtime release checks: delayed, packaged builds and bots only, never for a component that is not installed.
+  // Bots also update Claude Code, with the runtime of their image as the floor.
+  startRuntimeAssetUpdates()
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 

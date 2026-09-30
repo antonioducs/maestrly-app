@@ -1,7 +1,7 @@
 Cursor SDK and target platform helpers
 
-Maestrly includes unmodified @cursor/sdk 1.0.31 and the matching supported
-@cursor/sdk-<platform>-<architecture> 1.0.31 optional dependency from npm.
+Maestrly includes unmodified @cursor/sdk 1.0.34 and the matching supported
+@cursor/sdk-<platform>-<architecture> 1.0.34 optional dependency from npm.
 Copyright Anysphere Inc. All rights reserved.
 
 The upstream license is reproduced verbatim in cursor-sdk-LICENSE.md.

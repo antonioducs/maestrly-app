@@ -1,22 +1,18 @@
 import type { RuntimeAssetId, RuntimeAssetInfo, UpdatableRuntimeAssetId } from '../../shared/runtime-assets'
-import { RUNTIME_ASSET_IDS, isUpdatableRuntimeAssetId } from '../../shared/runtime-assets'
+import { isUpdatableRuntimeAssetId } from '../../shared/runtime-assets'
 import type { IpcRegistrar } from '../ipc-registrar'
-import {
-  codexRuntimeUpdates,
-  runtimeAssetInfo,
-  runtimeAssetService,
-  setRuntimeAssetChangedEmitter,
-} from './app-service'
+import { runtimeAssetInfo, runtimeAssetService, runtimeUpdates, setRuntimeAssetChangedEmitter } from './app-service'
+import type { RuntimeUpdateController } from './runtime-updates'
+import { isListedRuntimeAssetId, listedRuntimeAssetIds } from './visibility'
 
 export interface RuntimeAssetIpcDependencies {
   readonly emitChanged: (info: RuntimeAssetInfo) => void
 }
 
+/** Bot-only runtimes are unknown outside bots, exactly like an id that does not exist. */
 function assetId(value: unknown): RuntimeAssetId {
-  if (typeof value !== 'string' || !RUNTIME_ASSET_IDS.includes(value as RuntimeAssetId)) {
-    throw new Error('Unknown runtime asset id')
-  }
-  return value as RuntimeAssetId
+  if (!isListedRuntimeAssetId(value)) throw new Error('Unknown runtime asset id')
+  return value
 }
 
 /** Release operations accept only an asset id; URLs, hashes, and paths are always chosen by the main process. */
@@ -52,40 +48,37 @@ export function registerRuntimeAssetIpc(reg: IpcRegistrar, dependencies: Runtime
     }
   }
 
+  const updateOperation = (rawId: unknown, run: (controller: RuntimeUpdateController) => Promise<unknown>) =>
+    operation(rawId, () => run(runtimeUpdates(updatableAssetId(rawId))), updatableAssetId)
+
   reg.handle('runtime-assets:status', async (_event, id) => runtimeAssetInfo(assetId(id)))
-  reg.handle('runtime-assets:list', () => Promise.all(RUNTIME_ASSET_IDS.map(runtimeAssetInfo)))
+  reg.handle('runtime-assets:list', () => Promise.all(listedRuntimeAssetIds().map(runtimeAssetInfo)))
   reg.mhandle('runtime-assets:install', (_event, id) =>
     operation(id, (valid) =>
-      // Codex first installs prefer the latest validated stable release, falling back to the embedded pin.
-      isUpdatableRuntimeAssetId(valid) ? codexRuntimeUpdates().installInitial() : service.install(valid)
+      // Updatable runtimes first install the latest validated stable release, falling back to the embedded pin.
+      isUpdatableRuntimeAssetId(valid) ? runtimeUpdates(valid).installInitial() : service.install(valid)
     )
   )
   reg.mhandle('runtime-assets:repair', (_event, id) => operation(id, (valid) => service.repair(valid)))
   reg.mhandle('runtime-assets:remove', (_event, id) =>
     operation(id, async (valid) => {
       await service.remove(valid)
-      if (isUpdatableRuntimeAssetId(valid)) await codexRuntimeUpdates().prune()
+      if (isUpdatableRuntimeAssetId(valid)) await runtimeUpdates(valid).prune()
     })
   )
   reg.mhandle('runtime-assets:cancel', async (_event, rawId) => {
     const id = assetId(rawId)
     const installCancelled = service.cancel(id)
-    const updateCancelled = isUpdatableRuntimeAssetId(id) ? codexRuntimeUpdates().cancel() : false
+    const updateCancelled = isUpdatableRuntimeAssetId(id) ? runtimeUpdates(id).cancel() : false
     await emit(id)
     return installCancelled || updateCancelled
   })
-  reg.mhandle('runtime-assets:check-update', (_event, id) =>
-    operation(id, () => codexRuntimeUpdates().check(true), updatableAssetId)
-  )
-  reg.mhandle('runtime-assets:update', (_event, id) =>
-    operation(id, () => codexRuntimeUpdates().update(), updatableAssetId)
-  )
-  reg.mhandle('runtime-assets:rollback', (_event, id) =>
-    operation(id, () => codexRuntimeUpdates().rollback(), updatableAssetId)
-  )
+  reg.mhandle('runtime-assets:check-update', (_event, id) => updateOperation(id, (updates) => updates.check(true)))
+  reg.mhandle('runtime-assets:update', (_event, id) => updateOperation(id, (updates) => updates.update()))
+  reg.mhandle('runtime-assets:rollback', (_event, id) => updateOperation(id, (updates) => updates.rollback()))
   reg.mhandle('runtime-assets:set-auto-update', (_event, rawId, enabled) => {
-    const id = updatableAssetId(rawId)
+    updatableAssetId(rawId)
     const automatic = booleanArgument(enabled)
-    return operation(id, () => codexRuntimeUpdates().setAutomatic(automatic), updatableAssetId)
+    return updateOperation(rawId, (updates) => updates.setAutomatic(automatic))
   })
 }

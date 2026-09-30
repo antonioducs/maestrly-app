@@ -31,6 +31,7 @@ import {
 } from './harness/execution'
 import type { ResolvedHarness } from './harness/types'
 import { openAIResponsesFetch } from './openai/raw-input'
+import { withOpenAIResponsesReplay } from './openai/replay-middleware'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
 import { GrokNotAuthenticatedError } from './grok-subscription/manager'
 
@@ -134,7 +135,8 @@ function getProviderInstance(providerId: string): ModelResolver {
       apiKey: credential.apiKey,
       fetch: openAIResponsesFetch,
     })
-    resolve = (modelId) => openai.responses(modelId)
+    // Stateless replay keeps native assistant message IDs and phases, which the SDK drops with store: false.
+    resolve = (modelId) => withOpenAIResponsesReplay(openai.responses(modelId))
   } else {
     const oai = createOpenAICompatible({
       name: descriptor.id,
