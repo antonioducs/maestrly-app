@@ -128,8 +128,8 @@ export const HOST_MEMORY_READ_RULES: Ruleset = allowMcp([
   'history_search',
   'history_read',
 ])
-/** Artifact reads never prompt: they only return the user's own pages. */
-export const HOST_ARTIFACT_READ_RULES: Ruleset = allowMcp(['artifact_get', 'artifact_list'])
+/** Artifact reads never prompt: they only return the user's own pages and the comments left on them. */
+export const HOST_ARTIFACT_READ_RULES: Ruleset = allowMcp(['artifact_get', 'artifact_list', 'artifact_comments'])
 /** In a bot container the owner reviews memory on the Mac instead of approving each write (owner decision). */
 export const BOT_MEMORY_WRITE_RULES: Ruleset = allowMcp([
   'memory_upsert',

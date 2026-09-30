@@ -11,6 +11,7 @@ import {
   ArtifactHostError,
   type ArtifactSummary,
   type BundleFile,
+  type CommentView,
   isTextPath,
   MAX_TEXT_READ_BYTES,
   readBundleDirectory,
@@ -170,6 +171,38 @@ export class ArtifactsService {
     const truncated = file.bytes.byteLength > MAX_TEXT_READ_BYTES
     const bytes = truncated ? file.bytes.subarray(0, MAX_TEXT_READ_BYTES) : file.bytes
     return { text: new TextDecoder().decode(bytes), truncated }
+  }
+
+  /**
+   * What people wrote on an artifact, for an agent. The caller hands it to the model as untrusted data: a comment is
+   * feedback from someone outside the conversation, never an instruction.
+   */
+  async commentsForConversation(
+    convId: string,
+    id: string,
+    filter: { status?: 'open' | 'all'; version?: number; cursor?: string }
+  ): Promise<{ comments: CommentView[]; nextCursor: string | null; currentVersion: number }> {
+    const admin = await this.admin()
+    const artifact = await this.scoped(admin, this.conversation(convId), id)
+    const page = await admin.listComments(id, {
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(filter.version === undefined ? {} : { version: filter.version }),
+      ...(filter.cursor === undefined ? {} : { cursor: filter.cursor }),
+    })
+    return { ...page, currentVersion: artifact.currentVersion }
+  }
+
+  /** An agent's reply, stored as written by the owner's agent. */
+  async replyForConversation(convId: string, id: string, commentId: string, body: string): Promise<CommentView> {
+    const admin = await this.admin()
+    await this.scoped(admin, this.conversation(convId), id)
+    return admin.addComment(id, { author: 'agent', body, parentId: commentId })
+  }
+
+  async resolveForConversation(convId: string, id: string, commentId: string): Promise<void> {
+    const admin = await this.admin()
+    await this.scoped(admin, this.conversation(convId), id)
+    await admin.setCommentResolved(id, commentId, true)
   }
 
   async listForConversation(convId: string, scope: 'conversation' | 'project'): Promise<ArtifactSummary[]> {

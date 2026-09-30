@@ -370,6 +370,36 @@ describe('ArtifactsService', () => {
     ])
   })
 
+  it('lets agents read, answer and resolve comments within their scope', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const outsider = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Discussed', files: page })
+    const id = detail.id
+    const thread = await host.admin.addComment(id, { author: 'owner', version: 1, body: 'Is this right?' })
+    const resolved = await host.admin.addComment(id, { author: 'owner', version: 1, body: 'Done already' })
+    await host.admin.setCommentResolved(id, resolved.id, true)
+
+    const open = await service.commentsForConversation(conversation.id, id, { status: 'open' })
+    expect(open).toMatchObject({ currentVersion: 1, nextCursor: null })
+    expect(open.comments.map((comment) => comment.body)).toEqual(['Is this right?'])
+    expect((await service.commentsForConversation(conversation.id, id, { status: 'all' })).comments).toHaveLength(2)
+    expect((await service.commentsForConversation(conversation.id, id, { version: 2 })).comments).toEqual([])
+
+    const reply = await service.replyForConversation(conversation.id, id, thread.id, 'Yes, checked.')
+    expect(reply).toMatchObject({ parentId: thread.id, body: 'Yes, checked.', author: { kind: 'agent' } })
+    await service.resolveForConversation(conversation.id, id, thread.id)
+    expect((await service.commentsForConversation(conversation.id, id, { status: 'open' })).comments).toEqual([])
+
+    // Out of scope, the artifact and its comments do not exist.
+    for (const attempt of [
+      service.commentsForConversation(outsider.id, id, {}),
+      service.replyForConversation(outsider.id, id, thread.id, 'Intruding'),
+      service.resolveForConversation(outsider.id, id, thread.id),
+    ])
+      expect((await errorOf(attempt)).code).toBe('not_found')
+    expect((await service.commentsForConversation(conversation.id, id, { status: 'all' })).comments).toHaveLength(3)
+  })
+
   it('counts nothing, and starts nothing, while the host is not running', async () => {
     hostState = 'stopped'
     expect(await service.unseenCount()).toBe(0)
