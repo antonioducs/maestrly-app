@@ -7,7 +7,8 @@ export interface InviteVaultStore {
   remove(key: string): unknown
 }
 
-const KEY_PREFIX = 'artifacts.invite.'
+/** Named as a token so that data exports, which skip settings that look like secrets, leave these out. */
+export const INVITE_KEY_PREFIX = 'artifacts.inviteToken.'
 const secureStore: InviteVaultStore = { get: secureGet, set: secureSet, remove: secureRemove }
 
 /**
@@ -21,16 +22,16 @@ export class InviteVault {
   constructor(private readonly store: InviteVaultStore = secureStore) {}
 
   save(principalId: string, token: string): void {
-    if (this.store.set(KEY_PREFIX + principalId, token)) this.memory.delete(principalId)
+    if (this.store.set(INVITE_KEY_PREFIX + principalId, token)) this.memory.delete(principalId)
     else this.memory.set(principalId, token)
   }
 
   get(principalId: string): string | null {
-    return this.memory.get(principalId) ?? this.store.get(KEY_PREFIX + principalId)
+    return this.memory.get(principalId) ?? this.store.get(INVITE_KEY_PREFIX + principalId)
   }
 
   remove(principalId: string): void {
     this.memory.delete(principalId)
-    if (this.store.get(KEY_PREFIX + principalId) !== null) this.store.remove(KEY_PREFIX + principalId)
+    if (this.store.get(INVITE_KEY_PREFIX + principalId) !== null) this.store.remove(INVITE_KEY_PREFIX + principalId)
   }
 }

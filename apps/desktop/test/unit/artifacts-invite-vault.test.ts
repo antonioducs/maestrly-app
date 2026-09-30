@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { InviteVault, type InviteVaultStore } from '../../src/main/artifacts/invite-vault'
+import { INVITE_KEY_PREFIX, InviteVault, type InviteVaultStore } from '../../src/main/artifacts/invite-vault'
+import { filterExportableSettings } from '../../src/main/local-data/data-export'
 
 /** A stand-in for the app's secure store: it keeps values only while `available`, like the OS keyring. */
 function fakeStore(available: boolean) {
@@ -22,7 +23,7 @@ describe('InviteVault', () => {
     const vault = new InviteVault(store)
     vault.save('person-1', 'token-1')
     vault.save('person-2', 'token-2')
-    expect([...values.keys()]).toEqual(['artifacts.invite.person-1', 'artifacts.invite.person-2'])
+    expect([...values.keys()]).toEqual(['artifacts.inviteToken.person-1', 'artifacts.inviteToken.person-2'])
     expect(vault.get('person-1')).toBe('token-1')
     // Another vault on the same store sees them: they survive a restart.
     expect(new InviteVault(store).get('person-2')).toBe('token-2')
@@ -39,6 +40,15 @@ describe('InviteVault', () => {
     expect(values.size).toBe(0)
     expect(vault.get('person-1')).toBe('token-1')
     expect(new InviteVault(store).get('person-1')).toBeNull()
+  })
+
+  it('stays out of data exports', () => {
+    expect(
+      filterExportableSettings([
+        { key: `${INVITE_KEY_PREFIX}person-1`, value: 'enc:v1:abc' },
+        { key: 'artifacts.ownerName', value: 'Antonio' },
+      ])
+    ).toEqual({ 'artifacts.ownerName': 'Antonio' })
   })
 
   it('removes a token from both places', () => {
