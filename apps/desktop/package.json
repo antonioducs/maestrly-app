@@ -126,9 +126,10 @@
     "electron": "42.11.2",
     "electron-builder": "^26.8.1",
     "electron-vite": "5.0.0",
+    "esbuild": "0.28.2",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "typescript": "^5.7.0",
+    "typescript": "7.0.2",
     "vite": "^7.0.0",
     "vitest": "4.1.11"
   },

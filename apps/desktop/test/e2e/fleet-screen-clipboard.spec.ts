@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import ts from 'typescript'
+import { transformSync } from 'esbuild'
 import { test, expect, _electron as electron } from '@playwright/test'
 
 // Exercise native Electron Edit commands against the real bridge on a focused canvas.
@@ -9,15 +9,19 @@ import { test, expect, _electron as electron } from '@playwright/test'
 test('screen clipboard uses native paste/copy commands and leaves other editors alone', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-screen-clipboard-'))
   const source = await readFile(new URL('../../src/renderer/lib/fleet/screen-clipboard.ts', import.meta.url), 'utf8')
-  const script = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText
+  const script = transformSync(source, {
+    loader: 'ts',
+    target: 'es2022',
+    format: 'cjs',
+  }).code
   const nativeSource = await readFile(new URL('../../src/main/fleet/client/screen-bridge.ts', import.meta.url), 'utf8')
   await writeFile(
     path.join(root, 'bridge.cjs'),
-    ts.transpileModule(nativeSource, {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    }).outputText
+    transformSync(nativeSource, {
+      loader: 'ts',
+      target: 'es2022',
+      format: 'cjs',
+    }).code
   )
   await writeFile(
     path.join(root, 'preload.cjs'),
@@ -55,8 +59,8 @@ test('screen clipboard uses native paste/copy commands and leaves other editors 
     const page = await app.firstWindow()
     await page.evaluate(
       ({ script, isMac }) => {
-        const exports: Record<string, (...args: any[]) => any> = {}
-        new Function('exports', script)(exports)
+        const module = { exports: {} as Record<string, (...args: any[]) => any> }
+        new Function('module', 'exports', script)(module, module.exports)
         const container = document.querySelector<HTMLElement>('#screen')!
         const remote = Object.assign(new EventTarget(), {
           clipboardPasteFrom: (text: string) => {
@@ -73,7 +77,7 @@ test('screen clipboard uses native paste/copy commands and leaves other editors 
         })
         const state = { pasted: [] as string[], keys: [] as unknown[][], errors: [] as string[], detach: () => {} }
         ;(window as any).clipboardTest = state
-        state.detach = exports.attachScreenClipboard(
+        state.detach = module.exports.attachScreenClipboard(
           container,
           remote,
           (text: string) => (window as any).nativeWrite(text),
