@@ -56,6 +56,9 @@ Focused public contracts live in `packages/protocol`, `packages/client-sdk`, and
   with project context and migration recovery.
 - **Developer tools:** native terminals, an embedded editor and browser,
   screenshots, file references, and Git diffs.
+- **Voice dictation:** speak to a chat or bot; speech is transcribed on the
+  computer by whisper.cpp and sent as your message. See
+  [voice dictation](docs/chat-context.md#voice-dictation).
 - **Knowledge:** project notes, local memory and search, skills, MCP servers,
   and optional local embedding, transcription, and inference assets.
 

@@ -33,6 +33,7 @@ and sanitize diagnostics before posting them.
 | Skills and runtimes | Searches and installs can contact skills.sh, GitHub, npm, OpenAI asset hosts, and configured upstream sources. |
 | Embedded editor | Initial VS Code CLI/server setup can contact Microsoft's download service. The editor server binds to loopback with a token. |
 | Local ML | Inference runs locally; runtime/model preparation may download assets from npm, native dependency hosts, and Hugging Face. |
+| Voice dictation | Audio is transcribed locally and never uploaded. The voice model is downloaded from Hugging Face (`huggingface.co` and its `hf.co` CDN) only after you confirm; a sent transcription goes to the provider like any typed message. |
 
 Providers and integrations apply their own privacy and retention policies.
 Maestrly does not add analytics to provider calls; the Copilot runtime starts with
