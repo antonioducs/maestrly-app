@@ -180,7 +180,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (request?.status === 'pending') return 'pending'
     if (request?.status !== 'approved' || !request.principalId) return null
     // Approved, but this browser has not collected its session yet: it keeps waiting until it asks for it.
-    return sharing.getPrincipal(request.principalId)?.revokedAt === null ? 'pending' : null
+    return sharing.getPrincipal(request.principalId) ? 'pending' : null
   }
 
   const routes = new Map<string, Route>()

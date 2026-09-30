@@ -131,6 +131,7 @@ describe('personal links', () => {
     const maria = await join(token)
     const url = await contentUrl(maria)
     await h.admin.revokePerson(id, principalId)
+    expect((await h.admin.getSharing(id)).people).toEqual([])
     expect((await maria.get(`${api}/state`)).json).not.toHaveProperty('artifact')
     expect((await maria.send('POST', `${api}/frame`, { version: 1 })).status).toBe(404)
     expect((await maria.raw('GET', url)).status).toBe(404)
@@ -251,6 +252,18 @@ describe('access requests', () => {
     expect((await denied.get(`${api}/access-requests/current`)).json).toEqual({ status: 'denied' })
     expect((await denied.get(`${api}/state`)).json.gate.pending).toBe('denied')
     expect(denied.cookies.has('maestrly_artifact_session')).toBe(false)
+
+    // Someone approved and later revoked is out for good from that browser, like a denied request.
+    const approved = h.browser()
+    await ask(approved, 'Approved')
+    const [pending] = (await h.admin.getSharing(id)).requests
+    await h.admin.decideAccessRequest(id, pending!.id, { approve: true })
+    expect((await approved.get(`${api}/access-requests/current`)).json).toEqual({ status: 'approved' })
+    const [person] = (await h.admin.getSharing(id)).people
+    await h.admin.revokePerson(id, person!.id)
+    expect((await approved.get(`${api}/state`)).json.gate).toMatchObject({ request: true, pending: null })
+    expect((await approved.get(`${api}/access-requests/current`)).status).toBe(404)
+    expect((await ask(approved, 'Approved')).status).toBe(403)
 
     const late = h.browser()
     await ask(late, 'Late')

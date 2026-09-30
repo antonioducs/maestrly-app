@@ -108,7 +108,6 @@ describe('sharing admin', () => {
         name: 'Maria',
         createdAt: clock.now(),
         inviteExpiresAt: null,
-        revokedAt: null,
         devices: [],
       },
     ])
@@ -138,7 +137,7 @@ describe('sharing admin', () => {
     expect((await errorOf(admin.resetInvite(other, principalId))).code).toBe('not_found')
   })
 
-  it('revokes people and devices only within their own artifact', async () => {
+  it('revokes devices and removes revoked people, only within their own artifact', async () => {
     const { principalId } = await admin.createInvite(id, { name: 'Maria' })
     addSession('s1', id, principalId)
     addSession('s2', id, principalId)
@@ -148,10 +147,16 @@ describe('sharing admin', () => {
 
     await admin.revokeDevice(id, 's1')
     expect((await admin.getSharing(id)).people[0]?.devices.map((device) => device.id)).toEqual(['s2'])
+    const ana = await admin.createInvite(id, { name: 'Ana' })
+    onChange.mockClear()
     await admin.revokePerson(id, principalId)
-    const [person] = (await admin.getSharing(id)).people
-    expect(person).toMatchObject({ revokedAt: clock.now(), devices: [] })
+    // A revoked person leaves the list with their link and devices.
+    expect((await admin.getSharing(id)).people.map((person) => person.id)).toEqual([ana.principalId])
+    expect(sharing.getPrincipal(principalId)).toBeNull()
+    expect(store.findSessionById('s2', clock.now())).toBeNull()
+    expect(onChange).toHaveBeenCalledWith(id)
     expect((await errorOf(admin.resetInvite(id, principalId))).code).toBe('not_found')
+    expect((await errorOf(admin.revokePerson(id, principalId))).code).toBe('not_found')
   })
 
   it('ends every session of an artifact, the owner’s included', async () => {
@@ -199,7 +204,6 @@ describe('sharing admin', () => {
       name: '',
       inviteTokenHash: null,
       inviteExpiresAt: null,
-      revokedAt: null,
       createdAt: clock.now(),
     })
     addSession('maria', id, principalId)
@@ -219,7 +223,6 @@ describe('sharing admin', () => {
       name: 'Ana',
       inviteTokenHash: null,
       inviteExpiresAt: null,
-      revokedAt: null,
       createdAt: clock.now(),
     })
     expect((await admin.getSharing(id)).people).toEqual([])

@@ -59,6 +59,7 @@ export async function openArtifactHost(
     // An interrupted write leaves temporary files or blobs no version references; neither is ever served.
     blobs.clearTemp()
     const sharing = new SharingStore(store.db)
+    sharing.removeRevokedPrincipals()
     sharing.pruneGuests(clock())
     const referenced = store.referencedBlobs()
     for (const sha of blobs.listAll()) if (!referenced.has(sha)) await blobs.remove(sha)

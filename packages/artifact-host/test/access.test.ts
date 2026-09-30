@@ -32,7 +32,6 @@ const person = (kind: PrincipalKind, overrides: Partial<PrincipalRecord> = {}): 
   name: 'Maria',
   inviteTokenHash: null,
   inviteExpiresAt: null,
-  revokedAt: null,
   createdAt: 1,
   ...overrides,
 })
@@ -47,14 +46,13 @@ describe('resolveAccess', () => {
     expect(resolveAccess(sharing('link'), null, null, NOW)).toBeNull()
   })
 
-  it('lets invited and approved people in while the artifact is shared and they are not revoked', () => {
+  it('lets invited and approved people in while the artifact is shared and their invitation lasts', () => {
     for (const kind of ['invited', 'approved'] as const) {
       expect(enters(sharing('people'), person(kind))).toBe('person')
       expect(enters(sharing('link'), person(kind))).toBe('person')
       // An expired link only closes the door to guests.
       expect(enters(sharing('link', { linkExpiresAt: NOW - 1 }), person(kind))).toBe('person')
       expect(enters(sharing('private'), person(kind))).toBeNull()
-      expect(enters(sharing('people'), person(kind, { revokedAt: 5 }))).toBeNull()
       expect(enters(sharing('people'), person(kind, { inviteExpiresAt: NOW }))).toBeNull()
       expect(enters(sharing('people'), person(kind, { inviteExpiresAt: NOW + 1 }))).toBe('person')
     }
@@ -66,10 +64,9 @@ describe('resolveAccess', () => {
     expect(enters(sharing('link', { linkExpiresAt: NOW }), person('guest'))).toBeNull()
     expect(enters(sharing('people'), person('guest'))).toBeNull()
     expect(enters(sharing('private'), person('guest'))).toBeNull()
-    expect(enters(sharing('link'), person('guest', { revokedAt: 5 }))).toBeNull()
   })
 
-  it('refuses a session whose person is missing or is someone else', () => {
+  it('refuses a session whose person was removed or is someone else', () => {
     expect(enters(sharing('link'), null)).toBeNull()
     expect(enters(sharing('link'), person('invited', { id: 'other' }))).toBeNull()
     expect(enters(sharing('link'), person('invited', { artifactId: 'B' }))).toBeNull()

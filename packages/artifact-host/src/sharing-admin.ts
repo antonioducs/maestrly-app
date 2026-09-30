@@ -28,6 +28,7 @@ export interface SharingAdmin {
   ): Promise<{ principalId: string; token: string }>
   /** Issues a new personal link. The old one stops working; devices that already joined keep their sessions. */
   resetInvite(id: string, principalId: string): Promise<{ token: string }>
+  /** Ends the person's link and devices at once, and removes them from the artifact's people. */
   revokePerson(id: string, principalId: string): Promise<void>
   revokeDevice(id: string, sessionId: string): Promise<void>
   revokeAllSessions(id: string): Promise<void>
@@ -89,7 +90,6 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
         name: person.name,
         createdAt: person.createdAt,
         inviteExpiresAt: person.inviteExpiresAt,
-        revokedAt: person.revokedAt,
         devices,
       })
     }
@@ -157,7 +157,6 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
         name: input.name,
         inviteTokenHash: digest(token),
         inviteExpiresAt: input.expiresAt ?? null,
-        revokedAt: null,
         createdAt: clock(),
       })
       deps.onChange?.(id)
@@ -166,7 +165,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
 
     async resetInvite(id, principalId) {
       const found = person(id, principalId)
-      if (found.kind === 'guest' || found.revokedAt !== null) throw notFound('Person')
+      if (found.kind === 'guest') throw notFound('Person')
       const token = newSecretToken()
       sharing.setInviteToken(found.id, digest(token))
       deps.onChange?.(id)
@@ -174,7 +173,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
     },
 
     async revokePerson(id, principalId) {
-      sharing.revokePrincipal(person(id, principalId).id, clock())
+      sharing.removePrincipal(person(id, principalId).id)
       deps.onChange?.(id)
     },
 
@@ -209,7 +208,6 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
             name: decision.name ?? request.name,
             inviteTokenHash: null,
             inviteExpiresAt: null,
-            revokedAt: null,
             createdAt: now,
           })
           sharing.decideRequest(request.id, 'approved', principalId, now)

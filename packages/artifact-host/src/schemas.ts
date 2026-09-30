@@ -160,7 +160,6 @@ export interface PersonView {
   name: string
   createdAt: number
   inviteExpiresAt: number | null
-  revokedAt: number | null
   devices: DeviceView[]
 }
 

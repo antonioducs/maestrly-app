@@ -14,7 +14,6 @@ export interface PrincipalRecord {
   name: string
   inviteTokenHash: string | null
   inviteExpiresAt: number | null
-  revokedAt: number | null
   createdAt: number
 }
 
@@ -68,7 +67,6 @@ const toPrincipal = (row: Row): PrincipalRecord => ({
   name: row.name as string,
   inviteTokenHash: (row.invite_token_hash as string | null) ?? null,
   inviteExpiresAt: (row.invite_expires_at as number | null) ?? null,
-  revokedAt: (row.revoked_at as number | null) ?? null,
   createdAt: row.created_at as number,
 })
 
@@ -139,8 +137,8 @@ export class SharingStore {
   insertPrincipal(principal: PrincipalRecord): void {
     this.db
       .prepare(
-        `INSERT INTO principals (id, artifact_id, kind, name, invite_token_hash, invite_expires_at, revoked_at,
-           created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO principals (id, artifact_id, kind, name, invite_token_hash, invite_expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         principal.id,
@@ -149,7 +147,6 @@ export class SharingStore {
         principal.name,
         principal.inviteTokenHash,
         principal.inviteExpiresAt,
-        principal.revokedAt,
         principal.createdAt
       )
   }
@@ -180,11 +177,24 @@ export class SharingStore {
     this.db.prepare('UPDATE principals SET name = ? WHERE id = ?').run(name, id)
   }
 
-  /** Revokes the person and every device they joined with. */
-  revokePrincipal(id: string, now: number): void {
+  /** Forgets the person, their link and every device they joined with; their comments keep the name they used. */
+  removePrincipal(id: string): void {
     transaction(this.db, () => {
-      this.db.prepare('UPDATE principals SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now, id)
-      this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE principal_id = ? AND revoked_at IS NULL').run(now, id)
+      this.db.prepare('DELETE FROM sessions WHERE principal_id = ?').run(id)
+      this.db.prepare('DELETE FROM principals WHERE id = ?').run(id)
+    })
+  }
+
+  /**
+   * An earlier build kept revoked people as rows marked `revoked_at`. Nothing reads that mark anymore, so they are
+   * removed before the host serves anything: left in place, their links would work again.
+   */
+  removeRevokedPrincipals(): void {
+    transaction(this.db, () => {
+      this.db
+        .prepare('DELETE FROM sessions WHERE principal_id IN (SELECT id FROM principals WHERE revoked_at IS NOT NULL)')
+        .run()
+      this.db.prepare('DELETE FROM principals WHERE revoked_at IS NOT NULL').run()
     })
   }
 

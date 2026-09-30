@@ -44,7 +44,6 @@ function principal(id: string, overrides: Partial<PrincipalRecord> = {}): Princi
     name: `Person ${id}`,
     inviteTokenHash: sha(id.slice(-1)),
     inviteExpiresAt: null,
-    revokedAt: null,
     createdAt: 1000,
     ...overrides,
   }
@@ -127,7 +126,7 @@ describe('SharingStore', () => {
     expect(sharing.listPrincipals('B')).toEqual([])
   })
 
-  it('revokes a person together with their devices, and nobody else', () => {
+  it('removes a person together with their devices, and nobody else', () => {
     sharing.insertPrincipal(principal('p1'))
     sharing.insertPrincipal(principal('p2'))
     store.createSession(session('owner'))
@@ -137,12 +136,27 @@ describe('SharingStore', () => {
     expect(sharing.countSessions('p1', 2000)).toBe(2)
     expect(sharing.listSessions('A', 'p1', 2000).map((item) => item.id)).toEqual(['s1', 's2'])
 
-    sharing.revokePrincipal('p1', 3000)
-    expect(sharing.getPrincipal('p1')?.revokedAt).toBe(3000)
+    sharing.removePrincipal('p1')
+    expect(sharing.getPrincipal('p1')).toBeNull()
+    expect(sharing.findPrincipalByInvite(sha('1'), 'A')).toBeNull()
+    expect(sharing.listPrincipals('A').map((person) => person.id)).toEqual(['p2'])
     expect(sharing.countSessions('p1', 4000)).toBe(0)
     expect(store.findSessionById('s1', 4000)).toBeNull()
     expect(store.findSessionById('owner', 4000)?.id).toBe('owner')
     expect(store.findSessionById('s3', 4000)?.id).toBe('s3')
+    expect(count('sessions')).toBe(2)
+  })
+
+  it('removes the people an earlier build left marked as revoked', () => {
+    sharing.insertPrincipal(principal('p1'))
+    sharing.insertPrincipal(principal('p2'))
+    store.createSession(session('s1', { principalId: 'p1' }))
+    store.createSession(session('s2', { principalId: 'p2' }))
+    store.db.prepare("UPDATE principals SET revoked_at = 3000 WHERE id = 'p1'").run()
+    sharing.removeRevokedPrincipals()
+    expect(sharing.listPrincipals('A').map((person) => person.id)).toEqual(['p2'])
+    expect(store.findSessionById('s1', 4000)).toBeNull()
+    expect(store.findSessionById('s2', 4000)?.id).toBe('s2')
   })
 
   it('revokes one device only within its own artifact, and every session of an artifact on request', () => {

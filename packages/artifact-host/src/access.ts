@@ -11,6 +11,7 @@ const expired = (at: number | null, now: number): boolean => at !== null && at <
 /**
  * The single rule for who may view an artifact. The owner always may. `private` blocks everyone else without
  * forgetting them. Invited and approved people need `people` or `link`; guests need a `link` that has not expired.
+ * A revoked person is removed, so their session finds nobody to act as.
  */
 export function resolveAccess(
   sharing: SharingFields,
@@ -21,7 +22,7 @@ export function resolveAccess(
   if (!session) return null
   if (session.principalId === null) return { kind: 'owner', session }
   if (!principal || principal.id !== session.principalId || principal.artifactId !== session.artifactId) return null
-  if (principal.revokedAt !== null || sharing.visibility === 'private') return null
+  if (sharing.visibility === 'private') return null
   if (principal.kind === 'guest') {
     if (sharing.visibility !== 'link' || expired(sharing.linkExpiresAt, now)) return null
   } else if (expired(principal.inviteExpiresAt, now)) return null

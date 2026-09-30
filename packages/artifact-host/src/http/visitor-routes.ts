@@ -56,13 +56,13 @@ export function createVisitorRoutes(deps: VisitorRouteDeps): Record<string, (ctx
   const visitorCookie = (ctx: ApiContext, secret: string) =>
     cookie(VISITOR_COOKIE, ctx.artifactId, ctx.origin, secret, VISITOR_COOKIE_TTL_MS / 1000)
 
-  /** The person a personal link belongs to, while the link works: shared artifact, not revoked, not expired. */
+  /** The person a personal link belongs to, while the link works: shared artifact, not expired. */
   function invitee(ctx: ApiContext): PrincipalRecord | null {
     const token = ctx.body.token
     if (typeof token !== 'string' || token.length === 0 || token.length > MAX_COOKIE_TOKEN_CHARS) return null
     if (ctx.sharing.visibility === 'private') return null
     const principal = sharing.findPrincipalByInvite(digest(token), ctx.artifactId)
-    if (!principal || principal.kind === 'guest' || principal.revokedAt !== null) return null
+    if (!principal || principal.kind === 'guest') return null
     if (principal.inviteExpiresAt !== null && principal.inviteExpiresAt <= ctx.now) return null
     return principal
   }
@@ -145,7 +145,6 @@ export function createVisitorRoutes(deps: VisitorRouteDeps): Record<string, (ctx
         name: '',
         inviteTokenHash: null,
         inviteExpiresAt: null,
-        revokedAt: null,
         createdAt: ctx.now,
       }
       sharing.insertPrincipal(guest)
@@ -177,8 +176,9 @@ export function createVisitorRoutes(deps: VisitorRouteDeps): Record<string, (ctx
       if (previous?.status === 'pending') return json(ctx.res, 202, { status: 'pending' }, headers)
       if (previous?.status === 'denied') return json(ctx.res, 403, { error: 'denied' })
       if (previous?.status === 'approved') {
+        // Approved and later revoked: the person is gone, and asking again from that browser is refused.
         const person = previous.principalId ? sharing.getPrincipal(previous.principalId) : null
-        if (person && person.revokedAt === null) return json(ctx.res, 202, { status: 'pending' }, headers)
+        if (person) return json(ctx.res, 202, { status: 'pending' }, headers)
         return json(ctx.res, 403, { error: 'denied' })
       }
       if (sharing.listPendingRequests(ctx.artifactId, ctx.now).length >= MAX_PENDING_REQUESTS)
@@ -207,8 +207,7 @@ export function createVisitorRoutes(deps: VisitorRouteDeps): Record<string, (ctx
       const status: AccessRequestStatus = request.status
       if (status !== 'approved') return json(ctx.res, 200, { status })
       const principal = request.principalId ? sharing.getPrincipal(request.principalId) : null
-      if (!principal || principal.revokedAt !== null || ctx.sharing.visibility === 'private')
-        return apiNotFound(ctx.res)
+      if (!principal || ctx.sharing.visibility === 'private') return apiNotFound(ctx.res)
       if (isDeviceOf(ctx, principal)) return json(ctx.res, 200, { status })
       const session = addDevice(ctx, principal)
       if (!session) return json(ctx.res, 409, { error: 'too_many_devices' })
