@@ -15,6 +15,41 @@ const en = {
   pageError: 'The page reported an error: {message}',
   retry: 'Try again',
   versionsLabel: 'Version',
+  theOwner: 'the owner',
+  stored:
+    'The owner of this page sees your name, when you opened it, and a device label such as “Safari on iPhone”. Leave ends this device’s session.',
+  inviteTitle: '{owner} invited you as {name}',
+  inviteTitleNoOwner: 'You were invited to view this page as {name}',
+  inviteContinue: 'Continue as {name}',
+  inviteNotMe: 'I’m not {name}',
+  tooManyDevices: 'This link is already in use on too many devices. Ask {owner} to remove one.',
+  requestTitle: 'Ask {owner} for access',
+  requestTitleNoOwner: 'Ask for access to this page',
+  requestDetail: 'The owner of this page sees your name and message, and decides whether to let you in.',
+  yourName: 'Your name',
+  requestMessage: 'Message (optional)',
+  requestSend: 'Ask for access',
+  requestFailed: 'The request could not be sent. Check your name and try again.',
+  requestsFull: 'This page has too many requests waiting. Try again later.',
+  requestExpired: 'Your earlier request expired without an answer. You can ask again.',
+  waitingTitle: 'Waiting for approval',
+  waitingDetail: 'Your request reached {owner}. This page opens here as soon as it is approved.',
+  deniedTitle: 'Your request was not approved',
+  deniedDetail: 'This browser was not given access to the page.',
+  guestTitle: 'View this page',
+  guestDetail: 'This page is shared with anyone who has the link.',
+  guestCodeDetail: 'Enter the access code you received with the link.',
+  accessCode: 'Access code',
+  guestEnter: 'View page',
+  wrongCode: 'That code is not right.',
+  tooManyAttempts: 'Too many wrong codes. Try again in {minutes} min.',
+  tooManyGuests: 'Too many people are viewing this page right now. Try again later.',
+  tryLater: 'Something went wrong. Try again.',
+  verified: '{name} ✓',
+  invitedBy: 'Invited by {owner}',
+  approvedBy: 'Approved by {owner}',
+  unverified: '{name} (unverified)',
+  guest: 'Guest',
 }
 
 export type ShellKey = keyof typeof en
@@ -32,6 +67,41 @@ const ptBR: Record<ShellKey, string> = {
   pageError: 'A página informou um erro: {message}',
   retry: 'Tentar de novo',
   versionsLabel: 'Versão',
+  theOwner: 'o dono',
+  stored:
+    'O dono desta página vê seu nome, quando você abriu a página e um rótulo do dispositivo, como “Safari no iPhone”. Sair encerra a sessão deste dispositivo.',
+  inviteTitle: '{owner} convidou você como {name}',
+  inviteTitleNoOwner: 'Você recebeu um convite para ver esta página como {name}',
+  inviteContinue: 'Continuar como {name}',
+  inviteNotMe: 'Não sou {name}',
+  tooManyDevices: 'Este link já está em uso em dispositivos demais. Peça para {owner} remover um.',
+  requestTitle: 'Pedir acesso a {owner}',
+  requestTitleNoOwner: 'Pedir acesso a esta página',
+  requestDetail: 'O dono desta página vê seu nome e sua mensagem, e decide se libera o acesso.',
+  yourName: 'Seu nome',
+  requestMessage: 'Mensagem (opcional)',
+  requestSend: 'Pedir acesso',
+  requestFailed: 'Não foi possível enviar o pedido. Confira seu nome e tente de novo.',
+  requestsFull: 'Esta página tem pedidos demais aguardando. Tente mais tarde.',
+  requestExpired: 'Seu pedido anterior expirou sem resposta. Você pode pedir de novo.',
+  waitingTitle: 'Aguardando aprovação',
+  waitingDetail: 'Seu pedido chegou a {owner}. A página abre aqui assim que ele for aprovado.',
+  deniedTitle: 'Seu pedido não foi aprovado',
+  deniedDetail: 'Este navegador não recebeu acesso à página.',
+  guestTitle: 'Ver esta página',
+  guestDetail: 'Esta página está compartilhada com qualquer pessoa que tenha o link.',
+  guestCodeDetail: 'Digite o código de acesso que você recebeu com o link.',
+  accessCode: 'Código de acesso',
+  guestEnter: 'Ver página',
+  wrongCode: 'O código não está certo.',
+  tooManyAttempts: 'Muitos códigos errados. Tente de novo em {minutes} min.',
+  tooManyGuests: 'Há pessoas demais vendo esta página agora. Tente mais tarde.',
+  tryLater: 'Algo deu errado. Tente de novo.',
+  verified: '{name} ✓',
+  invitedBy: 'Convite de {owner}',
+  approvedBy: 'Aprovação de {owner}',
+  unverified: '{name} (não verificado)',
+  guest: 'Convidado',
 }
 
 export const SHELL_CATALOGS: Readonly<Record<ShellLocale, Readonly<Record<ShellKey, string>>>> = {
@@ -42,6 +112,8 @@ export const SHELL_CATALOGS: Readonly<Record<ShellLocale, Readonly<Record<ShellK
 export function pickLocale(languages: readonly string[]): ShellLocale {
   return languages[0]?.toLowerCase().startsWith('pt') ? 'pt-BR' : 'en'
 }
+
+export type Translate = (key: ShellKey, vars?: Record<string, string | number>) => string
 
 export function format(locale: ShellLocale, key: ShellKey, vars: Record<string, string | number> = {}): string {
   return SHELL_CATALOGS[locale][key].replace(/\{(\w+)\}/g, (match, name: string) =>

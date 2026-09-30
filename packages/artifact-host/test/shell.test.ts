@@ -10,7 +10,17 @@ describe('embedded shell assets', () => {
 
   it('include the viewer modules and style with matching content types', () => {
     const names = Object.keys(SHELL_FILES)
-    for (const name of ['viewer.js', 'i18n.js', 'listbox.js', 'contract.js', 'viewer.css'])
+    for (const name of [
+      'viewer.js',
+      'i18n.js',
+      'listbox.js',
+      'contract.js',
+      'gate.js',
+      'gate-model.js',
+      'api.js',
+      'dom.js',
+      'viewer.css',
+    ])
       expect(names).toContain(name)
     for (const [name, file] of Object.entries(SHELL_FILES)) {
       expect(file.contentType).toBe(

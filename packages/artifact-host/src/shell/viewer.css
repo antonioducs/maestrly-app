@@ -7,6 +7,7 @@
   --muted: #6b6b73;
   --accent: #6366f1;
   --hover: rgba(0, 0, 0, 0.05);
+  --danger: #b91c1c;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
   font-family:
     ui-sans-serif,
@@ -26,6 +27,7 @@
     --muted: #a0a0a8;
     --accent: #818cf8;
     --hover: rgba(255, 255, 255, 0.06);
+    --danger: #f87171;
     --shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   }
 }
@@ -213,6 +215,119 @@ body {
   width: 100%;
   border: 0;
   background: #ffffff;
+}
+
+.chip.verified {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+}
+
+.button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, #000000);
+}
+
+.gate {
+  width: 100%;
+  max-width: 420px;
+  margin: 14vh auto 0;
+  padding: 0 24px 48px;
+}
+
+.gate h1 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.gate p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.gate .note {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.gate .error {
+  color: var(--danger);
+}
+
+.gate .error[hidden] {
+  display: none;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.actions .button,
+.form .button {
+  min-height: 32px;
+  padding: 6px 14px;
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.form .button {
+  align-self: flex-start;
+}
+
+.form .error {
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.counter {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .message {
