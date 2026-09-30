@@ -36,6 +36,15 @@ export function estimateHistoryWindowBytes(messages: readonly ChatMessage[]): nu
   return messages.reduce((sum, message) => sum + messageWeight(message), 0)
 }
 
+/**
+ * `applyChatEvent` copies a new response's conversation from the first message it already holds; a response that
+ * starts before any history arrived has none. Cards inside it use this id to act on the conversation.
+ */
+export function withConversationId(messages: ChatMessage[], conversationId: string): ChatMessage[] {
+  if (messages.every(message => message.conversationId)) return messages
+  return messages.map(message => (message.conversationId ? message : { ...message, conversationId }))
+}
+
 /** SQLite checkpoints can lag a live stream. Overlay only the current in-memory assistant snapshot. */
 export function mergeLiveChatHistory(
   saved: readonly ChatMessage[], live: readonly ChatMessage[]

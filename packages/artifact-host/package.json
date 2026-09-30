@@ -1,0 +1,31 @@
+{
+  "name": "@maestrly/artifact-host",
+  "version": "0.1.0",
+  "description": "Maestrly artifact storage and isolated HTTP hosting",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "assets": "node scripts/embed-shell.mjs",
+    "build": "npm run assets && tsc -p tsconfig.json",
+    "typecheck": "npm run assets && tsc --noEmit -p tsconfig.json",
+    "test": "npm run assets && vitest run",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}

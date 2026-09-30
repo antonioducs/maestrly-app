@@ -20,6 +20,7 @@ for (const scope of [
   'apps/web/src',
   'packages/protocol/src',
   'packages/bot-fleet-protocol/src',
+  'packages/artifact-host/src',
   'packages/client-sdk/src',
   'packages/runner-core/src',
 ]) {

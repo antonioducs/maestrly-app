@@ -152,6 +152,11 @@ export const APP_TOOL_POLICY = {
   debug_inspect: policy(false, true, false),
   debug_variables: policy(false, true, false),
   debug_evaluate: policy(false, false, false),
+  artifact_create: policy(true, false, false),
+  artifact_update: policy(true, false, false),
+  artifact_get: policy(true, true, true),
+  artifact_list: policy(true, true, true),
+  artifact_open: policy(true, false, false),
 } as const satisfies Record<string, AppToolPolicy>
 
 export type AppToolName = keyof typeof APP_TOOL_POLICY

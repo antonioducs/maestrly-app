@@ -128,6 +128,8 @@ export const HOST_MEMORY_READ_RULES: Ruleset = allowMcp([
   'history_search',
   'history_read',
 ])
+/** Artifact reads never prompt: they only return the user's own pages. */
+export const HOST_ARTIFACT_READ_RULES: Ruleset = allowMcp(['artifact_get', 'artifact_list'])
 /** In a bot container the owner reviews memory on the Mac instead of approving each write (owner decision). */
 export const BOT_MEMORY_WRITE_RULES: Ruleset = allowMcp([
   'memory_upsert',
@@ -152,6 +154,7 @@ export const BYOK_DEFAULT_RULESET: Ruleset = [
   { action: 'read', resource: '*.env.*', effect: 'ask' },
   { action: 'read', resource: '*.env.example', effect: 'allow' },
   ...HOST_MEMORY_READ_RULES,
+  ...HOST_ARTIFACT_READ_RULES,
 ]
 export const YOLO_RULESET: Ruleset = [{ action: '*', resource: '*', effect: 'allow' }]
 

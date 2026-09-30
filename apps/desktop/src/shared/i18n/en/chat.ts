@@ -1,4 +1,11 @@
 export default {
+  artifacts: {
+    publishing: 'Publishing artifact…',
+    card: 'Artifact',
+    version: 'Version {{version}}',
+    open: 'Open',
+    openFailed: 'Could not open the artifact.',
+  },
   mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
   memorySettings: {
     title: 'Memory',

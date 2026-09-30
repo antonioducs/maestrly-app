@@ -3,6 +3,13 @@
  * componente do renderer. Gerado a partir das traduções dos componentes. {{var}} = interpolação i18next.
  */
 export default {
+  artifacts: {
+    publishing: 'Publicando artefato…',
+    card: 'Artefato',
+    version: 'Versão {{version}}',
+    open: 'Abrir',
+    openFailed: 'Não foi possível abrir o artefato.',
+  },
   mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
   memorySettings: {
     title: 'Memória',

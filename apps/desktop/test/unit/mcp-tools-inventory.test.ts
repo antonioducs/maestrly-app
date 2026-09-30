@@ -119,6 +119,11 @@ const EXPECTED_TOOL_NAMES = [
   'debug_inspect',
   'debug_variables',
   'debug_evaluate',
+  'artifact_create',
+  'artifact_update',
+  'artifact_get',
+  'artifact_list',
+  'artifact_open',
 ] as const
 
 // Board tools register only for linked board or project-chat conversations.
@@ -240,6 +245,15 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('debug_inspect', ['frameId']),
   shape('debug_variables', ['ref'], ['ref']),
   shape('debug_evaluate', ['expression', 'frameId'], ['expression']),
+  shape('artifact_create', ['description', 'directory', 'entry', 'files', 'title'], ['title']),
+  shape(
+    'artifact_update',
+    ['baseVersion', 'delete', 'directory', 'edits', 'entry', 'files', 'id', 'summary'],
+    ['baseVersion', 'id']
+  ),
+  shape('artifact_get', ['id', 'path', 'version'], ['id']),
+  shape('artifact_list', ['scope']),
+  shape('artifact_open', ['id', 'version'], ['id']),
 ]
 
 async function listToolInventory(convId: string, includeDescriptions = false): Promise<ToolShape[]> {
@@ -397,7 +411,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(77)
+    expect(registered).toHaveLength(82)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -437,5 +451,10 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)
+    expect(appToolAllowed('plan', 'artifact_create')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_get')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_list')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_create')).toBe(false)
+    expect(appToolAllowed('maestro', 'artifact_open')).toBe(false)
   })
 })

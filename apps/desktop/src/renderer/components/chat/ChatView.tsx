@@ -72,6 +72,7 @@ import { ChatMessageList } from './ChatMessageList'
 import {
   boundChatHistoryWindow,
   mergeLiveChatHistory,
+  withConversationId,
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
@@ -442,7 +443,11 @@ export function ChatView({
     ): ChatMessage[] => {
       const keepIds = keepIdsFor()
       if (anchorId) keepIds.add(anchorId)
-      return boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages
+      // A response that starts before any history arrived has no conversation id of its own.
+      return withConversationId(
+        boundChatHistoryWindow({ messages: prev, incoming, side, keepIds }).messages,
+        convIdRef.current
+      )
     },
     []
   )

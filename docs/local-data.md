@@ -177,6 +177,22 @@ bot gets its gateway token again when the gateway installs it, and the
 environment keeps the control token and keyring password the container already
 had.
 
+## Artifacts
+
+Artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
+holds artifacts, versions, and owner sessions, and `blobs/` holds file contents,
+stored once by SHA-256. The directory is owner-only (`0700`), and the database
+and stored files are created `0600`. Only the artifact host process writes there. Artifacts are independent
+of conversations: deleting a conversation keeps its artifacts, and deleting an
+artifact removes its versions and any files no other artifact uses.
+
+Export includes a consistent snapshot of the artifacts database
+(`artifacts/export/artifacts.sqlite`, written for the export and removed after
+it) together with `artifacts/blobs/`. If the snapshot cannot be written, for
+example because hosting is turned off, the export reports "Could not export
+artifacts." Reset stops the host and removes `artifacts/`. See
+[Artifacts](artifacts.md).
+
 ## Temporary tool output
 
 Large built-in chat tool results are saved under `chat-tool-output` so the agent

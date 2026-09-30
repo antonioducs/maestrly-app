@@ -160,6 +160,11 @@ export const drawerApi = {
     ipcRenderer.on('drawer:terminal-focus', listener)
     return () => ipcRenderer.removeListener('drawer:terminal-focus', listener)
   },
+  onDrawerBrowserFocus: (cb: (payload: { convId: string }) => void): (() => void) => {
+    const listener = (_e: unknown, payload: { convId: string }) => cb(payload)
+    ipcRenderer.on('drawer:browser-focus', listener)
+    return () => ipcRenderer.removeListener('drawer:browser-focus', listener)
+  },
   onBrowserState: (cb: (s: BrowserState) => void): (() => void) => {
     const listener = (_e: unknown, s: any) => cb(s)
     ipcRenderer.on('drawer:browser-state', listener)
