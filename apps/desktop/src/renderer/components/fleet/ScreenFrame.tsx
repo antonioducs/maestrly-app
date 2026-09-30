@@ -4,6 +4,7 @@ import type RFB from '@novnc/novnc'
 import type { FleetScreenSurface } from '@maestrly/bot-fleet-protocol'
 import type { FleetScreenTargetInput } from '../../../preload/api-fleet'
 import { loadNoVnc } from '@/lib/fleet/load-novnc'
+import { attachScreenClipboard, type ScreenClipboardError } from '@/lib/fleet/screen-clipboard'
 import { FleetScreenChannel, ScreenRetries, screenCloseOutcome } from '@/lib/fleet/screen-channel'
 import { fleetErrorMessage, isScreenConflict, isScreenOffline } from '@/lib/fleet/errors'
 
@@ -34,6 +35,7 @@ export function useFleetScreen({
 }) {
   const [phase, setPhase] = useState<ScreenPhase>('connecting')
   const [error, setError] = useState('')
+  const [clipboardError, setClipboardError] = useState<ScreenClipboardError | null>(null)
   const [attempt, setAttempt] = useState(0)
   const retries = useRef(new ScreenRetries())
   const lost = useRef(onControlLost)
@@ -47,8 +49,10 @@ export function useFleetScreen({
     let disposed = false
     let channel: FleetScreenChannel | null = null
     let rfb: RFB | null = null
+    let detachClipboard: (() => void) | undefined
     setPhase('connecting')
     setError('')
+    setClipboardError(null)
     const target: FleetScreenTargetInput =
       kind === 'environment' ? { environmentId: id } : surface ? { botId: id, surface } : id
     const openScreen = async () => {
@@ -89,6 +93,16 @@ export function useFleetScreen({
         remote.resizeSession = false
         remote.qualityLevel = 6
         remote.compressionLevel = 4
+        if (effective === 'control') {
+          detachClipboard = attachScreenClipboard(
+            container.current,
+            remote,
+            (text) => window.api.fleetScreenClipboardWrite(opened.channelId, text),
+            /Mac|iPhone|iPad/.test(navigator.platform),
+            setClipboardError,
+            () => window.api.fleetScreenClipboardRead(opened.channelId)
+          )
+        }
         remote.addEventListener('connect', () => {
           // The screen really answered: a later refusal of this screen may retry again.
           retries.current.reset()
@@ -116,6 +130,7 @@ export function useFleetScreen({
       })
     return () => {
       disposed = true
+      detachClipboard?.()
       rfb?.disconnect()
       channel?.close()
     }
@@ -129,7 +144,7 @@ export function useFleetScreen({
   const resetRetries = useCallback(() => {
     retries.current.reset()
   }, [])
-  return { phase, error, conflict, retryControl, resetRetries }
+  return { phase, error, clipboardError, conflict, retryControl, resetRetries }
 }
 
 /** The dark frame a screen streams into; clicking a watched screen explains how to control it. */
@@ -137,11 +152,13 @@ export function ScreenFrame({
   container,
   label,
   interactive,
+  clipboardError,
   children,
 }: {
   container: RefObject<HTMLDivElement | null>
   label: string
   interactive: boolean
+  clipboardError?: ScreenClipboardError | null
   children?: ReactNode
 }) {
   const { t } = useTranslation('fleet')
@@ -151,6 +168,9 @@ export function ScreenFrame({
     const timer = window.setTimeout(() => setHint(false), 2200)
     return () => window.clearTimeout(timer)
   }, [hint])
+  // noVNC puts an inline `cursor: none` on its canvas, since the screen server draws the bot's pointer into the frames.
+  // Under control that is the only pointer; a watched screen overrides it to keep the local one.
+  const cursor = interactive ? 'cursor-default' : 'cursor-not-allowed [&_canvas]:!cursor-not-allowed'
   return (
     <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/85 p-4">
       <div
@@ -160,7 +180,7 @@ export function ScreenFrame({
         onClick={() => {
           if (!interactive) setHint(true)
         }}
-        className={`relative h-full w-full [&_canvas]:mx-auto ${interactive ? 'cursor-default [&_canvas]:cursor-default' : 'cursor-not-allowed [&_canvas]:cursor-not-allowed'}`}
+        className={`relative h-full w-full [&_canvas]:mx-auto ${cursor}`}
       />
       {hint && !interactive && (
         <p
@@ -171,6 +191,14 @@ export function ScreenFrame({
         </p>
       )}
       {children}
+      {clipboardError && (
+        <p
+          role="alert"
+          className="absolute bottom-8 max-w-lg rounded-lg bg-popover px-3 py-2 text-sm text-popover-foreground shadow"
+        >
+          {t(`screen.clipboard.${clipboardError}`)}
+        </p>
+      )}
     </div>
   )
 }

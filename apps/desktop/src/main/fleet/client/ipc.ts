@@ -325,4 +325,10 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   reg.mhandle('fleet:screenClose', (event, channelId: unknown) =>
     fleet.screens.close(event.sender, opaqueId.parse(channelId))
   )
+  reg.mhandle('fleet:screenClipboardRead', (event, channelId: unknown) =>
+    fleet.screens.readClipboard(event.sender, opaqueId.parse(channelId))
+  )
+  reg.mhandle('fleet:screenClipboardWrite', (event, channelId: unknown, text: unknown) =>
+    fleet.screens.writeClipboard(event.sender, opaqueId.parse(channelId), text)
+  )
 }

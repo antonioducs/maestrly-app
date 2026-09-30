@@ -79,7 +79,20 @@ const BROWSER_WRAPPER = '/usr/local/bin/maestrly-bot-browser'
 const OPENBOX_CONFIG = '/opt/maestrly/openbox-rc.xml'
 const BROWSER_VNC_BASE = 5900
 const APPS_VNC_BASE = 5950
-const VNC_OPTIONS = ['-localhost', '-forever', '-shared', '-nopw']
+const VNC_OPTIONS = [
+  '-localhost',
+  '-forever',
+  '-shared',
+  '-nopw',
+  // Only forward CLIPBOARD: PRIMARY selections must not satisfy a pending copy or pollute its cache.
+  '-noprimary',
+  // Create the X11 selection window immediately so pastes work as soon as the viewer connects.
+  '-env',
+  'X11VNC_AVOID_WINDOWS=never',
+  // Viewers send letters already in the case their Caps Lock gives. Forwarding the lock would turn it on here too,
+  // and the Shift x11vnc adds for a capital would then type it lowercase. The display's lock stays off.
+  '-skip_lockkeys',
+]
 // -nocursorshape draws the X cursor into framebuffer updates for passive viewers.
 const VNC_CURSOR = ['-cursor', 'arrow', '-nocursorshape', '-nocursorpos', '-noxfixes', '-quiet']
 // Connects to the port and exits 0 once something listens there.

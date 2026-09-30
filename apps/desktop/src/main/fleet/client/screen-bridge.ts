@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { WebContents } from 'electron'
+import { clipboard, type WebContents } from 'electron'
 import type { FleetScreenTicketResponse } from '@maestrly/bot-fleet-protocol'
 import type { FleetScreenTargetInput } from '../../../shared/fleet-targets'
 import type { FleetApiClient } from './api'
@@ -15,7 +15,7 @@ export type FleetScreenData = { channelId: string; data: ArrayBuffer }
 type Socket = Pick<WebSocket, 'binaryType' | 'readyState' | 'send' | 'close' | 'addEventListener'>
 
 export class FleetScreenBridge {
-  private readonly channels = new Map<string, { socket: Socket; owner: WebContents }>()
+  private readonly channels = new Map<string, { socket: Socket; owner: WebContents; mode: 'view' | 'control' }>()
   private pending = 0
   private generation = 0
   constructor(
@@ -54,7 +54,7 @@ export class FleetScreenBridge {
     const state = (payload: Omit<FleetScreenState, 'channelId'>): void => {
       if (!owner.isDestroyed()) owner.send('fleet:screen:state', { channelId, ...payload })
     }
-    this.channels.set(channelId, { socket, owner })
+    this.channels.set(channelId, { socket, owner, mode })
     owner.once('destroyed', () => this.closeOwner(owner))
     state({ state: 'connecting' })
     socket.addEventListener('open', () => state({ state: 'open' }))
@@ -82,6 +82,27 @@ export class FleetScreenBridge {
     if (!channel || channel.owner !== owner) throw new Error('Screen channel unavailable')
     if (channel.socket.readyState !== WebSocket.OPEN) throw new Error('Screen channel is not open')
     channel.socket.send(data)
+  }
+
+  /** Finish an explicit remote copy even if the user has already switched to another local app. */
+  writeClipboard(owner: WebContents, channelId: string, text: unknown): void {
+    const channel = this.channels.get(channelId)
+    if (!channel || channel.owner !== owner || owner.isDestroyed() || channel.mode !== 'control')
+      throw new Error('Screen channel unavailable')
+    if (channel.socket.readyState !== WebSocket.OPEN) throw new Error('Screen channel is not open')
+    if (typeof text !== 'string' || text.length > 1_048_576) throw new Error('Invalid clipboard text')
+    clipboard.writeText(text)
+  }
+
+  /** Read only for an explicit paste in the focused owner's control session. */
+  readClipboard(owner: WebContents, channelId: string): string {
+    const channel = this.channels.get(channelId)
+    if (!channel || channel.owner !== owner || owner.isDestroyed() || channel.mode !== 'control' || !owner.isFocused())
+      throw new Error('Screen channel unavailable')
+    if (channel.socket.readyState !== WebSocket.OPEN) throw new Error('Screen channel is not open')
+    const text = clipboard.readText()
+    if (text.length > 1_048_576) throw new Error('Invalid clipboard text')
+    return text
   }
 
   close(owner: WebContents, channelId: string): void {

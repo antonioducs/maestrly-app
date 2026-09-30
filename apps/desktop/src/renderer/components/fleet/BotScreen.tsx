@@ -267,7 +267,12 @@ export function BotScreen({
           </div>
         )}
       </div>
-      <ScreenFrame container={target} label={t('screen.region', { name: bot.name })} interactive={human}>
+      <ScreenFrame
+        container={target}
+        label={t('screen.region', { name: bot.name })}
+        interactive={human && !screen.conflict}
+        clipboardError={screen.clipboardError}
+      >
         {shaded && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/80 text-white">
             <p>{bot.status === 'offline' ? t('screen.stopped') : t('screen.starting')}</p>
