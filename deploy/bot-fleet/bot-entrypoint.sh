@@ -99,7 +99,9 @@ done
 xdpyinfo -display :0 >/dev/null
 openbox --config-file /opt/maestrly/openbox-environment-rc.xml & children+=("$!")
 
-export MAESTRLY_BOT_MODE=1
+# The gateway sets MAESTRLY_SERVER_MODE=1 in a workspaces environment: Maestrly then hosts the owner's chats and
+# workspaces, and must not start as a bot.
+if [[ "${MAESTRLY_SERVER_MODE:-}" != 1 ]]; then export MAESTRLY_BOT_MODE=1; fi
 export BROWSER=/usr/bin/chromium
 while true; do
   # Maestrly runs in a session of its own, so everything it starts can be stopped once it exits. Without job control a

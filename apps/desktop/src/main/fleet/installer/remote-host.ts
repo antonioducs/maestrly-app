@@ -49,6 +49,15 @@ as_root systemctl enable --now docker
 as_root docker compose version
 `
 
+// uid and gid 1000 are the user the server's containers run as. `install -d` also sets the owner of a directory that
+// exists, without touching what is in it.
+const WORKSPACES_ROOT_SCRIPT = `# maestrly-bot-server:workspaces-root
+set -eu
+${asRoot}
+root=$1
+as_root install -d -o 1000 -g 1000 -m 0750 "$root"
+`
+
 const AUTHORIZE_KEY_SCRIPT = `# maestrly-bot-server:authorize-key
 set -eu
 umask 077
@@ -156,6 +165,12 @@ export function remoteSupport(probe: RemoteProbe): FleetInstallerErrorCode | nul
 export async function installDocker(session: RemoteShell, options?: RunOptions): Promise<void> {
   const result = await script(session, INSTALL_DOCKER_SCRIPT, [], { timeoutMs: 15 * 60_000, ...options })
   if (result.code !== 0) throw new InstallerError('docker-install-failed', lastLine(result.stderr, result.stdout))
+}
+
+/** Creates the directory a VPS mounts into its workspaces environment, owned by the user that environment runs as. */
+export async function createWorkspacesRoot(session: RemoteShell, root: string, options?: RunOptions): Promise<void> {
+  const result = await script(session, WORKSPACES_ROOT_SCRIPT, [root], options)
+  if (result.code !== 0) throw remoteFailure(result)
 }
 
 export async function authorizeKey(session: RemoteShell, publicKey: string): Promise<void> {

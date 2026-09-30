@@ -501,6 +501,8 @@ export class FakeVps {
   dockerInstalled = false
   /** The SSH server's authorized keys, which the installer's scripts add to and remove from. */
   authorizedKeys: string[] = []
+  /** The directories the installer created for workspaces. */
+  readonly workspacesRoots: string[] = []
 
   constructor(
     private readonly gateway: FakeGateway,
@@ -570,6 +572,9 @@ export class FakeVps {
       case 'install-docker':
         this.dockerInstalled = true
         return { code: 0, stdout: '# Executing docker install script\nDocker Compose version v2.29.7\n' }
+      case 'workspaces-root':
+        if (!this.workspacesRoots.includes(args[0])) this.workspacesRoots.push(args[0])
+        return { code: 0 }
       case 'authorize-key':
         if (!this.authorizedKeys.includes(args[0])) this.authorizedKeys.push(args[0])
         return { code: 0 }

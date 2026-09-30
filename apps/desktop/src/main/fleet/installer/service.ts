@@ -35,6 +35,7 @@ import { botServerImages, type BotServerImages } from './images'
 import {
   BOT_SERVER_GATEWAY_PORT,
   BOT_SERVER_REMOTE_DIR,
+  BOT_SERVER_WORKSPACES_ROOT,
   bundledComposePath,
   checkoutRoot,
   displayNameFor,
@@ -45,7 +46,15 @@ import {
   timezoneOrUtc,
   withEnvValues,
 } from './project'
-import { authorizeKey, installDocker, probeRemote, remoteSupport, removeRemoteProject, revokeKey } from './remote-host'
+import {
+  authorizeKey,
+  createWorkspacesRoot,
+  installDocker,
+  probeRemote,
+  remoteSupport,
+  removeRemoteProject,
+  revokeKey,
+} from './remote-host'
 import { LocalRunner, type CommandRunner, type RunOptions, type RunResult } from './runner'
 import { RemoteRunner, SshSession, generateSshKey, type SshConnectOptions } from './ssh'
 import {
@@ -432,7 +441,10 @@ export class FleetInstallerService {
               displayName: displayNameFor(probe.hostname || input.target.host),
               egress: input.allowPrivateNetwork ? 'open' : 'public',
               timezone: timezoneOrUtc(this.deps.timezone),
+              workspacesRoot: BOT_SERVER_WORKSPACES_ROOT,
             })
+            // Before the gateway starts: Docker would create a missing bind mount source owned by root.
+            await createWorkspacesRoot(session, BOT_SERVER_WORKSPACES_ROOT, { signal: context.signal })
             await host.writeProject(await this.deps.readBundledCompose(), rendered)
             return rendered
           })
@@ -632,21 +644,31 @@ export class FleetInstallerService {
         ? ['connect', 'files', 'images', 'start', 'environment-updates']
         : ['files', 'images', 'start', 'environment-updates']
     return this.runJob('update', record.mode, ids, async (context) => {
-      const { host, close } = await this.openHost(record, context)
+      const { host, session, close } = await this.openHost(record, context)
       try {
         const images = this.images()
         await context.step('files', async () => {
           if (record.mode === 'remote' && images.source === 'local')
             throw new InstallerError('images-unavailable', DEV_REMOTE_DETAIL)
           const current = await host.readEnv()
+          // A VPS installed before workspaces gains their directory; one whose owner set or emptied it keeps that.
+          const workspacesRoot =
+            session && (!current || parseBotServerEnv(current).workspacesRoot === undefined)
+              ? BOT_SERVER_WORKSPACES_ROOT
+              : null
           // Another computer may have moved the server past this app: its files tell, whatever this one recorded.
           const installed = current ? imageVersion(parseBotServerEnv(current).gatewayImage ?? '') : null
           if (installed && compareSemver(installed, this.deps.appVersion) > 0) {
             this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: installed })
             throw new InstallerError('server-newer')
           }
+          if (session && workspacesRoot) await createWorkspacesRoot(session, workspacesRoot, { signal: context.signal })
           const env = current
-            ? withEnvValues(current, { MAESTRLY_GATEWAY_IMAGE: images.gateway, MAESTRLY_GATEWAY_BOT_IMAGE: images.bot })
+            ? withEnvValues(current, {
+                MAESTRLY_GATEWAY_IMAGE: images.gateway,
+                MAESTRLY_GATEWAY_BOT_IMAGE: images.bot,
+                ...(workspacesRoot ? { MAESTRLY_GATEWAY_WORKSPACES_ROOT: workspacesRoot } : {}),
+              })
             : renderBotServerEnv({
                 gatewayImage: images.gateway,
                 botImage: images.bot,
@@ -654,6 +676,7 @@ export class FleetInstallerService {
                 displayName: displayNameFor(record.mode === 'local' ? this.deps.hostname : (record.remote?.host ?? '')),
                 egress: record.allowPrivateNetwork ? 'open' : 'public',
                 timezone: timezoneOrUtc(this.deps.timezone),
+                workspacesRoot,
               })
           await host.writeProject(await this.deps.readBundledCompose(), env)
         })

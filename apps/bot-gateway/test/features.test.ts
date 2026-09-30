@@ -300,6 +300,17 @@ describe('secrets and configuration', () => {
       'public'
     )
     expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
+    // The host directory of the workspaces environment: none unless named, and only as an absolute path.
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).workspacesRoot).toBeNull()
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: ' ' }).workspacesRoot
+    ).toBeNull()
+    expect(
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: '/srv/maestrly' }).workspacesRoot
+    ).toBe('/srv/maestrly')
+    expect(() =>
+      loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_WORKSPACES_ROOT: 'srv/maestrly' })
+    ).toThrow()
   })
 })
 describe('instance link and takeover', () => {

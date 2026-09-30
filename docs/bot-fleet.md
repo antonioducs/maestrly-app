@@ -71,6 +71,7 @@ Installer setups start with the private-network switch off: **Let bots reach thi
    | `MAESTRLY_GATEWAY_BOT_MEMORY` | Memory limit of each environment that has no limit of its own | `4g` |
    | `MAESTRLY_GATEWAY_BOT_SHM` | Shared memory per environment | `1g` |
    | `MAESTRLY_GATEWAY_BOT_EGRESS` | `open` permits private network access; `public` guards it | `open` |
+   | `MAESTRLY_GATEWAY_WORKSPACES_ROOT` | Absolute path of a host directory, owned by uid 1000, that the workspaces environment mounts at the same path | Empty: files stay in the environment's home volume |
 
 3. Make the loopback listener available to your tailnet over HTTPS. For example, with a Tailscale version supporting this syntax:
 
