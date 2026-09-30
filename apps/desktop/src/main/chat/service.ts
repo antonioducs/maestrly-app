@@ -324,7 +324,8 @@ import {
   getModelMeta,
   getProviderModelMeta,
 } from './model-meta'
-import { transcribe } from '../asr-service'
+import { currentAsrSupport, transcribe, warmAsr } from '../asr-service'
+import { asrLanguage } from '../../shared/asr'
 import { findMentions, type MentionMatch } from '../../shared/chat-mentions'
 import {
   applyChatEvent,
@@ -9617,14 +9618,18 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       return { ok: true, status: 'unknown' } // API unavailable → let getUserMedia try.
     }
   })
-  // Voice dictation: transcribe 16kHz mono PCM through local Whisper → text. Receives ArrayBuffer (Float32 bytes).
-  deps.mhandle('chat:transcribe', async (_e, buf: ArrayBuffer) => {
+  // Voice dictation: transcribe 16kHz mono PCM through local whisper.cpp → text. Receives ArrayBuffer (Float32 bytes).
+  deps.mhandle('chat:transcribe', async (_e, buf: ArrayBuffer, options?: { language?: unknown }) => {
     const audio = buf instanceof ArrayBuffer ? new Float32Array(buf) : new Float32Array(0)
-    const r = await transcribe(audio)
+    const r = await transcribe(audio, { language: asrLanguage(options?.language) })
+    if (r.modelMissing) return { error: 'model-missing' }
     if (r.text == null) return { error: 'unavailable' }
     if (r.silent) return { error: 'silent' } // Silent audio (mic permission missing / no speech) → UI notifies the user.
     return { text: r.text }
   })
+  // Loads the engine ahead of a dictation so the first result is not delayed by model loading.
+  deps.mhandle('chat:asr-warm', () => warmAsr())
+  deps.mhandle('chat:asr-support', () => currentAsrSupport())
   deps.mhandle('chat:prompts', () => listUserPrompts()) // List only user prompts (Settings screen).
   deps.mhandle('chat:prompt-add', (_e, input: { name: string; description?: string; content: string }) => {
     try {
