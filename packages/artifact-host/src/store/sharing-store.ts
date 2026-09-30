@@ -208,6 +208,36 @@ export class SharingStore {
     ).n as number
   }
 
+  /** Guests currently signed in to the artifact. */
+  countGuests(artifactId: string, now: number): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sessions s JOIN principals p ON p.id = s.principal_id
+           WHERE s.artifact_id = ? AND p.kind = 'guest' AND s.revoked_at IS NULL AND s.expires_at > ?`
+        )
+        .get(artifactId, now) as Row
+    ).n as number
+  }
+
+  /** Forgets guests whose only device expired or was signed out; their comments keep the name they used. */
+  pruneGuests(now: number): void {
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `DELETE FROM sessions WHERE (expires_at <= ? OR revoked_at IS NOT NULL)
+             AND principal_id IN (SELECT id FROM principals WHERE kind = 'guest')`
+        )
+        .run(now)
+      this.db
+        .prepare(
+          `DELETE FROM principals WHERE kind = 'guest'
+             AND id NOT IN (SELECT principal_id FROM sessions WHERE principal_id IS NOT NULL)`
+        )
+        .run()
+    })
+  }
+
   revokeSessionOf(artifactId: string, sessionId: string, now: number): boolean {
     return (
       this.db

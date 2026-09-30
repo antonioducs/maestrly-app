@@ -28,6 +28,8 @@ export const MAX_NAME_CHARS = 60
 export const MAX_REQUEST_MESSAGE_CHARS = 280
 export const MAX_PENDING_REQUESTS = 20
 export const MAX_DEVICES_PER_PRINCIPAL = 10
+/** Guests signed in to one artifact at a time; each guest is one browser. */
+export const MAX_GUESTS_PER_ARTIFACT = 200
 /** Beyond it, the oldest events the owner already saw are dropped first. */
 export const MAX_EVENTS_PER_ARTIFACT = 500
 export const MIN_ACCESS_CODE_CHARS = 6

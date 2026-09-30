@@ -175,6 +175,7 @@ describe('public server', () => {
     expect(reply.headers['cache-control']).toBe('no-store')
     const state = JSON.parse(reply.body)
     expect(state.identity).toEqual({ kind: 'owner' })
+    expect(state).toMatchObject({ ownerName: '', can: { comment: true, resolve: true } })
     expect(state.artifact).toMatchObject({ id, title: 'Probe', currentVersion: 1 })
     expect(state.artifact.versions).toEqual([{ number: 1, createdAt: clock.now(), summary: '' }])
   })

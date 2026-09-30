@@ -58,10 +58,11 @@ export async function openArtifactHost(
     const blobs = new BlobStore(path.join(dataDir, 'blobs'))
     // An interrupted write leaves temporary files or blobs no version references; neither is ever served.
     blobs.clearTemp()
+    const sharing = new SharingStore(store.db)
+    sharing.pruneGuests(clock())
     const referenced = store.referencedBlobs()
     for (const sha of blobs.listAll()) if (!referenced.has(sha)) await blobs.remove(sha)
 
-    const sharing = new SharingStore(store.db)
     const onChange = (artifactId: string) => options.onEvent?.({ type: 'changed', artifactId })
     const onActivity = (artifactId: string, kind: ArtifactEventKind) =>
       options.onEvent?.({ type: 'activity', artifactId, kind })
@@ -76,6 +77,7 @@ export async function openArtifactHost(
       sharing,
       ownerName,
       recordActivity: createActivityRecorder({ sharing, clock, onChange, onActivity }),
+      onChange,
     })
     const boundPort = await server.listen()
     let closed = false

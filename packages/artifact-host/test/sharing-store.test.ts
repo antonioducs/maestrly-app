@@ -160,6 +160,23 @@ describe('SharingStore', () => {
     expect(store.findSessionById('other', 4000)?.id).toBe('other')
   })
 
+  it('counts signed-in guests and forgets the ones whose device is gone', () => {
+    sharing.insertPrincipal(principal('p1'))
+    sharing.insertPrincipal(principal('g1', { kind: 'guest', inviteTokenHash: null }))
+    sharing.insertPrincipal(principal('g2', { kind: 'guest', inviteTokenHash: null }))
+    store.createSession(session('s1', { principalId: 'p1', expiresAt: 1500 }))
+    store.createSession(session('s2', { principalId: 'g1', expiresAt: 1500 }))
+    store.createSession(session('s3', { principalId: 'g2' }))
+    expect(sharing.countGuests('A', 1200)).toBe(2)
+    expect(sharing.countGuests('A', 2000)).toBe(1)
+    expect(sharing.countGuests('B', 1200)).toBe(0)
+
+    sharing.pruneGuests(2000)
+    expect(sharing.listPrincipals('A').map((person) => person.id)).toEqual(['g2', 'p1'])
+    // An invited person's expired device is not the prune's business.
+    expect(count('sessions')).toBe(2)
+  })
+
   it('keeps a browser’s latest request and expires pending requests after a day', () => {
     sharing.insertRequest(request('r1', { createdAt: 1000 }))
     sharing.insertRequest(request('r2', { createdAt: 2000, name: 'João again' }))
