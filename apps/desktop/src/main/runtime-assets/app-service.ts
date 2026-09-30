@@ -285,6 +285,10 @@ const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 're
     displayName: 'Voice model',
     requiredBy: 'Voice dictation',
   },
+  'antigravity-acp-runtime': {
+    displayName: 'Google Antigravity ACP server',
+    requiredBy: 'Google AI subscription',
+  },
 }
 
 async function directoryBytes(root: string): Promise<number> {
@@ -390,7 +394,7 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   await Promise.all(
     entries
       .filter((entry) =>
-        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model)-/.test(
+        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|antigravity-acp-runtime)-/.test(
           entry
         )
       )

@@ -6,6 +6,8 @@ export const RUNTIME_ASSET_IDS = [
   'tunnel-client',
   'local-ml-runtime',
   'whisper-model',
+  // Google's official Antigravity ACP server, installed on demand for the Google AI subscription provider.
+  'antigravity-acp-runtime',
 ] as const
 
 export type RuntimeAssetId = (typeof RUNTIME_ASSET_IDS)[number]

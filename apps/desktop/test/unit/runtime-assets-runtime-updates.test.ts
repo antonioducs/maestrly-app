@@ -77,6 +77,7 @@ function harness(
       'tunnel-client': empty('tunnel-client'),
       'local-ml-runtime': empty('local-ml-runtime'),
       'whisper-model': empty('whisper-model'),
+      'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
     },
     target: 'mac-arm64',
     downloader,

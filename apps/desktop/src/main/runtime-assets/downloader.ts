@@ -20,7 +20,7 @@ export type RuntimeDownloader = (
   options: DownloadOptions
 ) => Promise<DownloadResult>
 
-const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com', 'huggingface.co'])
+const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com', 'huggingface.co', 'dl.google.com'])
 /** Hugging Face redirects file downloads to regional CDN hosts under hf.co; the pinned hash stays the integrity check. */
 const DEFAULT_HOST_SUFFIXES: readonly string[] = ['.hf.co']
 

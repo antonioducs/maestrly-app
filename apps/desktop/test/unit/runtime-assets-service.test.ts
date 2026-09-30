@@ -44,6 +44,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
     'whisper-model': empty('whisper-model'),
+    'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
   }
 }
 

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES } from '../../src/shared/runtime-assets'
+import { RUNTIME_ASSET_IDS, RUNTIME_ASSET_STATES, isUpdatableRuntimeAssetId } from '../../src/shared/runtime-assets'
 import {
   CLAUDE_CODE_PINNED_VERSION,
   RUNTIME_ASSET_REGISTRY,
@@ -23,6 +23,7 @@ describe('runtime asset registry', () => {
       'tunnel-client',
       'local-ml-runtime',
       'whisper-model',
+      'antigravity-acp-runtime',
     ])
     expect(RUNTIME_ASSET_STATES).toEqual([
       'not-installed',
@@ -170,6 +171,31 @@ describe('runtime asset registry', () => {
     }
     expect(definition.targets['linux-arm64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_804_240)
     expect(definition.targets['linux-x64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_536_804)
+  })
+
+  it('pins the Antigravity ACP server for every desktop target', () => {
+    const definition = RUNTIME_ASSET_REGISTRY['antigravity-acp-runtime']
+    expect(definition.version).toBe('1.2.1')
+    expect(Object.keys(definition.targets).sort()).toEqual([...RUNTIME_TARGET_IDS].sort())
+    for (const target of Object.values(definition.targets)) {
+      expect(target?.url).toMatch(
+        /^https:\/\/dl\.google\.com\/agy-extensions\/releases\/(macos|linux|windows)\/agy-acp-server-1\.2\.1-[a-z0-9_-]+\.zip$/
+      )
+      expect(target?.archive).toBe('zip')
+      expect(target?.hash).toMatchObject({ algorithm: 'sha256', encoding: 'hex' })
+      expect(target?.hash.digest).toMatch(/^[0-9a-f]{64}$/)
+      expect(target?.criticalPaths).toContain(target?.executablePath)
+      expect(target?.maxDownloadBytes).toBeGreaterThanOrEqual(target?.downloadBytes ?? Number.POSITIVE_INFINITY)
+    }
+    expect(definition.targets['win-x64']?.executablePath).toBe('agy_acp_server.exe')
+    expect(definition.targets['linux-x64']?.executablePath).toBe('agy_acp_server.par')
+    expect(definition.targets['mac-arm64']).toMatchObject({
+      url: 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.2.1-darwin-arm64.zip',
+      hash: { digest: '0fab9938812e6b32b3b543e65e4f3a0025ceef755413db13542d9a9b81ea803c' },
+      downloadBytes: 111_725_488,
+      unpackedBytes: 397_584_640,
+    })
+    expect(isUpdatableRuntimeAssetId('antigravity-acp-runtime')).toBe(false)
   })
 
   it('maps supported hosts and rejects unsupported targets', () => {
