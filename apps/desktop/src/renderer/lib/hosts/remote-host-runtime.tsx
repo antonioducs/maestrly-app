@@ -142,6 +142,13 @@ export function RemoteHostRuntime({
       }),
     [api, hostId, refresh, setActive, setMountedConvs, onFocus]
   )
+  // Another computer may have created, renamed or removed a conversation of the host meanwhile: coming back to this
+  // window lists the host again.
+  useEffect(() => {
+    const onFocus = (): void => void refresh().catch(() => undefined)
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refresh])
   // The agent focused one of the conversation's terminals: its drawer opens on the Terminal tab.
   useEffect(
     () =>

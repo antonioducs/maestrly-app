@@ -90,7 +90,8 @@ running turn are kept by this window only, and are lost if the connection drops 
 sent.
 
 Two computers paired with the same server see the same chats and workspaces. Both receive a turn as it streams, and
-either can answer a permission request, a question, or a plan.
+either can answer a permission request, a question, or a plan. A chat or workspace that the other computer created,
+renamed, or removed appears here when this window gets the focus again.
 
 ## Not available yet
 
