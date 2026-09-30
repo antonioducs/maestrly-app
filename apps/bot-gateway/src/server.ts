@@ -22,6 +22,7 @@ import { publicRoute } from './routes/public.js'
 import { Peers } from './peers.js'
 import { Routines } from './routines.js'
 import { ScreenProxy } from './screen.js'
+import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -81,6 +82,8 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
+  const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
+  ctx.lifecycle.onCloseEnvironmentBridges = (id) => bridge.closeEnvironment(id)
   let subnetBlock = new BlockList()
   // Traffic reaching a published port from the host (Docker's port proxy, `tailscale serve`) arrives from the
   // bridge gateway address, which lies inside the fleet subnet. Bots use their own addresses and cannot
@@ -126,6 +129,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     revoking.add(deviceId)
     try {
       screen.closeDevice(deviceId)
+      bridge.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
       await Promise.allSettled(
         [...ctx.lifecycle.takeovers]
@@ -144,7 +148,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         .map((device) => revokeDevice(device.id))
     )
   }
-  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, revokeDevice }
+  const activeCtx: GatewayContext = { ...ctx, ownerMemory, peers, routines, screen, bridge, revokeDevice }
   ctx.lifecycle.onTurnFinished = (id, event) => {
     if (event.inputId) routines.finishRun(id, event.inputId, event.outcome, event.text)
   }
@@ -250,8 +254,9 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       if (insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
-      if (new URL(req.url ?? '/', 'http://gateway').pathname !== FLEET_GATEWAY_ROUTES.screen.path)
-        throw new GatewayError('NOT_FOUND', 'Route not found')
+      const { pathname } = new URL(req.url ?? '/', 'http://gateway')
+      if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      if (pathname !== FLEET_GATEWAY_ROUTES.screen.path) throw new GatewayError('NOT_FOUND', 'Route not found')
       screen.upgrade(req, socket, head)
       return
     } catch (caught) {
@@ -274,6 +279,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     routines,
     peers,
     screen,
+    bridge,
     sweepRevocations,
     async listen() {
       await refreshSubnets()
@@ -299,6 +305,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       if (revokeTimer) clearInterval(revokeTimer)
       routines.stop()
       screen.close()
+      bridge.close()
       ctx.lifecycle.close()
       ctx.events.close()
       await Promise.all(

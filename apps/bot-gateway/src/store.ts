@@ -12,6 +12,7 @@ import {
   type FleetBot,
   type FleetBotSetup,
   type FleetCompactionConfig,
+  type FleetEnvironmentKind,
   type FleetEnvironmentSetup,
   type FleetLifecycle,
   type FleetPeerMessage,
@@ -33,6 +34,8 @@ export type Device = {
 export type StoredEnvironment = {
   id: string
   name: string
+  /** Bots, or the owner's chats and workspaces. It never changes. */
+  kind: FleetEnvironmentKind
   lifecycle: FleetLifecycle
   setup: FleetEnvironmentSetup
   containerName: string
@@ -152,7 +155,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 8) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 9) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -210,6 +213,7 @@ export class Store {
     if (version <= 5) this.migrateToEnvironments()
     if (version <= 6) this.migrateEnvironmentCompaction()
     if (version <= 7) this.migrateEnvironmentUpdates()
+    if (version <= 8) this.migrateEnvironmentKinds()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -301,6 +305,13 @@ export class Store {
   private migrateEnvironmentUpdates() {
     this.db.exec('ALTER TABLE environments ADD COLUMN update_requested_at TEXT')
     this.db.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
+  }
+  /** Schema 9: an environment runs bots or hosts workspaces; every environment so far runs bots. */
+  private migrateEnvironmentKinds() {
+    this.db.exec(
+      "ALTER TABLE environments ADD COLUMN kind TEXT NOT NULL DEFAULT 'bots' CHECK (kind IN ('bots','workspaces'))"
+    )
+    this.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     return {
@@ -512,6 +523,7 @@ export class Store {
     return {
       id: String(row.id),
       name: String(row.name),
+      kind: row.kind === 'workspaces' ? 'workspaces' : 'bots',
       lifecycle: row.lifecycle as FleetLifecycle,
       setup: JSON.parse(String(row.setup_json)) as FleetEnvironmentSetup,
       containerName: String(row.container_name),
@@ -539,11 +551,12 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)'
         )
         .run(
           environment.id,
           environment.name,
+          environment.kind,
           environment.lifecycle,
           JSON.stringify(environment.setup),
           environment.containerName,
@@ -774,7 +787,10 @@ export class Store {
       let environmentId = bot.id,
         slot = 1
       if (placement) {
-        environmentId = this.activeEnvironment(placement.environmentId).id
+        const environment = this.activeEnvironment(placement.environmentId)
+        if (environment.kind === 'workspaces')
+          throw new GatewayError('CONFLICT', 'Workspaces environments hold no bots.')
+        environmentId = environment.id
         slot = this.claimSlot(environmentId, placement.slot)
       } else {
         if (secrets.controlToken === undefined || secrets.keyringPassword === undefined)
@@ -783,6 +799,7 @@ export class Store {
           {
             id: bot.id,
             name: bot.name,
+            kind: 'bots',
             lifecycle: bot.lifecycle,
             setup: environmentSetupOf(bot.setup, bot.lifecycle),
             containerName: legacyContainerName(bot.id),

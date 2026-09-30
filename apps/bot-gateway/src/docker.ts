@@ -10,6 +10,8 @@ export type ContainerSpec = {
   env: string[]
   network: string
   volume: string
+  /** Directories of the Docker host mounted into the container, besides its home volume. */
+  binds?: Array<{ source: string; target: string }>
   memory: number
   shmSize: number
   securityOpt: string[]
@@ -182,7 +184,10 @@ export class DockerEngineDriver implements DockerDriver {
           Init: true,
           RestartPolicy: { Name: 'unless-stopped' },
           NetworkMode: spec.network,
-          Mounts: [{ Type: 'volume', Source: spec.volume, Target: '/home/bot' }],
+          Mounts: [
+            { Type: 'volume', Source: spec.volume, Target: '/home/bot' },
+            ...(spec.binds ?? []).map((bind) => ({ Type: 'bind', Source: bind.source, Target: bind.target })),
+          ],
           SecurityOpt: spec.securityOpt,
           ...(spec.capAdd.length ? { CapAdd: spec.capAdd } : {}),
         },

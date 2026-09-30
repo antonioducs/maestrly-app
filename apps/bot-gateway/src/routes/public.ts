@@ -2,6 +2,7 @@ import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_WORKSPACES_HOST_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -236,6 +237,7 @@ export async function publicRoute(
             FLEET_ENVIRONMENT_COMPACTION_FEATURE,
             FLEET_ENVIRONMENT_UPDATES_FEATURE,
             FLEET_CONTEXT_LIMIT_FEATURE,
+            FLEET_WORKSPACES_HOST_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -265,7 +267,11 @@ export async function publicRoute(
       const input = body as FleetCreateEnvironmentRequest
       const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
       const result = ctx.store.idempotent('environmentsCreate', input.idempotencyKey, hash, () => ({
-        response: ctx.lifecycle.createEnvironment({ name: input.name, memoryLimitBytes: input.memoryLimitBytes }),
+        response: ctx.lifecycle.createEnvironment({
+          name: input.name,
+          memoryLimitBytes: input.memoryLimitBytes,
+          kind: input.kind,
+        }),
         status: 201,
       }))
       return { body: result.response, status: result.status }
@@ -311,6 +317,14 @@ export async function publicRoute(
       requireEnvironment(ctx, eid)
       const device = ctx.auth.device(res.req?.headers.authorization)
       return { body: ctx.screen!.environmentTicket(eid, device.id, body.mode), status: 201 }
+    }
+    case 'environmentBridgeTicket': {
+      const environment = requireEnvironment(ctx, eid)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      if (environment.kind !== 'workspaces')
+        throw new GatewayError('CONFLICT', 'This environment does not host workspaces.')
+      if (environment.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')
+      return { body: ctx.bridge!.ticket(eid, device.id), status: 201 }
     }
     case 'environmentUiOpen':
       requireEnvironment(ctx, eid)
@@ -494,6 +508,7 @@ export async function publicRoute(
       return { body: ctx.screen!.ticket(id, device.id, body.mode, body.surface), status: 201 }
     }
     case 'screen':
+    case 'bridge':
       throw new GatewayError('INVALID_REQUEST', 'WebSocket upgrade required')
     case 'botRoutinesList':
       requireBot(ctx, id)

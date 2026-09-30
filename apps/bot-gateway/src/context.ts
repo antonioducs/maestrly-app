@@ -8,6 +8,7 @@ import type { Store } from './store.js'
 import type { Peers } from './peers.js'
 import type { Routines } from './routines.js'
 import type { ScreenProxy } from './screen.js'
+import type { BridgeProxy } from './bridge.js'
 export type GatewayContext = {
   auth: Auth
   config: GatewayConfig
@@ -19,5 +20,6 @@ export type GatewayContext = {
   peers?: Peers
   routines?: Routines
   screen?: ScreenProxy
+  bridge?: BridgeProxy
   revokeDevice?: (deviceId: string) => Promise<void>
 }

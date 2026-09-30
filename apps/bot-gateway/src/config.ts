@@ -23,6 +23,11 @@ const schema = z.object({
   botMemory: bytes,
   botEgress: z.enum(FLEET_BOT_EGRESS_MODES),
   botShm: bytes,
+  /** A directory of the Docker host mounted into the workspaces environment at the same path; null mounts none. */
+  workspacesRoot: z
+    .string()
+    .regex(/^\/[^\0]*$/, 'Expected an absolute path')
+    .nullable(),
   timezone: z.string().min(1).refine(isValidTimeZone, 'Invalid time zone'),
   botSecurityOpt: z.array(z.string()),
 })
@@ -55,6 +60,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     botMemory: env[FLEET_GATEWAY_ENV.botMemory] ?? '4g',
     botEgress: env[FLEET_GATEWAY_ENV.botEgress] ?? 'open',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
+    workspacesRoot: env[FLEET_GATEWAY_ENV.workspacesRoot]?.trim() || null,
     timezone: env[FLEET_GATEWAY_ENV.timezone] ?? 'UTC',
     botSecurityOpt,
   })
