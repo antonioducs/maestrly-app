@@ -145,6 +145,31 @@ describe('RuntimeAssetService', () => {
     expect(rootEntries.some((entry) => entry.startsWith('.tmp-'))).toBe(false)
   })
 
+  it('reports a cancel as cancelled even when the downloader rejects with a generic abort error', async () => {
+    const deps = fixtureDependencies()
+    // Real fetch/stream pipelines reject with an AbortError ("The operation was aborted"), not the abort reason.
+    deps.downloader.mockImplementation(
+      (_target, _destination, options) =>
+        new Promise((_resolve, reject) =>
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted', 'AbortError')),
+            { once: true }
+          )
+        )
+    )
+    const service = new RuntimeAssetService({
+      userDataPath: userData,
+      registry: registry(),
+      target: 'mac-arm64',
+      ...deps,
+    })
+    const install = service.install('tunnel-client')
+    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
+    expect(service.cancel('tunnel-client')).toBe(true)
+    await expect(install).resolves.toMatchObject({ state: 'failed', error: 'Runtime asset installation cancelled' })
+  })
+
   it('cancels one waiter without aborting a shared install needed by another waiter', async () => {
     const deps = fixtureDependencies({ delayDownload: true })
     const service = new RuntimeAssetService({

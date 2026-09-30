@@ -736,7 +736,8 @@ export class RuntimeAssetService {
             state: 'failed',
             version: definition.version,
             target: this.target,
-            error: message(error),
+            // fetch and stream pipelines reject with a generic AbortError; report the cancel reason instead.
+            error: message(signal.aborted ? (signal.reason ?? error) : error),
           },
           true
         )
