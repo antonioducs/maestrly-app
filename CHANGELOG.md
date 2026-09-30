@@ -36,7 +36,8 @@ User-visible changes by version. Downloads are on
   bot conversations. While the agent works, the line shows its current step;
   afterwards it summarizes what it did, including steps that failed or that you
   denied. Open it to see every step and its details. The answer, questions,
-  plans, generated images, and tool screenshots stay in view.
+  plans, subagents, published artifacts, generated images, and tool screenshots
+  stay in view.
 
 ### Fixed
 

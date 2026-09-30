@@ -81,10 +81,8 @@ function toolLabel(t: TFunction, step: ActivityToolStep<unknown>, tense: 'live' 
       mono: true,
     }
   if (category === 'image') return { text: t(`activity.${tense}.image`), slot: null, mono: false }
-  if (category === 'subagent')
-    return step.agent && step.target
-      ? { text: t(`activity.${tense}.subagent`, { agent: step.agent, target: SLOT }), slot: step.target, mono: false }
-      : { text: t(`activity.${tense}.subagentBare`), slot: null, mono: false }
+  // Only bots list a subagent as a step, without its name: a chat shows its card outside the line.
+  if (category === 'subagent') return { text: t(`activity.${tense}.subagentBare`), slot: null, mono: false }
   return step.target
     ? { text: t(`activity.${tense}.${category}`, { target: SLOT }), slot: step.target, mono: MONO_TARGET.has(category) }
     : { text: t(`activity.${tense}.${category}Bare`), slot: null, mono: false }
@@ -163,6 +161,10 @@ export interface AgentActivityProps<S> {
   waitingAnswer?: boolean
   /** Live and the agent waits for the person (a bot's permission, question or help request). */
   waitingYou?: boolean
+  /** Live: subagents running in their own cards outside the line. */
+  runningSubagents?: number
+  /** The turn did work that is not among the steps (its subagents): the summary says it worked, not only thought. */
+  worked?: boolean
   /** How long the turn took, when known: the summary leads with it. */
   durationMs?: number | null
   /** Images the steps produced, shown under the line whether it is open or not. */
@@ -185,6 +187,8 @@ export function AgentActivity<S>({
   writing = false,
   waitingAnswer = false,
   waitingYou = false,
+  runningSubagents = 0,
+  worked = false,
   durationMs,
   thumbnails,
   renderToolDetail,
@@ -205,7 +209,9 @@ export function AgentActivity<S>({
   let labelKey: string
   let tone: 'live' | 'waiting' | 'done'
   if (live) {
-    const now = waitingYou ? ({ kind: 'waiting-you' } as const) : activityLive(steps, { writing, waitingAnswer })
+    const now = waitingYou
+      ? ({ kind: 'waiting-you' } as const)
+      : activityLive(steps, { writing, waitingAnswer, runningSubagents })
     tone =
       now.kind === 'waiting-permission' || now.kind === 'waiting-answer' || now.kind === 'waiting-you'
         ? 'waiting'
@@ -226,6 +232,10 @@ export function AgentActivity<S>({
       glyph = <Glyph icon={Lightbulb} spinning />
       labelKey = now.title ? t('activity.thinkingAbout', { title: now.title }) : t('activity.thinking')
       label = <Shimmer>{labelKey}</Shimmer>
+    } else if (now.kind === 'subagents') {
+      glyph = <Glyph icon={Bot} spinning />
+      labelKey = t('activity.runningSubagents', { count: now.count })
+      label = <Shimmer>{labelKey}</Shimmer>
     } else {
       const text = toolLabel(t, now.step, 'live')
       glyph = <Glyph icon={CATEGORY_ICON[now.step.category]} spinning />
@@ -241,7 +251,7 @@ export function AgentActivity<S>({
     const summary = activitySummary(steps)
     const lead =
       durationMs != null
-        ? t(summary.tools ? 'activity.workedFor' : 'activity.thoughtFor', {
+        ? t(summary.tools || worked ? 'activity.workedFor' : 'activity.thoughtFor', {
             duration: formatResponseDuration(durationMs),
           })
         : summary.tools

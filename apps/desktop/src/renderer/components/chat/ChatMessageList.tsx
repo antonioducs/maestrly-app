@@ -803,6 +803,7 @@ const Bubble = memo(function Bubble({
                 live={live}
                 writing={segment.writing}
                 waitingAnswer={segment.waitingAnswer}
+                subagents={segment.subagents}
                 onOpenImage={onOpenImage}
                 onOpenMention={onOpenMention}
                 searchQuery={searchQuery}
