@@ -15,6 +15,7 @@ export const ARTIFACT_ERROR_CODES = [
   'version_conflict',
   'version_limit',
   'quota_exceeded',
+  'limit_reached',
   'port_in_use',
   'storage',
   'host_unavailable',

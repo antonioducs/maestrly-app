@@ -1,3 +1,4 @@
+export type { Access, Gate } from './access.js'
 export { type ArtifactAdmin, thumbnailContentType } from './admin.js'
 export * from './bundle-paths.js'
 export { readBundleDirectory } from './directory.js'
@@ -21,8 +22,21 @@ export type {
   ArtifactVersionInfo,
   BundleFile,
   CreateArtifactInput,
+  AccessRequestView,
+  ArtifactEventView,
+  DeviceView,
   HostStatusInfo,
+  PersonView,
+  SharingPatch,
+  SharingView,
   ThumbnailImage,
   UpdateArtifactInput,
 } from './schemas.js'
+export type { SharingAdmin } from './sharing-admin.js'
 export type { OwnerKind, VersionAuthor, Visibility } from './store/artifact-store.js'
+export {
+  ARTIFACT_EVENT_KINDS,
+  type ArtifactEventKind,
+  type EventData,
+  type PrincipalKind,
+} from './store/sharing-store.js'

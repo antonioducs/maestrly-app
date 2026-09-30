@@ -20,6 +20,16 @@ export const ADMIN_METHODS = [
   'getThumbnail',
   'mintOwnerTicket',
   'snapshot',
+  'getSharing',
+  'setSharing',
+  'createInvite',
+  'resetInvite',
+  'revokePerson',
+  'revokeDevice',
+  'revokeAllSessions',
+  'decideAccessRequest',
+  'listEvents',
+  'markEventsSeen',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]
 
 type AdminMethod = (typeof ADMIN_METHODS)[number]

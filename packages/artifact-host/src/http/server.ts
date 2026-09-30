@@ -6,7 +6,9 @@ import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-as
 import { digest, newSecretToken, randomId } from '../ids.js'
 import { CAPABILITY_TTL_MS, MAX_API_BODY_BYTES, OWNER_SESSION_TTL_MS, SESSION_TOUCH_INTERVAL_MS } from '../limits.js'
 import { ARTIFACT_HEADER, SESSION_COOKIE, type ViewerState } from '../shell/contract.js'
+import type { ActivityRecorder } from '../sharing-admin.js'
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
+import type { SharingStore } from '../store/sharing-store.js'
 import type { BlobStore } from '../store/blobs.js'
 import { signCapability, verifyCapability } from './capability.js'
 import { deviceInfo } from './device-info.js'
@@ -22,6 +24,10 @@ export interface PublicServerDeps {
   port: number
   host?: string
   publicOrigins?: readonly string[]
+  /** People, requests and events; opened on the store's database when not given. */
+  sharing?: SharingStore
+  ownerName?: string
+  recordActivity?: ActivityRecorder
 }
 
 export interface PublicServer {

@@ -216,6 +216,17 @@ export class SharingStore {
     )
   }
 
+  /** Signs out everyone who entered as a guest. */
+  revokeGuestSessions(artifactId: string, now: number): void {
+    this.db
+      .prepare(
+        `UPDATE sessions SET revoked_at = ? WHERE artifact_id = ? AND revoked_at IS NULL AND principal_id IN (
+           SELECT id FROM principals WHERE artifact_id = ? AND kind = 'guest'
+         )`
+      )
+      .run(now, artifactId, artifactId)
+  }
+
   /** Every session of the artifact, the owner's included. */
   revokeAllSessions(artifactId: string, now: number): void {
     this.db

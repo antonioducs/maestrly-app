@@ -75,6 +75,27 @@ describe('admin RPC', () => {
     client.dispose()
   })
 
+  it('forwards sharing operations', async () => {
+    const [server, clientSide] = channelPair()
+    serveAdmin(server, admin)
+    const client = createAdminClient(clientSide)
+    const { id } = await client.create({
+      title: 'Shared',
+      owner: { kind: 'local', id: 'local' },
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+      files: [{ path: 'index.html', bytes: utf8('<p>shared</p>') }],
+    })
+    const invite = await client.createInvite(id, { name: 'Maria' })
+    expect(invite.token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    await client.setSharing(id, { visibility: 'people' })
+    const view = await client.getSharing(id)
+    expect(view.visibility).toBe('people')
+    expect(view.people.map((person) => person.name)).toEqual(['Maria'])
+    expect((await errorOf(client.createInvite(id, { name: '' }))).code).toBe('invalid_input')
+    expect(await client.listEvents()).toEqual([])
+    client.dispose()
+  })
+
   it('rebuilds host errors and hides unexpected ones', async () => {
     const [server, clientSide] = channelPair()
     const failing = {

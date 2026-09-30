@@ -18,11 +18,13 @@ import {
   type UpdateArtifactInput,
   updateArtifactInput,
 } from './schemas.js'
+import { createSharingAdmin, type SharingAdmin } from './sharing-admin.js'
 import type { ArtifactStore, FileRecord } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
+import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 
 /** The owner's interface to a host: used in-process, or across a process boundary through `rpc.ts`. */
-export interface ArtifactAdmin {
+export interface ArtifactAdmin extends SharingAdmin {
   status(): Promise<HostStatusInfo>
   create(input: CreateArtifactInput): Promise<ArtifactDetail>
   update(input: UpdateArtifactInput): Promise<ArtifactDetail>
@@ -46,6 +48,10 @@ export interface ArtifactAdminDeps {
   quotaBytes: number
   maxVersions?: number
   onChange?: (artifactId: string) => void
+  /** People, requests and events; opened on the store's database when not given. */
+  sharing?: SharingStore
+  /** Called for every event recorded for the owner, such as a new device or an access request. */
+  onActivity?: (artifactId: string, kind: ArtifactEventKind) => void
 }
 
 const notFound = () => new ArtifactHostError('not_found', 'Artifact not found')
@@ -63,6 +69,7 @@ export function thumbnailContentType(bytes: Uint8Array): string | null {
 export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   const { store, blobs, clock } = deps
   const maxVersions = deps.maxVersions ?? MAX_VERSIONS_PER_ARTIFACT
+  const sharing = deps.sharing ?? new SharingStore(store.db)
 
   // Writes run one at a time, so deleting unreferenced blobs never races a version that is about to reference them.
   let queue: Promise<unknown> = Promise.resolve()
@@ -73,6 +80,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   }
 
   const detail = (id: string): ArtifactDetail | null => {
+    sharing.expireRequests(clock())
     const artifact = store.getArtifact(id)
     if (!artifact) return null
     return {
@@ -139,6 +147,8 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   }
 
   return {
+    ...createSharingAdmin({ store, sharing, clock, onChange: deps.onChange }),
+
     async status() {
       return { artifactCount: store.countArtifacts(), storageBytes: blobs.totalBytes(), quotaBytes: deps.quotaBytes }
     },
@@ -230,6 +240,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
     },
 
     async list(filter = {}) {
+      sharing.expireRequests(clock())
       return store.listArtifacts(parseInput(artifactListFilter, filter))
     },
 
