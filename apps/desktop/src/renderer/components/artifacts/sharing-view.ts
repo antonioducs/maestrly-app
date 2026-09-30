@@ -6,7 +6,8 @@ import {
   MAX_ARTIFACT_NAME_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from '../../../shared/artifacts'
-import type { TFn } from '@/components/settings/shared'
+// A relative import: unit tests compile this file without the renderer's path aliases.
+import type { TFn } from '../settings/shared'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
