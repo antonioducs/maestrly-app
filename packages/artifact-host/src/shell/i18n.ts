@@ -101,7 +101,7 @@ const ptBR: Record<ShellKey, string> = {
   invitedBy: 'Convite de {owner}',
   approvedBy: 'Aprovação de {owner}',
   unverified: '{name} (não verificado)',
-  guest: 'Convidado',
+  guest: 'Visitante',
 }
 
 export const SHELL_CATALOGS: Readonly<Record<ShellLocale, Readonly<Record<ShellKey, string>>>> = {
