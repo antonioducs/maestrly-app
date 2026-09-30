@@ -1,6 +1,7 @@
 // The viewer shell: who is viewing, the version picker and the sandboxed content frame. Every text reaches the DOM
 // through `textContent`; nothing coming from the API or the frame is parsed as HTML.
 import { type ArtifactApi, createApi } from './api.js'
+import { createComments } from './comments.js'
 import { CONTENT_SANDBOX, type FrameResponse, parseBridgeMessage, type ViewerState } from './contract.js'
 import { button, element } from './dom.js'
 import { showEntry } from './gate.js'
@@ -26,12 +27,13 @@ function showMessage(title: string, detail?: string): void {
 
 const unavailable = () => showMessage(t('notAvailable'), t('notAvailableDetail'))
 
+const guestLabel = (name: string | null): string => (name ? t('unverified', { name }) : t('guest'))
+
 /** Who the viewer is here: the owner, a person the owner confirmed, or a guest whose name nobody checked. */
 function identityChip(state: ViewerState): HTMLElement {
   const { identity } = state
   if (identity.kind === 'owner') return element('span', 'chip', t('owner'))
-  if (identity.kind === 'guest')
-    return element('span', 'chip', identity.name ? t('unverified', { name: identity.name }) : t('guest'))
+  if (identity.kind === 'guest') return element('span', 'chip', guestLabel(identity.name))
   const chip = element('span', 'chip verified', t('verified', { name: identity.name }))
   const owner = state.ownerName || t('theOwner')
   chip.title = t(identity.kind === 'invited' ? 'invitedBy' : 'approvedBy', { owner })
@@ -62,8 +64,8 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     await api.write('session', 'DELETE').catch(() => undefined)
     showMessage(t('left'), t('leftDetail'))
   })
-  identity.append(identityChip(state), leave)
-  header.append(title, picker, identity)
+  const chip = identityChip(state)
+  identity.append(chip, leave)
 
   const banner = element('div', 'banner')
   banner.setAttribute('role', 'status')
@@ -74,7 +76,25 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   frame.setAttribute('referrerpolicy', 'no-referrer')
   frame.title = artifact.title
 
-  app.replaceChildren(header, banner, frame)
+  const comments = createComments({
+    api,
+    t,
+    locale,
+    state,
+    frame,
+    version: initialVersion,
+    onNamed: (name) => {
+      chip.textContent = guestLabel(name)
+    },
+  })
+  header.append(title, picker, comments.toggle, identity)
+  // The frame and the button that floats over a selection share one box; the panel sits beside it.
+  const stage = element('div', 'stage')
+  stage.append(frame, comments.action)
+  const workspace = element('div', 'workspace')
+  workspace.append(stage, comments.panel)
+
+  app.replaceChildren(header, banner, workspace)
 
   const showBanner = (text: string, retry?: () => void) => {
     banner.replaceChildren(element('span', undefined, text))
@@ -85,11 +105,14 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   window.addEventListener('message', (event) => {
     if (event.source !== frame.contentWindow) return
     const message = parseBridgeMessage(event.data)
-    if (message?.type === 'error') showBanner(t('pageError', { message: message.message }))
+    if (!message) return
+    if (message.type === 'error') showBanner(t('pageError', { message: message.message }))
+    else comments.handle(message)
   })
 
   async function load(version: number): Promise<void> {
     banner.hidden = true
+    comments.setVersion(version)
     try {
       const response = await api.write('frame', 'POST', { version })
       if (!response.ok) throw new Error(String(response.status))

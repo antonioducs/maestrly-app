@@ -31,6 +31,9 @@ export interface ApiContext {
   access: Access | null
   /** The visitor cookie's secret. */
   visitor: string | null
+  /** The comment a comment route acts on, as written in the path; it is looked up, never echoed. */
+  commentId: string | null
+  query: URLSearchParams
 }
 
 export function send(res: http.ServerResponse, status: number, headers: Headers, body?: string | Buffer): void {

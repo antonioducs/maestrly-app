@@ -1,29 +1,16 @@
 import { z } from 'zod'
 import { ArtifactHostError } from './errors.js'
 import { isArtifactId, randomId } from './ids.js'
-import {
-  COMMENTS_PAGE_SIZE,
-  MAX_COMMENT_CHARS,
-  MAX_COMMENTS_PER_ARTIFACT,
-  MAX_QUOTE_CHARS,
-  MAX_QUOTE_CONTEXT_CHARS,
-  MAX_SELECTOR_CHARS,
-} from './limits.js'
+import { COMMENTS_PAGE_SIZE, MAX_COMMENT_CHARS, MAX_COMMENTS_PER_ARTIFACT, MAX_SELECTOR_CHARS } from './limits.js'
 import { parseInput } from './schemas.js'
 import type { ActivityRecorder } from './sharing-admin.js'
+import { type CommentAnchor, MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS } from './shell/contract.js'
 import type { ArtifactStore } from './store/artifact-store.js'
 import type { CommentAuthorKind, CommentRecord, CommentStore } from './store/comment-store.js'
 
 export type { CommentAuthorKind } from './store/comment-store.js'
 
-/**
- * Where a comment points. The quote is the selected text with a little of what surrounds it, which finds the passage
- * again even after the page changes around it; the selector is only a hint of where to look first.
- */
-export interface CommentAnchor {
-  quote?: { exact: string; prefix: string; suffix: string }
-  hint?: { selector: string }
-}
+export type { CommentAnchor } from './shell/contract.js'
 
 export interface CommentView {
   id: string
@@ -188,12 +175,14 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       artifact(artifactId)
       const input = parseInput(newComment, raw)
       let version: number
+      let parentId: string | null = null
       if (input.parentId !== undefined) {
         const parent = comments.get(input.parentId)
         // Threads are one level deep: a reply answers the comment that started the thread.
         if (!parent || parent.artifactId !== artifactId || parent.parentId !== null) throw notFound('Comment')
         if (input.anchor) throw new ArtifactHostError('invalid_input', 'A reply has no anchor of its own')
         version = parent.version
+        parentId = parent.id
       } else {
         if (input.version === undefined) throw new ArtifactHostError('invalid_input', 'version: Required')
         if (!store.getVersion(artifactId, input.version)) throw notFound(`Version ${input.version}`)
@@ -205,7 +194,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         id: randomId(),
         artifactId,
         version,
-        parentId: input.parentId ?? null,
+        parentId,
         authorKind: author.kind,
         principalId: author.principalId,
         authorName: author.name,

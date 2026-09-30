@@ -66,6 +66,7 @@ export async function startHarness(options: { ownerName?: string } = {}): Promis
     quotaBytes: 10 * 1024 * 1024,
     sharing,
     onActivity,
+    ownerName,
   })
   const server = createPublicServer({
     store,

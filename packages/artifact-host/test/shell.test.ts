@@ -17,6 +17,8 @@ describe('embedded shell assets', () => {
       'contract.js',
       'gate.js',
       'gate-model.js',
+      'comments.js',
+      'comments-model.js',
       'api.js',
       'dom.js',
       'viewer.css',
@@ -68,6 +70,68 @@ describe('parseBridgeMessage', () => {
     expect(parseBridgeMessage(null)).toBeNull()
     expect(parseBridgeMessage('ready')).toBeNull()
     expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'navigate' })).toBeNull()
+  })
+
+  it('takes a selection as a hint, capped to what a comment may quote', () => {
+    const selection = (extra: Record<string, unknown>) =>
+      parseBridgeMessage({ source: 'maestrly-bridge', type: 'selection', ...extra })
+    expect(
+      selection({
+        quote: { exact: 'x'.repeat(900), prefix: 'p'.repeat(100), suffix: 's'.repeat(100) },
+        rect: { x: 1, y: 2.5, width: 30, height: 12, extra: 'ignored' },
+      })
+    ).toEqual({
+      type: 'selection',
+      quote: { exact: 'x'.repeat(500), prefix: 'p'.repeat(64), suffix: 's'.repeat(64) },
+      rect: { x: 1, y: 2.5, width: 30, height: 12 },
+    })
+    expect(selection({ quote: null, rect: null })).toEqual({ type: 'selection', quote: null, rect: null })
+    expect(selection({})).toEqual({ type: 'selection', quote: null, rect: null })
+    // A quote without text, or a rectangle that is not numbers, is no selection at all.
+    expect(
+      selection({ quote: { exact: '', prefix: '', suffix: '' }, rect: { x: 0, y: 0, width: 1, height: 1 } })
+    ).toEqual({ type: 'selection', quote: null, rect: null })
+    expect(selection({ quote: { exact: 42 }, rect: { x: 0, y: 0, width: 1, height: 1 } })).toEqual({
+      type: 'selection',
+      quote: null,
+      rect: null,
+    })
+    for (const rect of [
+      { x: '1', y: 2, width: 3, height: 4 },
+      { x: 1, y: 2, width: Number.NaN, height: 4 },
+      'nope',
+      null,
+    ])
+      expect(selection({ quote: { exact: 'text', prefix: '', suffix: '' }, rect })).toBeNull()
+    expect(selection({ quote: { exact: 'text' }, rect: { x: 0, y: 0, width: 1, height: 1 } })).toEqual({
+      type: 'selection',
+      quote: { exact: 'text', prefix: '', suffix: '' },
+      rect: { x: 0, y: 0, width: 1, height: 1 },
+    })
+  })
+
+  it('takes found and missing anchors only as lists of comment IDs', () => {
+    const a = 'A'.repeat(22)
+    const b = 'B'.repeat(22)
+    const anchors = (found: unknown, missing: unknown) =>
+      parseBridgeMessage({ source: 'maestrly-bridge', type: 'anchors', found, missing })
+    expect(anchors([a], [b])).toEqual({ type: 'anchors', found: [a], missing: [b] })
+    expect(anchors([], [])).toEqual({ type: 'anchors', found: [], missing: [] })
+    expect(anchors([a, '<script>', 42, 'short'], [b])).toBeNull()
+    expect(anchors('nope', [])).toBeNull()
+    expect(anchors([a], undefined)).toBeNull()
+    expect(
+      anchors(
+        Array.from({ length: 201 }, () => a),
+        []
+      )
+    ).toBeNull()
+    expect(
+      anchors(
+        Array.from({ length: 200 }, () => a),
+        []
+      )?.type
+    ).toBe('anchors')
   })
 
   it('caps error messages', () => {

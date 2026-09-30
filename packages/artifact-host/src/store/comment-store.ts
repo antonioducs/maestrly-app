@@ -1,6 +1,8 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 
-export type CommentAuthorKind = 'owner' | 'agent' | 'invited' | 'approved' | 'guest'
+import type { CommentAuthorKind } from '../shell/contract.js'
+
+export type { CommentAuthorKind } from '../shell/contract.js'
 export type CommentStatus = 'open' | 'resolved'
 
 export interface CommentRecord {

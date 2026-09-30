@@ -2,6 +2,7 @@ import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { gateFor, resolveAccess } from '../access.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
+import { createCommentService } from '../comments.js'
 import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
 import { digest, newSecretToken, randomId } from '../ids.js'
@@ -23,8 +24,10 @@ import {
 } from '../shell/contract.js'
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
 import type { BlobStore } from '../store/blobs.js'
+import { CommentStore } from '../store/comment-store.js'
 import { type PrincipalRecord, type SharingFields, SharingStore } from '../store/sharing-store.js'
 import { signCapability, verifyCapability } from './capability.js'
+import { createCommentRoutes } from './comment-routes.js'
 import { deviceInfo } from './device-info.js'
 import { contentHeaders, shellHeaders } from './headers.js'
 import { injectBridge } from './inject-bridge.js'
@@ -63,6 +66,7 @@ export interface PublicServerDeps {
   ownerName?: string
   recordActivity?: ActivityRecorder
   onChange?: (artifactId: string) => void
+  maxComments?: number
 }
 
 export interface PublicServer {
@@ -73,6 +77,7 @@ export interface PublicServer {
 const SHELL_ASSET = /^\/_maestrly\/shell\/([0-9a-f]{16})\/([a-z0-9-]+\.(?:js|css))$/
 const VIEWER = /^\/a\/([A-Za-z0-9_-]{22})$/
 const API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/([a-z]+(?:[/-][a-z]+)*)$/
+const COMMENT_API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/comments\/([A-Za-z0-9_-]{22})(?:\/(replies|resolve))?$/
 const CONTENT = /^\/c\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.*)$/
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]']
 const BRIDGE_PATH = '_maestrly/bridge.js'
@@ -100,12 +105,17 @@ export function allowedOrigin(
   return null
 }
 
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE'
+
 interface Route {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method: Method
   /** A read that changes something: it must come from the viewer's own script, like a write. */
   viewerOnly?: boolean
   handle: (ctx: ApiContext) => void
 }
+
+/** Routes by method and action, such as `POST frame`. */
+const routeKey = (method: string, action: string): string => `${method} ${action}`
 
 export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const { store, blobs, clock } = deps
@@ -173,7 +183,12 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     return sharing.getPrincipal(request.principalId)?.revokedAt === null ? 'pending' : null
   }
 
-  const routes: Record<string, Route> = {
+  const routes = new Map<string, Route>()
+  const route = (method: Method, action: string, handle: Route['handle'], viewerOnly = false): void => {
+    routes.set(routeKey(method, action), { method, viewerOnly, handle })
+  }
+
+  const core: Record<string, Route> = {
     state: {
       method: 'GET',
       handle(ctx) {
@@ -247,36 +262,56 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     },
   }
 
+  for (const [action, entry] of Object.entries(core)) route(entry.method, action, entry.handle)
+
   const visitorRoutes = createVisitorRoutes({ sharing, limiter, ownerName, record, onChange, startSession })
-  const methods: Record<string, Pick<Route, 'method' | 'viewerOnly'>> = {
-    'invite/preview': { method: 'POST' },
-    'invite/decline': { method: 'POST' },
-    'session/invite': { method: 'POST' },
-    'session/code': { method: 'POST' },
-    'session/name': { method: 'PUT' },
-    'access-requests': { method: 'POST' },
-    'access-requests/current': { method: 'GET', viewerOnly: true },
+  const visitorMethods: Record<string, Method> = {
+    'invite/preview': 'POST',
+    'invite/decline': 'POST',
+    'session/invite': 'POST',
+    'session/code': 'POST',
+    'session/name': 'PUT',
+    'access-requests': 'POST',
+    'access-requests/current': 'GET',
   }
-  for (const [action, route] of Object.entries(methods)) routes[action] = { ...route, handle: visitorRoutes[action]! }
+  for (const [action, method] of Object.entries(visitorMethods))
+    route(method, action, visitorRoutes[action]!, action === 'access-requests/current')
+
+  const commentRoutes = createCommentRoutes({
+    comments: createCommentService({
+      store,
+      comments: new CommentStore(store.db),
+      clock,
+      maxComments: deps.maxComments,
+      onChange,
+      record,
+    }),
+    ownerName,
+  })
+  route('GET', 'comments', commentRoutes.list)
+  route('POST', 'comments', commentRoutes.create)
+  route('POST', 'comments/:id/replies', commentRoutes.reply)
+  route('POST', 'comments/:id/resolve', commentRoutes.resolve)
+  route('DELETE', 'comments/:id', commentRoutes.remove)
 
   async function handleApi(
     req: http.IncomingMessage,
     res: http.ServerResponse,
     id: string,
     action: string,
-    origin: string
+    origin: string,
+    params: { commentId: string | null; query: URLSearchParams }
   ): Promise<void> {
-    const route = Object.hasOwn(routes, action) ? routes[action] : undefined
     const method = req.method ?? 'GET'
-    if (!route || (route.method !== method && !(route.method === 'GET' && !route.viewerOnly && method === 'HEAD')))
-      return apiNotFound(res)
+    const found = routes.get(routeKey(method === 'HEAD' ? 'GET' : method, action))
+    if (!found || (method === 'HEAD' && found.viewerOnly)) return apiNotFound(res)
 
     const fromViewer = req.headers[ARTIFACT_HEADER] === '1'
     if (method !== 'GET' && method !== 'HEAD') {
       // The shell's own fetches are the only legitimate writers: exact origin, custom header, and JSON bodies.
       if (req.headers.origin !== origin || !fromViewer) return apiForbidden(res)
       if (method !== 'DELETE' && !isJsonContent(req.headers['content-type'])) return apiForbidden(res)
-    } else if (route.viewerOnly && !fromViewer) return apiForbidden(res)
+    } else if (found.viewerOnly && !fromViewer) return apiForbidden(res)
     if (!limiter.allow('host', '')) return json(res, 429, { error: 'rate_limited' })
 
     let body: Record<string, unknown> = {}
@@ -300,7 +335,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (access && now - access.session.lastSeenAt > SESSION_TOUCH_INTERVAL_MS)
       store.touchSession(access.session.id, now, lifetime(principal, fields, now).expiresAt)
 
-    route.handle({
+    found.handle({
       req,
       res,
       artifactId: artifact.id,
@@ -311,6 +346,8 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       session,
       access,
       visitor: readCookie(req, VISITOR_COOKIE),
+      commentId: params.commentId,
+      query: params.query,
     })
   }
 
@@ -390,8 +427,22 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (VIEWER.test(pathname) && reading)
       return send(res, 200, { ...shellHeaders(origin), 'content-type': 'text/html; charset=utf-8' }, shellDocument())
 
+    const search = new URLSearchParams(query >= 0 ? url.slice(query + 1) : '')
     const api = API.exec(pathname)
-    if (api) return handleApi(req, res, api[1]!, api[2]!, origin)
+    if (api) return handleApi(req, res, api[1]!, api[2]!, origin, { commentId: null, query: search })
+    const commentApi = COMMENT_API.exec(pathname)
+    if (commentApi)
+      return handleApi(
+        req,
+        res,
+        commentApi[1]!,
+        commentApi[3] ? `comments/:id/${commentApi[3]}` : 'comments/:id',
+        origin,
+        {
+          commentId: commentApi[2]!,
+          query: search,
+        }
+      )
 
     const content = CONTENT.exec(pathname)
     if (content && reading) return handleContent(res, content[1]!, content[2]!, origin)

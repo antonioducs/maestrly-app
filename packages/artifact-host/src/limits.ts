@@ -43,9 +43,7 @@ export const VISITOR_COOKIE_TTL_MS = 30 * 24 * HOUR_MS
 /** Comments of one artifact that were not deleted, replies included. */
 export const MAX_COMMENTS_PER_ARTIFACT = 2000
 export const MAX_COMMENT_CHARS = 4000
-/** The quoted passage a comment is anchored to. */
-export const MAX_QUOTE_CHARS = 500
-/** The text kept before and after the quote to find it again. */
-export const MAX_QUOTE_CONTEXT_CHARS = 64
+/** The quoted passage a comment is anchored to, and the text kept before and after it to find it again. */
+export { MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS } from './shell/contract.js'
 export const MAX_SELECTOR_CHARS = 300
 export const COMMENTS_PAGE_SIZE = 200
