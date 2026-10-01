@@ -14,6 +14,7 @@ export class ServerArtifacts {
   private identity: string | null = null
   private pending: Promise<ArtifactServerStatus> | null = null
   private failed = false
+  private revision = 0
   constructor(
     private readonly deps: {
       fleet: Pick<FleetClientService, 'call' | 'hasFeature' | 'getConnection'>
@@ -55,6 +56,7 @@ export class ServerArtifacts {
     return this.pending
   }
   private async load(): Promise<ArtifactServerStatus> {
+    const revision = this.revision
     const identity = this.currentIdentity()
     if (identity !== this.identity) {
       this.cached = null
@@ -68,18 +70,19 @@ export class ServerArtifacts {
       return this.status()
     try {
       const host = fleetArtifactHostSchema.parse(await this.deps.fleet.call('artifactHost'))
-      if (identity === this.currentIdentity()) {
+      if (identity === this.currentIdentity() && revision === this.revision) {
         this.cached = host
         this.failed = false
       }
     } catch {
-      if (identity === this.currentIdentity()) this.failed = true
+      if (identity === this.currentIdentity() && revision === this.revision) this.failed = true
     }
     return this.status()
   }
   async update(patch: FleetArtifactSettingsPatch): Promise<FleetArtifactHost> {
     const identity = this.currentIdentity()
     if (!identity || !this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) throw serverUnavailable()
+    this.revision++
     try {
       const host = fleetArtifactHostSchema.parse(await this.deps.fleet.call('artifactHostPatch', { body: patch }))
       if (identity !== this.currentIdentity()) throw serverUnavailable()

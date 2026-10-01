@@ -128,3 +128,20 @@ it('refuses a remote admin result after its pairing was replaced', async () => {
   resolve({ ok: true, value: null })
   await expect(getting).rejects.toMatchObject({ code: 'host_unavailable' })
 })
+
+it('keeps newer settings when an older refresh finishes after a settings update', async () => {
+  const h = fixture()
+  let resolve!: (value: unknown) => void
+  h.call.mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r
+      })
+  )
+  const refresh = h.server.refresh()
+  await h.server.update({ enabled: true })
+  resolve({ ...h.host, settings: { ...h.host.settings, enabled: false } })
+  await refresh
+  expect(h.server.host()?.settings.enabled).toBe(true)
+  expect(h.server.status().state).toBe('ready')
+})
