@@ -1,3 +1,4 @@
+import { fleetArtifactSettingsPatchSchema } from '@maestrly/bot-fleet-protocol'
 import { isArtifactId } from '@maestrly/artifact-host'
 import { z } from 'zod'
 import {
@@ -51,6 +52,11 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
       activate: true,
     })
   })
+  reg.mhandle('artifacts:server-status', async () => service().serverStatus())
+  reg.mhandle('artifacts:server-host-get', async () => service().serverHost())
+  reg.mhandle('artifacts:server-host-set', async (_e, patch: unknown) =>
+    service().setServerHost(fleetArtifactSettingsPatchSchema.parse(patch))
+  )
   reg.mhandle('artifacts:status', async () => service().status())
   reg.mhandle('artifacts:start', async () => service().start())
   reg.mhandle('artifacts:settings-get', async () => service().getSettings())

@@ -245,6 +245,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "fleetInstallerDisconnect",
   "fleetInstallerInstallLocal",
   "fleetInstallerInstallRemote",
+  "fleetInstallerProvideBotEnvironment",
   "fleetInstallerRemove",
   "fleetInstallerSetPrivateNetwork",
   "fleetInstallerStatus",

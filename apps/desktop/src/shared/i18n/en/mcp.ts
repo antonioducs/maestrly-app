@@ -635,6 +635,11 @@ export default {
       invalidEncoding: '{{path}} is not valid base64.',
       inlineTooLarge: 'Inline files exceed 5 MiB in total. Write them to a folder and publish it with directory.',
       directoryRefused: 'The directory cannot be published: {{message}}',
+      serverUnavailable: 'The bot server is unavailable. Check its connection in Settings → Bots.',
+      serverOff: 'Artifact hosting is turned off on the bot server. Enable it in Settings → Artifacts.',
+      botOff: 'Publishing artifacts is turned off for this bot. Ask the owner to enable it.',
+      noViewer:
+        'No viewer address is available. Check the server tunnel or set its public address in Settings → Artifacts.',
       hostDisabled: 'Artifact hosting is turned off in Settings → Artifacts.',
       portInUse: 'Port {{port}} is in use. Change it in Settings → Artifacts.',
       hostUnavailable: 'The artifact host is unavailable. Check Settings → Artifacts.',

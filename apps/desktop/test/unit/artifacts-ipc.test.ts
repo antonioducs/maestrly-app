@@ -15,6 +15,9 @@ function setup() {
     mhandle: (channel, fn) => void guarded.set(channel, fn as Handler),
   }
   const service = {
+    serverStatus: vi.fn(async () => ({ state: 'absent' })),
+    serverHost: vi.fn(async () => null),
+    setServerHost: vi.fn(async (input: unknown) => input),
     listAll: vi.fn(async () => []),
     detail: vi.fn(async () => null),
     remove: vi.fn(async () => ({ removed: true, freedBytes: 0 })),
@@ -50,6 +53,7 @@ function setup() {
 const id = 'A'.repeat(22)
 const person = 'B'.repeat(22)
 const settings = {
+  publishTo: 'local',
   hostEnabled: true,
   port: 4010,
   quotaGb: 2,
@@ -79,6 +83,9 @@ describe('artifacts IPC', () => {
       'artifacts:open-in-conversation',
       'artifacts:person-revoke',
       'artifacts:request-decide',
+      'artifacts:server-host-get',
+      'artifacts:server-host-set',
+      'artifacts:server-status',
       'artifacts:sessions-revoke',
       'artifacts:settings-get',
       'artifacts:settings-set',
@@ -218,4 +225,12 @@ describe('artifacts IPC', () => {
     expect(service.markSeen).toHaveBeenCalledWith(id)
     expect(await call('artifacts:unseen-count')).toBe(0)
   })
+})
+
+it('validates server settings before calling the owner service', async () => {
+  const { call, service } = setup()
+  await expect(call('artifacts:server-host-set', { publicAddress: 'https://server.example/private' })).rejects.toThrow()
+  expect(service.setServerHost).not.toHaveBeenCalled()
+  await call('artifacts:server-host-set', { enabled: true, quotaGb: 2 })
+  expect(service.setServerHost).toHaveBeenCalledWith({ enabled: true, quotaGb: 2 })
 })

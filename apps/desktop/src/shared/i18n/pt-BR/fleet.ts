@@ -1118,6 +1118,25 @@ export default {
     },
   },
   botServer: {
+    hosts: {
+      question: 'O que este servidor deve hospedar?',
+      'bots-and-artifacts': {
+        title: 'Bots e artefatos',
+        description: 'Execute bots e publique artefatos neste servidor.',
+      },
+      'artifacts-only': {
+        title: 'Apenas artefatos',
+        description: 'Publique artefatos agora. Baixe o ambiente dos bots ao criar seu primeiro bot.',
+      },
+      localExpectations:
+        'Baixa as imagens necessárias para sua escolha. O tempo de instalação depende da conexão e do computador.',
+    },
+    warnings: {
+      'artifacts-enable-failed':
+        'A instalação do servidor terminou, mas não foi possível ativar a hospedagem de artefatos. Ative-a nas configurações de artefatos.',
+    },
+    artifactsTunnelFailed:
+      'A conexão com o visualizador de artefatos está indisponível. A conexão com o servidor de bots é independente.',
     description: 'Escolha onde os bots vão rodar e gerencie o servidor.',
     loading: 'Carregando servidor de bots…',
     back: 'Voltar',
@@ -1176,6 +1195,7 @@ export default {
         'Desligado, os bots só alcançam a internet pública. Ligue para usar um modelo rodando no servidor, como o Ollama. Cada ambiente passa a seguir quando reiniciar.',
     },
     job: {
+      'bot-environment': 'Preparando o ambiente dos bots',
       'install-local': 'Instalando servidor de bots neste computador',
       'install-remote': 'Instalando servidor de bots no servidor',
       update: 'Atualizando servidor de bots',

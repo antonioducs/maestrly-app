@@ -11,6 +11,7 @@ describe('artifact settings', () => {
   it('defaults to hosting on port 4010 with 2 GB, no public address and links that last 30 days', () => {
     expect(getArtifactSettings()).toEqual(DEFAULT_ARTIFACT_SETTINGS)
     expect(DEFAULT_ARTIFACT_SETTINGS).toEqual({
+      publishTo: 'local',
       hostEnabled: true,
       port: 4010,
       quotaGb: 2,
@@ -22,6 +23,7 @@ describe('artifact settings', () => {
 
   it('persists valid settings', () => {
     const saved = {
+      publishTo: 'server',
       hostEnabled: false,
       port: 5000,
       quotaGb: 3,
@@ -90,4 +92,12 @@ describe('artifact settings', () => {
     setAppSetting('artifacts.linkExpiryDays', '9000')
     expect(getArtifactSettings()).toEqual(DEFAULT_ARTIFACT_SETTINGS)
   })
+})
+
+it('reads older settings as local and rejects unknown publishing destinations', () => {
+  expect(getArtifactSettings().publishTo).toBe('local')
+  const { publishTo: _unused, ...old } = DEFAULT_ARTIFACT_SETTINGS
+  expect(setArtifactSettings(old).publishTo).toBe('local')
+  expect(() => setArtifactSettings({ ...old, publishTo: 'cloud' })).toThrow()
+  expect(getArtifactSettings().publishTo).toBe('local')
 })

@@ -171,6 +171,11 @@ import { registerPlatformIpc } from './platform/platform-ipc'
 import { registerBotIpc } from './bot/ipc'
 import { registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
+import { fleetInstallerService } from './fleet/installer/service'
+import { ServerArtifacts } from './artifacts/server-artifacts'
+import { createDesktopSources, localSource } from './artifacts/sources'
+import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
+import { botRuntimeForConversation } from './fleet/instance'
 import { fleetClientService } from './fleet/client/service'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
@@ -247,7 +252,34 @@ function initArtifacts(): void {
     onEvent: createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound }),
   })
   let thumbnails: ThumbnailQueue | null = null
+  const server = new ServerArtifacts({
+    fleet: fleetClientService,
+    viewerPort: () => fleetInstallerService.artifactsViewerPort(),
+  })
+  const local = localSource({ host: artifactHost, settings: getArtifactSettings })
+  const sources = isBotMode()
+    ? createBotSources((id) => {
+        const bot = botRuntimeForConversation(id)
+        return bot?.artifactsEnabled ? botArtifactSource(bot) : null
+      })
+    : createDesktopSources({
+        local,
+        server: () => server.source(),
+        settings: getArtifactSettings,
+        unavailable: () => server.unavailable(),
+      })
+  const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
+  if (!isBotMode())
+    fleetClientService.onArtifactEvent = (event) => {
+      void server.refresh().then(() => broadcast('artifacts:changed'))
+      if ('artifactId' in event) onArtifactEvent(event)
+      else broadcast('artifacts:changed')
+    }
   const service = new ArtifactsService({
+    sources,
+    emitChanged: () => broadcast('artifacts:changed'),
+    server: isBotMode() ? undefined : server,
+    botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
     host: artifactHost,
     vault: new InviteVault(),
     settings: getArtifactSettings,
@@ -940,7 +972,11 @@ app.whenReady().then(async () => {
   if (executor.autoStart && executor.connectionId) void embeddedRunnerHost.start(executor.connectionId)
   void botHost.restore()
   // Existing artifacts are served again at launch; a first artifact starts the host on demand.
-  if (getArtifactSettings().hostEnabled && existsSync(path.join(artifactsDataDir(), 'artifacts.sqlite')))
+  if (
+    !isBotMode() &&
+    getArtifactSettings().hostEnabled &&
+    existsSync(path.join(artifactsDataDir(), 'artifacts.sqlite'))
+  )
     void getArtifactsService().start()
   app.on('activate', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {

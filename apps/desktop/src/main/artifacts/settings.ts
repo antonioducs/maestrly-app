@@ -8,6 +8,7 @@ import {
 import { getAppFlag, getAppSetting, setAppFlag, setAppSetting } from '../store'
 
 const KEYS = {
+  publishTo: 'artifacts.publishTo',
   hostEnabled: 'artifacts.hostEnabled',
   port: 'artifacts.port',
   quotaGb: 'artifacts.quotaGb',
@@ -58,6 +59,7 @@ const publicAddress = z
 
 export const artifactSettingsSchema = z
   .object({
+    publishTo: z.enum(['local', 'server']).default('local'),
     hostEnabled: z.boolean(),
     port,
     quotaGb,
@@ -76,6 +78,7 @@ function stored<T>(key: string, schema: z.ZodType<T>, fallback: T, read: (raw: s
 
 export function getArtifactSettings(): ArtifactSettings {
   return {
+    publishTo: stored(KEYS.publishTo, z.enum(['local', 'server']), DEFAULT_ARTIFACT_SETTINGS.publishTo),
     hostEnabled: getAppFlag(KEYS.hostEnabled, DEFAULT_ARTIFACT_SETTINGS.hostEnabled),
     port: stored(KEYS.port, port, DEFAULT_ARTIFACT_SETTINGS.port, Number),
     quotaGb: stored(KEYS.quotaGb, quotaGb, DEFAULT_ARTIFACT_SETTINGS.quotaGb, Number),
@@ -93,6 +96,7 @@ export function getArtifactSettings(): ArtifactSettings {
 /** Validates the whole settings object before writing any of it; throws on invalid input. */
 export function setArtifactSettings(input: unknown): ArtifactSettings {
   const settings = artifactSettingsSchema.parse(input)
+  setAppSetting(KEYS.publishTo, settings.publishTo)
   setAppFlag(KEYS.hostEnabled, settings.hostEnabled)
   setAppSetting(KEYS.port, String(settings.port))
   setAppSetting(KEYS.quotaGb, String(settings.quotaGb))

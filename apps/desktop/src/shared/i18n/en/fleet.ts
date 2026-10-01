@@ -1117,6 +1117,24 @@ export default {
     },
   },
   botServer: {
+    hosts: {
+      question: 'What should this server host?',
+      'bots-and-artifacts': {
+        title: 'Bots and artifacts',
+        description: 'Run bots and publish artifacts on this server.',
+      },
+      'artifacts-only': {
+        title: 'Artifacts only',
+        description: 'Publish artifacts now. Download the bot environment when you create your first bot.',
+      },
+      localExpectations:
+        'Downloads the images needed for your choice. Setup time depends on your connection and computer.',
+    },
+    warnings: {
+      'artifacts-enable-failed':
+        'Server setup finished, but artifact hosting could not be enabled. Enable it in artifact settings.',
+    },
+    artifactsTunnelFailed: 'The artifact viewer connection is unavailable. The bot server connection is separate.',
     description: 'Choose where your bots will run and manage their server.',
     loading: 'Loading bot server…',
     back: 'Back',
@@ -1175,6 +1193,7 @@ export default {
         'Off, bots only reach the public internet. Turn it on to use a model running on the server, such as Ollama. Each environment follows when it restarts.',
     },
     job: {
+      'bot-environment': 'Preparing the bot environment',
       'install-local': 'Installing bot server on this computer',
       'install-remote': 'Installing bot server on the server',
       update: 'Updating bot server',

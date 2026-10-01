@@ -1,3 +1,4 @@
+import type { ArtifactHostEvent } from '@maestrly/artifact-host'
 import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -61,6 +62,7 @@ export class FleetClientService {
   private snapshot: FleetSnapshot = emptySnapshot()
   private generation = 0
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
+  onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
 
   start(): void {
@@ -91,6 +93,7 @@ export class FleetClientService {
   private setConnection(patch: Partial<FleetConnectionView>): void {
     this.connection = { ...this.connection, ...patch }
     broadcast('fleet:connection', this.connection)
+    if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
   }
 
   getConnection(): FleetConnectionView {
@@ -227,6 +230,15 @@ export class FleetClientService {
 
   private applyEvent(event: FleetGatewayEvent): void {
     switch (event.type) {
+      case 'hello':
+        this.onArtifactEvent?.({ type: 'changed' })
+        break
+      case 'artifact.changed':
+        this.onArtifactEvent?.({ type: 'changed', artifactId: event.artifactId })
+        break
+      case 'artifact.activity':
+        this.onArtifactEvent?.({ type: 'activity', artifactId: event.artifactId, kind: event.kind })
+        break
       case 'bot.updated':
         // Archiving emits the archived bot before `bot.removed`; it must not stay listed whatever the order.
         this.snapshot.bots = [
