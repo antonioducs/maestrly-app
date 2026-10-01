@@ -23,6 +23,7 @@ export interface TunnelOptions {
   /** A free loopback port, used when `listenPort` is taken. */
   freePort?: () => Promise<number>
   onState?: (state: FleetTunnelState) => void
+  onForwardError?: (error: InstallerError | null) => void
 }
 
 /**
@@ -85,6 +86,7 @@ export class SshTunnel {
     socket.pause()
     session.forward(this.options.remotePort ?? BOT_SERVER_GATEWAY_PORT).then(
       (channel) => {
+        if (this.lastForwardError) this.options.onForwardError?.(null)
         this.lastForwardError = null
         if (socket.destroyed) return channel.destroy()
         channel.on('error', () => socket.destroy())
@@ -95,6 +97,7 @@ export class SshTunnel {
       },
       (error: unknown) => {
         this.lastForwardError = error instanceof InstallerError ? error : new InstallerError('unknown', String(error))
+        this.options.onForwardError?.(this.lastForwardError)
         socket.destroy()
       }
     )

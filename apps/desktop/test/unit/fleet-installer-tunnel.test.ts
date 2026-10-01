@@ -38,11 +38,11 @@ async function until(check: () => boolean, timeout = 3000) {
   }
 }
 
-async function setup(options: { key?: string | null; listenPort?: number } = {}) {
+async function setup(options: { key?: string | null; listenPort?: number; remotePort?: number } = {}) {
   const target = await gateway()
   const fake: FakeSshServer = await startFakeSshServer({
     users: {},
-    forwardTo: (port) => (port === 7443 ? target : null),
+    forwardTo: (port) => (port === (options.remotePort ?? 7443) ? target : null),
   })
   cleanups.push(() => fake.close())
   const key = generateSshKey('maestrly-synthetic')
@@ -52,6 +52,7 @@ async function setup(options: { key?: string | null; listenPort?: number } = {})
     target: { host: '127.0.0.1', port: fake.port, username: 'root' },
     hostKey: fake.fingerprint,
     privateKey: () => (options.key === undefined ? key.privateKey : options.key),
+    remotePort: options.remotePort,
     listenPort: options.listenPort ?? (await freePort()),
     delay: () => 20,
     freePort,
@@ -68,6 +69,17 @@ describe('SSH tunnel to the gateway', () => {
     await until(() => tunnel.state === 'connected')
     expect(await get(port)).toBe('synthetic gateway')
     expect(states).toEqual(['connecting', 'connected'])
+  })
+
+  it('forwards the artifact viewer to port 4010 independently of the gateway', async () => {
+    const api = await setup()
+    const viewer = await setup({ remotePort: 4010 })
+    const apiPort = await api.tunnel.start()
+    const viewerPort = await viewer.tunnel.start()
+    await until(() => api.tunnel.state === 'connected' && viewer.tunnel.state === 'connected')
+    expect(await get(viewerPort)).toBe('synthetic gateway')
+    await viewer.tunnel.stop()
+    expect(await get(apiPort)).toBe('synthetic gateway')
   })
 
   it('reconnects after the server drops the connection', async () => {

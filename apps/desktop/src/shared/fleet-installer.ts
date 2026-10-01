@@ -22,6 +22,10 @@ export interface FleetInstallRecord {
   version: string | null
   /** This computer's port: the gateway's published port, or the local end of the SSH tunnel. */
   port: number
+  /** Local viewer port; remote installs forward it separately from the gateway. */
+  artifactsPort?: number | null
+  /** Port published on the remote server, preserved across desktop restarts. */
+  remoteArtifactsPort?: number | null
   allowPrivateNetwork: boolean
   remote: (FleetRemoteTarget & { hostKey: string; keyTag: string }) | null
   installedAt: string
@@ -109,6 +113,8 @@ export interface FleetInstallerStatus {
   appVersion: string
   update: FleetUpdateState
   tunnel: FleetTunnelState
+  artifactsTunnel?: FleetTunnelState
+  artifactsTunnelError?: FleetInstallerError | null
   /** Where Maestrly keeps its SSH key to a VPS; null without one. */
   keyPersistence: 'secure' | 'memory' | null
   job: FleetInstallerJob | null

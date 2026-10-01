@@ -26,6 +26,7 @@ import {
   type LocalDockerCheck,
 } from '../../../shared/fleet-installer'
 import { compareSemver } from '../../../shared/update'
+import { getArtifactSettings } from '../../artifacts/settings'
 import { broadcast } from '../../window-ipc'
 import { fleetClientService, type FleetClientService } from '../client/service'
 import { DockerHost, lastLine } from './docker-host'
@@ -82,6 +83,7 @@ export interface FleetInstallerDeps {
   env: NodeJS.ProcessEnv
   /** Read when used: the app sets its data directory after modules load. */
   userDataDir: () => string
+  desktopArtifactsPort?: () => number
   hostname: string
   timezone: string | undefined
   localRunner: () => CommandRunner
@@ -182,6 +184,8 @@ export class FleetInstallerService {
   private job: FleetInstallerJob | null = null
   private controller: AbortController | null = null
   private tunnel: InstallerTunnel | null = null
+  private artifactsTunnel: InstallerTunnel | null = null
+  private artifactsTunnelError: ReturnType<typeof installerErrorOf> | null = null
   /** What the last server update's `environment-updates` step scheduled, for `updateBots` to report. */
   private lastEnvironmentUpdate: FleetEnvironmentUpdateResult | null = null
 
@@ -220,6 +224,8 @@ export class FleetInstallerService {
       appVersion: this.deps.appVersion,
       update: record ? this.serverUpdateState(record) : 'none',
       tunnel: this.tunnel?.state ?? 'off',
+      artifactsTunnel: this.artifactsTunnel?.state ?? 'off',
+      artifactsTunnelError: this.artifactsTunnel?.lastForwardError ?? this.artifactsTunnelError,
       keyPersistence: record?.mode === 'remote' ? this.deps.store.keyPersistence() : null,
       job: this.job ? structuredClone(this.job) : null,
     }
@@ -321,13 +327,19 @@ export class FleetInstallerService {
         if (!this.deps.isPackaged && (await host.devFleetRunning())) throw new InstallerError('dev-fleet-running')
         detail([status.engine, status.version].filter(Boolean).join(' ') || null)
       })
+      let artifactsPort: number
       const port = await context.step('files', async () => {
         const record = this.deps.store.readRecord()
         const port =
           (record?.mode === 'local' ? record.port : null) ??
           (await host.publishedPort()) ??
           (await this.deps.freePort(BOT_SERVER_GATEWAY_PORT))
+        artifactsPort =
+          parseBotServerEnv((await host.readEnv()) ?? '').artifactsPort ??
+          (record?.mode === 'local' ? record.artifactsPort : null) ??
+          (await this.deps.freePort((this.deps.desktopArtifactsPort?.() ?? 4010) + 1))
         const env = renderBotServerEnv({
+          artifactsPort,
           gatewayImage: images.gateway,
           botImage: images.bot,
           port,
@@ -347,6 +359,7 @@ export class FleetInstallerService {
       await this.pair(context, origin, input.deviceName, () => host.pair())
       this.deps.store.writeRecord({
         mode: 'local',
+        artifactsPort: artifactsPort!,
         version: this.deps.appVersion,
         port,
         allowPrivateNetwork: input.allowPrivateNetwork,
@@ -377,6 +390,8 @@ export class FleetInstallerService {
       const pinned = sameServer?.hostKey ?? null
       // Setting up the same server again (its key was lost or refused): its idle tunnel gives the port back.
       if (sameServer) {
+        await this.artifactsTunnel?.stop()
+        this.artifactsTunnel = null
         await this.tunnel?.stop()
         this.tunnel = null
       }
@@ -428,6 +443,7 @@ export class FleetInstallerService {
               gatewayImage: images.gateway,
               botImage: images.bot,
               port: BOT_SERVER_GATEWAY_PORT,
+              artifactsPort: 4010,
               displayName: displayNameFor(probe.hostname || input.target.host),
               egress: input.allowPrivateNetwork ? 'open' : 'public',
               timezone: timezoneOrUtc(this.deps.timezone),
@@ -475,6 +491,8 @@ export class FleetInstallerService {
           const current = parseBotServerEnv(env)
           const record: FleetInstallRecord = {
             mode: 'remote',
+            artifactsPort: await this.deps.freePort(previous?.artifactsPort ?? 4011),
+            remoteArtifactsPort: current.artifactsPort ?? 4010,
             version: joining ? imageVersion(current.gatewayImage ?? '') : this.deps.appVersion,
             port,
             // Without the setting the gateway lets bots reach private networks, as before it existed.
@@ -572,6 +590,8 @@ export class FleetInstallerService {
 
   private async startTunnel(record: FleetInstallRecord): Promise<void> {
     if (!record.remote) return
+    await this.artifactsTunnel?.stop()
+    this.artifactsTunnel = null
     await this.tunnel?.stop()
     const tunnel = this.createTunnel({
       target: targetOf(record.remote),
@@ -587,7 +607,49 @@ export class FleetInstallerService {
       this.deps.store.writeRecord({ ...record, port })
       this.deps.fleet.retarget(loopbackOrigin(port))
     }
+    await this.startArtifactsTunnel(this.deps.store.readRecord() ?? record)
     this.emit()
+  }
+
+  /** A failed artifact connection must never take down the gateway's tunnel. */
+  private async startArtifactsTunnel(record: FleetInstallRecord): Promise<void> {
+    await this.artifactsTunnel?.stop()
+    this.artifactsTunnel = null
+    this.artifactsTunnelError = null
+    if (!record.remote || !record.artifactsPort) return
+    try {
+      const tunnel = this.createTunnel({
+        target: targetOf(record.remote),
+        hostKey: record.remote.hostKey,
+        privateKey: () => this.deps.store.readKey(),
+        listenPort: record.artifactsPort,
+        remotePort: record.remoteArtifactsPort ?? 4010,
+        onForwardError: (error) => {
+          this.artifactsTunnelError = error
+          this.emit()
+        },
+        freePort: () => this.deps.freePort(record.artifactsPort!),
+        onState: () => this.emit(),
+      })
+      this.artifactsTunnel = tunnel
+      const artifactsPort = await tunnel.start()
+      if (artifactsPort !== record.artifactsPort)
+        this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), artifactsPort })
+    } catch (error) {
+      this.artifactsTunnelError = installerErrorOf(error)
+      await this.artifactsTunnel?.stop()
+      this.artifactsTunnel = null
+    }
+    this.emit()
+  }
+
+  artifactsViewerPort(): number | null {
+    const record = this.deps.store.readRecord()
+    if (!record?.artifactsPort) return null
+    if (record.mode === 'local') return record.artifactsPort
+    return this.artifactsTunnel?.state === 'connected' && !this.artifactsTunnel.lastForwardError
+      ? this.artifactsTunnel.port
+      : null
   }
 
   /** The server's Docker: this computer's, or the VPS's over a new key session (a step of the job). */
@@ -644,9 +706,19 @@ export class FleetInstallerService {
             this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: installed })
             throw new InstallerError('server-newer')
           }
+          const artifactsPort =
+            (current ? parseBotServerEnv(current).artifactsPort : null) ??
+            (record.mode === 'local'
+              ? (record.artifactsPort ?? (await this.deps.freePort((this.deps.desktopArtifactsPort?.() ?? 4010) + 1)))
+              : (record.remoteArtifactsPort ?? 4010))
           const env = current
-            ? withEnvValues(current, { MAESTRLY_GATEWAY_IMAGE: images.gateway, MAESTRLY_GATEWAY_BOT_IMAGE: images.bot })
+            ? withEnvValues(current, {
+                MAESTRLY_GATEWAY_IMAGE: images.gateway,
+                MAESTRLY_GATEWAY_BOT_IMAGE: images.bot,
+                MAESTRLY_ARTIFACTS_PORT: String(artifactsPort),
+              })
             : renderBotServerEnv({
+                artifactsPort,
                 gatewayImage: images.gateway,
                 botImage: images.bot,
                 port: record.mode === 'local' ? record.port : BOT_SERVER_GATEWAY_PORT,
@@ -655,12 +727,19 @@ export class FleetInstallerService {
                 timezone: timezoneOrUtc(this.deps.timezone),
               })
           await host.writeProject(await this.deps.readBundledCompose(), env)
+          this.deps.store.writeRecord({
+            ...(this.deps.store.readRecord() ?? record),
+            artifactsPort:
+              record.mode === 'local' ? artifactsPort : (record.artifactsPort ?? (await this.deps.freePort(4011))),
+            ...(record.mode === 'remote' ? { remoteArtifactsPort: artifactsPort } : {}),
+          })
         })
         await context.step('images', (detail) => this.provideImages(host, images, record.mode, context.signal, detail))
         await context.step('start', async () => {
           await host.up({ signal: context.signal })
           await this.waitHealthy(this.origin(record), context.signal, this.tunnel)
         })
+        if (record.mode === 'remote') await this.startArtifactsTunnel(this.deps.store.readRecord() ?? record)
         await this.removeOtherVersions(host, images)
         this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: this.deps.appVersion })
         // The updated gateway recreates no running environment on its own: each is scheduled to follow once idle.
@@ -755,6 +834,8 @@ export class FleetInstallerService {
         }
       }
     }
+    await this.artifactsTunnel?.stop()
+    this.artifactsTunnel = null
     await this.tunnel?.stop()
     this.tunnel = null
     if (record) {
@@ -786,6 +867,8 @@ export class FleetInstallerService {
             await removeRemoteProject(session)
           } else
             await (this.deps.removeLocalDir ?? ((dir) => rm(dir, { recursive: true, force: true })))(this.localDir())
+          await this.artifactsTunnel?.stop()
+          this.artifactsTunnel = null
           await this.tunnel?.stop()
           this.tunnel = null
           this.deps.store.clearKey()
@@ -840,6 +923,8 @@ export class FleetInstallerService {
 
   async stop(): Promise<void> {
     this.controller?.abort()
+    await this.artifactsTunnel?.stop()
+    this.artifactsTunnel = null
     await this.tunnel?.stop()
     this.tunnel = null
   }
@@ -899,6 +984,7 @@ export const fleetInstallerService = new FleetInstallerService({
   isPackaged: app.isPackaged,
   env: process.env,
   userDataDir: () => app.getPath('userData'),
+  desktopArtifactsPort: () => getArtifactSettings().port,
   hostname: os.hostname(),
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   localRunner,

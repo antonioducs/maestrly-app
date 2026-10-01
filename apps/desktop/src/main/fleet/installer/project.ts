@@ -19,6 +19,7 @@ export interface BotServerEnvValues {
   gatewayImage: string
   botImage: string
   port: number
+  artifactsPort?: number
   displayName: string
   egress: FleetEgress
   timezone: string
@@ -29,6 +30,11 @@ const timezonePattern = /^[A-Za-z0-9_+/-]+$/
 
 export function renderBotServerEnv(values: BotServerEnvValues): string {
   if (!Number.isInteger(values.port) || values.port < 1 || values.port > 65535) throw new Error('Invalid port')
+  if (
+    values.artifactsPort !== undefined &&
+    (!Number.isInteger(values.artifactsPort) || values.artifactsPort < 1 || values.artifactsPort > 65535)
+  )
+    throw new Error('Invalid artifacts port')
   for (const image of [values.gatewayImage, values.botImage])
     if (!imagePattern.test(image)) throw new Error('Invalid image reference')
   if (values.egress !== 'open' && values.egress !== 'public') throw new Error('Invalid egress')
@@ -39,6 +45,7 @@ export function renderBotServerEnv(values: BotServerEnvValues): string {
     `MAESTRLY_GATEWAY_BOT_IMAGE=${values.botImage}`,
     'MAESTRLY_GATEWAY_BIND=127.0.0.1',
     `MAESTRLY_GATEWAY_PORT=${values.port}`,
+    `MAESTRLY_ARTIFACTS_PORT=${values.artifactsPort ?? 4010}`,
     // Single quotes keep Compose from interpolating; `displayNameFor` removes quotes, `$` and backslashes.
     `MAESTRLY_GATEWAY_DISPLAY_NAME='${displayName}'`,
     `MAESTRLY_GATEWAY_BOT_EGRESS=${values.egress}`,
@@ -53,6 +60,7 @@ export function parseBotServerEnv(text: string): {
   botImage: string | null
   egress: FleetEgress | null
   port: number | null
+  artifactsPort: number | null
 } {
   const values = new Map<string, string>()
   for (const line of text.split(/\r?\n/)) {
@@ -69,7 +77,10 @@ export function parseBotServerEnv(text: string): {
   }
   const egress = values.get('MAESTRLY_GATEWAY_BOT_EGRESS')
   const port = Number(values.get('MAESTRLY_GATEWAY_PORT'))
+  const artifactsPort = Number(values.get('MAESTRLY_ARTIFACTS_PORT'))
   return {
+    artifactsPort:
+      Number.isInteger(artifactsPort) && artifactsPort >= 1 && artifactsPort <= 65535 ? artifactsPort : null,
     gatewayImage: image('MAESTRLY_GATEWAY_IMAGE'),
     botImage: image('MAESTRLY_GATEWAY_BOT_IMAGE'),
     egress: egress === 'open' || egress === 'public' ? egress : null,
@@ -79,14 +90,21 @@ export function parseBotServerEnv(text: string): {
 
 /** The values Maestrly changes in an installed server's `.env`: its images and what bots may reach. */
 export type BotServerEnvChanges = Partial<
-  Record<'MAESTRLY_GATEWAY_IMAGE' | 'MAESTRLY_GATEWAY_BOT_IMAGE' | 'MAESTRLY_GATEWAY_BOT_EGRESS', string>
+  Record<
+    'MAESTRLY_GATEWAY_IMAGE' | 'MAESTRLY_GATEWAY_BOT_IMAGE' | 'MAESTRLY_GATEWAY_BOT_EGRESS' | 'MAESTRLY_ARTIFACTS_PORT',
+    string
+  >
 >
 
 /** The `.env` with these values replaced, or appended when missing; every other line stays as it was. */
 export function withEnvValues(text: string, changes: BotServerEnvChanges): string {
   for (const [key, value] of Object.entries(changes)) {
     const valid =
-      key === 'MAESTRLY_GATEWAY_BOT_EGRESS' ? value === 'open' || value === 'public' : imagePattern.test(value ?? '')
+      key === 'MAESTRLY_ARTIFACTS_PORT'
+        ? /^\d+$/.test(value ?? '') && Number(value) >= 1 && Number(value) <= 65535
+        : key === 'MAESTRLY_GATEWAY_BOT_EGRESS'
+          ? value === 'open' || value === 'public'
+          : imagePattern.test(value ?? '')
     if (!valid) throw new Error(`Invalid ${key}`)
   }
   const pending = new Map(Object.entries(changes) as Array<[string, string]>)

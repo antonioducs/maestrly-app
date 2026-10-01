@@ -297,6 +297,7 @@ describe('installing on this computer', () => {
         gatewayImage: images.gateway,
         botImage: images.bot,
         port: 7443,
+        artifactsPort: 4011,
         displayName: 'Estação de Trabalho',
         egress: 'public',
         timezone: 'America/Sao_Paulo',
@@ -311,6 +312,7 @@ describe('installing on this computer', () => {
     expect(fleetState.connects).toEqual([{ url: 'http://127.0.0.1:7443', code: 'ABCD-EFGH', deviceName: 'Mac' }])
     expect(stored.record).toEqual({
       mode: 'local',
+      artifactsPort: 4011,
       version: '0.9.4',
       port: 7443,
       allowPrivateNetwork: false,
@@ -477,6 +479,8 @@ describe('installing on a VPS', () => {
     expect(persistent.options.privateKey()).toBe(stored.key)
     expect(stored.record).toEqual({
       mode: 'remote',
+      artifactsPort: 4011,
+      remoteArtifactsPort: 4010,
       version: '0.9.4',
       port: 7443,
       allowPrivateNetwork: false,
@@ -622,6 +626,7 @@ describe('installing on a VPS', () => {
       [7443, true],
       [7443, true],
       [7443, false],
+      [4011, false],
     ])
     expect(steps(status)?.[7]).toEqual(['pair', 'skipped'])
     expect(fleetState.connects).toEqual([])
@@ -1079,5 +1084,62 @@ describe('image download progress', () => {
         'Status: Downloaded newer image for registry.example.test/maestrly-bot-gateway:0.9.4',
       ])
     ).toBe('registry.example.test/maestrly-bot-gateway:0.9.4 (2/2)')
+  })
+})
+
+describe('artifact viewer ports', () => {
+  it('allocates beside the desktop port and preserves a custom env port on reinstall and update', async () => {
+    const { service, local, stored } = setup({ deps: { desktopArtifactsPort: () => 5000 } })
+    await service.installLocal({ deviceName: 'Mac', allowPrivateNetwork: false })
+    expect(service.artifactsViewerPort()).toBe(5001)
+    local.files.set(localFile('.env'), local.files.get(localFile('.env'))!.replace('PORT=5001', 'PORT=5123'))
+    await service.installLocal({ deviceName: 'Mac', allowPrivateNetwork: false })
+    expect(stored.record?.artifactsPort).toBe(5123)
+    stored.record!.version = '0.9.3'
+    await service.update()
+    expect(service.artifactsViewerPort()).toBe(5123)
+    expect(local.files.get(localFile('.env'))).toContain('MAESTRLY_ARTIFACTS_PORT=5123')
+  })
+
+  it('upgrades legacy local installs with a free viewer port', async () => {
+    const { service, stored } = setup({ record: localRecord(), deps: { desktopArtifactsPort: () => 5100 } })
+    expect(service.artifactsViewerPort()).toBeNull()
+    expect((await service.update()).job?.state).toBe('succeeded')
+    expect(stored.record?.artifactsPort).toBe(5101)
+  })
+
+  it('restores the independent remote target, remaps the viewer, and stops both tunnels', async () => {
+    const { service, tunnels, stored, fleetState } = setup({
+      record: remoteRecord({ artifactsPort: 4011, remoteArtifactsPort: 4210 }),
+      key: 'synthetic',
+      tunnelPort: (options) => (options.remotePort ? 4111 : options.listenPort),
+    })
+    expect(service.artifactsViewerPort()).toBeNull()
+    await service.start()
+    expect(tunnels[1].options).toMatchObject({ listenPort: 4011, remotePort: 4210 })
+    expect(service.artifactsViewerPort()).toBe(4111)
+    expect(stored.record?.artifactsPort).toBe(4111)
+    expect(fleetState.retargets).toEqual([])
+    await service.stop()
+    expect(tunnels.every((tunnel) => tunnel.stopped)).toBe(true)
+    expect(service.artifactsViewerPort()).toBeNull()
+    await service.start()
+    expect(tunnels.at(-1)?.options.listenPort).toBe(4111)
+  })
+
+  it('keeps the gateway connected when the artifact listener fails', async () => {
+    const { service, tunnels } = setup({
+      record: remoteRecord({ artifactsPort: 4011 }),
+      key: 'synthetic',
+      tunnelPort: (options) => {
+        if (options.remotePort) throw new Error('Synthetic listener failure')
+        return options.listenPort
+      },
+    })
+    await service.start()
+    expect(service.status().tunnel).toBe('connected')
+    expect(service.status().artifactsTunnelError?.detail).toContain('Synthetic listener failure')
+    expect(service.artifactsViewerPort()).toBeNull()
+    expect(tunnels[0].stopped).toBe(false)
   })
 })
