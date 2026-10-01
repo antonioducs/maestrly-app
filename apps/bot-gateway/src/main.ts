@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { ArtifactHosting } from './artifact-hosting.js'
+import { FleetNetwork } from './network.js'
 import { accessSync, constants } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
@@ -84,7 +86,9 @@ export async function run(
     events.emit({ type: 'host.updated', at: new Date().toISOString(), host: value })
   })
   lifecycle.onEvent = (event) => events.emit(event)
-  const servers = createGatewayServers({ auth, config, events, host, lifecycle, store })
+  const network = new FleetNetwork(docker, config.network)
+  const artifacts = new ArtifactHosting({ store, config, network, emit: (event) => events.emit(event) })
+  const servers = createGatewayServers({ auth, config, events, host, lifecycle, store, network, artifacts })
   await lifecycle.reconcile()
   await servers.peers.retry()
   servers.routines.start()

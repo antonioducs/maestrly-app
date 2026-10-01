@@ -119,6 +119,15 @@ export class Store {
       throw error
     }
   }
+  getMetaJson(key: string): unknown {
+    const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(key) as Row | undefined
+    return row ? JSON.parse(String(row.value)) : null
+  }
+  setMetaJson(key: string, value: unknown) {
+    this.db
+      .prepare('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+      .run(key, JSON.stringify(value))
+  }
   close() {
     this.db.close()
   }

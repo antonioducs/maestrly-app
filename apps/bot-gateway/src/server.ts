@@ -1,6 +1,6 @@
 import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
-import { BlockList, isIP } from 'node:net'
+import { FleetNetwork } from './network.js'
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
@@ -81,46 +81,10 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
-  let subnetBlock = new BlockList()
-  // Traffic reaching a published port from the host (Docker's port proxy, `tailscale serve`) arrives from the
-  // bridge gateway address, which lies inside the fleet subnet. Bots use their own addresses and cannot
-  // complete a TCP handshake while spoofing the gateway's, so that single address is not treated as a bot.
-  let hostGateways = new Set<string>()
+  const network = ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
-  const refreshSubnets = async () => {
-    const subnets = await ctx.lifecycle.docker.networkInspect(ctx.config.network)
-    if (!subnets.length) throw new GatewayError('DOCKER_UNAVAILABLE', 'Fleet network has no subnet')
-    const next = new BlockList()
-    const gateways = new Set<string>()
-    for (const { subnet, gateway } of subnets) {
-      const [address, prefix] = subnet.split('/')
-      const family = isIP(address)
-      if (!family || prefix === undefined) throw new GatewayError('DOCKER_UNAVAILABLE', 'Invalid fleet network subnet')
-      next.addSubnet(address, Number(prefix), family === 4 ? 'ipv4' : 'ipv6')
-      if (gateway && isIP(gateway)) gateways.add(gateway)
-    }
-    subnetBlock = next
-    hostGateways = gateways
-  }
-  const remote = (address: string | undefined) => {
-    const normalized = address?.startsWith('::ffff:') ? address.slice(7) : (address ?? '')
-    const family = isIP(normalized)
-    return { address: normalized, family }
-  }
-  const insideFleet = (address: string | undefined) => {
-    const value = remote(address)
-    return (
-      !!value.family &&
-      !hostGateways.has(value.address) &&
-      subnetBlock.check(value.address, value.family === 4 ? 'ipv4' : 'ipv6')
-    )
-  }
-  const loopback = (address: string | undefined) => {
-    const value = remote(address)
-    return value.address === '::1' || value.address.startsWith('127.')
-  }
   const revokeDevice = async (deviceId: string) => {
     if (revoking.has(deviceId)) return
     revoking.add(deviceId)
@@ -155,8 +119,8 @@ export function createGatewayServers(ctx: GatewayContext) {
     try {
       if (
         internal
-          ? !(insideFleet(req.socket.remoteAddress) || loopback(req.socket.remoteAddress))
-          : insideFleet(req.socket.remoteAddress)
+          ? !(network.insideFleet(req.socket.remoteAddress) || network.loopback(req.socket.remoteAddress))
+          : network.insideFleet(req.socket.remoteAddress)
       )
         throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
@@ -248,7 +212,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     let status = 404
     let error: GatewayError = new GatewayError('NOT_FOUND', 'Route not found')
     try {
-      if (insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
+      if (network.insideFleet(req.socket.remoteAddress)) throw new GatewayError('FORBIDDEN', 'Network access forbidden')
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       if (new URL(req.url ?? '/', 'http://gateway').pathname !== FLEET_GATEWAY_ROUTES.screen.path)
         throw new GatewayError('NOT_FOUND', 'Route not found')
@@ -276,9 +240,10 @@ export function createGatewayServers(ctx: GatewayContext) {
     screen,
     sweepRevocations,
     async listen() {
-      await refreshSubnets()
+      await network.refresh()
+      await ctx.artifacts?.start()
       refreshTimer = setInterval(() => {
-        void refreshSubnets().catch(() => {})
+        void network.refresh().catch(() => {})
       }, 60000)
       revokeTimer = setInterval(() => {
         void sweepRevocations()
@@ -297,6 +262,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     async close() {
       if (refreshTimer) clearInterval(refreshTimer)
       if (revokeTimer) clearInterval(revokeTimer)
+      await ctx.artifacts?.close()
       routines.stop()
       screen.close()
       ctx.lifecycle.close()
