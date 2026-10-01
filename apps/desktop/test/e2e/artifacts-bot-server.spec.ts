@@ -160,7 +160,7 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
     await expect(page.getByRole('main').getByRole('status').filter({ hasText: 'Connected' })).toContainText(
       'artifact-e2e-host'
     )
-    await page.getByRole('button', { name: 'Artifacts', exact: true }).click()
+    await page.getByRole('main').getByRole('button', { name: 'Artifacts', exact: true }).click()
     const enabled = page.getByRole('switch', { name: 'Host artifacts on the bot server' })
     await expect(enabled).toHaveAttribute('aria-checked', 'false')
     await enabled.click()
@@ -254,7 +254,9 @@ test('publishes to the paired bot server, opens its viewer, lists versions and d
           })()`)) as { color: string; cookie: string; origin: string; api: unknown }
           await frame.executeJavaScript(`try { top.location.href = 'about:blank' } catch {} ; true`).catch(() => null)
           await new Promise((resolve) => setTimeout(resolve, 500))
-          const cookies = await contents.session.cookies.get({ url: contents.getURL() })
+          const cookies = await contents.session.cookies.get({
+            url: new URL(`/a/${id}/api/state`, contents.getURL()).href,
+          })
           const ownerCookie = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
           return { ...inside, viewerUrl: contents.getURL(), contentUrl: frame.url, ownerCookie }
         }
