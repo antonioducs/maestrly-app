@@ -1,4 +1,6 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
+import { artifactRoute } from '../src/artifact-routes.js'
+import type { GatewayContext } from '../src/context.js'
 import { toWire } from '@maestrly/artifact-host'
 import { harness } from './harness.js'
 
@@ -208,4 +210,130 @@ test('both upload endpoints reject declared bodies above 72 MiB before consuming
     })
     expect(result).toBe(400)
   }
+})
+
+for (const callerKind of ['device', 'bot'] as const) {
+  test.each([
+    { ownerName: 'Updated owner' },
+    { quotaGb: 3 },
+    { publicAddress: 'https://artifacts.example.test' },
+    { enabled: false },
+    null,
+  ])(`${callerKind} admitted uploads drain before lifecycle change %j`, async (patch) => {
+    const h = await harness()
+    await h.artifacts.update({ enabled: true })
+    await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+    const ctx = { artifacts: h.artifacts, store: h.store } as GatewayContext
+    const caller = callerKind === 'bot' ? { botId: h.bot.id } : { deviceId: 'synthetic-device' }
+    const admin = h.artifacts.admin()!
+    let entered!: () => void
+    let release!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const create = admin.create.bind(admin)
+    vi.spyOn(admin, 'create').mockImplementation(async (input) => {
+      entered()
+      await gate
+      return create(input)
+    })
+    const upload = artifactRoute(
+      ctx,
+      callerKind === 'bot' ? 'artifactBotUpload' : 'artifactUpload',
+      call('create', [bundle()]),
+      caller
+    )
+    await started
+    let changed = false
+    const change = (patch ? h.artifacts.update(patch) : h.artifacts.close()).then(() => {
+      changed = true
+    })
+    const queued = artifactRoute(ctx, 'artifactAdmin', call('list', []), caller)
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(changed).toBe(false)
+      expect(h.artifacts.admin()).toBe(admin)
+      expect((await admin.status()).artifactCount).toBe(0)
+    } finally {
+      release()
+      await Promise.all([upload, change, queued])
+    }
+    expect(await upload).toMatchObject({
+      ok: true,
+      value: { currentVersion: 1 },
+    })
+    if (!patch || patch.enabled === false) {
+      expect(await queued).toMatchObject({
+        ok: false,
+        error: {
+          code: 'host_unavailable',
+          details: { reason: patch ? 'server_off' : 'internal' },
+        },
+      })
+      await h.artifacts.update({ enabled: true })
+      if (!patch) await h.artifacts.start()
+    } else {
+      expect(await queued).toMatchObject({
+        ok: true,
+        value: [expect.objectContaining({ title: 'Synthetic artifact' })],
+      })
+    }
+    expect(await h.artifacts.admin()!.list()).toHaveLength(1)
+  })
+}
+
+test('bot ownership guard and update remain admitted together during restart', async () => {
+  const h = await harness()
+  await h.artifacts.update({ enabled: true })
+  await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+  const ctx = { artifacts: h.artifacts, store: h.store } as GatewayContext
+  const caller = { botId: h.bot.id }
+  await artifactRoute(ctx, 'artifactBotUpload', call('create', [bundle()]), caller)
+  const admin = h.artifacts.admin()!
+  const [made] = await admin.list()
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const get = admin.get.bind(admin)
+  vi.spyOn(admin, 'get').mockImplementationOnce(async (id) => {
+    entered()
+    await gate
+    return get(id)
+  })
+  const upload = artifactRoute(
+    ctx,
+    'artifactBotUpload',
+    call('update', [
+      {
+        id: made.id,
+        baseVersion: 1,
+        change: { kind: 'replace', files: bundle().files },
+      },
+    ]),
+    caller
+  )
+  await started
+  const change = h.artifacts.update({ ownerName: 'Updated owner' })
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(h.artifacts.admin()).toBe(admin)
+  } finally {
+    release()
+    await Promise.all([upload, change])
+  }
+  expect(await upload).toMatchObject({
+    ok: true,
+    value: { currentVersion: 2 },
+  })
+  expect(await h.artifacts.admin()!.get(made.id)).toMatchObject({
+    currentVersion: 2,
+  })
 })

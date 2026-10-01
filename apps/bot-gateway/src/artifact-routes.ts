@@ -79,32 +79,33 @@ export async function artifactRoute(
     if (!hosting) throw new GatewayError('INTERNAL', 'Artifact host is unavailable')
     return key === 'artifactHost' ? hosting.state() : hosting.update(body as FleetArtifactSettingsPatch)
   }
-  if ('botId' in caller) {
-    const bot = ctx.store.getBot(caller.botId)
-    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
-    if (!bot.publishArtifacts) return unavailable('bot_off')
-  }
   if (!hosting) return unavailable('internal')
-  const state = await hosting.state()
-  if (!state.settings.enabled) return unavailable('server_off')
-  if (state.status.state !== 'running') return unavailable(state.status.problem ?? 'internal')
-  const admin = hosting.admin()
-  if (!admin) return unavailable('internal')
-  const { method, args } = body as FleetArtifactCall
-  const upload = key === 'artifactUpload' || key === 'artifactBotUpload'
-  return callAdmin(admin, method, args, {
-    allowed:
-      'botId' in caller
-        ? upload
-          ? BOT_UPLOAD_METHODS
-          : BOT_ADMIN_METHODS
-        : upload
-          ? UPLOAD_METHODS
-          : DEVICE_ADMIN_METHODS,
-    guard: (method, args) => {
-      if ('botId' in caller) return botArgs(admin, caller.botId, method, args)
-      if (method === 'create') return [{ ...object(args[0]), owner: { kind: 'device', id: caller.deviceId } }]
-      return args
-    },
+  return hosting.withAdmin(async (admin) => {
+    if ('botId' in caller) {
+      const bot = ctx.store.getBot(caller.botId)
+      if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+      if (!bot.publishArtifacts) return unavailable('bot_off')
+    }
+    const state = await hosting.state()
+    if (!state.settings.enabled) return unavailable('server_off')
+    if (state.status.state !== 'running') return unavailable(state.status.problem ?? 'internal')
+    if (!admin) return unavailable('internal')
+    const { method, args } = body as FleetArtifactCall
+    const upload = key === 'artifactUpload' || key === 'artifactBotUpload'
+    return callAdmin(admin, method, args, {
+      allowed:
+        'botId' in caller
+          ? upload
+            ? BOT_UPLOAD_METHODS
+            : BOT_ADMIN_METHODS
+          : upload
+            ? UPLOAD_METHODS
+            : DEVICE_ADMIN_METHODS,
+      guard: (method, args) => {
+        if ('botId' in caller) return botArgs(admin, caller.botId, method, args)
+        if (method === 'create') return [{ ...object(args[0]), owner: { kind: 'device', id: caller.deviceId } }]
+        return args
+      },
+    })
   })
 }

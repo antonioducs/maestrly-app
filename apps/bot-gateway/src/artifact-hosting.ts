@@ -43,6 +43,10 @@ export class ArtifactHosting {
   admin(): ArtifactAdmin | null {
     return this.host?.admin ?? null
   }
+  /** Admit a complete RPC, including its guard, before a lifecycle change can close the host. */
+  withAdmin<T>(action: (admin: ArtifactAdmin | null) => Promise<T>): Promise<T> {
+    return this.serial(() => action(this.admin()))
+  }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const run = this.queue.then(action)
     this.queue = run.catch(() => {})
