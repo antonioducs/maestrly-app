@@ -15,7 +15,9 @@ import { BotComposer } from './BotComposer'
 import { BotTranscriptImages } from './BotTranscriptImages'
 import { AgentActivity } from '@/components/chat/AgentActivity'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
-import { fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
+import { ArtifactCard } from '../artifacts/ArtifactCard'
+import { parseArtifactToolResult } from '../../../shared/artifacts'
+import { baseToolName, fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
 
 function TranscriptRow({
   bot,
@@ -154,6 +156,13 @@ function TranscriptRow({
   // An instance that predates the checklist sends no todos; its todo_write keeps the generic row below.
   if (item.kind === 'tool' && item.name === 'todo_write' && item.todos)
     return item.id === latestTodoId ? <TodoList todos={item.todos} /> : null
+  if (item.kind === 'tool' && ['artifact_create', 'artifact_update'].includes(baseToolName(item.name))) {
+    const result = parseArtifactToolResult(item.output ?? '')
+    if (result)
+      return (
+        <ArtifactCard result={result} onOpen={() => window.api.artifacts.openExternal(result.id, result.version)} />
+      )
+  }
   if (item.kind === 'tool')
     return (
       <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">

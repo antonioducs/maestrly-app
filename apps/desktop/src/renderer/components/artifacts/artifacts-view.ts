@@ -1,6 +1,13 @@
 /** What the Artifacts center shows, derived from the list and the host status. No React, so it is tested directly. */
 import type { ArtifactHostProblem, ArtifactHostStatus, ArtifactListItem } from '../../../shared/artifacts'
 
+export type HostFilter = 'all' | 'local' | 'server'
+export const ARTIFACT_HOSTS: readonly HostFilter[] = ['all', 'local', 'server']
+
+export function artifactSource(item: ArtifactListItem): 'bot' | 'elsewhere' | 'local' | 'server' {
+  return item.bot ? 'bot' : item.elsewhere ? 'elsewhere' : item.host
+}
+
 export type ArtifactSort = 'updated' | 'created' | 'title' | 'size'
 export const ARTIFACT_SORTS: readonly ArtifactSort[] = ['updated', 'created', 'title', 'size']
 
@@ -56,7 +63,7 @@ export function projectOptions(items: readonly ArtifactListItem[], locale: strin
 
 export function visibleArtifacts(
   items: readonly ArtifactListItem[],
-  options: { query: string; project: ProjectFilter; sort: ArtifactSort; locale: string }
+  options: { query: string; project: ProjectFilter; sort: ArtifactSort; locale: string; host?: HostFilter }
 ): ArtifactListItem[] {
   const needle = options.query.trim().toLocaleLowerCase(options.locale)
   const compare: Record<ArtifactSort, (a: ArtifactListItem, b: ArtifactListItem) => number> = {
@@ -68,6 +75,7 @@ export function visibleArtifacts(
   return items
     .filter(
       (item) =>
+        (!options.host || options.host === 'all' || item.host === options.host) &&
         matchesProject(item, options.project) &&
         (!needle || `${item.title}\n${item.description}`.toLocaleLowerCase(options.locale).includes(needle))
     )
@@ -99,14 +107,15 @@ export type CenterBody =
  */
 export function centerBody(input: {
   loading: boolean
+  serverReady?: boolean
   status: ArtifactHostStatus | null
   listed: boolean
   total: number
   visible: number
 }): CenterBody {
   const { status } = input
-  if (input.loading || status?.state === 'starting') return { kind: 'loading' }
-  if (status?.problem) return { kind: 'unavailable', reason: status.problem }
+  if (input.loading || (status?.state === 'starting' && !input.serverReady)) return { kind: 'loading' }
+  if (status?.problem && !input.serverReady) return { kind: 'unavailable', reason: status.problem }
   if (!input.listed) return { kind: 'unavailable', reason: 'stopped' }
   if (input.total === 0) return { kind: 'empty' }
   return input.visible === 0 ? { kind: 'no-match' } : { kind: 'grid' }

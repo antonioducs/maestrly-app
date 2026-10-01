@@ -4,6 +4,27 @@
  */
 export default {
   artifacts: {
+    server: {
+      filter: 'Hospedagem',
+      all: 'Todos os locais',
+      local: 'Este computador',
+      server: 'Servidor de bots',
+      bot: 'Bot',
+      elsewhere: 'Outro computador',
+      hosted: 'Hospedado no servidor de bots. Seu computador pode estar em repouso.',
+      off: 'A hospedagem de artefatos no servidor de bots está desativada.',
+      unreachable: 'Não foi possível acessar o servidor de bots.',
+      ready: 'O servidor de bots está pronto.',
+      absent: 'Nenhum servidor de bots pareado.',
+      unsupported: 'Este servidor de bots não oferece suporte a artefatos.',
+      settings: 'Abrir configurações de artefatos',
+      title: 'Servidor de bots',
+      publishTo: 'Publicar novos artefatos em',
+      enabled: 'Hospedar artefatos no servidor de bots',
+      copy: 'Copiar deste computador',
+      copyHint: 'Copia apenas seu nome de compartilhamento e a validade padrão dos links.',
+      addressHint: 'O endereço público usado para abrir páginas no servidor de bots.',
+    },
     sidebar: 'Artefatos',
     sidebarTitle: 'Artefatos — páginas publicadas pelos seus agentes',
     title: 'Artefatos',

@@ -452,7 +452,9 @@ const FLEET_STATUS: Record<Extract<FleetTranscriptItem, { kind: 'tool' }>['state
 
 /** A bot's to-do list renders as its checklist outside the activity, like a chat's; an older bot sends no list. */
 const pinnedFleetItem = (item: FleetStepItem): boolean =>
-  item.kind === 'tool' && baseToolName(item.name) === 'todo_write' && !!item.todos
+  item.kind === 'tool' &&
+  ((baseToolName(item.name) === 'todo_write' && !!item.todos) ||
+    ['artifact_create', 'artifact_update'].includes(baseToolName(item.name)))
 
 export type FleetActivitySegment =
   | { kind: 'item'; item: FleetTranscriptItem }

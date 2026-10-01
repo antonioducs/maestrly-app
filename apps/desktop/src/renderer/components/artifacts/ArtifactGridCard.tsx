@@ -1,3 +1,4 @@
+import { artifactSource } from './artifacts-view'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
@@ -48,8 +49,14 @@ export function ArtifactOrigin({
   onGoToConversation: () => void
 }) {
   const { t } = useTranslation('ui')
-  const conversation = item.conversation
+  const conversation = item.bot || item.elsewhere ? null : item.conversation
   const icon = <MessagesSquare className="size-3.5 shrink-0" aria-hidden="true" />
+  if (item.bot || item.elsewhere)
+    return (
+      <span className="truncate text-xs text-muted-foreground">
+        {item.bot?.name ?? t(`artifacts.server.${artifactSource(item)}`)}
+      </span>
+    )
   if (!conversation)
     return (
       <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -116,7 +123,7 @@ export function ArtifactGridCard({
 }) {
   const { t } = useTranslation('ui')
   const [locale] = useLocale()
-  const conversation = item.conversation
+  const conversation = item.bot || item.elsewhere ? null : item.conversation
   const shared = item.visibility !== 'private'
   return (
     <li
@@ -178,6 +185,9 @@ export function ArtifactGridCard({
         </div>
       </div>
       <div className="min-w-0 px-0.5 pt-2.5">
+        <span className="mb-1 inline-block rounded border border-border px-1.5 text-[10px] text-muted-foreground">
+          {t(`artifacts.server.${item.host}`)}
+        </span>
         {projectLabel && (
           <p className="mb-0.5 truncate font-mono text-[11px] leading-4 text-muted-foreground">{projectLabel}</p>
         )}

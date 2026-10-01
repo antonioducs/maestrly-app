@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ALL_PROJECTS,
+  artifactSource,
   arrivals,
   centerBody,
   matchesProject,
@@ -24,6 +25,8 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
     createdAt: 1,
     updatedAt: 1,
     host: 'local',
+    bot: null,
+    elsewhere: false,
     conversation: null,
     project: { id: 'p1', name: 'Zeta' },
     storageBytes: 10,
@@ -113,7 +116,8 @@ describe('artifacts center view', () => {
       kind: 'unavailable',
       reason: 'port_in_use',
     })
-    expect(body({ status: { state: 'stopped', problem: 'disabled', port: 4010 }, listed: false })).toEqual({
+    expect(body({ status: { state: 'stopped', problem: 'disabled', port: 4010 },
+        listed: false })).toEqual({
       kind: 'unavailable',
       reason: 'disabled',
     })
@@ -134,5 +138,34 @@ describe('artifacts center view', () => {
       ['c', 'artifact'],
     ])
     expect(arrivals(after, before).size).toBe(0)
+  })
+})
+
+describe('artifact hosts and sources', () => {
+  it('filters hosts independently from project and search', () => {
+    const items = [item('local'), item('server', { host: 'server' })]
+    const options = { query: '', project: ALL_PROJECTS, sort: 'updated' as const, locale: 'en' }
+    expect(visibleArtifacts(items, { ...options, host: 'all' })).toHaveLength(2)
+    expect(visibleArtifacts(items, { ...options, host: 'server' }).map((item) => item.id)).toEqual(['server'])
+    expect(visibleArtifacts(items, { ...options, host: 'local' }).map((item) => item.id)).toEqual(['local'])
+    expect(visibleArtifacts(items, { ...options, host: 'server', query: 'local' })).toEqual([])
+  })
+  it('labels bot and other-computer sources before their host', () => {
+    expect(artifactSource(item('a'))).toBe('local')
+    expect(artifactSource(item('a', { host: 'server' }))).toBe('server')
+    expect(artifactSource(item('a', { elsewhere: true }))).toBe('elsewhere')
+    expect(artifactSource(item('a', { bot: { id: 'bot', name: null }, elsewhere: true }))).toBe('bot')
+  })
+  it('keeps listed cards visible when the local host is disabled', () => {
+    expect(
+      centerBody({
+        loading: false,
+        status: { state: 'stopped', problem: 'disabled', port: 4010 },
+        serverReady: true,
+        listed: true,
+        total: 2,
+        visible: 2,
+      })
+    ).toEqual({ kind: 'grid' })
   })
 })

@@ -747,6 +747,7 @@ export function DesktopApp() {
               )}
               {artifactsOpen && (
                 <ArtifactsCenter
+                  onOpenBot={openFleetBot}
                   onClose={() => setArtifactsOpen(false)}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onOpenSettings={() => openSettings('artifacts')}

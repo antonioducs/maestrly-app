@@ -13,6 +13,8 @@ import { ArtifactGridCard } from './ArtifactGridCard'
 import { EmptyState, LoadingGrid, NoMatchState, type SuggestionKey, UnavailableState } from './ArtifactsStates'
 import {
   ALL_PROJECTS,
+  ARTIFACT_HOSTS,
+  type HostFilter,
   ARTIFACT_SORTS,
   type Arrival,
   type ArtifactSort,
@@ -106,15 +108,18 @@ export function ArtifactsCenter({
   onClose,
   onShowSidebar,
   onOpenSettings,
+  onOpenBot,
 }: {
   onClose: () => void
   onShowSidebar?: () => void
   onOpenSettings: () => void
+  onOpenBot: (id: string) => void
 }) {
   const { t } = useTranslation('ui')
   const [locale] = useLocale()
-  const { items, status, loading, listed, error, refresh } = useArtifacts()
+  const { items, status, serverStatus, loading, listed, error, refresh } = useArtifacts()
   const { notices, push, dismiss } = useNotices()
+  const [host, setHost] = useState<HostFilter>('all')
   const [query, setQuery] = useState('')
   const [project, setProject] = useState<ProjectFilter>(ALL_PROJECTS)
   const [sort, setSort] = useState<ArtifactSort>('updated')
@@ -135,11 +140,14 @@ export function ArtifactsCenter({
 
   const options = useMemo(() => projectOptions(items, locale), [items, locale])
   const visible = useMemo(
-    () => visibleArtifacts(items, { query, project, sort, locale }),
-    [items, query, project, sort, locale]
+    () => visibleArtifacts(items, { query, project, sort, locale, host }),
+    [items, query, project, sort, locale, host]
   )
-  const body = centerBody({ loading, status, listed, total: items.length, visible: visible.length })
-  const toolbar = body.kind !== 'loading' && body.kind !== 'unavailable' && showToolbar(items.length, query, project)
+  const body = centerBody({ loading, status, serverReady: serverStatus?.state === 'ready', listed, total: items.length, visible: visible.length })
+  const toolbar =
+    body.kind !== 'loading' &&
+    body.kind !== 'unavailable' &&
+    (showToolbar(items.length, query, project) || host !== 'all' || items.some((item) => item.host === 'server'))
   const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined
   const sharing = shareId ? items.find((item) => item.id === shareId) : undefined
 
@@ -331,6 +339,7 @@ export function ArtifactsCenter({
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="artifact-card-select"]')?.focus())
   }
   const clearFilters = () => {
+    setHost('all')
     setQuery('')
     setProject(ALL_PROJECTS)
     searchRef.current?.focus()
@@ -414,6 +423,14 @@ export function ArtifactsCenter({
               )
             : null}
 
+          {serverStatus && (serverStatus.state === 'off' || serverStatus.state === 'unreachable') && (
+            <div role="status" className="mb-4 rounded-lg border border-artifact-warn/30 p-3 text-sm">
+              <p>{t(`artifacts.server.${serverStatus.state}`)}</p>
+              <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+                {t('artifacts.server.settings')}
+              </Button>
+            </div>
+          )}
           {toolbar && (
             <div className="mb-5 flex flex-wrap items-center gap-2" data-testid="artifacts-toolbar">
               <label className="flex h-8 min-w-[220px] flex-[1_1_260px] items-center gap-2 rounded-md border border-border-strong bg-black/[0.18] pl-2.5 pr-2 text-muted-foreground focus-within:border-ring">
@@ -440,6 +457,18 @@ export function ArtifactsCenter({
                   /
                 </kbd>
               </label>
+              <Select value={host} onValueChange={(value) => setHost(value as HostFilter)}>
+                <SelectTrigger className="h-8 w-auto" aria-label={t('artifacts.server.filter')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ARTIFACT_HOSTS.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {t(`artifacts.server.${value}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Select value={project} onValueChange={setProject}>
                 <SelectTrigger
                   className="h-8 w-auto max-w-[240px] border-border-strong bg-black/[0.18] text-[12.5px]"
@@ -531,6 +560,7 @@ export function ArtifactsCenter({
           item={selected}
           projectName={itemProject(selected)}
           isOpening={(version) => isOpening(selected.id, version)}
+          onOpenBot={onOpenBot}
           onOpen={(version) => void open(selected, version)}
           onGoToConversation={() => selected.conversation && openConversation(selected.conversation.id)}
           onShare={() => setShareId(selected.id)}
