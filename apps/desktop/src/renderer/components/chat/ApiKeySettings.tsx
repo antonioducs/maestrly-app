@@ -88,6 +88,7 @@ const kindLabelKey: Record<ChatProviderKind, string> = {
   'claude-subscription': 'settings.apiFormatClaudeSubscription',
   'grok-subscription': 'settings.apiFormatGrokSubscription',
   'cursor-subscription': 'settings.apiFormatCursorSubscription',
+  'antigravity-subscription': 'settings.apiFormatAntigravitySubscription',
 }
 
 const subscriptionProviderCopy: Record<

@@ -805,6 +805,7 @@ export default {
     backgroundCompactionSaved: 'Preparação em segundo plano salva.',
     backgroundCompactionSaveFailed: 'Não foi possível salvar a preparação em segundo plano.',
     apiFormatCursorSubscription: 'Assinatura Cursor',
+    apiFormatAntigravitySubscription: 'Assinatura Google AI',
     subscriptionMemoryOnly:
       'Esta conta está conectada apenas nesta sessão. Entre novamente após reiniciar o aplicativo.',
     cursorSubscriptionHeading: 'Cursor com assinatura',

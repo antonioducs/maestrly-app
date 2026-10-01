@@ -7,6 +7,7 @@
  * flow finishes.
  */
 import { mkdir, rm, chmod } from 'node:fs/promises'
+import path from 'node:path'
 import { app } from 'electron'
 import type { ChatSubscriptionAuthStatus, ChatSubscriptionLoginResult } from '../../../shared/chat'
 import { AcpClient, AcpRpcError } from '../acp/client'
@@ -27,6 +28,7 @@ import { type AntigravityModelEntry, parseAntigravityModelOptions } from './mode
 import {
   antigravityAccountRoot,
   antigravityAccountsRoot,
+  antigravityAcpHome,
   antigravityFingerprint,
   antigravityWorkDir,
   buildAntigravityProcessEnv,
@@ -39,6 +41,7 @@ import { type AntigravityRuntimeCommand, resolveAntigravityRuntime } from './run
 /** Every ACP session disables all built-in Antigravity tools; Maestrly's tools arrive over MCP. */
 export const ANTIGRAVITY_SESSION_META = Object.freeze({ agy: Object.freeze({ enabledTools: Object.freeze([]) }) })
 
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_IDLE_CLOSE_MS = 10 * 60_000
 const MODEL_CACHE_MS = 10 * 60_000
 const CLIENT_INFO = { name: 'maestrly', version: app.getVersion?.() || '0.0.0' }
@@ -330,6 +333,26 @@ export class AntigravitySubscriptionManager {
 
   liveSessionCount(): number {
     return this.liveSessions.size
+  }
+
+  /**
+   * Deletes one ACP session: through the running server when possible, then its files in this account's
+   * GEMINI_HOME (the server keeps them even for sessions it no longer has in memory).
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.conn?.client.alive) {
+      await this.conn.client.request('session/delete', { sessionId }, { timeoutMs: 10_000 }).catch(() => undefined)
+    }
+    if (!SESSION_ID_PATTERN.test(sessionId)) return
+    const acpHome = antigravityAcpHome(this.root)
+    const conversations = path.join(acpHome, 'conversations')
+    const targets = [
+      ...['.db', '.db-wal', '.db-shm', '.meta'].map((suffix) => path.join(conversations, `${sessionId}${suffix}`)),
+      path.join(acpHome, 'brain', sessionId),
+    ]
+    for (const target of targets) {
+      if (isStrictlyInside(acpHome, target)) await rm(target, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 
   async dispose(): Promise<void> {

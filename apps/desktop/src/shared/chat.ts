@@ -1181,6 +1181,7 @@ export type ChatProviderKind =
   | 'claude-subscription'
   | 'grok-subscription'
   | 'cursor-subscription'
+  | 'antigravity-subscription'
 
 export type ChatSubscriptionProviderKind = Extract<
   ChatProviderKind,

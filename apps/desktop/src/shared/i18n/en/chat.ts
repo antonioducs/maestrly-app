@@ -798,6 +798,7 @@ export default {
     backgroundCompactionSaved: 'Background preparation saved.',
     backgroundCompactionSaveFailed: 'Could not save background preparation.',
     apiFormatCursorSubscription: 'Cursor subscription',
+    apiFormatAntigravitySubscription: 'Google AI subscription',
     subscriptionMemoryOnly: 'This account is connected for this session only. Sign in again after restarting the app.',
     cursorSubscriptionHeading: 'Cursor with subscription',
     cursorSubscriptionDescription:
