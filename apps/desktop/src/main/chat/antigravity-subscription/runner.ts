@@ -82,6 +82,10 @@ import {
 } from './session-store'
 import { createAntigravityStreamMapper } from './stream-map'
 import { renderAntigravityToolCatalog } from './tool-catalog'
+import { createAntigravityTaskRuntime } from './task-runtime'
+import { SubagentCoordinator } from '../subagent-coordinator'
+import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
+import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 
 export interface AntigravityManagedTaskUpdate {
   output?: string
@@ -127,7 +131,6 @@ export interface RunAntigravitySubscriptionChatArgs {
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
   /** Host-managed subagent executor; built per turn when absent (see task-runtime.ts). */
   runTask?: AntigravityManagedTaskRunner
-  createTaskRuntime?: (input: AntigravityTaskRuntimeInput) => AntigravityManagedTaskRunner
   ephemeralSession?: boolean
   messageMeta?: {
     source?: ChatMessageSource
@@ -137,18 +140,6 @@ export interface RunAntigravitySubscriptionChatArgs {
   }
   executionScope?: ChatExecutionScope
   reviewerRuntime?: ReviewerToolRuntime
-}
-
-/** What the per-turn subagent runtime needs from the parent turn. */
-export interface AntigravityTaskRuntimeInput {
-  assistantId: string
-  agents: readonly import('../agents').ChatAgent[]
-  tools: ToolSet
-  history: readonly ChatMessage[]
-  subagentUsage: Map<string, ChatSubagentUsage>
-  apply: (event: ChatStreamEvent) => void
-  emitGeneratedImage?: (toolCallId: string, image: GeneratedImageEmission) => void
-  onGeneratedImageUsage?: (usage: import('../tools/util').GeneratedImageUsage) => void
 }
 
 export interface RunAntigravitySubscriptionChatResult {
@@ -485,12 +476,40 @@ export async function runAntigravitySubscriptionChat(
     const rawTools: ToolSet = { ...core, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
     // Antigravity never shows MCP tool images to the model, so tool images are always described instead.
     const tools = adaptToolSetForModel({ tools: rawTools, supportsImages: false, describeImage })
-    if (!runTask && agents.length && args.createTaskRuntime) {
-      runTask = args.createTaskRuntime({
+    if (!runTask && agents.length) {
+      const selectableAgentNames = agents.map((agent) => agent.name)
+      runTask = createAntigravityTaskRuntime({
+        conversationId: args.conversationId,
+        projectId: args.projectId,
+        permissionScope: args.permissionScope,
+        cwd: args.cwd,
+        mode: args.mode,
+        maestro: args.maestro,
+        maestroLive: args.maestroLive,
+        turnState: createExplicitSubagentTurnState(
+          detectExplicitSubagentsForTurn(history, selectableAgentNames),
+          selectableAgentNames
+        ),
+        permMode: args.permMode ?? 'ask',
+        selection: args.selection,
+        fastMode: false,
+        reasoningEffort: args.reasoningEffort,
+        manager: args.manager,
+        accountIdentity: args.accountIdentity,
+        broker: args.broker,
+        questionBroker: args.questionBroker,
         assistantId,
         agents,
         tools: rawTools,
-        history,
+        coordinator: new SubagentCoordinator({
+          onEvent: (event) =>
+            chatDiag({
+              kind: 'subagent-coordinator',
+              runtime: 'antigravity-subscription',
+              conv: args.conversationId,
+              ...event,
+            }),
+        }),
         subagentUsage,
         apply,
         emitGeneratedImage,

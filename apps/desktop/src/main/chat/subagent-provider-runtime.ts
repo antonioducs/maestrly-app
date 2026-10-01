@@ -25,6 +25,8 @@ import {
   type CursorModelCatalogEntry,
 } from './cursor-sdk/models'
 import { grokReasoningMeta } from './grok-subscription/models'
+import { getAntigravitySubscriptionManager } from './antigravity-subscription/manager'
+import { type AntigravityModelEntry, antigravityModelMeta } from './antigravity-subscription/models'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import { fetchModelsWithStatus } from './models'
 import { getHiddenChatModelsFor } from '../store'
@@ -151,6 +153,14 @@ async function authenticatedCursorModels(accountId: string | null): Promise<read
   return manager.listModels().catch(() => null)
 }
 
+async function authenticatedAntigravityModels(
+  accountId: string | null
+): Promise<readonly AntigravityModelEntry[] | null> {
+  const manager = getAntigravitySubscriptionManager(accountId)
+  if (!manager.getStatus().authenticated) return null
+  return manager.listModels().catch(() => null)
+}
+
 export async function subagentProviderStatus(providerId: string): Promise<SubagentProviderStatus> {
   if (!autonomousProviderAllowed(providerId)) return 'unsupported'
   if (!getProvider(providerId)) return 'missing'
@@ -186,8 +196,9 @@ export async function subagentProviderStatus(providerId: string): Promise<Subage
     if (!status?.available) return 'unsupported'
     return status.authenticated ? 'available' : 'disconnected'
   }
-  // Google AI has no AI SDK model, so it must never reach the BYOK subagent runner.
-  if (isAntigravitySubscriptionProvider(providerId)) return 'unsupported'
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    return getAntigravitySubscriptionManager(accountId).getStatus().authenticated ? 'available' : 'disconnected'
+  }
   return hasApiKey(providerId) ? 'available' : 'no-key'
 }
 
@@ -253,7 +264,18 @@ export async function subagentModelCatalog(providerId: string): Promise<Subagent
         }
       : { status: 'unavailable', models: [] }
   }
-  if (isAntigravitySubscriptionProvider(providerId)) return { status: 'unavailable', models: [] }
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const models = await authenticatedAntigravityModels(accountId)
+    return models
+      ? {
+          status: 'available',
+          models: visibleModelIds(
+            providerId,
+            models.map((model) => model.id)
+          ),
+        }
+      : { status: 'unavailable', models: [] }
+  }
   const result = await fetchModelsWithStatus(providerId)
   return result.status === 'available' ? { ...result, models: visibleModelIds(providerId, result.models) } : result
 }
@@ -288,7 +310,10 @@ export async function subagentModelMeta(providerId: string, modelId: string): Pr
     const model = models?.find((entry) => entry.id === modelId)
     return model ? { status: 'available', meta: cursorModelMeta(model) } : { status: 'unavailable', meta: null }
   }
-  if (isAntigravitySubscriptionProvider(providerId)) return { status: 'unavailable', meta: null }
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const model = (await authenticatedAntigravityModels(accountId))?.find((entry) => entry.id === modelId)
+    return model ? { status: 'available', meta: antigravityModelMeta(model) } : { status: 'unavailable', meta: null }
+  }
   const provider = getProvider(providerId)
   const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
   return getProviderModelMetaWithStatus(modelId, catalogProviderId)

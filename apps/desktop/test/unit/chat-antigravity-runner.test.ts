@@ -250,6 +250,33 @@ describe('Antigravity chat runner', () => {
     expect(fake.requests('session/prompt')).toHaveLength(0)
   })
 
+  it('runs task delegations through the host subagent runtime with the authoritative terminal state', async () => {
+    const runTask = vi.fn(
+      async (_input: unknown, _id: string, _signal: AbortSignal, update: (state: object) => void) => {
+        update({ sub: { profile: null, startedAt: 1 } })
+        return { output: 'subagent report', sub: { profile: null, startedAt: 1, durationMs: 5 } }
+      }
+    )
+    const first = await turn('ECHO warm-up')
+    const catalog = promptText(fake.requests('session/prompt').at(-1))
+    const agent = /"agent":\{"type":"string","enum":\["([^"]+)"/.exec(catalog)?.[1]
+    expect(agent).toBeTruthy()
+    expect(first.events.at(-1)?.kind).toBe('finish')
+    const { events } = await turn(`TOOL task {"agent":"${agent}","prompt":"Investigate."}`, {
+      runTask: runTask as never,
+    })
+    expect(runTask).toHaveBeenCalledWith(
+      { agent, prompt: 'Investigate.' },
+      expect.stringMatching(/^agy_/),
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+    expect(events.find((event) => event.kind === 'tool-state')).toMatchObject({
+      state: { status: 'completed', output: 'subagent report', sub: { durationMs: 5 } },
+    })
+    expect(textOf(events)).toBe('tool-result:subagent report')
+  })
+
   it('deletes an ACP session and its files from the account home', async () => {
     const { result } = await turn('ECHO bye')
     const sessionId = result.sessionId as string
