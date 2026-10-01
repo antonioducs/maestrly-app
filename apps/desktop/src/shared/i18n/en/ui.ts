@@ -825,9 +825,10 @@ export default {
     },
     artifacts: {
       title: 'Artifacts',
-      desc: 'Pages your agents publish are served by this computer while Maestrly is open. They stay private until you share them.',
+      desc: 'Choose where your agents publish pages: this computer or your bot server. Pages stay private until you share them.',
       hostEnabled: 'Host artifacts on this computer',
-      hostEnabledHint: 'When off, agents cannot publish and existing artifacts do not open.',
+      hostEnabledHint:
+        'When off, agents cannot publish on this computer and its existing artifacts do not open. Bot server hosting is separate.',
       port: 'Port',
       portHint: 'Loopback port of the artifact host (1024–65535). Artifact links use it.',
       invalidPort: 'Choose a port between 1024 and 65535.',

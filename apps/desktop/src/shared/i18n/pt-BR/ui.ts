@@ -835,9 +835,10 @@ export default {
     },
     artifacts: {
       title: 'Artefatos',
-      desc: 'As páginas que seus agentes publicam são servidas por este computador enquanto o Maestrly está aberto. Elas ficam privadas até você compartilhar.',
+      desc: 'Escolha onde seus agentes publicam páginas: neste computador ou no seu bot server. As páginas ficam privadas até você compartilhar.',
       hostEnabled: 'Hospedar artefatos neste computador',
-      hostEnabledHint: 'Desligado, os agentes não conseguem publicar e os artefatos existentes não abrem.',
+      hostEnabledHint:
+        'Desligado, os agentes não publicam neste computador e seus artefatos existentes não abrem. A hospedagem no bot server é independente.',
       port: 'Porta',
       portHint: 'Porta de loopback do host de artefatos (1024–65535). Os links dos artefatos usam essa porta.',
       invalidPort: 'Escolha uma porta entre 1024 e 65535.',

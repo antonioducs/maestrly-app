@@ -70,7 +70,9 @@ export function HostStatusChip({ status, onOpenSettings }: { status: ArtifactHos
         className="flex h-7 items-center gap-2 rounded-full border border-border-strong bg-white/[0.03] px-2.5 text-xs text-foreground/75 hover:bg-white/[0.07] hover:text-foreground aria-expanded:bg-white/[0.07] aria-expanded:text-foreground"
       >
         {dot}
-        <span>{label}</span>
+        <span>
+          {t('artifacts.server.local')} · {label}
+        </span>
       </button>
       {open && (
         <div
