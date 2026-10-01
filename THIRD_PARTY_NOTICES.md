@@ -188,3 +188,12 @@ component attribution is in
 [`cursor-sdk-NOTICE.txt`](apps/desktop/resources/licenses/cursor-sdk-NOTICE.txt).
 Use of Cursor services remains subject to Cursor's terms. Maestrly is not
 affiliated with or endorsed by Anysphere or Cursor.
+
+## Google Antigravity ACP server
+
+The optional Google AI subscription integration downloads Google's unmodified
+Antigravity ACP server 1.2.1 directly from `dl.google.com` when the user signs
+in. The lean application package does not contain the server. It is a proprietary
+Google component, separate from Maestrly's MIT-licensed source, and its use and
+the Google AI services it reaches remain subject to Google's terms. Maestrly is
+not affiliated with or endorsed by Google.

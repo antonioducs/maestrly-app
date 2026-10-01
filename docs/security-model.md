@@ -97,6 +97,13 @@ servers retain independent credential stores. Maestrly App cannot guarantee
 their encryption, expiry, revocation, or provider retention. Renderer state sees
 connection presence and sanitized status, not credential values.
 
+The Google Antigravity ACP server is one of these stores. Each Google account
+runs its own server process with an app-owned home directory (created with
+owner-only permissions) as `HOME` and `GEMINI_HOME`, and the server writes its
+OAuth token to a file there. Maestrly reads only the `project_id` field of that
+file to identify the account and never uses the token itself. Signing out or
+resetting local data deletes the directory.
+
 ### Configuring bot environments from a paired device
 
 Every paired device can configure every environment and bot on its gateway.
@@ -161,6 +168,10 @@ capabilities to arbitrary pages.
 The embedded VS Code server and ChatGPT Web bridge bind to loopback and use
 random tokens. The editor token file receives best-effort owner-only permissions.
 The ChatGPT bridge uses a random per-session path and validates loopback hosts.
+The Google Antigravity tool endpoint binds to `127.0.0.1`, rejects non-loopback
+`Host` headers, and requires a random bearer token per ACP session; each token
+exposes only the tools that session was granted, and every call still passes
+Maestrly's permission broker.
 These controls reduce accidental local access but do not defend against a fully
 compromised process running as the same user.
 
@@ -366,12 +377,27 @@ inherit explicit execution profiles and cannot silently become a separate
 authority. Context budgeting and redaction reduce accidental disclosure but
 cannot determine whether user-authored prompt content is sensitive.
 
+The Google Antigravity ACP server's native tools are all disabled, including its
+file viewer, which would otherwise read its working directory and the account
+home without asking. Its permission requests are approved once only for calls
+to Maestrly's own tool endpoint and rejected otherwise. The server's working
+directory is an app-owned folder, never the project, so it does not load hooks or
+settings from repository files.
+
 ## Runtime and package provenance
 
 Optional provider binaries and Local ML assets use pinned versions, target
 selection, and integrity or manifest checks where their upstream format permits.
 The package wrapper stages one target architecture, rejects foreign native
 packages, verifies resources outside the ASAR, and enforces size/leakage budgets.
+
+The Google Antigravity ACP server is downloaded only on sign-in, from
+`dl.google.com` over HTTPS with redirects limited to allowlisted hosts, and
+accepted only when it matches the size limit and SHA-256 digest pinned for that
+target. Google publishes no checksums for
+these archives, so the digests were measured when the version was pinned and
+must be re-measured for every new server release; the server never updates
+independently of Maestrly.
 
 The Codex runtime can also be updated independently of Maestrly releases. The
 main process reads only the `latest` stable version document of `@openai/codex`

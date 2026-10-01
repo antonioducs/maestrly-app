@@ -82,8 +82,8 @@ being exposed directly to React.
 
 The chat service owns conversations, streams, tool state, permissions, usage,
 and persistence. Provider adapters translate one stable internal contract into
-API-key, Codex, Claude, GitHub Copilot, Grok, ChatGPT Web, or compatible
-provider protocols. Provider failures are isolated from other
+API-key, Codex, Claude, GitHub Copilot, Grok, Google Antigravity ACP, ChatGPT
+Web, or compatible provider protocols. Provider failures are isolated from other
 local features.
 
 Maestro coordinates parent and subagent turns through explicit execution
