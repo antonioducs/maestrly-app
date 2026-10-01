@@ -192,8 +192,11 @@ affiliated with or endorsed by Anysphere or Cursor.
 ## Google Antigravity ACP server
 
 The optional Google AI subscription integration downloads Google's unmodified
-Antigravity ACP server 1.2.1 directly from `dl.google.com` when the user signs
-in. The lean application package does not contain the server. It is a proprietary
+Antigravity ACP server directly from `dl.google.com` on first sign-in. Version
+1.2.1 is the reference and minimum; newer official releases discovered through
+the ACP registry can be installed after compatibility validation. Bot environments
+update installed runtimes automatically by default. The lean application package
+and bot image do not contain the server. It is a proprietary
 Google component, separate from Maestrly's MIT-licensed source, and its use and
 the Google AI services it reaches remain subject to Google's terms. Maestrly is
 not affiliated with or endorsed by Google.

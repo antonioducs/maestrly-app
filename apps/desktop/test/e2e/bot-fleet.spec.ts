@@ -2703,8 +2703,26 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         error: null,
       },
     ]
-    upsertEnvironment(fleetEnvironmentSchema.parse({ ...environments.find((item) => item.id === 'acme')!, runtimes }))
-    const runtimesSection = page.getByRole('region', { name: 'Claude Code e Codex', exact: true })
+    upsertEnvironment(
+      fleetEnvironmentSchema.parse({
+        ...environments.find((item) => item.id === 'acme')!,
+        runtimes,
+        additionalRuntimes: [
+          {
+            id: 'antigravity-acp',
+            version: '1.2.1',
+            source: 'managed',
+            pendingVersion: '1.2.2',
+            automatic: true,
+            state: 'up-to-date',
+            availableVersion: null,
+            lastCheckedAt: now(),
+            error: null,
+          },
+        ],
+      })
+    )
+    const runtimesSection = page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })
     const claudeRow = runtimesSection.locator('[data-fleet-runtime="claude-code"]')
     await expect(claudeRow).toContainText('v2.1.285 · da imagem do bot')
     await expect(claudeRow).toContainText('Atualizado')
@@ -2716,6 +2734,11 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(codexRow.locator('[data-fleet-runtime-pending]')).toHaveCount(0)
     await expect(codexRow).toContainText('v0.161.0 disponível')
     await expect(codexRow).toContainText('Atualização automática desligada')
+    const googleRow = runtimesSection.locator('[data-fleet-runtime="antigravity-acp"]')
+    await expect(googleRow).toContainText('Google Antigravity ACP')
+    await expect(googleRow).toContainText('v1.2.1 · atualizado')
+    await expect(googleRow.locator('[data-fleet-runtime-pending]')).toContainText('v1.2.2 instalada')
+    await expect(googleRow).not.toContainText('Atualização automática desligada')
     const check = runtimesSection.getByRole('button', { name: 'Verificar atualizações' })
     await check.click()
     await expect
@@ -2725,7 +2748,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(check).toBeDisabled()
     await header('Home').click()
     await expect(page.getByRole('region', { name: 'Iniciar e parar', exact: true })).toBeVisible()
-    await expect(page.getByRole('region', { name: 'Claude Code e Codex', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Runtimes dos modelos', exact: true })).toHaveCount(0)
   } finally {
     await app?.close()
     for (const stream of streams) stream.end()

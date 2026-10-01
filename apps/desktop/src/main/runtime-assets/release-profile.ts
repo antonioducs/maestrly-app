@@ -1,9 +1,10 @@
 import type { UpdatableRuntimeAssetId } from '../../shared/runtime-assets'
 import type { RuntimeAssetTarget, RuntimeTargetId } from './registry'
 
-/** Verified npm metadata of one platform artifact. */
+/** npm publisher integrity, or explicit Google HTTPS provenance/local acceptance, with bounded artifact sizes. */
 export interface RuntimeArtifactMetadata {
-  readonly sha512Base64: string
+  readonly sha512Base64?: string
+  readonly googleIntegrity?: { readonly sha256: string } | { readonly pending: true }
   readonly downloadBytes: number
   readonly maxDownloadBytes: number
   readonly unpackedBytes: number

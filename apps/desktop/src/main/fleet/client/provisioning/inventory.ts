@@ -1,5 +1,6 @@
 import { fleetApiKeyProviderKindSchema } from '@maestrly/bot-fleet-protocol'
 import os from 'node:os'
+import { getAntigravitySubscriptionManager } from '../../../chat/antigravity-subscription/manager'
 import type { MacInventory } from '../../../../shared/fleet-provisioning'
 import { listProviders, listAvailableChatProviders, getProviderKind } from '../../../chat/catalog'
 import { getApiKey } from '../../../chat/credentials'
@@ -47,6 +48,9 @@ export async function buildMacInventory(): Promise<MacInventory> {
           label,
           expiresAt: credential.expiresAtMs === null ? null : new Date(credential.expiresAtMs).toISOString(),
         })
+    } else if (kind === 'antigravity') {
+      if (getAntigravitySubscriptionManager(slot).getStatus().authenticated)
+        result.logins.push({ id, kind, label, email: null })
     } else if (kind === 'codex') {
       const status = getCodexSubscriptionManager(slot).peekStatus()
       if (status?.authenticated)

@@ -49,6 +49,7 @@ export interface RuntimeAssetPublicStatus {
 
 /** Runtime assets whose releases can be discovered and installed independently of Maestrly releases. */
 export const UPDATABLE_RUNTIME_ASSET_IDS = [
+  'antigravity-acp-runtime',
   'codex-runtime',
   'claude-code-runtime',
 ] as const satisfies readonly RuntimeAssetId[]

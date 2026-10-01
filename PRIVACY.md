@@ -28,7 +28,7 @@ and sanitize diagnostics before posting them.
 | --- | --- |
 | AI providers | Prompts, selected conversation history, instructions, attachments, and allowed project/tool context go to the configured provider under its terms. |
 | ChatGPT Web | The enabled integration uses OpenAI's tunnel client to connect ChatGPT to a token-protected loopback MCP bridge. |
-| Google AI (Antigravity) | Google's Antigravity ACP server, downloaded from `dl.google.com` at sign-in, sends prompts to Google and reaches Maestrly's tools through a token-protected loopback MCP endpoint. |
+| Google AI (Antigravity) | Google's Antigravity ACP server, downloaded from `dl.google.com` at sign-in or update (version checks use `raw.githubusercontent.com`), sends prompts to Google and reaches Maestrly's tools through a token-protected loopback MCP endpoint. |
 | Personal bots | An optional HTTP endpoint inside Desktop shares authorized bot conversations and events with the connected bot. You provide external HTTPS access; no hosted Maestrly relay is required. Model credentials remain in Desktop. |
 | Model metadata | `models.dev` may receive metadata requests for model limits and pricing. |
 | Git and GitHub | Remote operations contact the selected Git host or GitHub. |

@@ -54,6 +54,9 @@ vi.mock('../../src/main/chat/github-copilot/manager', () => ({
     logout: state.logout,
   }),
 }))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
+  getAntigravitySubscriptionManager: () => ({ logout: state.logout }),
+}))
 vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
   getCursorSubscriptionManager: (id: string | null = null) => ({
     exportCredential: () => state.cursors.get(id) ?? null,
@@ -313,4 +316,16 @@ it.each([
   const accounts = listBotAccounts({ connectedProviderIds: new Set(), signingIn: [] })
   expect(accounts.apiKeys[0].baseURL).toBe('https://example.test/v1')
   expect(listProviders().find((provider) => provider.id === accounts.apiKeys[0].providerId)?.baseURL).toBe(baseURL)
+})
+
+it('lists and removes Google accounts without credential metadata', async () => {
+  const accounts = listBotAccounts({
+    connectedProviderIds: new Set([subscriptionProviderIdFor('antigravity-subscription', null)]),
+    signingIn: [],
+  })
+  expect(accounts.subscriptions).toContainEqual(
+    expect.objectContaining({ kind: 'antigravity', accountId: null, state: 'connected', email: null, plan: null })
+  )
+  await removeBotSubscription('antigravity', 'default')
+  expect(state.logout).toHaveBeenCalledTimes(1)
 })

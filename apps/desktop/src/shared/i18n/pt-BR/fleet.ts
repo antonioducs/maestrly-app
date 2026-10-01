@@ -71,6 +71,8 @@ export default {
       'missing-result': 'O bot não retornou o resultado da importação.',
       'login-unexpected-page': 'O bot retornou uma página de login que não pertence ao provedor.',
       'login-cancelled': 'O login foi cancelado.',
+      'login-port-unavailable':
+        'A porta de retorno do login do Google está ocupada. Feche o outro login e tente novamente.',
       'login-page-unavailable': 'Esta página de login está indisponível.',
       'too-large': 'Grande demais para enviar (máx. 8 MB)',
       'file-too-large': 'Um arquivo passa de 4 MB',
@@ -140,9 +142,11 @@ export default {
       codex: 'ChatGPT (Codex)',
       claude: 'Claude',
       grok: 'Grok',
+      antigravity: 'Google AI',
     },
     signInWith: 'Entrar com {{provider}}',
     title: 'Entrar em {{provider}} no {{bot}}',
+    preparingGoogle: 'Preparando o Google AI no ambiente. O primeiro login pode levar alguns minutos…',
     starting: 'Iniciando o login no bot…',
     browserOpened: 'Abrimos {{host}} no seu navegador. Entre e autorize.',
     openAgain: 'Abrir de novo',
@@ -307,13 +311,15 @@ export default {
     version: 'Versão {{version}}',
     updateAvailable: 'O servidor oferece a versão {{version}}.',
     runtimes: {
-      title: 'Claude Code e Codex',
-      note: 'Os bots atualizam sozinhos, entre uma tarefa e outra, nunca abaixo da versão da imagem.',
-      name: { 'claude-code': 'Claude Code', codex: 'Codex' },
+      title: 'Runtimes dos modelos',
+      note: 'Os bots atualizam os runtimes instalados automaticamente e trocam entre tarefas, mantendo a versão mínima compatível.',
+      name: { 'claude-code': 'Claude Code', codex: 'Codex', 'antigravity-acp': 'Google Antigravity ACP' },
       source: { image: 'da imagem do bot', managed: 'atualizado' },
       pending: {
         'claude-code': 'v{{version}} instalada: cada bot passa a usá-la quando terminar a tarefa atual',
         codex:
+          'v{{version}} instalada: os bots passam a usá-la quando nenhum estiver trabalhando, esperando por você ou compactando',
+        'antigravity-acp':
           'v{{version}} instalada: os bots passam a usá-la quando nenhum estiver trabalhando, esperando por você ou compactando',
       },
       state: {
@@ -966,6 +972,8 @@ export default {
       'missing-result': 'O bot não retornou o resultado da importação.',
       'login-unexpected-page': 'O bot retornou uma página de login que não pertence ao provedor.',
       'login-cancelled': 'O login foi cancelado.',
+      'login-port-unavailable':
+        'A porta de retorno do login do Google está ocupada. Feche o outro login e tente novamente.',
       'login-page-unavailable': 'Esta página de login está indisponível.',
       'too-large': 'Grande demais para enviar (máx. 8 MB)',
       'file-too-large': 'Um arquivo passa de 4 MB',

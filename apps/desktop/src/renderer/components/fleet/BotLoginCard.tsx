@@ -115,7 +115,7 @@ export function BotLoginCard({
                     : attempt?.state === 'pending' && attempt.browser
                       ? t('login.browserOpened', { host: loginHost(attempt.browser.authUrl) })
                       : attempt?.state === 'pending'
-                        ? t('login.waiting')
+                        ? t(login.preparing ? 'login.preparingGoogle' : 'login.waiting')
                         : ''}
         </span>
       </div>

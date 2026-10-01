@@ -35,6 +35,7 @@ import {
   isStrictlyInside,
   readAntigravityProjectId,
 } from './paths'
+import { captureAntigravityBrowser } from './remote-login'
 import { decideAntigravityPermission } from './permissions'
 import { type AntigravityRuntimeCommand, resolveAntigravityRuntime } from './runtime'
 
@@ -130,6 +131,8 @@ export class AntigravitySubscriptionManager {
   private generation = 0
   private conn: ConnectionState | null = null
   private connecting: Promise<ConnectionState> | null = null
+  private closing: Promise<void> | null = null
+  private runtimeUses = 0
   private loginController: AbortController | null = null
   private uses = 0
   private idleTimer: NodeJS.Timeout | null = null
@@ -147,6 +150,29 @@ export class AntigravitySubscriptionManager {
 
   get workDir(): string {
     return antigravityWorkDir(this.root)
+  }
+
+  get connectedRuntime(): Pick<AntigravityRuntimeCommand, 'command' | 'version' | 'source'> | null {
+    return this.conn?.runtime ?? null
+  }
+
+  get runtimeConnecting(): boolean {
+    return this.connecting !== null || this.closing !== null
+  }
+
+  /** A monotonic admission counter, unlike the number of currently retained requests. */
+  get runtimeUseCount(): number {
+    return this.runtimeUses
+  }
+
+  /** Called only after the environment is idle; a request admitted since that check keeps its process. */
+  async recycleRuntime(selectedCommand: string, unusedSince: number | undefined): Promise<boolean> {
+    if (this.connecting || this.closing || this.loginController || this.uses > 0) return false
+    if (!this.conn || this.conn.runtime.command === selectedCommand) return true
+    if (this.runtimeUses !== unusedSince) return false
+    this.models = null
+    await this.closeConnection()
+    return true
   }
 
   getStatus(): ChatSubscriptionAuthStatus {
@@ -182,7 +208,7 @@ export class AntigravitySubscriptionManager {
   }
 
   /** Blocks until the Google sign-in opened by the ACP server finishes, fails, or is cancelled. */
-  async login(signal?: AbortSignal): Promise<ChatSubscriptionLoginResult> {
+  async login(signal?: AbortSignal, onBrowserUrl?: (url: string) => void): Promise<ChatSubscriptionLoginResult> {
     if (this.disposed) return { ok: false, error: 'Google AI is shutting down.', status: this.getStatus() }
     if (this.loginController) {
       return { ok: false, error: 'A Google sign-in is already in progress.', status: this.getStatus() }
@@ -195,11 +221,16 @@ export class AntigravitySubscriptionManager {
     this.emitAuthChanged()
     let runtime: AntigravityRuntimeCommand | null = null
     let client: AcpClient | null = null
+    let browser: Awaited<ReturnType<typeof captureAntigravityBrowser>> | null = null
     try {
       runtime = await this.resolveRuntime()
       await ensurePrivateDirectory(this.root)
       await ensurePrivateDirectory(this.workDir)
-      client = (await AcpClient.start(this.startOptions(runtime), controller.signal)).client
+      controller.signal.throwIfAborted()
+      if (onBrowserUrl) browser = await captureAntigravityBrowser(onBrowserUrl)
+      const options = this.startOptions(runtime)
+      client = (await AcpClient.start({ ...options, env: { ...options.env, ...browser?.env } }, controller.signal))
+        .client
       await client.request('authenticate', { methodId: 'oauth-personal' }, { signal: controller.signal })
       this.projectId = readAntigravityProjectId(this.root)
       if (!this.projectId) throw new Error('Google sign-in finished without an Antigravity account.')
@@ -218,6 +249,7 @@ export class AntigravitySubscriptionManager {
     } finally {
       signal?.removeEventListener('abort', forward)
       await client?.close(0).catch(() => undefined)
+      await browser?.close().catch(() => undefined)
       runtime?.release()
       this.loginController = null
       this.emitAuthChanged()
@@ -245,7 +277,10 @@ export class AntigravitySubscriptionManager {
 
   /** Shared ACP connection, started on demand and replaced (with a new generation) when the process died. */
   async connection(signal?: AbortSignal): Promise<AntigravityConnection> {
+    this.runtimeUses++
     this.clearIdleTimer()
+    if (this.closing) await raceAbort(this.closing, signal)
+    signal?.throwIfAborted()
     if (this.disposed) throw new Error('Google AI is shutting down.')
     if (!this.currentProjectId() || this.authenticationRequired) throw new AntigravityAuthRequiredError()
     if (this.conn?.client.alive) return this.conn.handle
@@ -258,6 +293,7 @@ export class AntigravitySubscriptionManager {
   /** Keeps the shared process alive while a request that is not yet a live session is running. */
   retain(): () => void {
     this.clearIdleTimer()
+    this.runtimeUses++
     this.uses++
     let released = false
     return () => {
@@ -435,24 +471,38 @@ export class AntigravitySubscriptionManager {
     return state
   }
 
-  /** Forgets a connection: its sessions cannot be reused, and its runtime lease is returned. */
-  private discardConnection(state: ConnectionState): void {
+  /** Detach first so no new request can take a process that is closing. */
+  private detachConnection(state: ConnectionState): void {
     if (this.conn === state) this.conn = null
     for (const [conversationId, live] of [...this.liveSessions]) {
       if (live.generation === state.generation) this.dropLiveSession(conversationId)
     }
     state.subscribers.clear()
-    state.runtime.release()
+  }
+
+  private discardConnection(state: ConnectionState): void {
+    this.detachConnection(state)
+    // A failed client may have started terminating before its process has actually exited.
+    void state.client.exited.then(() => state.runtime.release())
   }
 
   private async closeConnection(): Promise<void> {
+    if (this.closing) return this.closing
     this.clearIdleTimer()
     const pending = this.connecting
     if (pending) await pending.catch(() => undefined)
+    if (this.closing) return this.closing
     const state = this.conn
     if (!state) return
-    this.discardConnection(state)
-    await state.client.close().catch(() => undefined)
+    this.detachConnection(state)
+    this.closing = state.client
+      .close()
+      .catch(() => undefined)
+      .finally(() => {
+        state.runtime.release()
+        this.closing = null
+      })
+    await this.closing
   }
 
   private dropAllLiveSessions(): void {

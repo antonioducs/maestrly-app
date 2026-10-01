@@ -195,7 +195,7 @@ describe('runtime asset registry', () => {
       downloadBytes: 111_725_488,
       unpackedBytes: 397_584_640,
     })
-    expect(isUpdatableRuntimeAssetId('antigravity-acp-runtime')).toBe(false)
+    expect(isUpdatableRuntimeAssetId('antigravity-acp-runtime')).toBe(true)
   })
 
   it('maps supported hosts and rejects unsupported targets', () => {

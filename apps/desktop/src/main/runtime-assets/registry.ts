@@ -6,11 +6,16 @@ import type { RuntimeArtifactMetadata } from './release-profile'
 export type RuntimeTargetId = 'mac-arm64' | 'mac-x64' | 'linux-arm64' | 'linux-x64' | 'win-arm64' | 'win-x64'
 export type ArchiveFormat = 'tar.gz' | 'zip' | 'file'
 
+/** Pending Google artifacts have HTTPS provenance, not a publisher signature or an accepted digest. */
+export type RuntimeArtifactHash =
+  | Readonly<{ algorithm: 'sha256' | 'sha512'; digest: string; encoding: 'hex' | 'base64'; provenance?: never }>
+  | Readonly<{ algorithm: 'sha256'; encoding: 'hex'; provenance: 'google-origin-pending'; digest?: never }>
+
 export interface RuntimeAssetTarget {
   readonly id: RuntimeTargetId
   readonly url: string
   readonly archive: ArchiveFormat
-  readonly hash: Readonly<{ algorithm: 'sha256' | 'sha512'; digest: string; encoding: 'hex' | 'base64' }>
+  readonly hash: RuntimeArtifactHash
   /** Estimated compressed archive size, used for download progress when Content-Length is unavailable. */
   readonly downloadBytes: number
   /** Maximum compressed archive size accepted by the downloader and reserved by the disk preflight. */
@@ -162,13 +167,9 @@ export function codexArtifactUrl(version: string, id: RuntimeTargetId): string {
 export function createCodexTarget(
   id: RuntimeTargetId,
   version: string,
-  metadata: {
-    readonly sha512Base64: string
-    readonly downloadBytes: number
-    readonly maxDownloadBytes: number
-    readonly unpackedBytes: number
-  }
+  metadata: RuntimeArtifactMetadata
 ): RuntimeAssetTarget {
+  if (!metadata.sha512Base64) throw new Error('Missing npm SHA-512 integrity')
   const executable = `bin/${id.startsWith('win-') ? 'codex.exe' : 'codex'}`
   return Object.freeze({
     id,
@@ -221,6 +222,7 @@ export function createClaudeCodeTarget(
   version: string,
   metadata: RuntimeArtifactMetadata
 ): RuntimeAssetTarget {
+  if (!metadata.sha512Base64) throw new Error('Missing npm SHA-512 integrity')
   return Object.freeze({
     id,
     url: claudeCodeArtifactUrl(version, id),
@@ -304,7 +306,7 @@ const localMlTargets = Object.freeze(
 export const ANTIGRAVITY_ACP_VERSION = '1.2.1'
 /**
  * Google publishes no checksums for these archives: the digests and sizes below were measured on 2026-09-30
- * and must be re-pinned for every Antigravity ACP server release.
+ * and must be re-measured when this reference version changes. Independent updates record their own accepted digest.
  */
 const antigravityAcp = [
   ['mac-arm64', 'macos', 'darwin-arm64', '0fab9938812e6b32b3b543e65e4f3a0025ceef755413db13542d9a9b81ea803c'],

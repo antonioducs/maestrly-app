@@ -61,7 +61,15 @@ function harness(
   const downloader = vi.fn<RuntimeDownloader>(async (target, destination, download) => {
     await writeFile(destination, 'archive')
     download.onProgress?.(7, 7)
-    return { bytes: 7, digest: target.hash.digest, finalUrl: target.url }
+    return {
+      bytes: 7,
+      digest:
+        target.hash.digest ??
+        (() => {
+          throw new Error('Fixture requires a pinned digest')
+        })(),
+      finalUrl: target.url,
+    }
   })
   const extract = vi.fn(async (_archive: string, destination: string) => {
     await mkdir(path.join(destination, 'bin'), { recursive: true })

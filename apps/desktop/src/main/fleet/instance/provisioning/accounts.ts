@@ -25,9 +25,11 @@ import { getClaudeSubscriptionManager } from '../../../chat/claude-agent-sdk/man
 import { getGrokSubscriptionManager } from '../../../chat/grok-subscription/manager'
 import { getGitHubCopilotSubscriptionManager } from '../../../chat/github-copilot/manager'
 import { getCursorSubscriptionManager } from '../../../chat/cursor-subscription/manager'
+import { getAntigravitySubscriptionManager } from '../../../chat/antigravity-subscription/manager'
 import { InstanceHttpError } from '../server'
 
 export const SUBSCRIPTION_PROVIDER_KIND: Record<FleetSubscriptionKind, ChatSubscriptionProviderKind> = {
+  antigravity: 'antigravity-subscription',
   codex: 'codex-subscription',
   claude: 'claude-subscription',
   grok: 'grok-subscription',
@@ -51,6 +53,8 @@ function cachedAccount(kind: FleetSubscriptionKind, id: string | null): { email:
       const account = getGrokSubscriptionManager(id).getStatusSnapshot()?.account
       return { email: account?.email ?? null, plan: account?.planType ?? null }
     }
+    case 'antigravity':
+      return { email: null, plan: null }
     case 'github-copilot':
       getGitHubCopilotSubscriptionManager(id).peekStatus()
       return { email: null, plan: null }
@@ -209,6 +213,9 @@ export async function removeBotSubscription(kind: FleetSubscriptionKind, slot: s
         break
       case 'grok':
         await getGrokSubscriptionManager(null).logout()
+        break
+      case 'antigravity':
+        await getAntigravitySubscriptionManager(null).logout()
         break
       case 'github-copilot':
         await getGitHubCopilotSubscriptionManager(null).logout()

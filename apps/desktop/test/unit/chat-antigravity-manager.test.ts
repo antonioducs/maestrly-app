@@ -136,3 +136,20 @@ describe('AntigravitySubscriptionManager', () => {
     expect(second.root.endsWith('acc_2')).toBe(true)
   })
 })
+
+it.skipIf(process.platform === 'win32')(
+  'captures the remote browser URL and closes the dedicated agent on cancellation',
+  async () => {
+    fake.env.FAKE_ACP_SCENARIO = 'auth-browser'
+    const manager = fake.manager()
+    const urls: string[] = []
+    const controller = new AbortController()
+    const pending = manager.login(controller.signal, (url) => urls.push(url))
+    await expect.poll(() => urls.length).toBe(1)
+    expect(urls[0]).toBe('https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A32123%2F')
+    expect(fake.requests('authenticate')[0]).toMatchObject({ params: { methodId: 'oauth-personal' } })
+    controller.abort()
+    await expect(pending).resolves.toMatchObject({ ok: false, error: 'Google sign-in was cancelled.' })
+    expect(manager.getStatus().state).toBe('signed-out')
+  }
+)

@@ -1354,7 +1354,7 @@ describe('environment contracts', () => {
 
   it('reports the runtime versions of an environment and the routes that check them', () => {
     expect(FLEET_RUNTIME_UPDATES_FEATURE).toBe('runtime-updates')
-    expect(FLEET_RUNTIME_IDS).toEqual(['claude-code', 'codex'])
+    expect(FLEET_RUNTIME_IDS).toEqual(['claude-code', 'codex', 'antigravity-acp'])
     expect(fleetEnvironmentSchema.parse(environment).runtimes).toBeNull()
     expect(fleetInstanceStatusSchema.parse(status).runtimes).toBeNull()
     const claude = {
@@ -1523,4 +1523,27 @@ describe('environment contracts', () => {
         }
     }
   })
+})
+
+it('supports Google browser sign-in without accepting Google credential imports', () => {
+  expect(provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'antigravity', method: 'browser' }).success).toBe(
+    true
+  )
+  expect(provisioning.fleetLoginStartRequestSchema.safeParse({ kind: 'antigravity', method: 'device' }).success).toBe(
+    false
+  )
+  expect(
+    provisioning.fleetAccountImportRequestSchema.safeParse({ items: [{ type: 'antigravity', token: 'synthetic' }] })
+      .success
+  ).toBe(false)
+  expect(provisioning.fleetLoginUrlAllowed('antigravity', 'https://accounts.google.com/o/oauth2/auth')).toBe(true)
+  for (const url of [
+    'https://accounts.google.com.evil.test/',
+    'https://evil.accounts.google.com/',
+    'https://accounts.google.com:444/',
+    'http://accounts.google.com/',
+    'https://user@accounts.google.com/',
+  ]) {
+    expect(provisioning.fleetLoginUrlAllowed('antigravity', url)).toBe(false)
+  }
 })

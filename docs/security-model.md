@@ -120,13 +120,13 @@ paired device's name and counts only, also when a desktop app from before enviro
 configures one of its bots. Unchanged imports and interactive logins do not
 create this activity; the existing API-key removal route does not create it
 either. Copilot and Cursor imports share the same credential between your computer and
-the environment. Codex, Claude and Grok sign in to separate sessions in the
+the environment. Codex, Claude, Grok and Google AI sign in to separate sessions in the
 environment. Accounts and MCP imports are refused when secure storage is
 unavailable in the environment.
 
 Sign-in URLs are restricted to HTTPS: `auth.openai.com` for Codex;
 `claude.com`, `claude.ai` and `platform.claude.com` for Claude; and `x.ai` or its
-subdomains for Grok. The desktop app's callback relay binds only to loopback, accepts the
+subdomains for Grok; and `accounts.google.com` for Google AI. The desktop app's callback relay binds only to loopback, accepts the
 attempt's exact callback path and closes on completion, cancellation or expiry.
 It never renders bot-provided content and redirects only to allowed provider
 origins; other responses use the desktop app's own completion or failure page. Codex
@@ -391,13 +391,25 @@ selection, and integrity or manifest checks where their upstream format permits.
 The package wrapper stages one target architecture, rejects foreign native
 packages, verifies resources outside the ASAR, and enforces size/leakage budgets.
 
-The Google Antigravity ACP server is downloaded only on sign-in, from
-`dl.google.com` over HTTPS with redirects limited to allowlisted hosts, and
-accepted only when it matches the size limit and SHA-256 digest pinned for that
-target. Google publishes no checksums for
-these archives, so the digests were measured when the version was pinned and
-must be re-measured for every new server release; the server never updates
-independently of Maestrly.
+The Google Antigravity ACP server is downloaded on sign-in and can be updated
+independently of Maestrly. Discovery reads bounded metadata from the ACP
+registry's `antigravity-acp/agent.json` on `raw.githubusercontent.com`, requiring a
+stable version and canonical per-platform `dl.google.com` archive URLs and launch
+arguments. Google does not publish checksums for these archives. The built-in
+version has measured SHA-256 pins; new versions rely on Google's HTTPS origin
+with redirects prohibited, then record a locally computed digest after layout
+checks and a credential-free ACP handshake. This is origin trust, not publisher
+signature verification. Subsequent downloads of an accepted version must match
+its recorded digest; accepted metadata and current/previous pointers support
+offline verification and rollback. Codex and Claude still require npm's published
+SHA-512 integrity.
+
+The ACP validation process has a temporary home and working directory and no
+account credentials. It checks protocol, agent version and required advertised
+capabilities; it cannot prove authenticated model/tool behavior. An incompatible
+candidate is not activated. Desktop updates are manual by default; bots update
+installed ACP runtimes automatically. Active processes keep their leases until
+they exit. Bots recycle them only while idle; account homes and sign-in survive.
 
 The Codex runtime can also be updated independently of Maestrly releases. The
 main process reads only the `latest` stable version document of `@openai/codex`

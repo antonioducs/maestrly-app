@@ -250,9 +250,16 @@ export const fleetAddApiKeyAccountRequestSchema = z
 export type FleetAddApiKeyAccountRequest = z.infer<typeof fleetAddApiKeyAccountRequestSchema>
 export const fleetAddApiKeyAccountResponseSchema = z.object({ providerId: fleetIdSchema })
 export type FleetAddApiKeyAccountResponse = z.infer<typeof fleetAddApiKeyAccountResponseSchema>
-export const fleetSubscriptionKindSchema = z.enum(['codex', 'claude', 'grok', 'github-copilot', 'cursor'])
+export const fleetSubscriptionKindSchema = z.enum([
+  'codex',
+  'claude',
+  'grok',
+  'antigravity',
+  'github-copilot',
+  'cursor',
+])
 export type FleetSubscriptionKind = z.infer<typeof fleetSubscriptionKindSchema>
-export const fleetLoginKindSchema = z.enum(['codex', 'claude', 'grok'])
+export const fleetLoginKindSchema = z.enum(['codex', 'claude', 'grok', 'antigravity'])
 export type FleetLoginKind = z.infer<typeof fleetLoginKindSchema>
 export const fleetAccountSlotIdSchema = z.string().regex(/^acc_[A-Za-z0-9-]{1,80}$/)
 
@@ -327,6 +334,10 @@ export const fleetLoginStartRequestSchema = z
   })
   .refine((value) => value.kind !== 'grok' || value.method === 'device', {
     message: 'Grok signs in with the device flow',
+    path: ['method'],
+  })
+  .refine((value) => value.kind !== 'antigravity' || value.method === 'browser', {
+    message: 'Google AI signs in with the browser flow',
     path: ['method'],
   })
 export type FleetLoginStartRequest = z.infer<typeof fleetLoginStartRequestSchema>
@@ -605,6 +616,8 @@ export const fleetInstanceStatusSchema = z.object({
   compaction: fleetCompactionStateSchema.nullable().default(null),
   /** The environment's runtimes, the same in every bot's status; null from an image that predates runtime reports. */
   runtimes: fleetRuntimesSchema.nullable().default(null),
+  /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
+  additionalRuntimes: fleetRuntimesSchema.optional(),
   lastEventSeq: fleetNonNegativeIntSchema,
 })
 export type FleetInstanceStatus = z.infer<typeof fleetInstanceStatusSchema>

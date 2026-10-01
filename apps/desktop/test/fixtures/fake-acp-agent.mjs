@@ -229,6 +229,19 @@ async function handle(message) {
         agentInfo: { name: 'antigravity-acp', title: 'Google Antigravity', version: '1.2.1' },
       })
     case 'authenticate':
+      if (scenario === 'auth-browser') {
+        spawn(
+          '/bin/sh',
+          [
+            '-c',
+            process.env.BROWSER.replace('%s', '"$1"'),
+            'browser',
+            'https://accounts.google.com/o/oauth2/auth?redirect_uri=http%3A%2F%2Flocalhost%3A32123%2F',
+          ],
+          { stdio: 'ignore' }
+        )
+        return undefined
+      }
       if (scenario === 'auth-cancel') return undefined
       mkdirSync(acpHome, { recursive: true })
       writeFileSync(

@@ -183,6 +183,18 @@ describe('runtime asset IPC', () => {
     }
   )
 
+  it('routes Antigravity setup and update controls through its release channel', async () => {
+    for (const operation of ['install', 'check-update', 'update', 'rollback', 'cancel']) {
+      await mutations.get(`runtime-assets:${operation}`)?.({}, 'antigravity-acp-runtime')
+    }
+    await mutations.get('runtime-assets:set-auto-update')?.({}, 'antigravity-acp-runtime', true)
+    expect(mocks.runtimeUpdates).toHaveBeenCalledWith('antigravity-acp-runtime')
+    for (const method of ['installInitial', 'check', 'update', 'rollback', 'cancel', 'setAutomatic'] as const) {
+      expect(mocks.updates[method]).toHaveBeenCalled()
+    }
+    expect(mocks.service.install).not.toHaveBeenCalled()
+  })
+
   it('validates the automatic preference as a boolean', async () => {
     await expect(
       Promise.resolve().then(() => mutations.get('runtime-assets:set-auto-update')?.({}, 'codex-runtime', 'yes'))

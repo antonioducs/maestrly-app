@@ -36,8 +36,8 @@ describe('managed runtime renderer contract', () => {
     expect(install).toBeGreaterThanOrEqual(0)
     expect(probe).toBeGreaterThan(install)
     expect(probe).toBeLessThan(login)
-    expect(apiSettings).toContain('recovered?.authenticated || recovered?.state === \'signed-in\'')
-    expect(apiSettings).toContain('recovered?.state !== \'signed-out\'')
+    expect(apiSettings).toContain("recovered?.authenticated || recovered?.state === 'signed-in'")
+    expect(apiSettings).toContain("recovered?.state !== 'signed-out'")
     expect(apiSettings).toContain('chatSubscriptionStatus(providerKind, force, accountId)')
   })
 
