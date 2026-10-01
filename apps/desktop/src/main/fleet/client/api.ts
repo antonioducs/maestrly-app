@@ -31,6 +31,8 @@ type RouteResponse<K extends RouteKey> = Routes[K]['response'] extends { _output
 const LIFECYCLE_TIMEOUT_MS = 300_000
 /** The gateway waits up to 30 s for sign-in pages and 60 s for a skill installation, for bots and environments. */
 const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
+  artifactUpload: 300_000,
+  artifactAdmin: 60_000,
   botLoginStart: 35_000,
   environmentLoginStart: 35_000,
   botSkillInstall: 65_000,

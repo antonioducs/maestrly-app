@@ -284,3 +284,32 @@ describe('bot settings translations', () => {
     expect(missing).toEqual([])
   })
 })
+
+describe('bot artifact publishing preference', () => {
+  it('defaults off and does not send unchanged fields to older gateways', () => {
+    const current = bot()
+    const draft = botSettingsDraft(current, false)
+    expect(draft.publishArtifacts).toBe(false)
+    expect(botSettingsPatch(current, draft, false, [])).toEqual({})
+  })
+  it('patches only the publishing toggle in both directions', () => {
+    for (const enabled of [true, false]) {
+      const current = bot({ publishArtifacts: !enabled })
+      const draft = { ...botSettingsDraft(current, false), publishArtifacts: enabled }
+      expect(changedBotSettings(current, draft, false)).toEqual(['publishArtifacts'])
+      expect(botSettingsPatch(current, draft, false, [])).toEqual({ publishArtifacts: enabled })
+    }
+  })
+  it('preserves edits when settings arrive from another device', () => {
+    const previous = botSettingsDraft(bot(), false)
+    const edited = { ...previous, publishArtifacts: true }
+    expect(rebaseBotSettingsDraft(edited, previous, { ...previous, name: 'Renamed' })).toMatchObject({
+      name: 'Renamed',
+      publishArtifacts: true,
+    })
+  })
+  it('names the toggle in both UI catalogs', () => {
+    expect(resources.en.ui.artifacts.publishingBot.label).toBe('Publish artifacts')
+    expect(resources['pt-BR'].ui.artifacts.publishingBot.label).toBe('Publicar artefatos')
+  })
+})

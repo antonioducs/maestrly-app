@@ -6,7 +6,7 @@ A bot is a Maestrly agent that runs in Docker on this computer or on a Linux ser
 
 ## Set up the bot server
 
-Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. The first image download is several gigabytes (the bot image is about 7 GB uncompressed), and each environment needs its own persistent home volume.
+Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
 
 ### On this computer
 
@@ -20,21 +20,61 @@ Choose **This computer**. Docker must be installed and running; Maestrly does no
 | Compose plugin missing | Install the Docker Compose plugin, then **Check again**. |
 | Development fleet running | An unpackaged app does not install beside `npm run bot-fleet:dev`, which uses the same local images. Stop its gateway with `docker compose -p maestrly-fleet-dev stop` (or remove the fleet and its data with `npm run bot-fleet:dev -- down`), then **Check again**. |
 
-**Install bot server** writes the bundled Compose project under the app's data directory, downloads both images of the app's version from GHCR, starts the gateway on a loopback port, and pairs this computer automatically. An unpackaged development build instead uses local images and builds missing ones with `scripts/bot-fleet-images.mjs`. Progress continues if you leave Settings; use **Cancel** while it runs, **Try again** after a failure, or **Back** to change your choice. A failed or cancelled attempt may leave files, images, or a running gateway; **Try again** reuses them. Bots stop when this computer sleeps or shuts down. The **Server** page says **Bots run here** and warns about that limit.
+**Install bot server** writes the bundled Compose project under the app's data directory, downloads the required images of the app's version from GHCR, starts the gateway on a loopback port, and pairs this computer automatically. An unpackaged development build instead uses local images and builds missing ones with `scripts/bot-fleet-images.mjs`. Progress continues if you leave Settings; use **Cancel** while it runs, **Try again** after a failure, or **Back** to change your choice. A failed or cancelled attempt may leave files, images, or a running gateway; **Try again** reuses them. Bots stop when this computer sleeps or shuts down. The **Server** page says **Bots run here** and warns about that limit.
 
 ### On a VPS
 
 Choose **A server (VPS)**. Get a Linux VPS from a provider that gives you SSH access. Use Ubuntu 22.04 or later or Debian 12 or later on x86_64 or arm64, with a root login or a user with passwordless `sudo`. Plan for at least 4 GB of memory and 20 GB free disk space; allow outbound access to your model providers and GHCR. Enter **Server address**, **User**, and **Password**. Under **Advanced options**, change **SSH port** or choose **Use a private key instead** and provide **Private key** and, if needed, **Key passphrase**. Maestrly uses these credentials for setup only.
 
-Choose **Install on the server**. Maestrly checks the server, installs Docker Engine and Compose from Docker's installer when needed, writes Compose files under `/opt/maestrly-bots/`, pulls both images of the app's version from GHCR, starts the gateway, and pairs this computer. It generates a separate ed25519 administrator key, authorizes it on the server, and stores the private key with the OS keyring when available. The app pins the server's SSH host key fingerprint on first use. If secure storage is unavailable, the key lasts only until the app closes; after restarting, the panel asks you to sign in again: use **Set up again** with the server's password or key. The setup progress shows the host key fingerprint and can be cancelled or retried like an install on this computer.
+Choose **Install on the server**. Maestrly checks the server, installs Docker Engine and Compose from Docker's installer when needed, writes Compose files under `/opt/maestrly-bots/`, pulls the required images of the app's version from GHCR, starts the gateway, and pairs this computer. It generates a separate ed25519 administrator key, authorizes it on the server, and stores the private key with the OS keyring when available. The app pins the server's SSH host key fingerprint on first use. If secure storage is unavailable, the key lasts only until the app closes; after restarting, the panel asks you to sign in again: use **Set up again** with the server's password or key. The setup progress shows the host key fingerprint and can be cancelled or retried like an install on this computer.
 
 The gateway stays on the server's loopback port `7443`. The desktop app reaches it through an SSH tunnel from `127.0.0.1` on this computer and shows **Reconnecting to the server…** when SSH drops. Installer setups need no Tailscale or HTTPS certificate. On a second computer, installing against an existing `/opt/maestrly-bots/` starts the gateway if needed and only pairs that computer; it does not replace the server's images or network setting.
+
+### Artifact hosting
+
+The installer offers hosting bots and artifacts together, or artifacts only.
+The latter installs just the gateway image and creates no bot environment.
+Creating the first bot then downloads the bot image recorded in the server's
+`installed.env`, preserving compatibility with the installed gateway. Existing
+artifacts stay available during that download.
+
+New installations enable artifact hosting and copy only the desktop's sharing
+name and default link expiry. Joining an existing installation leaves those
+settings alone. Upgraded servers keep hosting off until you enable it in
+**Settings → Artifacts → Bot server**. The installer update adds the artifact
+port mapping to older installations; reconnect after updating if needed.
+
+The gateway embeds the artifact host and stores its pages in `/data/artifacts`
+in its persistent volume. Its third listener is port 4010 inside Docker,
+separate from the device API (7443) and bot API (7444). The container listens on
+`0.0.0.0`, but installer setups publish it only on the Docker host's loopback.
+For Docker on this computer, the installer chooses a free port starting after
+the desktop artifact port (normally 4011), leaving desktop port 4010 available.
+
+For a VPS, a second, independent SSH tunnel forwards a local loopback port
+(normally 4011, or another free port) to server port 4010, or the port recorded
+in `MAESTRLY_ARTIFACTS_PORT`. An artifact tunnel failure does not take down the
+gateway tunnel. These tunnels let the desktop open pages; visitor links need
+external access and a manually configured public address. See
+[server artifact setup](artifacts.md#bot-server) and the
+[Tailscale example](artifacts.md#reach-the-server-from-another-device).
+
+Each bot has a **Publish artifacts** setting. New bots default to whether the
+server has artifact hosting enabled; migrated bots start with it off. Enabled
+bots receive seven artifact tools, excluding `artifact_open`, and can work only
+with their own artifacts. The desktop's bot publication card opens the external
+viewer. Desktop conversations independently choose their publication host in
+**Settings → Artifacts → Publish new artifacts to**.
+
+Turning hosting off keeps its data. Disconnecting or unpairing this computer
+leaves server hosting running. Explicit server removal with data deletion also
+removes the artifacts; desktop export and reset do not back up or erase them.
 
 ### Update, disconnect, and remove
 
 When bots can be updated, the **Bots** tab shows an arrow icon, and the bots sidebar and the **Server** page show **Update available** with an **Update bots** button (**Settings → Bot server** offers the same button). One click does everything:
 
-1. When Maestrly installed the server and it is older than the desktop app, it updates the server. A packaged app pulls both images of its version from GHCR and recreates the gateway; an unpackaged app uses local images.
+1. When Maestrly installed the server and it is older than the desktop app, it updates the server. A packaged app pulls the required images of its version from GHCR and recreates the gateway; an unpackaged app uses local images.
 2. It then schedules every running environment whose container runs an older image than the server offers. Each environment restarts on the new image as soon as none of its bots is working, waiting for your answer, or under your control. Its home volume keeps accounts, site logins, files, and every bot's conversation.
 
 While an environment waits, the Bots tab and its sidebar entry show a clock, and its environment view shows **Update scheduled** with the bots it waits for and since when. Messages you send still arrive and start turns. Scheduled routine runs are skipped as busy, and messages between bots wait on the server until the environment has restarted. **Update now** restarts the environment at once and interrupts what its bots are doing; **Cancel update** keeps it on its current image. The server finishes a scheduled update on its own, even while your computer is off. A stopped or failed environment moves to the new image the next time it starts. An environment on a server that cannot schedule updates keeps **Update environment**, which restarts it at once after you confirm.

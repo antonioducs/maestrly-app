@@ -4,6 +4,36 @@
  */
 export default {
   artifacts: {
+    publishingBot: {
+      label: 'Publicar artefatos',
+      hint: 'Permitir que este bot publique páginas no servidor de bots.',
+      environmentNotice:
+        'Ao criar seu primeiro bot, o ambiente de execução será baixado. Os artefatos existentes continuam disponíveis.',
+      preparing: 'Preparando o ambiente do bot…',
+      prepareFailed: 'Não foi possível preparar o ambiente do bot: {{message}}',
+    },
+    server: {
+      addressUnavailable: 'Defina um endereço público para o servidor de bots antes de compartilhar um link.',
+      filter: 'Hospedagem',
+      all: 'Todos os locais',
+      local: 'Este computador',
+      server: 'Servidor de bots',
+      bot: 'Bot',
+      elsewhere: 'Outro computador',
+      hosted: 'Hospedado no servidor de bots. Seu computador pode estar em repouso.',
+      off: 'A hospedagem de artefatos no servidor de bots está desativada.',
+      unreachable: 'Não foi possível acessar o servidor de bots.',
+      ready: 'O servidor de bots está pronto.',
+      absent: 'Nenhum servidor de bots pareado.',
+      unsupported: 'Este servidor de bots não oferece suporte a artefatos.',
+      settings: 'Abrir configurações de artefatos',
+      title: 'Servidor de bots',
+      publishTo: 'Publicar novos artefatos em',
+      enabled: 'Hospedar artefatos no servidor de bots',
+      copy: 'Copiar deste computador',
+      copyHint: 'Copia apenas seu nome de compartilhamento e a validade padrão dos links.',
+      addressHint: 'O endereço público usado para abrir páginas no servidor de bots.',
+    },
     sidebar: 'Artefatos',
     sidebarTitle: 'Artefatos — páginas publicadas pelos seus agentes',
     title: 'Artefatos',
@@ -805,9 +835,10 @@ export default {
     },
     artifacts: {
       title: 'Artefatos',
-      desc: 'As páginas que seus agentes publicam são servidas por este computador enquanto o Maestrly está aberto. Elas ficam privadas até você compartilhar.',
+      desc: 'Escolha onde seus agentes publicam páginas: neste computador ou no seu bot server. As páginas ficam privadas até você compartilhar.',
       hostEnabled: 'Hospedar artefatos neste computador',
-      hostEnabledHint: 'Desligado, os agentes não conseguem publicar e os artefatos existentes não abrem.',
+      hostEnabledHint:
+        'Desligado, os agentes não publicam neste computador e seus artefatos existentes não abrem. A hospedagem no bot server é independente.',
       port: 'Porta',
       portHint: 'Porta de loopback do host de artefatos (1024–65535). Os links dos artefatos usam essa porta.',
       invalidPort: 'Escolha uma porta entre 1024 e 65535.',

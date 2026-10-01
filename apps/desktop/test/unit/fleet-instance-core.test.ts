@@ -228,7 +228,7 @@ describe('bot identity', () => {
       ceiling: 'ask',
       selection: null,
       compaction: null,
-      gateway: { peersEnabled: false },
+      gateway: { peersEnabled: false, artifactsEnabled: false },
     })
     expect(botIdentityPrompt('/bot/chat')).toBe('')
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')

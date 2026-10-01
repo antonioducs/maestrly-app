@@ -7,6 +7,7 @@ on:
       - deploy/bot-fleet/**
       - apps/bot-gateway/**
       - packages/bot-fleet-protocol/**
+      - packages/artifact-host/**
       - apps/desktop/src/main/fleet/**
       - apps/desktop/package.json
       - package-lock.json
@@ -20,6 +21,7 @@ on:
       - deploy/bot-fleet/**
       - apps/bot-gateway/**
       - packages/bot-fleet-protocol/**
+      - packages/artifact-host/**
       - apps/desktop/src/main/fleet/**
       - apps/desktop/package.json
       - package-lock.json

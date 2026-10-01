@@ -19,7 +19,8 @@
   "dependencies": {
     "@maestrly/bot-fleet-protocol": "0.1.0",
     "zod": "4.6.5",
-    "ws": "8.22.0"
+    "ws": "8.22.0",
+    "@maestrly/artifact-host": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "22.20.4",

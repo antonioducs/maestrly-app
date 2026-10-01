@@ -7,7 +7,6 @@ import {
   type ArtifactSharingPatch,
   type ArtifactSharingView,
   type ArtifactVisibility,
-  DEFAULT_ARTIFACT_SETTINGS,
   MAX_ACCESS_CODE_CHARS,
   MAX_ARTIFACT_NAME_CHARS,
 } from '../../../shared/artifacts'
@@ -53,7 +52,6 @@ export function ShareDialog({
   const { t } = useTranslation('ui')
   const [locale] = useLocale()
   const [sharing, setSharing] = useState<ArtifactSharingView | null>(null)
-  const [defaultExpiryDays, setDefaultExpiryDays] = useState(DEFAULT_ARTIFACT_SETTINGS.linkExpiryDays)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -78,10 +76,6 @@ export function ShareDialog({
   // Devices join and leave while the dialog is open.
   useEffect(() => {
     void load()
-    void window.api.artifacts
-      .getSettings()
-      .then((settings) => setDefaultExpiryDays(settings.linkExpiryDays))
-      .catch(() => {})
     const off = window.api.artifacts.onChanged(() => void load())
     return () => {
       off()
@@ -139,7 +133,7 @@ export function ShareDialog({
     const stale = sharing.linkExpiresAt === null || sharing.linkExpiresAt <= Date.now()
     void patch(
       visibility === 'link' && stale
-        ? { visibility, linkExpiresAt: expiryFromDays(defaultExpiryDays, Date.now()) }
+        ? { visibility, linkExpiresAt: expiryFromDays(sharing.defaultLinkExpiryDays, Date.now()) }
         : { visibility }
     )
   }
@@ -192,7 +186,8 @@ export function ShareDialog({
   const expiry = sharing ? expiryChoice(sharing.linkExpiresAt, now) : null
   const expired = sharing?.linkExpiresAt != null && sharing.linkExpiresAt <= now
   const expiryValue = expiry === null ? NEVER : expiry === 'custom' ? CUSTOM : String(expiry)
-  const pageLink = sharing ? `${sharing.publicBase ?? sharing.localBase}/a/${id}` : ''
+  const linkBase = sharing?.publicBase || sharing?.localBase
+  const pageLink = linkBase ? `${linkBase}/a/${id}` : ''
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -430,6 +425,7 @@ export function ShareDialog({
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={!pageLink}
                     onClick={() => void copy(pageLink, t('artifacts.share.linkCopied'))}
                   >
                     <Copy className="size-3.5" /> {t('artifacts.share.copyLink')}
@@ -446,7 +442,9 @@ export function ShareDialog({
                   >
                     <AlertTriangle className="size-3.5 shrink-0 text-artifact-warn" aria-hidden="true" />
                     <p className="min-w-[200px] flex-1 text-xs text-foreground/85">
-                      {t('artifacts.share.addressLocal')}
+                      {t(
+                        item.host === 'server' ? 'artifacts.server.addressUnavailable' : 'artifacts.share.addressLocal'
+                      )}
                     </p>
                     <Button
                       size="sm"
@@ -461,7 +459,9 @@ export function ShareDialog({
                     </Button>
                   </div>
                 )}
-                <p className="mt-2 text-xs text-muted-foreground">{t('artifacts.share.awake')}</p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t(item.host === 'server' ? 'artifacts.server.hosted' : 'artifacts.share.awake')}
+                </p>
               </Section>
             )}
 

@@ -1,6 +1,7 @@
 /** Artifacts shared between the main process and the renderer: settings, host status and list views. */
 
 export interface ArtifactSettings {
+  publishTo: 'local' | 'server'
   hostEnabled: boolean
   port: number
   quotaGb: number
@@ -13,6 +14,7 @@ export interface ArtifactSettings {
 }
 
 export const DEFAULT_ARTIFACT_SETTINGS: ArtifactSettings = {
+  publishTo: 'local',
   hostEnabled: true,
   port: 4010,
   quotaGb: 2,
@@ -49,7 +51,9 @@ export interface ArtifactListItem {
   visibility: ArtifactVisibility
   createdAt: number
   updatedAt: number
-  host: 'local'
+  host: 'local' | 'server'
+  bot: { id: string; name: string | null } | null
+  elsewhere: boolean
   /** The originating conversation; `exists` is false once it was deleted, with its last known title. */
   conversation: { id: string; title: string | null; exists: boolean } | null
   /** The project it was published in; null for standalone conversations. `name` is null once the project is gone. */
@@ -122,6 +126,7 @@ export interface ArtifactSharingView {
   requests: ArtifactAccessRequestView[]
   /** The configured public address, or null when links only work on this computer. */
   publicBase: string | null
+  defaultLinkExpiryDays: number | null
   localBase: string
 }
 
@@ -198,3 +203,18 @@ export function parseArtifactToolResult(text: string): ArtifactToolResult | null
   if (typeof artifact.version !== 'number' || !Number.isInteger(artifact.version) || artifact.version < 1) return null
   return { id: artifact.id, title: artifact.title.slice(0, MAX_CARD_TITLE_CHARS), version: artifact.version }
 }
+
+/** The paired server's artifact host, kept separate from the local host's status. */
+export type ArtifactServerStatus =
+  | { state: 'absent' }
+  | { state: 'unsupported' }
+  | { state: 'unreachable' }
+  | { state: 'off' }
+  | {
+      state: 'ready'
+      canOpen: boolean
+      artifactCount: number
+      storageBytes: number
+      quotaBytes: number
+      problem: string | null
+    }

@@ -1,4 +1,6 @@
 import path from 'node:path'
+import http from 'node:http'
+import type net from 'node:net'
 import { describe, expect, it } from 'vitest'
 import type { FleetConnectionView } from '../../src/main/fleet/client/service'
 import { InstallerError } from '../../src/main/fleet/installer/errors'
@@ -12,7 +14,9 @@ import {
   type InstallerSession,
   type InstallerTunnel,
 } from '../../src/main/fleet/installer/service'
-import type { TunnelOptions } from '../../src/main/fleet/installer/tunnel'
+import { generateSshKey } from '../../src/main/fleet/installer/ssh'
+import { startFakeSshServer } from '../fixtures/fake-ssh-server'
+import { SshTunnel, type TunnelOptions } from '../../src/main/fleet/installer/tunnel'
 import type { FleetInstallRecord, FleetInstallerStatus, FleetTunnelState } from '../../src/shared/fleet-installer'
 import { FakeRunner, fail, ok } from '../fixtures/fleet-installer-fakes'
 
@@ -164,6 +168,7 @@ function setup(options: SetupOptions = {}) {
     isPackaged: true,
     env: {},
     userDataDir: () => '/profile',
+    desktopArtifactsPort: () => 4010,
     hostname: 'Estação de Trabalho',
     timezone: 'America/Sao_Paulo',
     localRunner: () => local,
@@ -297,6 +302,7 @@ describe('installing on this computer', () => {
         gatewayImage: images.gateway,
         botImage: images.bot,
         port: 7443,
+        artifactsPort: 4011,
         displayName: 'Estação de Trabalho',
         egress: 'public',
         timezone: 'America/Sao_Paulo',
@@ -311,6 +317,7 @@ describe('installing on this computer', () => {
     expect(fleetState.connects).toEqual([{ url: 'http://127.0.0.1:7443', code: 'ABCD-EFGH', deviceName: 'Mac' }])
     expect(stored.record).toEqual({
       mode: 'local',
+      artifactsPort: 4011,
       version: '0.9.4',
       port: 7443,
       allowPrivateNetwork: false,
@@ -477,6 +484,8 @@ describe('installing on a VPS', () => {
     expect(persistent.options.privateKey()).toBe(stored.key)
     expect(stored.record).toEqual({
       mode: 'remote',
+      artifactsPort: 4011,
+      remoteArtifactsPort: 4010,
       version: '0.9.4',
       port: 7443,
       allowPrivateNetwork: false,
@@ -622,6 +631,7 @@ describe('installing on a VPS', () => {
       [7443, true],
       [7443, true],
       [7443, false],
+      [4011, false],
     ])
     expect(steps(status)?.[7]).toEqual(['pair', 'skipped'])
     expect(fleetState.connects).toEqual([])
@@ -1079,5 +1089,255 @@ describe('image download progress', () => {
         'Status: Downloaded newer image for registry.example.test/maestrly-bot-gateway:0.9.4',
       ])
     ).toBe('registry.example.test/maestrly-bot-gateway:0.9.4 (2/2)')
+  })
+})
+
+describe('artifact viewer ports', () => {
+  it('allocates beside the desktop port and preserves a custom env port on reinstall and update', async () => {
+    const { service, local, stored } = setup({ deps: { desktopArtifactsPort: () => 5000 } })
+    await service.installLocal({ deviceName: 'Mac', allowPrivateNetwork: false })
+    expect(service.artifactsViewerPort()).toBe(5001)
+    local.files.set(localFile('.env'), local.files.get(localFile('.env'))!.replace('PORT=5001', 'PORT=5123'))
+    await service.installLocal({ deviceName: 'Mac', allowPrivateNetwork: false })
+    expect(stored.record?.artifactsPort).toBe(5123)
+    stored.record!.version = '0.9.3'
+    await service.update()
+    expect(service.artifactsViewerPort()).toBe(5123)
+    expect(local.files.get(localFile('.env'))).toContain('MAESTRLY_ARTIFACTS_PORT=5123')
+  })
+
+  it('upgrades legacy local installs with a free viewer port', async () => {
+    const { service, stored } = setup({ record: localRecord(), deps: { desktopArtifactsPort: () => 5100 } })
+    expect(service.artifactsViewerPort()).toBeNull()
+    expect((await service.update()).job?.state).toBe('succeeded')
+    expect(stored.record?.artifactsPort).toBe(5101)
+  })
+
+  it('restores the independent remote target, remaps the viewer, and stops both tunnels', async () => {
+    const { service, tunnels, stored, fleetState } = setup({
+      record: remoteRecord({ artifactsPort: 4011, remoteArtifactsPort: 4210 }),
+      key: 'synthetic',
+      tunnelPort: (options) => (options.remotePort ? 4111 : options.listenPort),
+    })
+    expect(service.artifactsViewerPort()).toBeNull()
+    await service.start()
+    expect(tunnels[1].options).toMatchObject({ listenPort: 4011, remotePort: 4210, recoverForwarding: true })
+    expect(tunnels[0].options.recoverForwarding).toBeUndefined()
+    expect(service.artifactsViewerPort()).toBe(4111)
+    expect(stored.record?.artifactsPort).toBe(4111)
+    expect(fleetState.retargets).toEqual([])
+    await service.stop()
+    expect(tunnels.every((tunnel) => tunnel.stopped)).toBe(true)
+    expect(service.artifactsViewerPort()).toBeNull()
+    await service.start()
+    expect(tunnels.at(-1)?.options.listenPort).toBe(4111)
+  })
+
+  it('recovers an unavailable viewer through SSH without another viewer request', async () => {
+    const viewer = http.createServer((_request, response) => response.end('synthetic artifact'))
+    const api = http.createServer((_request, response) => response.end('synthetic API'))
+    const listen = (server: net.Server, port = 0) =>
+      new Promise<number>((resolve) =>
+        server.listen(port, '127.0.0.1', () => resolve((server.address() as net.AddressInfo).port))
+      )
+    const close = (server: net.Server) => new Promise<void>((resolve) => server.close(() => resolve()))
+    const viewerDestination = await listen(viewer)
+    await close(viewer)
+    const apiDestination = await listen(api)
+    let viewerAttempts = 0
+    const fake = await startFakeSshServer({
+      users: {},
+      forwardTo: (port) => {
+        if (port === 4010) {
+          viewerAttempts++
+          return viewerDestination
+        }
+        return port === 7443 ? apiDestination : null
+      },
+    })
+    const key = generateSshKey('maestrly-synthetic')
+    fake.authorizedKeys.push(key.publicKey)
+    const actual: SshTunnel[] = []
+    const { service } = setup({
+      record: remoteRecord({
+        port: 0,
+        artifactsPort: 1,
+        remote: {
+          host: '127.0.0.1',
+          port: fake.port,
+          username: 'root',
+          hostKey: fake.fingerprint,
+          keyTag: 'synthetic',
+        },
+      }),
+      key: key.privateKey,
+      deps: {
+        createTunnel(options) {
+          const tunnel = new SshTunnel({ ...options, listenPort: 0 })
+          actual.push(tunnel)
+          return tunnel
+        },
+      },
+    })
+    try {
+      await service.start()
+      await expect.poll(() => service.status().artifactsTunnel).toBe('connected')
+      const port = service.artifactsViewerPort()!
+      await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
+      expect(service.artifactsViewerPort()).toBeNull()
+      expect(service.status().artifactsTunnelError).not.toBeNull()
+      expect(await (await fetch(`http://127.0.0.1:${actual[0].port}`)).text()).toBe('synthetic API')
+      await listen(viewer, viewerDestination)
+      await expect.poll(() => service.artifactsViewerPort(), { timeout: 4000 }).toBe(port)
+      expect(service.status().artifactsTunnelError).toBeNull()
+      expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('synthetic artifact')
+      expect(fake.connections).toBe(2)
+      // Leave recovery scheduled, then verify disconnect cancels it and closes both listeners.
+      await close(viewer)
+      await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
+      await service.disconnect()
+      const attempts = viewerAttempts
+      await new Promise((resolve) => setTimeout(resolve, 1100))
+      expect(viewerAttempts).toBe(attempts)
+      expect(service.artifactsViewerPort()).toBeNull()
+      expect(actual.every((tunnel) => tunnel.state === 'off')).toBe(true)
+    } finally {
+      await service.stop()
+      await fake.close()
+      await close(viewer)
+      await close(api)
+    }
+  })
+
+  it('keeps the gateway connected when the artifact listener fails', async () => {
+    const { service, tunnels } = setup({
+      record: remoteRecord({ artifactsPort: 4011 }),
+      key: 'synthetic',
+      tunnelPort: (options) => {
+        if (options.remotePort) throw new Error('Synthetic listener failure')
+        return options.listenPort
+      },
+    })
+    await service.start()
+    expect(service.status().tunnel).toBe('connected')
+    expect(service.status().artifactsTunnelError?.detail).toContain('Synthetic listener failure')
+    expect(service.artifactsViewerPort()).toBeNull()
+    expect(tunnels[0].stopped).toBe(false)
+  })
+})
+
+describe('artifact-only installation', () => {
+  const localInput = { deviceName: 'Mac', allowPrivateNetwork: false, hosts: 'artifacts-only' as const }
+  const remoteInput = { ...localInput, target, credentials: { kind: 'password' as const, password: 'synthetic' } }
+
+  it('pulls only the gateway, initializes hosting from desktop settings, and provisions the first bot on demand', async () => {
+    const { service, local, stored, fleetState } = setup({
+      connection: { features: ['artifacts'] },
+      deps: { desktopArtifactSettings: () => ({ ownerName: 'Synthetic owner', linkExpiryDays: 7 }) },
+    })
+    fleetState.responses.artifactHostPatch = {}
+    expect((await service.installLocal(localInput)).job?.state).toBe('succeeded')
+    expect(local.commands(['pull'])).toEqual([['pull', images.gateway]])
+    expect(stored.record?.artifactsOnly).toBe(true)
+    expect(fleetState.calls).toContainEqual([
+      'artifactHostPatch',
+      { body: { enabled: true, ownerName: 'Synthetic owner', linkExpiryDays: 7 } },
+    ])
+    local.on(['pull', images.bot], fail('Synthetic download failure'))
+    expect((await service.provideBotEnvironment()).job).toMatchObject({ kind: 'bot-environment', state: 'failed' })
+    expect(stored.record?.artifactsOnly).toBe(true)
+    local.on(['pull', images.bot], ok())
+    expect((await service.provideBotEnvironment()).job?.state).toBe('succeeded')
+    expect(stored.record?.artifactsOnly).toBe(false)
+    expect(local.commands(['pull'])).toEqual([
+      ['pull', images.gateway],
+      ['pull', images.bot],
+      ['pull', images.bot],
+    ])
+    await service.provideBotEnvironment()
+    expect(local.commands(['pull'])).toHaveLength(3)
+  })
+
+  it('builds only the requested image in a development checkout', async () => {
+    const built = new Set<string>()
+    const builds: Array<string | undefined> = []
+    const { service, local } = setup({
+      deps: {
+        isPackaged: false,
+        runImageBuilder: async (_options, only) => {
+          builds.push(only)
+          built.add(only!)
+          return ok()
+        },
+      },
+    })
+    local.on(['image', 'inspect'], (args) =>
+      built.has(args.at(-1)!.includes('gateway') ? 'gateway' : 'bot') ? ok('sha256:synthetic') : fail('missing')
+    )
+    expect((await service.installLocal(localInput)).job?.state).toBe('succeeded')
+    expect(builds).toEqual(['gateway'])
+    expect(local.commands(['image', 'inspect']).every((args) => args.at(-1)!.includes('gateway'))).toBe(true)
+    expect((await service.provideBotEnvironment()).job?.state).toBe('succeeded')
+    expect(builds).toEqual(['gateway', 'bot'])
+    expect(local.commands(['pull'])).toEqual([])
+  })
+
+  it('skips the bot download during updates, preserving registry overrides', async () => {
+    const { service, local, stored } = setup({
+      deps: { env: { MAESTRLY_BOT_SERVER_REGISTRY: 'registry.example.test:5500' } },
+    })
+    await service.installLocal(localInput)
+    stored.record!.version = '0.9.3'
+    expect((await service.update()).job?.state).toBe('succeeded')
+    expect(local.commands(['pull'])).toEqual([
+      ['pull', 'registry.example.test:5500/maestrly-bot-gateway:0.9.4'],
+      ['pull', 'registry.example.test:5500/maestrly-bot-gateway:0.9.4'],
+    ])
+    expect(stored.record?.artifactsOnly).toBe(true)
+  })
+
+  it('provisions the image named by an existing remote registry install from a development desktop', async () => {
+    const { service, remote, stored } = setup({
+      record: remoteRecord({ artifactsOnly: true }),
+      key: 'synthetic',
+      deps: { isPackaged: false },
+    })
+    remote.files.set(
+      '/opt/maestrly-bots/.env',
+      'MAESTRLY_GATEWAY_BOT_IMAGE=registry.example.test:5500/maestrly-bot-instance:0.9.1\n'
+    )
+    expect((await service.provideBotEnvironment()).job?.state).toBe('succeeded')
+    expect(remote.commands(['pull'])).toEqual([['pull', 'registry.example.test:5500/maestrly-bot-instance:0.9.1']])
+    expect(stored.record?.artifactsOnly).toBe(false)
+  })
+
+  it('keeps artifact enable failure as a nonfatal notice', async () => {
+    const { service, stored } = setup({ connection: { features: ['artifacts'] } })
+    const status = await service.installLocal(localInput)
+    expect(status.job).toMatchObject({ state: 'succeeded', warning: 'artifacts-enable-failed', error: null })
+    expect(stored.record?.artifactsOnly).toBe(true)
+  })
+
+  it('does not initialize host settings when joining an existing local server', async () => {
+    const { service, local, fleetState } = setup({ connection: { features: ['artifacts'] } })
+    local.files.set(localFile('.env'), 'MAESTRLY_ARTIFACTS_PORT=4321\n')
+    expect((await service.installLocal(localInput)).job?.state).toBe('succeeded')
+    expect(fleetState.calls).toEqual([])
+  })
+
+  it('pulls only the gateway remotely and preserves settings when joining an existing server', async () => {
+    const fresh = setup({ connection: { features: ['artifacts'] } })
+    fresh.fleetState.responses.artifactHostPatch = {}
+    expect((await fresh.service.installRemote(remoteInput)).job?.state).toBe('succeeded')
+    expect(fresh.remote.commands(['pull'])).toEqual([['pull', images.gateway]])
+    expect(fresh.stored.record?.artifactsOnly).toBe(true)
+    const env = fresh.remote.files.get('/opt/maestrly-bots/.env')!
+    const joining = setup({
+      connection: { features: ['artifacts'] },
+      vps: fakeSession(vpsScript({ existing_env: Buffer.from(env).toString('base64') })),
+    })
+    expect((await joining.service.installRemote(remoteInput)).job?.state).toBe('succeeded')
+    expect(joining.fleetState.calls).toEqual([])
+    expect(joining.remote.commands(['pull'])).toEqual([])
   })
 })

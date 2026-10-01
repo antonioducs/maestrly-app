@@ -636,6 +636,11 @@ export default {
       invalidEncoding: '{{path}} não é base64 válido.',
       inlineTooLarge: 'Os arquivos inline passam de 5 MiB no total. Grave-os numa pasta e publique com directory.',
       directoryRefused: 'A pasta não pode ser publicada: {{message}}',
+      serverUnavailable: 'O bot server está indisponível. Verifique a conexão em Configurações → Bots.',
+      serverOff: 'A hospedagem de artefatos está desligada no bot server. Ative em Configurações → Artefatos.',
+      botOff: 'A publicação de artefatos está desligada para este bot. Peça ao dono para ativá-la.',
+      noViewer:
+        'Não há endereço para abrir o visualizador. Verifique o túnel ou configure o endereço público do servidor em Configurações → Artefatos.',
       hostDisabled: 'A hospedagem de artefatos está desligada em Configurações → Artefatos.',
       portInUse: 'A porta {{port}} está em uso. Troque em Configurações → Artefatos.',
       hostUnavailable: 'O host de artefatos está indisponível. Verifique Configurações → Artefatos.',

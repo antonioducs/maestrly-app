@@ -113,6 +113,20 @@ export function BotServerPanel({
               </Button>
             </div>
           )}
+          {mode === 'remote' &&
+            (status.artifactsTunnelError ||
+              (status.artifactsTunnel &&
+                status.artifactsTunnel !== 'connected' &&
+                status.artifactsTunnel !== 'off')) && (
+              <p role="status" className="rounded-md border border-amber-500/40 p-3 text-xs text-amber-500">
+                {t('botServer.artifactsTunnelFailed')}
+              </p>
+            )}
+          {status.job?.warning && (
+            <p role="status" className="rounded-md border border-amber-500/40 p-3 text-xs text-amber-500">
+              {t(`botServer.warnings.${status.job.warning}`)}
+            </p>
+          )}
           <PrivateNetworkSwitch
             mode={record.mode}
             checked={record.allowPrivateNetwork}

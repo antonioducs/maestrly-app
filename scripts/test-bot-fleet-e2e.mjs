@@ -705,6 +705,7 @@ async function main() {
     ...process.env,
     MAESTRLY_GATEWAY_NETWORK: network,
     MAESTRLY_GATEWAY_PORT: String(port),
+    MAESTRLY_ARTIFACTS_PORT: String(await freePort()),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
     MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
     // Bots must not download Claude Code or Codex releases during the test.
@@ -1301,6 +1302,95 @@ async function main() {
   pass(
     'provisioning from the Mac',
     "account replay unchanged; skill and MCP server reached the model and are the environment's; removed again"
+  )
+
+  // A real bot publishes through its scoped gateway RPC; the paired device can inspect and open the result.
+  const artifactBase = 'http://127.0.0.1:' + composeEnv.MAESTRLY_ARTIFACTS_PORT
+  assert.ok(meta.features.includes('artifacts'))
+  const artifactHost = await request('PATCH', '/v1/artifacts/host', {
+    enabled: true,
+    publicAddress: artifactBase,
+    ownerName: 'E2E owner',
+    linkExpiryDays: 30,
+    quotaGb: 2,
+  })
+  assert.equal(artifactHost.status.state, 'running')
+  assert.equal((await request('PATCH', '/v1/bots/' + scoutId, { publishArtifacts: true })).publishArtifacts, true)
+  await poll(
+    'Scout artifact publishing enabled',
+    async () => (await instanceStatus(containers[1])).bots.find((entry) => entry.botId === scoutId)?.status.ready
+  )
+  await answer(await send(scoutId, 'E2E-ARTIFACT-CREATE'), 'E2E-ARTIFACT-CREATED', { approve: true })
+  const artifactAdmin = async (method, args = []) => {
+    const result = await request('POST', '/v1/artifacts/admin', { method, args })
+    assert.equal(result.ok, true, JSON.stringify(result))
+    return result.value
+  }
+  const published = (await artifactAdmin('list')).filter((item) => item.title === 'E2E bot page')
+  assert.equal(published.length, 1)
+  const artifact = published[0]
+  assert.equal(artifact.ownerKind, 'bot')
+  assert.equal(artifact.ownerId, scoutId)
+  assert.equal(artifact.workspaceId, null)
+  assert.equal(artifact.currentVersion, 1)
+  const scoutRuntime = (await instanceStatus(containers[1])).bots.find((entry) => entry.botId === scoutId)
+  assert.equal(artifact.conversationId, scoutRuntime.status.conversationId)
+  assert.equal(typeof artifact.conversationTitle, 'string')
+  assert.ok(artifact.conversationTitle.length > 0)
+  const ticket = await artifactAdmin('mintOwnerTicket', [artifact.id])
+  const viewer = artifactBase + '/a/' + artifact.id
+  assert.equal((await fetch(viewer + '/api/state')).status, 404)
+  const session = await fetch(viewer + '/api/session/owner', {
+    method: 'POST',
+    headers: { origin: artifactBase, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+    body: JSON.stringify({ ticket: ticket.ticket }),
+  })
+  assert.equal(session.status, 204)
+  const cookie = session.headers.get('set-cookie')?.split(';')[0]
+  assert.ok(cookie)
+  const viewerState = await fetch(viewer + '/api/state', { headers: { cookie } })
+  assert.equal(viewerState.status, 200)
+  const state = await viewerState.json()
+  assert.equal(state.identity.kind, 'owner')
+  assert.equal(state.artifact.id, artifact.id)
+  assert.equal(state.artifact.title, 'E2E bot page')
+  const frame = await fetch(viewer + '/api/frame', {
+    method: 'POST',
+    headers: { cookie, origin: artifactBase, 'content-type': 'application/json', 'x-maestrly-artifact': '1' },
+    body: JSON.stringify({ version: 1 }),
+  })
+  assert.equal(frame.status, 200)
+  const contentUrl = new URL((await frame.json()).url, artifactBase)
+  const content = await fetch(contentUrl)
+  assert.equal(content.status, 200)
+  assert.ok((await content.text()).includes('E2E-BOT-ARTIFACT-CONTENT'))
+  // The listener accepts then destroys fleet sockets, so a successful TCP connect is not proof of access.
+  const denied = await docker([
+    'exec',
+    containers[1],
+    'node',
+    '-e',
+    `
+    const http = require('node:http')
+    const request = http.get('http://maestrly-bot-gateway:4010/a/' + process.argv[1], () => {
+      console.error('Fleet container received an HTTP response from the artifact listener')
+      process.exit(1)
+    })
+    request.setTimeout(5000, () => { console.error('Artifact listener did not reject promptly'); process.exit(2) })
+    request.on('error', (error) => {
+      if (error.code !== 'ECONNRESET') { console.error(error.code); process.exit(3) }
+      console.log('artifact HTTP refused: ' + error.code)
+    })
+  `,
+    artifact.id,
+  ])
+  assert.ok(denied.stdout.includes('artifact HTTP refused: ECONNRESET'))
+  assert.equal(await artifactAdmin('delete', [artifact.id]), true)
+  assert.equal((await fetch(viewer + '/api/state', { headers: { cookie } })).status, 404)
+  assert.equal((await fetch(contentUrl)).status, 404)
+  pass(
+    'bot artifacts',
+    'bot-owned page with conversation metadata; owner viewer API and HTML verified; fleet HTTP refused; deletion revoked API and content'
   )
 
   const sendMemoryMessage = (text) =>

@@ -1,3 +1,5 @@
+import { ArtifactHosting } from '../src/artifact-hosting.js'
+import { FleetNetwork } from '../src/network.js'
 import { afterEach, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
@@ -428,7 +430,18 @@ export async function harness(
     one = auth.pair(auth.createPairing().code, 'Mac', 'one'),
     events: import('@maestrly/bot-fleet-protocol').FleetGatewayEvent[] = []
   lifecycle.onEvent = (event) => events.push(event)
+  const network = new FleetNetwork(docker, cfg.network)
+  const artifacts = new ArtifactHosting({
+    store,
+    config: { ...cfg, artifactsPort: 0 },
+    network,
+    emit: (event) => events.push(event),
+    onEnabledChange: () => lifecycle.refreshProfiles(),
+  })
+  lifecycle.artifactsEnabled = () => artifacts.settings().enabled
   const gateway = createGatewayServers({
+    network,
+    artifacts,
     auth,
     config: { ...cfg, publicPort: 0, internalPort: 0 },
     events: new EventHub(async () => {}),
@@ -465,6 +478,7 @@ export async function harness(
     })
   return {
     dir,
+    artifacts,
     store,
     docker,
     lifecycle,

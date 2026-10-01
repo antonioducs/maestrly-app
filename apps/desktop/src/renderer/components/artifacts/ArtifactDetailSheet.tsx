@@ -33,6 +33,7 @@ export function ArtifactDetailSheet({
   projectName,
   isOpening,
   onOpen,
+  onOpenBot,
   onGoToConversation,
   onShare,
   onDelete,
@@ -44,6 +45,7 @@ export function ArtifactDetailSheet({
   projectName: string
   isOpening: (version?: number) => boolean
   onOpen: (version?: number) => void
+  onOpenBot: (id: string) => void
   onGoToConversation: () => void
   onShare: () => void
   onDelete: () => void
@@ -142,7 +144,7 @@ export function ArtifactDetailSheet({
     }
   }
 
-  const conversation = item.conversation
+  const conversation = item.bot || item.elsewhere ? null : item.conversation
   const openComments = comments.filter((comment) => comment.parentId === null && comment.status === 'open').length
   // Puts the open comments in the conversation's message box, for the owner to edit and send. Nothing is sent here.
   const sendToConversation = () => {
@@ -209,6 +211,11 @@ export function ArtifactDetailSheet({
           <Button size="sm" variant="outline" onClick={onShare} data-testid="artifact-detail-share">
             <Share2 className="size-3.5" /> {t('artifacts.share.action')}
           </Button>
+          {item.bot && (
+            <Button size="sm" variant="outline" onClick={() => onOpenBot(item.bot!.id)}>
+              {item.bot.name ?? t('artifacts.server.bot')}
+            </Button>
+          )}
           {conversation?.exists && (
             <Button size="sm" variant="outline" onClick={onGoToConversation}>
               <MessagesSquare className="size-3.5" /> {t('artifacts.origin.goTo')}

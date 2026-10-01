@@ -167,18 +167,45 @@ compromised process running as the same user.
 ## Artifacts
 
 Artifacts are active HTML, CSS, and JavaScript written by agents, so the desktop
-renders them as untrusted content. The artifact host runs in an Electron utility
+renders them as untrusted content. The local artifact host runs in an Electron utility
 process that receives only its configuration and holds no app credentials. It
 is not a sandbox: it runs as the same user with full Node.js access, and it
 isolates crashes and keeps secrets out of its memory.
 
-The host listens on `127.0.0.1` only and refuses requests whose `Host` is
+The desktop host listens on `127.0.0.1` only and refuses requests whose `Host` is
 neither a loopback name on its port nor the public address the owner configured,
 which blocks DNS rebinding. Other people reach it only through a proxy the owner
 runs, such as Tailscale Serve. Artifact IDs and tokens carry at least 128 random
 bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
 expired artifact, and one that is not shared with whoever asks, answer the same
 404, and responses ask crawlers not to index them.
+
+On a bot server, the same host package runs inside the gateway process, sharing
+its process authority, and stores data under `/data/artifacts`. The container's
+viewer listener binds to `0.0.0.0:4010` so Docker can forward it; installed
+setups publish it on host loopback only. This is not a public host bind.
+Connections from fleet network clients are refused, with the Docker bridge
+gateway exempt so host port forwarding and proxies can reach the viewer.
+`anyLoopbackPort` permits loopback Host values on remapped or SSH-forwarded
+ports. Non-loopback Host values still require the exact configured public
+address allowlist; arbitrary DNS names are not accepted.
+
+Paired devices use authenticated `/v1/artifacts/admin` and
+`/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
+publications are stamped with the authenticated device's owner ID. Bots use
+`/internal/v1/artifacts/admin` and `/internal/v1/artifacts/upload` with their
+bot credential: both server hosting and the bot's publication flag must be on.
+The gateway enforces bot ownership and a method allowlist, overwrites supplied
+ownership on creation, and permits replies and resolution only in that scope.
+Bots cannot mint owner viewer tickets or administer sharing or deletion. A
+paired desktop may manage all server artifacts, but its conversation tools
+remain scoped to its own device and project or standalone conversation.
+
+Admin request bodies are limited to 1 MiB and upload bodies to 72 MiB; normal
+artifact file and version limits still apply. The database snapshot method is
+not exposed over either network API. Server artifacts are excluded from desktop
+export and reset. Disabling hosting preserves data, and unpairing does not stop
+the server; explicit server removal with data deletion erases it.
 
 The owner signs in with a single-use ticket that the desktop mints, which
 expires after 60 seconds and travels in the URL fragment, so it never reaches
@@ -253,7 +280,8 @@ the viewer, submit forms, or register service workers. Network access is limited
 to its own files and a fixed allowlist of CDNs. Messages from content to the
 viewer are validated, capped, and rendered as text.
 
-After each publication the desktop renders the new version for a preview, in
+After a local publication, and when a listed server version lacks a preview,
+the desktop renders the new version for a preview, in
 an offscreen window that is never shown. It loads the owner view through a fresh
 single-use ticket, like any other opening, so the page runs under the same
 sandbox and Content Security Policy. The window uses an in-memory partition of

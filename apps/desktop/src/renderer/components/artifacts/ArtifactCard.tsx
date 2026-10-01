@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AppWindow, ArrowUpRight, Loader2 } from 'lucide-react'
-import { parseArtifactToolResult } from '../../../shared/artifacts'
+import { parseArtifactToolResult, type ArtifactToolResult } from '../../../shared/artifacts'
 import { toolOutputText, type MessagePart } from '../../../shared/chat'
 import { ToolCallCard } from '../chat/ToolCallCard'
 
@@ -12,26 +12,43 @@ export function ArtifactCard({
   part,
   conversationId,
   messageId,
+  result: suppliedResult,
+  onOpen,
 }: {
-  part: ToolPart
-  conversationId: string
-  messageId: string
+  part?: ToolPart
+  conversationId?: string
+  messageId?: string
+  result?: ArtifactToolResult
+  onOpen?: () => Promise<unknown>
 }) {
   const { t } = useTranslation('chat')
   const [failed, setFailed] = useState(false)
-  if (part.state.status === 'pending' || part.state.status === 'running') {
+  if (part && (part.state.status === 'pending' || part.state.status === 'running')) {
     return (
       <div className="flex min-w-0 max-w-full items-center gap-2 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px] text-muted-foreground">
         <Loader2 className="size-3.5 animate-spin" /> {t('artifacts.publishing')}
       </div>
     )
   }
-  const result = part.state.status === 'completed' ? parseArtifactToolResult(toolOutputText(part.state.output)) : null
-  if (!result) return <ToolCallCard part={part} conversationId={conversationId} messageId={messageId} />
+  const result =
+    suppliedResult ??
+    (part?.state.status === 'completed' ? parseArtifactToolResult(toolOutputText(part.state.output)) : null)
+  if (!result)
+    return part && conversationId && messageId ? (
+      <ToolCallCard part={part} conversationId={conversationId} messageId={messageId} />
+    ) : null
 
   const open = () => {
     setFailed(false)
-    window.api.artifacts.openInConversation(conversationId, result.id, result.version).catch(() => setFailed(true))
+    const action =
+      onOpen ??
+      (() =>
+        conversationId
+          ? window.api.artifacts.openInConversation(conversationId, result.id, result.version)
+          : window.api.artifacts.openExternal(result.id, result.version))
+    void Promise.resolve()
+      .then(action)
+      .catch(() => setFailed(true))
   }
 
   return (

@@ -38,10 +38,12 @@ function run(file, args, options = {}) {
   })
 }
 const docker = (args, options) => run('docker', args, options)
+let artifactsPort = 4010
 const env = (port) => ({
   ...process.env,
   MAESTRLY_GATEWAY_NETWORK: network,
   MAESTRLY_GATEWAY_PORT: String(port),
+  MAESTRLY_ARTIFACTS_PORT: String(artifactsPort),
   MAESTRLY_GATEWAY_BIND: '127.0.0.1',
 })
 const compose = (port, args, options) =>
@@ -68,7 +70,11 @@ async function freePort() {
   await new Promise((resolve) => server.close(resolve))
   return port
 }
-const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'))
+const readState = async () => {
+  const state = JSON.parse(await readFile(stateFile, 'utf8'))
+  artifactsPort = state.artifactsPort ?? 4010
+  return state
+}
 async function saveState(state) {
   await mkdir(path.dirname(stateFile), { recursive: true })
   await writeFile(stateFile, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 })
@@ -172,8 +178,8 @@ async function readRecords(file) {
   try {
     const version = Number(db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()?.value)
     const record = (row, container, volume) => ({ id: String(row.id), container, volume, createdAt: row.created_at })
-    // Schema 7 only adds each environment's default compaction model.
-    if (version === 6 || version === 7)
+    // Schemas 7–9 add compaction, pending updates and artifact permissions without changing these records.
+    if (version >= 6 && version <= 9)
       return db
         .prepare('SELECT id, container_name, volume_name, created_at FROM environments')
         .all()
@@ -323,10 +329,13 @@ async function main() {
     } catch {
       state = { port: await freePort(), bots: [] }
     }
+    state.artifactsPort ??= await freePort()
+    artifactsPort = state.artifactsPort
     await compose(state.port, ['up', '-d', '--no-build'])
     await poll('gateway', async () => (await request(state, 'GET', '/v1/meta')).protocol === 1, 60000)
     await saveState(state)
     console.log(`Fleet URL: http://127.0.0.1:${state.port}`)
+    console.log(`Artifacts URL: http://127.0.0.1:${state.artifactsPort}`)
     return
   }
   if (command === 'down') {

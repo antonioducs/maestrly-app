@@ -71,6 +71,7 @@ describe('environment routes', () => {
     const h = await harness(Date.now, { environments: true })
     const docker = h.lifecycle.docker as FakeDockerDriver
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
+      'artifacts',
       'provisioning',
       'environments',
       'environment-compaction',

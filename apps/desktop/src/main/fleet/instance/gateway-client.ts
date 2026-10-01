@@ -27,7 +27,8 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   const route = FLEET_INTERNAL_ROUTES[routeKey]
   const routineRequest = routeKey.startsWith('routine')
   const ownerRequest = routeKey.startsWith('ownerMemory')
-  const family = routineRequest ? 'routine' : ownerRequest ? 'owner memory' : 'peer'
+  const artifactRequest = routeKey.startsWith('artifact')
+  const family = routineRequest ? 'routine' : ownerRequest ? 'owner memory' : artifactRequest ? 'artifact' : 'peer'
   let response: Response
   try {
     response = await fetch(new URL(buildPath(route.path, params), config.url), {
@@ -52,9 +53,9 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
       throw new Error(envelope.success ? envelope.data.message : 'Owner memory request failed.')
     if (routineRequest && ['FORBIDDEN', 'CONFLICT', 'NOT_FOUND', 'INVALID_REQUEST'].includes(code ?? ''))
       throw new Error((envelope.success ? envelope.data.message : 'Routine request failed.') + routineHint)
-    if (!routineRequest && !ownerRequest && response.status === 403)
+    if (!routineRequest && !ownerRequest && !artifactRequest && response.status === 403)
       throw new Error('Peer contact is not allowed by the bot ACL. Ask your owner to update permissions.')
-    if (!routineRequest && !ownerRequest && response.status === 429)
+    if (!routineRequest && !ownerRequest && !artifactRequest && response.status === 429)
       throw new Error(
         'Peer messaging is rate-limited. Stop messaging peers and summarize the situation for your owner.'
       )

@@ -99,7 +99,7 @@ const profileOf = (botId: string) => ({
   ceiling: 'ask' as const,
   selection: null,
   compaction: null,
-  gateway: { peersEnabled: true },
+  gateway: { peersEnabled: true, artifactsEnabled: false },
 })
 
 function fakeBot(botId: string, slot: number) {

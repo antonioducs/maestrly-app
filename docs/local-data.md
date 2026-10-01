@@ -202,7 +202,7 @@ dictation starts.
 
 ## Artifacts
 
-Artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
+Local artifacts live in `artifacts/` in the application profile: `artifacts.sqlite`
 holds artifacts, versions, sessions, and which preview image belongs to
 each version, and `blobs/` holds file contents and preview images, stored once
 by SHA-256. The directory is owner-only (`0700`), and the database
@@ -221,12 +221,29 @@ the application settings, encrypted with the operating-system keyring; without
 it they stay in memory until the app quits. Exports do not include them, so after
 restoring an export personal links must be reset.
 
-Export includes a consistent snapshot of the artifacts database
+Export includes a consistent snapshot of the local artifacts database
 (`artifacts/export/artifacts.sqlite`, written for the export and removed after
 it) together with `artifacts/blobs/`. If the snapshot cannot be written, for
 example because hosting is turned off, the export reports "Could not export
 artifacts." Reset stops the host and removes `artifacts/`. See
 [Artifacts](artifacts.md).
+
+### Server artifacts
+
+The paired bot server stores its artifacts database, blobs, previews, sharing
+state, sessions, activity, and comments in `/data/artifacts/` inside the gateway
+volume. These are separate from the desktop profile. The same artifact storage
+layout applies; the gateway owns the writes. Server settings and per-bot
+publication permissions live in the gateway's state. Artifacts carry a device
+or bot owner ID; the desktop center combines the hosts without copying the
+server's database into the desktop profile.
+
+Desktop export and reset include only local artifacts. The server API does not
+provide a database snapshot; back up the gateway volume separately while its
+writer is stopped, together with the rest of your bot server data. Turning
+hosting or a bot's publication permission off preserves pages. Unpairing leaves
+the server running; explicit server removal with data deletion removes its
+artifact data too. See [bot server management](bot-fleet.md#update-disconnect-and-remove).
 
 ## Temporary tool output
 

@@ -5,6 +5,17 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Host artifacts on a paired bot server so shared pages stay available while
+  your computer sleeps. Choose where desktop conversations publish, control
+  publication per bot, and browse both hosts in the Artifacts center. Existing
+  servers and migrated bots start with artifact hosting/publication off.
+- Install an artifact-only server with just the gateway image; creating the
+  first bot downloads its runtime later. Installer updates add the artifact
+  viewer port, with a separate SSH tunnel for VPS setups. Public addresses and
+  Tailscale access remain manual. See [server artifacts](docs/artifacts.md#bot-server).
+
 ## [0.12.0] - 2026-09-30
 
 ### Added
@@ -17,8 +28,8 @@ User-visible changes by version. Downloads are on
 - Agents can publish web pages as artifacts, such as prototypes, reports, and
   dashboards, with Maestrly tools on. Each change becomes a new version.
   **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
-  its versions, and the conversation it came from; pages open only on this
-  computer, in an isolated frame. See [Artifacts](docs/artifacts.md).
+  its versions, and the conversation it came from; pages open in an isolated
+  frame. See [Artifacts](docs/artifacts.md).
 - Share an artifact with other people: personal links that show every device
   that joins, access requests you approve, or a link for anyone with an optional
   access code and expiry. You can revoke a device, a person, or every session,

@@ -15,6 +15,7 @@ function register() {
     installLocal: vi.fn(async () => 'local'),
     installRemote: vi.fn(async () => 'remote'),
     update: vi.fn(async () => 'update'),
+    provideBotEnvironment: vi.fn(async () => 'bot-environment'),
     updateBots: vi.fn(async () => 'updateBots'),
     setPrivateNetwork: vi.fn(async () => 'private'),
     disconnect: vi.fn(async () => 'disconnect'),
@@ -51,12 +52,29 @@ describe('bot server installer IPC', () => {
         'fleet:installer:disconnect',
         'fleet:installer:installLocal',
         'fleet:installer:installRemote',
+        'fleet:installer:provideBotEnvironment',
         'fleet:installer:remove',
         'fleet:installer:setPrivateNetwork',
         'fleet:installer:update',
         'fleet:installer:updateBots',
       ].sort()
     )
+  })
+
+  it('accepts artifact-only hosting and provisions the first bot through a mutation', async () => {
+    const { mutate, service } = register()
+    await mutate('fleet:installer:installLocal', {
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+      hosts: 'artifacts-only',
+    })
+    expect(service.installLocal).toHaveBeenCalledWith({
+      deviceName: 'Mac',
+      allowPrivateNetwork: false,
+      hosts: 'artifacts-only',
+    })
+    expect(await mutate('fleet:installer:provideBotEnvironment')).toBe('bot-environment')
+    expect(service.provideBotEnvironment).toHaveBeenCalledTimes(1)
   })
 
   it('updates bots through the service', async () => {
@@ -69,6 +87,8 @@ describe('bot server installer IPC', () => {
   it('rejects malformed input before the service sees it', () => {
     const { mutate, service } = register()
     const invalid: Array<[string, unknown]> = [
+      ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: false, hosts: 'anything' }],
+      ['fleet:installer:installRemote', { ...remote, hosts: 'anything' }],
       ['fleet:installer:installLocal', { deviceName: '', allowPrivateNetwork: false }],
       ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: 'yes' }],
       ['fleet:installer:installLocal', { deviceName: 'Mac', allowPrivateNetwork: false, extra: 1 }],

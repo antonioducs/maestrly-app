@@ -1,3 +1,6 @@
+import type { FleetArtifactHost, FleetArtifactSettingsPatch } from '@maestrly/bot-fleet-protocol'
+import type { ArtifactServerStatus } from '../../../shared/artifacts'
+import { Button } from '@/components/ui/button'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type ArtifactHostStatus, type ArtifactSettings, MAX_ARTIFACT_NAME_CHARS } from '../../../shared/artifacts'
@@ -96,12 +99,43 @@ export function ArtifactsSettings() {
   const { t } = useTranslation('ui')
   const [settings, setSettings] = useState<ArtifactSettings | null>(null)
   const [status, setStatus] = useState<ArtifactHostStatus | null>(null)
+  const [server, setServer] = useState<FleetArtifactHost | null>(null)
+  const [serverStatus, setServerStatus] = useState<ArtifactServerStatus | null>(null)
+  const [serverBusy, setServerBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    void window.api.artifacts.getSettings().then(setSettings)
-    void window.api.artifacts.status().then(setStatus)
-    return window.api.artifacts.onStatus(setStatus)
+    void window.api.artifacts
+      .getSettings()
+      .then(setSettings)
+      .catch((reason) => setError(String(reason)))
+    void window.api.artifacts
+      .status()
+      .then(setStatus)
+      .catch((reason) => setError(String(reason)))
+    const refreshServer = () => {
+      void Promise.allSettled([window.api.artifacts.serverStatus(), window.api.artifacts.serverHost()]).then(
+        ([status, host]) => {
+          if (status.status === 'fulfilled') setServerStatus(status.value)
+          else {
+            setServerStatus(null)
+            setError(String(status.reason))
+          }
+          if (host.status === 'fulfilled') setServer(host.value)
+          else {
+            setServer(null)
+            setError(String(host.reason))
+          }
+        }
+      )
+    }
+    refreshServer()
+    const offChanged = window.api.artifacts.onChanged(refreshServer)
+    const offStatus = window.api.artifacts.onStatus(setStatus)
+    return () => {
+      offChanged()
+      offStatus()
+    }
   }, [])
 
   const save = async (next: ArtifactSettings) => {
@@ -116,7 +150,28 @@ export function ArtifactsSettings() {
     }
   }
 
-  if (!settings) return null
+  const saveServer = async (patch: FleetArtifactSettingsPatch) => {
+    if (serverBusy) return
+    setServerBusy(true)
+    setError(null)
+    try {
+      setServer(await window.api.artifacts.setServerHost(patch))
+      setServerStatus(await window.api.artifacts.serverStatus())
+    } catch (reason) {
+      setError(
+        t('settings.artifacts.saveFailed', { message: reason instanceof Error ? reason.message : String(reason) })
+      )
+    } finally {
+      setServerBusy(false)
+    }
+  }
+
+  if (!settings)
+    return error ? (
+      <p role="alert" className="text-xs text-destructive">
+        {error}
+      </p>
+    ) : null
   return (
     <section className="flex flex-col gap-4">
       <div>
@@ -221,6 +276,115 @@ export function ArtifactsSettings() {
           <div className="text-sm font-medium text-foreground">{t('settings.artifacts.status')}</div>
           <div className="text-[11px] leading-snug text-muted-foreground">{statusText(t, status)}</div>
         </div>
+      )}
+      {(serverStatus?.state === 'ready' || settings.publishTo === 'server') && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">{t('artifacts.server.publishTo')}</span>
+          <Select
+            value={settings.publishTo}
+            onValueChange={(publishTo) => void save({ ...settings, publishTo: publishTo as 'local' | 'server' })}
+          >
+            <SelectTrigger className="w-48" aria-label={t('artifacts.server.publishTo')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local">{t('artifacts.server.local')}</SelectItem>
+              <SelectItem value="server" disabled={serverStatus?.state !== 'ready'}>
+                {t('artifacts.server.server')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {serverStatus && !['absent', 'unsupported'].includes(serverStatus.state) && (
+        <section className="flex flex-col gap-4 border-t border-border pt-4">
+          <h3 className="text-sm font-medium">{t('artifacts.server.title')}</h3>
+          <p role="status" className="text-xs text-muted-foreground">
+            {t(`artifacts.server.${serverStatus.state}`)}
+            {'problem' in serverStatus && serverStatus.problem ? ` · ${serverStatus.problem}` : ''}
+          </p>
+          {server && (
+            <fieldset disabled={serverBusy} className="flex flex-col gap-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm">{t('artifacts.server.enabled')}</span>
+                <SettingsSwitch
+                  checked={server.settings.enabled}
+                  disabled={serverBusy}
+                  label={t('artifacts.server.enabled')}
+                  onChange={() => void saveServer({ enabled: !server.settings.enabled })}
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void saveServer({ ownerName: settings.ownerName, linkExpiryDays: settings.linkExpiryDays })
+                }
+              >
+                {t('artifacts.server.copy')}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t('artifacts.server.copyHint')}</p>
+              <SettingTextField
+                wide
+                label={t('settings.artifacts.publicAddress')}
+                hint={t('artifacts.server.addressHint')}
+                value={server.settings.publicAddress}
+                maxLength={MAX_ADDRESS_CHARS}
+                testId="artifacts-server-address"
+                onCommit={(value) => {
+                  const publicAddress = value === '' ? '' : originOf(value)
+                  if (publicAddress === null) return setError(t('settings.artifacts.invalidAddress'))
+                  void saveServer({ publicAddress })
+                }}
+              />
+              <SettingTextField
+                label={t('settings.artifacts.ownerName')}
+                hint={t('settings.artifacts.ownerNameHint')}
+                value={server.settings.ownerName}
+                maxLength={MAX_ARTIFACT_NAME_CHARS}
+                testId="artifacts-server-owner"
+                onCommit={(ownerName) => void saveServer({ ownerName })}
+              />
+              <Select
+                value={server.settings.linkExpiryDays === null ? NEVER : String(server.settings.linkExpiryDays)}
+                onValueChange={(value) => void saveServer({ linkExpiryDays: value === NEVER ? null : Number(value) })}
+              >
+                <SelectTrigger aria-label={t('settings.artifacts.linkExpiry')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[...new Set([...EXPIRY_CHOICES, server.settings.linkExpiryDays])].map((days) => (
+                    <SelectItem key={days ?? NEVER} value={days === null ? NEVER : String(days)}>
+                      {days === null
+                        ? t('artifacts.share.expiryNever')
+                        : t('artifacts.share.expiryDays', { count: days })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <SettingLimitField
+                label={t('settings.artifacts.quota')}
+                hint={t('settings.artifacts.quotaHint')}
+                value={server.settings.quotaGb}
+                emptyNote=""
+                placeholder="2"
+                min={1}
+                onCommit={(quotaGb) => {
+                  if (quotaGb === null) return
+                  if (quotaGb > MAX_QUOTA_GB) return setError(t('settings.artifacts.invalidQuota'))
+                  void saveServer({ quotaGb })
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('settings.artifacts.usage', {
+                  used: formatBytes(server.status.storageBytes),
+                  total: formatBytes(server.status.quotaBytes),
+                  count: server.status.artifactCount,
+                })}
+              </p>
+            </fieldset>
+          )}
+        </section>
       )}
       {error && (
         <p role="alert" className="text-xs text-destructive">

@@ -1,5 +1,35 @@
 export default {
   artifacts: {
+    publishingBot: {
+      label: 'Publish artifacts',
+      hint: 'Allow this bot to publish pages on the bot server.',
+      environmentNotice:
+        'Creating your first bot will download its runtime environment. Existing artifacts stay available.',
+      preparing: 'Preparing the bot environment…',
+      prepareFailed: 'Could not prepare the bot environment: {{message}}',
+    },
+    server: {
+      addressUnavailable: 'Set a public address for the bot server before sharing a link.',
+      filter: 'Host',
+      all: 'All hosts',
+      local: 'This computer',
+      server: 'Bot server',
+      bot: 'Bot',
+      elsewhere: 'Other computer',
+      hosted: 'Hosted on the bot server. Your computer can be asleep.',
+      off: 'Artifact hosting on the bot server is off.',
+      unreachable: 'The bot server cannot be reached.',
+      ready: 'The bot server is ready.',
+      absent: 'No bot server paired.',
+      unsupported: 'This bot server does not support artifacts.',
+      settings: 'Open artifact settings',
+      title: 'Bot server',
+      publishTo: 'Publish new artifacts to',
+      enabled: 'Host artifacts on the bot server',
+      copy: 'Copy from this computer',
+      copyHint: 'Copies only your sharing name and default link expiry.',
+      addressHint: 'The public address people use to open pages on the bot server.',
+    },
     sidebar: 'Artifacts',
     sidebarTitle: 'Artifacts — pages published by your agents',
     title: 'Artifacts',
@@ -795,9 +825,10 @@ export default {
     },
     artifacts: {
       title: 'Artifacts',
-      desc: 'Pages your agents publish are served by this computer while Maestrly is open. They stay private until you share them.',
+      desc: 'Choose where your agents publish pages: this computer or your bot server. Pages stay private until you share them.',
       hostEnabled: 'Host artifacts on this computer',
-      hostEnabledHint: 'When off, agents cannot publish and existing artifacts do not open.',
+      hostEnabledHint:
+        'When off, agents cannot publish on this computer and its existing artifacts do not open. Bot server hosting is separate.',
       port: 'Port',
       portHint: 'Loopback port of the artifact host (1024–65535). Artifact links use it.',
       invalidPort: 'Choose a port between 1024 and 65535.',

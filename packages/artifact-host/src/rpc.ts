@@ -36,7 +36,7 @@ export const ADMIN_METHODS = [
   'deleteComment',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]
 
-type AdminMethod = (typeof ADMIN_METHODS)[number]
+export type AdminMethod = (typeof ADMIN_METHODS)[number]
 
 interface CallMessage {
   type: 'call'
@@ -53,10 +53,10 @@ const DEFAULT_TIMEOUT_MS = 60_000
 
 const unavailable = (message: string) => new ArtifactHostError('host_unavailable', message)
 
-function serialize(error: unknown): SerializedArtifactError {
+export function serializeAdminError(error: unknown): SerializedArtifactError {
   if (error instanceof ArtifactHostError) return error.toJSON()
-  // The details of unexpected failures stay in this process's log; the caller only learns that one happened.
-  console.error('[artifact-host] admin call failed:', error instanceof Error ? error.message : String(error))
+  // Error messages can contain request URLs or bodies; never log their contents.
+  console.error('[artifact-host] admin call failed')
   return { code: 'internal', message: 'Internal artifact host error' }
 }
 
@@ -83,7 +83,7 @@ export function serveAdmin(channel: RpcChannel, admin: ArtifactAdmin): () => voi
       .then(() => fn(...args))
       .then(
         (value) => reply({ ok: true, value }),
-        (error: unknown) => reply({ ok: false, error: serialize(error) })
+        (error: unknown) => reply({ ok: false, error: serializeAdminError(error) })
       )
   })
 }

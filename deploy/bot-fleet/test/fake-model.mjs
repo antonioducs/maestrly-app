@@ -92,6 +92,14 @@ async function reply(req) {
       })
     return { text: 'E2E-ROUTINE-DONE' }
   }
+  if (text.includes('E2E-ARTIFACT-CREATE')) {
+    if (toolReturned) return { text: 'E2E-ARTIFACT-CREATED' }
+    // Files are structured input; validate the tool declaration without treating arrays as primitive values.
+    return { name: toolName(req.tools ?? [], 'artifact_create'), args: {
+      title: 'E2E bot page',
+      files: [{ path: 'index.html', content: '<!doctype html><html><body><h1>E2E-BOT-ARTIFACT-CONTENT</h1></body></html>' }],
+    } }
+  }
   if (text.includes('E2E-ROUTINE-CREATE')) {
     const userIndex = messages.lastIndexOf(lastUser)
     if (messages.slice(userIndex + 1).some((entry) => entry.role === 'tool')) return { text: 'E2E-ROUTINE-CREATED' }

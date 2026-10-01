@@ -2,9 +2,11 @@ FROM node:22.22.0-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
+COPY packages/artifact-host/package.json packages/artifact-host/package.json
 COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
-RUN npm ci --ignore-scripts --include-workspace-root=false --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
+RUN npm ci --ignore-scripts --include-workspace-root=false --workspace @maestrly/artifact-host --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
 COPY packages/bot-fleet-protocol packages/bot-fleet-protocol
+COPY packages/artifact-host packages/artifact-host
 COPY apps/bot-gateway apps/bot-gateway
 RUN npm run build:fleet-protocol && npm run build:bot-gateway
 
@@ -12,8 +14,9 @@ FROM node:22.22.0-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/bot-gateway/package.json apps/bot-gateway/package.json
+COPY packages/artifact-host/package.json packages/artifact-host/package.json
 COPY packages/bot-fleet-protocol/package.json packages/bot-fleet-protocol/package.json
-RUN npm ci --omit=dev --ignore-scripts --include-workspace-root=false --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
+RUN npm ci --omit=dev --ignore-scripts --include-workspace-root=false --workspace @maestrly/artifact-host --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/bot-gateway
 
 FROM node:22.22.0-bookworm-slim
 ARG MAESTRLY_VERSION
@@ -24,13 +27,15 @@ ENV MAESTRLY_GATEWAY_VERSION=$MAESTRLY_VERSION
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/bot-gateway apps/bot-gateway
 COPY --from=dependencies /app/packages/bot-fleet-protocol packages/bot-fleet-protocol
+COPY --from=dependencies /app/packages/artifact-host packages/artifact-host
 COPY --from=build /app/apps/bot-gateway/dist apps/bot-gateway/dist
 COPY --from=build /app/packages/bot-fleet-protocol/dist packages/bot-fleet-protocol/dist
+COPY --from=build /app/packages/artifact-host/dist packages/artifact-host/dist
 COPY deploy/bot-fleet/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint
 COPY deploy/bot-fleet/gateway-cli.sh /usr/local/bin/maestrly-bot-gateway
 COPY deploy/bot-fleet/seccomp-bot.json /etc/maestrly-bot/seccomp-bot.json
 RUN chmod 755 /usr/local/bin/gateway-entrypoint /usr/local/bin/maestrly-bot-gateway && mkdir /data && chown node:node /data
 VOLUME /data
-EXPOSE 7443 7444
+EXPOSE 7443 7444 4010
 ENTRYPOINT ["/usr/local/bin/gateway-entrypoint"]
 CMD ["node", "apps/bot-gateway/dist/main.js", "serve"]

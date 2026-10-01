@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetInstallLocalInput, LocalDockerCheck } from '../../../../shared/fleet-installer'
+import type { FleetInstallHosts, FleetInstallLocalInput, LocalDockerCheck } from '../../../../shared/fleet-installer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { BotServerHostsChoice } from './BotServerHostsChoice'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
 const dockerUrl = {
@@ -23,6 +24,7 @@ export function BotServerLocalSetup({
   const [check, setCheck] = useState<LocalDockerCheck | null>(null)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [hosts, setHosts] = useState<FleetInstallHosts>('bots-and-artifacts')
   const [deviceName, setDeviceName] = useState(t(`settings.deviceNameDefault.${window.api.platformInfo.os}`))
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(false)
   const checkDocker = useCallback(async () => {
@@ -86,7 +88,7 @@ export function BotServerLocalSetup({
       )}
       {check?.state === 'ready' && !checking && (
         <>
-          <p className="text-xs leading-relaxed text-muted-foreground">{t('botServer.local.expectations')}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t('botServer.hosts.localExpectations')}</p>
           <label className="block space-y-1">
             <span>{t('settings.deviceName')}</span>
             <Input
@@ -96,12 +98,14 @@ export function BotServerLocalSetup({
               maxLength={80}
             />
           </label>
+          <BotServerHostsChoice value={hosts} onChange={setHosts} />
           <PrivateNetworkSwitch mode="local" checked={allowPrivateNetwork} onChange={setAllowPrivateNetwork} />
           <Button
             onClick={() =>
               onInstall({
                 deviceName: deviceName.trim() || t(`settings.deviceNameDefault.${window.api.platformInfo.os}`),
                 allowPrivateNetwork,
+                hosts,
               })
             }
           >

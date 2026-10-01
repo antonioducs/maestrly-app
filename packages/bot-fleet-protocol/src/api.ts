@@ -94,6 +94,58 @@ export const fleetBotMemoryPatchRequestSchema = z
   .refine((value) => value.pinned !== undefined || value.status !== undefined, 'nothing to change')
 export type FleetBotMemoryPatchRequest = z.infer<typeof fleetBotMemoryPatchRequestSchema>
 
+export const fleetArtifactCallSchema = z.object({
+  method: z.string().min(1).max(40),
+  args: z.array(z.unknown()).max(3),
+})
+export type FleetArtifactCall = z.infer<typeof fleetArtifactCallSchema>
+export const fleetArtifactResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), value: z.unknown() }),
+  z.object({
+    ok: z.literal(false),
+    error: z.object({
+      code: z.string().max(40),
+      message: z.string().max(500),
+      details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    }),
+  }),
+])
+export type FleetArtifactResult = z.infer<typeof fleetArtifactResultSchema>
+/** Exact normalized HTTP(S) origin, without credentials, path, query or fragment. */
+export const fleetHttpOriginSchema = z
+  .string()
+  .max(300)
+  .refine((value) => {
+    try {
+      const url = new URL(value)
+      return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value
+    } catch {
+      return false
+    }
+  }, 'Expected a normalized HTTP(S) origin')
+export type FleetHttpOrigin = z.infer<typeof fleetHttpOriginSchema>
+export const fleetArtifactSettingsSchema = z.object({
+  enabled: z.boolean(),
+  publicAddress: z.union([z.literal(''), fleetHttpOriginSchema]),
+  ownerName: z.string().trim().max(60),
+  linkExpiryDays: z.number().int().min(1).max(365).nullable(),
+  quotaGb: z.number().int().min(1).max(100),
+})
+export type FleetArtifactSettings = z.infer<typeof fleetArtifactSettingsSchema>
+export const fleetArtifactSettingsPatchSchema = fleetArtifactSettingsSchema.partial()
+export type FleetArtifactSettingsPatch = z.infer<typeof fleetArtifactSettingsPatchSchema>
+export const fleetArtifactHostSchema = z.object({
+  settings: fleetArtifactSettingsSchema,
+  status: z.object({
+    state: z.enum(['off', 'running', 'error']),
+    problem: z.enum(['port_in_use', 'storage', 'internal']).nullable(),
+    artifactCount: fleetNonNegativeIntSchema,
+    storageBytes: fleetNonNegativeIntSchema,
+    quotaBytes: fleetNonNegativeIntSchema,
+  }),
+})
+export type FleetArtifactHost = z.infer<typeof fleetArtifactHostSchema>
+
 /** Decoded size of a base64 string, without allocating. */
 export function base64DecodedBytes(value: string): number {
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
@@ -203,6 +255,7 @@ export const fleetCreateBotRequestSchema = z
     instructions: fleetInstructionsSchema,
     ceiling: fleetCeilingSchema,
     talksTo: z.array(fleetBotIdSchema),
+    publishArtifacts: z.boolean().optional(),
     idempotencyKey: fleetIdempotencyKeySchema,
     environmentId: fleetEnvironmentIdSchema.optional(),
     environment: z
@@ -220,6 +273,7 @@ export const fleetPatchBotRequestSchema = z.object({
   role: fleetRoleSchema.optional(),
   ceiling: fleetCeilingSchema.optional(),
   talksTo: z.array(fleetBotIdSchema).optional(),
+  publishArtifacts: z.boolean().optional(),
   selection: fleetSelectionSchema.nullable().optional(),
   /**
    * The bot's own compaction model. Null makes it use its environment's default. In an environment without a default,
@@ -550,7 +604,7 @@ export const fleetInstanceProfileSchema = z.object({
   ceiling: fleetCeilingSchema,
   selection: fleetSelectionSchema.nullable(),
   compaction: fleetCompactionConfigSchema.nullable().default(null),
-  gateway: z.object({ peersEnabled: z.boolean() }),
+  gateway: z.object({ peersEnabled: z.boolean(), artifactsEnabled: z.boolean().default(false) }),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
 /** Installs or updates a bot in an environment instance: its profile, its display slot and its own gateway token. */
@@ -689,6 +743,25 @@ export type FleetRoute = {
 }
 
 export const FLEET_GATEWAY_ROUTES = {
+  artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
+  artifactHostPatch: {
+    method: 'PATCH',
+    path: '/v1/artifacts/host',
+    body: fleetArtifactSettingsPatchSchema,
+    response: fleetArtifactHostSchema,
+  },
+  artifactAdmin: {
+    method: 'POST',
+    path: '/v1/artifacts/admin',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
+  artifactUpload: {
+    method: 'POST',
+    path: '/v1/artifacts/upload',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
   ownerMemoryList: { method: 'GET', path: '/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
   ownerMemoryCreate: {
     method: 'POST',
@@ -1055,6 +1128,18 @@ export const FLEET_GATEWAY_ROUTES = {
 } as const satisfies Record<string, FleetRoute>
 
 export const FLEET_INTERNAL_ROUTES = {
+  artifactBotAdmin: {
+    method: 'POST',
+    path: '/internal/v1/artifacts/admin',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
+  artifactBotUpload: {
+    method: 'POST',
+    path: '/internal/v1/artifacts/upload',
+    body: fleetArtifactCallSchema,
+    response: fleetArtifactResultSchema,
+  },
   ownerMemoryGet: { method: 'GET', path: '/internal/v1/owner-memory', body: null, response: fleetOwnerMemorySchema },
   ownerMemorySave: {
     method: 'POST',

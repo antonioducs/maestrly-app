@@ -16,6 +16,10 @@ export function artifactToolFailure(t: McpToolContext['t'], resolveService: () =
     }
     if (error.code === 'host_unavailable') {
       const reason = error.details?.reason
+      if (reason === 'server_unreachable') return err(t('errors.artifacts.serverUnavailable'))
+      if (reason === 'server_off') return err(t('errors.artifacts.serverOff'))
+      if (reason === 'bot_off') return err(t('errors.artifacts.botOff'))
+      if (reason === 'no_viewer') return err(t('errors.artifacts.noViewer'))
       if (reason === 'disabled') return err(t('errors.artifacts.hostDisabled'))
       if (reason === 'port_in_use')
         return err(t('errors.artifacts.portInUse', { port: resolveService().getSettings().port }))
@@ -36,7 +40,8 @@ type InlineFile = { path: string; content: string; encoding?: 'utf8' | 'base64' 
  */
 export function registerArtifactTools(
   ctx: McpToolContext,
-  resolveService: () => ArtifactsService = getArtifactsService
+  resolveService: () => ArtifactsService = getArtifactsService,
+  options: { open?: boolean } = {}
 ): void {
   const { server, convId, t, workerScope } = ctx
 
@@ -224,6 +229,7 @@ export function registerArtifactTools(
     }
   )
 
+  if (options.open === false) return
   server.registerTool(
     'artifact_open',
     {

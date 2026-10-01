@@ -87,6 +87,7 @@ describe('bot server project files', () => {
         'MAESTRLY_GATEWAY_BOT_IMAGE=ghcr.io/antonioducs/maestrly-bot-instance:0.9.4',
         'MAESTRLY_GATEWAY_BIND=127.0.0.1',
         'MAESTRLY_GATEWAY_PORT=7443',
+        'MAESTRLY_ARTIFACTS_PORT=4010',
         "MAESTRLY_GATEWAY_DISPLAY_NAME='Estação de Trabalho'",
         'MAESTRLY_GATEWAY_BOT_EGRESS=public',
         'MAESTRLY_GATEWAY_NETWORK=maestrly-bots',
@@ -112,12 +113,14 @@ describe('bot server project files', () => {
       botImage: values.botImage,
       egress: 'public',
       port: 7443,
+      artifactsPort: 4010,
     })
     expect(parseBotServerEnv('# comment\nMAESTRLY_GATEWAY_BOT_EGRESS=closed\nMAESTRLY_GATEWAY_PORT=abc\n')).toEqual({
       gatewayImage: null,
       botImage: null,
       egress: null,
       port: null,
+      artifactsPort: null,
     })
     expect(parseBotServerEnv('MAESTRLY_GATEWAY_IMAGE="maestrly/bot-gateway:0.9.1"\n').gatewayImage).toBe(
       'maestrly/bot-gateway:0.9.1'
@@ -135,6 +138,15 @@ describe('bot server project files', () => {
     )
     expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_BOT_EGRESS: 'closed' })).toThrow()
     expect(() => withEnvValues(edited, { MAESTRLY_GATEWAY_IMAGE: 'a b' })).toThrow()
+  })
+
+  it('patches and validates the artifact port without changing unrelated settings', () => {
+    const env = '# owner settings\nMAESTRLY_ARTIFACTS_PORT=4123\nTZ=Europe/Lisbon\n'
+    expect(parseBotServerEnv(env).artifactsPort).toBe(4123)
+    expect(withEnvValues(env, { MAESTRLY_ARTIFACTS_PORT: '4124' })).toBe(env.replace('4123', '4124'))
+    for (const value of ['0', '65536', 'NaN', '4.1', '1e3'])
+      expect(() => withEnvValues(env, { MAESTRLY_ARTIFACTS_PORT: value })).toThrow()
+    expect(() => renderBotServerEnv({ ...values, artifactsPort: 65536 })).toThrow()
   })
 
   it('splits an image reference without taking a registry port for a tag', () => {

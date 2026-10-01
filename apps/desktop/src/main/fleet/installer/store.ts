@@ -17,6 +17,9 @@ const recordSchema = z
     mode: z.enum(['local', 'remote']),
     version: z.string().min(1).max(128).nullable(),
     port,
+    artifactsOnly: z.boolean().optional(),
+    artifactsPort: port.nullable().optional(),
+    remoteArtifactsPort: port.nullable().optional(),
     allowPrivateNetwork: z.boolean(),
     remote: z
       .object({

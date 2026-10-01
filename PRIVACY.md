@@ -26,7 +26,7 @@ and sanitize diagnostics before posting them.
 | AI providers | Prompts, selected conversation history, instructions, attachments, and allowed project/tool context go to the configured provider under its terms. |
 | ChatGPT Web | The enabled integration uses OpenAI's tunnel client to connect ChatGPT to a token-protected loopback MCP bridge. |
 | Personal bots | An optional HTTP endpoint inside Desktop shares authorized bot conversations and events with the connected bot. You provide external HTTPS access; no hosted Maestrly relay is required. Model credentials remain in Desktop. |
-| Shared artifacts | Pages you choose to share are served by Desktop to the people you invite, or to anyone with the link. You provide external access; no hosted Maestrly relay is required. Desktop stores each person's name, a coarse device label, and visit times, and no IP address. |
+| Shared artifacts | Pages you choose to share are served by Desktop or your paired bot server to the people you invite, or to anyone with the link. You provide external access; no hosted Maestrly relay is required. The selected host stores each person's name, a coarse device label, and visit times, and no IP address. |
 | Model metadata | `models.dev` may receive metadata requests for model limits and pricing. |
 | Git and GitHub | Remote operations contact the selected Git host or GitHub. |
 | Browser and web tools | Navigation and fetches contact their selected destinations. |
@@ -41,11 +41,24 @@ Maestrly does not add analytics to provider calls; the Copilot runtime starts wi
 session telemetry disabled. Authentication and provider requests still reach
 that provider. Review custom URLs, installed tools, and permissions before use.
 
+Server artifacts, their files, sharing state, and comments are stored on your
+bot server. Desktop conversations publish there only when that destination is
+selected; bots need their publication permission and server hosting enabled.
+The desktop renders missing previews when it lists server artifacts, running
+the page's scripts under the artifact sandbox and loading allowed CDN resources.
+Those CDN requests can reveal the desktop's IP address even without an explicit
+page opening. Comments remain untrusted feedback and never start an agent turn
+by themselves. See [Artifacts](docs/artifacts.md).
+
 ## Export and deletion
 
 In-app exports include supported database state and app-owned assets with integrity
 metadata. They exclude provider credentials, repositories, worktrees, search
 indexes, embeddings, and reproducible caches. Back up projects separately.
+
+Desktop export and reset exclude server artifacts. Back up the gateway volume
+separately. Disabling artifact hosting preserves its data; unpairing leaves the
+server running. Explicit removal of the server and its data deletes its artifacts.
 
 Reset previews removal of app-owned state and preserves repositories/worktrees.
 Deleting a profile does not erase OS backups, filesystem snapshots, provider

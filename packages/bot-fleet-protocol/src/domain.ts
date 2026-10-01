@@ -255,6 +255,7 @@ export const fleetBotSchema = z.object({
   ceiling: fleetCeilingSchema,
   selection: fleetSelectionSchema.nullable(),
   talksTo: z.array(fleetBotIdSchema),
+  publishArtifacts: z.boolean().default(false),
   paused: z.boolean(),
   lifecycle: fleetLifecycleSchema,
   setup: fleetBotSetupSchema,
@@ -744,7 +745,16 @@ export const fleetActivityEntrySchema = z.object({
 })
 export type FleetActivityEntry = z.infer<typeof fleetActivityEntrySchema>
 
+const fleetArtifactIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
+
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('artifact.changed'), at: fleetTimestampSchema, artifactId: fleetArtifactIdSchema }),
+  z.object({
+    type: z.literal('artifact.activity'),
+    at: fleetTimestampSchema,
+    artifactId: fleetArtifactIdSchema,
+    kind: z.enum(['device_added', 'access_requested', 'invite_declined', 'comment_added']),
+  }),
   z.object({ type: z.literal('owner_memory.updated'), at: fleetTimestampSchema, revision: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('hello'), at: fleetTimestampSchema, lastActivitySeq: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('bot.updated'), at: fleetTimestampSchema, bot: fleetBotSchema }),
