@@ -143,7 +143,14 @@ export function ArtifactsCenter({
     () => visibleArtifacts(items, { query, project, sort, locale, host }),
     [items, query, project, sort, locale, host]
   )
-  const body = centerBody({ loading, status, serverReady: serverStatus?.state === 'ready', listed, total: items.length, visible: visible.length })
+  const body = centerBody({
+    loading,
+    status,
+    serverReady: serverStatus?.state === 'ready',
+    listed,
+    total: items.length,
+    visible: visible.length,
+  })
   const toolbar =
     body.kind !== 'loading' &&
     body.kind !== 'unavailable' &&

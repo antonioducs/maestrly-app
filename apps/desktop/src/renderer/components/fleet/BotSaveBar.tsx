@@ -56,7 +56,7 @@ export function BotSaveBar({
                 onClick={() => onGoTo(field)}
                 className="rounded-full border border-border-strong px-2 py-px text-xs text-foreground/75 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {t(`botSettings.field.${field}`)}
+                {t(field === 'publishArtifacts' ? 'ui:artifacts.publishingBot.label' : `botSettings.field.${field}`)}
               </button>
             ))}
           </span>
@@ -111,7 +111,9 @@ export function LeaveSettingsDialog({
 }) {
   const { t, i18n } = useTranslation('fleet')
   const fields = new Intl.ListFormat(i18n.language, { type: 'conjunction' }).format(
-    changed.map((field) => t(`botSettings.field.${field}`))
+    changed.map((field) =>
+      t(field === 'publishArtifacts' ? 'ui:artifacts.publishingBot.label' : `botSettings.field.${field}`)
+    )
   )
   return (
     <Dialog

@@ -4,7 +4,16 @@
  */
 export default {
   artifacts: {
+    publishingBot: {
+      label: 'Publicar artefatos',
+      hint: 'Permitir que este bot publique páginas no servidor de bots.',
+      environmentNotice:
+        'Ao criar seu primeiro bot, o ambiente de execução será baixado. Os artefatos existentes continuam disponíveis.',
+      preparing: 'Preparando o ambiente do bot…',
+      prepareFailed: 'Não foi possível preparar o ambiente do bot: {{message}}',
+    },
     server: {
+      addressUnavailable: 'Defina um endereço público para o servidor de bots antes de compartilhar um link.',
       filter: 'Hospedagem',
       all: 'Todos os locais',
       local: 'Este computador',

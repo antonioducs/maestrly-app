@@ -1,6 +1,15 @@
 export default {
   artifacts: {
+    publishingBot: {
+      label: 'Publish artifacts',
+      hint: 'Allow this bot to publish pages on the bot server.',
+      environmentNotice:
+        'Creating your first bot will download its runtime environment. Existing artifacts stay available.',
+      preparing: 'Preparing the bot environment…',
+      prepareFailed: 'Could not prepare the bot environment: {{message}}',
+    },
     server: {
+      addressUnavailable: 'Set a public address for the bot server before sharing a link.',
       filter: 'Host',
       all: 'All hosts',
       local: 'This computer',

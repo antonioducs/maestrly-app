@@ -1,3 +1,5 @@
+import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { fleetActivitySegments } from '../../src/renderer/lib/agent-activity'
 import { describe, expect, it } from 'vitest'
 import {
   ALL_PROJECTS,
@@ -116,8 +118,7 @@ describe('artifacts center view', () => {
       kind: 'unavailable',
       reason: 'port_in_use',
     })
-    expect(body({ status: { state: 'stopped', problem: 'disabled', port: 4010 },
-        listed: false })).toEqual({
+    expect(body({ status: { state: 'stopped', problem: 'disabled', port: 4010 }, listed: false })).toEqual({
       kind: 'unavailable',
       reason: 'disabled',
     })
@@ -168,4 +169,28 @@ describe('artifact hosts and sources', () => {
       })
     ).toEqual({ kind: 'grid' })
   })
+})
+
+it('keeps normalized artifact tool results outside compact bot activity', () => {
+  for (const name of ['artifact_create', 'mcp__maestrly__artifact_update']) {
+    const artifact: FleetTranscriptItem = {
+      kind: 'tool',
+      id: 'm1:0',
+      at: '2026-09-30T12:00:00Z',
+      name,
+      target: null,
+      state: 'done',
+      output: '{"id":"page","title":"Page","version":1}',
+      images: [],
+    }
+    const following: FleetTranscriptItem = { ...artifact, id: 'm1:1', name: 'bash', output: null }
+    const segments = fleetActivitySegments([artifact, following], { working: false })
+    expect(segments.some((segment) => segment.kind === 'item' && segment.item.id === artifact.id)).toBe(true)
+    expect(
+      segments
+        .filter((segment) => segment.kind === 'activity')
+        .flatMap((segment) => segment.steps)
+        .some((step) => step.id === artifact.id)
+    ).toBe(false)
+  }
 })

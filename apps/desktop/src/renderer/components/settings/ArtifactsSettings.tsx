@@ -105,15 +105,29 @@ export function ArtifactsSettings() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    void window.api.artifacts.getSettings().then(setSettings)
-    void window.api.artifacts.status().then(setStatus)
+    void window.api.artifacts
+      .getSettings()
+      .then(setSettings)
+      .catch((reason) => setError(String(reason)))
+    void window.api.artifacts
+      .status()
+      .then(setStatus)
+      .catch((reason) => setError(String(reason)))
     const refreshServer = () => {
-      void Promise.all([window.api.artifacts.serverStatus(), window.api.artifacts.serverHost()])
-        .then(([status, host]) => {
-          setServerStatus(status)
-          setServer(host)
-        })
-        .catch((reason) => setError(String(reason)))
+      void Promise.allSettled([window.api.artifacts.serverStatus(), window.api.artifacts.serverHost()]).then(
+        ([status, host]) => {
+          if (status.status === 'fulfilled') setServerStatus(status.value)
+          else {
+            setServerStatus(null)
+            setError(String(status.reason))
+          }
+          if (host.status === 'fulfilled') setServer(host.value)
+          else {
+            setServer(null)
+            setError(String(host.reason))
+          }
+        }
+      )
     }
     refreshServer()
     const offChanged = window.api.artifacts.onChanged(refreshServer)
@@ -152,7 +166,12 @@ export function ArtifactsSettings() {
     }
   }
 
-  if (!settings) return null
+  if (!settings)
+    return error ? (
+      <p role="alert" className="text-xs text-destructive">
+        {error}
+      </p>
+    ) : null
   return (
     <section className="flex flex-col gap-4">
       <div>

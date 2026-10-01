@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import {
+  botPublishingRequest,
+  canOfferBotPublishing,
+  prepareBotEnvironment,
+} from '../../src/renderer/components/artifacts/bot-publishing'
+import type { FleetInstallerStatus } from '../../src/shared/fleet-installer'
+import { describe, expect, it, vi } from 'vitest'
 import {
   fleetBotSchema,
   fleetEnvironmentSchema,
@@ -289,5 +295,60 @@ describe('create bot translations', () => {
         .map((language) => `${language} ${key}`)
     )
     expect(missing).toEqual([])
+  })
+})
+
+describe('first bot artifact publishing', () => {
+  it('offers publishing only with a supported and ready artifact host', () => {
+    const ready = {
+      state: 'ready' as const,
+      canOpen: true,
+      artifactCount: 0,
+      storageBytes: 0,
+      quotaBytes: 100,
+      problem: null,
+    }
+    expect(canOfferBotPublishing(['artifacts'], ready)).toBe(true)
+    expect(canOfferBotPublishing([], ready)).toBe(false)
+    for (const state of ['absent', 'unsupported', 'unreachable', 'off'] as const) {
+      expect(canOfferBotPublishing(['artifacts'], { state })).toBe(false)
+    }
+    expect(botPublishingRequest(false, true)).toEqual({})
+    expect(botPublishingRequest(true, true)).toEqual({ publishArtifacts: true })
+    expect(botPublishingRequest(true, false)).toEqual({ publishArtifacts: false })
+  })
+
+  const status = (artifactsOnly: boolean, state: 'succeeded' | 'failed' | 'cancelled' = 'succeeded') =>
+    ({
+      record: { artifactsOnly },
+      job: { state, error: state === 'failed' ? { code: 'images-unavailable', detail: 'Image unavailable' } : null },
+    }) as FleetInstallerStatus
+
+  it('waits for a successful bot environment before allowing creation', async () => {
+    const progress = vi.fn()
+    const api = {
+      fleetInstallerStatus: vi.fn().mockResolvedValue(status(true)),
+      fleetInstallerProvideBotEnvironment: vi.fn().mockResolvedValue(status(false)),
+    }
+    await prepareBotEnvironment(api, progress)
+    expect(progress).toHaveBeenCalledOnce()
+    expect(api.fleetInstallerProvideBotEnvironment).toHaveBeenCalledOnce()
+  })
+  it('never allows creation after a failed or cancelled preparation job', async () => {
+    for (const state of ['failed', 'cancelled'] as const) {
+      const api = {
+        fleetInstallerStatus: vi.fn().mockResolvedValue(status(true)),
+        fleetInstallerProvideBotEnvironment: vi.fn().mockResolvedValue(status(true, state)),
+      }
+      await expect(prepareBotEnvironment(api, vi.fn())).rejects.toThrow()
+    }
+  })
+  it('skips preparation for a server that already supports bots', async () => {
+    const api = {
+      fleetInstallerStatus: vi.fn().mockResolvedValue(status(false)),
+      fleetInstallerProvideBotEnvironment: vi.fn(),
+    }
+    await prepareBotEnvironment(api, vi.fn())
+    expect(api.fleetInstallerProvideBotEnvironment).not.toHaveBeenCalled()
   })
 })

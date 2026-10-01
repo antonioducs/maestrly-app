@@ -1,3 +1,7 @@
+import type { FleetInstallerStatus } from '../../../shared/fleet-installer'
+import type { ArtifactServerStatus } from '../../../shared/artifacts'
+import { botPublishingRequest, canOfferBotPublishing, prepareBotEnvironment } from '../artifacts/bot-publishing'
+import { SettingsSwitch } from './SettingsSwitch'
 import { MacImportPicker } from './MacImportPicker'
 import {
   emptyImportChoice,
@@ -204,6 +208,44 @@ export function CreateBotDialog({
   initialEnvironmentId?: string | null
 }) {
   const { t, i18n } = useTranslation('fleet')
+  const [artifactServer, setArtifactServer] = useState<ArtifactServerStatus | null>(null)
+  const [publishArtifacts, setPublishArtifacts] = useState(true)
+  const [installer, setInstaller] = useState<FleetInstallerStatus | null>(null)
+  const [preparing, setPreparing] = useState(false)
+  const offerPublishing = canOfferBotPublishing(fleet.state.connection.features, artifactServer)
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setPublishArtifacts(true)
+    const refresh = () => {
+      void window.api.artifacts
+        .serverStatus()
+        .then((status) => {
+          if (active) setArtifactServer(status)
+        })
+        .catch(() => {
+          if (active) setArtifactServer(null)
+        })
+    }
+    refresh()
+    void window.api
+      .fleetInstallerStatus()
+      .then((status) => {
+        if (active) setInstaller(status)
+      })
+      .catch(() => {
+        if (active) setInstaller(null)
+      })
+    const offArtifacts = window.api.artifacts.onChanged(refresh)
+    const offInstaller = window.api.onFleetInstallerStatus((status) => {
+      if (active) setInstaller(status)
+    })
+    return () => {
+      active = false
+      offArtifacts()
+      offInstaller()
+    }
+  }, [open])
   const ids = useId()
   const sectionId = (name: string) => `${ids}-${name}`
   // Without the gateway feature the dialog is the one from before environments: every bot gets its own container.
@@ -302,20 +344,32 @@ export function CreateBotDialog({
     }
     setBusy(true)
     setError('')
+    let preparingEnvironment = true
     try {
+      await prepareBotEnvironment(window.api, () => setPreparing(true))
+      preparingEnvironment = false
+      setPreparing(false)
       const bot = await window.api.fleetCreateBot({
         name: name.trim(),
         instructions: instructions.trim(),
         ceiling,
         talksTo,
         ...placement,
+        ...botPublishingRequest(offerPublishing, publishArtifacts),
       })
       setJoined(environments && where === 'existing')
       setCreated(bot)
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot } })
     } catch (cause) {
-      setError(fleetErrorText(cause, t))
+      setError(
+        preparingEnvironment
+          ? t('ui:artifacts.publishingBot.prepareFailed', {
+              message: cause instanceof Error ? cause.message : String(cause),
+            })
+          : fleetErrorText(cause, t)
+      )
     } finally {
+      setPreparing(false)
       setBusy(false)
     }
   }
@@ -647,6 +701,27 @@ export function CreateBotDialog({
                 </Section>
               )}
 
+              {offerPublishing && (
+                <Section
+                  id={sectionId('artifacts')}
+                  title={t('ui:artifacts.publishingBot.label')}
+                  note={t('ui:artifacts.publishingBot.hint')}
+                >
+                  <SettingsSwitch
+                    checked={publishArtifacts}
+                    label={t('ui:artifacts.publishingBot.label')}
+                    disabled={busy}
+                    onChange={() => setPublishArtifacts((value) => !value)}
+                  />
+                </Section>
+              )}
+              {(installer?.record?.artifactsOnly || preparing) && (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {t(
+                    preparing ? 'ui:artifacts.publishingBot.preparing' : 'ui:artifacts.publishingBot.environmentNotice'
+                  )}
+                </p>
+              )}
               <Section id={sectionId('autonomy')} title={t('botFields.ceiling')} note={t('create.autonomyNote')}>
                 <AutonomyChoice value={ceiling} onChange={setCeiling} labelledBy={sectionId('autonomy')} />
               </Section>

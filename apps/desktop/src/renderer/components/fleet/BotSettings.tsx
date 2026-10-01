@@ -1,3 +1,4 @@
+import { SettingsSwitch } from './SettingsSwitch'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
@@ -71,6 +72,7 @@ const fieldTargets: Record<BotSettingsField, string> = {
   role: 'fleet-settings-role',
   instructions: 'fleet-settings-instructions',
   ceiling: 'fleet-settings-autonomy-heading',
+  publishArtifacts: 'fleet-settings-publish-artifacts',
   selection: 'fleet-settings-model-heading',
   compaction: 'fleet-compaction-heading',
   talksTo: 'fleet-settings-peers-heading',
@@ -557,6 +559,24 @@ export function BotSettings({
           </SettingsSection>
 
           <SettingsSection id={domId('autonomy')} title={navLabel('autonomy')} note={t('botSettings.autonomyNote')}>
+            {fleet.state.connection.features.includes('artifacts') && (
+              <div
+                id="fleet-settings-publish-artifacts"
+                tabIndex={-1}
+                className="mb-4 flex items-start justify-between gap-3"
+              >
+                <div>
+                  <p className="text-sm font-medium">{t('ui:artifacts.publishingBot.label')}</p>
+                  <p className="text-xs text-muted-foreground">{t('ui:artifacts.publishingBot.hint')}</p>
+                </div>
+                <SettingsSwitch
+                  checked={draft.publishArtifacts}
+                  disabled={busy}
+                  label={t('ui:artifacts.publishingBot.label')}
+                  onChange={() => edit({ publishArtifacts: !draft.publishArtifacts })}
+                />
+              </div>
+            )}
             <BotAutonomyTable
               value={draft.ceiling}
               onChange={(ceiling) => edit({ ceiling })}
