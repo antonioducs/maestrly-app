@@ -7,6 +7,7 @@ import type {
   FleetBotMcpServers,
   FleetSubscriptionKind,
 } from '@maestrly/bot-fleet-protocol'
+import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import { ipcRenderer } from 'electron'
 import type {
   FleetOwnerMemory,
@@ -163,6 +164,8 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 // Provisioning and sign-ins take a target: an environment (shared by its bots), a bot, or a bare bot id as the views
 // from before environments pass it.
 export const fleetApi = {
+  fleetInstallerProvideBotEnvironment: (): Promise<FleetInstallerStatus> =>
+    ipcRenderer.invoke('fleet:installer:provideBotEnvironment'),
   fleetLoginStart: (
     target: FleetProvisioningTargetInput,
     request: FleetLoginStartRequest

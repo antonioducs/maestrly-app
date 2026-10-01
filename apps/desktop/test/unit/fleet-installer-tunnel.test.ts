@@ -38,16 +38,19 @@ async function until(check: () => boolean, timeout = 3000) {
   }
 }
 
-async function setup(options: { key?: string | null; listenPort?: number; remotePort?: number } = {}) {
+async function setup(
+  options: { key?: string | null; listenPort?: number; remotePort?: number; allowForward?: () => boolean } = {}
+) {
   const target = await gateway()
   const fake: FakeSshServer = await startFakeSshServer({
     users: {},
-    forwardTo: (port) => (port === (options.remotePort ?? 7443) ? target : null),
+    forwardTo: (port) => (port === (options.remotePort ?? 7443) && (options.allowForward?.() ?? true) ? target : null),
   })
   cleanups.push(() => fake.close())
   const key = generateSshKey('maestrly-synthetic')
   fake.authorizedKeys.push(key.publicKey)
   const states: FleetTunnelState[] = []
+  const errors: Array<InstallerError | null> = []
   const tunnel = new SshTunnel({
     target: { host: '127.0.0.1', port: fake.port, username: 'root' },
     hostKey: fake.fingerprint,
@@ -57,9 +60,10 @@ async function setup(options: { key?: string | null; listenPort?: number; remote
     delay: () => 20,
     freePort,
     onState: (state) => states.push(state),
+    onForwardError: (error) => errors.push(error),
   })
   cleanups.push(() => tunnel.stop())
-  return { fake, tunnel, states }
+  return { fake, tunnel, states, errors }
 }
 
 describe('SSH tunnel to the gateway', () => {
@@ -80,6 +84,23 @@ describe('SSH tunnel to the gateway', () => {
     expect(await get(viewerPort)).toBe('synthetic gateway')
     await viewer.tunnel.stop()
     expect(await get(apiPort)).toBe('synthetic gateway')
+  })
+
+  it('reports artifact forwarding failure and recovery without stopping the gateway', async () => {
+    let allowed = false
+    const api = await setup()
+    const viewer = await setup({ remotePort: 4010, allowForward: () => allowed })
+    const apiPort = await api.tunnel.start()
+    const viewerPort = await viewer.tunnel.start()
+    await until(() => api.tunnel.state === 'connected' && viewer.tunnel.state === 'connected')
+    await expect(get(viewerPort)).rejects.toThrow()
+    expect(viewer.tunnel.lastForwardError).not.toBeNull()
+    expect(viewer.errors.at(-1)).toBe(viewer.tunnel.lastForwardError)
+    expect(await get(apiPort)).toBe('synthetic gateway')
+    allowed = true
+    expect(await get(viewerPort)).toBe('synthetic gateway')
+    expect(viewer.errors.at(-1)).toBeNull()
+    expect(viewer.tunnel.lastForwardError).toBeNull()
   })
 
   it('reconnects after the server drops the connection', async () => {

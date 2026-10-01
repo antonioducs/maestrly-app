@@ -24,9 +24,10 @@ const credentials = z.discriminatedUnion('kind', [
     })
     .strict(),
 ])
-export const installLocalInput = z.object({ deviceName, allowPrivateNetwork: z.boolean() }).strict()
+const hosts = z.enum(['bots-and-artifacts', 'artifacts-only']).optional()
+export const installLocalInput = z.object({ hosts, deviceName, allowPrivateNetwork: z.boolean() }).strict()
 export const installRemoteInput = z
-  .object({ target, credentials, deviceName, allowPrivateNetwork: z.boolean() })
+  .object({ hosts, target, credentials, deviceName, allowPrivateNetwork: z.boolean() })
   .strict()
 const removeConfirmation = z.object({ confirm: z.literal('remove') }).strict()
 
@@ -41,6 +42,7 @@ export function registerFleetInstallerIpc(
     | 'installRemote'
     | 'update'
     | 'updateBots'
+    | 'provideBotEnvironment'
     | 'setPrivateNetwork'
     | 'disconnect'
     | 'remove'
@@ -58,6 +60,7 @@ export function registerFleetInstallerIpc(
     service.installRemote(installRemoteInput.parse(input))
   )
   reg.mhandle('fleet:installer:update', () => service.update())
+  reg.mhandle('fleet:installer:provideBotEnvironment', () => service.provideBotEnvironment())
   reg.mhandle('fleet:installer:updateBots', () => service.updateBots())
   reg.mhandle('fleet:installer:setPrivateNetwork', (_event, allow: unknown) =>
     service.setPrivateNetwork(z.boolean().parse(allow))

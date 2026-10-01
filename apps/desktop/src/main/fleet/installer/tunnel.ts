@@ -86,8 +86,9 @@ export class SshTunnel {
     socket.pause()
     session.forward(this.options.remotePort ?? BOT_SERVER_GATEWAY_PORT).then(
       (channel) => {
-        if (this.lastForwardError) this.options.onForwardError?.(null)
+        const recovered = this.lastForwardError !== null
         this.lastForwardError = null
+        if (recovered) this.options.onForwardError?.(null)
         if (socket.destroyed) return channel.destroy()
         channel.on('error', () => socket.destroy())
         channel.once('close', () => socket.destroy())

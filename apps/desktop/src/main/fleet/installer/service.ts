@@ -5,7 +5,11 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { app } from 'electron'
-import { FLEET_ENVIRONMENTS_FEATURE, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ARTIFACTS_FEATURE,
+  FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_PROTOCOL_VERSION,
+} from '@maestrly/bot-fleet-protocol'
 import {
   fleetUpdateState,
   knownServerVersion,
@@ -83,7 +87,8 @@ export interface FleetInstallerDeps {
   env: NodeJS.ProcessEnv
   /** Read when used: the app sets its data directory after modules load. */
   userDataDir: () => string
-  desktopArtifactsPort?: () => number
+  desktopArtifactSettings?: () => { ownerName: string; linkExpiryDays: number | null }
+  desktopArtifactsPort: () => number
   hostname: string
   timezone: string | undefined
   localRunner: () => CommandRunner
@@ -103,7 +108,7 @@ export interface FleetInstallerDeps {
   broadcast: (status: FleetInstallerStatus) => void
   readBundledCompose: () => Promise<string>
   /** Builds the `:local` images from the checkout, for a development build. */
-  runImageBuilder: (options: RunOptions) => Promise<RunResult>
+  runImageBuilder: (options: RunOptions, only?: 'gateway' | 'bot') => Promise<RunResult>
   removeLocalDir?: (dir: string) => Promise<void>
   now: () => Date
   randomId: (length: number) => string
@@ -327,6 +332,8 @@ export class FleetInstallerService {
         if (!this.deps.isPackaged && (await host.devFleetRunning())) throw new InstallerError('dev-fleet-running')
         detail([status.engine, status.version].filter(Boolean).join(' ') || null)
       })
+      let joining = false
+      let artifactsOnly = input.hosts === 'artifacts-only'
       let artifactsPort: number
       const port = await context.step('files', async () => {
         const record = this.deps.store.readRecord()
@@ -334,10 +341,13 @@ export class FleetInstallerService {
           (record?.mode === 'local' ? record.port : null) ??
           (await host.publishedPort()) ??
           (await this.deps.freePort(BOT_SERVER_GATEWAY_PORT))
+        const existingEnv = await host.readEnv()
+        joining = existingEnv !== null
+        if (joining) artifactsOnly = record?.artifactsOnly ?? artifactsOnly
         artifactsPort =
-          parseBotServerEnv((await host.readEnv()) ?? '').artifactsPort ??
+          parseBotServerEnv(existingEnv ?? '').artifactsPort ??
           (record?.mode === 'local' ? record.artifactsPort : null) ??
-          (await this.deps.freePort((this.deps.desktopArtifactsPort?.() ?? 4010) + 1))
+          (await this.deps.freePort(this.deps.desktopArtifactsPort() + 1))
         const env = renderBotServerEnv({
           artifactsPort,
           gatewayImage: images.gateway,
@@ -350,15 +360,19 @@ export class FleetInstallerService {
         await host.writeProject(await this.deps.readBundledCompose(), env)
         return port
       })
-      await context.step('images', (detail) => this.provideImages(host, images, 'local', context.signal, detail))
+      await context.step('images', (detail) =>
+        this.provideImages(host, images, 'local', context.signal, detail, artifactsOnly ? 'gateway' : 'both')
+      )
       const origin = loopbackOrigin(port)
       await context.step('start', async () => {
         await host.up({ signal: context.signal })
         await this.waitHealthy(origin, context.signal)
       })
       await this.pair(context, origin, input.deviceName, () => host.pair())
+      if (!joining) await this.initializeArtifacts()
       this.deps.store.writeRecord({
         mode: 'local',
+        ...(artifactsOnly ? { artifactsOnly: true } : {}),
         artifactsPort: artifactsPort!,
         version: this.deps.appVersion,
         port,
@@ -451,7 +465,16 @@ export class FleetInstallerService {
             await host.writeProject(await this.deps.readBundledCompose(), rendered)
             return rendered
           })
-          await context.step('images', (detail) => this.provideImages(host, images, 'remote', context.signal, detail))
+          await context.step('images', (detail) =>
+            this.provideImages(
+              host,
+              images,
+              'remote',
+              context.signal,
+              detail,
+              input.hosts === 'artifacts-only' ? 'gateway' : 'both'
+            )
+          )
         }
         await context.step('start', () => host.up({ signal: context.signal }))
         const port = await context.step('tunnel', async () => {
@@ -475,6 +498,7 @@ export class FleetInstallerService {
           return bound
         })
         paired = await this.pair(context, loopbackOrigin(port), input.deviceName, () => host.pair())
+        if (!joining) await this.initializeArtifacts()
         await context.step('key', async () => {
           const keyTag = `maestrly-${this.deps.randomId(12)}`
           const key = generateSshKey(keyTag)
@@ -491,6 +515,9 @@ export class FleetInstallerService {
           const current = parseBotServerEnv(env)
           const record: FleetInstallRecord = {
             mode: 'remote',
+            ...((joining ? sameServer && previous?.artifactsOnly : input.hosts === 'artifacts-only')
+              ? { artifactsOnly: true }
+              : {}),
             artifactsPort: await this.deps.freePort(previous?.artifactsPort ?? 4011),
             remoteArtifactsPort: current.artifactsPort ?? 4010,
             version: joining ? imageVersion(current.gatewayImage ?? '') : this.deps.appVersion,
@@ -524,23 +551,78 @@ export class FleetInstallerService {
     images: BotServerImages,
     mode: FleetInstallMode,
     signal: AbortSignal,
-    detail: (text: string | null) => void
+    detail: (text: string | null) => void,
+    selection: 'gateway' | 'bot' | 'both' = 'both'
   ): Promise<void> {
+    const refs = selection === 'both' ? [images.gateway, images.bot] : [images[selection]]
     if (images.source === 'registry') {
-      for (const ref of [images.gateway, images.bot]) {
+      for (const ref of refs) {
         detail(ref)
         await host.pull(ref, { signal, onLine: pullDetail(ref, detail) })
       }
       return
     }
     const missing: string[] = []
-    for (const ref of [images.gateway, images.bot]) if (!(await host.imageExists(ref))) missing.push(ref)
+    for (const ref of refs) if (!(await host.imageExists(ref))) missing.push(ref)
     if (!missing.length) return
     if (mode === 'remote') throw new InstallerError('images-unavailable', DEV_REMOTE_DETAIL)
     detail('Building from this checkout')
-    const result = await this.deps.runImageBuilder({ signal, onLine: lineDetail(detail) })
+    const result = await this.deps.runImageBuilder(
+      { signal, onLine: lineDetail(detail) },
+      selection === 'both' ? undefined : selection
+    )
     if (result.code !== 0) throw new InstallerError('image-build-failed', lastLine(result.stderr, result.stdout))
     for (const ref of missing) if (!(await host.imageExists(ref))) throw new InstallerError('images-unavailable', ref)
+  }
+
+  private async initializeArtifacts(): Promise<void> {
+    if (!this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) return
+    try {
+      const settings = this.deps.desktopArtifactSettings?.() ?? { ownerName: '', linkExpiryDays: null }
+      await this.deps.fleet.call('artifactHostPatch', { body: { enabled: true, ...settings } })
+    } catch {
+      if (this.job) this.job.warning = 'artifacts-enable-failed'
+      this.emit()
+    }
+  }
+
+  /** Installs the bot image only; a failed attempt leaves the artifact-only flag intact. */
+  async provideBotEnvironment(): Promise<FleetInstallerStatus> {
+    this.assertIdle()
+    const record = this.deps.store.readRecord()
+    if (!record) throw new InstallerError('not-connected')
+    if (!record.artifactsOnly) return this.status()
+    return this.runJob(
+      'bot-environment',
+      record.mode,
+      record.remote ? ['connect', 'images'] : ['images'],
+      async (context) => {
+        const { host, close } = await this.openHost(record, context)
+        try {
+          const current = parseBotServerEnv((await host.readEnv()) ?? '')
+          const images = this.images()
+          if (!current.botImage) throw new InstallerError('images-unavailable', 'The server bot image is unknown')
+          // The running gateway may be older than this desktop; provision the image its environment names.
+          await context.step('images', (detail) =>
+            this.provideImages(
+              host,
+              {
+                ...images,
+                bot: current.botImage!,
+                source: current.botImage === images.bot ? images.source : 'registry',
+              },
+              record.mode,
+              context.signal,
+              detail,
+              'bot'
+            )
+          )
+          this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), artifactsOnly: false })
+        } finally {
+          close()
+        }
+      }
+    )
   }
 
   private async waitHealthy(origin: string, signal: AbortSignal, tunnel?: InstallerTunnel | null): Promise<void> {
@@ -709,7 +791,7 @@ export class FleetInstallerService {
           const artifactsPort =
             (current ? parseBotServerEnv(current).artifactsPort : null) ??
             (record.mode === 'local'
-              ? (record.artifactsPort ?? (await this.deps.freePort((this.deps.desktopArtifactsPort?.() ?? 4010) + 1)))
+              ? (record.artifactsPort ?? (await this.deps.freePort(this.deps.desktopArtifactsPort() + 1)))
               : (record.remoteArtifactsPort ?? 4010))
           const env = current
             ? withEnvValues(current, {
@@ -734,7 +816,16 @@ export class FleetInstallerService {
             ...(record.mode === 'remote' ? { remoteArtifactsPort: artifactsPort } : {}),
           })
         })
-        await context.step('images', (detail) => this.provideImages(host, images, record.mode, context.signal, detail))
+        await context.step('images', (detail) =>
+          this.provideImages(
+            host,
+            images,
+            record.mode,
+            context.signal,
+            detail,
+            record.artifactsOnly ? 'gateway' : 'both'
+          )
+        )
         await context.step('start', async () => {
           await host.up({ signal: context.signal })
           await this.waitHealthy(this.origin(record), context.signal, this.tunnel)
@@ -967,12 +1058,12 @@ async function fetchMeta(origin: string): Promise<void> {
 const localRunner = () => new LocalRunner()
 
 /** `scripts/bot-fleet-images.mjs` from the checkout, run by Electron as Node with Docker on PATH. */
-function runImageBuilder(options: RunOptions): Promise<RunResult> {
+function runImageBuilder(options: RunOptions, only?: 'gateway' | 'bot'): Promise<RunResult> {
   const root = checkoutRoot()
   const script = path.join(root, 'scripts', 'bot-fleet-images.mjs')
   if (!existsSync(script))
     return Promise.resolve({ code: 1, stdout: '', stderr: 'scripts/bot-fleet-images.mjs is not in this checkout' })
-  return new LocalRunner().run(process.execPath, [script], {
+  return new LocalRunner().run(process.execPath, [script, ...(only ? ['--only', only] : [])], {
     ...options,
     cwd: root,
     env: { ELECTRON_RUN_AS_NODE: '1' },
@@ -985,6 +1076,10 @@ export const fleetInstallerService = new FleetInstallerService({
   env: process.env,
   userDataDir: () => app.getPath('userData'),
   desktopArtifactsPort: () => getArtifactSettings().port,
+  desktopArtifactSettings: () => {
+    const { ownerName, linkExpiryDays } = getArtifactSettings()
+    return { ownerName, linkExpiryDays }
+  },
   hostname: os.hostname(),
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   localRunner,

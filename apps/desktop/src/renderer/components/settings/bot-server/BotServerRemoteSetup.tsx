@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetInstallRecord, FleetInstallRemoteInput } from '../../../../shared/fleet-installer'
+import type { FleetInstallHosts, FleetInstallRecord, FleetInstallRemoteInput } from '../../../../shared/fleet-installer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { validateRemoteForm, type RemoteForm } from '@/lib/fleet/installer'
+import { BotServerHostsChoice } from './BotServerHostsChoice'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
 export function BotServerRemoteSetup({
@@ -25,6 +26,7 @@ export function BotServerRemoteSetup({
     privateKey: '',
   })
   const [passphrase, setPassphrase] = useState('')
+  const [hosts, setHosts] = useState<FleetInstallHosts>('bots-and-artifacts')
   const [deviceName, setDeviceName] = useState(t(`settings.deviceNameDefault.${window.api.platformInfo.os}`))
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(record?.allowPrivateNetwork ?? false)
   const [advanced, setAdvanced] = useState(false)
@@ -45,6 +47,7 @@ export function BotServerRemoteSetup({
         : { kind: 'password', password: form.password },
       deviceName: deviceName.trim() || t(`settings.deviceNameDefault.${window.api.platformInfo.os}`),
       allowPrivateNetwork,
+      hosts,
     })
   }
   return (
@@ -169,6 +172,7 @@ export function BotServerRemoteSetup({
           maxLength={80}
         />
       </label>
+      <BotServerHostsChoice value={hosts} onChange={setHosts} />
       <PrivateNetworkSwitch mode="remote" checked={allowPrivateNetwork} onChange={setAllowPrivateNetwork} />
       <Button onClick={install}>{t('botServer.remote.install')}</Button>
     </div>

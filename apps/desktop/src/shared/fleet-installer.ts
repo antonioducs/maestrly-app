@@ -6,6 +6,7 @@ import { compareSemver, parseSemver } from './update'
 
 /** Where Maestrly installed the bot server: this computer's Docker, or a VPS reached over SSH. */
 export type FleetInstallMode = 'local' | 'remote'
+export type FleetInstallHosts = 'bots-and-artifacts' | 'artifacts-only'
 /** What bots may reach: `public` keeps them off private networks and this computer; `open` does not. */
 export type FleetEgress = 'open' | 'public'
 
@@ -22,6 +23,8 @@ export interface FleetInstallRecord {
   version: string | null
   /** This computer's port: the gateway's published port, or the local end of the SSH tunnel. */
   port: number
+  /** True until the bot image has been provisioned successfully. */
+  artifactsOnly?: boolean
   /** Local viewer port; remote installs forward it separately from the gateway. */
   artifactsPort?: number | null
   /** Port published on the remote server, preserved across desktop restarts. */
@@ -94,13 +97,20 @@ export interface FleetInstallerError {
   detail: string | null
 }
 
-export type FleetInstallerJobKind = 'install-local' | 'install-remote' | 'update' | 'private-network' | 'remove'
+export type FleetInstallerJobKind =
+  | 'install-local'
+  | 'install-remote'
+  | 'update'
+  | 'private-network'
+  | 'remove'
+  | 'bot-environment'
 export interface FleetInstallerJob {
   id: string
   kind: FleetInstallerJobKind
   mode: FleetInstallMode
   steps: FleetInstallerStep[]
   state: 'running' | 'succeeded' | 'failed' | 'cancelled'
+  warning?: 'artifacts-enable-failed'
   error: FleetInstallerError | null
   startedAt: string
   /** The server's SSH host key fingerprint, shown while installing on a VPS. */
@@ -145,6 +155,7 @@ export interface LocalDockerCheck {
 }
 
 export interface FleetInstallLocalInput {
+  hosts?: FleetInstallHosts
   deviceName: string
   allowPrivateNetwork: boolean
 }
@@ -153,6 +164,7 @@ export type FleetSshCredentials =
   | { kind: 'password'; password: string }
   | { kind: 'key'; privateKey: string; passphrase: string | null }
 export interface FleetInstallRemoteInput {
+  hosts?: FleetInstallHosts
   target: FleetRemoteTarget
   credentials: FleetSshCredentials
   deviceName: string
