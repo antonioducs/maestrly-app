@@ -81,3 +81,30 @@ test('a failed settings write leaves the current settings intact and the queue u
   await hosting.update({ ownerName: 'Saved' })
   expect(hosting.settings().ownerName).toBe('Saved')
 })
+
+test('occupied ports become host errors and a subsequent start recovers', async () => {
+  const { createServer } = await import('node:http')
+  const occupied = createServer()
+  await new Promise<void>((resolve) => occupied.listen(0, '127.0.0.1', resolve))
+  const port = (occupied.address() as { port: number }).port
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'gateway-artifacts-'))
+  const config = { ...loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }), artifactsPort: port }
+  const store = new Store(dir)
+  const hosting = new ArtifactHosting({
+    store,
+    config,
+    network: new FleetNetwork(new FakeDockerDriver(), config.network),
+    emit: () => {},
+  })
+  cleanups.push(async () => {
+    await hosting.close()
+    occupied.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  expect((await hosting.update({ enabled: true })).status).toMatchObject({ state: 'error', problem: 'port_in_use' })
+  expect(hosting.admin()).toBeNull()
+  await new Promise<void>((resolve) => occupied.close(() => resolve()))
+  await hosting.start()
+  expect((await hosting.state()).status.state).toBe('running')
+})

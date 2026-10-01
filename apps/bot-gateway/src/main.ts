@@ -87,7 +87,14 @@ export async function run(
   })
   lifecycle.onEvent = (event) => events.emit(event)
   const network = new FleetNetwork(docker, config.network)
-  const artifacts = new ArtifactHosting({ store, config, network, emit: (event) => events.emit(event) })
+  const artifacts = new ArtifactHosting({
+    store,
+    config,
+    network,
+    emit: (event) => events.emit(event),
+    onEnabledChange: () => lifecycle.refreshProfiles(),
+  })
+  lifecycle.artifactsEnabled = () => artifacts.settings().enabled
   const servers = createGatewayServers({ auth, config, events, host, lifecycle, store, network, artifacts })
   await lifecycle.reconcile()
   await servers.peers.retry()

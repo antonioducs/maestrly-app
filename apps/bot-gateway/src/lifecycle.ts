@@ -116,6 +116,7 @@ export class Lifecycle {
   onCloseScreens: (id: string, code: number, mode?: 'control') => void = () => {}
   onCloseEnvironmentScreens: (environmentId: string, code: number) => void = () => {}
   controlCount: (id: string) => number = () => 0
+  artifactsEnabled: () => boolean = () => false
   onReady: (id: string) => void = () => {}
   onTurnFinished?: (
     botId: string,
@@ -540,7 +541,10 @@ export class Lifecycle {
       ceiling: bot.ceiling,
       selection: bot.selection,
       compaction: this.effectiveCompaction(bot, environment),
-      gateway: { peersEnabled: bot.talksTo.length > 0 },
+      gateway: {
+        peersEnabled: bot.talksTo.length > 0,
+        artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
+      },
     }
   }
   private insertEnvironment(name: string, memoryLimitBytes: number | null, at: string): string {
@@ -595,6 +599,7 @@ export class Lifecycle {
       compactionSource: null,
       compactionState: null,
       talksTo: input.talksTo,
+      publishArtifacts: input.publishArtifacts ?? this.artifactsEnabled(),
       paused: false,
       lifecycle: 'creating',
       setup: botSetup(joining ? 'profile' : 'container'),
@@ -1729,6 +1734,20 @@ export class Lifecycle {
     await this.propagateCompaction(environmentId, id)
   }
   /** Sends a running bot its profile again, from its stored record. */
+  async refreshProfiles(): Promise<void> {
+    for (const environment of this.store.listEnvironments()) {
+      await this.exclusive(environment.id, async () => {
+        for (const bot of this.store.botsOfEnvironment(environment.id)) {
+          if (this.get(bot.id)?.lifecycle !== 'running') continue
+          try {
+            this.updateStatus(bot.id, await this.reinstallProfile(environment.id, bot))
+          } catch (error) {
+            this.logger.warn('Could not refresh bot profile', { botId: bot.id, failure: failureCode(error) })
+          }
+        }
+      })
+    }
+  }
   private reinstallProfile(environmentId: string, bot: FleetBot): Promise<FleetInstanceStatus> {
     const profile = this.profile(bot)
     return this.capable(environmentId)

@@ -1,3 +1,4 @@
+import { artifactRoute } from './artifact-routes.js'
 import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { FleetNetwork } from './network.js'
@@ -7,6 +8,7 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_MESSAGE_BODY_MAX,
+  FLEET_ARTIFACT_BODY_MAX,
   FLEET_SKILL_BODY_MAX,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
@@ -138,14 +140,21 @@ export function createGatewayServers(ctx: GatewayContext) {
         ? match.route.body.parse(
             await readBody(
               req,
-              !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
-                ? FLEET_SKILL_BODY_MAX
-                : !internal && match.key === 'botMessageSend'
-                  ? FLEET_MESSAGE_BODY_MAX
-                  : 1024 * 1024
+              match.key === 'artifactUpload' || match.key === 'artifactBotUpload'
+                ? FLEET_ARTIFACT_BODY_MAX
+                : !internal && (match.key === 'botSkillInstall' || match.key === 'environmentSkillInstall')
+                  ? FLEET_SKILL_BODY_MAX
+                  : !internal && match.key === 'botMessageSend'
+                    ? FLEET_MESSAGE_BODY_MAX
+                    : 1024 * 1024
             )
           )
         : undefined
+      if (match.key.startsWith('artifact')) {
+        const identity = internal ? { botId: caller! } : { deviceId: ctx.auth.device(req.headers.authorization).id }
+        const result = await artifactRoute(activeCtx, match.key, body, identity)
+        return send(res, 200, match.route.response?.parse(result) ?? result)
+      }
       if (internal) {
         if (match.key.startsWith('routine')) {
           const bot = ctx.store.getBot(caller!)

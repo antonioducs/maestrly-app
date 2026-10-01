@@ -73,6 +73,7 @@ function botRecord(id: string, overrides: Partial<FleetBot> = {}): FleetBot {
     compactionSource: null,
     compactionState: null,
     talksTo: [],
+    publishArtifacts: false,
     paused: false,
     lifecycle: 'running',
     setup: botSetup('ready'),
@@ -223,9 +224,9 @@ function seedSchema5(db: DatabaseSync) {
 }
 
 describe('schema 6 migration', () => {
-  it('creates schema 8 with environments in an empty data directory', () => {
+  it('creates schema 9 with environments in an empty data directory', () => {
     const store = open()
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     const columns = (table: string) =>
       store.db
         .prepare(`PRAGMA table_info(${table})`)
@@ -255,10 +256,11 @@ describe('schema 6 migration', () => {
       ['gateway_token', 1],
       ['gateway_token_sha256', 1],
     ])
-    expect(columns('bots').slice(-3)).toEqual([
+    expect(columns('bots').slice(-4)).toEqual([
       ['environment_id', 1],
       ['slot', 1],
       ['archived_with_environment', 1],
+      ['publish_artifacts', 1],
     ])
     expect(columns('owner_memories').at(-1)).toEqual(['environment_id', 0])
     expect(columns('activity').at(-1)).toEqual(['environment_id', 0])
@@ -304,7 +306,7 @@ describe('schema 6 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     expect(snapshot(store.db)).toEqual(before)
     expect(meta(store.db)).toEqual(metaBefore)
 
@@ -343,6 +345,7 @@ describe('schema 6 migration', () => {
 
     expect(store.db.prepare('SELECT * FROM bots ORDER BY id').all()).toEqual(
       botsBefore.map((row) => ({
+        publish_artifacts: 0,
         ...row,
         // The migrated bot's model became its environment's default, which it now inherits.
         compaction_json: null,
@@ -409,7 +412,7 @@ describe('schema 6 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('8')
+    expect(version(reopened.db)).toBe('9')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -485,7 +488,7 @@ describe('schema 6 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     expect(store.listEnvironments().map((environment) => environment.id)).toEqual(['alpha'])
   })
 
@@ -493,14 +496,14 @@ describe('schema 6 migration', () => {
     const dir = temp()
     new Store(dir).close()
     const raw = new DatabaseSync(file(dir))
-    raw.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='10' WHERE key='schema_version'").run()
     const schema = schemaOf(raw)
     const data = dumpTables(raw)
     raw.close()
 
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
     const after = new DatabaseSync(file(dir))
-    expect(version(after)).toBe('9')
+    expect(version(after)).toBe('10')
     expect(schemaOf(after)).toEqual(schema)
     expect(dumpTables(after)).toEqual(data)
     after.close()
@@ -612,14 +615,14 @@ describe('schema 7 migration', () => {
       bots: database
         .prepare('SELECT * FROM bots ORDER BY id')
         .all()
-        .map(({ compaction_json: _, ...row }) => row),
+        .map(({ compaction_json: _, ...row }) => ({ publish_artifacts: 0, ...row })),
     })
     const before = untouched(db)
     checked(db)
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     checked(store.db)
     expect(untouched(store.db)).toEqual(before)
     expect(
@@ -653,7 +656,7 @@ describe('schema 7 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('8')
+    expect(version(reopened.db)).toBe('9')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
@@ -680,7 +683,7 @@ describe('schema 7 migration', () => {
     raw.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     expect(store.getEnvironment('alpha')?.compaction).toEqual(model('model-x'))
   })
 
@@ -746,7 +749,7 @@ describe('schema 8 migration', () => {
     db.close()
 
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     checked(store.db)
     expect(store.db.prepare('SELECT * FROM environments ORDER BY id').all()).toEqual(
       before.map((row) => ({ ...row, update_requested_at: null }))
@@ -767,17 +770,17 @@ describe('schema 8 migration', () => {
     const data = dumpTables(store.db)
     store.close()
     const reopened = open(dir)
-    expect(version(reopened.db)).toBe('8')
+    expect(version(reopened.db)).toBe('9')
     expect(schemaOf(reopened.db)).toEqual(schema)
     expect(dumpTables(reopened.db)).toEqual(data)
     expect(reopened.db.prepare('SELECT total_changes() AS count').get()).toEqual({ count: 0 })
   })
 
-  it('migrates a schema 6 database through schema 7 to schema 8', () => {
+  it('migrates a schema 6 database through schema 7 to schema 9', () => {
     const dir = temp()
     createSchema6Database(dir).close()
     const store = open(dir)
-    expect(version(store.db)).toBe('8')
+    expect(version(store.db)).toBe('9')
     checked(store.db)
     store.insertEnvironment(environmentRecord('work'), environmentSecrets('work'))
     expect(store.getEnvironment('work')).toEqual(environmentRecord('work'))
@@ -1171,5 +1174,22 @@ describe('environments and their bots', () => {
     expect(store.getEnvironment('pair')).toEqual(environmentRecord('pair'))
     store.deleteBot('two')
     expect(store.getEnvironment('pair')).toBeNull()
+  })
+})
+
+describe('schema 9 migration', () => {
+  it('defaults existing bots to disabled and persists later publishing changes', () => {
+    const dir = temp()
+    const old = new Store(dir)
+    const bot = botRecord('legacy')
+    old.insertBot(bot, { ...environmentSecrets('legacy'), ...gatewaySecrets('legacy') })
+    old.db.exec('ALTER TABLE bots DROP COLUMN publish_artifacts')
+    old.db.prepare("UPDATE meta SET value='8' WHERE key='schema_version'").run()
+    old.close()
+    const store = open(dir)
+    expect(store.getBot('legacy')?.publishArtifacts).toBe(false)
+    store.saveBot({ ...store.getBot('legacy')!, publishArtifacts: true })
+    store.close()
+    expect(open(dir).getBot('legacy')?.publishArtifacts).toBe(true)
   })
 })

@@ -2,6 +2,7 @@ import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_ARTIFACTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -234,6 +235,7 @@ export async function publicRoute(
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: ctx.host.gatewayVersion,
           features: [
+            FLEET_ARTIFACTS_FEATURE,
             FLEET_PROVISIONING_FEATURE,
             FLEET_ENVIRONMENTS_FEATURE,
             FLEET_ENVIRONMENT_COMPACTION_FEATURE,

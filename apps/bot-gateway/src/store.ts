@@ -161,7 +161,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 8) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 9) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -219,6 +219,10 @@ export class Store {
     if (version <= 5) this.migrateToEnvironments()
     if (version <= 6) this.migrateEnvironmentCompaction()
     if (version <= 7) this.migrateEnvironmentUpdates()
+    if (version <= 8) {
+      this.db.exec('ALTER TABLE bots ADD COLUMN publish_artifacts INTEGER NOT NULL DEFAULT 0')
+      this.db.prepare("UPDATE meta SET value='9' WHERE key='schema_version'").run()
+    }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -807,8 +811,8 @@ export class Store {
         )
       }
       this.db
-        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,archived_with_environment)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,publish_artifacts,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,archived_with_environment)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
         .run(
           bot.id,
           bot.name,
@@ -820,6 +824,7 @@ export class Store {
           bot.compaction ? JSON.stringify(bot.compaction) : null,
           JSON.stringify(bot.talksTo),
           Number(bot.paused),
+          Number(bot.publishArtifacts ?? false),
           bot.lifecycle,
           JSON.stringify(bot.setup),
           bot.createdAt,
@@ -841,7 +846,7 @@ export class Store {
   saveBot(bot: FleetBot) {
     const archived = Number(bot.lifecycle === 'archived')
     const result = this.db
-      .prepare(`UPDATE bots SET name=?,role=?,instructions=?,tint=?,ceiling=?,selection_json=?,compaction_json=?,talks_to_json=?,paused=?,lifecycle=?,setup_json=?,updated_at=?,
+      .prepare(`UPDATE bots SET name=?,role=?,instructions=?,tint=?,ceiling=?,selection_json=?,compaction_json=?,talks_to_json=?,paused=?,publish_artifacts=?,lifecycle=?,setup_json=?,updated_at=?,
       archived_at=CASE WHEN ? THEN COALESCE(archived_at,?) END,archived_with_environment=CASE WHEN ? THEN archived_with_environment ELSE 0 END WHERE id=?`)
       .run(
         bot.name,
@@ -853,6 +858,7 @@ export class Store {
         bot.compaction ? JSON.stringify(bot.compaction) : null,
         JSON.stringify(bot.talksTo),
         Number(bot.paused),
+        Number(bot.publishArtifacts ?? false),
         bot.lifecycle,
         JSON.stringify(bot.setup),
         bot.updatedAt,
@@ -911,6 +917,7 @@ export class Store {
       compactionState: null,
       talksTo: JSON.parse(String(row.talks_to_json)),
       paused: Boolean(row.paused),
+      publishArtifacts: Boolean(row.publish_artifacts),
       lifecycle: row.lifecycle as FleetBot['lifecycle'],
       setup: JSON.parse(String(row.setup_json)),
       createdAt: String(row.created_at),

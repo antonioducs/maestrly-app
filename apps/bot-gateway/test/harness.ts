@@ -436,7 +436,9 @@ export async function harness(
     config: { ...cfg, artifactsPort: 0 },
     network,
     emit: (event) => events.push(event),
+    onEnabledChange: () => lifecycle.refreshProfiles(),
   })
+  lifecycle.artifactsEnabled = () => artifacts.settings().enabled
   const gateway = createGatewayServers({
     network,
     artifacts,
