@@ -102,12 +102,16 @@ export class ServerArtifacts {
     if (status.state !== 'ready' || status.problem) return null
     const identity = this.currentIdentity()
     const owner = { kind: 'device' as const, id: this.deps.fleet.getConnection().deviceId! }
+    const validate = () => {
+      if (identity !== this.currentIdentity() || this.status().state !== 'ready' || this.unavailable())
+        throw this.unavailable() ?? serverUnavailable()
+    }
     return {
       key: 'server',
       owner,
       admin: async () => {
-        if (identity !== this.currentIdentity() || this.unavailable()) throw this.unavailable() ?? serverUnavailable()
-        return createFleetAdmin(this.deps.fleet)
+        validate()
+        return createFleetAdmin(this.deps.fleet, validate)
       },
       ready: () => identity === this.currentIdentity() && this.status().state === 'ready' && !this.unavailable(),
       viewerBase: () => (identity === this.currentIdentity() ? this.base() : null),

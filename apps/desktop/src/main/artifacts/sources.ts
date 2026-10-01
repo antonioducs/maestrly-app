@@ -70,8 +70,9 @@ export function createDesktopSources(deps: {
     managed: all,
   }
 }
-export function createFleetAdmin(fleet: Pick<FleetClientService, 'call'>): ArtifactAdmin {
+export function createFleetAdmin(fleet: Pick<FleetClientService, 'call'>, validate?: () => void): ArtifactAdmin {
   return createRemoteAdmin(async (method, args) => {
+    validate?.()
     let result: unknown
     try {
       result = await fleet.call(
@@ -81,6 +82,7 @@ export function createFleetAdmin(fleet: Pick<FleetClientService, 'call'>): Artif
     } catch {
       throw serverUnavailable()
     }
+    validate?.()
     const parsed = fleetArtifactResultSchema.safeParse(result)
     if (!parsed.success) throw serverUnavailable()
     // The host's client validates the serialized error code before rethrowing it.

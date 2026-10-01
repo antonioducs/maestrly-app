@@ -17,7 +17,7 @@ function fixture() {
     settings: { enabled: true, publicAddress: '', ownerName: 'Owner', linkExpiryDays: 7, quotaGb: 2 },
     status: { state: 'running', problem: null, artifactCount: 1, storageBytes: 30, quotaBytes: 2 ** 31 },
   }
-  const call = vi.fn(async () => host)
+  const call = vi.fn(async (): Promise<unknown> => host)
   const fleet = {
     call,
     hasFeature: (f: string) => connection.features.includes(f),
@@ -101,4 +101,30 @@ it('routes binary uploads separately and preserves errors through JSON', async (
   await expect(offline.get('AAAAAAAAAAAAAAAAAAAAAA')).rejects.toMatchObject({
     details: { reason: 'server_unreachable' },
   })
+})
+
+it('rechecks pairing on every call from an already acquired admin', async () => {
+  const h = fixture()
+  await h.server.refresh()
+  const admin = await h.server.source()!.admin()
+  h.call.mockClear()
+  h.connection.deviceId = 'dev-2'
+  await expect(admin.get('AAAAAAAAAAAAAAAAAAAAAA')).rejects.toMatchObject({ code: 'host_unavailable' })
+  expect(h.call).not.toHaveBeenCalled()
+})
+it('refuses a remote admin result after its pairing was replaced', async () => {
+  const h = fixture()
+  await h.server.refresh()
+  const admin = await h.server.source()!.admin()
+  let resolve!: (value: unknown) => void
+  h.call.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r
+      })
+  )
+  const getting = admin.get('AAAAAAAAAAAAAAAAAAAAAA')
+  h.connection.deviceId = 'dev-2'
+  resolve({ ok: true, value: null })
+  await expect(getting).rejects.toMatchObject({ code: 'host_unavailable' })
 })
