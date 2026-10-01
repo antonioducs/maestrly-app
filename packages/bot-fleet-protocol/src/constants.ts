@@ -48,7 +48,12 @@ export const FLEET_IMAGE_LIMITS = {
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 
+export const FLEET_ARTIFACTS_FEATURE = 'artifacts'
+/** JSON body limit for artifact uploads, including base64 encoding. */
+export const FLEET_ARTIFACT_BODY_MAX = 72 * 1024 * 1024
+
 export const FLEET_PORTS = {
+  artifacts: 4010,
   public: 7443,
   internal: 7444,
   instanceControl: 7680,
@@ -64,6 +69,8 @@ export const FLEET_GATEWAY_ENV = {
   publicHost: 'MAESTRLY_GATEWAY_PUBLIC_HOST',
   publicPort: 'MAESTRLY_GATEWAY_PUBLIC_PORT',
   internalPort: 'MAESTRLY_GATEWAY_INTERNAL_PORT',
+  artifactsPort: 'MAESTRLY_GATEWAY_ARTIFACTS_PORT',
+  artifactsHost: 'MAESTRLY_GATEWAY_ARTIFACTS_HOST',
   internalUrl: 'MAESTRLY_GATEWAY_INTERNAL_URL',
   botImage: 'MAESTRLY_GATEWAY_BOT_IMAGE',
   network: 'MAESTRLY_GATEWAY_NETWORK',

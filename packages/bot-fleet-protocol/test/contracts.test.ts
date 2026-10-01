@@ -161,6 +161,49 @@ const status = {
 }
 
 describe('domain contracts', () => {
+  it('defaults artifact permissions for old bots and instance profiles', () => {
+    expect(fleetBotSchema.parse(bot).publishArtifacts).toBe(false)
+    expect(fleetBotSchema.parse({ ...bot, publishArtifacts: true }).publishArtifacts).toBe(true)
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: true },
+    }
+    expect(fleetInstanceProfileSchema.parse(profile).gateway).toEqual({
+      peersEnabled: true,
+      artifactsEnabled: false,
+    })
+    expect(
+      fleetInstanceProfileSchema.parse({
+        ...profile,
+        gateway: { peersEnabled: true, artifactsEnabled: true },
+      }).gateway.artifactsEnabled
+    ).toBe(true)
+    const request = { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [], idempotencyKey: key }
+    expect(fleetCreateBotRequestSchema.parse(request)).toEqual(request)
+    expect(fleetPatchBotRequestSchema.parse({})).toEqual({})
+    for (const publishArtifacts of [true, false]) {
+      expect(fleetCreateBotRequestSchema.parse({ ...request, publishArtifacts }).publishArtifacts).toBe(
+        publishArtifacts
+      )
+      expect(fleetPatchBotRequestSchema.parse({ publishArtifacts })).toEqual({ publishArtifacts })
+    }
+    expect(fleetCreateBotRequestSchema.safeParse({ ...request, publishArtifacts: 'true' }).success).toBe(
+      false
+    )
+    expect(fleetPatchBotRequestSchema.safeParse({ publishArtifacts: 'false' }).success).toBe(false)
+    expect(fleetBotSchema.safeParse({ ...bot, publishArtifacts: 'true' }).success).toBe(false)
+    expect(
+      fleetInstanceProfileSchema.safeParse({
+        ...profile,
+        gateway: { peersEnabled: true, artifactsEnabled: 'true' },
+      }).success
+    ).toBe(false)
+  })
+
   it('exports the fleet egress modes and environment keys', () => {
     expect(FLEET_BOT_EGRESS_MODES).toEqual(['open', 'public'])
     expect(FLEET_GATEWAY_ENV.botEgress).toBe('MAESTRLY_GATEWAY_BOT_EGRESS')
@@ -1209,7 +1252,7 @@ describe('environment contracts', () => {
     const install = { profile, slot: 1, gatewayToken: 'g'.repeat(16) }
     expect(fleetInstanceBotInstallSchema.parse(install)).toEqual({
       ...install,
-      profile: { ...profile, compaction: null },
+      profile: { ...profile, compaction: null, gateway: { ...profile.gateway, artifactsEnabled: false } },
     })
     expect(fleetInstanceBotInstallSchema.parse({ ...install, slot: 8, gatewayToken: 'g'.repeat(200) }).slot).toBe(8)
     expect(fleetInstanceBotInstallSchema.parse(install).paused).toBeUndefined()
