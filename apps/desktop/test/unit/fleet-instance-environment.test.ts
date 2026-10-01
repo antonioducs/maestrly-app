@@ -62,7 +62,7 @@ const profile = (botId: string, name: string, extra: Partial<FleetInstanceProfil
   ceiling: 'ask',
   selection: null,
   compaction: null,
-  gateway: { peersEnabled: true },
+  gateway: { peersEnabled: true, artifactsEnabled: false },
   ...extra,
 })
 const exists = (file: string) =>

@@ -8,6 +8,13 @@ import { insertConversation } from '../../src/main/store'
 import { freshDb, closeDb } from '../helpers/db'
 import { makeWorkspace, makeConversation } from '../helpers/factories'
 
+const botState = vi.hoisted(() => ({ enabled: false, conversationId: '' }))
+vi.mock('../../src/main/fleet/instance', () => ({
+  requestOwnerHelp: vi.fn(),
+  botRuntimeForConversation: (id: string) =>
+    id === botState.conversationId ? { artifactsEnabled: botState.enabled } : null,
+}))
+
 interface ToolShape {
   name: string
   props: string[]
@@ -325,8 +332,33 @@ describe('MCP app tools inventory', () => {
     convId = makeConversation(ws.id).id
   })
   afterEach(() => {
+    botState.enabled = false
+    botState.conversationId = ''
     vi.unstubAllEnvs()
     closeDb()
+  })
+
+  it.each([true, false])('gates the seven bot artifact tools by runtime authorization: %s', async (enabled) => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    botState.enabled = enabled
+    botState.conversationId = convId
+    const names = (await listToolInventory(convId))
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith('artifact_'))
+    expect(names).toEqual(
+      enabled
+        ? [
+            'artifact_create',
+            'artifact_update',
+            'artifact_get',
+            'artifact_list',
+            'artifact_comments',
+            'artifact_comment_reply',
+            'artifact_comment_resolve',
+          ]
+        : []
+    )
+    expect(names).not.toContain('artifact_open')
   })
 
   it('omits desktop-only app tools from bot catalogs and rejects their calls', async () => {

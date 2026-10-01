@@ -336,6 +336,9 @@ export class BotRuntime {
   get name(): string | null {
     return this.stored?.profile.name ?? null
   }
+  get artifactsEnabled(): boolean {
+    return this.stored?.profile.gateway.artifactsEnabled ?? false
+  }
   /** Whether the environment has a gateway: its tools are offered even before the bot's token arrives. */
   get gatewayConfigured(): boolean {
     return !!this.host.gatewayUrl
