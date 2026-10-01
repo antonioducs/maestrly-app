@@ -379,6 +379,7 @@ export function listAvailableChatProviders(): ChatProvider[] {
     ...withAccounts(CLAUDE_SUBSCRIPTION_PROVIDER),
     ...withAccounts(GROK_SUBSCRIPTION_PROVIDER),
     ...withAccounts(CURSOR_SUBSCRIPTION_PROVIDER),
+    ...withAccounts(ANTIGRAVITY_SUBSCRIPTION_PROVIDER),
     ...listUserProviders(),
   ]
 }

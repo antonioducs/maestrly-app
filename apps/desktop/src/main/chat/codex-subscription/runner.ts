@@ -105,6 +105,7 @@ import { recordModelCallUsage } from '../usage-diagnostics'
 import { renderDesignModePrompt, renderDesignUltraGuidance } from '../design-mode-prompt'
 import {
   getProvider,
+  isAntigravitySubscriptionProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
@@ -126,6 +127,8 @@ import {
 import { harnessFor } from '../harness/execution'
 import { getCursorSubscriptionManager } from '../cursor-subscription/manager'
 import { runCursorSubagent } from '../cursor-subscription/subagent-runner'
+import { getAntigravitySubscriptionManager } from '../antigravity-subscription/manager'
+import { runAntigravitySubagent } from '../antigravity-subscription/subagent-runner'
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
@@ -1580,7 +1583,12 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       if (isBotMode() && questions.some((question) => question.isSecret)) {
         throw new Error('Secret questions are not supported in fleet bot mode. Continue without requesting secrets.')
       }
-      emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleItemId, toolName: 'ask_question' })
+      emit({
+        kind: 'tool-input-start',
+        messageId: route.messageId,
+        toolCallId: visibleItemId,
+        toolName: 'ask_question',
+      })
       emit(
         {
           kind: 'tool-call',
@@ -3715,6 +3723,7 @@ export async function runCodexSubscriptionChat(
             const nativeCodex = isCodexSubscriptionProvider(profile.effective.providerId)
             const nativeClaude = isClaudeSubscriptionProvider(profile.effective.providerId)
             const nativeCursor = isCursorSubscriptionProvider(profile.effective.providerId)
+            const nativeAntigravity = isAntigravitySubscriptionProvider(profile.effective.providerId)
             const nativeCopilot = isGitHubCopilotSubscriptionProvider(profile.effective.providerId)
             lease = await state.subagentCoordinator.acquire({ agent: agentName, signal })
             const childApproval = approvalConfig(codexReadOnly ? 'plan' : 'agent', args.permMode)
@@ -4192,65 +4201,102 @@ export async function runCodexSubscriptionChat(
                         args.releasePhysicalProvider?.(providerId)
                       }
                     })()
-                  : nativeCopilot
+                  : nativeAntigravity
                     ? await (async () => {
-                        const manager = getGitHubCopilotSubscriptionManager(
-                          subscriptionAccountId(profile.effective!.providerId)
-                        )
-                        const identity = manager.getAccountIdentity()
-                        if (!identity.fingerprint) {
-                          return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
-                        }
-                        return runGitHubCopilotSubagent({
-                          conversationScope: args.projectId === null ? 'standalone' : 'project',
-                          manager,
-                          accountIdentity: identity,
-                          conversationId: args.conversationId,
-                          cwd: args.cwd,
-                          profile,
-                          definition: effectiveDefinition,
-                          signal,
-                          agentName,
-                          task: resumeFor(profile.effective!.providerId, null).task,
-                          readOnly: codexReadOnly,
-                          tools: await copilotTools(
-                            Object.fromEntries(
+                        const providerId = profile.effective!.providerId
+                        const accountId = subscriptionAccountId(providerId)
+                        const manager = getAntigravitySubscriptionManager(accountId)
+                        args.acquirePhysicalProvider?.(providerId)
+                        try {
+                          const accountIdentity = manager.getAccountIdentity()
+                          if (!accountIdentity.fingerprint) {
+                            return { text: '', error: 'Google AI subscription is not authenticated.' }
+                          }
+                          manager.assertAccountIdentity(accountIdentity)
+                          const outcome = await runAntigravitySubagent({
+                            manager,
+                            accountIdentity,
+                            conversationId: args.conversationId,
+                            cwd: args.cwd,
+                            profile,
+                            definition: effectiveDefinition,
+                            signal,
+                            agentName,
+                            task: resumeFor(providerId, accountId).task,
+                            readOnly: codexReadOnly,
+                            tools: Object.fromEntries(
                               Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                             ),
+                            allowSkillLoader: args.mode === 'maestro',
+                            progress,
+                            onTextUpdate,
+                          })
+                          manager.assertAccountIdentity(accountIdentity)
+                          settleResume({ resumed: false, resumeReason: 'resume-rejected' })
+                          return outcome
+                        } finally {
+                          args.releasePhysicalProvider?.(providerId)
+                        }
+                      })()
+                    : nativeCopilot
+                      ? await (async () => {
+                          const manager = getGitHubCopilotSubscriptionManager(
+                            subscriptionAccountId(profile.effective!.providerId)
+                          )
+                          const identity = manager.getAccountIdentity()
+                          if (!identity.fingerprint) {
+                            return { text: '', error: 'GitHub Copilot subscription is not authenticated.' }
+                          }
+                          return runGitHubCopilotSubagent({
+                            conversationScope: args.projectId === null ? 'standalone' : 'project',
+                            manager,
+                            accountIdentity: identity,
+                            conversationId: args.conversationId,
+                            cwd: args.cwd,
+                            profile,
+                            definition: effectiveDefinition,
                             signal,
-                            childDeferredToolNames
-                          ),
-                          allowSkillLoader: args.mode === 'maestro',
-                          progress,
-                          onTextUpdate,
-                        })
-                      })()
-                    : await (async () => {
-                        // BYOK: without a server-side session, resume replays the previous turn as history.
-                        const resume = resumeFor(profile.effective!.providerId, null)
-                        const outcome = await runSubagent({
-                          cwd: args.cwd,
-                          projectId: args.projectId,
-                          permissionScope: args.permissionScope,
-                          conversationId: args.conversationId,
-                          parentMessageId: assistantId,
-                          toolCallId,
-                          profile,
-                          definition: effectiveDefinition,
-                          broker: args.broker,
-                          signal,
-                          agentName,
-                          task: resume.task,
-                          ...(resume.replay ? { replayHistory: resume.replay } : {}),
-                          progress,
-                          onTextUpdate,
-                          readOnly: codexReadOnly,
-                          tools: childTools,
-                          allowSkillLoader: args.mode === 'maestro',
-                        })
-                        if (resume.replay) settleResume({ resumed: true })
-                        return outcome
-                      })()
+                            agentName,
+                            task: resumeFor(profile.effective!.providerId, null).task,
+                            readOnly: codexReadOnly,
+                            tools: await copilotTools(
+                              Object.fromEntries(
+                                Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
+                              ),
+                              signal,
+                              childDeferredToolNames
+                            ),
+                            allowSkillLoader: args.mode === 'maestro',
+                            progress,
+                            onTextUpdate,
+                          })
+                        })()
+                      : await (async () => {
+                          // BYOK: without a server-side session, resume replays the previous turn as history.
+                          const resume = resumeFor(profile.effective!.providerId, null)
+                          const outcome = await runSubagent({
+                            cwd: args.cwd,
+                            projectId: args.projectId,
+                            permissionScope: args.permissionScope,
+                            conversationId: args.conversationId,
+                            parentMessageId: assistantId,
+                            toolCallId,
+                            profile,
+                            definition: effectiveDefinition,
+                            broker: args.broker,
+                            signal,
+                            agentName,
+                            task: resume.task,
+                            ...(resume.replay ? { replayHistory: resume.replay } : {}),
+                            progress,
+                            onTextUpdate,
+                            readOnly: codexReadOnly,
+                            tools: childTools,
+                            allowSkillLoader: args.mode === 'maestro',
+                          })
+                          if (resume.replay) settleResume({ resumed: true })
+                          return outcome
+                        })()
             const runtimeEstimatedCostUsd = (result as { runtimeEstimatedCostUsd?: number }).runtimeEstimatedCostUsd
             if (
               result.model &&

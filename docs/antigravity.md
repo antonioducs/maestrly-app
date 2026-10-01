@@ -8,8 +8,9 @@ Gemini model in the conversation model picker. Use **Connect another account** t
 add another Google account with its own label. An eligible Google AI plan and an
 internet connection are required.
 
-Google AI is available for chat, Maestro, and subagent profiles. It is not yet
-available to bots or to the desktop executor. The model list comes from the
+Google AI is available for chat, Maestro, subagent profiles, and the desktop
+executor's provider selection. Bot environments cannot sign in to it yet. The
+model list comes from the
 Antigravity server, which offers Gemini models only; variants that differ only by
 thinking level appear as one model with Low, Medium, or High effort. The server
 does not report token usage, remaining quota, or reasoning text, so Maestrly shows

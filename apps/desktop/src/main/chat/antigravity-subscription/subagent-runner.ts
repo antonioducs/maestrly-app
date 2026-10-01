@@ -7,6 +7,7 @@ import type { ChatAgent } from '../agents'
 import { resolveAntigravityHarness } from '../harness/adapters/antigravity'
 import type { ResolvedHarness } from '../harness/types'
 import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { selectSubagentToolNames } from '../tools'
@@ -51,6 +52,8 @@ export interface AntigravitySubagentResult {
   text: string
   error?: string
   model?: ChatModelRef
+  /** Shared subagent result shape; never set because the ACP server reports no token usage. */
+  usage?: NormalizedAiUsage
 }
 
 function abortedError(model: ChatModelRef): Error {
