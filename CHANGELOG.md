@@ -16,6 +16,15 @@ User-visible changes by version. Downloads are on
   viewer port, with a separate SSH tunnel for VPS setups. Public addresses and
   Tailscale access remain manual. See [server artifacts](docs/artifacts.md#bot-server).
 
+## [0.12.0] - 2026-09-30
+
+### Added
+
+- Dictate messages locally with whisper.cpp in chat and bot composers. Send
+  transcriptions automatically or review them first, choose the language, and
+  hold the microphone button to record. Recordings without speech are discarded.
+- Experimental: cap a bot's context window in its compaction settings, including
+  the shared environment default, to bound context use and cost.
 - Agents can publish web pages as artifacts, such as prototypes, reports, and
   dashboards, with Maestrly tools on. Each change becomes a new version.
   **Artifacts**, in the sidebar, shows every artifact with a preview of its page,
@@ -58,6 +67,7 @@ User-visible changes by version. Downloads are on
 
 ### Changed
 
+- Require macOS 13 or later. Apps on macOS 12 are not offered this update.
 - Fold the reasoning, commands, searches, and other tool steps behind each
   answer into one activity line in chats, workspaces, subagent transcripts, and
   bot conversations. While the agent works, the line shows its current step;
@@ -68,6 +78,10 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- Share plain-text clipboard contents while controlling a bot or environment
+  screen, preserve Caps Lock, and show the bot's pointer on its screen.
+- Keep subagent cards visible outside the compact activity line, and show bots'
+  to-do lists without offering desktop-only tools inside bot environments.
 - Let bots use new Claude models such as Opus 5.5: the bot image now ships
   Claude Code 2.1.285, so bots see these models as the desktop app does,
   including the extra high effort, instead of a reduced context window and a
