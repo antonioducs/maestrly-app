@@ -77,6 +77,7 @@ const h = vi.hoisted(() => {
     }),
     genericRun: vi.fn(),
     send: vi.fn(),
+    summarize: vi.fn(async () => ({ text: 'Gemini summary' })),
   }
 })
 
@@ -88,6 +89,10 @@ vi.mock('../../src/main/chat/antigravity-subscription/manager', async (importOri
   disposeAllAntigravitySubscriptionManagers: vi.fn(async () => {}),
 }))
 vi.mock('../../src/main/chat/antigravity-subscription/runner', () => ({ runAntigravitySubscriptionChat: h.run }))
+vi.mock('../../src/main/chat/antigravity-subscription/isolated-prompt', () => ({
+  runAntigravityIsolatedPrompt: vi.fn(),
+  summarizeWithAntigravityRuntime: h.summarize,
+}))
 vi.mock('../../src/main/runtime-assets/app-service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/runtime-assets/app-service')>()),
   ensureRuntimeAsset: h.ensure,
@@ -104,6 +109,7 @@ import {
 } from '../../src/main/chat/antigravity-subscription/session-store'
 import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
 import { type ChatIpcDeps, registerChatIpc } from '../../src/main/chat/service'
+import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -271,5 +277,54 @@ describe('Google AI subscription service', () => {
     ])
     h.managerFor(null).state.authenticated = false
     await expect(handlers.get('chat:models')!({}, 'builtin_antigravity_subscription', true)).resolves.toEqual([])
+  })
+
+  it('compacts through Antigravity and retires the old ACP session', async () => {
+    const conv = makeConversation(makeWorkspace().id)
+    patchConvUiPrefs(conv.id, {
+      chat: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro', reasoning: 'low' },
+    })
+    upsertChatMessage({
+      id: 'agy-user',
+      conversationId: conv.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'u', text: 'Implement the feature.' }],
+      createdAt: 1,
+    })
+    upsertChatMessage({
+      id: 'agy-answer',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'text', id: 'a', text: 'Work completed.' }],
+      model: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' },
+      createdAt: 2,
+    })
+    putAntigravitySessionBinding({
+      conversationId: conv.id,
+      accountId: null,
+      accountFingerprint: 'project:null',
+      sessionId: 'old-session',
+      modelValue: 'gemini-3.1-pro-low',
+      toolSignature: 't',
+      instructionHash: 'i',
+      lastMessageId: 'agy-answer',
+    })
+    const handlers = register()
+    await expect(handlers.get('chat:compact')!({}, conv.id)).resolves.toMatchObject({
+      ok: true,
+      summary: 'Gemini summary',
+    })
+    expect(h.summarize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: 'gemini-3.1-pro',
+        reasoningEffort: 'low',
+        accountIdentity: { fingerprint: 'project:null', epoch: 1 },
+      })
+    )
+    expect(h.managerFor(null).deleteSession).toHaveBeenCalledWith('old-session')
+    expect(getAntigravitySessionBinding(conv.id)).toBeUndefined()
+    expect(listChatMessages(conv.id).at(-1)?.parts).toContainEqual(
+      expect.objectContaining({ type: 'compaction', text: 'Gemini summary' })
+    )
   })
 })

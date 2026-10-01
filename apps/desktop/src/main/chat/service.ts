@@ -207,6 +207,7 @@ import {
   getAntigravitySubscriptionManager,
   listAntigravitySubscriptionManagers,
   runAntigravitySubscriptionChat,
+  summarizeWithAntigravityRuntime,
   type AntigravityAccountIdentity,
 } from './antigravity-subscription'
 import { AntigravityServiceAuth } from './antigravity-subscription/service-auth'
@@ -7400,6 +7401,38 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           fastMode: compactFastMode,
           ...(compactReasoningEffort ? { reasoningEffort: compactReasoningEffort } : {}),
           ...(frozen?.cursorModelSelection ? { frozenModelSelection: frozen.cursorModelSelection } : {}),
+        })
+    } else if (isAntigravitySubscriptionProvider(selection.providerId)) {
+      if (antigravityAuth.busy(compactAccountId)) return { ok: false, error: 'no-key' }
+      const manager = getAntigravitySubscriptionManager(compactAccountId)
+      if (!manager.getStatus().authenticated) return { ok: false, error: 'no-key' }
+      const identity = manager.getAccountIdentity()
+      if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+      let compactReasoningEffort = frozen?.reasoningEffort
+      if (!frozen) {
+        const entry = (await manager.listModels()).find((model) => model.id === selection.modelId)
+        const resolved = resolveNativeReasoningEffort({
+          requestedEffort: getConvUiPrefs(conversationId).chat?.reasoning,
+          supportedEfforts: entry ? antigravityModelEfforts(entry) : [],
+          defaultEffort: entry?.defaultEffort,
+          strict: false,
+        })
+        if (resolved.ok) compactReasoningEffort = resolved.reasoningEffort
+      }
+      summarize = (prompt, _phase, stageSignal = compactSignal) =>
+        summarizeWithAntigravityRuntime({
+          manager,
+          accountIdentity: frozen
+            ? {
+                fingerprint: frozen.identityFingerprint ?? identity.fingerprint,
+                epoch: frozen.identityEpoch ?? identity.epoch,
+              }
+            : identity,
+          modelId: selection.modelId,
+          system: compactSystem,
+          prompt,
+          signal: stageSignal,
+          ...(compactReasoningEffort ? { reasoningEffort: compactReasoningEffort } : {}),
         })
     } else {
       if (isGrokSubscriptionProvider(selection.providerId)) {
