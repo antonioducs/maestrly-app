@@ -102,6 +102,21 @@ const firstMcpUrl = (entry: Record<string, unknown> | undefined) => {
   return params?.mcpServers?.[0]?.url
 }
 
+async function cancelSlowTurn() {
+  const controller = new AbortController()
+  const pending = turn('SLOW', { signal: controller.signal })
+  try {
+    // Cancel an active prompt, even when setup takes longer on a busy runner.
+    await vi.waitFor(() => {
+      expect(promptText(fake.requests('session/prompt').at(-1))).toMatch(/(?:^|\n)SLOW$/)
+    })
+  } finally {
+    controller.abort()
+    await pending
+  }
+  return pending
+}
+
 describe('Antigravity chat runner', () => {
   it('starts a session with built-in tools disabled, the host MCP server, and the tool catalog', async () => {
     const { events, result } = await turn('ECHO oi')
@@ -187,9 +202,7 @@ describe('Antigravity chat runner', () => {
   })
 
   it('cancels the ACP turn when Maestrly aborts', async () => {
-    const controller = new AbortController()
-    setTimeout(() => controller.abort(), 150)
-    const { events } = await turn('SLOW', { signal: controller.signal })
+    const { events } = await cancelSlowTurn()
     expect(events.at(-1)?.kind).toBe('aborted')
     expect(fake.requests('session/cancel')).toHaveLength(1)
     expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
@@ -291,9 +304,8 @@ describe('Antigravity chat runner', () => {
   it('keeps a live session only after a finished turn', async () => {
     await turn('ECHO keep')
     expect(manager.liveSessionCount()).toBe(1)
-    const controller = new AbortController()
-    setTimeout(() => controller.abort(), 100)
-    await turn('SLOW', { signal: controller.signal })
+    const { events } = await cancelSlowTurn()
+    expect(events.at(-1)?.kind).toBe('aborted')
     expect(manager.liveSessionCount()).toBe(0)
   })
 })

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AntigravityAccountChangedError } from '../../src/main/chat/antigravity-subscription/errors'
 import {
   runAntigravityIsolatedPrompt,
@@ -59,8 +59,14 @@ describe('Antigravity isolated prompts', () => {
 
   it('cancels the ACP turn when aborted', async () => {
     const controller = new AbortController()
-    setTimeout(() => controller.abort(new Error('stop')), 100)
-    await expect(runAntigravityIsolatedPrompt(args('SLOW', { signal: controller.signal }))).rejects.toThrow('stop')
+    const pending = runAntigravityIsolatedPrompt(args('SLOW', { signal: controller.signal }))
+    const rejected = expect(pending).rejects.toThrow('stop')
+    try {
+      await vi.waitFor(() => expect(fake.requests('session/prompt')).toHaveLength(1))
+    } finally {
+      controller.abort(new Error('stop'))
+      await rejected
+    }
     await expect.poll(() => fake.requests('session/cancel').length).toBe(1)
   })
 

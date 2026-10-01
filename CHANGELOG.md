@@ -5,8 +5,17 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-01
+
 ### Added
 
+- Connect Google AI Pro or Ultra accounts through Google's official Antigravity
+  ACP server and use its Gemini models in chat, Maestro, subagents, and bot
+  environments. The runtime downloads on first sign-in; accounts and bot
+  sign-ins remain separate. See [Google AI](docs/antigravity.md).
+- Check, update, or roll back the Antigravity runtime in Components. Bots update
+  installed runtimes automatically and switch existing processes when the
+  environment is idle. Failed updates keep the current version and account data.
 - Host artifacts on a paired bot server so shared pages stay available while
   your computer sleeps. Choose where desktop conversations publish, control
   publication per bot, and browse both hosts in the Artifacts center. Existing

@@ -114,8 +114,14 @@ describe('Antigravity subagent runner', () => {
 
   it('cancels the child session when aborted', async () => {
     const controller = new AbortController()
-    setTimeout(() => controller.abort(new Error('parent stopped')), 100)
-    await expect(runAntigravitySubagent(args('SLOW', { signal: controller.signal }))).rejects.toThrow('parent stopped')
+    const pending = runAntigravitySubagent(args('SLOW', { signal: controller.signal }))
+    const rejected = expect(pending).rejects.toThrow('parent stopped')
+    try {
+      await vi.waitFor(() => expect(fake.requests('session/prompt')).toHaveLength(1))
+    } finally {
+      controller.abort(new Error('parent stopped'))
+      await rejected
+    }
     await expect.poll(() => fake.requests('session/cancel').length).toBe(1)
   })
 
