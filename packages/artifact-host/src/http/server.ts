@@ -59,7 +59,9 @@ export interface PublicServerDeps {
   capabilityKey: Buffer
   clock: () => number
   port: number
-  host?: string
+  host?: '127.0.0.1' | '0.0.0.0'
+  anyLoopbackPort?: boolean
+  allowConnection?: (remoteAddress: string | undefined) => boolean
   publicOrigins?: readonly string[]
   /** People, requests and events; opened on the store's database when not given. */
   sharing?: SharingStore
@@ -92,11 +94,16 @@ const BRIDGE_PATH = '_maestrly/bridge.js'
 export function allowedOrigin(
   hostHeader: string | undefined,
   port: number,
-  publicOrigins: readonly string[]
+  publicOrigins: readonly string[],
+  anyLoopbackPort = false
 ): string | null {
   if (!hostHeader) return null
   const host = hostHeader.toLowerCase()
   for (const name of LOOPBACK_NAMES) if (host === `${name}:${port}`) return `http://${host}`
+  if (anyLoopbackPort) {
+    const match = /^(127\.0\.0\.1|localhost|\[::1\]):([0-9]+)$/.exec(host)
+    if (match && Number(match[2]) >= 1 && Number(match[2]) <= 65535) return `http://${host}`
+  }
   for (const candidate of publicOrigins) {
     try {
       const url = new URL(candidate)
@@ -434,7 +441,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const origin = allowedOrigin(req.headers.host, port, publicOrigins)
+    const origin = allowedOrigin(req.headers.host, port, publicOrigins, deps.anyLoopbackPort)
     if (!origin) return text(res, 403, 'Forbidden')
     const url = req.url ?? '/'
     if (!url.startsWith('/')) return notFound(res)
@@ -495,6 +502,13 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       if (!res.headersSent) text(res, 500, 'Internal error')
       else res.destroy()
     })
+  })
+  server.on('connection', (socket) => {
+    try {
+      if (deps.allowConnection && !deps.allowConnection(socket.remoteAddress)) socket.destroy()
+    } catch {
+      socket.destroy()
+    }
   })
   server.requestTimeout = 30_000
   server.headersTimeout = 10_000

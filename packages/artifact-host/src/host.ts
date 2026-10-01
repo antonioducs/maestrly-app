@@ -14,6 +14,8 @@ import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 export interface ArtifactHostConfig {
   dataDir: string
   port: number
+  host?: '127.0.0.1' | '0.0.0.0'
+  anyLoopbackPort?: boolean
   quotaBytes: number
   /** Origins (such as a Tailscale HTTPS address) accepted besides loopback. */
   publicOrigins?: string[]
@@ -35,6 +37,8 @@ export interface ArtifactHost {
 const configSchema = z.object({
   dataDir: z.string().min(1),
   port: z.number().int().min(0).max(65535),
+  host: z.enum(['127.0.0.1', '0.0.0.0']).default('127.0.0.1'),
+  anyLoopbackPort: z.boolean().default(false),
   quotaBytes: z.number().int().positive(),
   publicOrigins: z.array(z.url()).max(8).default([]),
   ownerName: z.string().trim().max(MAX_NAME_CHARS).default(''),
@@ -42,13 +46,20 @@ const configSchema = z.object({
 
 /**
  * Opens a host: its data directory (`artifacts.sqlite` and `blobs/`), the admin interface, and the public HTTP server
- * on loopback. The host is the only writer of its data directory.
+ * on the configured interface (loopback by default). The host is the only writer of its data directory.
  */
 export async function openArtifactHost(
   config: ArtifactHostConfig,
-  options: { clock?: () => number; onEvent?: (event: ArtifactHostEvent) => void } = {}
+  options: {
+    clock?: () => number
+    onEvent?: (event: ArtifactHostEvent) => void
+    allowConnection?: (remoteAddress: string | undefined) => boolean
+  } = {}
 ): Promise<ArtifactHost> {
-  const { dataDir, port, quotaBytes, publicOrigins, ownerName } = parseInput(configSchema, config)
+  const { dataDir, port, host, anyLoopbackPort, quotaBytes, publicOrigins, ownerName } = parseInput(
+    configSchema,
+    config
+  )
   const clock = options.clock ?? Date.now
   mkdirSync(dataDir, { recursive: true, mode: 0o700 })
   if (process.platform !== 'win32') chmodSync(dataDir, 0o700)
@@ -75,6 +86,9 @@ export async function openArtifactHost(
       clock,
       port,
       publicOrigins,
+      host,
+      anyLoopbackPort,
+      allowConnection: options.allowConnection,
       sharing,
       ownerName,
       recordActivity: createActivityRecorder({ sharing, clock, onChange, onActivity }),

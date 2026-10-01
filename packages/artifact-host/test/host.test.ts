@@ -1,4 +1,5 @@
 import { statSync, writeFileSync } from 'node:fs'
+import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -121,4 +122,74 @@ describe('openArtifactHost', () => {
     const error = await openArtifactHost({ dataDir: '', port: -1, quotaBytes: 0 }).catch((reason: unknown) => reason)
     expect((error as ArtifactHostError).code).toBe('invalid_input')
   })
+})
+
+function requestHost(port: number, host: string): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    http
+      .get({ hostname: '127.0.0.1', port, path: '/robots.txt', headers: { host }, agent: false }, (res) => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode))
+      })
+      .on('error', reject)
+  })
+}
+
+it('accepts remapped loopback ports only when enabled', async () => {
+  const host = await openArtifactHost({
+    dataDir,
+    port: 0,
+    quotaBytes: DEFAULT_QUOTA_BYTES,
+    host: '0.0.0.0',
+    anyLoopbackPort: true,
+  })
+  hosts.push(host)
+  for (const name of ['127.0.0.1', 'localhost', '[::1]']) {
+    expect(await requestHost(host.port, `${name}:12345`)).toBe(200)
+  }
+  for (const name of [
+    'localhost:0',
+    'localhost:65536',
+    'localhost:+80',
+    'localhost:1e2',
+    'localhost:80x',
+    'localhost:',
+    'localhost:1.5',
+    'localhost:80:90',
+    'localhost.evil:80',
+    '127.0.0.2:80',
+  ]) {
+    expect(await requestHost(host.port, name)).toBe(403)
+  }
+  await host.close()
+  const local = await open()
+  expect(await requestHost(local.port, 'localhost:12345')).toBe(403)
+})
+
+it('destroys connections rejected by the connection guard', async () => {
+  const addresses: (string | undefined)[] = []
+  const host = await openArtifactHost(
+    { dataDir, port: 0, quotaBytes: DEFAULT_QUOTA_BYTES },
+    {
+      allowConnection(address) {
+        addresses.push(address)
+        return false
+      },
+    }
+  )
+  hosts.push(host)
+  await expect(requestHost(host.port, `localhost:${host.port}`)).rejects.toMatchObject({ code: 'ECONNRESET' })
+  expect(addresses).toEqual(['127.0.0.1'])
+})
+
+it('rejects unsupported bind addresses', async () => {
+  await expect(
+    openArtifactHost({
+      dataDir,
+      port: 0,
+      quotaBytes: DEFAULT_QUOTA_BYTES,
+      // @ts-expect-error Exercise runtime configuration validation.
+      host: '192.0.2.1',
+    })
+  ).rejects.toMatchObject({ code: 'invalid_input' })
 })
