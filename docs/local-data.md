@@ -142,12 +142,15 @@ data under its bot id:
 | Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
 | Session bus of its apps screen | `~/.cache/maestrly-bots/<botId>/` |
 
-Claude Code and Codex releases a bot downloads on its own live in the
+Claude Code, Codex and Google Antigravity ACP releases a bot downloads live in the
 profile's `runtime-assets/` folder, with the accepted release metadata in the
-`runtimeAssets.claudeCodeReleases` and `runtimeAssets.codexReleases` settings.
+`runtimeAssets.claudeCodeReleases`, `runtimeAssets.codexReleases` and
+`runtimeAssets.antigravityReleases` settings.
 They are shared by the environment's bots and survive container replacement;
 Maestrly keeps the active version, the previous one, and any version a running
-turn still uses, and removes the rest.
+turn still uses, and removes the rest. Google AI credentials and ACP conversation
+files live separately under `antigravity/accounts/` in the profile. Runtime
+updates preserve those account homes; signing out removes the selected home.
 
 Two browsers keep separate data. The browser that a bot drives with `browser_*`
 runs in the environment's Maestrly process, so all bots of the environment share

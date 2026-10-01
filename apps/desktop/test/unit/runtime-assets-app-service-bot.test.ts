@@ -3,15 +3,20 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const originalResourcesPath = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+
 const state = vi.hoisted(() => ({
   userData: '',
+  packaged: false,
   bundledClaude: null as string | null,
   settings: new Map<string, string>(),
 }))
 
 vi.mock('electron', () => ({
   app: {
-    isPackaged: false,
+    get isPackaged() {
+      return state.packaged
+    },
     getPath: () => state.userData,
     getAppPath: () => path.join(state.userData, 'app'),
     getVersion: () => '0.11.0',
@@ -48,6 +53,8 @@ import { RuntimeUpdateController } from '../../src/main/runtime-assets/runtime-u
 beforeEach(async () => {
   state.userData = await mkdtemp(path.join(os.tmpdir(), 'runtime-app-service-bot-'))
   state.settings.clear()
+  state.packaged = false
+  Object.defineProperty(process, 'resourcesPath', { configurable: true, value: path.join(state.userData, 'resources') })
   const claude = path.join(state.userData, 'claude')
   await writeFile(claude, '#!/bin/sh\n')
   await chmod(claude, 0o755)
@@ -58,6 +65,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetRuntimeAssetAppServiceForTests()
+  if (originalResourcesPath) Object.defineProperty(process, 'resourcesPath', originalResourcesPath)
+  else Reflect.deleteProperty(process, 'resourcesPath')
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   vi.useRealTimers()
@@ -81,6 +90,13 @@ describe('runtime asset app service in a bot', () => {
       update: { automatic: true },
     })
     expect(await runtimeUpdates('claude-code-runtime').effectiveVersion()).toBe('2.1.285')
+    expect(await imageRuntimeBaseline('antigravity-acp-runtime')).toBeNull()
+    expect(await runtimeAssetInfo('antigravity-acp-runtime')).toMatchObject({
+      status: { state: 'not-installed' },
+      update: { automatic: true },
+    })
+    await runtimeUpdates('antigravity-acp-runtime').setAutomatic(false)
+    expect(state.settings.has('runtimeAssets.antigravityReleases')).toBe(true)
   })
 
   it('reports nothing provided when the image has no bundled Claude Code', async () => {
@@ -105,22 +121,26 @@ describe('runtime asset app service in a bot', () => {
     expect((await readdir(root)).sort()).toEqual(['.tmp-unknown-1a2b', 'claude-code-runtime'])
   })
 
-  it('schedules checks for both runtimes', async () => {
+  it('schedules checks for all three runtimes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
     const cycle = vi.spyOn(RuntimeUpdateController.prototype, 'cycle').mockResolvedValue()
     startRuntimeAssetUpdates()
     await vi.advanceTimersByTimeAsync(61_000)
-    expect(cycle).toHaveBeenCalledTimes(2)
+    expect(cycle).toHaveBeenCalledTimes(3)
   })
 
-  it('does not schedule checks when the server turned bot runtime updates off', async () => {
-    vi.stubEnv('MAESTRLY_BOT_RUNTIME_UPDATES', 'off')
-    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
-    const cycle = vi.spyOn(RuntimeUpdateController.prototype, 'cycle').mockResolvedValue()
-    startRuntimeAssetUpdates()
-    await vi.advanceTimersByTimeAsync(7 * 60 * 60_000)
-    expect(cycle).not.toHaveBeenCalled()
-  })
+  it.each([false, true])(
+    'does not schedule checks when the server turned bot runtime updates off (packaged=%s)',
+    async (packaged) => {
+      state.packaged = packaged
+      vi.stubEnv('MAESTRLY_BOT_RUNTIME_UPDATES', 'off')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
+      const cycle = vi.spyOn(RuntimeUpdateController.prototype, 'cycle').mockResolvedValue()
+      startRuntimeAssetUpdates()
+      await vi.advanceTimersByTimeAsync(7 * 60 * 60_000)
+      expect(cycle).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('runtime asset app service on the desktop', () => {
@@ -128,6 +148,7 @@ describe('runtime asset app service on the desktop', () => {
     const info = await runtimeAssetInfo('codex-runtime')
     expect(info).not.toHaveProperty('provided')
     expect(info.update?.automatic).toBe(false)
+    expect((await runtimeAssetInfo('antigravity-acp-runtime')).update?.automatic).toBe(false)
     expect(await imageRuntimeBaseline('claude-code-runtime')).toBeNull()
   })
 
@@ -136,7 +157,7 @@ describe('runtime asset app service on the desktop', () => {
     const start = vi.spyOn(RuntimeUpdateController.prototype, 'start')
     const cycle = vi.spyOn(RuntimeUpdateController.prototype, 'cycle').mockResolvedValue()
     startRuntimeAssetUpdates()
-    expect(start).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledTimes(2)
     expect(start.mock.contexts[0]).toBe(runtimeUpdates('codex-runtime'))
     await vi.advanceTimersByTimeAsync(7 * 60 * 60_000)
     expect(cycle).not.toHaveBeenCalled()

@@ -132,7 +132,7 @@ describe('fleet renderer wiring', () => {
       const copy = catalog.environment.runtimes
       for (const key of ['title', 'note', 'lastChecked', 'neverChecked', 'manual', 'check', 'unsupported', 'restart'])
         expect(copy[key as keyof typeof copy], key).toEqual(expect.any(String))
-      for (const id of ['claude-code', 'codex'] as const) {
+      for (const id of ['claude-code', 'codex', 'antigravity-acp'] as const) {
         expect(copy.name[id]).toEqual(expect.any(String))
         expect(copy.pending[id]).toContain('{{version}}')
       }

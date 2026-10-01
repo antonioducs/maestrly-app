@@ -15,6 +15,7 @@ import { getClaudeSubscriptionManager } from '../chat/claude-agent-sdk/manager'
 import { clearAllClaudeSessionCleanup } from '../chat/claude-agent-sdk/session-store'
 import { deleteAllManagedCursorAgents, wipeAllCursorSubscriptionState } from '../chat/cursor-subscription/lifecycle'
 import { clearAllCursorAgentCleanup } from '../chat/cursor-subscription/session-store'
+import { wipeAllAntigravitySubscriptionState } from '../chat/antigravity-subscription/lifecycle'
 import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
@@ -94,6 +95,13 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     cursorWiped = true
   })
   if (!cursorWiped) assertComplete('Local data cleanup was incomplete.')
+  // Signs every Google AI account out and removes the app-owned Antigravity homes (tokens and ACP sessions).
+  let antigravityWiped = false
+  await attempt(async () => {
+    await wipeAllAntigravitySubscriptionState(accountIds('antigravity-subscription'))
+    antigravityWiped = true
+  })
+  if (!antigravityWiped) assertComplete('Local data cleanup was incomplete.')
   for (const account of accounts) await attempt(() => removeSubscriptionAccount(account.id))
 
   // Validate and remove managed chat directories before rows, preserving identity on failure.

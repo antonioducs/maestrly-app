@@ -165,6 +165,7 @@ export function fleetLoginUrlAllowed(kind: FleetLoginKind, value: string): boole
     return false
   }
   if (url.protocol !== 'https:' || url.username || url.password) return false
+  if (kind === 'antigravity') return url.origin === 'https://accounts.google.com'
   if (kind === 'codex') return url.origin === 'https://auth.openai.com'
   if (kind === 'claude')
     return ['https://claude.com', 'https://claude.ai', 'https://platform.claude.com'].includes(url.origin)

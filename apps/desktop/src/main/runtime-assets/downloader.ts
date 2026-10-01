@@ -20,7 +20,7 @@ export type RuntimeDownloader = (
   options: DownloadOptions
 ) => Promise<DownloadResult>
 
-const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com', 'huggingface.co'])
+const DEFAULT_HOSTS = new Set(['registry.npmjs.org', 'persistent.oaistatic.com', 'huggingface.co', 'dl.google.com'])
 /** Hugging Face redirects file downloads to regional CDN hosts under hf.co; the pinned hash stays the integrity check. */
 const DEFAULT_HOST_SUFFIXES: readonly string[] = ['.hf.co']
 
@@ -49,12 +49,21 @@ export function createHttpsDownloader(
         throw new Error(`Download URL is not allowed: ${url}`)
       response = await fetchImpl(url, { signal: options.signal, redirect: 'manual' })
       if (![301, 302, 303, 307, 308].includes(response.status)) break
+      if (target.hash.provenance === 'google-origin-pending') {
+        await response.body?.cancel()
+        throw new Error('Google-origin runtime downloads cannot redirect')
+      }
       const location = response.headers.get('location')
       if (!location) throw new Error(`Redirect without Location: ${url}`)
       url = new URL(location, url).href
       response = null
     }
     if (!response) throw new Error(`Too many redirects downloading ${target.url}`)
+    if (
+      target.hash.provenance === 'google-origin-pending' &&
+      (response.redirected || url !== target.url || new URL(url).origin !== 'https://dl.google.com')
+    )
+      throw new Error('Invalid Google download origin')
     if (!response.ok || !response.body) throw new Error(`Download failed (${response.status}) for ${url}`)
     const maxBytes = target.maxDownloadBytes
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)

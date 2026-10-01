@@ -1,3 +1,5 @@
+import { ANTIGRAVITY_COMPATIBILITY_REVISION, validateAntigravityRuntime } from './antigravity-compatibility'
+import { ANTIGRAVITY_RELEASE_PROFILE, discoverAntigravityRelease } from './antigravity-releases'
 import { FLEET_BOT_ENV } from '@maestrly/bot-fleet-protocol'
 import { app } from 'electron'
 import { accessSync, constants } from 'node:fs'
@@ -23,7 +25,12 @@ import { CLAUDE_CODE_RELEASE_PROFILE, discoverClaudeCodeRelease } from './claude
 import { CODEX_COMPATIBILITY_REVISION, validateCodexRuntime } from './codex-compatibility'
 import { CODEX_RELEASE_PROFILE, compareStableVersions, discoverCodexRelease } from './codex-releases'
 import { CLAUDE_CODE_PINNED_VERSION, RUNTIME_ASSET_REGISTRY, hostRuntimeTarget } from './registry'
-import { CLAUDE_CODE_RELEASE_STORE_KEY, CODEX_RELEASE_STORE_KEY, RuntimeReleaseStore } from './release-store'
+import {
+  ANTIGRAVITY_RELEASE_STORE_KEY,
+  CLAUDE_CODE_RELEASE_STORE_KEY,
+  CODEX_RELEASE_STORE_KEY,
+  RuntimeReleaseStore,
+} from './release-store'
 import { type RuntimeBaseline, RuntimeUpdateController } from './runtime-updates'
 import { RuntimeAssetService } from './service'
 import { createBundledRuntimeDownloader } from './downloader'
@@ -56,6 +63,7 @@ export class RuntimeAssetComponentRequiredError extends Error {
 }
 
 const RELEASE_CHANNELS = {
+  'antigravity-acp-runtime': { profile: ANTIGRAVITY_RELEASE_PROFILE, key: ANTIGRAVITY_RELEASE_STORE_KEY },
   'codex-runtime': { profile: CODEX_RELEASE_PROFILE, key: CODEX_RELEASE_STORE_KEY },
   'claude-code-runtime': { profile: CLAUDE_CODE_RELEASE_PROFILE, key: CLAUDE_CODE_RELEASE_STORE_KEY },
 } as const satisfies Record<UpdatableRuntimeAssetId, unknown>
@@ -110,11 +118,13 @@ export function botRuntimeUpdatesEnabled(env: NodeJS.ProcessEnv = process.env): 
 }
 
 function scheduleRuntimeUpdates(): boolean {
-  return !isE2E() && (app.isPackaged || (isBotMode() && botRuntimeUpdatesEnabled()))
+  return !isE2E() && (isBotMode() ? botRuntimeUpdatesEnabled() : app.isPackaged)
 }
 
 async function readImageBaseline(id: UpdatableRuntimeAssetId): Promise<RuntimeBaseline | null> {
   switch (id) {
+    case 'antigravity-acp-runtime':
+      return null
     case 'codex-runtime': {
       try {
         const image = resolveCodexRuntime()
@@ -183,6 +193,20 @@ function runtimeUpdateChanged(id: UpdatableRuntimeAssetId): void {
 
 function createRuntimeUpdates(id: UpdatableRuntimeAssetId): RuntimeUpdateController {
   switch (id) {
+    case 'antigravity-acp-runtime':
+      return new RuntimeUpdateController({
+        profile: ANTIGRAVITY_RELEASE_PROFILE,
+        compatibilityRevision: ANTIGRAVITY_COMPATIBILITY_REVISION,
+        service: runtimeAssetService(),
+        store: releaseStore(id),
+        target: hostRuntimeTarget(),
+        embedded: RUNTIME_ASSET_REGISTRY[id],
+        discover: discoverAntigravityRelease,
+        validate: validateAntigravityRuntime,
+        onChanged: () => runtimeUpdateChanged(id),
+        schedule: scheduleRuntimeUpdates(),
+        baseline: () => imageRuntimeBaseline(id),
+      })
     case 'codex-runtime':
       return new RuntimeUpdateController({
         profile: CODEX_RELEASE_PROFILE,
@@ -235,9 +259,10 @@ export function codexRuntimeUpdates(): RuntimeUpdateController {
 
 export { listedRuntimeAssetIds } from './visibility'
 
-/** Codex everywhere its schedule allows; Claude Code only in bots, the only place Maestrly manages it. */
+/** Codex and Antigravity wherever scheduling allows; managed Claude Code only in bots. */
 export function startRuntimeAssetUpdates(): void {
   codexRuntimeUpdates().start()
+  runtimeUpdates('antigravity-acp-runtime').start()
   if (isBotMode()) runtimeUpdates('claude-code-runtime').start()
 }
 
@@ -284,6 +309,10 @@ const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 're
   'whisper-model': {
     displayName: 'Voice model',
     requiredBy: 'Voice dictation',
+  },
+  'antigravity-acp-runtime': {
+    displayName: 'Google Antigravity ACP server',
+    requiredBy: 'Google AI subscription',
   },
 }
 
@@ -390,7 +419,7 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   await Promise.all(
     entries
       .filter((entry) =>
-        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model)-/.test(
+        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|antigravity-acp-runtime)-/.test(
           entry
         )
       )

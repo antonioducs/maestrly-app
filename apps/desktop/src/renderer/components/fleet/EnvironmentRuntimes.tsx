@@ -10,14 +10,14 @@ import { formatCheckedAt, isRuntimeAssetUpdateActive } from '@/components/chat/r
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /**
- * The Claude Code and Codex versions an environment runs, which its bots keep current on their own, with a check on
+ * The runtime versions an environment runs, which its bots keep current on their own, with a check on
  * demand. Hidden for a gateway or image that does not report them.
  */
 export function EnvironmentRuntimes({ environment, fleet }: { environment: FleetEnvironment; fleet: FleetController }) {
   const { t, i18n } = useTranslation('fleet')
   const [busy, setBusy] = useState(false)
-  const runtimes = environment.runtimes
-  if (!runtimes) return null
+  const runtimes = [...(environment.runtimes ?? []), ...(environment.additionalRuntimes ?? [])]
+  if (!runtimes.length) return null
   const supported = fleet.state.connection.features.includes(FLEET_RUNTIME_UPDATES_FEATURE)
   const running = environment.lifecycle === 'running'
   const active = runtimes.some((runtime) => isRuntimeAssetUpdateActive(runtime.state))

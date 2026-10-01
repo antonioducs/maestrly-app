@@ -1,3 +1,4 @@
+import { isPendingAntigravityArtifact } from './antigravity-releases'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, rename, rm, statfs, writeFile } from 'node:fs/promises'
@@ -764,12 +765,19 @@ export class RuntimeAssetService {
     options: RuntimeAssetUpdateOptions
   ): Promise<RuntimeAssetStatus> {
     const id = definition.id
+    // The embedded pin and previously accepted digests always override discovery metadata.
+    definition = this.definitionFor(id, definition.version) ?? definition
     const signal = options.signal ?? new AbortController().signal
-    const target = definition.targets[this.target]
+    let target = definition.targets[this.target]
     if (!target) throw new RuntimeAssetUpdateError('failed', `No ${this.target} target is configured for ${id}`)
     if (!/^[A-Za-z0-9.]+(?:-[A-Za-z0-9.]+)*$/.test(definition.version)) {
       throw new RuntimeAssetUpdateError('failed', `Invalid runtime version: ${definition.version}`)
     }
+    const pending = target.hash.provenance === 'google-origin-pending'
+    if (pending && (!isPendingAntigravityArtifact(definition, this.target) || !options.validate || !options.commit)) {
+      throw new RuntimeAssetUpdateError('integrity', 'Untrusted pending runtime artifact')
+    }
+    if (!pending && !target.hash.digest) throw new RuntimeAssetUpdateError('integrity', 'Missing runtime digest')
     if (signal.aborted) throw new RuntimeAssetUpdateError('cancelled', 'Runtime asset update cancelled')
     const directory = `${definition.version}-${this.target}`
     const destination = path.join(this.versionsRoot(id), directory)
@@ -826,6 +834,18 @@ export class RuntimeAssetService {
       })
       phase = 'verifying'
       report('verifying', downloaded.bytes)
+      if (pending) {
+        if (
+          downloaded.finalUrl !== target.url ||
+          !/^[a-f0-9]{64}$/.test(downloaded.digest) ||
+          downloaded.bytes <= 0 ||
+          downloaded.bytes > target.maxDownloadBytes
+        ) {
+          throw new RuntimeAssetUpdateError('integrity', 'Invalid Google-origin download')
+        }
+        target = { ...target, hash: { algorithm: 'sha256', encoding: 'hex', digest: downloaded.digest } }
+        definition = { ...definition, targets: { [this.target]: target } }
+      }
       if (downloaded.digest !== target.hash.digest) {
         throw new RuntimeAssetUpdateError(
           'integrity',

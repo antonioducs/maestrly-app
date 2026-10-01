@@ -44,6 +44,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
     'whisper-model': empty('whisper-model'),
+    'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
   }
 }
 
@@ -63,7 +64,15 @@ function fixtureDependencies(options: { delayDownload?: boolean; available?: num
     }
     await writeFile(destination, 'fixture')
     downloadOptions.onProgress?.(7, 7)
-    return { bytes: 7, digest: target.hash.digest, finalUrl: target.url }
+    return {
+      bytes: 7,
+      digest:
+        target.hash.digest ??
+        (() => {
+          throw new Error('Fixture requires a pinned digest')
+        })(),
+      finalUrl: target.url,
+    }
   })
   const extract = vi.fn(async (_archive: string, destination: string) => {
     await mkdir(path.join(destination, 'bin'), { recursive: true })
@@ -213,7 +222,15 @@ describe('RuntimeAssetService', () => {
       }
       await writeFile(destination, 'fixture')
       downloadOptions.onProgress?.(7, 7)
-      return { bytes: 7, digest: target.hash.digest, finalUrl: target.url }
+      return {
+        bytes: 7,
+        digest:
+          target.hash.digest ??
+          (() => {
+            throw new Error('Fixture requires a pinned digest')
+          })(),
+        finalUrl: target.url,
+      }
     })
     const service = new RuntimeAssetService({
       userDataPath: userData,

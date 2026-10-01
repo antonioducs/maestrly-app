@@ -71,6 +71,7 @@ export default {
       'missing-result': 'The bot did not return an import result.',
       'login-unexpected-page': 'The bot returned a sign-in page that is not from the provider.',
       'login-cancelled': 'Sign-in was cancelled.',
+      'login-port-unavailable': 'The Google sign-in callback port is busy. Close the other sign-in and try again.',
       'login-page-unavailable': 'This sign-in page is unavailable.',
       'too-large': 'Too large to send (max. 8 MB)',
       'file-too-large': 'A file is larger than 4 MB',
@@ -140,9 +141,11 @@ export default {
       codex: 'ChatGPT (Codex)',
       claude: 'Claude',
       grok: 'Grok',
+      antigravity: 'Google AI',
     },
     signInWith: 'Sign in with {{provider}}',
     title: 'Sign in to {{provider}} on {{bot}}',
+    preparingGoogle: 'Preparing Google AI on the environment. The first sign-in may take a few minutes…',
     starting: 'Starting sign-in on the bot…',
     browserOpened: 'We opened {{host}} in your browser. Sign in and authorize.',
     openAgain: 'Open again',
@@ -306,13 +309,15 @@ export default {
     version: 'Version {{version}}',
     updateAvailable: 'The server offers version {{version}}.',
     runtimes: {
-      title: 'Claude Code and Codex',
-      note: 'Bots update them on their own between tasks, never below the version of their image.',
-      name: { 'claude-code': 'Claude Code', codex: 'Codex' },
+      title: 'Model runtimes',
+      note: 'Bots update installed runtimes automatically and switch between tasks, keeping the minimum supported version.',
+      name: { 'claude-code': 'Claude Code', codex: 'Codex', 'antigravity-acp': 'Google Antigravity ACP' },
       source: { image: 'from the bot image', managed: 'updated' },
       pending: {
         'claude-code': 'v{{version}} is installed: each bot switches to it when its current task ends',
         codex:
+          'v{{version}} is installed: bots switch to it once none of them is working, waiting for you, or compacting',
+        'antigravity-acp':
           'v{{version}} is installed: bots switch to it once none of them is working, waiting for you, or compacting',
       },
       state: {
@@ -965,6 +970,7 @@ export default {
       'missing-result': 'The bot did not return an import result.',
       'login-unexpected-page': 'The bot returned a sign-in page that is not from the provider.',
       'login-cancelled': 'Sign-in was cancelled.',
+      'login-port-unavailable': 'The Google sign-in callback port is busy. Close the other sign-in and try again.',
       'login-page-unavailable': 'This sign-in page is unavailable.',
       'too-large': 'Too large to send (max. 8 MB)',
       'file-too-large': 'A file is larger than 4 MB',

@@ -118,6 +118,12 @@ const SUBSCRIPTION_CHANNELS: Record<
     logout: 'chat:grok-subscription:logout',
     changed: 'chat:grok-subscription:auth-changed',
   },
+  'antigravity-subscription': {
+    status: 'chat:antigravity-subscription:status',
+    login: 'chat:antigravity-subscription:login',
+    logout: 'chat:antigravity-subscription:logout',
+    changed: 'chat:antigravity-subscription:auth-changed',
+  },
 }
 
 export type ChatGptWebStatusPayload = ChatGptWebStatus & { enabled: boolean }

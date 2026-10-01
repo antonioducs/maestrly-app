@@ -372,6 +372,8 @@ export const fleetEnvironmentSchema = z.object({
   update: fleetEnvironmentUpdateSchema.nullable().default(null),
   /** Null when the gateway or the environment's image predates runtime reports. */
   runtimes: fleetRuntimesSchema.nullable().default(null),
+  /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
+  additionalRuntimes: fleetRuntimesSchema.optional(),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,

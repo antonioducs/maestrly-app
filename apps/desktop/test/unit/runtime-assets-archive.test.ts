@@ -237,6 +237,34 @@ describe('HTTPS downloader', () => {
     expect(result.finalUrl).toBe('https://us.aws.cdn.hf.co/xet/abc')
   })
 
+  it('allows the Google download host for the Antigravity ACP server by default', async () => {
+    const body = Buffer.from('acp')
+    const fetchMock = vi.fn(async () => new Response(body, { status: 200 }))
+    const downloader = createHttpsDownloader({ fetch: fetchMock as unknown as typeof fetch })
+    const result = await downloader(
+      {
+        ...target(createHash('sha256').update(body).digest('hex')),
+        url: 'https://dl.google.com/agy-extensions/x.zip',
+      },
+      path.join(temporary, 'agy'),
+      { signal: new AbortController().signal }
+    )
+    expect(result.finalUrl).toBe('https://dl.google.com/agy-extensions/x.zip')
+  })
+
+  it('rejects look-alike Google download hosts', async () => {
+    const downloader = createHttpsDownloader({
+      fetch: vi.fn(async () => new Response('x', { status: 200 })) as unknown as typeof fetch,
+    })
+    for (const url of ['https://dl.google.com.evil.test/x.zip', 'https://evildl.google.com/x.zip']) {
+      await expect(
+        downloader({ ...target('x'), url }, path.join(temporary, `g-${url.length}`), {
+          signal: new AbortController().signal,
+        })
+      ).rejects.toThrow(/not allowed/i)
+    }
+  })
+
   it('rejects look-alike Hugging Face hosts', async () => {
     for (const location of ['https://evilhf.co/x', 'https://hf.co.evil.test/x']) {
       const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location } }))

@@ -29,6 +29,7 @@ import {
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
+  isAntigravitySubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
   subscriptionAccountId,
@@ -38,6 +39,8 @@ import { freezeFailoverChain } from './subscription-failover/config'
 import { getCodexSubscriptionManager } from './codex-subscription/manager'
 import { getCursorSubscriptionManager } from './cursor-subscription/manager'
 import { summarizeWithCursorRuntime } from './cursor-subscription/portable-summarizer'
+import { runAntigravityIsolatedPrompt } from './antigravity-subscription/isolated-prompt'
+import { getAntigravitySubscriptionManager } from './antigravity-subscription/manager'
 import { getApiKey, hasApiKey } from './credentials'
 import { getGitHubCopilotSubscriptionManager } from './github-copilot/manager'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
@@ -424,6 +427,11 @@ export function hasConfiguredImageInterpreter(): boolean {
       return status?.authenticated === true && status.accountFingerprint !== null
     }
 
+    if (isAntigravitySubscriptionProvider(interpreter.providerId)) {
+      // Reads the account's token file only; the ACP server starts when a description is requested.
+      return getAntigravitySubscriptionManager(accountId).getAccountIdentity().fingerprint !== null
+    }
+
     if (isGrokSubscriptionProvider(interpreter.providerId)) {
       const status = getGrokSubscriptionManager(accountId).getStatusSnapshot()
       // Grok uses its authenticated BYOK-compatible path and does not require an active connected snapshot.
@@ -485,6 +493,11 @@ function interpreterIdentityFingerprint(interpreter: ChatImageInterpreter): stri
 
     if (isCursorSubscriptionProvider(providerId)) {
       const { fingerprint, epoch } = getCursorSubscriptionManager(accountId).getAccountIdentity()
+      return fingerprint ? `sub:${fingerprint}:${epoch}` : ''
+    }
+
+    if (isAntigravitySubscriptionProvider(providerId)) {
+      const { fingerprint, epoch } = getAntigravitySubscriptionManager(accountId).getAccountIdentity()
       return fingerprint ? `sub:${fingerprint}:${epoch}` : ''
     }
 
@@ -707,6 +720,28 @@ async function describeImage(
       ],
     })
     record('cursor-subscription', result.usage)
+    return result.text
+  }
+
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const manager = getAntigravitySubscriptionManager(accountId)
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) throw new Error('Image interpreter provider is not authenticated.')
+    const result = await runAntigravityIsolatedPrompt({
+      manager,
+      accountIdentity: identity,
+      modelId,
+      system: SYSTEM,
+      prompt,
+      signal,
+      ...(effort ? { reasoningEffort: effort } : {}),
+      images: [
+        {
+          data: image.base64 ?? image.dataUrl?.replace(/^data:[^;]+;base64,/, '') ?? '',
+          mimeType: image.mediaType,
+        },
+      ],
+    })
     return result.text
   }
 

@@ -266,7 +266,7 @@ export class RuntimeUpdateController {
     try {
       const latest = await this.options.discover(this.options.target, signal)
       this.options.store.recordCheck(latest)
-      return latest
+      return this.options.store.candidate() ?? latest
     } catch (error) {
       if (signal.aborted) throw error
       this.lastError = 'check-failed'
@@ -391,6 +391,7 @@ export class RuntimeUpdateController {
     try {
       candidate = await this.options.discover(this.options.target, signal)
       store.recordCheck(candidate)
+      candidate = store.candidate() ?? candidate
     } catch (error) {
       if (signal.aborted) throw signal.reason ?? error
       this.log('Release check before installation failed; installing the embedded version', error)

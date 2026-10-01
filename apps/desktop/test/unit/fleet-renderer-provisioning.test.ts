@@ -20,7 +20,10 @@ describe('fleet provisioning choices', () => {
       { id: 'local', name: 'Local', kind: 'openai', host: 'localhost', localOnly: true },
     ],
     copies: [{ id: 'cursor', kind: 'cursor', label: 'Cursor', expiresAt: null }],
-    logins: [{ id: 'grok', kind: 'grok', label: 'Grok', email: null }],
+    logins: [
+      { id: 'grok', kind: 'grok', label: 'Grok', email: null },
+      { id: 'google', kind: 'antigravity', label: 'Google AI', email: null },
+    ],
     skills: [
       { name: 'ready', description: '', files: 1, bytes: 10, scripts: false, problem: null },
       { name: 'broken', description: '', files: 1, bytes: 10, scripts: false, problem: 'no-skill-md' },
@@ -41,7 +44,7 @@ describe('fleet provisioning choices', () => {
     expect(recommendedImportChoice(inventory, ['accounts', 'skills', 'mcp'])).toEqual({
       apiKeyIds: ['remote'],
       copyIds: ['cursor'],
-      loginIds: ['grok'],
+      loginIds: ['grok', 'google'],
       skillNames: ['ready'],
       mcpServerIds: ['ready'],
     })

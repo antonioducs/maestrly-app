@@ -3,12 +3,13 @@ import type { RuntimeAssetDefinition, RuntimeTargetId } from './registry'
 import type { RuntimeReleaseProfile } from './release-profile'
 
 /**
- * Persisted state of independently installed releases of one runtime. Accepted records carry the verified npm
- * metadata of each installed version so status, repair, rollback, and lease verification work offline after a
+ * Persisted state of independently installed releases of one runtime. Accepted records carry npm publisher integrity
+ * or the locally accepted Google SHA-256 digest so status, repair, rollback, and lease verification work offline after a
  * restart. The embedded registry remains authoritative for its own version and is the minimum version accepted for
  * use. Every runtime-specific rule (targets, canonical URL, size limits, layout) comes from the profile.
  */
 
+export const ANTIGRAVITY_RELEASE_STORE_KEY = 'runtimeAssets.antigravityReleases'
 export const CODEX_RELEASE_STORE_KEY = 'runtimeAssets.codexReleases'
 export const CLAUDE_CODE_RELEASE_STORE_KEY = 'runtimeAssets.claudeCodeReleases'
 
@@ -21,7 +22,9 @@ export type RuntimeRejectionReason = 'failed' | 'rollback'
 
 interface StoredArtifact {
   readonly url: string
-  readonly sha512: string
+  readonly sha512?: string
+  readonly sha256?: string
+  readonly googleOriginPending?: true
   readonly downloadBytes: number
   readonly maxDownloadBytes: number
   readonly unpackedBytes: number
@@ -90,9 +93,22 @@ function parseArtifact(
   target: RuntimeTargetId
 ): StoredArtifact | null {
   if (!isRecord(value)) return null
-  const { url, sha512, downloadBytes, maxDownloadBytes, unpackedBytes } = value
+  const { url, sha512, sha256, googleOriginPending, downloadBytes, maxDownloadBytes, unpackedBytes } = value
   if (url !== profile.artifactUrl(version, target)) return null
-  if (typeof sha512 !== 'string' || !SHA512_BASE64.test(sha512)) return null
+  if (profile.id === 'antigravity-acp-runtime') {
+    if (sha512 !== undefined) return null
+    if (
+      googleOriginPending === true ? sha256 !== undefined : typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)
+    )
+      return null
+    if (googleOriginPending !== undefined && googleOriginPending !== true) return null
+  } else if (
+    typeof sha512 !== 'string' ||
+    !SHA512_BASE64.test(sha512) ||
+    sha256 !== undefined ||
+    googleOriginPending !== undefined
+  )
+    return null
   for (const size of [downloadBytes, maxDownloadBytes, unpackedBytes]) {
     if (typeof size !== 'number' || !Number.isSafeInteger(size) || size <= 0) return null
   }
@@ -101,7 +117,9 @@ function parseArtifact(
   if ((unpackedBytes as number) > profile.maxUnpackedBytes) return null
   return {
     url,
-    sha512,
+    ...(typeof sha512 === 'string' ? { sha512 } : {}),
+    ...(typeof sha256 === 'string' ? { sha256 } : {}),
+    ...(googleOriginPending === true ? { googleOriginPending: true as const } : {}),
     downloadBytes: downloadBytes as number,
     maxDownloadBytes: maxDownloadBytes as number,
     unpackedBytes: unpackedBytes as number,
@@ -134,7 +152,8 @@ function parseState(profile: RuntimeReleaseProfile, raw: string | null, automati
   const accepted: StoredRelease[] = []
   for (const entry of Array.isArray(parsed.accepted) ? parsed.accepted : []) {
     const versioned = parseVersioned(profile, entry)
-    if (!versioned || !isRecord(entry) || !isTimestamp(entry.acceptedAt)) continue
+    if (!versioned || versioned.artifact.googleOriginPending || !isRecord(entry) || !isTimestamp(entry.acceptedAt))
+      continue
     const revision = entry.compatibilityRevision
     if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) continue
     if (accepted.some((item) => item.version === versioned.version && item.target === versioned.target)) continue
@@ -174,7 +193,13 @@ function toArtifact(
         profile,
         {
           url: entry.url,
-          sha512: entry.hash.algorithm === 'sha512' && entry.hash.encoding === 'base64' ? entry.hash.digest : '',
+          ...(entry.hash.algorithm === 'sha512' && entry.hash.encoding === 'base64'
+            ? { sha512: entry.hash.digest }
+            : {}),
+          ...(entry.hash.algorithm === 'sha256' && entry.hash.encoding === 'hex' && entry.hash.digest
+            ? { sha256: entry.hash.digest }
+            : {}),
+          ...(entry.hash.provenance === 'google-origin-pending' ? { googleOriginPending: true } : {}),
           downloadBytes: entry.downloadBytes,
           maxDownloadBytes: entry.maxDownloadBytes,
           unpackedBytes: entry.unpackedBytes,
@@ -201,6 +226,11 @@ function toDefinition(
     targets: Object.freeze({
       [target]: profile.createTarget(target, version, {
         sha512Base64: artifact.sha512,
+        ...(artifact.sha256
+          ? { googleIntegrity: { sha256: artifact.sha256 } }
+          : artifact.googleOriginPending
+            ? { googleIntegrity: { pending: true as const } }
+            : {}),
         downloadBytes: artifact.downloadBytes,
         maxDownloadBytes: artifact.maxDownloadBytes,
         unpackedBytes: artifact.unpackedBytes,
@@ -290,13 +320,23 @@ export class RuntimeReleaseStore {
   candidate(): RuntimeAssetDefinition | null {
     const candidate = this.load().candidate
     if (!candidate || candidate.target !== this.target) return null
-    return toDefinition(this.profile, candidate.version, candidate.target, candidate.artifact)
+    return candidate.version === this.embedded.version
+      ? this.embedded
+      : (this.acceptedDefinition(candidate.version) ??
+          toDefinition(this.profile, candidate.version, candidate.target, candidate.artifact))
   }
 
   /** Accept verified metadata for activation. Must be persisted before the active pointer moves to the version. */
   accept(definition: RuntimeAssetDefinition, compatibilityRevision: number): void {
     if (definition.id === this.profile.id && definition.version === this.embedded.version) return
     const artifact = toArtifact(this.profile, definition, this.target)
+    if (artifact.googleOriginPending) throw new Error('Pending Google artifacts cannot be accepted')
+    const existing = this.acceptedDefinition(definition.version)
+    if (
+      existing &&
+      JSON.stringify(existing.targets[this.target]?.hash) !== JSON.stringify(definition.targets[this.target]?.hash)
+    )
+      throw new Error('Accepted runtime digest cannot change')
     const state = this.load()
     const accepted = state.accepted.filter(
       (item) => !(item.version === definition.version && item.target === this.target)

@@ -57,7 +57,7 @@ export function useBotLogin({
         const value = await window.api.fleetLoginStatus(target, owned.loginId)
         if (!live()) return
         update(value)
-        setError('')
+        if (value.state === 'pending' || value.state === 'completed') setError('')
       } catch (cause) {
         if (live()) setError(fleetErrorMessage(cause))
       }
@@ -101,6 +101,7 @@ export function useBotLogin({
   const loginId = attempt?.loginId
   return {
     attempt,
+    preparing: kind === 'antigravity' && attempt?.state === 'pending' && !attempt.browser,
     error,
     busy,
     paste,
