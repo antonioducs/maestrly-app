@@ -706,6 +706,7 @@ export class FleetInstallerService {
         privateKey: () => this.deps.store.readKey(),
         listenPort: record.artifactsPort,
         remotePort: record.remoteArtifactsPort ?? 4010,
+        recoverForwarding: true,
         onForwardError: (error) => {
           this.artifactsTunnelError = error
           this.emit()

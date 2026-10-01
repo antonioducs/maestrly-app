@@ -1,4 +1,6 @@
 import path from 'node:path'
+import http from 'node:http'
+import type net from 'node:net'
 import { describe, expect, it } from 'vitest'
 import type { FleetConnectionView } from '../../src/main/fleet/client/service'
 import { InstallerError } from '../../src/main/fleet/installer/errors'
@@ -12,7 +14,9 @@ import {
   type InstallerSession,
   type InstallerTunnel,
 } from '../../src/main/fleet/installer/service'
-import type { TunnelOptions } from '../../src/main/fleet/installer/tunnel'
+import { generateSshKey } from '../../src/main/fleet/installer/ssh'
+import { startFakeSshServer } from '../fixtures/fake-ssh-server'
+import { SshTunnel, type TunnelOptions } from '../../src/main/fleet/installer/tunnel'
 import type { FleetInstallRecord, FleetInstallerStatus, FleetTunnelState } from '../../src/shared/fleet-installer'
 import { FakeRunner, fail, ok } from '../fixtures/fleet-installer-fakes'
 
@@ -1117,7 +1121,8 @@ describe('artifact viewer ports', () => {
     })
     expect(service.artifactsViewerPort()).toBeNull()
     await service.start()
-    expect(tunnels[1].options).toMatchObject({ listenPort: 4011, remotePort: 4210 })
+    expect(tunnels[1].options).toMatchObject({ listenPort: 4011, remotePort: 4210, recoverForwarding: true })
+    expect(tunnels[0].options.recoverForwarding).toBeUndefined()
     expect(service.artifactsViewerPort()).toBe(4111)
     expect(stored.record?.artifactsPort).toBe(4111)
     expect(fleetState.retargets).toEqual([])
@@ -1126,6 +1131,82 @@ describe('artifact viewer ports', () => {
     expect(service.artifactsViewerPort()).toBeNull()
     await service.start()
     expect(tunnels.at(-1)?.options.listenPort).toBe(4111)
+  })
+
+  it('recovers an unavailable viewer through SSH without another viewer request', async () => {
+    const viewer = http.createServer((_request, response) => response.end('synthetic artifact'))
+    const api = http.createServer((_request, response) => response.end('synthetic API'))
+    const listen = (server: net.Server, port = 0) =>
+      new Promise<number>((resolve) =>
+        server.listen(port, '127.0.0.1', () => resolve((server.address() as net.AddressInfo).port))
+      )
+    const close = (server: net.Server) => new Promise<void>((resolve) => server.close(() => resolve()))
+    const viewerDestination = await listen(viewer)
+    await close(viewer)
+    const apiDestination = await listen(api)
+    let viewerAttempts = 0
+    const fake = await startFakeSshServer({
+      users: {},
+      forwardTo: (port) => {
+        if (port === 4010) {
+          viewerAttempts++
+          return viewerDestination
+        }
+        return port === 7443 ? apiDestination : null
+      },
+    })
+    const key = generateSshKey('maestrly-synthetic')
+    fake.authorizedKeys.push(key.publicKey)
+    const actual: SshTunnel[] = []
+    const { service } = setup({
+      record: remoteRecord({
+        port: 0,
+        artifactsPort: 1,
+        remote: {
+          host: '127.0.0.1',
+          port: fake.port,
+          username: 'root',
+          hostKey: fake.fingerprint,
+          keyTag: 'synthetic',
+        },
+      }),
+      key: key.privateKey,
+      deps: {
+        createTunnel(options) {
+          const tunnel = new SshTunnel({ ...options, listenPort: 0 })
+          actual.push(tunnel)
+          return tunnel
+        },
+      },
+    })
+    try {
+      await service.start()
+      await expect.poll(() => service.status().artifactsTunnel).toBe('connected')
+      const port = service.artifactsViewerPort()!
+      await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
+      expect(service.artifactsViewerPort()).toBeNull()
+      expect(service.status().artifactsTunnelError).not.toBeNull()
+      expect(await (await fetch(`http://127.0.0.1:${actual[0].port}`)).text()).toBe('synthetic API')
+      await listen(viewer, viewerDestination)
+      await expect.poll(() => service.artifactsViewerPort(), { timeout: 4000 }).toBe(port)
+      expect(service.status().artifactsTunnelError).toBeNull()
+      expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('synthetic artifact')
+      expect(fake.connections).toBe(2)
+      // Leave recovery scheduled, then verify disconnect cancels it and closes both listeners.
+      await close(viewer)
+      await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
+      await service.disconnect()
+      const attempts = viewerAttempts
+      await new Promise((resolve) => setTimeout(resolve, 1100))
+      expect(viewerAttempts).toBe(attempts)
+      expect(service.artifactsViewerPort()).toBeNull()
+      expect(actual.every((tunnel) => tunnel.state === 'off')).toBe(true)
+    } finally {
+      await service.stop()
+      await fake.close()
+      await close(viewer)
+      await close(api)
+    }
   })
 
   it('keeps the gateway connected when the artifact listener fails', async () => {

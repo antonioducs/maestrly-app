@@ -19,6 +19,8 @@ export interface TunnelOptions {
   session?: () => Promise<TunnelSession>
   listenPort: number
   remotePort?: number
+  /** Probe a failed destination without waiting for another local client connection. */
+  recoverForwarding?: boolean
   delay?: (attempt: number) => number
   /** A free loopback port, used when `listenPort` is taken. */
   freePort?: () => Promise<number>
@@ -38,6 +40,10 @@ export class SshTunnel {
   private currentState: FleetTunnelState = 'off'
   private currentPort: number
   private stopped = false
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null
+  private recoveryAttempt = 0
+  private recoveryGeneration = 0
+  private probing = false
   private wake: (() => void) | null = null
   /** The last error opening a channel to the gateway, such as forwarding being disabled on the server. */
   lastForwardError: InstallerError | null = null
@@ -86,9 +92,8 @@ export class SshTunnel {
     socket.pause()
     session.forward(this.options.remotePort ?? BOT_SERVER_GATEWAY_PORT).then(
       (channel) => {
-        const recovered = this.lastForwardError !== null
-        this.lastForwardError = null
-        if (recovered) this.options.onForwardError?.(null)
+        if (this.stopped || this.session !== session) return channel.destroy()
+        this.forwardRecovered()
         if (socket.destroyed) return channel.destroy()
         channel.on('error', () => socket.destroy())
         channel.once('close', () => socket.destroy())
@@ -97,11 +102,65 @@ export class SshTunnel {
         socket.resume()
       },
       (error: unknown) => {
+        if (this.stopped || this.session !== session) return socket.destroy()
         this.lastForwardError = error instanceof InstallerError ? error : new InstallerError('unknown', String(error))
         this.options.onForwardError?.(this.lastForwardError)
         socket.destroy()
+        this.scheduleRecovery()
       }
     )
+  }
+
+  private cancelRecovery() {
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = null
+    this.recoveryGeneration++
+    this.probing = false
+  }
+
+  private forwardRecovered() {
+    this.cancelRecovery()
+    this.recoveryAttempt = 0
+    const recovered = this.lastForwardError !== null
+    this.lastForwardError = null
+    if (recovered) this.options.onForwardError?.(null)
+  }
+
+  private scheduleRecovery() {
+    const session = this.session
+    if (!this.options.recoverForwarding || this.stopped || !session || !this.lastForwardError) return
+    if (this.recoveryTimer || this.probing) return
+    // Disabled artifact hosts must not cause a tight retry loop. Keep one probe outstanding at most.
+    const delay = Math.min(60_000, 1_000 * 2 ** Math.min(this.recoveryAttempt++, 6))
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null
+      this.probing = true
+      const generation = this.recoveryGeneration
+      const current = () => !this.stopped && this.session === session && generation === this.recoveryGeneration
+      this.recoveryTimer = setTimeout(() => {
+        this.recoveryTimer = null
+        // Closing our SSH session cancels a stalled channel open; the normal reconnect loop resumes probing.
+        // A borrowed session belongs to its caller: wait for its pending open rather than accumulating probes.
+        if (current() && !this.options.session) {
+          this.cancelRecovery()
+          session.close()
+        }
+      }, 5_000)
+      this.recoveryTimer.unref()
+      void session.forward(this.options.remotePort ?? BOT_SERVER_GATEWAY_PORT).then(
+        (channel) => {
+          channel.on('error', () => {})
+          channel.destroy()
+          if (current()) this.forwardRecovered()
+        },
+        () => {
+          if (!current()) return
+          this.cancelRecovery()
+          this.scheduleRecovery()
+        }
+      )
+    }, delay)
+    this.recoveryTimer.unref()
   }
 
   /** How to open the next SSH session: the given one, or a sign-in with Maestrly's key; null without a key. */
@@ -135,7 +194,9 @@ export class SshTunnel {
         connectedBefore = true
         attempt = 0
         this.setState('connected')
+        this.scheduleRecovery()
         await new Promise<void>((resolve) => session.onClose(() => resolve()))
+        this.cancelRecovery()
         this.session = null
         if (this.stopped) return
         this.setState('reconnecting')
@@ -161,6 +222,7 @@ export class SshTunnel {
 
   async stop(): Promise<void> {
     this.stopped = true
+    this.cancelRecovery()
     this.wake?.()
     if (!this.options.session) this.session?.close()
     this.session = null
