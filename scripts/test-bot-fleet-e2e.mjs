@@ -705,6 +705,7 @@ async function main() {
     ...process.env,
     MAESTRLY_GATEWAY_NETWORK: network,
     MAESTRLY_GATEWAY_PORT: String(port),
+    MAESTRLY_ARTIFACTS_PORT: String(await freePort()),
     MAESTRLY_GATEWAY_BIND: '127.0.0.1',
     MAESTRLY_GATEWAY_BOT_EGRESS: 'public',
     // Bots must not download Claude Code or Codex releases during the test.
