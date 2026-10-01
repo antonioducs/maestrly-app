@@ -1,4 +1,4 @@
-import {autonomousProviderAllowed} from './autonomous'
+import { autonomousProviderAllowed } from './autonomous'
 import type { ChatModelMeta } from '../../shared/chat'
 import type { SubagentProfileModelMetaResult } from '../../shared/subagent-profile-effort'
 import type { SubagentProfileModelCatalogResult } from '../../shared/subagent-profiles'
@@ -9,6 +9,7 @@ import {
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
   isCursorSubscriptionProvider,
+  isAntigravitySubscriptionProvider,
   subscriptionAccountId,
 } from './catalog'
 import { hasApiKey } from './credentials'
@@ -76,7 +77,9 @@ function copilotModelMeta(model: CopilotSubscriptionModel): ChatModelMeta {
   }
 }
 
-async function authenticatedCopilotModels(accountId: string | null): Promise<readonly CopilotSubscriptionModel[] | null> {
+async function authenticatedCopilotModels(
+  accountId: string | null
+): Promise<readonly CopilotSubscriptionModel[] | null> {
   const manager = getGitHubCopilotSubscriptionManager(accountId)
   const status = await manager.getStatus().catch(() => null)
   if (!status?.authenticated || !status.connected) return null
@@ -141,9 +144,7 @@ function cursorModelMeta(model: CursorModelCatalogEntry): ChatModelMeta {
   }
 }
 
-async function authenticatedCursorModels(
-  accountId: string | null
-): Promise<readonly CursorModelCatalogEntry[] | null> {
+async function authenticatedCursorModels(accountId: string | null): Promise<readonly CursorModelCatalogEntry[] | null> {
   const manager = getCursorSubscriptionManager(accountId)
   const status = await manager.getStatus().catch(() => null)
   if (!status?.authenticated) return null
@@ -185,6 +186,8 @@ export async function subagentProviderStatus(providerId: string): Promise<Subage
     if (!status?.available) return 'unsupported'
     return status.authenticated ? 'available' : 'disconnected'
   }
+  // Google AI has no AI SDK model, so it must never reach the BYOK subagent runner.
+  if (isAntigravitySubscriptionProvider(providerId)) return 'unsupported'
   return hasApiKey(providerId) ? 'available' : 'no-key'
 }
 
@@ -219,26 +222,40 @@ export async function subagentModelCatalog(providerId: string): Promise<Subagent
     return models
       ? {
           status: 'available',
-          models: visibleModelIds(providerId, models.map((model) => model.value)),
+          models: visibleModelIds(
+            providerId,
+            models.map((model) => model.value)
+          ),
         }
       : { status: 'unavailable', models: [] }
   }
   if (isGrokSubscriptionProvider(providerId)) {
     const models = await authenticatedGrokModels(accountId)
     return models
-      ? { status: 'available', models: visibleModelIds(providerId, models.map((model) => model.id)) }
+      ? {
+          status: 'available',
+          models: visibleModelIds(
+            providerId,
+            models.map((model) => model.id)
+          ),
+        }
       : { status: 'unavailable', models: [] }
   }
   if (isCursorSubscriptionProvider(providerId)) {
     const models = await authenticatedCursorModels(accountId)
     return models
-      ? { status: 'available', models: visibleModelIds(providerId, models.map((model) => model.id)) }
+      ? {
+          status: 'available',
+          models: visibleModelIds(
+            providerId,
+            models.map((model) => model.id)
+          ),
+        }
       : { status: 'unavailable', models: [] }
   }
+  if (isAntigravitySubscriptionProvider(providerId)) return { status: 'unavailable', models: [] }
   const result = await fetchModelsWithStatus(providerId)
-  return result.status === 'available'
-    ? { ...result, models: visibleModelIds(providerId, result.models) }
-    : result
+  return result.status === 'available' ? { ...result, models: visibleModelIds(providerId, result.models) } : result
 }
 
 /** Metadata from the same effective catalog used to start the child Codex thread. */
@@ -271,6 +288,7 @@ export async function subagentModelMeta(providerId: string, modelId: string): Pr
     const model = models?.find((entry) => entry.id === modelId)
     return model ? { status: 'available', meta: cursorModelMeta(model) } : { status: 'unavailable', meta: null }
   }
+  if (isAntigravitySubscriptionProvider(providerId)) return { status: 'unavailable', meta: null }
   const provider = getProvider(providerId)
   const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
   return getProviderModelMetaWithStatus(modelId, catalogProviderId)

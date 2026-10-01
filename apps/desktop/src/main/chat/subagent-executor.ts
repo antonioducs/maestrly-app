@@ -8,6 +8,7 @@ import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles
 import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { ChatAgent } from './agents'
 import {
+  isAntigravitySubscriptionProvider,
   isClaudeSubscriptionProvider,
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
@@ -388,6 +389,10 @@ export async function executeSubagent(args: {
       })
       manager.assertAccountIdentity(identity)
       return result
+    }
+
+    if (isAntigravitySubscriptionProvider(effective.providerId)) {
+      return { text: '', error: 'Google AI cannot run Maestrly subagents yet.', errorCode: 'agent-unavailable' }
     }
 
     if (isGitHubCopilotSubscriptionProvider(effective.providerId)) {

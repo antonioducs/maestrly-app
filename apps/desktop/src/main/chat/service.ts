@@ -42,6 +42,7 @@ import {
   isChatGptWebProvider,
   isClaudeSubscriptionProvider,
   isCursorSubscriptionProvider,
+  isAntigravitySubscriptionProvider,
   isCodexSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
   isGrokSubscriptionProvider,
@@ -192,6 +193,23 @@ import {
 import { isCursorSdkPlatformSupported } from './cursor-sdk/platform'
 import { CursorServiceAuth } from './cursor-subscription/service-auth'
 import { abortCursorAccountRuns } from './cursor-subscription/account-runs'
+import {
+  antigravityErrorMessage,
+  antigravityModelEfforts,
+  antigravityModelMeta,
+  antigravityRuntimeOverrideDir,
+  clearAntigravitySessionBindings,
+  closeAntigravityHostMcpServer,
+  deleteAntigravitySessionForConversation,
+  disposeAllAntigravitySubscriptionManagers,
+  disposeAntigravitySubscriptionManager,
+  getAntigravitySessionBinding,
+  getAntigravitySubscriptionManager,
+  listAntigravitySubscriptionManagers,
+  runAntigravitySubscriptionChat,
+  type AntigravityAccountIdentity,
+} from './antigravity-subscription'
+import { AntigravityServiceAuth } from './antigravity-subscription/service-auth'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
@@ -455,6 +473,11 @@ async function ensurePackagedProviderAsset(
   if (app.isPackaged) await ensureRuntimeAsset(id, signal)
 }
 
+/** Antigravity has no bundled or PATH fallback: development also installs the managed asset unless overridden. */
+async function ensureAntigravityRuntimeAsset(signal?: AbortSignal): Promise<void> {
+  if (!antigravityRuntimeOverrideDir()) await ensureRuntimeAsset('antigravity-acp-runtime', signal)
+}
+
 const extractIsolatedSummaryAttemptUsage = (value: unknown): NormalizedAiUsage | undefined => {
   try {
     return portableSummarizer.isolatedSummaryAttemptUsage?.(value)
@@ -688,6 +711,9 @@ interface ActiveRun {
   grokIdentity?: GrokAccountIdentity
   cursorIdentity?: CursorSubscriptionAccountIdentity
   allowCursorPersistence: boolean
+  /** Google AI identity captured at admission; account changes/logout revoke the ACP session. */
+  antigravityIdentity?: AntigravityAccountIdentity
+  allowAntigravityPersistence: boolean
   done: Promise<void>
   settleDone: () => void
   /** Structured terminal outcome (internal automated turn API, e.g. review loop). Resolves ONCE. */
@@ -1851,6 +1877,44 @@ async function validateCursorModelSelection(
   }
 }
 
+const antigravityAuth = new AntigravityServiceAuth({
+  reset: resetAntigravityAccountSessions,
+  ensureRuntime: ensureAntigravityRuntimeAsset,
+  broadcast: broadcastAntigravityAuth,
+})
+
+function broadcastAntigravityAuth(status: ChatSubscriptionAuthStatus): void {
+  notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
+  const wc = getMainWebContents()
+  if (!wc || wc.isDestroyed()) return
+  try {
+    wc.send('chat:antigravity-subscription:auth-changed', status)
+  } catch {
+    /* window closed during authentication transition */
+  }
+}
+
+async function validateAntigravityModelSelection(
+  modelId: string,
+  accountId: string | null = null
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!validSubscriptionAccountId('antigravity-subscription', accountId)) {
+    return { ok: false, error: 'invalid-account' }
+  }
+  if (antigravityAuth.busy(accountId)) return { ok: false, error: 'busy' }
+  const manager = getAntigravitySubscriptionManager(accountId)
+  try {
+    if (!manager.getStatus().authenticated) return { ok: false, error: 'no-key' }
+    const identity = manager.getAccountIdentity()
+    const models = await manager.listModels(true)
+    if (antigravityAuth.busy(accountId)) return { ok: false, error: 'busy' }
+    manager.assertAccountIdentity(identity)
+    return models.some((candidate) => candidate.id === modelId) ? { ok: true } : { ok: false, error: 'no-model' }
+  } catch (error) {
+    return { ok: false, error: antigravityErrorMessage(error).message }
+  }
+}
+
 function broadcastGrokAuth(status: ChatSubscriptionAuthStatus): void {
   notifyChatRunnerCapabilityChanges(authChangeResetsRunnerCatalog(status))
   const wc = getMainWebContents()
@@ -1969,7 +2033,9 @@ function defaultSelection(): ChatModelRef | null {
               ? grokAuthSnapshot(subscriptionAccountId(p.id)).authenticated
               : isCursorSubscriptionProvider(p.id)
                 ? cursorAuthSnapshot(subscriptionAccountId(p.id)).authenticated
-                : hasApiKey(p.id)
+                : isAntigravitySubscriptionProvider(p.id)
+                  ? antigravityAuth.status(subscriptionAccountId(p.id)).authenticated
+                  : hasApiKey(p.id)
     ) ?? providers[0]
   const modelId = isChatGptWebProvider(savedP) ? '' : (savedM ?? '')
   if (isChatGptWebProvider(savedP)) {
@@ -2143,7 +2209,12 @@ function buildConfig(): ChatConfig {
                     builtIn: true,
                     connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
                   }
-                : { connected: hasApiKey(p.id) }),
+                : isAntigravitySubscriptionProvider(p.id)
+                  ? {
+                      builtIn: true,
+                      connected: antigravityAuth.status(p.accountId ?? null).authenticated,
+                    }
+                  : { connected: hasApiKey(p.id) }),
       ...(p.kind ? { kind: getProviderKind(p) } : {}),
       ...(p.accountId ? { accountId: p.accountId } : {}),
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
@@ -2271,6 +2342,14 @@ async function runnerCapabilityMetaFallback(providerId: string, modelId: string)
       fastModeCapability: Boolean(fastParam && pickFastOnValue(fastParam)),
     }
   }
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const manager = getAntigravitySubscriptionManager(accountId)
+    if (!manager.getStatus().authenticated) return null
+    const entry = (await manager.listModels().catch(() => [])).find((candidate) => candidate.id === modelId)
+    if (!entry) return null
+    const meta = antigravityModelMeta(entry)
+    return { reasoning: meta.reasoning, reasoningEfforts: meta.reasoningEfforts, fastModeCapability: false }
+  }
 
   return null
 }
@@ -2374,6 +2453,17 @@ export async function listChatExecutionModels(
                 : cursorAuthSnapshot(accountId)
               if (!status.authenticated) return null
               const models = await getCursorSubscriptionManager(accountId)
+                .listModels()
+                .catch(() => [])
+              return {
+                id: provider.id,
+                name: provider.name,
+                models: filterChatModelsSnapshot(models.map((model) => model.id)),
+              }
+            }
+            if (isAntigravitySubscriptionProvider(provider.id)) {
+              if (!antigravityAuth.status(accountId).authenticated) return null
+              const models = await getAntigravitySubscriptionManager(accountId)
                 .listModels()
                 .catch(() => [])
               return {
@@ -3091,6 +3181,28 @@ export async function effectiveModelMeta(
     return { meta, providerWindow, catalogWindow }
   }
 
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    const manager = getAntigravitySubscriptionManager(subscriptionAccount)
+    const entry = manager.getStatus().authenticated
+      ? (await manager.listModels().catch(() => [])).find((model) => model.id === modelId)
+      : undefined
+    // The ACP server publishes no context window; the public catalog (models.dev) is the only source.
+    const catalogWindow = canonical?.contextWindow
+    const limit = getContextLimit(providerId, modelId)
+    const effective = resolveContextWindow({ limit, catalogWindow })
+    const canonicalFields = canonical ? { ...canonical } : {}
+    delete canonicalFields.contextWindow
+    const meta: ChatModelMeta | null =
+      canonical || entry
+        ? {
+            ...canonicalFields,
+            ...(effective ? { contextWindow: effective } : {}),
+            ...(entry ? { ...antigravityModelMeta(entry), fastModeCapability: false } : {}),
+          }
+        : null
+    return { meta, catalogWindow, ...(limit ? { limit } : {}) }
+  }
+
   const provider = getProvider(providerId)
   const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
   // The same precedence powers the main selector and profiles: exact provider → canonical model ID.
@@ -3407,6 +3519,22 @@ async function currentChatHistoryStats(
     stats = chatHistoryStats(conversationId, {
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
     })
+  } else if (isAntigravitySubscriptionProvider(selection?.providerId)) {
+    usesNativeSeedProjection = true
+    const binding = getAntigravitySessionBinding(conversationId)
+    const identity = getAntigravitySubscriptionManager(
+      subscriptionAccountId(selection?.providerId)
+    ).getAccountIdentity()
+    runtimeReusable = !!(
+      binding &&
+      binding.lastMessageId === latestMessage?.id &&
+      binding.accountFingerprint === identity.fingerprint
+    )
+    // The ACP server reports no token usage, so there is no measured window to reuse.
+    runtimeWindowReusable = false
+    stats = chatHistoryStats(conversationId, {
+      isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
+    })
   } else if (isCursorSubscriptionProvider(selection?.providerId)) {
     usesNativeSeedProjection = true
     const binding = getCursorAgentBinding(conversationId)
@@ -3713,6 +3841,7 @@ async function startSend(
     return 'unavailable'
   }
   let cursorIdentityAtAdmission: CursorSubscriptionAccountIdentity | undefined
+  let antigravityIdentityAtAdmission: AntigravityAccountIdentity | undefined
   let grokIdentityAtAdmission: GrokAccountIdentity | undefined
   let releaseCwdActivity: (() => void) | null = null
   let admittedRun: ActiveRun | null = null
@@ -3747,8 +3876,13 @@ async function startSend(
     const useGrokSubscription = isGrokSubscriptionProvider(selection.providerId)
     // Grok uses the generic AI SDK runner — never mark it official or it would skip runChat.
     const useCursorSubscription = isCursorSubscriptionProvider(selection.providerId)
+    const useAntigravitySubscription = isAntigravitySubscriptionProvider(selection.providerId)
     const useOfficialSubscription =
-      useCodexSubscription || useGitHubCopilot || useClaudeSubscription || useCursorSubscription
+      useCodexSubscription ||
+      useGitHubCopilot ||
+      useClaudeSubscription ||
+      useCursorSubscription ||
+      useAntigravitySubscription
     // Conversation subscription account slot (null = default). Global transition/login state machines govern
     // only the default account; additional slots have their own boundaries (explicit reset on login/removal).
     const selectionAccountId = subscriptionAccountId(selection.providerId)
@@ -3936,6 +4070,28 @@ async function startSend(
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
       }
+    } else if (useAntigravitySubscription) {
+      if (antigravityAuth.busy(selectionAccountId)) return { ok: false, error: 'no-key' }
+      const manager = getAntigravitySubscriptionManager(selectionAccountId)
+      if (!manager.getStatus().authenticated) return { ok: false, error: 'no-key' }
+      antigravityIdentityAtAdmission = manager.getAccountIdentity()
+      if (!antigravityIdentityAtAdmission.fingerprint) return { ok: false, error: 'no-key' }
+      // Sending uses the provider explicitly: make sure its server is installed before starting it.
+      await ensureAntigravityRuntimeAsset(operation.controller.signal)
+      const models = await manager.listModels()
+      if (!conversationOperationIsCurrent(conversationId, operation) || antigravityAuth.busy(selectionAccountId)) {
+        return { ok: false, error: 'busy' }
+      }
+      manager.assertAccountIdentity(antigravityIdentityAtAdmission)
+      if (!selection.modelId) {
+        const modelId = models[0]?.id ?? ''
+        if (!modelId) return { ok: false, error: 'no-model' }
+        selection = { providerId: selection.providerId, modelId }
+        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+      }
+      if (!models.some((model) => model.id === selection?.modelId)) {
+        return { ok: false, error: 'no-model' }
+      }
     } else if (!hasApiKey(selection.providerId)) {
       return { ok: false, error: 'no-key' }
     }
@@ -3986,6 +4142,10 @@ async function startSend(
     if (useCursorSubscription && cursorIdentityAtAdmission) {
       if (cursorAuth.busy(selectionAccountId)) return { ok: false, error: 'busy' }
       getCursorSubscriptionManager(selectionAccountId).assertAccountIdentity(cursorIdentityAtAdmission)
+    }
+    if (useAntigravitySubscription && antigravityIdentityAtAdmission) {
+      if (antigravityAuth.busy(selectionAccountId)) return { ok: false, error: 'busy' }
+      getAntigravitySubscriptionManager(selectionAccountId).assertAccountIdentity(antigravityIdentityAtAdmission)
     }
     releaseCwdActivity = tryAcquireCwdActivity(conv.cwd, 'chat', internalLoop?.cwdActivityOwner)
     if (!releaseCwdActivity) return { ok: false, error: 'cwd-locked' }
@@ -4477,6 +4637,8 @@ async function startSend(
       ...(claudeIdentityAtAdmission ? { claudeIdentity: claudeIdentityAtAdmission } : {}),
       ...(cursorIdentityAtAdmission ? { cursorIdentity: cursorIdentityAtAdmission } : {}),
       allowCursorPersistence: !isolated,
+      ...(antigravityIdentityAtAdmission ? { antigravityIdentity: antigravityIdentityAtAdmission } : {}),
+      allowAntigravityPersistence: !isolated,
       ...(grokIdentityAtAdmission ? { grokIdentity: grokIdentityAtAdmission } : {}),
       // Ephemeral/isolated: persist messages, but do NOT resume/write the main conversation's native binding.
       // Lifecycle remains allowed: the ephemeral thread must execute but must not become a binding.
@@ -4670,11 +4832,13 @@ async function startSend(
     const admittedHarness = admittedHarnessFor(
       useCursorSubscription
         ? 'cursor-subscription'
-        : useClaudeSubscription
-          ? 'claude-subscription'
-          : useGitHubCopilot
-            ? 'github-copilot-subscription'
-            : 'openai',
+        : useAntigravitySubscription
+          ? 'antigravity-subscription'
+          : useClaudeSubscription
+            ? 'claude-subscription'
+            : useGitHubCopilot
+              ? 'github-copilot-subscription'
+              : 'openai',
       admittedBehaviorResolvedModelId
     )
     const compactActiveHistory = async (
@@ -5380,6 +5544,68 @@ async function startSend(
             : {}),
         })
       })()
+    } else if (useAntigravitySubscription && antigravityIdentityAtAdmission) {
+      const admittedIdentity = antigravityIdentityAtAdmission
+      const selectedModelId = selection.modelId
+      turnPromise = (async () => {
+        const manager = getAntigravitySubscriptionManager(selectionAccountId)
+        manager.assertAccountIdentity(admittedIdentity)
+        const entry = (await manager.listModels(isolated)).find((model) => model.id === selectedModelId)
+        if (!entry) throw new Error('no-model')
+        const resolved = resolveNativeReasoningEffort({
+          requestedEffort: turnReasoning(conversationId, frozenProfile),
+          supportedEfforts: antigravityModelEfforts(entry),
+          defaultEffort: entry.defaultEffort,
+          strict: isolated && !!frozenProfile,
+        })
+        if (!resolved.ok) throw new Error('executor-unavailable')
+        if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
+          throw new Error('executor-unavailable')
+        }
+        return runAntigravitySubscriptionChat({
+          conversationId,
+          projectId: executionContext.workspaceId,
+          permissionScope: executionContext.permissionScope,
+          cwd: executionContext.cwd,
+          selection,
+          mode: turnBehavior,
+          harness: admittedHarness,
+          permMode: permModeFor(conversationId),
+          ...(internalLoop?.reviewerRuntime ? { reviewerRuntime: internalLoop.reviewerRuntime } : {}),
+          maestro: maestroTurn,
+          maestroLive: run.maestroLive,
+          reasoningEffort: resolved.reasoningEffort,
+          maestrlyUltra: resolved.maestrlyUltra,
+          dropImages: !supportsChatToolImages({
+            modelVision: true,
+            runtimeImageUnsupported: getConvUiPrefs(conversationId).chat?.imagesUnsupported === true,
+          }),
+          manager,
+          accountIdentity: admittedIdentity,
+          broker: getBroker(),
+          questionBroker: getQuestionBroker(),
+          emit,
+          ...backgroundPrefixHook,
+          signal: controller.signal,
+          responseStartedAt,
+          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
+          canPersistSession: () => {
+            if (!run.allowAntigravityPersistence || antigravityAuth.busy(selectionAccountId)) return false
+            try {
+              manager.assertAccountIdentity(admittedIdentity)
+              return true
+            } catch {
+              return false
+            }
+          },
+          ...(isolated && reviewLoopMessageMeta
+            ? {
+                ephemeralSession: true as const,
+                executionScope: reviewLoopMessageMeta.executionScope,
+              }
+            : {}),
+        })
+      })()
     } else {
       if (useGrokSubscription && grokIdentityAtAdmission) {
         getGrokSubscriptionManager(selectionAccountId).assertAccountIdentity(grokIdentityAtAdmission)
@@ -5539,13 +5765,15 @@ async function startSend(
             ? claudeSubscriptionErrorMessage(e)
             : useCursorSubscription
               ? cursorSdkErrorMessage(e)
-              : useGrokSubscription
-                ? grokSubscriptionErrorMessage(e)
-                : e instanceof ChatConfigError
-                  ? e.message
-                  : e instanceof Error
+              : useAntigravitySubscription
+                ? antigravityErrorMessage(e).message
+                : useGrokSubscription
+                  ? grokSubscriptionErrorMessage(e)
+                  : e instanceof ChatConfigError
                     ? e.message
-                    : String(e)
+                    : e instanceof Error
+                      ? e.message
+                      : String(e)
         const ev: ChatStreamEvent = {
           kind: 'error',
           messageId: run.messageId || undefined,
@@ -5849,6 +6077,13 @@ async function invalidateActiveCursorRun(conversationId: string, run: ActiveRun)
   await deleteCursorAgentForConversation(conversationId)
 }
 
+async function invalidateActiveAntigravityRun(conversationId: string, run: ActiveRun): Promise<void> {
+  run.allowAntigravityPersistence = false
+  stop(conversationId)
+  await waitForRuns([run])
+  await deleteAntigravitySessionForConversation(conversationId)
+}
+
 async function invalidateActiveClaudeRun(conversationId: string, run: ActiveRun): Promise<void> {
   run.allowClaudePersistence = false
   stop(conversationId)
@@ -5870,6 +6105,8 @@ export async function stopChat(conversationId: string): Promise<void> {
     await invalidateActiveGitHubCopilotRun(conversationId, run)
   } else if (run && isCursorSubscriptionProvider(run.providerId)) {
     await invalidateActiveCursorRun(conversationId, run)
+  } else if (run && isAntigravitySubscriptionProvider(run.providerId)) {
+    await invalidateActiveAntigravityRun(conversationId, run)
   } else if (run && isClaudeSubscriptionProvider(run.providerId)) {
     await invalidateActiveClaudeRun(conversationId, run)
   } else {
@@ -5979,6 +6216,20 @@ async function resetCursorAccountSessions(accountId: string | null = null): Prom
   await deleteAllManagedCursorAgents({ accountId })
 }
 
+/** Identity boundary for one Google AI account: abort its turns and forget its ACP sessions. */
+async function resetAntigravityAccountSessions(accountId: string | null = null): Promise<void> {
+  const providerId = subscriptionProviderIdFor('antigravity-subscription', accountId)
+  for (const operation of pendingConversationOperations.values()) {
+    if (operation.providerId === providerId) operation.controller.abort(new Error('Google AI account changed'))
+  }
+  const runs = [...active.entries()].filter(([, run]) => run.providerId === providerId)
+  await Promise.all(runs.map(([id, run]) => invalidateActiveAntigravityRun(id, run)))
+  clearAntigravitySessionBindings(accountId)
+  for (const manager of listAntigravitySubscriptionManagers()) {
+    if (manager.accountId === accountId) await manager.closeSessions().catch(() => undefined)
+  }
+}
+
 async function resetGrokAccountSessions(): Promise<void> {
   cancelPendingGrokOperations()
   const runs = [...active.entries()].filter(
@@ -6027,6 +6278,10 @@ async function resetSubscriptionAccountState(providerId: string, accountId: stri
   }
   if (isCursorSubscriptionProvider(providerId)) {
     await resetCursorAccountSessions(accountId)
+    return
+  }
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    await resetAntigravityAccountSessions(accountId)
     return
   }
   if (isGitHubCopilotSubscriptionProvider(providerId)) {
@@ -6388,6 +6643,10 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
       const logout = await cursorAuth.logout(accountId)
       if (!logout.ok) throw new Error(logout.error ?? 'Cursor logout failed')
       await resetCursorSubscriptionAccount(accountId)
+    } else if (account.kind === 'antigravity-subscription') {
+      const logout = await antigravityAuth.logout(accountId)
+      if (!logout.ok) throw new Error(logout.error ?? 'Google AI logout failed')
+      await disposeAntigravitySubscriptionManager(accountId)
     } else if (account.kind === 'grok-subscription') {
       await getGrokSubscriptionManager(accountId)
         .resetLocalData()
@@ -6426,6 +6685,7 @@ async function deleteSubscriptionStateForConversation(
     deleteCodexThreadForConversation(conversationId, { signal }),
     deleteGitHubCopilotSessionForConversation(conversationId),
     deleteCursorAgentForConversation(conversationId),
+    deleteAntigravitySessionForConversation(conversationId),
     ...(options.preserveClaude ? [] : [deleteClaudeSessionForConversation(conversationId)]),
   ])
 }
@@ -6439,6 +6699,7 @@ async function retireIncompatibleSubscriptionState(
   if (isCodexSubscriptionProvider(targetProviderId)) {
     await Promise.all([
       deleteCursorAgentForConversation(conversationId),
+      deleteAntigravitySessionForConversation(conversationId),
       deleteGitHubCopilotSessionForConversation(conversationId),
       deleteClaudeSessionForConversation(conversationId),
     ])
@@ -6447,6 +6708,7 @@ async function retireIncompatibleSubscriptionState(
   if (isGitHubCopilotSubscriptionProvider(targetProviderId)) {
     await Promise.all([
       deleteCursorAgentForConversation(conversationId),
+      deleteAntigravitySessionForConversation(conversationId),
       deleteCodexThreadForConversation(conversationId, { signal }),
       deleteClaudeSessionForConversation(conversationId),
     ])
@@ -6455,6 +6717,7 @@ async function retireIncompatibleSubscriptionState(
   if (isClaudeSubscriptionProvider(targetProviderId)) {
     await Promise.all([
       deleteCursorAgentForConversation(conversationId),
+      deleteAntigravitySessionForConversation(conversationId),
       deleteCodexThreadForConversation(conversationId, { signal }),
       deleteGitHubCopilotSessionForConversation(conversationId),
     ])
@@ -6462,6 +6725,16 @@ async function retireIncompatibleSubscriptionState(
   }
   if (isCursorSubscriptionProvider(targetProviderId)) {
     await Promise.all([
+      deleteCodexThreadForConversation(conversationId, { signal }),
+      deleteGitHubCopilotSessionForConversation(conversationId),
+      deleteClaudeSessionForConversation(conversationId),
+      deleteAntigravitySessionForConversation(conversationId),
+    ])
+    return
+  }
+  if (isAntigravitySubscriptionProvider(targetProviderId)) {
+    await Promise.all([
+      deleteCursorAgentForConversation(conversationId),
       deleteCodexThreadForConversation(conversationId, { signal }),
       deleteGitHubCopilotSessionForConversation(conversationId),
       deleteClaudeSessionForConversation(conversationId),
@@ -6551,6 +6824,8 @@ async function retireNativeBindingAfterPortableCompaction(
     await deleteGitHubCopilotSessionForConversation(conversationId)
   } else if (isCursorSubscriptionProvider(providerId)) {
     await deleteCursorAgentForConversation(conversationId)
+  } else if (isAntigravitySubscriptionProvider(providerId)) {
+    await deleteAntigravitySessionForConversation(conversationId)
   } else if (isClaudeSubscriptionProvider(providerId)) {
     await deleteClaudeSessionForConversation(conversationId)
   }
@@ -7338,7 +7613,9 @@ function backgroundIdentityCurrent(frozen: FrozenChatSelection): boolean {
         ? getCursorSubscriptionManager(account)
         : isGrokSubscriptionProvider(frozen.providerId)
           ? getGrokSubscriptionManager(account)
-          : null
+          : isAntigravitySubscriptionProvider(frozen.providerId)
+            ? getAntigravitySubscriptionManager(account)
+            : null
     if (manager) {
       const identity = manager.getAccountIdentity()
       return Boolean(
@@ -7544,7 +7821,8 @@ async function activateBackgroundCompactionCandidate(
     isCodexSubscriptionProvider(destination.providerId) ||
     isClaudeSubscriptionProvider(destination.providerId) ||
     isGitHubCopilotSubscriptionProvider(destination.providerId) ||
-    isCursorSubscriptionProvider(destination.providerId)
+    isCursorSubscriptionProvider(destination.providerId) ||
+    isAntigravitySubscriptionProvider(destination.providerId)
   const tokens = nativeTransfer ? estimateNativeSeedContextTokens(projected) : estimatePortableContextTokens(projected)
   if (
     preflightContextLoad(
@@ -7755,6 +8033,9 @@ export async function resolveReviewLoopSelection(
       modelId = models.find((model) => model.policy?.state !== 'disabled')?.id ?? ''
     } else if (isCursorSubscriptionProvider(selection.providerId)) {
       return { ok: false, error: 'no-model' }
+    } else if (isAntigravitySubscriptionProvider(selection.providerId)) {
+      const models = await getAntigravitySubscriptionManager(accountId).listModels(true)
+      modelId = models[0]?.id ?? ''
     } else if (isGrokSubscriptionProvider(selection.providerId)) {
       const models = await getGrokSubscriptionManager(accountId).listModels(true)
       modelId = models[0]?.id ?? ''
@@ -7801,6 +8082,12 @@ export async function resolveReviewLoopSelection(
     const status = await cursorAuthStatus(true, accountId)
     if (!status.authenticated) return { ok: false, error: 'no-key' }
     const identity = getCursorSubscriptionManager(accountId).getAccountIdentity()
+    if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+    identityFingerprint = identity.fingerprint
+    identityEpoch = identity.epoch
+  } else if (isAntigravitySubscriptionProvider(selection.providerId)) {
+    if (antigravityAuth.busy(accountId)) return { ok: false, error: 'no-key' }
+    const identity = getAntigravitySubscriptionManager(accountId).getAccountIdentity()
     if (!identity.fingerprint) return { ok: false, error: 'no-key' }
     identityFingerprint = identity.fingerprint
     identityEpoch = identity.epoch
@@ -7870,6 +8157,14 @@ export async function resolveReviewLoopSelection(
       frozenEffort = resolveFrozenSentEffort({
         reasoning,
         supportedEfforts: cursorModel ? cursorReasoningEfforts(cursorModel) : [],
+      })
+    } else if (isAntigravitySubscriptionProvider(selection.providerId)) {
+      const entry = (await getAntigravitySubscriptionManager(accountId).listModels(true)).find(
+        (model) => model.id === modelId
+      )
+      frozenEffort = resolveFrozenSentEffort({
+        reasoning,
+        supportedEfforts: entry ? antigravityModelEfforts(entry) : [],
       })
     } else {
       // BYOK/Grok: the runner validates against catalog metadata (same source as the turn).
@@ -8173,6 +8468,31 @@ export async function revalidateReviewLoopSelection(
       } catch {
         return { ok: false, error: 'executor-unavailable' }
       }
+    }
+    return { ok: true }
+  }
+  if (isAntigravitySubscriptionProvider(frozen.providerId)) {
+    if (antigravityAuth.busy(accountId)) return { ok: false, error: 'executor-unavailable' }
+    const manager = getAntigravitySubscriptionManager(accountId)
+    const identity = manager.getAccountIdentity()
+    if (!identity.fingerprint) return { ok: false, error: 'no-key' }
+    if (frozen.identityFingerprint && identity.fingerprint !== frozen.identityFingerprint) {
+      return { ok: false, error: 'executor-unavailable' }
+    }
+    if (typeof frozen.identityEpoch === 'number' && identity.epoch !== frozen.identityEpoch) {
+      return { ok: false, error: 'executor-unavailable' }
+    }
+    try {
+      const entry = (await manager.listModels(true)).find((model) => model.id === frozen.modelId)
+      if (!entry) return { ok: false, error: 'executor-unavailable' }
+      if (
+        frozenReasoningIsActive(frozen) &&
+        !frozenEffortMatchesLiveCapabilities(frozen, antigravityModelEfforts(entry))
+      ) {
+        return { ok: false, error: 'executor-unavailable' }
+      }
+    } catch {
+      return { ok: false, error: 'executor-unavailable' }
     }
     return { ok: true }
   }
@@ -9086,6 +9406,31 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     const accountId = payload?.accountId ?? null
     if (!validSubscriptionAccountId('cursor-subscription', accountId)) return { ok: false, error: 'invalid-account' }
     return cursorAuth.logout(accountId)
+  })
+  deps.mhandle(
+    'chat:antigravity-subscription:status',
+    async (_event, payload?: { refresh?: boolean; accountId?: string | null }) => {
+      const accountId = payload?.accountId ?? null
+      if (!validSubscriptionAccountId('antigravity-subscription', accountId)) {
+        return { state: 'unavailable', authenticated: false }
+      }
+      const status = antigravityAuth.status(accountId)
+      return accountId ? { ...status, accountId } : status
+    }
+  )
+  deps.mhandle('chat:antigravity-subscription:login', async (_event, payload?: { accountId?: string | null }) => {
+    const accountId = payload?.accountId ?? null
+    if (!validSubscriptionAccountId('antigravity-subscription', accountId)) {
+      return { ok: false, error: 'invalid-account' }
+    }
+    return antigravityAuth.login(accountId)
+  })
+  deps.mhandle('chat:antigravity-subscription:logout', async (_event, payload?: { accountId?: string | null }) => {
+    const accountId = payload?.accountId ?? null
+    if (!validSubscriptionAccountId('antigravity-subscription', accountId)) {
+      return { ok: false, error: 'invalid-account' }
+    }
+    return antigravityAuth.logout(accountId)
   })
 
   deps.mhandle('chat:grok-subscription:logout', async (_event, payload?: { accountId?: string | null }) => {
@@ -10223,6 +10568,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
       if (!validated.ok) return validated
     }
+    if (isAntigravitySubscriptionProvider(sel?.providerId) && sel?.modelId) {
+      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      if (!validated.ok) return validated
+    }
     if (isGrokSubscriptionProvider(sel?.providerId) && sel?.modelId) {
       const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
       if (!validated.ok) return validated
@@ -10250,6 +10599,10 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
       if (isCursorSubscriptionProvider(sel.providerId)) {
         const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        if (!validated.ok) return validated
+      }
+      if (isAntigravitySubscriptionProvider(sel.providerId)) {
+        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
         if (!validated.ok) return validated
       }
       if (isGrokSubscriptionProvider(sel.providerId)) {
@@ -10480,6 +10833,7 @@ export function disposeChat(): Promise<void> {
     await claudeIdentityTransitionPromise
     await cursorAuth.dispose()
     await cursorCleanupPromise
+    antigravityAuth.dispose()
     await grokIdentityTransitionPromise
     const grokProviderIds = listGrokSubscriptionManagers().map((manager) =>
       subscriptionProviderIdFor('grok-subscription', manager.accountId)
@@ -10489,6 +10843,8 @@ export function disposeChat(): Promise<void> {
       ...listGitHubCopilotSubscriptionManagers().map((manager) => manager.dispose()),
       ...listClaudeSubscriptionManagers().map((manager) => Promise.resolve(manager.dispose())),
       disposeCursorSubscriptionManagers(),
+      disposeAllAntigravitySubscriptionManagers(),
+      closeAntigravityHostMcpServer(),
       disposeGrokSubscriptionManager(),
       disposeMcpRuntime(),
     ])
@@ -10551,6 +10907,15 @@ export async function listChatProviderModels(
       return visible((await getCursorSubscriptionManager(accountId).listModels(force)).map((model) => model.id))
     } catch (error) {
       throw new Error(cursorSdkErrorMessage(error))
+    }
+  }
+  if (isAntigravitySubscriptionProvider(providerId)) {
+    if (!validSubscriptionAccountId('antigravity-subscription', accountId)) return []
+    if (!antigravityAuth.status(accountId).authenticated) return []
+    try {
+      return visible((await getAntigravitySubscriptionManager(accountId).listModels(force)).map((model) => model.id))
+    } catch (error) {
+      throw new Error(antigravityErrorMessage(error).message)
     }
   }
   if (isGrokSubscriptionProvider(providerId)) {

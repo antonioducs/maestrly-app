@@ -15,6 +15,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isClaudeSubscriptionProvider: () => false,
   isGitHubCopilotSubscriptionProvider: () => false,
   isCursorSubscriptionProvider: () => false,
+  isAntigravitySubscriptionProvider: () => false,
   isGrokSubscriptionProvider: () => false,
 }))
 vi.mock('../../src/main/chat/provider', () => ({ resolveLanguageModel: () => ({ modelId: 'test' }) }))

@@ -823,6 +823,21 @@ export default {
     cursorSubscriptionLogoutFailed: 'Não foi possível sair do Cursor.',
     cursorSubscriptionProviderPending:
       'A conta está conectada, mas o provider Cursor ainda não apareceu no catálogo do chat.',
+    antigravitySubscriptionHeading: 'Google AI (Antigravity)',
+    antigravitySubscriptionDescription:
+      'Use seu plano Google AI Pro ou Ultra pelo servidor ACP oficial do Google Antigravity. O login abre o navegador.',
+    antigravitySubscriptionConnected: 'Conectado',
+    antigravitySubscriptionDisconnected: 'Não conectado',
+    antigravitySubscriptionWaiting: 'Conclua o login com o Google no navegador…',
+    antigravitySubscriptionWaitingShort: 'Aguardando o Google…',
+    antigravitySubscriptionUnavailable: 'O servidor do Antigravity não está disponível nesta plataforma.',
+    antigravitySubscriptionLogin: 'Entrar com Google',
+    antigravitySubscriptionLogout: 'Sair',
+    antigravitySubscriptionRefresh: 'Atualizar status da conta Google AI',
+    antigravitySubscriptionLoginFailed: 'O login com o Google não foi concluído.',
+    antigravitySubscriptionLogoutFailed: 'Não foi possível sair da Google AI.',
+    antigravitySubscriptionProviderPending:
+      'A conta está conectada, mas o provider Google AI ainda não apareceu no catálogo do chat.',
     tabsLabel: 'Configurações do Maestrly Chat',
     tabAccounts: 'Contas',
     tabModelsAgents: 'Modelos & agentes',

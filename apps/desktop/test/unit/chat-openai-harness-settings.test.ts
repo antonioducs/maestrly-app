@@ -88,6 +88,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
   isClaudeSubscriptionProvider: vi.fn(() => false),
   isCursorSubscriptionProvider: vi.fn(() => false),
+  isAntigravitySubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn(
     (providerId: string) => providerId.startsWith('builtin-') || providerId.startsWith('builtin_')

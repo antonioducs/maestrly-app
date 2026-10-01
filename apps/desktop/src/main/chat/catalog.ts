@@ -115,13 +115,28 @@ export function isCursorSubscriptionProvider(providerId: string | null | undefin
   return !!providerId && subscriptionBaseProviderId(providerId) === CURSOR_SUBSCRIPTION_PROVIDER_ID
 }
 
+/** Google AI (Pro/Ultra) subscription through Google's official Antigravity ACP server. */
+export const ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID = 'builtin_antigravity_subscription'
+export const ANTIGRAVITY_SUBSCRIPTION_PROVIDER: ChatProvider = {
+  id: ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID,
+  name: 'Google AI',
+  baseURL: 'antigravity://subscription',
+  kind: 'antigravity-subscription',
+  builtin: 'antigravity-subscription',
+}
+
+export function isAntigravitySubscriptionProvider(providerId: string | null | undefined): boolean {
+  return !!providerId && subscriptionBaseProviderId(providerId) === ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID
+}
+
 export function isSubscriptionProvider(providerId: string | null | undefined): boolean {
   return (
     isCodexSubscriptionProvider(providerId) ||
     isGitHubCopilotSubscriptionProvider(providerId) ||
     isClaudeSubscriptionProvider(providerId) ||
     isGrokSubscriptionProvider(providerId) ||
-    isCursorSubscriptionProvider(providerId)
+    isCursorSubscriptionProvider(providerId) ||
+    isAntigravitySubscriptionProvider(providerId)
   )
 }
 
@@ -161,6 +176,7 @@ const SUBSCRIPTION_BASE_PROVIDERS: Record<ChatSubscriptionProviderKind, ChatProv
   'claude-subscription': CLAUDE_SUBSCRIPTION_PROVIDER,
   'grok-subscription': GROK_SUBSCRIPTION_PROVIDER,
   'cursor-subscription': CURSOR_SUBSCRIPTION_PROVIDER,
+  'antigravity-subscription': ANTIGRAVITY_SUBSCRIPTION_PROVIDER,
 }
 
 /** Persisted additional accounts (creation order). */

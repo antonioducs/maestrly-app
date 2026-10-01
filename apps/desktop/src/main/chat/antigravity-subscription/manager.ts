@@ -355,6 +355,12 @@ export class AntigravitySubscriptionManager {
     }
   }
 
+  /** Forgets every live session and stops the shared process; sign-in state is kept. */
+  async closeSessions(): Promise<void> {
+    this.dropAllLiveSessions()
+    await this.closeConnection()
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true
     this.cancelLogin()

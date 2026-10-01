@@ -700,7 +700,8 @@ export function buildProviderOptions(
     kind === 'codex-subscription' ||
     kind === 'github-copilot-subscription' ||
     kind === 'claude-subscription' ||
-    kind === 'cursor-subscription'
+    kind === 'cursor-subscription' ||
+    kind === 'antigravity-subscription'
   ) {
     return undefined
   }
@@ -762,7 +763,8 @@ export function frozenEffortReproducible(
     kind === 'codex-subscription' ||
     kind === 'github-copilot-subscription' ||
     kind === 'claude-subscription' ||
-    kind === 'cursor-subscription'
+    kind === 'cursor-subscription' ||
+    kind === 'antigravity-subscription'
   ) {
     return true
   }
@@ -1190,6 +1192,7 @@ export type ChatSubscriptionProviderKind = Extract<
   | 'claude-subscription'
   | 'grok-subscription'
   | 'cursor-subscription'
+  | 'antigravity-subscription'
 >
 
 export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProviderKind[] = [
@@ -1198,6 +1201,7 @@ export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProvider
   'claude-subscription',
   'grok-subscription',
   'cursor-subscription',
+  'antigravity-subscription',
 ]
 
 export function isChatSubscriptionProviderKind(kind: string | null | undefined): kind is ChatSubscriptionProviderKind {
