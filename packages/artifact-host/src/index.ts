@@ -13,7 +13,15 @@ export {
 } from './host.js'
 export * from './ids.js'
 export * from './limits.js'
-export { ADMIN_METHODS, createAdminClient, type RpcChannel, serveAdmin } from './rpc.js'
+export { type AdminResult, UPLOAD_METHODS, toWire, fromWire, callAdmin, createRemoteAdmin } from './remote-admin.js'
+export {
+  ADMIN_METHODS,
+  type AdminMethod,
+  createAdminClient,
+  type RpcChannel,
+  serializeAdminError,
+  serveAdmin,
+} from './rpc.js'
 export { ARTIFACT_HEADER } from './shell/contract.js'
 export type {
   ArtifactDetail,
