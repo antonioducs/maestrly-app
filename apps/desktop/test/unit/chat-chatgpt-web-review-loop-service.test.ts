@@ -67,6 +67,8 @@ vi.mock('../../src/main/chat/codex-subscription/manager', () => ({
 
 const h = vi.hoisted(() => ({
   getMainWebContents: vi.fn(),
+  sendToConversation: vi.fn(),
+  sessionForConversation: vi.fn(() => null as unknown),
   getConversation: vi.fn(),
   getConvUiPrefs: vi.fn(),
   getAppFlag: vi.fn(),
@@ -114,7 +116,7 @@ const h = vi.hoisted(() => ({
   invalidateUnifiedUsageCache: vi.fn(),
 }))
 
-vi.mock('../../src/main/window-ipc', () => ({ getMainWebContents: h.getMainWebContents }))
+vi.mock('../../src/main/window-ipc', () => ({ getMainWebContents: h.getMainWebContents, sendToConversation: h.sendToConversation }))
 
 vi.mock('../../src/main/chat/github-copilot/manager', () => ({
   getGitHubCopilotSubscriptionManager: () => ({
@@ -282,6 +284,7 @@ vi.mock('../../src/main/chat/mcp', () => ({ listMcpServers: vi.fn(() => []) }))
 
 vi.mock('../../src/main/chat/chatgpt-web/manager', () => ({
   setChatGptWebHooks: h.setChatGptWebHooks,
+  sessionForConversation: h.sessionForConversation,
   onChatGptWebChange: h.onChatGptWebChange,
   reviewLoopLockFor: h.reviewLoopLockFor,
   projectEnvironmentLockFor: h.projectEnvironmentLockFor,
@@ -292,7 +295,6 @@ vi.mock('../../src/main/chat/chatgpt-web/manager', () => ({
   disposeChatGptWeb: h.disposeChatGptWeb,
   status: h.status,
   listSessions: vi.fn(() => []),
-  sessionForConversation: vi.fn(() => null),
   companionPrompt: vi.fn(() => null),
   startSession: vi.fn(async () => ({ ok: true })),
   openCompanionWindow: vi.fn(async () => ({ ok: true })),
@@ -338,7 +340,7 @@ vi.mock('../../src/main/chat/openai/inference-store', () => ({
   OPENAI_INFERENCE_STATE_VERSION: 3,
 }))
 
-import { registerChatIpc } from '../../src/main/chat/service'
+import { getChatPermissionBroker, registerChatIpc } from '../../src/main/chat/service'
 import {
   startInternalChatTurn,
   cancelInternalChatTurn,
@@ -376,6 +378,7 @@ describe('review loop internal service API', () => {
     __resetReviewLoopRegistryForTests()
     cwd = mkdtempSync(path.join(os.tmpdir(), 'review-loop-service-'))
     h.getMainWebContents.mockReturnValue(wc)
+    h.sessionForConversation.mockReturnValue(null)
     h.getConversation.mockReturnValue({ id: 'conv-chat', cli: 'chat', cwd, workspaceId: 'workspace-1' })
     h.getConvUiPrefs.mockReturnValue({ chat: { providerId: 'provider-1', modelId: 'model-1', mode: 'agent' } })
     h.getAppFlag.mockImplementation((_key: string, fallback: boolean) => fallback)
@@ -394,6 +397,28 @@ describe('review loop internal service API', () => {
     register() // savedDeps = deps (startInternalChatTurn and related functions require service registration).
   })
   afterEach(() => rmSync(cwd, { recursive: true, force: true }))
+
+  it('delivers personal-memory broker approval to an idle Companion conversation', async () => {
+    h.getConversation.mockReturnValue({ id: 'conv-chat', scope: 'standalone', workspaceId: null, cwd })
+    h.getConvUiPrefs.mockReturnValue({ chat: { mode: 'agent', permMode: 'ask' } })
+    h.sessionForConversation.mockReturnValue({ sessionKey: 'synthetic' })
+    const hooks = h.setChatGptWebHooks.mock.calls.at(-1)![0] as unknown as {
+      authorizePersonalMemoryWrite: (id: string, tool: string, signal: AbortSignal) => Promise<void>
+    }
+    const permission = hooks.authorizePersonalMemoryWrite('conv-chat', 'memory_upsert', new AbortController().signal)
+    await vi.waitFor(() => expect(h.sendToConversation).toHaveBeenCalledWith(
+      'conv-chat', 'chat:permission:conv-chat',
+      expect.objectContaining({ kind: 'request', request: expect.objectContaining({ toolName: 'memory_upsert' }) })
+    ))
+    const request = getChatPermissionBroker().pendingFor('conv-chat')[0]
+    expect(request.permissionScope).toEqual({ kind: 'conversation', id: 'conv-chat' })
+    getChatPermissionBroker().reply({ requestId: request.id, reply: 'once' })
+    await permission
+    expect(h.sendToConversation).toHaveBeenLastCalledWith(
+      'conv-chat', 'chat:permission:conv-chat',
+      expect.objectContaining({ kind: 'resolved', requestId: request.id, decision: 'allow' })
+    )
+  })
 
   it('returns race-free internal handles with hidden parts', async () => {
     // Live preferences deliberately differ from frozen profiles; reasoning must never

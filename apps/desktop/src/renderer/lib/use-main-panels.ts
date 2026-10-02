@@ -1,3 +1,4 @@
+import { PERSONAL_MEMORY_SPACE_ID } from '../../shared/memory'
 /** Coordinate mutually exclusive project panels, settings, and onboarding. */
 import {
   useCallback,
@@ -11,6 +12,8 @@ import {
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import type { SettingsSection } from '@/components/settings/nav'
 
+export type MemoryTarget = { kind: 'personal' } | { kind: 'workspace'; workspaceId: string }
+
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
   | { kind: 'environment'; environmentId: string; tab: 'overview' | 'screen' }
@@ -19,12 +22,18 @@ export type FleetView =
   | { kind: 'memory' }
 
 type UseMainPanelsParams = {
+  standaloneConversations: Conversation[]
   workspaces: WorkspaceWithConversations[]
   setActive: Dispatch<SetStateAction<Conversation | null>>
   refreshWorkspaces: () => Promise<WorkspaceWithConversations[]>
 }
 
-export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseMainPanelsParams) {
+export function useMainPanels({
+  workspaces,
+  standaloneConversations,
+  setActive,
+  refreshWorkspaces,
+}: UseMainPanelsParams) {
   const [projectNotesWs, setProjectNotesWs] = useState<string | null>(null)
   const [projectMemoryWs, setProjectMemoryWs] = useState<string | null>(null)
   const [focusMemoryRequest, setFocusMemoryRequest] = useState(0)
@@ -46,12 +55,17 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
 
   useEffect(() => {
     const open = (event: Event) => {
-      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string }>).detail
-      if (!detail?.conversationId) return
+      const detail = (event as CustomEvent<{ conversationId?: string; memoryId?: string; personal?: boolean }>).detail
+      if (!detail) return
       const workspace = workspaces.find((item) =>
         item.conversations.some((conversation) => conversation.id === detail.conversationId)
       )
-      if (!workspace) return
+      const personal =
+        detail.personal ||
+        standaloneConversations.some(
+          (conversation) => conversation.id === detail.conversationId && !conversation.botOrigin
+        )
+      if (!workspace && !personal) return
       setProjectNotesWs(null)
       setFleetView(null)
       setCreateBot(false)
@@ -60,11 +74,11 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       setOnboardingOpen(false)
       setFocusMemoryId(detail.memoryId)
       setFocusMemoryRequest((value) => value + 1)
-      setProjectMemoryWs(workspace.id)
+      setProjectMemoryWs(personal ? PERSONAL_MEMORY_SPACE_ID : workspace!.id)
     }
     window.addEventListener('maestrly:open-memory', open)
     return () => window.removeEventListener('maestrly:open-memory', open)
-  }, [workspaces])
+  }, [workspaces, standaloneConversations])
 
   // Links to other conversations (e.g. conversations started by start_conversations) focus them in place.
   useEffect(() => {
@@ -73,7 +87,10 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
       if (!conversationId) return
       const find = (items: WorkspaceWithConversations[]) =>
         items.flatMap((item) => item.conversations).find((conversation) => conversation.id === conversationId)
-      const conversation = find(workspaces) ?? find(await refreshWorkspaces())
+      const conversation =
+        standaloneConversations.find((item) => item.id === conversationId) ??
+        find(workspaces) ??
+        find(await refreshWorkspaces())
       if (!conversation) return
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
@@ -85,7 +102,7 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     const listener = (event: Event) => void open(event)
     window.addEventListener('maestrly:open-conversation', listener)
     return () => window.removeEventListener('maestrly:open-conversation', listener)
-  }, [refreshWorkspaces, setActive, workspaces])
+  }, [refreshWorkspaces, setActive, workspaces, standaloneConversations])
 
   const mainOverride =
     projectNotesWs ||
@@ -226,6 +243,12 @@ export function useMainPanels({ workspaces, setActive, refreshWorkspaces }: UseM
     projectNotesWs,
     setProjectNotesWs,
     projectMemoryWs,
+    memoryTarget:
+      projectMemoryWs === PERSONAL_MEMORY_SPACE_ID
+        ? ({ kind: 'personal' } as MemoryTarget)
+        : projectMemoryWs
+          ? ({ kind: 'workspace', workspaceId: projectMemoryWs } as MemoryTarget)
+          : null,
     focusMemoryId,
     focusMemoryRequest,
     setProjectMemoryWs,

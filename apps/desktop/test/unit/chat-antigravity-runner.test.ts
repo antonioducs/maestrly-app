@@ -15,6 +15,7 @@ vi.mock('../../src/main/chat/mcp', async (importOriginal) => {
   }
 })
 
+import { insertConversation, patchConvUiPrefs } from '../../src/main/store'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { closeAntigravityHostMcpServer } from '../../src/main/chat/antigravity-subscription/host-mcp'
 import type { AntigravitySubscriptionManager } from '../../src/main/chat/antigravity-subscription/manager'
@@ -118,6 +119,47 @@ async function cancelSlowTurn() {
 }
 
 describe('Antigravity chat runner', () => {
+  it.each(['agent', 'plan'] as const)('exposes personal memory with app tools off in %s mode', async (mode) => {
+    insertConversation({
+      id: 'personal',
+      scope: 'standalone',
+      experience: 'standard',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      isMulti: 0,
+      name: 'Synthetic personal chat',
+      cwd,
+      status: 'idle',
+      createdAt: Date.now(),
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: Date.now(),
+    })
+    patchConvUiPrefs('personal', { chat: { tools: { app: false } } })
+    const assert = vi.fn(async () => {
+      throw new Error('Synthetic permission denial')
+    })
+    const { events } = await turn('TOOL memory_list {}', { mode, broker: { assert } as never }, 'personal')
+    expect(assert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'personal',
+        action: 'mcp',
+        toolName: 'memory_list',
+      })
+    )
+    expect(textOf(events)).toContain('Synthetic permission denial')
+    const prompt = promptText(fake.requests('session/prompt').at(-1))
+    expect(prompt).toContain('# Personal chat memory')
+    expect(prompt).toContain('- maestrly_memory_list:')
+    expect(prompt).toContain('- maestrly_memory_read:')
+    expect(prompt).toContain('- maestrly_memory_search:')
+    expect(prompt.includes('- maestrly_memory_upsert:')).toBe(mode === 'agent')
+    expect(prompt.includes('- maestrly_memory_forget:')).toBe(mode === 'agent')
+    expect(prompt).not.toContain('- maestrly_memory_write:')
+    expect(prompt).not.toContain('- maestrly_workspace_list:')
+  })
+
   it('starts a session with built-in tools disabled, the host MCP server, and the tool catalog', async () => {
     const { events, result } = await turn('ECHO oi')
     expect(kinds(events)[0]).toBe('message-start')

@@ -336,3 +336,326 @@ it('does not account for recall hits dropped at the hit limit', async () => {
   expect(getConversationMemoryState(conversation.id)?.recalledIds).not.toContain(hits[3].id)
   expect(getLocalMemory(workspace.id, hits[3].id)?.useCount).toBe(0)
 })
+
+import { insertConversation, getDb } from '../../src/main/store'
+import { restartDb } from '../helpers/db'
+import { PERSONAL_MEMORY_SPACE_ID } from '../../src/shared/memory'
+import { memorySpaceForConversation, isPersonalMemoryConversation } from '../../src/main/memory/spaces'
+import {
+  DEFAULT_PERSONAL_MEMORY_SETTINGS,
+  setPersonalMemorySettings,
+} from '../../src/main/memory/personal-memory-settings'
+import { forgetLocalMemory, updateLocalMemory } from '../../src/main/memory/local-memory-service'
+import { exportLocalMemoryData } from '../../src/main/memory/memory-center-service'
+import { reconcileMemoryIndex, getMemoryIndexStatus } from '../../src/main/memory/index'
+
+function personalChat(id = randomUUID()) {
+  insertConversation({
+    id,
+    scope: 'standalone',
+    workspaceId: null,
+    branch: null,
+    mode: null,
+    experience: 'standard',
+    isMulti: 0,
+    cwd: '/tmp/synthetic-chat',
+    name: 'Chat',
+    status: 'idle',
+    createdAt: 1,
+    archived: 0,
+    pinnedAt: null,
+    lastActivityAt: 1,
+  })
+  return id
+}
+function personalEntry(content = 'Use the synthetic staging SSH port 2222.') {
+  return createLocalMemory({
+    workspaceId: PERSONAL_MEMORY_SPACE_ID,
+    title: 'Staging SSH port',
+    content,
+    type: 'reference',
+    source: 'user',
+  }).memory
+}
+function partText(turn: Awaited<ReturnType<typeof prepareTurnMemory>>) {
+  return turn.hiddenParts.map((part) => (part.type === 'file' && part.kind === 'text' ? part.data : '')).join('\n')
+}
+it('invalidates personal pinned evidence after another chat corrects or archives it', async () => {
+  const id = personalChat()
+  const entry = personalEntry('Prefer concise explanations.')
+  updateLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id, { pinned: true })
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  updateLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id, { content: 'Prefer detailed explanations.' })
+  const corrected = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(corrected)).toContain('Updated:')
+  expect(partText(corrected)).toContain('Prefer detailed explanations.')
+  corrected.commit()
+  archiveLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id)
+  const archived = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(archived)).toContain('No longer valid')
+  archived.commit()
+  expect(memoryCoreForPrompt(id)).not.toContain('Prefer detailed explanations.')
+})
+it('shares personal memory between chats while isolating project and bot spaces', async () => {
+  const a = personalChat(),
+    b = personalChat()
+  personalEntry()
+  const project = makeConversation(makeWorkspace().id)
+  expect(memorySpaceForConversation(a)).toEqual({ id: PERSONAL_MEMORY_SPACE_ID, kind: 'personal', roots: [] })
+  expect(memorySpaceForConversation(b)).toEqual(memorySpaceForConversation(a))
+  expect(memorySpaceForConversation(project.id)?.kind).toBe('workspace')
+  registerConversationMemorySpace(b, { id: 'bot-self:synthetic', kind: 'bot' })
+  registeredConversations.push(b)
+  expect(isPersonalMemoryConversation(b)).toBe(false)
+  expect(memorySpaceForConversation(b)?.kind).toBe('bot')
+  getDb()
+    .prepare('UPDATE conversations SET bot_origin = ? WHERE id = ?')
+    .run(JSON.stringify({ kind: 'bot', connectionId: 'synthetic', botName: 'Bot' }), a)
+  expect(isPersonalMemoryConversation(a)).toBe(false)
+})
+it('persists catalog deletion updates only after admission and survives restart', async () => {
+  const id = personalChat()
+  const entry = personalEntry()
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  forgetLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id)
+  const abandoned = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(abandoned)).toContain('No longer valid')
+  restartDb()
+  const admitted = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(admitted)).toContain('No longer valid')
+  admitted.commit()
+  expect(partText(await prepareTurnMemory({ conversationId: id, text: '/skip' }))).not.toContain('No longer valid')
+})
+it('delivers corrections and re-recalls changed entries, preserving a concurrent newer admission', async () => {
+  const id = personalChat()
+  const entry = personalEntry()
+  ;(await prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })).commit()
+  const stale = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  updateLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id, { content: 'Synthetic staging SSH port is now 3333.' })
+  const corrected = await prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })
+  expect(partText(corrected)).toContain('3333')
+  expect(names(corrected.hiddenParts)).toContain(MEMORY_RECALL_PART)
+  corrected.commit()
+  const baseline = getConversationMemoryState(id)
+  stale.commit()
+  expect(getConversationMemoryState(id)).toEqual(baseline)
+})
+it('revalidates personal access and cancellation at commit', async () => {
+  const id = personalChat()
+  personalEntry()
+  const controller = new AbortController()
+  const cancelled = await prepareTurnMemory({ conversationId: id, text: '/skip', signal: controller.signal })
+  controller.abort()
+  cancelled.commit()
+  expect(getConversationMemoryState(id)).toBeUndefined()
+  const disabled = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  setPersonalMemorySettings({ ...DEFAULT_PERSONAL_MEMORY_SETTINGS, enabled: false })
+  disabled.commit()
+  expect(getConversationMemoryState(id)).toBeUndefined()
+  expect(memoryCoreForPrompt(id)).toBe('')
+})
+it('indexes and exports every entry beyond the 500-row page boundary with textual fallback', async () => {
+  for (let i = 0; i < 501; i++) personalEntry(`Synthetic entry ${i}`)
+  await reconcileMemoryIndex(PERSONAL_MEMORY_SPACE_ID, [])
+  expect((await getMemoryIndexStatus(PERSONAL_MEMORY_SPACE_ID)).localDocuments).toBe(501)
+  expect(JSON.parse(exportLocalMemoryData(PERSONAL_MEMORY_SPACE_ID).json).memories).toHaveLength(501)
+})
+
+import { FLEET_BOT_ENV } from '@maestrly/bot-fleet-protocol'
+import { initMemoryIndexService, searchMemoryIndexLexical } from '../../src/main/memory/index'
+it('excludes unregistered runtime chats even when personal memory is enabled', () => {
+  const id = personalChat()
+  vi.stubEnv(FLEET_BOT_ENV.mode, '1')
+  try {
+    expect(isPersonalMemoryConversation(id)).toBe(false)
+    expect(memorySpaceForConversation(id)).toBeNull()
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+it('keeps previously recalled entries across compaction and emits archive and supersession updates', async () => {
+  const id = personalChat()
+  const entry = personalEntry()
+  ;(await prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })).commit()
+  compact(id)
+  archiveLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id)
+  const archived = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(archived)).toContain('No longer valid')
+  archived.commit()
+  const second = personalEntry('Synthetic replacement port 4444')
+  compact(id)
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  createLocalMemory({
+    workspaceId: PERSONAL_MEMORY_SPACE_ID,
+    title: 'Replacement',
+    content: 'Port 5555',
+    type: 'reference',
+    source: 'user',
+    supersedesId: second.id,
+  })
+  const superseded = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(superseded)).toContain('No longer valid')
+})
+it('disables the personal index independently and keeps textual fallback after re-enabling', async () => {
+  personalEntry()
+  initMemoryIndexService()
+  await reconcileMemoryIndex(PERSONAL_MEMORY_SPACE_ID, [])
+  setPersonalMemorySettings({ ...DEFAULT_PERSONAL_MEMORY_SETTINGS, enabled: false })
+  expect((await getMemoryIndexStatus(PERSONAL_MEMORY_SPACE_ID)).state).toBe('disabled')
+  expect(await searchMemoryIndexLexical(PERSONAL_MEMORY_SPACE_ID, 'staging', [])).toEqual([])
+  setPersonalMemorySettings(DEFAULT_PERSONAL_MEMORY_SETTINGS)
+  expect(await searchMemoryIndexLexical(PERSONAL_MEMORY_SPACE_ID, 'staging', [])).toHaveLength(1)
+})
+it('discards prepared personal context when disabled during a pending recall', async () => {
+  const id = personalChat()
+  personalEntry()
+  let finish!: (hits: Awaited<ReturnType<typeof memorySearch.searchMemorySpace>>) => void
+  vi.spyOn(memorySearch, 'searchMemorySpace').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const pending = prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+  setPersonalMemorySettings({ ...DEFAULT_PERSONAL_MEMORY_SETTINGS, enabled: false })
+  finish([])
+  const turn = await pending
+  expect(turn.hiddenParts).toEqual([])
+  turn.commit()
+  expect(getConversationMemoryState(id)).toBeUndefined()
+})
+
+it('retains recall tracking from both concurrent admitted turns', async () => {
+  const id = personalChat()
+  const first = personalEntry('Synthetic first recall'),
+    second = personalEntry('Synthetic second recall')
+  const hit = (memory: typeof first) => ({
+    kind: 'local' as const,
+    id: memory.id,
+    title: memory.title,
+    type: memory.type,
+    relevance: 1,
+    snippet: memory.content,
+    pinned: false,
+  })
+  vi.spyOn(memorySearch, 'searchMemorySpace')
+    .mockResolvedValueOnce([hit(first)])
+    .mockResolvedValueOnce([hit(second)])
+  const a = await prepareTurnMemory({ conversationId: id, text: 'first synthetic recall?' })
+  const b = await prepareTurnMemory({ conversationId: id, text: 'second synthetic recall?' })
+  b.commit()
+  a.commit()
+  expect(getConversationMemoryState(id)?.recalledIds).toEqual(expect.arrayContaining([first.id, second.id]))
+})
+it('admits the personal core without tracking a recall that exceeds the time budget', async () => {
+  const id = personalChat()
+  personalEntry()
+  vi.spyOn(memorySearch, 'searchMemorySpace').mockImplementation(() => new Promise(() => {}))
+  const turn = await prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })
+  expect(turn.hiddenParts).toEqual([])
+  turn.commit()
+  expect(getConversationMemoryState(id)?.recalledIds).toEqual([])
+  expect(memoryCoreForPrompt(id)).toContain('Staging SSH port')
+}, 5000)
+
+it('tracks a recalled entry deleted while recall was pending', async () => {
+  const id = personalChat()
+  const entry = personalEntry()
+  for (let i = 0; i < 45; i++)
+    createLocalMemory({
+      workspaceId: PERSONAL_MEMORY_SPACE_ID,
+      title: `Catalog ${i}`,
+      content: `Synthetic catalog ${i}`,
+      type: 'reference',
+      source: 'user',
+      importance: 100,
+    })
+  let finish!: (hits: Awaited<ReturnType<typeof memorySearch.searchMemorySpace>>) => void
+  vi.spyOn(memorySearch, 'searchMemorySpace').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const pending = prepareTurnMemory({ conversationId: id, text: 'staging ssh port?' })
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+  forgetLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id)
+  finish([
+    {
+      kind: 'local',
+      id: entry.id,
+      title: entry.title,
+      type: entry.type,
+      relevance: 1,
+      snippet: entry.content,
+      pinned: false,
+      updatedAt: entry.updatedAt,
+    },
+  ])
+  ;(await pending).commit()
+  const next = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(next)).toContain('No longer valid')
+})
+
+it('refreshes an empty personal catalog on the next unrelated admission without recall', async () => {
+  const a = personalChat(),
+    b = personalChat()
+  setPersonalMemorySettings({ ...DEFAULT_PERSONAL_MEMORY_SETTINGS, autoRecall: false })
+  ;(await prepareTurnMemory({ conversationId: a, text: 'hi' })).commit()
+  createLocalMemory({
+    workspaceId: PERSONAL_MEMORY_SPACE_ID,
+    title: 'Prefers tea',
+    content: 'The user prefers tea.',
+    type: 'preference',
+    source: 'user',
+    originConversationId: b,
+  })
+  ;(await prepareTurnMemory({ conversationId: a, text: 'ok' })).commit()
+  expect(memoryCoreForPrompt(a)).toContain('Prefers tea')
+  expect(memoryCoreForPrompt(a)).not.toContain('Save durable decisions')
+})
+
+it('invalidates every supplied personal entry on the first admission when updates overflow', async () => {
+  const id = personalChat()
+  const entries = Array.from({ length: 12 }, (_, i) => personalEntry(`Old ${i} ${'a'.repeat(650)}`))
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  for (const entry of entries)
+    updateLocalMemory(PERSONAL_MEMORY_SPACE_ID, entry.id, { content: `Corrected ${entry.id} ` + 'b'.repeat(650) })
+  const turn = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(turn)).toContain('all earlier personal memory')
+  expect(partText(turn).length).toBeLessThanOrEqual(1500)
+  turn.commit()
+  expect(partText(await prepareTurnMemory({ conversationId: id, text: '/skip' }))).toBe('')
+})
+
+it('refreshes personal catalog order and removals within its budget without dropping delivered evidence', async () => {
+  const id = personalChat()
+  const first = personalEntry('The user prefers tea.')
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  const newer = Array.from(
+    { length: 45 },
+    (_, i) =>
+      createLocalMemory({
+        workspaceId: PERSONAL_MEMORY_SPACE_ID,
+        title: `New preference ${i}`,
+        content: `User preference ${i}.`,
+        type: 'preference',
+        source: 'user',
+        importance: 100,
+      }).memory
+  )
+  ;(await prepareTurnMemory({ conversationId: id, text: '/skip' })).commit()
+  expect(memoryCoreForPrompt(id)).not.toContain(first.title)
+  expect(memoryCoreForPrompt(id).split('## Memory catalog')[1].length).toBeLessThan(1800)
+  updateLocalMemory(PERSONAL_MEMORY_SPACE_ID, first.id, { content: 'The user prefers coffee.' })
+  const changed = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(changed)).toContain('prefers coffee')
+  changed.commit()
+  for (const memory of newer) archiveLocalMemory(PERSONAL_MEMORY_SPACE_ID, memory.id)
+  const removed = await prepareTurnMemory({ conversationId: id, text: '/skip' })
+  expect(partText(removed).length).toBeLessThanOrEqual(1500)
+  removed.commit()
+  expect(memoryCoreForPrompt(id)).toContain(first.title)
+  expect(memoryCoreForPrompt(id)).not.toContain('New preference')
+})

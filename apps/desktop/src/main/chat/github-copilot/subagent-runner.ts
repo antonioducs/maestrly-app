@@ -7,7 +7,7 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { selectSubagentToolNames } from '../tools'
 import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { hardDeleteGitHubCopilotSession } from './lifecycle'
 import type {
   GitHubCopilotAccountIdentity,
@@ -173,7 +173,7 @@ export async function runGitHubCopilotSubagent(
   const legacySystemMessage = [
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-    args.conversationScope === 'standalone' ? 'This is a standalone conversation without project or workspace memory.' : MEMORY_TOOL_GUIDANCE,
+    args.conversationScope === 'standalone' ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',

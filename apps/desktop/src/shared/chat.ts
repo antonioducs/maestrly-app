@@ -1227,6 +1227,8 @@ export interface ChatGptWebCapabilities {
   conversation: 'off' | 'read'
   /** Local durable memory requires explicit Read; shared knowledge remains repository-jailed. */
   memory: 'off' | 'read'
+  /** Profile-local personal memory. Missing values deny access; independent of project memory. */
+  personalMemory?: ChatGptWebCapabilityScope
   /** Browser access is fail-closed and may target an isolated preview or an attached embedded local tab. */
   browser: ChatGptWebBrowserCapability
   mcp: Record<string, ChatGptWebCapabilityScope>
@@ -1281,6 +1283,7 @@ export interface ChatGptWebSessionInfo {
     ghRead: boolean
     conversation: 'off' | 'read'
     memory: 'off' | 'read'
+    personalMemory?: ChatGptWebCapabilityScope
     browser: ChatGptWebBrowserCapability
     mcpRead: number
     mcpWrite: number

@@ -17,7 +17,7 @@ import type { ChatAgent } from '../agents'
 import { effectiveSkills } from '../skill-state'
 import { buildProjectContext } from '../project-context'
 import { listEffectiveAgents } from '../virtual-subagents'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
 import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
 import type { CursorAgentBinding } from './session-store'
@@ -158,7 +158,7 @@ export async function buildCursorHarnessContext(
     'The `ask_question` tool asks the user a question and waits for the answer.',
     ...(args.mode === 'maestro' ? [MAESTRO_SYSTEM_SPEC] : []),
     ...(args.mode === 'maestro' && args.maestro ? [renderMaestroTurnPolicy(args.maestro)] : []),
-    MEMORY_TOOL_GUIDANCE,
+    args.projectId === null ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
     ...(ultra ? [harnessUltraGuidance(harness, args.mode) ?? ultra] : []),
     ...(notes ? ['The conversation has a Notes tab; use it when the user asks about notes.'] : []),
     "You are an assistant on the user's machine. The Maestrly tool layer enforces permissions; never claim you executed something you did not.",

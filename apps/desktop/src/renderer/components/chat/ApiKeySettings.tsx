@@ -1499,6 +1499,13 @@ export function ApiKeySettings({
             onChanged={refresh}
             locked={backgroundCompactionLocked}
           />
+          <MemorySettings
+            scope="personal"
+            config={config}
+            catalogRevision={modelFilterRevision}
+            onChanged={refresh}
+            locked={backgroundCompactionLocked}
+          />
           <SubagentProfilesSettings config={config} />
         </div>
       )}

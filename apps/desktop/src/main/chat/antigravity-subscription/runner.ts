@@ -45,7 +45,7 @@ import {
 import { MAESTRO_DELEGATE_TOOL_DESCRIPTION, MAESTRO_DELEGATE_TOOL_SCHEMA } from '../maestro-delegation'
 import type { MaestroLiveRunPort } from '../maestro-live'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
-import { buildAppTools, buildMcpTools } from '../mcp'
+import { buildAppTools, buildMcpTools, hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { clipPersistedToolOutput } from '../message'
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
@@ -356,16 +356,18 @@ export async function runAntigravitySubscriptionChat(
           describeImage,
         })
     mcpClose = mcp.close
-    const app = appToolsEnabled
-      ? await buildAppTools({
-          conversationId: args.conversationId,
-          mode: args.mode,
-          gate,
-          exclude: new Set(['review_plan']),
-          supportsImages: true,
-          describeImage,
-        })
-      : { tools: {}, close: async () => {} }
+    const app =
+      !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(args.conversationId))
+        ? await buildAppTools({
+            only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
+            conversationId: args.conversationId,
+            mode: args.mode,
+            gate,
+            exclude: new Set(['review_plan']),
+            supportsImages: true,
+            describeImage,
+          })
+        : { tools: {}, close: async () => {} }
     appClose = app.close
 
     const reviewerInstructions =

@@ -68,7 +68,7 @@ import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
-import { insertConversation, patchConvUiPrefs, setAppSetting } from '../../src/main/store'
+import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 
@@ -896,9 +896,50 @@ describe('Codex subscription runner', () => {
     }
   })
 
+  it('keeps personal memory readers in standalone Plan when general app tools are off', async () => {
+    setAppFlag('chat.appTools', false)
+    insertConversation({
+      id: 'personal-plan',
+      scope: 'standalone',
+      workspaceId: null,
+      branch: null,
+      mode: null,
+      experience: 'standard',
+      cwd: '/synthetic/personal-plan',
+      name: 'Chat',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+      isMulti: 0,
+    })
+    persistUser('personal-plan', 'personal-plan-user', 'Plan a reading list', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({
+      turnId: 'personal-plan-turn',
+      notifications: [completedNotification('thread_1', 'personal-plan-turn')],
+    })
+    const args = runArgs('personal-plan', null, '/synthetic/personal-plan', client)
+    args.mode = 'plan'
+    await runCodexSubscriptionChat(args)
+    const request = client.startThreadCalls[0] as {
+      dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
+    }
+    const names = request.dynamicTools.flatMap((spec) => spec.tools?.map((entry) => entry.name) ?? [spec.name])
+    expect(names.filter((name) => name.startsWith('memory_')).sort()).toEqual([
+      'memory_list',
+      'memory_read',
+      'memory_search',
+    ])
+    expect(names).not.toContain('browser_navigate')
+    expect(names).not.toContain('terminal_read')
+  })
+
   it.each(['', '\n\n# Memory\n## About your owner\nPrefer short replies.\n## Pinned memories\nUse signed releases.'])(
     'runs standalone Ask with general native instructions and memory context %j',
     async (memoryCore) => {
+      setAppFlag('chat.appTools', false)
       const context = vi.spyOn(projectContext, 'buildProjectContext').mockResolvedValue(memoryCore)
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'codex-standalone-'))
       try {
@@ -931,13 +972,19 @@ describe('Codex subscription runner', () => {
           developerInstructions: string
           config: Record<string, unknown>
           environments: unknown[]
+          dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
         }
+        const memoryNames = request.dynamicTools
+          .flatMap((spec) => spec.tools?.map((tool) => tool.name) ?? [spec.name])
+          .filter((name) => name.startsWith('memory_'))
+        expect(memoryNames.sort()).toEqual(['memory_list', 'memory_read', 'memory_search'])
+        expect(request.developerInstructions).toContain('# Personal chat memory')
         expect(request.developerInstructions.endsWith(memoryCore)).toBe(true)
         const base = memoryCore
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          '13d3b6724979a2d28998d0ad7d13246131d9008d4dae384d88b53958f28cbb74'
+          '31b3dde16993675ac1d7fab5ef72ca687a47497017faec1cfc1efdabc3448886'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.developerInstructions).toContain('general assistant')

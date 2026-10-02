@@ -4,7 +4,7 @@ import { BOT_APP_TOOLS_GUIDANCE, botIdentityPrompt } from '../../fleet/instance/
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import type { ResolvedHarness } from './types'
 
 /**
@@ -150,7 +150,7 @@ export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string 
     const isBot = Boolean(botIdentityPrompt(input.cwd))
     const scopeLine = isBot
       ? `This is your persistent bot conversation, with no project or repository. Your durable memory is described in the "# Memory" section when present. The private working directory is ${input.cwd}.`
-      : `This is a standalone conversation, with no project, repository or workspace memory. The private working directory is ${input.cwd}.`
+      : `This is a standalone conversation, with no project or repository. The private working directory is ${input.cwd}.`
     const discovery = isBot
       ? 'Do not discover project instructions in this directory or its ancestors, or infer a repository.'
       : 'Do not discover project instructions in this directory or its ancestors, consult workspace memory, or infer a repository.'
@@ -165,9 +165,10 @@ ${discovery} Online research requires an actually available tool; webfetch reads
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),
       HOST_RENDERING,
+      isBot ? '' : PERSONAL_MEMORY_TOOL_GUIDANCE,
       input.appToolsEnabled
         ? 'Maestrly tools are available only as exposed in your tool catalog. Respect their permissions.'
-        : 'Maestrly app tools are disabled.',
+        : 'General Maestrly app tools are disabled. Personal memory tools may be available separately; use only the exposed catalog.',
       renderDesignModePrompt(input.mode),
     ]
       .filter(Boolean)

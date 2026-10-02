@@ -59,13 +59,26 @@ itself installed. Removal affects other paired computers too.
 ## Memory storage
 
 Desktop durable entries remain in `local_memories`. Its `workspace_id` now names
-a memory space: a workspace or a fleet bot's own `bot-self:<botId>` space. Bot
+a memory space: a workspace, the profile's `personal-chat` space, or a fleet bot's
+own `bot-self:<botId>` space. Bot
 profiles from before environments used a single `bot-self` space, which is
 re-keyed when the bot is adopted (see
 [bot environment data](#bot-environment-data)). The migration removes the
 workspace foreign key and preserves workspace deletion cleanup through a
 trigger. Entries can have source `auto` for automatic extraction. Conversation
 provenance does not make saved entries disappear when a transcript is deleted.
+
+Ordinary standalone chats share `personal-chat`; project and bot conversations
+do not use it. The existing schema supports this space without a new table or
+synthetic workspace. Personal configuration lives in `app_settings` under
+`chat.personalMemory`, separately from project recall/extraction configuration
+at `chat.memory`. Missing settings enable personal access and recall but leave
+extraction disabled. Unreadable or invalid personal settings disable assistant
+access without removing entries. Deleting a chat or workspace leaves personal
+entries intact. Manage and export them from **Settings → Chat → Models & agents →
+Personal memory → Manage personal memory**; exports
+include the full collection, including archived and superseded entries. There is
+no automatic import from project/bot memory and no cross-device synchronization.
 
 `conversation_memory_state` stores the frozen core, source baseline and recalled
 IDs; `memory_extraction_state` stores the extraction cursor and failure state.

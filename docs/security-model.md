@@ -426,6 +426,37 @@ embeddings are reproducible caches, not authoritative copies. Promoting local me
 explicit write and then follows that repository's own review and disclosure
 rules.
 
+### Personal chat memory
+
+Ordinary desktop Chats share one personal memory collection in the local profile.
+The host derives its space from the calling conversation; memory tools do not
+accept a space selector. Project conversations, bot-originated conversations and
+fleet runtimes cannot use that collection through their memory tools. This is a
+host-tool access boundary, not an operating-system sandbox for agents allowed to
+run commands with the user's filesystem permissions.
+
+Personal reads remain available in Ask/Plan; mutations require Agent/Design and
+the existing permission broker. These tools do not require enabling unrelated
+app tools. A shared collection does not grant another chat's saved permissions
+or access to its transcript. The user can manage entries while assistant access
+is disabled. Disabling personal memory prevents new tool access, context
+injection and background writes; it cannot retract data already sent to a
+provider or erase historical messages.
+
+Companion has a separate personal-memory capability, disabled by default.
+Project-memory consent does not grant personal access. Read and Write are
+session-scoped, and context delivery must respect the same capability as tools.
+Revoked or ended sessions cannot continue reading or writing the collection.
+
+Personal background extraction is independently opt-in and sends local
+conversation excerpts to the selected model. Each accepted operation must cite
+a user message from the processed excerpt. This validates provenance, not the
+truth of the extracted claim. Assistant/tool text is not an authorized source of
+personal facts. Cancellation and target-version checks discard late or stale
+results. Memories remain evidence below system instructions, the user's current
+instructions and permission policy. Personal memory is not synchronized with
+the fleet gateway or other devices.
+
 ## Agent and bot memory
 
 Fleet owner memory lives in the gateway. Global entries are included in every

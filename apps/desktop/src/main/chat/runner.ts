@@ -1,3 +1,4 @@
+import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from './mcp'
 import type { PermissionScope } from '../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, governAutonomousTools, AUTONOMOUS_INSTRUCTIONS } from './autonomous'
 /**
@@ -797,11 +798,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
       })
 
-  // App-tools remain opt-in. Wrapper preserves Agent catalog and applies product allowlist in restricted
-  // modes. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
+  // General app tools remain opt-in; personal memory is independently enabled. The wrapper applies the mode
+  // allowlist. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
   const app =
-    !args.reviewerRuntime && appToolsEnabled
+    !args.reviewerRuntime && (appToolsEnabled || hasPersonalMemoryTools(conversationId))
       ? await buildAppTools({
+          only: appToolsEnabled ? undefined : PERSONAL_MEMORY_TOOLS,
           conversationId,
           mode,
           gate: mcpGate,

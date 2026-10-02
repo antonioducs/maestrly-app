@@ -1,4 +1,5 @@
 import type { ToolSet } from 'ai'
+import { getConversation } from '../../store'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
 import type { AcpPromptResult, AcpSessionSetupResult } from '../acp/protocol'
@@ -6,7 +7,7 @@ import { isAcpMessageChunk } from '../acp/protocol'
 import type { ChatAgent } from '../agents'
 import { resolveAntigravityHarness } from '../harness/adapters/antigravity'
 import type { ResolvedHarness } from '../harness/types'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
@@ -84,7 +85,7 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
     `The user's project is ${args.cwd}; your own working directory is a private scratch folder, so always use absolute project paths with Maestrly's tools.`,
-    MEMORY_TOOL_GUIDANCE,
+    getConversation(args.conversationId)?.scope === 'standalone' ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',

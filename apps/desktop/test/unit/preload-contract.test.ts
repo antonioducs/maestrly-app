@@ -297,7 +297,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(503)
+    expect(keys).toHaveLength(517)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -338,6 +338,16 @@ describe('preload API — exposure', () => {
 // Distinct sentinel arguments make accidental reordering fail the assertion.
 // ---------------------------------------------------------------------------
 describe('preload API — channels and argument order (ipcRenderer.invoke)', () => {
+  it('personal memory search and index wrappers never take a workspace or repository root', () => {
+    const filters = { limit: 10, pinned: true }
+    api.searchPersonalMemories('synthetic query', filters)
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:search', 'synthetic query', filters)
+    api.getPersonalMemoryIndexStatus()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-status-get')
+    api.rebuildPersonalMemoryIndex()
+    expect(invokeSpy).toHaveBeenLastCalledWith('personal-memory:index-rebuild')
+  })
+
   it('runtime assets preserve IDs and explicit channels', () => {
     api.runtimeAssetStatus('codex-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:status', 'codex-runtime')

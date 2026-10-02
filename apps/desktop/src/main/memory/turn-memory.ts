@@ -1,3 +1,4 @@
+import { personalMemorySource, personalMemoryUpdates } from './personal-memory-updates'
 import { randomUUID } from 'node:crypto'
 import type { MessagePart } from '../../shared/chat'
 import type { MemoryContextMeta, MemorySourceRef } from '../../shared/memory'
@@ -14,10 +15,10 @@ import {
   renderMemoryDelta,
   type MemoryCoreExtraSection,
 } from './core'
-import { markLocalMemoriesUsed } from './local-memory-service'
+import { markLocalMemoriesUsed, getLocalMemory } from './local-memory-service'
 import { queryStems } from './relevance'
 import { searchMemorySpace, type SpaceSearchHit } from './search'
-import { readMemorySettings } from './settings'
+import { memorySettingsForSpace } from './settings'
 import { memorySpaceForConversation, type MemorySpace } from './spaces'
 
 export const MEMORY_PART_PREFIX = 'maestrly-memory-'
@@ -126,6 +127,7 @@ export async function prepareTurnMemory(input: {
   try {
     const space = memorySpaceForConversation(input.conversationId)
     if (!space) return NOTHING
+    if (input.signal?.aborted) return NOTHING
     const now = input.now ?? Date.now()
     const markers = latestCompactionMarkers(input.conversationId)
     // A provider that misses the budget counts as unavailable: the core and its baseline stay usable without it.
@@ -134,7 +136,7 @@ export async function prepareTurnMemory(input: {
     const sameSpace = previous?.spaceId === space.id ? previous : undefined
     const parts: MessagePart[] = []
     let state: ConversationMemoryState
-    if (!sameSpace || sameSpace.coreEpoch !== markers.portable) {
+    if (space.kind === 'personal' || !sameSpace || sameSpace.coreEpoch !== markers.portable) {
       state = freshState(
         input.conversationId,
         space,
@@ -147,7 +149,10 @@ export async function prepareTurnMemory(input: {
       state = { ...sameSpace }
       if (extras !== null) {
         const current = memoryCoreSources(space, extras)
-        const delta = renderMemoryDelta(sameSpace.baseline, current)
+        const delta = renderMemoryDelta(
+          sameSpace.baseline.filter((source) => !source.key.startsWith('personal:')),
+          current
+        )
         if (delta?.tooLarge)
           state = freshState(
             input.conversationId,
@@ -159,16 +164,24 @@ export async function prepareTurnMemory(input: {
           )
         else if (delta) {
           parts.push(memoryPart(MEMORY_UPDATES_PART, delta.text))
-          state.baseline = current
+          state.baseline = [...current, ...sameSpace.baseline.filter((source) => source.key.startsWith('personal:'))]
         }
       }
+    }
+    if (space.kind === 'personal' && sameSpace) {
+      const tracked = new Map(state.baseline.map((source) => [source.key, source]))
+      for (const source of sameSpace.baseline) if (source.key.startsWith('personal:')) tracked.set(source.key, source)
+      const updates = personalMemoryUpdates(space.id, [...tracked.values()])
+      state.baseline = updates.baseline
+      state.recalledIds = state.recalledIds.filter((id) => !updates.changedIds.includes(id))
+      if (updates.text) parts.push(memoryPart(MEMORY_UPDATES_PART, updates.text))
     }
     if (state.recallEpoch !== markers.any) {
       state.recallEpoch = markers.any
       state.recalledIds = []
     }
     let recalled: SpaceSearchHit[] = []
-    if (readMemorySettings().autoRecall && recallEligible(input.text) && !signal.aborted) {
+    if (memorySettingsForSpace(space).autoRecall && recallEligible(input.text) && !signal.aborted) {
       const exclude = new Set([
         ...state.recalledIds,
         ...state.baseline.filter((source) => source.key.startsWith('pinned:')).map((source) => source.key.slice(7)),
@@ -195,6 +208,29 @@ export async function prepareTurnMemory(input: {
         )
       }
     }
+    if (input.signal?.aborted || memorySpaceForConversation(input.conversationId)?.id !== space.id) return NOTHING
+    if (space.kind === 'personal') {
+      const tracked = new Map(state.baseline.map((source) => [source.key, source]))
+      for (const hit of recalled) {
+        const memory = getLocalMemory(space.id, hit.id)
+        const source =
+          memory?.status === 'active' &&
+          memory.title === hit.title &&
+          memory.content.replace(/\s+/g, ' ').includes(hit.snippet.replace(/^…|…$/g, '')) &&
+          (hit.updatedAt === undefined || hit.updatedAt === memory.updatedAt)
+            ? personalMemorySource(memory)
+            : {
+                key: `personal:${hit.id}`,
+                text: `[${hit.id.slice(0, 8)}] ${hit.title}: ${hit.snippet}`,
+                hash: 'recalled-before-mutation',
+              }
+        tracked.set(source.key, source)
+      }
+      state.baseline = [
+        ...[...tracked.values()].filter((source) => !source.key.startsWith('personal:')),
+        ...[...tracked.values()].filter((source) => source.key.startsWith('personal:')).slice(-240),
+      ]
+    }
     const sources: MemorySourceRef[] = recalled.map((hit) => ({
       kind: hit.kind,
       id: hit.id,
@@ -205,11 +241,30 @@ export async function prepareTurnMemory(input: {
       ...(hit.endLine ? { endLine: hit.endLine } : {}),
     }))
     const extrasForCommit = extras ?? []
+    let committed = false
     return {
       hiddenParts: parts,
       ...(sources.length ? { memoryContext: { revision: state.recallEpoch || 'start', sources } } : {}),
       commit: () => {
         try {
+          if (committed || input.signal?.aborted || memorySpaceForConversation(input.conversationId)?.id !== space.id)
+            return
+          committed = true
+          // Keep a concurrent admission's core and updates, while retaining memories this turn actually recalled.
+          const persisted = getConversationMemoryState(input.conversationId)
+          if (JSON.stringify(persisted) !== JSON.stringify(previous)) {
+            if (!persisted || persisted.spaceId !== space.id || !recalled.length) return
+            const tracked = new Map(persisted.baseline.map((source) => [source.key, source]))
+            const recalledKeys = new Set(recalled.map((hit) => `personal:${hit.id}`))
+            for (const source of state.baseline) if (recalledKeys.has(source.key)) tracked.set(source.key, source)
+            state = {
+              ...persisted,
+              baseline: [...tracked.values()],
+              recalledIds: [...new Set([...persisted.recalledIds, ...recalled.map((hit) => hit.id)])].slice(
+                -TURN_MEMORY_LIMITS.recalledIdsKept
+              ),
+            }
+          }
           // A preflight compaction may have moved the epochs between prepare and commit.
           const latest = latestCompactionMarkers(input.conversationId)
           let final = state
@@ -224,6 +279,19 @@ export async function prepareTurnMemory(input: {
             )
           else if (latest.any !== state.recallEpoch)
             final = { ...state, recallEpoch: latest.any, recalledIds: recalled.map((hit) => hit.id) }
+          if (space.kind === 'personal' && final !== state) {
+            const tracked = new Map(final.baseline.map((source) => [source.key, source]))
+            for (const source of state.baseline) if (source.key.startsWith('personal:')) tracked.set(source.key, source)
+            final = { ...final, baseline: [...tracked.values()] }
+          }
+          if (space.kind === 'personal')
+            final = {
+              ...final,
+              baseline: [
+                ...final.baseline.filter((source) => !source.key.startsWith('personal:')),
+                ...final.baseline.filter((source) => source.key.startsWith('personal:')).slice(-240),
+              ],
+            }
           saveConversationMemoryState({ ...final, updatedAt: now })
           if (recalled.length)
             markLocalMemoriesUsed(

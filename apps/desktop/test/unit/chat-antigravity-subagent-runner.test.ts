@@ -7,6 +7,8 @@ import {
   type RunAntigravitySubagentArgs,
   runAntigravitySubagent,
 } from '../../src/main/chat/antigravity-subscription/subagent-runner'
+import { insertConversation } from '../../src/main/store'
+import { PERSONAL_MEMORY_TOOL_GUIDANCE, MEMORY_TOOL_GUIDANCE } from '../../src/main/chat/memory-tool-guidance'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
 import { closeDb, freshDb } from '../helpers/db'
 
@@ -78,6 +80,44 @@ const lastPromptText = () => {
 }
 
 describe('Antigravity subagent runner', () => {
+  it.each([false, true])(
+    'uses personal guidance and preserves child memory restrictions (readOnly=%s)',
+    async (readOnly) => {
+      insertConversation({
+        id: 'personal',
+        scope: 'standalone',
+        experience: 'standard',
+        workspaceId: null,
+        branch: null,
+        mode: null,
+        isMulti: 0,
+        name: 'Synthetic personal chat',
+        cwd: '/tmp/project',
+        status: 'idle',
+        createdAt: Date.now(),
+        archived: 0,
+        pinnedAt: null,
+        lastActivityAt: Date.now(),
+      })
+      const input = args('ECHO done')
+      await runAntigravitySubagent({
+        ...input,
+        conversationId: 'personal',
+        readOnly,
+        definition: { ...input.definition, tools: ['memory_read', 'memory_upsert'] },
+        tools: {
+          memory_read: tool({ description: 'Read memory.', inputSchema: z.object({}), execute: async () => 'memory' }),
+          memory_upsert: tool({ description: 'Save memory.', inputSchema: z.object({}), execute: async () => 'saved' }),
+        },
+      })
+      const prompt = lastPromptText()
+      expect(prompt).toContain(PERSONAL_MEMORY_TOOL_GUIDANCE)
+      expect(prompt).not.toContain(MEMORY_TOOL_GUIDANCE)
+      expect(prompt).toContain('- maestrly_memory_read:')
+      expect(prompt.includes('- maestrly_memory_upsert:')).toBe(!readOnly)
+    }
+  )
+
   it('runs the child in its own session with only its allowed tools', async () => {
     const progress: string[] = []
     const updates: unknown[] = []
@@ -95,6 +135,7 @@ describe('Antigravity subagent runner', () => {
     expect(progress).toEqual(['Starting subagent worker', 'read started'])
     expect(updates.length).toBeGreaterThan(0)
     const prompt = lastPromptText()
+    expect(prompt).toContain(MEMORY_TOOL_GUIDANCE)
     expect(prompt).toContain('You are the delegated Maestrly subagent "worker"')
     expect(prompt).toContain('- maestrly_read:')
     expect(prompt).toContain('- maestrly_write:')

@@ -10,8 +10,13 @@
  * inference still uses the user's ChatGPT subscription in the chatgpt.com tab. Validated in the spike
  * with an organization holding NO API credits: the tunnel incurred no charge.
  */
+import { cancelMemoryExtraction } from '../../memory/extraction/scheduler'
 import { createHash, randomBytes } from 'node:crypto'
-import { createLinkedBoardAccess, linkedConversationBinding, linkedBoardScopeIdentity } from '../../platform/linked-board'
+import {
+  createLinkedBoardAccess,
+  linkedConversationBinding,
+  linkedBoardScopeIdentity,
+} from '../../platform/linked-board'
 import { app, net } from 'electron'
 import { acquireRuntimeAssetLease } from '../../runtime-assets/app-service'
 import {
@@ -72,6 +77,9 @@ import {
   remoteMcpServerCapabilities,
   resolveChatGptWebCapabilities,
 } from './capability-policy'
+import { createPersonalMemoryAdapter } from './personal-memory'
+import { memorySpaceForConversation } from '../../memory/spaces'
+import { normalizeChatMode } from '../../../shared/chat-mode'
 import { isWorkspaceMemoryEnabled } from '../../memory/access'
 import { getLocalMemory, markLocalMemoriesUsed } from '../../memory/local-memory-service'
 import { getMemoryIndexStatus, reconcileMemoryIndex } from '../../memory/index'
@@ -136,6 +144,7 @@ function releaseCompanionPlacement(conversationId: string): void {
 
 /** Hooks depending on the rest of the app (plan, skills, project context), injected by the service. */
 export interface ChatGptWebHooks {
+  authorizePersonalMemoryWrite?: (conversationId: string, toolName: string, signal?: AbortSignal) => Promise<void>
   deliverChat: (conversationId: string, markdown: string, title?: string) => Promise<void> | void
   deliverPlan: (conversationId: string, plan: string, reviewId: string, title?: string) => Promise<void> | void
   turnCompleted: (conversationId: string) => void
@@ -612,10 +621,23 @@ export function listSessions(): ChatGptWebSession[] {
 
 export function capabilitiesForConversation(conversationId: string): ChatGptWebCapabilitiesInfo {
   const prefs = getConvUiPrefs(conversationId)
-  const info = chatGptWebCapabilitiesInfo(prefs.chatGptWebCapabilities, listMcpServers(), sessionForConversation(conversationId) === null, getConversation(conversationId)?.scope ?? 'project')
+  const conversation = getConversation(conversationId)
+  const personalAllowed =
+    conversation?.scope === 'standalone' &&
+    !conversation.botOrigin &&
+    memorySpaceForConversation(conversationId)?.kind === 'personal'
+  const stored = prefs.chatGptWebCapabilities
+  const info = chatGptWebCapabilitiesInfo(
+    stored && !personalAllowed ? { ...stored, personalMemory: 'off' } : stored,
+    listMcpServers(),
+    sessionForConversation(conversationId) === null,
+    conversation?.scope ?? 'project'
+  )
   const binding = linkedConversationBinding(conversationId)
-  if (binding && info.capabilities.kanban !== 'off') info.fingerprint = createHash('sha256')
-    .update(JSON.stringify([info.fingerprint, linkedBoardScopeIdentity(conversationId)])).digest('hex')
+  if (binding && info.capabilities.kanban !== 'off')
+    info.fingerprint = createHash('sha256')
+      .update(JSON.stringify([info.fingerprint, linkedBoardScopeIdentity(conversationId)]))
+      .digest('hex')
   return info
 }
 
@@ -720,7 +742,8 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
     }))
     const localMemoryAllowed = capabilityInfo.capabilities.memory === 'read'
     const assertMemoryEnabled = () => {
-      if (conversation.scope === 'standalone' || !isWorkspaceMemoryEnabled(conversation.workspaceId)) throw new Error('memory-disabled')
+      if (conversation.scope === 'standalone' || !isWorkspaceMemoryEnabled(conversation.workspaceId))
+        throw new Error('memory-disabled')
     }
     const publicRepositoryId = (root: string): string | undefined => {
       const match = repositoryScope.repositories.find(
@@ -882,6 +905,23 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       onChange: emitChange,
     })
     reviewLoopControllers.set(input.conversationId, controller)
+    const personalMemory = createPersonalMemoryAdapter({
+      conversationId: input.conversationId,
+      access: () => {
+        const currentSession = sessionForConversation(input.conversationId)
+        if (currentSession?.sessionKey !== sessionKey || !startIsCurrent(input.conversationId, epoch, managerEpoch)) {
+          throw new Error('personal-memory-session-ended')
+        }
+        const current = capabilitiesForConversation(input.conversationId)
+        if (current.fingerprint !== capabilityInfo.fingerprint) throw new Error('personal-memory-session-stale')
+        return current.capabilities.personalMemory ?? 'off'
+      },
+      mode: () => normalizeChatMode(getConvUiPrefs(input.conversationId).chat?.mode),
+      authorizeWrite: async (toolName, signal) => {
+        if (!hooks?.authorizePersonalMemoryWrite) throw new Error('personal-memory-permission-unavailable')
+        await hooks.authorizePersonalMemoryWrite(input.conversationId, toolName, signal)
+      },
+    })
     const created = createChatGptWebSession({
       conversationId: input.conversationId,
       cwd: input.cwd,
@@ -894,6 +934,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         ghRead: capabilityInfo.capabilities.gh === 'read',
         conversation: capabilityInfo.capabilities.conversation,
         memory: capabilityInfo.capabilities.memory,
+        personalMemory: capabilityInfo.capabilities.personalMemory ?? 'off',
         browser: capabilityInfo.capabilities.browser,
         mcpRead: Object.values(capabilityInfo.capabilities.mcp).filter((scope) => scope === 'read').length,
         mcpWrite: Object.values(capabilityInfo.capabilities.mcp).filter((scope) => scope === 'write').length,
@@ -908,6 +949,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         // A completed Web turn without a new delivery releases only the Web reservation; a concurrent
         // Maestrly reservation remains owned by the local runner.
         releasePlanRevision(input.conversationId, 'chatgpt-web')
+        personalMemory.scheduleExtraction()
         try {
           hooks?.turnCompleted(input.conversationId)
         } catch {
@@ -916,7 +958,12 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
       },
       bridge: {
         ...(capabilityInfo.capabilities.kanban !== 'off' && linkedConversationBinding(input.conversationId)
-          ? { kanban: createLinkedBoardAccess(input.conversationId, capabilityInfo.capabilities.kanban === 'write' ? 'write' : 'read') }
+          ? {
+              kanban: createLinkedBoardAccess(
+                input.conversationId,
+                capabilityInfo.capabilities.kanban === 'write' ? 'write' : 'read'
+              ),
+            }
           : {}),
         deliver: async (delivery) => {
           if (!hooks) throw new Error('delivery-unavailable')
@@ -930,9 +977,10 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
         planReview: planReviewController,
         projectContext: () => hooks?.projectContext(input.conversationId, input.cwd) ?? '',
         listSkills: () => hooks?.listSkills(input.cwd, input.conversationId) ?? [],
-        readSkill: (name) => conversation.scope === 'standalone'
-          ? hooks?.readSkill(input.cwd, name, input.conversationId) ?? null
-          : hooks?.readSkill(input.cwd, name) ?? null,
+        readSkill: (name) =>
+          conversation.scope === 'standalone'
+            ? (hooks?.readSkill(input.cwd, name, input.conversationId) ?? null)
+            : (hooks?.readSkill(input.cwd, name) ?? null),
         ...(capabilityInfo.capabilities.conversation === 'read'
           ? {
               conversation: {
@@ -955,6 +1003,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
               },
             }
           : {}),
+        personalMemory,
         memory: {
           status: async () => {
             if (conversation.scope === 'standalone' || !isWorkspaceMemoryEnabled(conversation.workspaceId)) {
@@ -1072,6 +1121,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
             gh: capabilityInfo.capabilities.gh,
             conversation: capabilityInfo.capabilities.conversation,
             memory: capabilityInfo.capabilities.memory,
+            personalMemory: capabilitiesForConversation(input.conversationId).capabilities.personalMemory ?? 'off',
             mcpServers: remoteMcpServerCapabilities(capabilityInfo.capabilities, mcpServers),
           }),
           searchMcpTools: (args, signal) =>
@@ -1155,6 +1205,7 @@ export async function startSession(input: StartSessionInput): Promise<{ ok: bool
 /** End the session for ONE conversation (others continue on the same tunnel). */
 export async function endSession(conversationId: string): Promise<void> {
   sessionEpochs.set(conversationId, (sessionEpochs.get(conversationId) ?? 0) + 1)
+  if (memorySpaceForConversation(conversationId)?.kind === 'personal') void cancelMemoryExtraction(conversationId, 0)
   // Review loop: cancel the active job BEFORE revoking remote routing (no orphan execution), then
   // clear all controller state (active + historical); a new session starts from scratch.
   reviewLoopControllers.get(conversationId)?.dispose()
@@ -1289,6 +1340,7 @@ export function companionPrompt(conversationId: string): string | null {
   if (!session) return null
   return buildCompanionPrompt({
     scope: getConversation(conversationId)?.scope,
+    personalMemory: capabilitiesForConversation(conversationId).capabilities.personalMemory ?? 'off',
     appName: getAppName(),
     sessionKey: session.sessionKey,
   })
@@ -1365,6 +1417,9 @@ export async function disposeChatGptWeb(): Promise<void> {
   for (const conversationId of sessions.keys()) releaseCompanionPlacement(conversationId)
   companionWindows.dispose()
   for (const session of sessions.values()) {
+    if (memorySpaceForConversation(session.conversationId)?.kind === 'personal') {
+      void cancelMemoryExtraction(session.conversationId, 0)
+    }
     getRouter().unregister(session.sessionKey)
     session.end()
   }

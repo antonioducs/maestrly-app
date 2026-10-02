@@ -1,3 +1,4 @@
+import { memorySpaceForConversation } from '../memory/spaces'
 import { isDeepStrictEqual } from 'node:util'
 /**
  * MCP server support for BYOK chat. Users configure streamable HTTP or stdio MCP servers;
@@ -769,4 +770,19 @@ export async function buildAppTools(args: {
       await server.close().catch(() => {})
     },
   }
+}
+
+/** The complete local collection surface; repository aliases never enter personal chats. */
+export const PERSONAL_MEMORY_TOOLS = new Set([
+  'memory_search',
+  'memory_list',
+  'memory_read',
+  'memory_upsert',
+  'memory_archive',
+  'memory_restore',
+  'memory_forget',
+])
+
+export function hasPersonalMemoryTools(conversationId: string): boolean {
+  return memorySpaceForConversation(conversationId)?.kind === 'personal'
 }

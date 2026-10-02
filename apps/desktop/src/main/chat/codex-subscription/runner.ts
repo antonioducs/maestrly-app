@@ -1,3 +1,4 @@
+import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { isBotMode } from '../../fleet/instance/config'
 import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
@@ -1925,8 +1926,14 @@ async function buildDynamicTools(
         })
       : { tools: {}, close: async () => {} }
   const app =
-    !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled
+    !args.reviewerRuntime &&
+    (((capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled) ||
+      hasPersonalMemoryTools(args.conversationId))
       ? await buildAppTools({
+          only:
+            appToolsEnabled && (capabilityMode === 'agent' || args.mode === 'maestro')
+              ? undefined
+              : PERSONAL_MEMORY_TOOLS,
           conversationId: args.conversationId,
           mode: args.mode,
           gate,

@@ -300,7 +300,7 @@ processing every old chat.
 ## Memory core and catalog
 
 Project conversations with memory enabled share their workspace's durable memory;
-standalone chats have no memory space. Fleet bots have their own space (see
+ordinary standalone chats share personal memory in the local app profile. Fleet bots have their own space (see
 [bot memory](bot-fleet.md#bot-memory)). The host includes a memory core in the
 model's context: pinned content and a catalog of other active memories by title.
 The project **Memory Center** shows an **Automatic** source for extracted entries
@@ -310,9 +310,73 @@ The pinned section has a 3,000-character budget, with content excerpts of up to
 700 characters per entry; entries that do not fit are omitted. Catalog entries
 have a 1,600-character budget, at most 40 entries and 90-character titles, ordered
 by importance, use count and last update. The agent can use `memory_read` to read
-an entry in full. The core stays stable until portable compaction; changes to
-included pinned content arrive as an update on the next turn. Updates over
-1,500 characters rebuild the core. Native compaction alone does not rebuild it.
+an entry in full. Project and bot cores stay stable until portable compaction;
+changes to included pinned content arrive as an update on the next turn. Updates
+over 1,500 characters rebuild those cores. Native compaction alone does not
+rebuild them. Personal cores refresh on each admitted turn so changes made by
+other chats reach the bounded catalog immediately.
+
+## Personal memory in Chats
+
+**Settings → Chat → Models & agents → Personal memory → Manage personal memory**
+opens the personal memory panel; selecting an entry in a message's memory
+indicator opens the panel at that entry. The panel manages facts and preferences
+that should be useful across your conversations: language, response style,
+interests and recurring habits. Every ordinary chat in the same local profile uses this collection,
+including chats with different native providers. Projects, bot-originated chats
+and fleet bots keep their existing memory scopes. Personal memory does not sync
+between devices or with the fleet gateway.
+
+Create or edit an entry in the central view, or ask an assistant in Agent or
+Design mode to save it. Memory tools remain available when general app tools are
+disabled. Ask and Plan can read memories; writes retain the conversation's
+permission rules. Sharing memories does not share permission approvals or other
+chats' transcripts. Prefer replacing an outdated entry over saving contradictory
+facts. The central view supports pinning, archiving, restoring, permanent deletion
+with confirmation, and JSON/Markdown export.
+
+The personal memory panel opens a readable detail sheet before editing. Search
+and the All, Recent and Archived tabs keep the collection in one list; type,
+status and pinned filters can be combined. Type, scope and tags are under a
+collapsible section in the editor. Closing an edited draft asks before discarding
+it, and failed saves leave the draft available. Updates from other chats preserve
+fields you are editing; saving changes only the fields you touched.
+
+Use **Settings** in the panel for personal access, recall and the extraction
+model. **More options** contains separate JSON and Markdown exports and index
+rebuilding. The existing project memory settings and panel remain independent.
+
+Pinned entries enter the context; other entries appear in the bounded catalog
+and can be recalled by relevance. On the next admitted turn, personal catalog
+changes and corrections or removals of previously recalled entries reach other
+open chats. Deleting the originating chat or a project does not delete personal
+memories. Removing a memory stops future retrieval and tells chats that already
+received it to stop relying on it; it does not erase historical messages or
+information already sent to a provider.
+
+Personal memory also tracks entries returned by its read, list and search tools.
+If corrections exceed the update budget, a short notice invalidates all earlier
+personal evidence: the rebuilt core is current, and other facts must be read
+again. Assistants cannot read archived or superseded personal content; the
+central view retains that history for your review and restoration.
+
+Personal memory has separate settings from project memory. Access and automatic
+recall start enabled; background saving starts disabled and requires its own
+model selection. Turning off recall leaves the core and tools available.
+Turning off personal memory stops new assistant reads, writes, context injection
+and background extraction, while manual management remains available. Invalid
+or unreadable personal settings disable assistant access until corrected.
+
+ChatGPT Web/Companion requires its own **Personal memory** permission: Off,
+Read, or Write. It defaults to Off; project-memory permission does not grant
+personal access. Read permits retrieval, and Write additionally permits changes
+subject to the session's mode and permission policy. Changing or revoking the
+capability invalidates the corresponding session access.
+
+Companion background saving additionally requires Write and Agent/Design mode.
+It processes only user messages already persisted in the local conversation;
+it does not scrape the browser's ChatGPT history. Ending the session or revoking
+access cancels pending extraction and discards late results.
 
 ## Automatic recall
 
@@ -329,8 +393,9 @@ recalled sources.
 Turn-memory preparation has a 1,500 ms budget, including at most 800 ms for vector
 retrieval. Text search remains available without vectors. A slow recall or
 unavailable host memory provider skips that piece while preserving the memory
-core. Unreadable memory settings fall back to the defaults: recall on, automatic
-saving off. Memory failures do not prevent sending a message.
+core. Unreadable project-memory settings fall back to the defaults: recall on,
+automatic saving off. Personal settings fail closed as described above. Memory
+failures do not prevent sending a message.
 
 Recall and the read-only `memory_search`, `memory_list`, `memory_read`,
 `history_search` and `history_read` tools never prompt for approval. Disabling
@@ -357,6 +422,16 @@ choose a **Memory model**. Saving starts disabled and needs a selected model.
 Background extraction sends condensed conversation content and existing memory
 to that model; extraction and consolidation consume its quota and record usage.
 Bots use their configured compaction model instead.
+
+Personal memory uses its own background-saving switch and model. Enabling
+project extraction does not enable personal extraction. Personal extraction
+accepts entries only with a reference to a user message in the processed local
+transcript and focuses on durable facts or preferences about the user. Assistant
+claims, tool output and task-specific details are not sources of personal facts.
+This provenance check and model guidance do not prove the truth of an entry;
+review saved memories in the central view. Disabling personal access or saving
+cancels pending work and discards late model responses. Concurrent extractions
+do not replace targets changed since the extraction began.
 
 Extraction waits three minutes after the latest completed turn, with a maximum
 wait of 30 minutes from the first pending trigger. It reads messages after the

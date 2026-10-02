@@ -17,6 +17,7 @@ import {
   forgetLocalMemory,
   getLocalMemory,
   listLocalMemories,
+  listAllLocalMemories,
   restoreLocalMemory,
   updateLocalMemory,
 } from './local-memory-service'
@@ -24,7 +25,7 @@ import { getLegacyMemoryBackups } from './legacy-memory-migrator'
 import { rebuildMemoryIndex, reconcileMemoryIndex } from './index'
 import { retrieveHybridMemory } from './retrieval'
 import { discoverSharedKnowledge } from './shared-knowledge'
-import { isWorkspaceMemoryEnabled } from './access'
+import { isMemorySpaceEnabled } from './access'
 
 function slugify(value: string): string {
   return value
@@ -41,7 +42,10 @@ function inside(root: string, target: string): boolean {
   return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
 }
 
-async function safeKnowledgeDirectory(repositoryRoot: string, type: SharedMemoryType): Promise<{
+async function safeKnowledgeDirectory(
+  repositoryRoot: string,
+  type: SharedMemoryType
+): Promise<{
   realRoot: string
   directory: string
 }> {
@@ -97,7 +101,10 @@ function toSharedType(type: MemoryType, requested?: SharedMemoryType): SharedMem
   return type === 'preference' ? 'reference' : type
 }
 
-export async function listSharedMemories(workspaceId: string, repositoryRoot?: string): Promise<{
+export async function listSharedMemories(
+  workspaceId: string,
+  repositoryRoot?: string
+): Promise<{
   documents: SharedKnowledgeDocument[]
   warnings: string[]
   repositoryRoot: string
@@ -112,11 +119,11 @@ export async function listSharedMemories(workspaceId: string, repositoryRoot?: s
 export async function searchMemoryCenter(
   workspaceId: string,
   query: string,
-  repositoryRoot?: string,
+  repositoryRoot?: string
 ): Promise<MemorySearchHit[]> {
   const workspace = getWorkspace(workspaceId)
   if (!workspace) throw new Error('workspace not found')
-  if (!isWorkspaceMemoryEnabled(workspaceId)) {
+  if (!isMemorySpaceEnabled(workspaceId)) {
     const needle = query.trim().toLocaleLowerCase()
     const locals: MemorySearchHit[] = listLocalMemories(workspaceId, { query, limit: 100 }).map((memory) => ({
       kind: 'local',
@@ -140,7 +147,7 @@ export async function searchMemoryCenter(
         [document.title, document.content, document.scope, document.relativePath, ...document.tags]
           .join('\n')
           .toLocaleLowerCase()
-          .includes(needle),
+          .includes(needle)
       )
       .slice(0, 100)
       .map((document) => ({
@@ -201,7 +208,8 @@ export async function promoteLocalMemory(input: {
     if (error.code === 'ENOENT') return undefined
     throw error
   })
-  if (existing && (existing.isSymbolicLink() || !existing.isFile())) throw new Error('promotion target is not a regular file')
+  if (existing && (existing.isSymbolicLink() || !existing.isFile()))
+    throw new Error('promotion target is not a regular file')
   if (existing && !input.overwrite) throw new Error('shared memory already exists')
   if (existing) {
     const temporary = path.join(directory, `.${id}.${Date.now()}.tmp`)
@@ -262,12 +270,12 @@ export async function openSharedMemorySource(workspaceId: string, relativePath: 
 }
 
 export function exportLocalMemoryData(workspaceId: string): { json: string; markdown: string } {
-  const memories = listLocalMemories(workspaceId, { limit: 500 })
+  const memories = listAllLocalMemories(workspaceId)
   const json = `${JSON.stringify({ schemaVersion: 1, workspaceId, exportedAt: Date.now(), memories }, null, 2)}\n`
   const markdown = memories
     .map(
       (memory) =>
-        `# ${memory.title}\n\n- ID: \`${memory.id}\`\n- Type: ${memory.type}\n- Status: ${memory.status}\n- Scope: ${memory.scope || '—'}\n- Tags: ${memory.tags.join(', ') || '—'}\n- Source: ${memory.source}\n\n${memory.content}\n`,
+        `# ${memory.title}\n\n- ID: \`${memory.id}\`\n- Type: ${memory.type}\n- Status: ${memory.status}\n- Scope: ${memory.scope || '—'}\n- Tags: ${memory.tags.join(', ') || '—'}\n- Source: ${memory.source}\n\n${memory.content}\n`
     )
     .join('\n---\n\n')
   return { json, markdown }

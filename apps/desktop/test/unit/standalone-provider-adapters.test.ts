@@ -36,7 +36,11 @@ vi.mock('../../src/main/chat/tools', async (original) => {
     },
   }
 })
-vi.mock('../../src/main/chat/mcp', () => ({ buildMcpTools: h.mcp, buildAppTools: h.mcp }))
+vi.mock('../../src/main/chat/mcp', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/mcp')>()),
+  buildMcpTools: h.mcp,
+  buildAppTools: h.mcp,
+}))
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: vi.fn() }))
 vi.mock('../../src/main/chat/usage-diagnostics', () => ({ recordModelCallUsage: vi.fn() }))
 vi.mock('../../src/main/chat/model-meta', () => ({

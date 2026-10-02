@@ -7,7 +7,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { recordModelCallUsage } from '../usage-diagnostics'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { isSubagentToolAllowed } from '../tools'
 import { allowedConversationShellEnv, type ConversationShellEnv } from '../conversation-env'
 import type { CodexAppServerClient } from './client'
@@ -487,9 +487,7 @@ export async function runCodexSubagent(args: RunCodexSubagentArgs): Promise<Code
         developerInstructions: [
           args.definition.prompt,
           `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-          args.conversationScope === 'standalone'
-            ? 'This is a standalone conversation without project or workspace memory.'
-            : MEMORY_TOOL_GUIDANCE,
+          args.conversationScope === 'standalone' ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
           autonomousPolicy('')
             ? 'This is unattended work. Never ask for a plan approval or an answer from a person. Resolve ordinary technical choices; return concrete blockers to the parent. Use only the provided Maestrly tools under the inherited permissions.'
             : '',
