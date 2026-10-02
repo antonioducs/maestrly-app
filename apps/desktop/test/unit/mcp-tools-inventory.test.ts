@@ -38,6 +38,7 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'computer_key',
   'bot_peers_list',
   'bot_peers_send',
+  'bot_share_file',
   'bot_routines_list',
   'bot_routines_create',
   'bot_routines_update',

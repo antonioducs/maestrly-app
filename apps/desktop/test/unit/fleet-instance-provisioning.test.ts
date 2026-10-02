@@ -254,6 +254,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     usage: null,
   })
   expect((await runtime.status()).capabilities).toEqual([
+    'files',
     'provisioning',
     'environments',
     'environment-compaction',

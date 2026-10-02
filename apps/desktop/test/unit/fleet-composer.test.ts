@@ -24,7 +24,7 @@ const model: FleetSelectionOption = {
 
 describe('fleet composer helpers', () => {
   it('validates attachment type, per-image size, count, and aggregate size', () => {
-    expect(validateAttachments([], [file(1, 'text/plain')])).toBe('type')
+    expect(validateAttachments([], [file(1, 'application/zip')])).toBe('type')
     expect(validateAttachments([], [file(FLEET_IMAGE_LIMITS.attachmentMaxBytes + 1)])).toBe('size')
     expect(validateAttachments(Array(8).fill(file(1)), [file(1)])).toBe('count')
     expect(validateAttachments(Array(4).fill(file(5 * 1024 * 1024)), [file(1)])).toBe('total')

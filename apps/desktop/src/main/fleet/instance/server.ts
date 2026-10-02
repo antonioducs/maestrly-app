@@ -1,9 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
 import { createConnection, type Socket } from 'node:net'
-import type { Duplex } from 'node:stream'
+import { Transform, type Duplex, type Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_ROUTES,
@@ -17,6 +19,8 @@ import {
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
+  fleetFileIdSchema,
+  fleetFileRefSchema,
   fleetInstanceEventSchema,
   fleetReaderWantsReasoning,
   fleetTranscriptItemReadable,
@@ -31,6 +35,7 @@ import {
   type FleetBotMemoryPatchRequest,
   type FleetBotSkills,
   type FleetConversationCallRequest,
+  type FleetFileRef,
   type FleetImportResults,
   type FleetInputReceipt,
   type FleetInstanceBotInstall,
@@ -76,6 +81,7 @@ export class InstanceHttpError extends Error {
  * newer ones. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
+  FLEET_FILES_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -86,6 +92,8 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
 const MEMORY_STATUSES: readonly string[] = ['active', 'archived', 'superseded', 'all']
+
+export type InstanceFile = { ref: FleetFileRef; stream: Readable }
 
 /** One bot of the environment, as the control API reaches it. */
 export interface InstanceBot {
@@ -102,6 +110,8 @@ export interface InstanceBot {
   /** A page of the transcript; `reasoning` items only when the reader asked for them. */
   transcript(before: string | null, limit: number, reasoning: boolean): Promise<FleetTranscriptPage>
   image(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array }>
+  fileMeta(fileId: string): Promise<FleetFileRef>
+  file(fileId: string): Promise<InstanceFile>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
   cancel(): Promise<void>
@@ -267,6 +277,11 @@ function routeFor(method: string, pathname: string): { key: RouteKey; params: Re
 const isBotId = (value: string | undefined): value is string =>
   value !== undefined && fleetBotIdSchema.safeParse(value).success
 const botNotFound = (): InstanceHttpError => new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+const fileIdOf = (value: string): string => {
+  const parsed = fleetFileIdSchema.safeParse(value)
+  if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid file id.')
+  return parsed.data
+}
 const underTakeover = (bot: InstanceBot): boolean => {
   const hold = bot.holdManager.state
   return hold.state === 'held' && hold.reason === 'takeover'
@@ -447,6 +462,8 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       return bot(params).transcript(url.searchParams.get('before'), limit, fleetReaderWantsReasoning(url.searchParams))
     },
     botImage: ({ params }) => bot(params).image(params.imageId),
+    botFileMeta: ({ params }) => bot(params).fileMeta(fileIdOf(params.fileId)),
+    botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botTurnCancel: ({ params }) => bot(params).cancel(),
@@ -487,6 +504,35 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
       const route = FLEET_INSTANCE_ROUTES[match.key]
       const input = await body(request, route.body, BODY_LIMITS[match.key] ?? DEFAULT_BODY_MAX)
       const output = await handler({ params: match.params, url, input })
+      if (match.key === 'botFile') {
+        const file = output as InstanceFile
+        try {
+          const ref = fleetFileRefSchema.parse(file.ref)
+          response.writeHead(200, {
+            'Content-Type': ref.mediaType,
+            'Content-Length': ref.byteSize,
+            'Content-Disposition':
+              "attachment; filename*=UTF-8''" +
+              encodeURIComponent(ref.name).replace(/['()*]/g, (char) => '%' + char.charCodeAt(0).toString(16)),
+            'Cache-Control': 'private, no-store',
+            'X-Content-Type-Options': 'nosniff',
+          })
+          let size = 0
+          const bounded = new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              size += chunk.length
+              callback(size > ref.byteSize ? new Error('File exceeds its recorded size') : null, chunk)
+            },
+            flush(callback) {
+              callback(size === ref.byteSize ? null : new Error('Incomplete file'))
+            },
+          })
+          await pipeline(file.stream, bounded, response)
+        } finally {
+          file.stream.destroy()
+        }
+        return
+      }
       if (match.key === 'botImage') {
         const image = output as { mediaType: string; bytes: Uint8Array }
         response.writeHead(200, {
@@ -504,6 +550,10 @@ export function createInstanceControlServer(config: BotInstanceConfig, environme
         response.end()
       }
     } catch (error) {
+      if (response.headersSent || response.destroyed) {
+        response.destroy()
+        return
+      }
       const known =
         error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Instance request failed.')
       writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })

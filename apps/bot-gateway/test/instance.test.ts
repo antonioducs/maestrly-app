@@ -146,3 +146,42 @@ describe('transcript reasoning', () => {
     expect(received).toEqual([event])
   })
 })
+
+describe('private file transport', () => {
+  it('lets file streams outlive the normal RPC timeout while remaining cancellable', async () => {
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file/content': (res) => {
+        res.writeHead(200, { 'content-type': 'text/plain', 'content-length': 4 })
+        res.write('ab')
+        setTimeout(() => res.end('cd'), 50)
+      },
+    })
+    const client = new InstanceClient('environment', 'control', origin, 5).forBot('bot', true)
+    expect(await (await client.file('file')).text()).toBe('abcd')
+    const controller = new AbortController()
+    const response = await client.file('file', controller.signal)
+    controller.abort()
+    await expect(response.text()).rejects.toThrow()
+  })
+  it.each([Buffer.from([0, 255, 2]), Buffer.alloc(0)])('reads authenticated exact binary bytes (%s)', async (bytes) => {
+    const ref = { id: 'file', name: 'document.bin', mediaType: 'application/octet-stream', byteSize: bytes.length }
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file': json(200, ref),
+      'GET /v1/bots/bot/files/file/content': (res) =>
+        res.writeHead(200, { 'content-type': ref.mediaType, 'content-length': bytes.length }).end(bytes),
+    })
+    const client = new InstanceClient('environment', 'control', origin).forBot('bot', true)
+    expect(await client.fileMeta('file')).toEqual(ref)
+    expect(Buffer.from(await (await client.file('file')).arrayBuffer())).toEqual(bytes)
+  })
+  it('rejects redirects and invalid metadata', async () => {
+    const origin = await instance({
+      'GET /v1/bots/bot/files/file/content': (res) => res.writeHead(302, { location: '/other' }).end(),
+      'GET /v1/bots/bot/files/file': json(200, { id: 'other', name: 'a', mediaType: 'text/plain', byteSize: 0 }),
+    })
+    const client = new InstanceClient('environment', 'control', origin).forBot('bot', true)
+    await expect(client.file('file')).rejects.toBeInstanceOf(GatewayError)
+    await expect(client.fileMeta('file')).rejects.toBeInstanceOf(GatewayError)
+    await expect(client.file('../file')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+})

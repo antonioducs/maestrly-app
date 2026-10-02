@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { FleetRoutine } from '@maestrly/bot-fleet-protocol'
+import type { FleetRoutine, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import {
   formatUptime,
   latestTodoItemId,
@@ -107,6 +107,23 @@ describe('fleet forms', () => {
     }
     const owner = { ...continuation, id: 'o', source: 'owner' as const }
     expect(visibleTranscriptItems([continuation, owner])).toEqual([owner])
+  })
+  it('keeps pending permissions and hides approved, denied and expired requests from the conversation', () => {
+    const permission = (state: 'pending' | 'approved' | 'denied' | 'expired'): FleetTranscriptItem => ({
+      kind: 'permission',
+      id: state,
+      at: '2026-09-23T12:34:56Z',
+      requestId: state,
+      title: 'Run a command',
+      detail: null,
+      tool: null,
+      state,
+      resolvedAt: null,
+    })
+    const pending = permission('pending')
+    expect(
+      visibleTranscriptItems([permission('approved'), pending, permission('denied'), permission('expired')])
+    ).toEqual([pending])
   })
   it('picks the latest checklist, skipping other tools and todo_write rows from older instances', () => {
     const tool = (id: string, name: string, todos?: { content: string; status: 'pending' }[]) => ({

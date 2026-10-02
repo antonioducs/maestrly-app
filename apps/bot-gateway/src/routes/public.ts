@@ -1,4 +1,5 @@
 import { ownerMemoryRequestHash } from '../owner-memory.js'
+import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
@@ -10,6 +11,9 @@ import {
   FLEET_PROVISIONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILES_FEATURE,
+  FLEET_FILE_LIMITS,
+  fleetFileIdSchema,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
   normalizePairingCode,
@@ -235,6 +239,7 @@ export async function publicRoute(
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: ctx.host.gatewayVersion,
           features: [
+            FLEET_FILES_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_PROVISIONING_FEATURE,
             FLEET_ENVIRONMENTS_FEATURE,
@@ -432,6 +437,63 @@ export async function publicRoute(
             fleetReaderWantsReasoning(url.searchParams)
           ),
       }
+    case 'botFileMeta':
+    case 'botFile': {
+      if (!fleetFileIdSchema.safeParse(params.fileId).success)
+        throw new GatewayError('INVALID_REQUEST', 'Invalid file id')
+      requireBot(ctx, id)
+      const client = ctx.lifecycle.instanceFor(id)
+      const controller = new AbortController()
+      const closed = () => controller.abort()
+      res.once('close', closed)
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+      try {
+        const ref = await client.fileMeta(params.fileId, controller.signal)
+        controller.signal.throwIfAborted()
+        if (key === 'botFileMeta') {
+          res.setHeader('Cache-Control', 'private, no-store')
+          res.setHeader('X-Content-Type-Options', 'nosniff')
+          return { body: ref }
+        }
+        const response = await client.file(params.fileId, controller.signal)
+        reader = response.body!.getReader()
+        if (
+          Number(response.headers.get('content-length')) !== ref.byteSize ||
+          response.headers.get('content-type') !== ref.mediaType
+        )
+          throw new GatewayError('INSTANCE_UNAVAILABLE', 'Invalid file response')
+        res.writeHead(200, {
+          'Content-Type': ref.mediaType,
+          'Content-Length': ref.byteSize,
+          'Content-Disposition':
+            "attachment; filename*=UTF-8''" +
+            encodeURIComponent(ref.name).replace(/['()*]/g, (char) => '%' + char.charCodeAt(0).toString(16)),
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'private, no-store',
+        })
+        let size = 0
+        for (;;) {
+          controller.signal.throwIfAborted()
+          const next = await reader.read()
+          if (next.done) break
+          size += next.value.byteLength
+          if (size > ref.byteSize || size > FLEET_FILE_LIMITS.downloadMaxBytes) throw new Error('Oversized file')
+          if (!res.write(next.value)) await once(res, 'drain', { signal: controller.signal })
+        }
+        if (size !== ref.byteSize) throw new Error('Truncated file')
+        res.end()
+        return { stream: true }
+      } catch (error) {
+        if (!res.headersSent && !res.destroyed) throw error
+        res.destroy()
+        return { stream: true }
+      } finally {
+        controller.abort()
+        await reader?.cancel().catch(() => undefined)
+        reader?.releaseLock()
+        res.off('close', closed)
+      }
+    }
     case 'botImage': {
       const response = await ctx.lifecycle.instanceFor(id).image(params.imageId)
       const mediaType = response.headers.get('content-type')!
@@ -460,7 +522,21 @@ export async function publicRoute(
     case 'botMessageSend': {
       const input = body as FleetSendMessageRequest,
         scope = 'botMessageSend:' + id
-      const hash = createHash('sha256').update(JSON.stringify(input)).digest('hex')
+      if (
+        input.attachments.some((attachment) => attachment.kind && attachment.kind !== 'image') &&
+        !ctx.lifecycle.statuses.get(id)?.capabilities.includes(FLEET_FILES_FEATURE)
+      )
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to send documents')
+      // Preserve receipts written before image inputs had an explicit kind.
+      const fingerprint = {
+        ...input,
+        attachments: input.attachments.map((attachment) => {
+          if (attachment.kind !== 'image') return attachment
+          const { kind: _kind, ...legacy } = attachment
+          return legacy
+        }),
+      }
+      const hash = createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex')
       const prior = ctx.store.priorIdempotency(scope, input.idempotencyKey, hash)
       if (prior) return { body: prior.response, status: prior.status }
       const pendingKey = scope + ':' + input.idempotencyKey

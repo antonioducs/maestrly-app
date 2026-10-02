@@ -2,7 +2,11 @@ import type { FleetBot, FleetRoutine, FleetRoutineSchedule, FleetTranscriptItem 
 import { FLEET_ROUTINE_LIMITS } from '@maestrly/bot-fleet-protocol'
 
 export function visibleTranscriptItems(items: FleetTranscriptItem[]): FleetTranscriptItem[] {
-  return items.filter((item) => item.kind !== 'user' || item.source !== 'continuation')
+  return items.filter(
+    (item) =>
+      (item.kind !== 'user' || item.source !== 'continuation') &&
+      (item.kind !== 'permission' || item.state === 'pending')
+  )
 }
 
 /** Like desktop chats, a bot conversation shows only its latest to-do list, where it was last written. */

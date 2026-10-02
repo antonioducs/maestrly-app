@@ -45,6 +45,18 @@ export const FLEET_IMAGE_LIMITS = {
   imageReadMaxBytes: 32 * 1024 * 1024,
   imagesPerItemMax: 8,
 } as const
+/** Gateway and instance capability for document attachments and private file downloads. */
+export const FLEET_FILES_FEATURE = 'files'
+export const FLEET_FILE_LIMITS = {
+  pdfMaxBytes: 10 * 1024 * 1024,
+  pdfsMax: 4,
+  textMaxBytes: 256 * 1024,
+  attachmentsMax: 8,
+  attachmentsTotalMaxBytes: 20 * 1024 * 1024,
+  downloadMaxBytes: 100 * 1024 * 1024,
+  publishedTotalMaxBytes: 1024 * 1024 * 1024,
+  publishedCountMax: 200,
+} as const
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 

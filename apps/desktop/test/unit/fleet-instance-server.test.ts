@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { once } from 'node:events'
 import { randomBytes, randomUUID } from 'node:crypto'
 import http from 'node:http'
+import { Readable } from 'node:stream'
 import net, { type AddressInfo } from 'node:net'
 import {
   FLEET_PROTOCOL_HEADER,
@@ -128,6 +129,16 @@ function fakeBot(botId: string, slot: number) {
     deleteMemory: vi.fn(async (_id: string) => {}),
     transcript: vi.fn(async (_before: string | null, _limit: number) => ({ items: [], before: null })),
     image: vi.fn(async (_imageId: string) => ({ mediaType: 'image/png', bytes: new Uint8Array([137, 80, 78, 71]) })),
+    fileMeta: vi.fn(async (fileId: string) => ({
+      id: fileId,
+      name: 'report.txt',
+      mediaType: 'text/plain',
+      byteSize: Buffer.byteLength(botId),
+    })),
+    file: vi.fn(async (fileId: string) => ({
+      ref: { id: fileId, name: 'report.txt', mediaType: 'text/plain', byteSize: Buffer.byteLength(botId) },
+      stream: Readable.from([Buffer.from(botId)]),
+    })),
     input: vi.fn(async (_value: FleetInstanceInput) => ({
       inputId: `input-${botId}`,
       itemId: `input:${botId}`,
@@ -408,6 +419,7 @@ describe('instance control HTTP', () => {
 
   it("lists the environment's models for its default compaction model", async () => {
     expect(INSTANCE_CAPABILITIES).toEqual([
+      'files',
       'provisioning',
       'environments',
       'environment-compaction',
@@ -472,6 +484,50 @@ describe('instance control HTTP', () => {
     for (const target of ['accounts', 'skills', 'mcp'] as const)
       expect((await send(base, 'POST', '/v1/ui/open', { target })).status).toBe(204)
     expect(environment.open.mock.calls).toEqual([['accounts'], ['skills'], ['mcp']])
+  })
+
+  it('serves private file bytes for the addressed bot and refuses unauthenticated or invalid paths', async () => {
+    const { base, bots } = await setup()
+    const route = '/v1/bots/beta/files/f-synthetic'
+    const meta = await send(base, 'GET', route)
+    expect(meta.status).toBe(200)
+    expect(await meta.json()).toMatchObject({ id: 'f-synthetic', name: 'report.txt', byteSize: 4 })
+    const response = await send(base, 'GET', route + '/content')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toContain('attachment;')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(await response.text()).toBe('beta')
+    expect(bots.get('beta')!.file).toHaveBeenCalledWith('f-synthetic')
+    expect(bots.get('alpha')!.file).not.toHaveBeenCalled()
+    expect((await send(base, 'GET', route + '/content', undefined, { Authorization: 'Bearer wrong' })).status).toBe(401)
+    expect((await send(base, 'GET', route + '/content', undefined, { Origin: 'https://example.test' })).status).toBe(
+      403
+    )
+    expect((await send(base, 'GET', '/v1/bots/unknown/files/f-synthetic/content')).status).toBe(404)
+    expect((await send(base, 'GET', '/v1/bots/beta/files/..%2Fsecret/content')).status).toBe(400)
+  })
+
+  it('streams empty files and aborts truncated files without writing a JSON error into the download', async () => {
+    const { base, bots } = await setup()
+    const beta = bots.get('beta')!
+    beta.file.mockResolvedValueOnce({
+      ref: { id: 'f-empty', name: 'empty.txt', mediaType: 'text/plain', byteSize: 0 },
+      stream: Readable.from([]),
+    })
+    const empty = await send(base, 'GET', '/v1/bots/beta/files/f-empty/content')
+    expect(empty.status).toBe(200)
+    expect(await empty.text()).toBe('')
+    beta.file.mockResolvedValueOnce({
+      ref: { id: 'f-broken', name: 'broken.txt', mediaType: 'text/plain', byteSize: 6 },
+      stream: Readable.from(
+        (async function* () {
+          yield Buffer.from('beta')
+          await new Promise((resolve) => setTimeout(resolve, 5))
+        })()
+      ),
+    })
+    const broken = await send(base, 'GET', '/v1/bots/beta/files/f-broken/content')
+    await expect(broken.arrayBuffer()).rejects.toThrow()
   })
 
   it('serves binary images only with fleet credentials and keeps the larger body limit on bot inputs', async () => {

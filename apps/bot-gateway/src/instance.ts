@@ -1,5 +1,8 @@
 import {
   FLEET_INSTANCE_ROUTES,
+  FLEET_FILE_LIMITS,
+  fleetFileIdSchema,
+  type FleetFileRef,
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
@@ -84,7 +87,8 @@ export class InstanceClient {
     params: Record<string, string> = {},
     query?: Record<string, string | number | undefined>,
     body?: unknown,
-    timeoutMs = this.timeoutMs
+    timeoutMs = this.timeoutMs,
+    signal?: AbortSignal
   ): Promise<any> {
     const route = FLEET_INSTANCE_ROUTES[key]
     const controller = new AbortController()
@@ -93,13 +97,14 @@ export class InstanceClient {
     try {
       response = await fetch(this.origin + buildPath(route.path, params, query), {
         method: route.method,
+        redirect: 'error',
         headers: {
           [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
           Authorization: 'Bearer ' + this.controlToken,
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: controller.signal,
+        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
       })
       text = await response.text()
     } catch {
@@ -241,6 +246,61 @@ export class InstanceClient {
       {},
       { before, limit, [FLEET_REASONING_QUERY]: reasoning ? 1 : undefined }
     )
+  }
+  async fileMeta(fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
+    if (!fleetFileIdSchema.safeParse(fileId).success || !this.scope)
+      throw new GatewayError('INVALID_REQUEST', 'Invalid file request')
+    const ref: FleetFileRef = await this.call(
+      'botFileMeta',
+      { botId: this.scope.botId, fileId },
+      undefined,
+      undefined,
+      this.timeoutMs,
+      signal
+    )
+    if (ref.id !== fileId) throw invalidResponse()
+    return ref
+  }
+  async file(fileId: string, signal?: AbortSignal): Promise<Response> {
+    if (!fleetFileIdSchema.safeParse(fileId).success || !this.scope)
+      throw new GatewayError('INVALID_REQUEST', 'Invalid file request')
+    let response: Response | undefined
+    try {
+      response = await fetch(
+        this.origin +
+          buildPath(FLEET_INSTANCE_ROUTES.botFile.path, {
+            botId: this.scope.botId,
+            fileId,
+          }),
+        {
+          headers: {
+            [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
+            Authorization: 'Bearer ' + this.controlToken,
+          },
+          redirect: 'error',
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+        }
+      )
+      if (response.status === 404) throw new GatewayError('NOT_FOUND', 'File not found')
+      const length = response.headers.get('content-length')
+      const type = response.headers.get('content-type') ?? ''
+      if (
+        response.status !== 200 ||
+        !response.body ||
+        length === null ||
+        !/^\d+$/.test(length) ||
+        !Number.isSafeInteger(Number(length)) ||
+        Number(length) > FLEET_FILE_LIMITS.downloadMaxBytes ||
+        !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(type) ||
+        (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity')
+      )
+        throw invalidResponse()
+      return response
+    } catch (error) {
+      await response?.body?.cancel().catch(() => undefined)
+      if (error instanceof GatewayError) throw error
+      throw new InstanceUnreachableError()
+    }
   }
   async image(imageId: string): Promise<Response> {
     const path = this.scope?.environments
