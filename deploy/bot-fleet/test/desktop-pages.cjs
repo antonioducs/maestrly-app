@@ -44,7 +44,7 @@ const pages = {
     page(
       'popup',
       field('popup', '#d9f7d6') +
-        `<script>fetch('/opener?owner=popup&path=' + encodeURIComponent(window.opener ? window.opener.location.pathname : ''))` +
+        `<script>fetch('/opened-by?owner=popup&path=' + encodeURIComponent(window.opener ? window.opener.location.pathname : ''))` +
         `</script>`
     ),
   // Where the address bar test navigates.
@@ -58,7 +58,8 @@ http
     const url = new URL(request.url, 'http://fixture.test')
     const name = url.pathname.slice(1)
     const param = (key) => url.searchParams.get(key) ?? ''
-    if (name !== 'state') state.hits.push({ path: url.pathname, ua: request.headers['user-agent'] ?? '', at: elapsed() })
+    if (name !== 'state')
+      state.hits.push({ path: url.pathname, owner: param('owner'), ua: request.headers['user-agent'] ?? '', at: elapsed() })
     if (name === 'state') return response.end(JSON.stringify({ ...state, now: elapsed() }))
     if (name.startsWith('pid/')) {
       state.pids.push(name.slice(4))
@@ -76,7 +77,7 @@ http
       state.sizes[param('owner')] = { width: Number(param('w')), height: Number(param('h')) }
       return response.end('ok')
     }
-    if (name === 'opener') {
+    if (name === 'opened-by') {
       state.openers[param('owner')] = param('path')
       return response.end('ok')
     }

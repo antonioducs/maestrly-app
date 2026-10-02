@@ -2,7 +2,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { TerminalViewers, xdotoolActivate } from '../../src/main/fleet/instance/desktop/terminal-viewers'
+import {
+  QUIET_TERMINAL_NAME,
+  TerminalViewers,
+  xdotoolActivate,
+  xdotoolRaise,
+} from '../../src/main/fleet/instance/desktop/terminal-viewers'
 
 interface FakeChild {
   command: string
@@ -25,6 +30,7 @@ function harness(
   const children: FakeChild[] = []
   const log = vi.fn()
   const activate = vi.fn(options.activate ?? (async () => true))
+  const raise = vi.fn(async (_pid: number) => true)
   let nextPid = 500
   const viewers = new TerminalViewers({
     env: ENV,
@@ -46,10 +52,11 @@ function harness(
       return { pid, exited, kill: child.kill }
     },
     activate,
+    raise,
     log,
     ...(options.max === undefined ? {} : { max: options.max }),
   })
-  return { viewers, children, activate, log }
+  return { viewers, children, activate, raise, log }
 }
 
 const settle = async (): Promise<void> => {
@@ -102,6 +109,20 @@ describe('TerminalViewers', () => {
     await viewers.show('term:conv:1', 'Terminal 1')
     expect(children).toHaveLength(1)
     expect(activate).toHaveBeenCalledExactlyOnceWith(500)
+  })
+
+  it("opens a window the bot's work asked for without taking the keyboard, and raises it later the same way", async () => {
+    const { viewers, children, activate, raise } = harness()
+    await viewers.show('term:conv:1', 'Terminal 1', { activate: false })
+    // Openbox gives no focus to a new window of this name (openbox-rc.xml), so the owner's typing stays where it was.
+    expect(QUIET_TERMINAL_NAME).toBe('maestrly-quiet')
+    expect(children[0].args.slice(0, 4)).toEqual(['-class', 'Maestrly-Terminal', '-name', 'maestrly-quiet'])
+    await viewers.show('term:conv:1', 'Terminal 1', { activate: false })
+    expect(raise).toHaveBeenCalledExactlyOnceWith(500)
+    expect(activate).not.toHaveBeenCalled()
+    await viewers.show('term:conv:1', 'Terminal 1')
+    expect(activate).toHaveBeenCalledExactlyOnceWith(500)
+    expect(children).toHaveLength(1)
   })
 
   it('opens one viewer for simultaneous requests for the same pty', async () => {
@@ -190,6 +211,7 @@ describe('TerminalViewers', () => {
         throw new Error('ENOENT')
       },
       activate: async () => true,
+      raise: async () => true,
       log: vi.fn(),
     })
     await expect(viewers.show('term:conv:1', 'Terminal 1')).rejects.toThrow('ENOENT')
@@ -254,6 +276,13 @@ describe('xdotoolActivate', () => {
       await withFakeXdotool('exit 0', async (env, calls) => {
         await expect(xdotoolActivate(env)(4242)).resolves.toBe(true)
         expect(calls()).toEqual([':7|search --pid 4242 --limit 1 windowactivate --sync'])
+      })
+    })
+
+    it('raises the window of the pid without activating it', async () => {
+      await withFakeXdotool('exit 0', async (env, calls) => {
+        await expect(xdotoolRaise(env)(4242)).resolves.toBe(true)
+        expect(calls()).toEqual([':7|search --pid 4242 --limit 1 windowraise'])
       })
     })
 

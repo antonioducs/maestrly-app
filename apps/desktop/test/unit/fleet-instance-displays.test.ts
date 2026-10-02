@@ -203,6 +203,11 @@ describe('DisplayManager apps displays', () => {
       { command: 'xdpyinfo', args: ['-display', ':2'], env: {} },
       { command: 'openbox', args: ['--config-file', '/opt/maestrly/openbox-rc.xml'], env: botEnv('alpha', 2) },
       { command: 'tint2', args: ['-c', `${HOME}/.config/tint2/tint2rc`], env: botEnv('alpha', 2) },
+      {
+        command: 'maestrly-browser-presenter',
+        args: ['--source', ':0', '--socket', `${HOME}/.cache/maestrly-bots/alpha/desktop.sock`],
+        env: botEnv('alpha', 2),
+      },
     ])
   })
 
@@ -363,6 +368,7 @@ describe('DisplayManager apps displays', () => {
       ['Xvfb', true, false],
       ['openbox', true, false],
       ['tint2', true, false],
+      ['maestrly-browser-presenter', true, false],
     ])
     expect(beta.every((child) => child.running && !child.killed)).toBe(true)
     expect(manager.bot('alpha')).toBeNull()
@@ -456,6 +462,47 @@ describe('DisplayManager apps displays', () => {
     expect(['dbus-daemon', 'Xvfb', 'openbox', 'tint2'].map((command) => spawner.running(command).length)).toEqual([
       1, 1, 1, 1,
     ])
+  })
+
+  it("supervises the bot's browser presenter apart from its display, and gives up on it alone", async () => {
+    const { manager, spawner, clock, logs } = setup()
+    await manager.startBot('alpha', 2)
+    const presenter = 'maestrly-browser-presenter'
+    expect(spawner.running(presenter)).toHaveLength(1)
+    // It exits when the desktop service closes its connection: it comes back a second later.
+    spawner.running(presenter)[0].exit(0)
+    await clock.advance(1_000)
+    expect(spawner.running(presenter)).toHaveLength(1)
+    // A presenter that keeps crashing is given up after five restarts in a minute; the display goes on.
+    for (let crash = 1; crash <= 5; crash++) {
+      spawner.running(presenter)[0].exit(1)
+      await clock.advance(1_000)
+    }
+    expect(spawner.named(presenter)).toHaveLength(7)
+    spawner.running(presenter)[0].exit(1)
+    await clock.advance(10_000)
+    expect(spawner.named(presenter)).toHaveLength(7)
+    expect(spawner.running(presenter)).toHaveLength(0)
+    expect(logs.some((line) => line.includes('presenter') && /giving up/i.test(line))).toBe(true)
+    expect(['dbus-daemon', 'Xvfb', 'openbox', 'tint2'].map((command) => spawner.running(command).length)).toEqual([
+      1, 1, 1, 1,
+    ])
+    // The display server restarting brings it back with the window manager and taskbar.
+    spawner.running('Xvfb')[0].exit(1)
+    await clock.advance(1_000)
+    expect(spawner.running(presenter)).toHaveLength(1)
+  })
+
+  it('never retries a presenter that is not installed or cannot run on these displays', async () => {
+    for (const code of [127, 2]) {
+      const { manager, spawner, clock, logs } = setup()
+      spawner.respond = (command) => (command === 'maestrly-browser-presenter' ? code : PROBES.has(command) ? 0 : 'run')
+      await manager.startBot('alpha', 2)
+      await clock.advance(60_000)
+      expect(spawner.named('maestrly-browser-presenter')).toHaveLength(1)
+      expect(logs.filter((line) => line.includes('maestrly-browser-presenter'))).toHaveLength(1)
+      expect(spawner.running('tint2')).toHaveLength(1)
+    }
   })
 })
 

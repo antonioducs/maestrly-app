@@ -67,6 +67,8 @@ export {
   flushPendingBrowserPersists,
   reorderBrowserTab,
   createBrowserTab,
+  presentedBrowserViews,
+  onBrowserStateChange,
   type CreateBrowserTabOptions,
   ensureBrowser,
   closeBrowserTab,

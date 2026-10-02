@@ -33,6 +33,7 @@ import {
 } from '../../src/main/fleet/instance/environment'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
+import { emitChatHost } from '../../src/main/chat/host-events'
 import { writeBotPaused } from '../../src/main/fleet/instance/registry'
 import { InstanceInputQueue } from '../../src/main/fleet/instance/queue'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
@@ -743,7 +744,12 @@ describe('bot environment registry', () => {
   )
 
   it("starts each bot's desktop services with its display and stops them with its screens", async () => {
-    const handles: Array<{ botId: string; display: string; dispose: ReturnType<typeof vi.fn> }> = []
+    const handles: Array<{
+      botId: string
+      display: string
+      dispose: ReturnType<typeof vi.fn>
+      present: ReturnType<typeof vi.fn>
+    }> = []
     const order: string[] = []
     const displays = fakeDisplays(home)
     displays.dispose.mockImplementation(async () => {
@@ -753,8 +759,9 @@ describe('bot environment registry', () => {
       const dispose = vi.fn(async () => {
         order.push('desktop ' + target.botId)
       })
-      handles.push({ botId: target.botId, display: target.display.display, dispose })
-      return { present: vi.fn(), dispose }
+      const handle = { present: vi.fn(), dispose }
+      handles.push({ botId: target.botId, display: target.display.display, ...handle })
+      return handle
     })
     const setup = environment(displays)
     const runtime = new EnvironmentRuntime({ ...setup.deps, desktop })
@@ -769,6 +776,38 @@ describe('bot environment registry', () => {
     const target = desktop.mock.calls[0][0]
     expect(target.conversationId()).toBe(runtime.bot('alpha').primaryConversationId)
     expect(target.hold()).toMatchObject({ state: 'none' })
+    // The app a bot's tool uses comes forward on that bot's desktop only.
+    const alphaConversation = runtime.bot('alpha').primaryConversationId!
+    const betaConversation = runtime.bot('beta').primaryConversationId!
+    for (const handle of handles) handle.present.mockClear()
+    const tool = (conversationId: string, payload: Record<string, unknown>) =>
+      emitChatHost(conversationId, `chat:delta:${conversationId}`, { messageId: 'm', ...payload })
+    tool(betaConversation, { kind: 'tool-call', toolCallId: 'b1', toolName: 'browser_click', input: { ref: 1 } })
+    tool(alphaConversation, {
+      kind: 'tool-call',
+      toolCallId: 'a1',
+      toolName: 'terminal_run',
+      input: { id: 'term:x:2' },
+    })
+    // A new terminal exists only once its tool finished.
+    tool(alphaConversation, {
+      kind: 'tool-call',
+      toolCallId: 'a2',
+      toolName: 'mcp__maestrly__terminal_create',
+      input: {},
+    })
+    // Reading the page shows nothing.
+    tool(betaConversation, { kind: 'tool-call', toolCallId: 'b2', toolName: 'browser_snapshot', input: {} })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    expect(handles[1].present.mock.calls).toEqual([[{ app: 'browser' }]])
+    expect(handles[0].present.mock.calls).toEqual([[{ app: 'terminal', terminalId: 'term:x:2' }]])
+    tool(alphaConversation, {
+      kind: 'tool-state',
+      toolCallId: 'a2',
+      state: { status: 'completed', output: { text: 'created' } },
+    })
+    expect(handles[0].present.mock.calls.at(-1)).toEqual([{ app: 'terminal', terminalId: null }])
+    expect(setup.deps.floatBrowser).toHaveBeenCalledWith(betaConversation)
 
     // A new slot is a new display: the old services stop first.
     await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 3, gatewayToken: tokenA })

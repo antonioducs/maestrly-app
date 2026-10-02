@@ -81,6 +81,7 @@ import {
 import { listProviders } from '../../chat/catalog'
 import { hasApiKey } from '../../chat/credentials'
 import { observeChatHost } from '../../chat/host-events'
+import { presentationForTool, presentsOnCompletion, type PresentationRequest } from './desktop/presentation'
 import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/conversation-env'
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents } from './server'
@@ -234,6 +235,8 @@ export interface BotRuntimeHost {
   peers(botId: string): BotIdentityPeer[]
   /** Shows the bot's browser in its area of the environment display. */
   floatBrowser(conversationId: string): void
+  /** Brings the app a tool of the bot uses forward on its desktop, when the environment gives bots one. */
+  present?(conversationId: string, request: PresentationRequest): void
 }
 
 type EventPayload = Parameters<InstanceEvents['publish']>[0]
@@ -280,6 +283,8 @@ export class BotRuntime {
   private statusTimer: NodeJS.Timeout | null = null
   private transcriptTimer: NodeJS.Timeout | null = null
   private floatTimers = new Set<NodeJS.Timeout>()
+  /** Tool calls whose app comes forward once they finish, such as a terminal just created. */
+  private readonly presentOnCompletion = new Map<string, PresentationRequest>()
   private permissionAt = new Map<string, string>()
   private questionAt = new Map<string, string>()
   /** The tool of each pending permission request, once its call was found: it never changes. */
@@ -540,7 +545,11 @@ export class BotRuntime {
     await this.syncCompaction()
     if (!this.floatAttempted) {
       this.floatAttempted = true
-      this.schedule(() => this.host.floatBrowser(id), 2_000)
+      this.schedule(() => {
+        this.host.floatBrowser(id)
+        // A bot's desktop starts with its browser window shown.
+        this.host.present?.(id, { app: 'browser' })
+      }, 2_000)
     }
     this.stopObserving?.()
     this.stopGate?.()
@@ -1382,8 +1391,22 @@ export class BotRuntime {
       this.activeTool = { tool: event.toolName, target: toolTarget(event.input) }
       const id = this.primaryConversationId
       if (event.toolName.startsWith('browser_') && id) this.schedule(() => this.host.floatBrowser(id), 1_000)
+      const request = presentationForTool(event.toolName, event.input)
+      if (id && request) {
+        if (presentsOnCompletion(event.toolName)) this.presentOnCompletion.set(event.toolCallId, request)
+        else this.schedule(() => this.host.present?.(id, request), 1_000)
+      }
     }
-    if (event.kind === 'tool-state' && event.state.status !== 'running') this.activeTool = null
+    if (event.kind === 'tool-state' && event.state.status !== 'running') {
+      this.activeTool = null
+      const request = this.presentOnCompletion.get(event.toolCallId)
+      const id = this.primaryConversationId
+      if (request && event.state.status !== 'pending' && event.state.status !== 'awaiting-permission') {
+        this.presentOnCompletion.delete(event.toolCallId)
+        if (event.state.status === 'completed' && id) this.host.present?.(id, request)
+      }
+    }
+    if (event.kind === 'finish' || event.kind === 'aborted') this.presentOnCompletion.clear()
     if (
       event.kind === 'text-delta' ||
       event.kind === 'text-start' ||

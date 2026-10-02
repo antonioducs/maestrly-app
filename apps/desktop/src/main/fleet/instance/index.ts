@@ -80,7 +80,9 @@ export async function startBotInstanceMode(
     displays,
     floatBrowser: hooks.floatBrowser,
     // A bot's desktop needs its apps display: outside a container there is none.
-    ...(displays ? { desktop: (target: BotDesktopTarget) => startBotDesktop(target) } : {}),
+    ...(displays
+      ? { desktop: (target: BotDesktopTarget) => startBotDesktop(target, { floatBrowser: hooks.floatBrowser }) }
+      : {}),
     closeConversation: hooks.closeConversation,
     purgeConversation: hooks.purgeConversation,
     openSettings: (target) => {

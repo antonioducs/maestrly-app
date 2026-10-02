@@ -437,7 +437,7 @@ describe.skipIf(process.platform === 'win32')('BotDesktopService commands', () =
     expect(item.openUrl).not.toHaveBeenCalled()
   })
 
-  it('opens an http or https URL in the conversation and shows the browser', async () => {
+  it('opens an http or https URL in the conversation, which brings its browser forward itself', async () => {
     const item = await fixture()
     expect(await item.command(...url('https://example.test/a'))).toEqual(['ok'])
     expect(await item.command(...url('http://example.test/b?q=é'))).toEqual(['ok'])
@@ -446,8 +446,8 @@ describe.skipIf(process.platform === 'win32')('BotDesktopService commands', () =
       [CONVERSATION, 'https://example.test/a'],
       [CONVERSATION, 'http://example.test/b?q=%C3%A9'],
     ])
-    expect(item.presentBrowser).toHaveBeenCalledTimes(2)
-    expect(item.presentBrowser).toHaveBeenCalledWith(CONVERSATION)
+    // Presenting would give the browser the keyboard; a link may come from the bot's own programs.
+    expect(item.presentBrowser).not.toHaveBeenCalled()
   })
 
   it('opens a URL of the largest accepted size', async () => {
@@ -458,15 +458,11 @@ describe.skipIf(process.platform === 'win32')('BotDesktopService commands', () =
     expect(item.openUrl).toHaveBeenCalledWith(CONVERSATION, value)
   })
 
-  it('answers with the reason when the tab or the browser cannot be shown', async () => {
+  it('answers with the reason when the tab cannot be opened', async () => {
     const item = await fixture()
     item.openUrl.mockRejectedValueOnce(new Error('No such conversation'))
-    let reply = await item.command(...url('https://example.test/a'))
+    const reply = await item.command(...url('https://example.test/a'))
     expect([reply[0], text(reply[1])]).toEqual(['err', 'No such conversation'])
-    expect(item.presentBrowser).not.toHaveBeenCalled()
-    item.presentBrowser.mockRejectedValueOnce(new Error('Browser is not on screen'))
-    reply = await item.command(...url('https://example.test/a'))
-    expect([reply[0], text(reply[1])]).toEqual(['err', 'Browser is not on screen'])
   })
 
   it('refuses commands when the bot has no conversation', async () => {
@@ -996,7 +992,7 @@ describe.skipIf(process.platform === 'win32')('maestrly-desktop', () => {
     expect(await runScript('maestrly-desktop', ['url', 'https://example.test/é?a=1&b=2'], env).exit).toBe(0)
     expect(item.openFiles).toHaveBeenCalledTimes(1)
     expect(item.viewers.show).toHaveBeenCalledTimes(1)
-    expect(item.presentBrowser).toHaveBeenCalledTimes(2)
+    expect(item.presentBrowser).toHaveBeenCalledTimes(1)
     expect(item.openUrl).toHaveBeenCalledExactlyOnceWith(CONVERSATION, 'https://example.test/%C3%A9?a=1&b=2')
   })
 

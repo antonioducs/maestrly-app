@@ -28,10 +28,18 @@ import { restoreFocusAfterFloatingClose } from './popup-manager'
 import { attachWindowNavigation } from './mouse-navigation'
 import { setDrawerPlacementPerformance } from './drawer/performance'
 import { isBotMode } from './fleet/instance/config'
-import { centerInArea, clampToArea, fillsScreenArea, initialFloatingBounds } from './fleet/instance/window-bounds'
+import {
+  centerInArea,
+  clampToArea,
+  fillsScreenArea,
+  initialFloatingBounds,
+  presentedBrowserBounds,
+  type PresentedSize,
+} from './fleet/instance/window-bounds'
 import {
   conversationScreen,
   onConversationScreenChange,
+  presentedBrowserSize,
   type ConversationScreen,
   type ScreenArea,
 } from './conversation-screen'
@@ -195,8 +203,17 @@ function clampBounds(saved?: FloatingBounds, area?: ScreenArea): FloatingBounds 
   }
 }
 
-/** Initial bounds of a floating window: the bot browser fills its area (or the work area), others keep theirs. */
-function floatingBounds(tab: FloatTab, saved: FloatingBounds | undefined, area: ScreenArea | undefined) {
+/**
+ * Initial bounds of a floating window: the bot browser fills its area (or the work area), others keep theirs. A bot
+ * browser its desktop presents sits at the top left of its area at the presented size.
+ */
+function floatingBounds(
+  tab: FloatTab,
+  saved: FloatingBounds | undefined,
+  area: ScreenArea | undefined,
+  presented: PresentedSize | null = null
+) {
+  if (area && presented && fillsScreenArea(tab, isBotMode())) return presentedBrowserBounds(area, presented)
   return clampBounds(
     initialFloatingBounds<FloatingBounds>(tab, isBotMode(), area ?? screen.getPrimaryDisplay().workArea, saved),
     area
@@ -208,7 +225,12 @@ function makeWindow(convId: string, tab: FloatTab): BrowserWindow {
   // and borders around those bounds, outside the area, and move a frame that starts above the display down.
   const frameless = fillsScreenArea(tab, isBotMode())
   const win = new BrowserWindow({
-    ...floatingBounds(tab, getConvUiPrefs(convId).floating?.[tab], conversationScreen(convId)?.windowArea),
+    ...floatingBounds(
+      tab,
+      getConvUiPrefs(convId).floating?.[tab],
+      conversationScreen(convId)?.windowArea,
+      presentedBrowserSize(convId)
+    ),
     ...(frameless ? { frame: false } : {}),
     minWidth: MIN_W,
     minHeight: MIN_H,
@@ -345,10 +367,16 @@ export function setFloatBounds(convId: string, tab: FloatTab, bounds: FloatingBo
   if (en && !en.win.isDestroyed()) en.win.setBounds(clampBounds(bounds, conversationScreen(convId)?.windowArea))
 }
 
-/** A conversation's screen may be registered after its windows opened; move them into its (new) area. */
+/**
+ * A conversation's screen may be registered after its windows opened, and its desktop may present its browser at a new
+ * size: move them into their (new) place. The views are laid out again even when the bounds stay, since a presented
+ * browser loses its identity strip.
+ */
 function placeConversationWindows(convId: string, registered: ConversationScreen | null): void {
   for (const [tab, en] of floats.get(convId) ?? []) {
-    if (!en.win.isDestroyed()) en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea))
+    if (en.win.isDestroyed()) continue
+    en.win.setBounds(floatingBounds(tab, en.win.getBounds(), registered?.windowArea, presentedBrowserSize(convId)))
+    layoutFloatingTab(convId, tab, en.win)
   }
 }
 onConversationScreenChange(placeConversationWindows)

@@ -10,6 +10,15 @@
 //             dock opens the same shell again.
 //   files     The dock's Files shows the bot's home folder, with a file its shell just wrote, which opens in the editor.
 //   url       A link a program on the bot's desktop opens lands in the bot's Maestrly browser, not in Chromium.
+//   browser   Each bot's desktop shows its own Maestrly browser as a window, with its own page, at the window's size,
+//             and the window comes back where it was after its presenter restarts.
+//   typing    Typing on two bots' desktops at once reaches exactly each bot's own page, accents included, and the
+//             address bar takes an address typed on the desktop.
+//   clipboard Text copied in a desktop program pastes into the bot's page, and text copied there pastes back.
+//   popup     A sign-in popup opens inside the presented browser, takes typing and closes from its title bar.
+//   resize    Resizing the browser window on one bot's desktop resizes that bot's browser only.
+//   forward   A link opened while the owner works in another window raises the browser without taking the keyboard,
+//             and a terminal window opened for the bot's own work does not take it either.
 //
 // More scenarios register in `scenarios` below. It runs the bot image as it is, MAESTRLY_GATEWAY_BOT_IMAGE as for the
 // gateway or maestrly/bot-instance:local, and never pulls, builds or tags an image. It installs synthetic bots through the
@@ -244,6 +253,65 @@ async function closeTerminals(bot) {
   )
 }
 const desktopSocket = (bot) => `/home/bot/.cache/maestrly-bots/${bot.botId}/desktop.sock`
+/** Opens an address as a program on the bot's desktop would: through its link opener. */
+const openLink = (bot, address) =>
+  docker([
+    'exec',
+    '-e',
+    'DISPLAY=:' + bot.slot,
+    '-e',
+    'MAESTRLY_DESKTOP_SOCKET=' + desktopSocket(bot),
+    name,
+    'xdg-open',
+    address,
+  ])
+/** The window that presents the bot's Maestrly browser on its desktop, once it is shown. */
+async function browserWindow(bot) {
+  let found = null
+  await poll(bot.name + "'s browser window", async () => {
+    ;[found] = await windows(bot, '--class', 'Maestrly-Browser')
+    return Boolean(found)
+  })
+  return found
+}
+/**
+ * A window's client area on a display. xwininfo, as `xdotool getwindowgeometry` adds the window's offset inside its
+ * window manager frame to its position.
+ */
+async function clientArea(display, window) {
+  const info = await onDisplay(display, 'xwininfo', '-id', window)
+  const value = (label) => Number(new RegExp(label + ':\\s+(-?\\d+)').exec(info)?.[1])
+  return {
+    x: value('Absolute upper-left X'),
+    y: value('Absolute upper-left Y'),
+    width: value('Width'),
+    height: value('Height'),
+  }
+}
+const geometry = (bot, window) => clientArea(':' + bot.slot, window)
+/** Where a bot's browser window opens the first time (DEFAULT_PRESENTER_GEOMETRY): its client area. */
+const DEFAULT_BROWSER_AREA = { x: 80, y: 56, width: 1120, height: 640 }
+const sameArea = (a, b) => ['x', 'y', 'width', 'height'].every((key) => a[key] === b[key])
+/** The page color of each bot's fixture page (desktop-pages.cjs). */
+const PAGE_COLOR = { alpha: [0xff, 0xd6, 0xe0], beta: [0xd6, 0xe8, 0xff] }
+/** The bot's tile of the environment display, where its browser lives (fleetEnvironmentTile). */
+const tile = (bot) => ({ x: (bot.slot % 3) * 1280, y: Math.floor(bot.slot / 3) * 800 })
+/** Clicks a point of the bot's browser window, given in the window's client area. */
+async function clickBrowser(bot, x, y) {
+  const area = await geometry(bot, await browserWindow(bot))
+  await xdotool(bot, 'mousemove', String(area.x + x), String(area.y + y), 'click', '1')
+  await sleep(250)
+}
+/** Opens the bot's own fixture page in its browser, and waits for the page to report its size. */
+async function openOwnPage(bot) {
+  const since = (await fixture()).now
+  await openLink(bot, FIXTURE + '/' + bot.botId)
+  // A page reports its size once it has loaded; an earlier tab of the same page reported before.
+  await poll(bot.name + "'s page", async () =>
+    (await fixture()).hits.some((hit) => hit.path === '/size' && hit.owner === bot.botId && hit.at > since)
+  )
+  return browserWindow(bot)
+}
 
 // ---- Scenarios ---------------------------------------------------------------------------------------------------
 
@@ -266,6 +334,14 @@ async function look() {
       const root = await onDisplay(':' + bot.slot, 'xprop', '-root', '_XROOTPMAP_ID')
       return /pixmap id/.test(root) && (await desktopPrograms(bot)).taskbar !== null
     })
+  }
+  // A bot's browser window shows on its desktop once the bot starts; minimized, it leaves the wallpaper to measure.
+  for (const bot of BOTS) {
+    await xdotool(bot, 'windowminimize', '--sync', await browserWindow(bot))
+    await poll(
+      bot.name + "'s browser window to minimize",
+      async () => (await windows(bot, '--class', 'Maestrly-Browser')).length === 0
+    )
   }
   // Every bot gets its own wallpaper, window manager and taskbar.
   for (const bot of BOTS) {
@@ -441,11 +517,302 @@ async function url() {
   )
 }
 
+async function browser() {
+  for (const bot of BOTS) await openOwnPage(bot)
+  for (const bot of BOTS) {
+    const window = await browserWindow(bot)
+    const area = await geometry(bot, window)
+    check(`${bot.name}'s browser window opens centered above the dock`, sameArea(area, DEFAULT_BROWSER_AREA), { area })
+    await sleep(800)
+    const shot = await capture(bot, 'browser')
+    // Below the tab strip and address bar, the window shows the bot's own page.
+    const color = await meanColor(shot, [300, 200, area.x + 200, area.y + 250])
+    step(bot.name + "'s browser window", { area, color })
+    check(`${bot.name}'s desktop shows its own browser with its own page`, near(color, PAGE_COLOR[bot.botId]), {
+      area,
+      color,
+      expected: PAGE_COLOR[bot.botId],
+    })
+    const size = (await fixture()).sizes[bot.botId]
+    check(`${bot.name}'s page is as wide as its browser window`, size.width === area.width, { size, area })
+  }
+  // The presenter restarts after it ends; the window comes back shown, where it was.
+  const [alpha] = BOTS
+  const before = await geometry(alpha, await browserWindow(alpha))
+  // Anchored, so that it does not match the shell running it.
+  await inContainer(`pkill -f '^maestrly-browser-presenter --source :0 --socket ${desktopSocket(alpha)}'`)
+  await poll(
+    "Alpha's browser window to close",
+    async () => (await windows(alpha, '--class', 'Maestrly-Browser')).length === 0
+  )
+  const after = await geometry(alpha, await browserWindow(alpha))
+  check("Alpha's browser window comes back where it was after its presenter restarts", sameArea(before, after), {
+    before,
+    after,
+  })
+}
+
+async function typing() {
+  for (const bot of BOTS) await openOwnPage(bot)
+  const texts = { alpha: 'Alpha escreve: ação, já! 123', beta: 'beta types other words; (ok)' }
+  for (const bot of BOTS) await clickBrowser(bot, 300, 300)
+  // Both owners type at once, each on their own bot's desktop.
+  await Promise.all(BOTS.map((bot) => xdotool(bot, 'type', '--delay', '30', '--', texts[bot.botId])))
+  await poll(
+    'both pages to get their text',
+    async () => {
+      const { values } = await fixture()
+      return values.alpha === texts.alpha && values.beta === texts.beta
+    },
+    20_000
+  ).catch(() => undefined)
+  const { values } = await fixture()
+  check(
+    "each bot's page gets exactly what was typed on its own desktop",
+    values.alpha === texts.alpha && values.beta === texts.beta,
+    {
+      values: { alpha: values.alpha, beta: values.beta },
+      texts,
+    }
+  )
+  // The address bar is in the second row of the browser's chrome, after its three navigation buttons.
+  const [alpha] = BOTS
+  await clickBrowser(alpha, 500, 58)
+  await xdotool(alpha, 'key', 'ctrl+a')
+  await xdotool(alpha, 'type', '--delay', '20', '--', FIXTURE + '/arrived')
+  await xdotool(alpha, 'key', 'Return')
+  const arrived = async () => (await fixture()).hits.find((hit) => hit.path === '/arrived')
+  await poll('the address typed in the address bar', arrived, 20_000).catch(() => undefined)
+  await capture(alpha, 'address')
+  const hit = await arrived()
+  check("Alpha's address bar takes an address typed on its desktop", Boolean(hit && /Electron\//.test(hit.ua)), { hit })
+}
+
+async function clipboard() {
+  const [alpha] = BOTS
+  await openOwnPage(alpha)
+  const file = '/home/bot/desktop-clipboard.txt'
+  await inContainer(`printf 'from the desktop' > ${file}`)
+  await docker(['exec', '-d', '-e', 'DISPLAY=:' + alpha.slot, name, 'mousepad', file])
+  let editor = []
+  await poll('the editor', async () => {
+    editor = await windows(alpha, '--name', 'desktop-clipboard')
+    return editor.length > 0
+  })
+  await xdotool(alpha, 'windowactivate', '--sync', editor[0])
+  await sleep(500)
+  await xdotool(alpha, 'key', 'ctrl+a', 'ctrl+c')
+  await sleep(300)
+  // Pasted into the bot's page through its browser window, clicked to the right of the editor, which lies over it.
+  await clickBrowser(alpha, 900, 300)
+  await xdotool(alpha, 'key', 'ctrl+a', 'ctrl+v')
+  await poll('the pasted text', async () => (await fixture()).values.alpha === 'from the desktop', 20_000).catch(
+    () => undefined
+  )
+  await capture(alpha, 'clipboard-paste')
+  const pasted = (await fixture()).values.alpha
+  check('text copied on the desktop pastes into the bot page', pasted === 'from the desktop', { pasted })
+  // Copied in the page, pasted into the editor and saved.
+  await xdotool(alpha, 'key', 'End')
+  await xdotool(alpha, 'type', '--delay', '20', '--', ' and back')
+  await poll('the page text', async () => (await fixture()).values.alpha === 'from the desktop and back', 20_000).catch(
+    () => undefined
+  )
+  const typed = (await fixture()).values.alpha
+  check('the page holds the pasted text and what was typed after it', typed === 'from the desktop and back', { typed })
+  await xdotool(alpha, 'key', 'ctrl+a', 'ctrl+c')
+  await sleep(600)
+  await xdotool(alpha, 'windowactivate', '--sync', editor[0])
+  await sleep(300)
+  await xdotool(alpha, 'key', 'ctrl+a', 'ctrl+v', 'ctrl+s')
+  await poll(
+    'the saved file',
+    async () => (await inContainer(`cat ${file}`)).trim() === 'from the desktop and back',
+    20_000
+  ).catch(() => undefined)
+  const saved = (await inContainer(`cat ${file}`)).trim()
+  check('text copied in the bot page pastes on the desktop', saved === 'from the desktop and back', { saved })
+  await inContainer('pkill -x mousepad || true')
+}
+
+async function popup() {
+  const [alpha] = BOTS
+  const since = (await fixture()).now
+  await openLink(alpha, FIXTURE + '/opener')
+  await poll('the opener page', async () =>
+    (await fixture()).hits.some((hit) => hit.path === '/opener' && hit.at > since)
+  )
+  await sleep(800)
+  await clickBrowser(alpha, 560, 360)
+  await poll('the popup', async () => (await fixture()).openers.popup === '/opener', 20_000).catch(() => undefined)
+  check('the page opens its sign-in popup', (await fixture()).openers.popup === '/opener', {
+    openers: (await fixture()).openers,
+  })
+  // The popup lies on the environment display; the bot's desktop shows it inside the browser window.
+  const [popupWindow] = (
+    await onDisplay(':0', 'xdotool', 'search', '--onlyvisible', '--name', '^popup$').catch(() => '')
+  )
+    .split('\n')
+    .filter(Boolean)
+  if (!popupWindow) throw new Error('The popup is not on the environment display')
+  const onEnvironment = await clientArea(':0', popupWindow)
+  const origin = tile(alpha)
+  const inBrowser = { ...onEnvironment, x: onEnvironment.x - origin.x, y: onEnvironment.y - origin.y }
+  const area = await geometry(alpha, await browserWindow(alpha))
+  await sleep(500)
+  const shot = await capture(alpha, 'popup')
+  const color = await meanColor(shot, [
+    100,
+    60,
+    area.x + inBrowser.x + inBrowser.width / 2 - 50,
+    area.y + inBrowser.y + inBrowser.height / 2 - 30,
+  ])
+  check('the popup shows inside the browser window on the bot desktop', near(color, [0xd9, 0xf7, 0xd6]), {
+    inBrowser,
+    color,
+  })
+  await clickBrowser(alpha, inBrowser.x + inBrowser.width / 2, inBrowser.y + inBrowser.height / 2)
+  await xdotool(alpha, 'type', '--delay', '20', '--', 'signed in')
+  await poll('the popup text', async () => (await fixture()).values.popup === 'signed in', 20_000).catch(
+    () => undefined
+  )
+  check('typing on the desktop reaches the popup', (await fixture()).values.popup === 'signed in', {
+    value: (await fixture()).values.popup,
+  })
+  // Its close button is at the right end of the title bar Openbox draws above it on the environment display.
+  await clickBrowser(alpha, inBrowser.x + inBrowser.width - 10, inBrowser.y - 10)
+  const open = async () =>
+    (await onDisplay(':0', 'xdotool', 'search', '--onlyvisible', '--name', '^popup$').catch(() => '')).trim() !== ''
+  await poll('the popup to close', async () => !(await open()), 20_000).catch(() => undefined)
+  check("the popup closes from its title bar's close button", !(await open()))
+}
+
+async function resize() {
+  for (const bot of BOTS) await openOwnPage(bot)
+  const [alpha] = BOTS
+  const betaBefore = (await fixture()).sizes.beta
+  await xdotool(alpha, 'windowsize', '--sync', await browserWindow(alpha), '900', '560')
+  await poll("Alpha's page at its new size", async () => (await fixture()).sizes.alpha?.width === 900, 20_000).catch(
+    () => undefined
+  )
+  await sleep(800)
+  const sizes = (await fixture()).sizes
+  const area = await geometry(alpha, await browserWindow(alpha))
+  await capture(alpha, 'resize')
+  check("resizing Alpha's browser window resizes its browser", sizes.alpha.width === 900 && area.width === 900, {
+    sizes,
+    area,
+  })
+  check(
+    "Beta's browser keeps its size",
+    sizes.beta.width === betaBefore.width && sizes.beta.height === betaBefore.height,
+    {
+      before: betaBefore,
+      after: sizes.beta,
+    }
+  )
+  const saved = JSON.parse(await inContainer(`cat ${wallpaperFolder(alpha)}/presenter.json`))
+  check("Alpha's browser window keeps its new size for next time", saved.width === 900 && saved.height === 560, {
+    saved,
+  })
+}
+
+/** The windows Openbox manages on a display, bottom to top, and the one with the keyboard. */
+async function stacking(bot) {
+  const ids = (text) => (text.match(/0x[0-9a-f]+/gi) ?? []).map((id) => Number.parseInt(id, 16))
+  const stack = ids(await onDisplay(':' + bot.slot, 'xprop', '-root', '_NET_CLIENT_LIST_STACKING'))
+  const [active] = ids(await onDisplay(':' + bot.slot, 'xprop', '-root', '_NET_ACTIVE_WINDOW'))
+  return { stack, active }
+}
+/** The managed window among those a search found. */
+async function managed(bot, ...query) {
+  const { stack } = await stacking(bot)
+  const found = (await windows(bot, ...query)).map(Number)
+  return found.find((id) => stack.includes(id)) ?? null
+}
+
+async function forward() {
+  const [alpha] = BOTS
+  await openOwnPage(alpha)
+  const file = '/home/bot/desktop-forward.txt'
+  await inContainer(`printf 'owner at work' > ${file}`)
+  await docker(['exec', '-d', '-e', 'DISPLAY=:' + alpha.slot, name, 'mousepad', file])
+  let editor = null
+  await poll('the editor', async () => {
+    editor = await managed(alpha, '--name', 'desktop-forward')
+    return editor !== null
+  })
+  await xdotool(alpha, 'windowactivate', '--sync', String(editor))
+  await sleep(500)
+  const browserId = Number(await browserWindow(alpha))
+  const before = await stacking(alpha)
+  step('stacking before the link', { before, editor, browserId })
+  await openLink(alpha, FIXTURE + '/forward')
+  await poll(
+    'the browser above the editor',
+    async () => {
+      const { stack } = await stacking(alpha)
+      return stack.indexOf(browserId) > stack.indexOf(editor)
+    },
+    20_000
+  ).catch(() => undefined)
+  const after = await stacking(alpha)
+  check(
+    'a link brings the browser above the window the owner works in, which keeps the keyboard',
+    after.stack.indexOf(browserId) > after.stack.indexOf(editor) && after.active === editor,
+    { after, editor, browserId }
+  )
+  // A terminal window opened for the bot's work, as its terminal tools open them.
+  await docker([
+    'exec',
+    '-d',
+    '-e',
+    'DISPLAY=:' + alpha.slot,
+    name,
+    'xterm',
+    '-class',
+    'Maestrly-Terminal',
+    '-name',
+    'maestrly-quiet',
+    '-T',
+    'Quiet terminal',
+    '-e',
+    'sleep',
+    '60',
+  ])
+  const activeBefore = (await stacking(alpha)).active
+  let quiet = null
+  await poll('the quiet terminal', async () => {
+    quiet = await managed(alpha, '--name', 'Quiet terminal')
+    return quiet !== null
+  })
+  await sleep(800)
+  const withTerminal = await stacking(alpha)
+  check(
+    "a terminal window opened for the bot's work leaves the keyboard where it was",
+    withTerminal.active === activeBefore && withTerminal.stack.includes(quiet),
+    {
+      withTerminal,
+      activeBefore,
+      quiet,
+    }
+  )
+  await inContainer(
+    'pkill -x mousepad || true; pkill -f "^xterm -class Maestrly-Terminal -name maestrly-quiet" || true'
+  )
+}
+
 const scenarios = new Map([
   ['look', { title: "The look of each bot's desktop", run: look }],
   ['terminal', { title: "The dock's Terminal and the bot's shell", run: terminal }],
   ['files', { title: "The dock's Files and the editor", run: files }],
   ['url', { title: 'Links from the desktop open in the Maestrly browser', run: url }],
+  ['browser', { title: "Each bot's browser as a window of its desktop", run: browser }],
+  ['typing', { title: 'Typing reaches only the bot whose desktop it is on', run: typing }],
+  ['clipboard', { title: 'The desktop clipboard and the browser', run: clipboard }],
+  ['popup', { title: 'Sign-in popups inside the presented browser', run: popup }],
+  ['resize', { title: 'Resizing the browser window', run: resize }],
+  ['forward', { title: 'Apps come forward without taking the keyboard', run: forward }],
 ])
 
 function parseScenarios(argv) {

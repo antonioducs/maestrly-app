@@ -62,7 +62,10 @@ export interface BotDesktopServiceDeps {
   terminals: DesktopTerminals
   viewers: { show(ptyId: string, title: string): Promise<void> }
   openFiles(): Promise<void>
-  /** Opens the address in a tab of the conversation's browser. A rejection's message goes back to the client. */
+  /**
+   * Opens the address in a tab of the conversation's browser and brings the browser forward without the keyboard: the
+   * link may come from the bot's own programs. A rejection's message goes back to the client.
+   */
   openUrl(conversationId: string, url: string): Promise<void>
   /** Shows the bot's browser window on its desktop. A rejection's message goes back to the client. */
   presentBrowser(conversationId: string): Promise<void>
@@ -383,7 +386,6 @@ export class BotDesktopService {
         const url = this.checkedUrl(role.argument ?? '')
         const conversationId = this.requireConversation()
         await this.deps.openUrl(conversationId, url)
-        await this.presentBrowser(conversationId)
         return
       }
       case 'browser':

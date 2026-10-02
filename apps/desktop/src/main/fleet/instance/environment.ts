@@ -88,6 +88,7 @@ import {
   writeInstalledBots,
 } from './registry'
 import { BotRuntime, loadFleetAccountOptions, type BotRuntimeHost, type BotScreen } from './runtime'
+import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './server'
 
@@ -110,6 +111,11 @@ export interface BotDesktopTarget {
 }
 /** The desktop services of one bot: its desktop socket, terminal windows and browser window. */
 export interface BotDesktopHandle {
+  /**
+   * Brings the app a tool of the bot uses forward on its desktop, without the keyboard; never while a person has taken
+   * the bot over, and not again within moments for the same app.
+   */
+  present(request: PresentationRequest): void
   dispose(): Promise<void>
 }
 
@@ -222,6 +228,7 @@ export class EnvironmentRuntime {
           .filter((bot) => bot.botId !== botId && bot.name)
           .map((bot) => ({ botId: bot.botId, name: bot.name! })),
       floatBrowser: (conversationId) => this.deps.floatBrowser(conversationId),
+      present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
     }
   }
 
@@ -506,6 +513,11 @@ export class EnvironmentRuntime {
         env: this.fallbackEnv(botId, slot),
       }
     }
+  }
+  /** The desktop services of the bot whose conversation this is. */
+  private desktopOf(conversationId: string): BotDesktopHandle | null {
+    const bot = this.botForConversation(conversationId)
+    return bot ? (this.desktops.get(bot.botId) ?? null) : null
   }
   /** Starts the desktop services of a bot on its display; without them the bot still runs, so a failure is logged. */
   private async startDesktop(bot: BotRuntime, display: BotDisplay): Promise<void> {

@@ -84,11 +84,18 @@ export interface DisplayManagerDeps {
 }
 
 type Timer = ReturnType<typeof setTimeout>
-type Program = 'dbus-daemon' | 'Xvfb' | 'openbox' | 'tint2'
+/** Shows the bot's Maestrly browser, which lives on the environment display, as a window of the bot's desktop. */
+const PRESENTER = 'maestrly-browser-presenter'
+type Program = 'dbus-daemon' | 'Xvfb' | 'openbox' | 'tint2' | typeof PRESENTER
 type SurfaceKind = DisplaySurface['kind']
 
 const PROGRAMS: readonly Program[] = ['dbus-daemon', 'Xvfb', 'openbox', 'tint2']
-const DESKTOP: readonly Program[] = ['openbox', 'tint2']
+const DESKTOP: readonly Program[] = ['openbox', 'tint2', PRESENTER]
+/**
+ * Exit codes of a presenter that can never run here, so restarting it is pointless: not installed (127, as the spawner
+ * reports a missing program) or the displays lack the X extensions it needs (2).
+ */
+const PRESENTER_CANNOT_RUN: ReadonlySet<number> = new Set([127, 2])
 const ENVIRONMENT_DISPLAY = ':0'
 /** Opens links in the bot's Maestrly browser, which shares the environment's site logins, through its desktop socket. */
 export const BOT_URL_OPENER = '/usr/local/bin/maestrly-open-url'
@@ -144,6 +151,8 @@ interface BotStack {
   /** The last painting of the wallpaper, so that paintings never overlap. It never rejects. */
   decoration: Promise<void>
   recentRestarts: number
+  /** Restarts of the presenter within the last minute: it has a budget of its own and never fails the display. */
+  presenterRestarts: number
   serverReady: boolean
   serverStarting: boolean
 }
@@ -248,6 +257,7 @@ export class DisplayManager {
         restarts: new Map(),
         decoration: Promise.resolve(),
         recentRestarts: 0,
+        presenterRestarts: 0,
         serverReady: false,
         serverStarting: false,
       }
@@ -500,7 +510,9 @@ export class DisplayManager {
           ? [display, '-screen', '0', `${FLEET_SCREEN.width}x${FLEET_SCREEN.height}x24`, '-nolisten', 'tcp', '-noreset']
           : program === 'openbox'
             ? ['--config-file', OPENBOX_CONFIG]
-            : ['-c', `${this.home}/.config/tint2/tint2rc`]
+            : program === PRESENTER
+              ? ['--source', ENVIRONMENT_DISPLAY, '--socket', env.MAESTRLY_DESKTOP_SOCKET]
+              : ['-c', `${this.home}/.config/tint2/tint2rc`]
     const language = program === 'tint2' ? this.language() : null
     const child = this.spawnChild(
       program,
@@ -526,10 +538,46 @@ export class DisplayManager {
     if (stack.children.get(program) !== child) return
     stack.children.delete(program)
     if (program === 'Xvfb') stack.serverReady = false
+    if (program === PRESENTER) {
+      this.presenterExited(stack, code)
+      return
+    }
     if (stack.state !== 'running') return
     const { botId, display } = stack.display
     this.deps.log(`${program} of bot ${botId} (display ${display}) exited with code ${code}; restarting it in 1 s.`)
     this.scheduleRestart(stack, program)
+  }
+
+  /**
+   * The presenter comes back a second after it exits, on a budget of its own: without it the bot's desktop only lacks
+   * its browser window, so it never fails the display. One that cannot run here is not retried; a clean exit (the
+   * desktop service closed its connection) does not count against the budget.
+   */
+  private presenterExited(stack: BotStack, code: number | null): void {
+    if (stack.state !== 'running' && stack.state !== 'starting') return
+    const { botId, display } = stack.display
+    if (code !== null && PRESENTER_CANNOT_RUN.has(code)) {
+      this.deps.log(
+        `${PRESENTER} of bot ${botId} (display ${display}) cannot run here (exit code ${code}); its browser is not shown on its desktop.`
+      )
+      return
+    }
+    if (code !== 0) {
+      if (stack.presenterRestarts >= RESTART_BUDGET) {
+        this.deps.log(
+          `${PRESENTER} of bot ${botId} (display ${display}) restarted ${RESTART_BUDGET} times within a minute; giving up on it until its display server restarts.`
+        )
+        return
+      }
+      stack.presenterRestarts++
+      this.stackTimer(stack, RESTART_WINDOW_MS, () => {
+        stack.presenterRestarts--
+      })
+    }
+    this.stackTimer(stack, RESTART_DELAY_MS, () => {
+      if (stack.state === 'running' && stack.serverReady && !stack.children.has(PRESENTER))
+        this.relaunchProgram(stack, PRESENTER)
+    })
   }
 
   private scheduleRestart(stack: BotStack, program: Program): void {

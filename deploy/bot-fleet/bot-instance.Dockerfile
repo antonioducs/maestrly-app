@@ -49,6 +49,15 @@ RUN set -eu; \
     echo "${mise_sha}  /usr/local/bin/mise" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/mise
 
+# Shows each bot's Maestrly browser, drawn on the environment display, as a window of the bot's own desktop.
+FROM debian:bookworm-slim AS presenter
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libc6-dev libx11-dev libxext-dev libxdamage-dev libxfixes-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY deploy/bot-fleet/desktop/presenter/maestrly-browser-presenter.c /src/maestrly-browser-presenter.c
+RUN mkdir /out && gcc -std=c11 -O2 -Wall -Wextra -Werror -o /out/maestrly-browser-presenter \
+    /src/maestrly-browser-presenter.c -lX11 -lXext -lXdamage -lXfixes
+
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=Etc/UTC HOME=/home/bot DISPLAY=:0 XDG_CURRENT_DESKTOP=Openbox
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -97,11 +106,13 @@ COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
 COPY deploy/bot-fleet/openbox-environment-rc.xml /opt/maestrly/openbox-environment-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
 # The desktop of the bots' apps displays: icons, launchers, programs and the Openbox theme.
-COPY deploy/bot-fleet/desktop /opt/maestrly/desktop
+COPY deploy/bot-fleet/desktop/icons /opt/maestrly/desktop/icons
+COPY deploy/bot-fleet/desktop/xterm /opt/maestrly/desktop/xterm
 COPY deploy/bot-fleet/desktop/theme/Maestrly /usr/share/themes/Maestrly
 COPY deploy/bot-fleet/desktop/applications/ /usr/share/applications/
 # The dock launchers, the link opener and the terminal windows reach the environment's Maestrly through these.
 COPY deploy/bot-fleet/desktop/bin/maestrly-desktop deploy/bot-fleet/desktop/bin/maestrly-pty-attach deploy/bot-fleet/desktop/bin/maestrly-open-url /usr/local/bin/
+COPY --from=presenter /out/maestrly-browser-presenter /usr/local/bin/maestrly-browser-presenter
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display

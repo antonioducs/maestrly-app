@@ -128,7 +128,10 @@ test('the bot image build context holds every file its Dockerfile copies from th
     ),
   ].map((match) => match[1].replace(/\/$/, ''))
   for (const source of [
-    'deploy/bot-fleet/desktop',
+    'deploy/bot-fleet/desktop/icons',
+    'deploy/bot-fleet/desktop/xterm',
+    'deploy/bot-fleet/desktop/presenter/maestrly-browser-presenter.c',
+    'deploy/bot-fleet/desktop/bin/maestrly-desktop',
     'deploy/bot-fleet/desktop/theme/Maestrly',
     'deploy/bot-fleet/desktop/applications',
     'deploy/bot-fleet/tint2rc',

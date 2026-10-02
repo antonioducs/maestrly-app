@@ -72,4 +72,8 @@
     </context>
   </mouse>
   <menu><file>menu.xml</file></menu>
+  <applications>
+    <!-- A terminal window opened for the bot's own work comes up without the keyboard: the owner's typing stays put. -->
+    <application name="maestrly-quiet" class="Maestrly-Terminal"><focus>no</focus></application>
+  </applications>
 </openbox_config>

@@ -23,6 +23,8 @@ export interface TerminalViewersDeps {
   spawn(command: string, args: string[], options: { env: Record<string, string> }): TerminalViewerProcess
   /** Brings the window of the program with this pid forward; false when it found none or could not. */
   activate(pid: number): Promise<boolean>
+  /** Raises that window without giving it the keyboard; false when it found none or could not. */
+  raise(pid: number): Promise<boolean>
   log(message: string): void
   /** The most viewers at once. */
   max?: number
@@ -41,6 +43,11 @@ const ATTACH_PROGRAM = '/usr/local/bin/maestrly-pty-attach'
 const TITLE_MAX = 80
 const DEFAULT_TITLE = 'Terminal'
 const XDOTOOL_TIMEOUT_MS = 5_000
+/**
+ * The instance name of a terminal window opened for the bot's own work. Openbox gives a new window of this name no
+ * keyboard focus (openbox-rc.xml), so what the owner is typing never lands in the bot's shell.
+ */
+export const QUIET_TERMINAL_NAME = 'maestrly-quiet'
 
 interface Viewer {
   readonly process: TerminalViewerProcess
@@ -62,20 +69,24 @@ export class TerminalViewers {
     this.max = deps.max ?? TERMINAL_VIEWERS_MAX
   }
 
-  /** Brings the window of the shell forward, or opens one. Rejects at the limit, or when `xterm` cannot start. */
-  async show(ptyId: string, title: string): Promise<void> {
+  /**
+   * Brings the window of the shell forward, or opens one. With `activate: false`, for the bot's own work, the window
+   * comes forward without taking the keyboard. Rejects at the limit, or when `xterm` cannot start.
+   */
+  async show(ptyId: string, title: string, options: { activate?: boolean } = {}): Promise<void> {
     if (this.disposed) throw new Error('The terminal viewers were disposed')
+    const activate = options.activate !== false
     const existing = this.viewers.get(ptyId)
     if (existing) {
-      let activated = false
+      let shown = false
       try {
-        activated = await this.deps.activate(existing.pid)
+        shown = await (activate ? this.deps.activate(existing.pid) : this.deps.raise(existing.pid))
       } catch (error) {
-        this.deps.log(`Activating the terminal window of ${ptyId} failed: ${(error as Error).message}`)
+        this.deps.log(`Bringing the terminal window of ${ptyId} forward failed: ${(error as Error).message}`)
         return
       }
       // The window may still be opening, so the viewer stays; asking again later finds it.
-      if (!activated) this.deps.log(`The terminal window of ${ptyId} is not on screen yet`)
+      if (!shown) this.deps.log(`The terminal window of ${ptyId} is not on screen yet`)
       return
     }
     if (this.viewers.size >= this.max) throw new TerminalViewerLimitError(this.max)
@@ -87,6 +98,7 @@ export class TerminalViewers {
         [
           '-class',
           'Maestrly-Terminal',
+          ...(activate ? [] : ['-name', QUIET_TERMINAL_NAME]),
           '-T',
           windowTitle(title),
           '-fa',
@@ -160,6 +172,22 @@ export function xdotoolActivate(
   env: Readonly<Record<string, string>>,
   timeoutMs = XDOTOOL_TIMEOUT_MS
 ): (pid: number) => Promise<boolean> {
+  return xdotoolOnPid(env, ['windowactivate', '--sync'], timeoutMs)
+}
+
+/** Raises the window that belongs to a pid on the bot's display without giving it the keyboard; as `xdotoolActivate`. */
+export function xdotoolRaise(
+  env: Readonly<Record<string, string>>,
+  timeoutMs = XDOTOOL_TIMEOUT_MS
+): (pid: number) => Promise<boolean> {
+  return xdotoolOnPid(env, ['windowraise'], timeoutMs)
+}
+
+function xdotoolOnPid(
+  env: Readonly<Record<string, string>>,
+  action: readonly string[],
+  timeoutMs: number
+): (pid: number) => Promise<boolean> {
   return (pid) =>
     new Promise((resolve) => {
       if (!Number.isInteger(pid) || pid <= 0) {
@@ -168,7 +196,7 @@ export function xdotoolActivate(
       }
       execFile(
         'xdotool',
-        ['search', '--pid', String(pid), '--limit', '1', 'windowactivate', '--sync'],
+        ['search', '--pid', String(pid), '--limit', '1', ...action],
         { env: { ...process.env, ...env }, timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true },
         (error) => resolve(error === null)
       )

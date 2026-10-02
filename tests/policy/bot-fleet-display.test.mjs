@@ -78,7 +78,11 @@ test('the Dockerfile installs the desktop programs and copies the desktop, its t
       new RegExp(`apt-get install[^\\n]*\\\\\\n(?:[^\\n]*\\\\\\n)*[^\\n]*\\b${packageName}\\b`),
       packageName
     )
-  assert.match(dockerfile, /^COPY deploy\/bot-fleet\/desktop \/opt\/maestrly\/desktop$/m)
+  for (const folder of ['icons', 'xterm'])
+    assert.match(
+      dockerfile,
+      new RegExp(`^COPY deploy/bot-fleet/desktop/${folder} /opt/maestrly/desktop/${folder}$`, 'm')
+    )
   assert.match(dockerfile, /^COPY deploy\/bot-fleet\/desktop\/theme\/Maestrly \/usr\/share\/themes\/Maestrly$/m)
   assert.match(dockerfile, /^COPY deploy\/bot-fleet\/desktop\/applications\/ \/usr\/share\/applications\/$/m)
   // xterm, which has no bitmap fonts in the image, gets its dark look and an Xft font from its app defaults.
@@ -215,4 +219,35 @@ test("plain text opens in the text editor and web links in the bot's Maestrly br
   ])
   // The GTK 2 file manager reads its dark theme from this file; the GTK 3 programs get GTK_THEME from the display manager.
   assert.match(entrypoint, /cat > "\$HOME\/\.gtkrc-2\.0" <<'GTK2'\ngtk-theme-name = "Adwaita-dark"/)
+})
+
+test("the image builds the browser presenter from source, with warnings as errors, and runs it on the bots' displays", () => {
+  const dockerfile = read('bot-instance.Dockerfile')
+  const stage = /^FROM debian:bookworm-slim AS presenter\n([\s\S]*?)\n\nFROM /m.exec(dockerfile)?.[1]
+  assert.ok(stage, 'a presenter build stage')
+  for (const packageName of ['gcc', 'libc6-dev', 'libx11-dev', 'libxext-dev', 'libxdamage-dev', 'libxfixes-dev'])
+    assert.match(stage, new RegExp(`\\b${packageName}\\b`), packageName)
+  assert.match(stage, /^COPY deploy\/bot-fleet\/desktop\/presenter\/maestrly-browser-presenter\.c /m)
+  assert.match(stage, /gcc -std=c11 -O2 -Wall -Wextra -Werror\b[^\n]*\\\n[^\n]*-lX11 -lXext -lXdamage -lXfixes$/m)
+  assert.match(
+    dockerfile,
+    /^COPY --from=presenter \/out\/maestrly-browser-presenter \/usr\/local\/bin\/maestrly-browser-presenter$/m
+  )
+  // The runtime libraries it links to; the X library itself comes with Chromium's.
+  assert.match(dockerfile, /apt-get install[^\n]*\\\n(?:[^\n]*\\\n)*[^\n]*\blibxdamage1 libxfixes3 libxext6\b/)
+  // The source is built, not shipped.
+  assert.doesNotMatch(dockerfile, /^COPY deploy\/bot-fleet\/desktop \/opt\/maestrly\/desktop$/m)
+  const displays = readFileSync(
+    fileURLToPath(new URL('../../apps/desktop/src/main/fleet/instance/displays.ts', import.meta.url)),
+    'utf8'
+  )
+  assert.match(displays, /const PRESENTER = 'maestrly-browser-presenter'/)
+})
+
+test("a terminal window the bot's work opens does not take the keyboard from the owner", () => {
+  const rc = read('openbox-rc.xml')
+  const rule = /<application name="maestrly-quiet" class="Maestrly-Terminal">([\s\S]*?)<\/application>/.exec(rc)?.[1]
+  assert.ok(rule, 'an Openbox rule for quiet terminal windows')
+  assert.match(rule, /<focus>no<\/focus>/)
+  assert.match(rc, /<\/applications>\s*<\/openbox_config>\s*$/)
 })
