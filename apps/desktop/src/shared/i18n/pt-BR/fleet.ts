@@ -1,3 +1,5 @@
+import environmentSettings from './environment-settings'
+
 export default {
   files: {
     download: 'Baixar',
@@ -14,6 +16,37 @@ export default {
       'Não foi possível ler este PDF. Ele pode estar danificado ou protegido por senha. Envie outra cópia.',
     notSent: 'Não enviado',
   },
+  environmentSettings,
+  environmentSettingsShell: {
+    replace: 'Substituir',
+    title: 'Configurações do ambiente',
+    tab: 'Configurações',
+    tabs: 'Seções das configurações do ambiente',
+    shared: 'Compartilhado com',
+    noBots: 'os futuros bots deste ambiente',
+    localSeparate: 'As configurações deste computador continuam separadas.',
+    overviewLink: 'Gerencie as contas, modelos, skills e ferramentas compartilhados neste ambiente.',
+    open: 'Configurar ambiente',
+    updateServer: 'Atualize o servidor dos bots para configurar este ambiente pelo app.',
+    updateEnvironment: 'Reinicie este ambiente com a imagem atualizada para configurá-lo pelo app.',
+    offline: 'Sem conexão. As últimas configurações continuam visíveis; reconecte para editar.',
+    stopped: 'Inicie o ambiente para consultar ou alterar as configurações.',
+    leaveTitle: 'Salvar antes de sair?',
+    leaveDescription: 'Há alterações não salvas em {{name}}.',
+    keepEditing: 'Continuar editando',
+    discardLeave: 'Descartar e sair',
+    saveLeave: 'Salvar e continuar',
+    saveFailed: 'Não foi possível salvar. Continue editando para revisar o erro ou descarte as alterações.',
+    sections: {
+      accounts: 'Contas',
+      models: 'Modelos',
+      skills: 'Skills',
+      tools: 'Ferramentas',
+      components: 'Componentes',
+      preferences: 'Preferências',
+    },
+  },
+
   provisioning: {
     picker: {
       tabs: 'O que trazer',
@@ -600,6 +633,8 @@ export default {
     placeholder: 'Mensagem para {{name}}…',
     manageMcp: 'Gerenciar servidores MCP na tela do bot',
     manageSkills: 'Gerenciar skills na tela do bot',
+    manageMcpSettings: 'Gerenciar MCPs do ambiente',
+    manageSkillsSettings: 'Gerenciar skills do ambiente',
     manageMcpEnvironment: 'Gerenciar servidores MCP na tela do ambiente',
     manageSkillsEnvironment: 'Gerenciar skills na tela do ambiente',
     noSkills: 'Este bot ainda não tem skills. Elas ficam na Maestrly dele: instale-as pela tela do bot.',

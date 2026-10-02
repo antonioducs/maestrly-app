@@ -15,8 +15,8 @@ export function listBotMcpServers(): FleetBotMcpServers {
       name: server.name,
       transport: server.transport,
       enabled: server.enabled,
-      command: server.transport === 'stdio' ? (server.command ?? null) : null,
-      host: server.transport === 'http' && server.url ? new URL(server.url).host : null,
+      command: null,
+      host: server.transport === 'http' && server.url ? safeHost(server.url) : null,
       envKeys: Object.keys(server.env ?? {}),
       headerKeys: Object.keys(server.headers ?? {}),
       unavailable: server.unavailable ?? false,
@@ -51,4 +51,12 @@ export function removeBotMcpServer(id: string): void {
   if (!listMcpServers().some((server) => server.id === id))
     throw new InstanceHttpError(404, 'NOT_FOUND', 'MCP server does not exist.')
   removeMcpServer(id)
+}
+
+function safeHost(url: string): string | null {
+  try {
+    return new URL(url).host
+  } catch {
+    return null
+  }
 }

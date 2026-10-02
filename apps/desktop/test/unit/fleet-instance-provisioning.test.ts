@@ -3,7 +3,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { freshDb, closeDb } from '../helpers/db'
-import { listProviders, listSubscriptionAccounts, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
+import {
+  defaultSubscriptionLabel,
+  renameDefaultSubscriptionAccount,
+  listProviders,
+  listSubscriptionAccounts,
+  subscriptionProviderIdFor,
+} from '../../src/main/chat/catalog'
 import { getAppSetting } from '../../src/main/store'
 import { getApiKey } from '../../src/main/chat/credentials'
 import {
@@ -41,6 +47,9 @@ vi.mock('../../src/main/secure-store', () => ({
   },
   secureRemove: (key: string) => state.secrets.delete(key),
 }))
+vi.mock('../../src/main/chat/codex-subscription/manager', () => ({
+  getCodexSubscriptionManager: () => ({ peekStatus: () => ({ authenticated: true }), logout: state.logout }),
+}))
 vi.mock('../../src/main/chat/github-copilot/manager', () => ({
   getGitHubCopilotSubscriptionManager: (id: string | null = null) => ({
     exportToken: () => state.tokens.get(id) ?? null,
@@ -55,7 +64,7 @@ vi.mock('../../src/main/chat/github-copilot/manager', () => ({
   }),
 }))
 vi.mock('../../src/main/chat/antigravity-subscription/manager', () => ({
-  getAntigravitySubscriptionManager: () => ({ logout: state.logout }),
+  getAntigravitySubscriptionManager: () => ({ getStatus: () => ({ authenticated: true }), logout: state.logout }),
 }))
 vi.mock('../../src/main/chat/cursor-subscription/manager', () => ({
   getCursorSubscriptionManager: (id: string | null = null) => ({
@@ -231,7 +240,7 @@ it('upserts MCP servers and projects names instead of secret values', () => {
   expect(first.outcome).toBe('added')
   expect(importBotMcpServers([{ ...server, name: 'echo' }]).results[0].outcome).toBe('unchanged')
   expect(importBotMcpServers([{ ...server, args: ['changed.mjs'] }]).results[0].outcome).toBe('updated')
-  expect(listBotMcpServers().servers[0]).toMatchObject({ envKeys: ['K'], command: 'node', host: null })
+  expect(listBotMcpServers().servers[0]).toMatchObject({ envKeys: ['K'], command: null, host: null })
   expect(JSON.stringify(listBotMcpServers())).not.toContain('private-env-value')
   removeBotMcpServer(first.target!)
   expect(() => removeBotMcpServer(first.target!)).toThrow('does not exist')
@@ -255,6 +264,7 @@ it('advertises provisioning, environments, environment compaction and transcript
   })
   expect((await runtime.status()).capabilities).toEqual([
     'files',
+    'environment-settings-v1',
     'provisioning',
     'environments',
     'environment-compaction',
@@ -327,6 +337,8 @@ it('lists and removes Google accounts without credential metadata', async () => 
   expect(accounts.subscriptions).toContainEqual(
     expect.objectContaining({ kind: 'antigravity', accountId: null, state: 'connected', email: null, plan: null })
   )
+  renameDefaultSubscriptionAccount('antigravity-subscription', 'Work')
   await removeBotSubscription('antigravity', 'default')
+  expect(defaultSubscriptionLabel('antigravity-subscription')).toBeNull()
   expect(state.logout).toHaveBeenCalledTimes(1)
 })

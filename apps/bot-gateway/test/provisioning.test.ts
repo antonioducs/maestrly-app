@@ -43,6 +43,7 @@ it('discovers provisioning on the gateway and the live bot', async () => {
   const h = await harness()
   expect((await (await h.request('GET', '/v1/meta')).json()).features).toEqual([
     'files',
+    'environment-settings-v1',
     'artifacts',
     'provisioning',
     'environments',

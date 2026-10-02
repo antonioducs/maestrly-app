@@ -1,3 +1,5 @@
+import { environmentSettingsRoute } from './environment-settings.js'
+import { FLEET_ENVIRONMENT_SETTINGS_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
@@ -91,7 +93,9 @@ function recordConfiguration(
   ctx: GatewayContext,
   environmentId: string,
   res: ServerResponse,
-  counts: Partial<Record<'accounts' | 'skills' | 'mcpServers' | 'removed', number>>
+  counts: Partial<
+    Record<'accounts' | 'skills' | 'mcpServers' | 'removed' | 'models' | 'runtimes' | 'preferences', number>
+  >
 ) {
   if (!Object.values(counts).some((count) => count > 0)) return
   const device = ctx.auth.device(res.req?.headers.authorization)
@@ -181,6 +185,34 @@ export async function publicRoute(
 ): Promise<Result> {
   const id = params.id,
     eid = params.eid
+  if (key.startsWith('settings')) {
+    ctx.auth.device(res.req?.headers.authorization)
+    const result = await environmentSettingsRoute(key, params, body, ctx)
+    if (
+      ![
+        'settingsAccounts',
+        'settingsModels',
+        'settingsSkills',
+        'settingsSkill',
+        'settingsSearchSkills',
+        'settingsSkillGroups',
+        'settingsMcpServers',
+        'settingsMcpServer',
+        'settingsTestMcpServer',
+        'settingsRuntimes',
+        'settingsPreferences',
+      ].includes(key)
+    )
+      recordConfiguration(ctx, eid, res, {
+        accounts: key.includes('Account') || key.includes('Subscription') ? 1 : 0,
+        skills: key.includes('Skill') ? 1 : 0,
+        mcpServers: key.includes('Mcp') ? 1 : 0,
+        models: key.includes('Model') ? 1 : 0,
+        runtimes: key.includes('Runtime') ? 1 : 0,
+        preferences: key === 'settingsSetPreferences' ? 1 : 0,
+      })
+    return result
+  }
   if (key.startsWith('environment') && PROVISIONING.has(key.slice('environment'.length))) {
     requireEnvironment(ctx, eid)
     requireEnvironmentProvisioning(ctx, eid)
@@ -240,6 +272,7 @@ export async function publicRoute(
           gatewayVersion: ctx.host.gatewayVersion,
           features: [
             FLEET_FILES_FEATURE,
+            FLEET_ENVIRONMENT_SETTINGS_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_PROVISIONING_FEATURE,
             FLEET_ENVIRONMENTS_FEATURE,

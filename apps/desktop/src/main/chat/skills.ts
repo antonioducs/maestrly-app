@@ -13,6 +13,7 @@
  * which depends on the store.
  */
 import fsp from 'node:fs/promises'
+import { assertSafeSkillPath, withSkillMutation } from './skill-document'
 import os from 'node:os'
 import path from 'node:path'
 import { normalizeCommandName } from './commands'
@@ -338,6 +339,7 @@ export interface SkillWriteResult {
 
 /** Creates skill folder EXCLUSIVELY (parent root may exist; skill folder must not). */
 async function mkdirExclusive(root: string, dir: string): Promise<SkillWriteResult> {
+  await assertSafeSkillPath(root, true)
   await fsp.mkdir(root, { recursive: true })
   try {
     await fsp.mkdir(dir, { recursive: false })
@@ -348,7 +350,7 @@ async function mkdirExclusive(root: string, dir: string): Promise<SkillWriteResu
 }
 
 /** Creates skill skeleton (`<root>/<name>/SKILL.md`). Fails if folder exists. */
-export async function createSkill(input: {
+async function createSkillUnlocked(input: {
   name: string
   description?: string
   scope: ChatSkillScope
@@ -377,12 +379,15 @@ export async function removeSkillDir(dir: string, cwd: string, home: string = os
   const target = path.resolve(dir)
   const inRoot = roots.some((root) => target.startsWith(root + path.sep) && path.dirname(target) === root)
   if (!inRoot) return { ok: false, error: 'outside-skill-roots' }
-  await fsp.rm(target, { recursive: true, force: true })
+  await withSkillMutation(target, async () => {
+    await assertSafeSkillPath(target, true)
+    await fsp.rm(target, { recursive: true, force: true })
+  })
   return { ok: true, dir: target }
 }
 
 /** Converts saved prompt text to a real skill (folder + SKILL.md using template body). */
-export async function writeSkillFromPrompt(input: {
+async function writeSkillFromPromptUnlocked(input: {
   name: string
   description?: string
   content: string
@@ -403,4 +408,22 @@ export async function writeSkillFromPrompt(input: {
   const front = `---\nname: ${name}\ndescription: ${description || `Converted from the saved prompt /${name}.`}\n---\n\n`
   await fsp.writeFile(path.join(dir, 'SKILL.md'), front + body + '\n', 'utf8')
   return { ok: true, name, dir }
+}
+
+export async function createSkill(input: Parameters<typeof createSkillUnlocked>[0]): Promise<SkillWriteResult> {
+  const dir = path.join(
+    skillInstallRoot(input.scope, input.cwd, input.home ?? os.homedir()),
+    normalizeCommandName(input.name)
+  )
+  return withSkillMutation(dir, () => createSkillUnlocked(input))
+}
+
+export async function writeSkillFromPrompt(
+  input: Parameters<typeof writeSkillFromPromptUnlocked>[0]
+): Promise<SkillWriteResult> {
+  const dir = path.join(
+    skillInstallRoot(input.scope, input.cwd, input.home ?? os.homedir()),
+    normalizeCommandName(input.name)
+  )
+  return withSkillMutation(dir, () => writeSkillFromPromptUnlocked(input))
 }

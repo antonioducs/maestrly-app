@@ -1,4 +1,5 @@
 import { PersonalMemoryView } from '@/components/PersonalMemoryView'
+import { requestMainNavigation } from '@/lib/main-navigation'
 /** Local desktop shell. Keep live conversations mounted while project panels replace the main view.
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -677,22 +678,26 @@ export function DesktopApp() {
                 onRemoveWorkspace={handleRemoveWorkspace}
                 onNewConversation={(wsId) => setDialogWs(wsId)}
                 onOpenProjectNotes={(wsId) => {
-                  setProjectNotesWs(wsId)
-                  nav.setFleetView(null)
-                  setCreateBot(false)
-                  setProjectMemoryWs(null)
-                  setSettingsOpen(false)
-                  setArtifactsOpen(false)
-                  setOnboardingOpen(false)
+                  requestMainNavigation(() => {
+                    setProjectNotesWs(wsId)
+                    nav.setFleetView(null)
+                    setCreateBot(false)
+                    setProjectMemoryWs(null)
+                    setSettingsOpen(false)
+                    setArtifactsOpen(false)
+                    setOnboardingOpen(false)
+                  })
                 }}
                 onOpenProjectMemory={(wsId) => {
-                  setProjectMemoryWs(wsId)
-                  nav.setFleetView(null)
-                  setCreateBot(false)
-                  setProjectNotesWs(null)
-                  setSettingsOpen(false)
-                  setArtifactsOpen(false)
-                  setOnboardingOpen(false)
+                  requestMainNavigation(() => {
+                    setProjectMemoryWs(wsId)
+                    nav.setFleetView(null)
+                    setCreateBot(false)
+                    setProjectNotesWs(null)
+                    setSettingsOpen(false)
+                    setArtifactsOpen(false)
+                    setOnboardingOpen(false)
+                  })
                 }}
                 onEditDefaultBranch={(wsId) => setBranchDialogWs(wsId)}
                 onOpenAbout={() => setAboutOpen(true)}

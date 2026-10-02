@@ -10,7 +10,7 @@
 export type { FloatTab } from '../shared/tool-tabs'
 
 export * from './store/db'
-export * from './store/app-settings'
+export { getAppFlag, setAppFlag, getAppSetting, setAppSetting } from './store/app-settings'
 export * from './store/settings'
 export * from './store/workspaces'
 export * from './store/local-memories'

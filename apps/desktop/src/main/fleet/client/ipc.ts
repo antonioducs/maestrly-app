@@ -1,3 +1,4 @@
+import { registerFleetEnvironmentSettingsIpc } from './environment-settings-ipc'
 import { app } from 'electron'
 import { validateAttachmentBytes } from '../instance/incoming-attachments'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
@@ -94,6 +95,7 @@ const updateWhen = fleetEnvironmentUpdateRequestSchema.shape.when
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, fleet)
+  registerFleetEnvironmentSettingsIpc(reg, fleet)
   if (process.env.MAESTRLY_BOT_MODE !== '1') {
     fleet.start()
     app.once('will-quit', () => fleet.stop())

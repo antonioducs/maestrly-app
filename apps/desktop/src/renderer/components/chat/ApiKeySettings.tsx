@@ -1,3 +1,4 @@
+import { ModelVisibilityCheckbox } from './ModelVisibilityCheckbox'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -486,10 +487,7 @@ function ProviderModelFilter({ providerId, onFilterChanged }: { providerId: stri
             {!loading &&
               !failed &&
               shown.map((m) => (
-                <label key={m} className="flex cursor-pointer items-center gap-2 px-2.5 py-1 hover:bg-white/[0.04]">
-                  <input type="checkbox" checked={!hiddenSet.has(m)} onChange={() => toggle(m)} />
-                  <span className="truncate text-[12px] text-foreground">{m}</span>
-                </label>
+                <ModelVisibilityCheckbox key={m} name={m} checked={!hiddenSet.has(m)} onChange={() => toggle(m)} />
               ))}
           </div>
           {saveError && <p className="text-[11px] text-destructive">{t('settings.modelFilterSaveFailed')}</p>}

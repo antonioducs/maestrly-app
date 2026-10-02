@@ -1,3 +1,5 @@
+import environmentSettings from './environment-settings'
+
 export default {
   files: {
     download: 'Download',
@@ -13,6 +15,37 @@ export default {
     unreadablePdf: 'This PDF could not be read. It may be damaged or password-protected. Send another copy.',
     notSent: 'Not sent',
   },
+  environmentSettings,
+  environmentSettingsShell: {
+    replace: 'Replace',
+    title: 'Environment settings',
+    tab: 'Settings',
+    tabs: 'Environment settings sections',
+    shared: 'Shared by',
+    noBots: 'future bots in this environment',
+    localSeparate: 'This computer’s settings stay separate.',
+    overviewLink: 'Manage the accounts, models, skills and tools shared by this environment.',
+    open: 'Configure environment',
+    updateServer: 'Update the bot server to configure this environment from the app.',
+    updateEnvironment: 'Restart this environment on the updated image to configure it from the app.',
+    offline: 'Disconnected. The last settings remain visible; reconnect before editing.',
+    stopped: 'Start the environment to read or change its settings.',
+    leaveTitle: 'Save before leaving?',
+    leaveDescription: 'There are unsaved changes in {{name}}.',
+    keepEditing: 'Keep editing',
+    discardLeave: 'Discard and leave',
+    saveLeave: 'Save and continue',
+    saveFailed: 'Changes could not be saved. Keep editing to review the error, or discard the draft.',
+    sections: {
+      accounts: 'Accounts',
+      models: 'Models',
+      skills: 'Skills',
+      tools: 'Tools',
+      components: 'Components',
+      preferences: 'Preferences',
+    },
+  },
+
   provisioning: {
     picker: {
       tabs: 'What to bring',
@@ -597,6 +630,8 @@ export default {
     placeholder: 'Message {{name}}…',
     manageMcp: "Manage MCP servers on the bot's screen",
     manageSkills: "Manage skills on the bot's screen",
+    manageMcpSettings: 'Manage environment MCP servers',
+    manageSkillsSettings: 'Manage environment skills',
     manageMcpEnvironment: 'Manage MCP servers on the environment screen',
     manageSkillsEnvironment: 'Manage skills on the environment screen',
     noSkills: "This bot has no skills yet. They live in its own Maestrly: install them on the bot's screen.",

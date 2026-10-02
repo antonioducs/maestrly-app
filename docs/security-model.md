@@ -106,6 +106,31 @@ resetting local data deletes the directory.
 
 ### Configuring bot environments from a paired device
 
+The environment settings API is an explicit set of validated owner operations
+under `/v1/environments/:eid/settings/`. It requires both gateway and running
+image support for `environment-settings-v1`, uses the existing paired-device
+and control-token boundary, and adds no public instance port. A bot's gateway
+token cannot call these administrator routes. Reads and writes always identify
+the environment; they cannot fall back to the controller's local profile.
+
+Settings responses contain opaque revisions. Substitutive edits and removals
+compare those revisions before changing data, including changes made by local
+settings or imports. Encrypted detail writes invalidate the same revisions.
+MCP URL/command/argument values and header/environment values remain protected;
+responses expose only presence, key names, and a sanitized HTTP host. Omitted
+replacements preserve stored secrets; removal is explicit. Credential-bearing
+writes require secure storage and preserve the previous configuration on failure.
+
+MCP connection diagnostics can start a configured stdio process or connect to its
+HTTP endpoint inside the environment. They list tools without executing them,
+use an isolated connection with a deadline, deduplicate concurrent diagnostics
+of one revision, and allow at most four active diagnostics. Reconfiguring a
+server retires its pooled connection after existing calls finish. Global skill
+editing accepts a managed skill name and bounded Markdown, never a caller's
+filesystem path. Writes validate containment, reject unsafe symlinks, preserve
+bundled resources, and replace the manifest atomically.
+
+
 Every paired device can configure every environment and bot on its gateway.
 Selected stored credentials flow from the desktop app's main process through the gateway
 to the environment, whose bots all use them; provisioning does not retrieve

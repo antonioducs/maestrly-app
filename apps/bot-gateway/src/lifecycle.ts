@@ -3,6 +3,7 @@ import {
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
   type FleetActivityEntry,
@@ -555,6 +556,9 @@ export class Lifecycle {
       ceiling: bot.ceiling,
       selection: bot.selection,
       compaction: this.effectiveCompaction(bot, environment),
+      ...(environment && this.environmentCapabilities(environment.id).includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
+        ? { compactionInherited: !bot.compaction && !!environment.compaction }
+        : {}),
       gateway: {
         peersEnabled: bot.talksTo.length > 0,
         artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
@@ -1301,18 +1305,28 @@ export class Lifecycle {
    */
   async patchEnvironment(
     id: string,
-    input: { name?: string; memoryLimitBytes?: number | null; compaction?: FleetCompactionConfig | null }
+    input: {
+      name?: string
+      memoryLimitBytes?: number | null
+      compaction?: FleetCompactionConfig | null
+      expected?: { name?: string; compaction?: FleetCompactionConfig | null }
+    }
   ): Promise<FleetEnvironment> {
     const environment = this.requireEnvironment(id)
     const limit = input.memoryLimitBytes
     const changesLimit = limit !== undefined && limit !== environment.memoryLimitBytes
     // A default is compared in the environment's turn: an earlier change may still be waiting for it.
-    if (!changesLimit && input.compaction === undefined) {
+    if (!changesLimit && input.compaction === undefined && !input.expected) {
       if (input.name !== undefined && input.name !== environment.name) this.updateEnvironment(id, { name: input.name })
       return this.environment(id)!
     }
     return this.exclusive(id, async () => {
       const current = this.requireEnvironment(id)
+      if (
+        (input.expected?.name !== undefined && input.expected.name !== current.name) ||
+        (input.expected?.compaction !== undefined && !sameCompaction(input.expected.compaction, current.compaction))
+      )
+        throw new GatewayError('CONFLICT', 'Environment settings changed. Reload before saving.')
       const changesCompaction = input.compaction !== undefined && !sameCompaction(input.compaction, current.compaction)
       if (!changesLimit && !changesCompaction) {
         if (input.name !== undefined && input.name !== current.name) this.updateEnvironment(id, { name: input.name })
