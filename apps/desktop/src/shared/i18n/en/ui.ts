@@ -1,4 +1,13 @@
 export default {
+  chatWindow: {
+    open: 'Open chat in new window',
+    focus: 'Focus chat window',
+    return: 'Return to app',
+    detached: 'This conversation is open in another window.',
+    failed: 'Could not open the chat window. Your conversation is still here. Try again.',
+    tools: 'Open tools in main window',
+    plan: 'Review plan',
+  },
   artifacts: {
     publishingBot: {
       label: 'Publish artifacts',

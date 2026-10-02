@@ -1,3 +1,4 @@
+import { useChatDocument, useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
@@ -23,23 +24,25 @@ export function ConfirmDialog({
   onCancel: () => void
   onConfirm: () => void
 }) {
+  const ownerDocument = useChatDocument()
+  const ownerWindow = useChatOwnerWindow()
   const { t } = useTranslation('ui')
   const confirmRef = useRef<HTMLButtonElement>(null)
   // Escape cancels, the decision starts focused, and whatever opened it gets the focus back.
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null
+    const opener = ownerDocument.activeElement as HTMLElement | null
     confirmRef.current?.focus()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.stopPropagation()
       onCancel()
     }
-    window.addEventListener('keydown', onKeyDown, true)
+    ownerWindow.addEventListener('keydown', onKeyDown, true)
     return () => {
-      window.removeEventListener('keydown', onKeyDown, true)
+      ownerWindow.removeEventListener('keydown', onKeyDown, true)
       if (opener?.isConnected) opener.focus()
     }
-  }, [onCancel])
+  }, [ownerDocument, ownerWindow, onCancel])
   return (
     <>
       <div className="fixed inset-0 z-[60] bg-black/50" onClick={onCancel} />

@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
@@ -29,6 +30,7 @@ export function DictationModelCard({
   /** Clicks inside this element (the microphone control) do not close the card. */
   boundary?: RefObject<HTMLElement | null>
 }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const cardRef = useRef<HTMLDivElement>(null)
   const [requesting, setRequesting] = useState(false)
@@ -41,13 +43,13 @@ export function DictationModelCard({
       const inside = (boundary?.current ?? cardRef.current)?.contains(e.target as Node)
       if (!inside) onClose()
     }
-    document.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKey)
+    ownerDocument.addEventListener('mousedown', onDoc)
     return () => {
-      document.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKey)
+      ownerDocument.removeEventListener('mousedown', onDoc)
     }
-  }, [boundary, onClose])
+  }, [ownerDocument, boundary, onClose])
 
   const run = (operation: () => Promise<RuntimeAssetInfo | boolean>) => {
     setRequesting(true)

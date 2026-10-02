@@ -115,6 +115,7 @@ function quitHarness() {
     disposeConversationMigrationIpc: null,
     releaseInstanceLock: cleanup,
     floatingManager: { flushPendingFloatPersists: vi.fn(), disposeAll: vi.fn() },
+    chatWindowManager: { dispose: vi.fn() },
     popupManager: { disposeAll: vi.fn() },
     releasePowerBlocker: vi.fn(),
     killAllPtys: vi.fn(),

@@ -1,3 +1,4 @@
+import { useChatOwnerWindow, useChatDocument } from '@/lib/chat-window-context'
 import {
   forwardRef,
   useCallback,
@@ -84,6 +85,8 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   },
   ref
 ) {
+  const ownerWindow = useChatOwnerWindow()
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const [config, setConfig] = useState<ChatConfig | null>(null)
   const [conversationSel, setConversationSel] = useState<ChatModelRef | null>(null)
@@ -110,11 +113,11 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     if (!root) return
     setPanelStyle(
       fixedPanelPlacement(root, {
-        width: Math.min(320, window.innerWidth - 16),
-        estimatedHeight: Math.min(420, window.innerHeight * 0.5),
+        width: Math.min(320, ownerWindow.innerWidth - 16),
+        estimatedHeight: Math.min(420, ownerWindow.innerHeight * 0.5),
       }).style
     )
-  }, [avoidOverflow])
+  }, [ownerWindow, avoidOverflow])
   useImperativeHandle(ref, () => ({
     open: () => {
       positionPanel()
@@ -214,13 +217,13 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     if (!open || !avoidOverflow) return
     positionPanel()
     const reposition = () => positionPanel()
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
+    ownerWindow.addEventListener('resize', reposition)
+    ownerWindow.addEventListener('scroll', reposition, true)
     return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
+      ownerWindow.removeEventListener('resize', reposition)
+      ownerWindow.removeEventListener('scroll', reposition, true)
     }
-  }, [avoidOverflow, open, positionPanel])
+  }, [ownerWindow, avoidOverflow, open, positionPanel])
 
   useEffect(() => {
     if (!open || !config) return
@@ -232,9 +235,9 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     const onDoc = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
+    ownerDocument.addEventListener('mousedown', onDoc)
+    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+  }, [ownerDocument, open])
 
   const provider = config?.providers.find((p) => p.id === sel?.providerId)
   const connectedProviders = config?.providers.filter(isChatProviderConnected) ?? []

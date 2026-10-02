@@ -1,11 +1,12 @@
 import { useTranslation } from 'react-i18next'
-import { useRef, type KeyboardEvent } from 'react'
+import { useCallback, useRef, useState, type KeyboardEvent } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { environmentOf, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
+import { ChatWindowButton, ChatWindowHost } from '@/components/chat/ChatWindowHost'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
 import { BotSettings, type SettingsLeaveGuard } from './BotSettings'
@@ -17,14 +18,24 @@ export function BotView({
   fleet,
   onView,
   onOpenBot,
+  onDetachedChange,
 }: {
   bot: FleetBot
   view: Extract<FleetView, { kind: 'bot' }>
   fleet: FleetController
   onView: (view: FleetView) => void
   onOpenBot: (id: string) => void
+  onDetachedChange?: (detached: boolean) => void
 }) {
   const { t } = useTranslation('fleet')
+  const [detached, setDetached] = useState(false)
+  const handleDetachedChange = useCallback(
+    (value: boolean) => {
+      setDetached(value)
+      onDetachedChange?.(value)
+    },
+    [onDetachedChange]
+  )
   const tab = view.tab
   const environment = hasEnvironments(fleet.state.connection)
     ? environmentOf(fleet.state.snapshot.environments, bot)
@@ -32,6 +43,7 @@ export function BotView({
   // Settings with unsaved changes ask before this view leaves them.
   const leaveGuard = useRef<SettingsLeaveGuard | null>(null)
   const go = (next: FleetView) => {
+    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
     const guard = tab === 'settings' ? leaveGuard.current : null
     if (guard) guard(() => onView(next))
     else onView(next)
@@ -112,6 +124,7 @@ export function BotView({
               </button>
             ))}
           </div>
+          {tab === 'conversation' && <ChatWindowButton target={{ kind: 'bot', id: bot.id }} />}
           <span className="ml-auto shrink-0 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
             {t(`status.${bot.status}`)}
           </span>
@@ -159,17 +172,35 @@ export function BotView({
         aria-labelledby={`fleet-tab-${tab}`}
         className="flex min-h-0 flex-1 flex-col"
       >
-        {tab === 'conversation' ? (
-          <BotConversation
-            key={bot.id}
-            bot={bot}
-            fleet={fleet}
-            onOpenBot={onOpenBot}
-            onOpenScreen={() => setTab('screen')}
-            onOpenSettings={() => setTab('settings')}
-            onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-          />
-        ) : tab === 'screen' ? (
+        {(tab === 'conversation' || detached) && (
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            style={tab === 'conversation' ? undefined : { display: 'none' }}
+          >
+            <ChatWindowHost
+              target={{ kind: 'bot', id: bot.id }}
+              title={bot.name}
+              onDetachedChange={handleDetachedChange}
+              onReattach={() => onView({ kind: 'bot', botId: bot.id, tab: 'conversation' })}
+            >
+              {() => (
+                <BotConversation
+                  key={bot.id}
+                  bot={bot}
+                  fleet={fleet}
+                  onOpenBot={(id) => {
+                    onOpenBot(id)
+                    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                  }}
+                  onOpenScreen={() => setTab('screen')}
+                  onOpenSettings={() => setTab('settings')}
+                  onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+                />
+              )}
+            </ChatWindowHost>
+          </div>
+        )}
+        {tab === 'screen' && (
           <BotScreen
             key={bot.id}
             bot={bot}
@@ -178,7 +209,8 @@ export function BotView({
             onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
             onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
           />
-        ) : (
+        )}
+        {tab === 'settings' && (
           <BotSettings
             key={bot.id}
             bot={bot}

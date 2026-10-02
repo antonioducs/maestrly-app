@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bot, Check, Loader2, TriangleAlert, X } from 'lucide-react'
@@ -9,6 +10,7 @@ function live(session: SubagentSessionSummary): boolean {
 }
 
 export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSummary[] }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const openSession = useOpenSubagentSession()
   const [open, setOpen] = useState(false)
@@ -20,16 +22,13 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
     const close = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
+    ownerDocument.addEventListener('mousedown', close)
+    return () => ownerDocument.removeEventListener('mousedown', close)
+  }, [ownerDocument, open])
 
   if (!sessions.length || !openSession) return null
   return (
-    <div
-      ref={rootRef}
-      className="absolute bottom-3 right-[max(0.75rem,calc((100%_-_var(--container-3xl))/2))] z-10"
-    >
+    <div ref={rootRef} className="absolute bottom-3 right-[max(0.75rem,calc((100%_-_var(--container-3xl))/2))] z-10">
       {open && (
         <div className="absolute bottom-full right-0 mb-2 w-[min(25rem,calc(100vw-3rem))] overflow-hidden rounded-xl border border-violet-400/20 bg-[#15131d]/95 shadow-xl backdrop-blur">
           <div className="flex items-center gap-2 border-b border-white/[0.07] px-3 py-2">

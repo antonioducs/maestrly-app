@@ -6,6 +6,7 @@ import { WorkspaceKanbanLink } from './platform/WorkspaceKanbanLink'
  * Apply drag sorting only to the complete list so filtered searches cannot corrupt persisted order. */
 import { useEffect, useMemo, useState, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { requestChatWindow } from '@/lib/chat-windows'
 import {
   Plus,
   ChevronRight,
@@ -312,6 +313,10 @@ export function Sidebar({
   }
 
   const menus = useSidebarMenus({
+    onOpenChatWindow: (conversation) => {
+      onSelect(conversation)
+      requestChatWindow({ kind: 'conversation', id: conversation.id })
+    },
     openTargets,
     onOpenExternal,
     groups,

@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Hand, ShieldAlert, TerminalSquare, Check } from 'lucide-react'
@@ -29,6 +30,7 @@ export function ChatPermModePicker({
   conversationId: string
   source?: ChatComposerSource
 }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const [mode, setMode] = useState<ChatPermMode>('ask')
   const [open, setOpen] = useState(false)
@@ -58,9 +60,9 @@ export function ChatPermModePicker({
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
+    ownerDocument.addEventListener('mousedown', onDoc)
+    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+  }, [ownerDocument, open])
 
   const current = MODES.find((m) => m.id === mode) ?? MODES[0]
   const choose = (id: ChatPermMode) => {

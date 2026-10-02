@@ -77,6 +77,7 @@ import {
   CHAT_HISTORY_PAGE_SIZE as HISTORY_PAGE_SIZE,
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
+import { useChatOwnerWindow, useChatSourceConversation } from '@/lib/chat-window-context'
 import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -170,6 +171,8 @@ export function ChatView({
   onEvictionSafetyChange,
 }: Props) {
   const { t } = useTranslation('chat')
+  const ownerWindow = useChatOwnerWindow()
+  const showSourceConversation = useChatSourceConversation()
   // A released chat still belongs to its bot; what changes is that the person may write in it too.
   const botBlocked = botManaged && !botConversation?.botManualChatEnabled
   const [currentExperience, setCurrentExperience] = useState(experience)
@@ -719,9 +722,9 @@ export function ChatView({
         closeSearch()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [visible, searchOpen, closeSearch])
+    ownerWindow.addEventListener('keydown', onKey)
+    return () => ownerWindow.removeEventListener('keydown', onKey)
+  }, [visible, searchOpen, closeSearch, ownerWindow])
 
   useEffect(
     () => () => {
@@ -1558,9 +1561,11 @@ export function ChatView({
   }, [reloadSubagents, visible])
 
   const openMention = useCallback(
-    (relPath: string, startLine?: number, endLine?: number) =>
-      void window.api.openPlanFile(conversationId, relPath, startLine, endLine),
-    [conversationId]
+    (relPath: string, startLine?: number, endLine?: number) => {
+      showSourceConversation()
+      void window.api.openPlanFile(conversationId, relPath, startLine, endLine)
+    },
+    [conversationId, showSourceConversation]
   )
 
   const [remoteCmds, setRemoteCmds] = useState<{
@@ -1913,33 +1918,36 @@ export function ChatView({
     [conversationId]
   )
 
-  const beginSubagentPaneResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    const root = rootRef.current
-    if (!root) return
-    const onMove = (move: MouseEvent) => {
-      const rect = root.getBoundingClientRect()
-      const percent = ((rect.right - move.clientX) / Math.max(1, rect.width)) * 100
-      setSubagentPaneWidth(Math.max(28, Math.min(65, percent)))
-    }
-    const onUp = () => {
-      document.body.style.cursor = ''
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    document.body.style.cursor = 'col-resize'
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp, { once: true })
-  }, [])
+  const beginSubagentPaneResize = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const root = rootRef.current
+      if (!root) return
+      const onMove = (move: MouseEvent) => {
+        const rect = root.getBoundingClientRect()
+        const percent = ((rect.right - move.clientX) / Math.max(1, rect.width)) * 100
+        setSubagentPaneWidth(Math.max(28, Math.min(65, percent)))
+      }
+      const onUp = () => {
+        ownerWindow.document.body.style.cursor = ''
+        ownerWindow.removeEventListener('mousemove', onMove)
+        ownerWindow.removeEventListener('mouseup', onUp)
+      }
+      ownerWindow.document.body.style.cursor = 'col-resize'
+      ownerWindow.addEventListener('mousemove', onMove)
+      ownerWindow.addEventListener('mouseup', onUp, { once: true })
+    },
+    [ownerWindow]
+  )
 
   useEffect(() => {
     if (!selectedSubagentSessionId) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setSelectedSubagentSessionId(null)
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedSubagentSessionId])
+    ownerWindow.addEventListener('keydown', onKeyDown)
+    return () => ownerWindow.removeEventListener('keydown', onKeyDown)
+  }, [selectedSubagentSessionId, ownerWindow])
 
   const reasoningEfforts = modelMeta?.reasoning
     ? modelMeta.reasoningEfforts?.length
