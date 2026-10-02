@@ -13,6 +13,7 @@ import {
   MAX_TITLE_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from './limits.js'
+import type { CommentAnchor, CommentAuthorKind } from './shell/contract.js'
 import type { ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
 import type { ArtifactEventKind, EventData, PrincipalKind } from './store/sharing-store.js'
 
@@ -193,6 +194,104 @@ export interface HostStatusInfo {
   artifactCount: number
   storageBytes: number
   quotaBytes: number
+}
+
+/**
+ * An artifact as it moves to another host: its content, history and comments, but nobody it was shared with. File
+ * bytes travel separately (`putBlobs`) and are referenced by SHA-256. Deleted comments are left behind.
+ */
+export interface ArtifactExport {
+  id: string
+  title: string
+  description: string
+  workspaceId: string | null
+  conversationId: string | null
+  conversationTitle: string | null
+  commentsEnabled: boolean
+  createdAt: number
+  updatedAt: number
+  /** Oldest first, numbered from 1. */
+  versions: {
+    number: number
+    entry: string
+    summary: string
+    createdBy: VersionAuthor
+    createdAt: number
+    files: { path: string; sha256: string; bytes: number; contentType: string }[]
+  }[]
+  thumbnails: { version: number; sha256: string; contentType: string; bytes: number; createdAt: number }[]
+  /** In the order they were written, so a thread always comes before its replies. */
+  comments: {
+    id: string
+    version: number
+    parentId: string | null
+    authorKind: CommentAuthorKind
+    authorName: string
+    body: string
+    anchor: CommentAnchor | null
+    status: 'open' | 'resolved'
+    createdAt: number
+  }[]
+}
+
+/** JSON with object keys in a fixed order, so equal anchors compare equal however they were built. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object')
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`
+  return JSON.stringify(value) ?? 'null'
+}
+
+/** What `sameContent` compares: an export, or a manifest whose sizes and types were not derived from its files yet. */
+export interface ArtifactContent extends Omit<ArtifactExport, 'versions' | 'thumbnails' | 'updatedAt'> {
+  versions: (Omit<ArtifactExport['versions'][number], 'files'> & { files: { path: string; sha256: string }[] })[]
+  thumbnails: { version: number; sha256: string }[]
+}
+
+/**
+ * Whether two exports hold the same artifact: the same content, history and comments. Sizes and types are derived
+ * from the files, and `updatedAt` from the history, so neither is compared.
+ */
+export function sameContent(a: ArtifactContent, b: ArtifactContent): boolean {
+  const key = (value: ArtifactContent) =>
+    canonical([
+      value.id,
+      value.title,
+      value.description,
+      value.workspaceId,
+      value.conversationId,
+      value.conversationTitle,
+      value.commentsEnabled,
+      value.createdAt,
+      [...value.versions]
+        .sort((x, y) => x.number - y.number)
+        .map((version) => [
+          version.number,
+          version.entry,
+          version.summary,
+          version.createdBy,
+          version.createdAt,
+          version.files.map((file) => [file.path, file.sha256]).sort(([x], [y]) => (x! < y! ? -1 : x! > y! ? 1 : 0)),
+        ]),
+      [...value.thumbnails]
+        .sort((x, y) => x.version - y.version)
+        .map((thumbnail) => [thumbnail.version, thumbnail.sha256]),
+      value.comments.map((comment) => [
+        comment.id,
+        comment.version,
+        comment.parentId,
+        comment.authorKind,
+        comment.authorName,
+        comment.body,
+        comment.anchor,
+        comment.status,
+        comment.createdAt,
+      ]),
+    ])
+  return key(a) === key(b)
 }
 
 /** Parses untrusted input, turning the first validation issue into an `invalid_input` error. */

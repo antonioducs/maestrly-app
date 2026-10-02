@@ -1,6 +1,6 @@
 import { randomBytes, randomInt } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import os from 'node:os'
@@ -27,6 +27,10 @@ import { commandOf } from '../../fixtures/fleet-installer-fakes'
  */
 
 const GB = 1024 ** 3
+const VIEWER_PATH = /^\/(?:a|c|_maestrly\/shell)\/|^\/robots\.txt$/
+const HOP_BY_HOP = ['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-connection']
+const endToEnd = (headers: IncomingMessage['headers']) =>
+  Object.fromEntries(Object.entries(headers).filter(([name]) => !HOP_BY_HOP.includes(name)))
 const now = () => new Date().toISOString()
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 
@@ -74,7 +78,11 @@ export class FakeGateway {
 
   constructor(
     private readonly hostname: string,
-    private readonly options: { artifacts?: boolean } = {}
+    /**
+     * With `gatewayViewer`, the API port also serves the artifact viewer, as a current gateway does. With `transfer`, a
+     * device can move artifacts in (`exportArtifact`, `putBlobs`, `importArtifact`).
+     */
+    private readonly options: { artifacts?: boolean; gatewayViewer?: boolean; transfer?: boolean } = {}
   ) {
     this.reset()
   }
@@ -112,7 +120,8 @@ export class FakeGateway {
             type: event.type === 'changed' ? 'artifact.changed' : 'artifact.activity',
             at: now(),
           }
-          for (const stream of this.streams) stream.write(`data: ${JSON.stringify(value)}\n\n`)
+          // The real gateway names its frames; the desktop reads only `fleet` events.
+          for (const stream of this.streams) stream.write(`event: fleet\ndata: ${JSON.stringify(value)}\n\n`)
         },
       }
     )
@@ -235,8 +244,45 @@ export class FakeGateway {
     return `${code.slice(0, 4)}-${code.slice(4)}`
   }
 
+  /** Forwards a viewer request to the real artifact host, keeping its Host, Origin and cookies. */
+  private forwardViewer(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const port = this.artifactHost?.port
+    if (!port) {
+      response.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' })
+      response.end('Artifact hosting is unavailable')
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      const upstream = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: request.method,
+          path: request.url,
+          headers: endToEnd(request.headers),
+          setHost: false,
+          agent: false,
+        },
+        (reply) => {
+          response.writeHead(reply.statusCode ?? 502, endToEnd(reply.headers))
+          reply.pipe(response)
+        }
+      )
+      upstream.on('error', () => {
+        if (!response.headersSent) response.writeHead(503).end()
+        else response.destroy()
+      })
+      response.on('close', () => {
+        if (!response.writableFinished) upstream.destroy()
+        resolve()
+      })
+      request.pipe(upstream)
+    })
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (this.options.gatewayViewer && VIEWER_PATH.test(url.pathname)) return this.forwardViewer(request, response)
     const send = (status: number, value?: unknown) => {
       if (value === undefined) {
         response.writeHead(status)
@@ -275,6 +321,8 @@ export class FakeGateway {
             'environments',
             'environment-updates',
             ...(this.options.artifacts ? ['artifacts'] : []),
+            ...(this.options.artifacts && this.options.gatewayViewer ? ['artifacts-gateway-viewer'] : []),
+            ...(this.options.artifacts && this.options.transfer ? ['artifacts-transfer'] : []),
           ],
         })
       case 'pair': {
@@ -335,18 +383,21 @@ export class FakeGateway {
             error: { code: 'host_unavailable', message: 'Artifact hosting is off', details: { reason: 'server_off' } },
           })
         const { method, args } = body as { method: string; args: unknown[] }
+        const transfer = ['exportArtifact', 'putBlobs', 'importArtifact']
+        const offered = (name: string) => this.options.transfer || !transfer.includes(name)
         return send(
           200,
           await callAdmin(this.artifactHost.admin, method, args, {
             allowed:
               key === 'artifactUpload'
-                ? UPLOAD_METHODS
+                ? UPLOAD_METHODS.filter(offered)
                 : ADMIN_METHODS.filter(
-                    (name) => name !== 'snapshot' && !(UPLOAD_METHODS as readonly string[]).includes(name)
+                    (name) =>
+                      name !== 'snapshot' && !(UPLOAD_METHODS as readonly string[]).includes(name) && offered(name)
                   ),
             // Paired owner devices can administer all artifacts, but cannot impersonate a publishing bot.
             guard: (name, values) =>
-              name === 'create'
+              name === 'create' || name === 'importArtifact'
                 ? [
                     {
                       ...(values[0] as Record<string, unknown>),

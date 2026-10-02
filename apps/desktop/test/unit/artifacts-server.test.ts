@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { ServerArtifacts } from '../../src/main/artifacts/server-artifacts'
 import { createFleetAdmin } from '../../src/main/artifacts/sources'
 import type { FleetClientService, FleetConnectionView } from '../../src/main/fleet/client/service'
-function fixture() {
+function fixture(options: { viewerPort?: () => number | null } = {}) {
   const connection: FleetConnectionView = {
     state: 'connected',
     features: ['artifacts'],
@@ -23,15 +23,21 @@ function fixture() {
     hasFeature: (f: string) => connection.features.includes(f),
     getConnection: () => connection,
   } as unknown as Pick<FleetClientService, 'call' | 'hasFeature' | 'getConnection'>
-  return { connection, host, call, server: new ServerArtifacts({ fleet, viewerPort: () => 4011 }) }
+  return {
+    connection,
+    host,
+    call,
+    server: new ServerArtifacts({ fleet, viewerPort: options.viewerPort ?? (() => 4011) }),
+  }
 }
+const GATEWAY_VIEWER = 'artifacts-gateway-viewer'
 it('discovers hosting and provides no source when disabled or unsupported', async () => {
   const h = fixture()
   expect(h.server.source()).toBeNull()
   expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: true })
   expect(h.server.source()?.viewerBase()).toBe('http://127.0.0.1:4011')
   h.host.settings.enabled = false
-  expect(await h.server.refresh()).toEqual({ state: 'off' })
+  expect(await h.server.refresh()).toEqual({ state: 'off', canMove: false })
   expect(h.server.source()).toBeNull()
   expect(h.server.unavailable()).toMatchObject({ details: { reason: 'server_off' } })
   h.connection.features = []
@@ -144,4 +150,91 @@ it('keeps newer settings when an older refresh finishes after a settings update'
   await refresh
   expect(h.server.host()?.settings.enabled).toBe(true)
   expect(h.server.status().state).toBe('ready')
+})
+
+it('opens artifacts through the paired gateway when it serves the viewer', async () => {
+  const h = fixture()
+  h.connection.features = ['artifacts', GATEWAY_VIEWER]
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: true })
+  // The gateway's own port wins over the separate artifact port, even while that one is available.
+  expect(h.server.source()?.viewerBase()).toBe('http://127.0.0.1:7443')
+  expect(h.server.source()?.publicBase()).toBeNull()
+  h.host.settings.publicAddress = 'https://bots.example.ts.net'
+  await h.server.refresh()
+  expect(h.server.source()?.viewerBase()).toBe('http://127.0.0.1:7443')
+  expect(h.server.source()?.publicBase()).toBe('https://bots.example.ts.net')
+})
+
+it('follows an SSH tunnel to the gateway without the separate artifact tunnel', async () => {
+  let viewerPort: number | null = 53_111
+  const h = fixture({ viewerPort: () => viewerPort })
+  h.connection.features = ['artifacts', GATEWAY_VIEWER]
+  h.connection.url = 'http://127.0.0.1:52000'
+  viewerPort = null
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: true })
+  expect(h.server.source()?.viewerBase()).toBe('http://127.0.0.1:52000')
+})
+
+it('uses an HTTPS gateway only at the address its artifact host accepts', async () => {
+  const h = fixture({ viewerPort: () => null })
+  h.connection.features = ['artifacts', GATEWAY_VIEWER]
+  h.connection.url = 'https://bots.example.ts.net'
+  // Without a public address the host would refuse that Host, so nothing can be opened.
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: false })
+  expect(h.server.source()?.viewerBase()).toBeNull()
+  h.host.settings.publicAddress = 'https://bots.example.ts.net'
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: true })
+  expect(h.server.source()?.viewerBase()).toBe('https://bots.example.ts.net')
+  h.host.settings.publicAddress = 'https://artifacts.example.ts.net'
+  await h.server.refresh()
+  expect(h.server.source()?.viewerBase()).toBe('https://artifacts.example.ts.net')
+})
+
+it('keeps the separate artifact port for a gateway that does not serve the viewer', async () => {
+  let viewerPort: number | null = 4011
+  const h = fixture({ viewerPort: () => viewerPort })
+  await h.server.refresh()
+  expect(h.server.source()?.viewerBase()).toBe('http://127.0.0.1:4011')
+  viewerPort = null
+  h.host.settings.publicAddress = 'https://bots.example.ts.net'
+  await h.server.refresh()
+  expect(h.server.source()?.viewerBase()).toBe('https://bots.example.ts.net')
+  h.host.settings.publicAddress = ''
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canOpen: false })
+})
+
+it('offers no gateway viewer while hosting is off, unreachable, or paired elsewhere', async () => {
+  const h = fixture()
+  h.connection.features = ['artifacts', GATEWAY_VIEWER]
+  await h.server.refresh()
+  const source = h.server.source()!
+  expect(source.viewerBase()).toBe('http://127.0.0.1:7443')
+  h.connection.deviceId = 'dev-2'
+  expect(source.viewerBase()).toBeNull()
+  h.connection.deviceId = 'dev-1'
+  h.host.settings.enabled = false
+  await h.server.refresh()
+  expect(h.server.source()).toBeNull()
+  h.host.settings.enabled = true
+  h.call.mockRejectedValueOnce(new Error('Offline'))
+  expect(await h.server.refresh()).toEqual({ state: 'unreachable' })
+  expect(h.server.source()).toBeNull()
+})
+
+it('explains why the server cannot host, and whether it accepts moved artifacts', async () => {
+  const h = fixture()
+  await h.server.refresh()
+  expect(h.server.unavailable()).toBeNull()
+  expect(h.server.status()).toMatchObject({ state: 'ready', canMove: false })
+  h.connection.features = ['artifacts', 'artifacts-transfer']
+  expect(await h.server.refresh()).toMatchObject({ state: 'ready', canMove: true })
+  h.call.mockRejectedValueOnce(new Error('Offline'))
+  await h.server.refresh()
+  expect(h.server.unavailable()).toMatchObject({ details: { reason: 'server_unreachable' } })
+  h.connection.features = []
+  await h.server.refresh()
+  expect(h.server.unavailable()).toMatchObject({ details: { reason: 'server_unsupported' } })
+  h.connection.deviceId = null
+  await h.server.refresh()
+  expect(h.server.unavailable()).toMatchObject({ code: 'host_unavailable', details: { reason: 'server_absent' } })
 })

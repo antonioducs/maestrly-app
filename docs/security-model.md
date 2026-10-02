@@ -178,15 +178,18 @@ compromised process running as the same user.
 ## Artifacts
 
 Artifacts are active HTML, CSS, and JavaScript written by agents, so the desktop
-renders them as untrusted content. The local artifact host runs in an Electron utility
-process that receives only its configuration and holds no app credentials. It
-is not a sandbox: it runs as the same user with full Node.js access, and it
-isolates crashes and keeps secrets out of its memory.
+renders them as untrusted content. They are hosted only on the bot server. The
+desktop starts a local artifact host only for what earlier versions published on
+this computer, to list, export, move, or delete it; those artifacts never open
+in a viewer. That host runs in an Electron utility process that receives only its
+configuration and holds no app credentials. It is not a sandbox: it runs as the
+same user with full Node.js access, and it isolates crashes and keeps secrets out
+of its memory. It listens on an ephemeral `127.0.0.1` port and stops when idle.
 
-The desktop host listens on `127.0.0.1` only and refuses requests whose `Host` is
-neither a loopback name on its port nor the public address the owner configured,
-which blocks DNS rebinding. Other people reach it only through a proxy the owner
-runs, such as Tailscale Serve. Artifact IDs and tokens carry at least 128 random
+Every artifact host refuses requests whose `Host` is neither a loopback name nor
+the public address the owner configured, which blocks DNS rebinding. Other
+people reach the server's host only through a route the owner runs, such as
+Tailscale Serve. Artifact IDs and tokens carry at least 128 random
 bits, and tokens are stored as SHA-256 digests. A missing, deleted, private, or
 expired artifact, and one that is not shared with whoever asks, answer the same
 404, and responses ask crawlers not to index them.
@@ -201,6 +204,18 @@ gateway exempt so host port forwarding and proxies can reach the viewer.
 ports. Non-loopback Host values still require the exact configured public
 address allowlist; arbitrary DNS names are not accepted.
 
+The gateway's public port also forwards the viewer's paths (`/a/`, `/c/`,
+`/_maestrly/shell/`, and `/robots.txt`) to that listener over the container's
+loopback, after applying its fleet network rule to the original client. It keeps
+the request's Host, Origin, and cookies, so the host applies the same checks as
+on its own port, and limits request bodies to 1 MiB. The target is fixed, never
+taken from the request; restarting or disabling hosting cuts requests in
+progress, and requests in the meantime are answered as unavailable. The bot API
+on that port still refuses any request with an `Origin` header and requires a
+device token. Sharing an origin with the viewer gives artifact pages no access to
+it: they run with an opaque origin, and the bot API uses bearer tokens, not
+cookies.
+
 Paired devices use authenticated `/v1/artifacts/admin` and
 `/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
 publications are stamped with the authenticated device's owner ID. Bots use
@@ -211,6 +226,17 @@ ownership on creation, and permits replies and resolution only in that scope.
 Bots cannot mint owner viewer tickets or administer sharing or deletion. A
 paired desktop may manage all server artifacts, but its conversation tools
 remain scoped to its own device and project or standalone conversation.
+
+Moving an earlier local artifact uses three device-only methods: export
+returns an artifact's manifest, blob upload stores content under the SHA-256 the
+host computes from the bytes, within the file size and storage limits, and import
+recreates the artifact under its original ID only when every referenced blob is
+present and the manifest passes the normal path, file, version, and thumbnail
+checks. Uploaded blobs that no import references are removed when the host
+restarts. Import never overwrites a different artifact with the same ID, records
+the authenticated device as owner, and carries no
+sharing state, people, sessions, or activity, so a moved artifact starts
+private. Bots cannot call these methods.
 
 Admin request bodies are limited to 1 MiB and upload bodies to 72 MiB; normal
 artifact file and version limits still apply. The database snapshot method is

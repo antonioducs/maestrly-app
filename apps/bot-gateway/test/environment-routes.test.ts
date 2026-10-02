@@ -72,6 +72,8 @@ describe('environment routes', () => {
     const docker = h.lifecycle.docker as FakeDockerDriver
     expect((await json(await h.request('GET', '/v1/meta'))).features).toEqual([
       'artifacts',
+      'artifacts-gateway-viewer',
+      'artifacts-transfer',
       'provisioning',
       'environments',
       'environment-compaction',

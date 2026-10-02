@@ -1,7 +1,8 @@
 /**
- * Lifecycle of the artifact host utility process. The host serves agent-generated pages over HTTP, so it runs
- * outside the main process and holds no app credentials. It starts on demand, restarts with backoff after a crash,
- * and stays down after repeated crashes or a busy port until the owner acts.
+ * Lifecycle of the artifact host utility process on this computer. Artifacts are hosted on the bot server; this
+ * process only opens what earlier versions published here, so they can be listed, moved and deleted. It serves pages
+ * over HTTP only on an ephemeral loopback port, holds no app credentials, restarts with backoff after a crash, and
+ * stays down after repeated crashes until asked again.
  */
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,12 +15,18 @@ import {
   type RpcChannel,
 } from '@maestrly/artifact-host'
 import { utilityProcess } from 'electron'
-import type {
-  ArtifactHostProblem,
-  ArtifactHostState,
-  ArtifactHostStatus,
-  ArtifactSettings,
-} from '../../shared/artifacts'
+
+export type ArtifactHostState = 'stopped' | 'starting' | 'running' | 'error'
+export type ArtifactHostProblem = 'port_in_use' | 'storage' | 'crashed'
+export interface ArtifactHostStatus {
+  state: ArtifactHostState
+  problem?: ArtifactHostProblem
+  /** The loopback port, while running. */
+  port: number | null
+}
+
+/** Nothing new is published here, so the limit only has to admit what is already stored. */
+const LEGACY_QUOTA_BYTES = 100 * 1024 ** 3
 
 export interface UtilityLike {
   postMessage(message: unknown): void
@@ -32,9 +39,8 @@ export interface UtilityLike {
 export interface ArtifactHostProcessDeps {
   fork: () => UtilityLike
   dataDir: () => string
-  settings: () => ArtifactSettings
-  onStatus: (status: ArtifactHostStatus) => void
-  onEvent: (event: ArtifactHostEvent) => void
+  onStatus?: (status: ArtifactHostStatus) => void
+  onEvent?: (event: ArtifactHostEvent) => void
   schedule?: (fn: () => void, ms: number) => void
   now?: () => number
 }
@@ -91,38 +97,30 @@ export class ArtifactHostProcess {
   }
 
   status(): ArtifactHostStatus {
-    const settings = this.deps.settings()
-    const problem =
-      this.problem ?? (this.state === 'stopped' && !settings.hostEnabled ? ('disabled' as const) : undefined)
     return {
       state: this.state,
-      ...(problem ? { problem } : {}),
-      port: this.state === 'running' && this.port !== null ? this.port : settings.port,
+      ...(this.problem ? { problem: this.problem } : {}),
+      port: this.state === 'running' ? this.port : null,
     }
   }
 
   private setStatus(state: ArtifactHostState, problem?: ArtifactHostProblem): void {
     this.state = state
     this.problem = problem
-    this.deps.onStatus(this.status())
+    this.deps.onStatus?.(this.status())
   }
 
   ensureStarted(): Promise<ArtifactAdmin> {
     if (this.client && this.state === 'running') return Promise.resolve(this.client)
     if (this.starting) return this.starting
-    const settings = this.deps.settings()
-    if (!settings.hostEnabled) {
-      this.setStatus('stopped')
-      return Promise.reject(unavailable('disabled'))
-    }
-    const starting = this.start(settings).finally(() => {
+    const starting = this.start().finally(() => {
       if (this.starting === starting) this.starting = null
     })
     this.starting = starting
     return starting
   }
 
-  private start(settings: ArtifactSettings): Promise<ArtifactAdmin> {
+  private start(): Promise<ArtifactAdmin> {
     const generation = ++this.generation
     this.setStatus('starting')
     const child = this.deps.fork()
@@ -164,12 +162,12 @@ export class ArtifactHostProcess {
         for (const listener of listeners) listener(message)
         const m = message as { type?: unknown; code?: unknown; port?: unknown; event?: unknown } | null
         if (m?.type === 'event') {
-          if (isHostEvent(m.event)) this.deps.onEvent(m.event)
+          if (isHostEvent(m.event)) this.deps.onEvent?.(m.event)
         } else if (m?.type === 'ready' && !settled && generation === this.generation) {
           settled = true
           clearTimeout(readyTimer)
           this.client = client
-          this.port = typeof m.port === 'number' ? m.port : settings.port
+          this.port = typeof m.port === 'number' ? m.port : null
           this.setStatus('running')
           resolve(client)
         } else if (m?.type === 'init-error') {
@@ -193,12 +191,13 @@ export class ArtifactHostProcess {
 
       child.postMessage({
         type: 'init',
+        // A free port on the loopback, and no public address: nobody else reaches these pages any more.
         config: {
           dataDir: this.deps.dataDir(),
-          port: settings.port,
-          quotaBytes: settings.quotaGb * 1024 ** 3,
-          publicOrigins: settings.publicAddress ? [settings.publicAddress] : [],
-          ownerName: settings.ownerName,
+          port: 0,
+          quotaBytes: LEGACY_QUOTA_BYTES,
+          publicOrigins: [],
+          ownerName: '',
         },
       })
     })
@@ -260,10 +259,10 @@ export class ArtifactHostProcess {
     })
   }
 
-  /** Applies new settings: stops the current worker and, when hosting is on, starts a fresh one. */
+  /** Starts afresh after repeated crashes or a failed start. */
   async restart(): Promise<void> {
     await this.stop()
     this.crashes = []
-    if (this.deps.settings().hostEnabled) await this.ensureStarted().catch(() => {})
+    await this.ensureStarted().catch(() => {})
   }
 }

@@ -22,7 +22,7 @@ export default {
     artifact_create: {
       title: 'Publicar artefato',
       description:
-        'Publica uma página web autocontida (HTML, CSS, JavaScript e assets) como um artefato versionado que o usuário abre pelo chat ou pela central de artefatos. Passe os arquivos inline com `files`, ou publique uma pasta de build com `directory` (relativa aos arquivos desta conversa). O arquivo de entrada padrão é index.html. Os artefatos são privados do usuário. Use para protótipos, relatórios, dashboards e outras páginas que valha a pena ver num navegador.',
+        'Publica uma página web autocontida (HTML, CSS, JavaScript e assets) como um artefato versionado no servidor de bots do usuário, que ele abre pelo chat ou pela central de artefatos. Passe os arquivos inline com `files`, ou publique uma pasta de build com `directory` (relativa aos arquivos desta conversa). O arquivo de entrada padrão é index.html. Os artefatos são privados do usuário. Use para protótipos, relatórios, dashboards e outras páginas que valha a pena ver num navegador.',
       params: {
         title: 'título curto mostrado ao usuário',
         description: 'descrição opcional em uma linha',
@@ -636,13 +636,18 @@ export default {
       invalidEncoding: '{{path}} não é base64 válido.',
       inlineTooLarge: 'Os arquivos inline passam de 5 MiB no total. Grave-os numa pasta e publique com directory.',
       directoryRefused: 'A pasta não pode ser publicada: {{message}}',
-      serverUnavailable: 'O bot server está indisponível. Verifique a conexão em Configurações → Bots.',
-      serverOff: 'A hospedagem de artefatos está desligada no bot server. Ative em Configurações → Artefatos.',
+      serverAbsent:
+        'Nenhum servidor de bots está conectado, e os artefatos só são publicados num servidor de bots. Diga ao usuário para conectar um em Configurações → Artefatos; não publique a página de outro jeito a menos que ele peça.',
+      serverUnsupported:
+        'O servidor de bots é antigo demais para hospedar artefatos. Diga ao usuário para atualizá-lo em Configurações → Servidor de bots.',
+      serverUnavailable:
+        'O servidor de bots está inacessível. Verifique a conexão em Configurações → Servidor de bots.',
+      serverOff: 'A hospedagem de artefatos está desligada no servidor de bots. Ative em Configurações → Artefatos.',
       botOff: 'A publicação de artefatos está desligada para este bot. Peça ao dono para ativá-la.',
       noViewer:
         'Não há endereço para abrir o visualizador. Verifique o túnel ou configure o endereço público do servidor em Configurações → Artefatos.',
-      hostDisabled: 'A hospedagem de artefatos está desligada em Configurações → Artefatos.',
-      portInUse: 'A porta {{port}} está em uso. Troque em Configurações → Artefatos.',
+      onThisComputer:
+        'Este artefato ainda está neste computador, de uma versão anterior. Ele volta a abrir e a mudar quando o usuário movê-lo para o servidor de bots em Configurações → Artefatos.',
       hostUnavailable: 'O host de artefatos está indisponível. Verifique Configurações → Artefatos.',
       internal: 'A operação com o artefato falhou inesperadamente.',
       invalid_input: 'Entrada inválida: {{message}}',
@@ -663,7 +668,8 @@ export default {
       version_limit: 'Este artefato chegou a 200 versões. Publique um artefato novo.',
       quota_exceeded:
         'O limite de armazenamento de artefatos foi atingido. O usuário pode aumentá-lo em Configurações → Artefatos ou excluir artefatos.',
-      port_in_use: 'A porta {{port}} está em uso. Troque em Configurações → Artefatos.',
+      port_in_use: 'O host de artefatos não conseguiu iniciar: a porta {{port}} está em uso.',
+      already_exists: 'Já existe um artefato com este ID.',
       storage: 'O armazenamento de artefatos falhou: {{message}}',
       host_unavailable: 'O host de artefatos está indisponível. Verifique Configurações → Artefatos.',
       limit_reached: '{{message}}.',

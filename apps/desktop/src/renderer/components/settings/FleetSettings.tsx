@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FLEET_INSTALLER_ERROR_CODES, type FleetInstallerStatus } from '../../../shared/fleet-installer'
+import {
+  FLEET_INSTALLER_ERROR_CODES,
+  type FleetInstallHosts,
+  type FleetInstallerStatus,
+} from '../../../shared/fleet-installer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
@@ -13,10 +17,20 @@ import { BotServerPanel } from './bot-server/BotServerPanel'
 
 type SetupScreen = 'choice' | 'local' | 'remote' | 'manual'
 
-export function FleetSettings({ fleet }: { fleet: FleetController }) {
+export function FleetSettings({
+  fleet,
+  initialSetup,
+  defaultHosts,
+}: {
+  fleet: FleetController
+  /** Opens on this setup screen, as when Settings → Artifacts sends the owner here. */
+  initialSetup?: Exclude<SetupScreen, 'choice'>
+  /** What a new server hosts unless the owner picks otherwise. */
+  defaultHosts?: FleetInstallHosts
+}) {
   const { t } = useTranslation('fleet')
   const { status, refresh } = useFleetInstaller()
-  const [screen, setScreen] = useState<SetupScreen>('choice')
+  const [screen, setScreen] = useState<SetupScreen>(initialSetup ?? 'choice')
   const [dismissedJobId, setDismissedJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const retry = useRef<(() => Promise<FleetInstallerStatus>) | null>(null)
@@ -121,6 +135,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
         <BotServerManualSetup fleet={fleet} onBack={() => setScreen('choice')} />
       ) : screen === 'local' ? (
         <BotServerLocalSetup
+          defaultHosts={defaultHosts}
           onBack={() => setScreen('choice')}
           onInstall={(input) => {
             void run(() => window.api.fleetInstallerInstallLocal(input))
@@ -129,6 +144,7 @@ export function FleetSettings({ fleet }: { fleet: FleetController }) {
       ) : screen === 'remote' ? (
         <BotServerRemoteSetup
           record={status.record}
+          defaultHosts={defaultHosts}
           onBack={() => setScreen('choice')}
           onInstall={(input) => {
             void run(async () => {

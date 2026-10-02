@@ -45,26 +45,33 @@ settings alone. Upgraded servers keep hosting off until you enable it in
 port mapping to older installations; reconnect after updating if needed.
 
 The gateway embeds the artifact host and stores its pages in `/data/artifacts`
-in its persistent volume. Its third listener is port 4010 inside Docker,
-separate from the device API (7443) and bot API (7444). The container listens on
-`0.0.0.0`, but installer setups publish it only on the Docker host's loopback.
-For Docker on this computer, the installer chooses a free port starting after
-the desktop artifact port (normally 4011), leaving desktop port 4010 available.
+in its persistent volume. The device API port (7443) also serves the artifact
+viewer under `/a/`, `/c/`, `/_maestrly/shell/` and `/robots.txt`, so the
+desktop, and any route you expose to the gateway, reach bots and artifacts at one
+address. The desktop opens server pages through its gateway connection whenever
+the gateway serves the viewer.
+
+The artifact host keeps its own listener, port 4010 inside Docker, separate from
+the device API (7443) and bot API (7444), for older desktops. The container
+listens on `0.0.0.0`, but installer setups publish it only on the Docker host's
+loopback. For Docker on this computer, the installer chooses a free port starting at
+4011, leaving port 4010 to what earlier desktop versions used.
 
 For a VPS, a second, independent SSH tunnel forwards a local loopback port
 (normally 4011, or another free port) to server port 4010, or the port recorded
 in `MAESTRLY_ARTIFACTS_PORT`. An artifact tunnel failure does not take down the
-gateway tunnel. These tunnels let the desktop open pages; visitor links need
-external access and a manually configured public address. See
-[server artifact setup](artifacts.md#bot-server) and the
-[Tailscale example](artifacts.md#reach-the-server-from-another-device).
+gateway tunnel, and a current gateway does not need it: the desktop opens pages
+through the gateway tunnel. Visitor links need external access and a manually
+configured public address. See [server artifact setup](artifacts.md#hosting)
+and the [Tailscale example](artifacts.md#reach-the-server-from-another-device).
 
 Each bot has a **Publish artifacts** setting. New bots default to whether the
 server has artifact hosting enabled; migrated bots start with it off. Enabled
 bots receive seven artifact tools, excluding `artifact_open`, and can work only
 with their own artifacts. The desktop's bot publication card opens the external
-viewer. Desktop conversations independently choose their publication host in
-**Settings → Artifacts → Publish new artifacts to**.
+viewer. Desktop conversations publish on the same server, which is the only place
+artifacts are hosted; **Settings → Artifacts** offers an artifact-only setup when
+no server is paired.
 
 Turning hosting off keeps its data. Disconnecting or unpairing this computer
 leaves server hosting running. Explicit server removal with data deletion also

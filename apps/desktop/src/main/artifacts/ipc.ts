@@ -9,7 +9,6 @@ import {
 } from '../../shared/artifacts'
 import type { IpcRegistrar } from '../ipc-registrar'
 import type { ArtifactsService } from './service'
-import { artifactSettingsSchema } from './settings'
 
 const artifactId = z.string().refine(isArtifactId, 'Invalid artifact ID')
 const version = z.number().int().min(1).optional()
@@ -32,6 +31,8 @@ const sharingPatch = z
   .strict()
 const requestDecision = z.object({ approve: z.boolean(), name: personName.optional() }).strict()
 const commentBody = z.string().trim().min(1).max(MAX_ARTIFACT_COMMENT_CHARS)
+/** Some artifacts, or all of them when absent. */
+const idList = z.array(artifactId).min(1).max(1000).optional()
 
 /** Owner actions from the renderer. Every channel is guarded and validates its input before the service sees it. */
 export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => ArtifactsService }): void {
@@ -57,12 +58,15 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
   reg.mhandle('artifacts:server-host-set', async (_e, patch: unknown) =>
     service().setServerHost(fleetArtifactSettingsPatchSchema.parse(patch))
   )
-  reg.mhandle('artifacts:status', async () => service().status())
-  reg.mhandle('artifacts:start', async () => service().start())
-  reg.mhandle('artifacts:settings-get', async () => service().getSettings())
-  reg.mhandle('artifacts:settings-set', async (_e, settings: unknown) =>
-    service().setSettings(artifactSettingsSchema.parse(settings))
-  )
+
+  // Artifacts an earlier version left on this computer: they move to the bot server or are deleted.
+  reg.mhandle('artifacts:legacy-list', async () => service().legacyList())
+  reg.mhandle('artifacts:legacy-state', async () => service().legacyState())
+  reg.mhandle('artifacts:legacy-move', async (_e, ids: unknown) => service().legacyMove(idList.parse(ids)))
+  reg.mhandle('artifacts:legacy-stop', async () => service().legacyStop())
+  reg.mhandle('artifacts:legacy-delete', async (_e, ids: unknown) => {
+    await service().legacyDelete(idList.parse(ids))
+  })
 
   // Sharing: the owner's controls. There is no agent tool for any of these.
   reg.mhandle('artifacts:sharing-get', async (_e, id: unknown) => service().sharing(artifactId.parse(id)))
