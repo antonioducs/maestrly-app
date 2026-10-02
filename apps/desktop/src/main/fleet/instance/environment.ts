@@ -49,10 +49,19 @@ import { invalidateProvider } from '../../chat/provider'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { botMemorySpaceId } from '../../memory/spaces'
 import type { ScreenFocusOwner } from '../../screen-focus'
-import { deleteLocalMemorySpace, getAppSetting, setAppSetting } from '../../store'
+import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting } from '../../store'
 import { adoptLegacyBot } from './adoption'
 import type { EnvironmentInstanceConfig } from './config'
-import type { BotDisplay, BotDisplayEnv, DisplayManagerDeps, DisplaySurface, VncLease, VncMode } from './displays'
+import { paintWallpaper } from './desktop/paint-wallpaper'
+import {
+  BOT_GTK_THEME,
+  type BotDisplay,
+  type BotDisplayEnv,
+  type DisplayManagerDeps,
+  type DisplaySurface,
+  type VncLease,
+  type VncMode,
+} from './displays'
 import {
   SUBSCRIPTION_PROVIDER_KIND,
   cleanupBotSubscriptionSlot,
@@ -84,6 +93,8 @@ import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError } from './serv
 export interface EnvironmentDisplays {
   startBot(botId: string, slot: number): Promise<BotDisplay>
   stopBot(botId: string): Promise<void>
+  /** Paints the bot's wallpaper again after its name or color changed; it never rejects for a failed painting. */
+  redecorate(botId: string): Promise<void>
   acquireVnc(surface: DisplaySurface, mode: VncMode): Promise<VncLease>
   dispose(): Promise<void>
 }
@@ -400,8 +411,11 @@ export class EnvironmentRuntime {
       }
       if (hold.paused) await existing.hold('paused')
       if (hold.takeover) await existing.hold('takeover')
+      const look = { name: existing.name, tint: existing.tint }
       await existing.profile(profile)
       existing.activate()
+      // The wallpaper shows the bot's name and color: an update that changes either paints it again.
+      if (look.name !== profile.name || look.tint !== (profile.tint ?? null)) this.repaint(botId)
       return existing
     }
     if (members.filter((member) => member.botId !== botId).length >= FLEET_ENVIRONMENT_LIMITS.botsMax)
@@ -424,7 +438,13 @@ export class EnvironmentRuntime {
     }
     this.registry.set(botId, bot)
     bot.activate()
+    // Its display started before its profile was known: the first wallpaper is painted now.
+    this.repaint(botId)
     return bot
+  }
+  /** Paints a bot's wallpaper again without waiting for it; a failure is logged and never reaches the install. */
+  private repaint(botId: string): void {
+    void this.displays?.redecorate(botId).catch((error: unknown) => log('error', errorMessage(error)))
   }
   private async recreate(member: InstalledBot): Promise<void> {
     const bot = new BotRuntime(member.botId, member.slot, this.host)
@@ -473,6 +493,7 @@ export class EnvironmentRuntime {
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(paths.cache, 'bus')}`,
       BROWSER: BOT_BROWSER,
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(paths.browserConfig, 'chromium'),
+      GTK_THEME: BOT_GTK_THEME,
     }
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */
@@ -630,11 +651,33 @@ export class EnvironmentRuntime {
   }
 }
 
+/** What a bot's wallpaper shows: its name and its color (`#rrggbb`, or null for the neutral one). */
+export interface BotLook {
+  name: string
+  tint: string | null
+}
+
+/** The look in the profile an install stored, which is all there is when the environment starts again. */
+function storedBotLook(botId: string): BotLook | null {
+  const stored = readStoredProfile(botId)
+  return stored ? { name: stored.profile.name, tint: stored.profile.tint ?? null } : null
+}
+
+/** The language the taskbar uses for its launcher names: the app's own, as a POSIX locale name. */
+const taskbarLanguage = (locale: string): string => (locale === 'pt-BR' ? 'pt_BR' : 'en')
+
 /**
  * Runs the display manager's programs. `options.env` holds only the variables set over this process's environment,
  * so each child gets both. A program that cannot start exits with 127, like a shell's "command not found".
+ *
+ * `look` tells a bot's wallpaper what to show; a bot it knows nothing about is left unpainted until an install paints
+ * it (see `EnvironmentRuntime`). `locale` is the app's language, read whenever a taskbar starts.
  */
-export function productionDisplayDeps(home: string): DisplayManagerDeps {
+export function productionDisplayDeps(
+  home: string,
+  look: (botId: string) => BotLook | null = storedBotLook,
+  locale: () => string = getLocale
+): DisplayManagerDeps {
   return {
     spawn(command, args, options) {
       let child: ChildProcess
@@ -662,6 +705,16 @@ export function productionDisplayDeps(home: string): DisplayManagerDeps {
     mkdir: async (folder) => {
       await fs.mkdir(folder, { recursive: true, mode: 0o700 })
     },
+    decorate: async (display) => {
+      const botLook = look(display.botId)
+      if (!botLook) return
+      await paintWallpaper({
+        folder: path.join(home, '.cache', 'maestrly-bots', display.botId),
+        display: display.display,
+        ...botLook,
+      })
+    },
+    language: () => taskbarLanguage(locale()),
     setTimeout,
     clearTimeout,
     log: (message) => log('info', message),

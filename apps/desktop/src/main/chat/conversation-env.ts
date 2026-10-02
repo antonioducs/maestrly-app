@@ -9,6 +9,7 @@ export const CONVERSATION_SHELL_ENV_KEYS = [
   'DBUS_SESSION_BUS_ADDRESS',
   'BROWSER',
   'MAESTRLY_BOT_BROWSER_PROFILE',
+  'GTK_THEME',
 ] as const
 
 export type ConversationShellEnv = Partial<Record<(typeof CONVERSATION_SHELL_ENV_KEYS)[number], string>>

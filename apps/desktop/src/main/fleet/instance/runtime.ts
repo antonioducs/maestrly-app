@@ -336,6 +336,10 @@ export class BotRuntime {
   get name(): string | null {
     return this.stored?.profile.name ?? null
   }
+  /** The bot's color for its desktop (`#rrggbb`), or null when the gateway sent none. */
+  get tint(): string | null {
+    return this.stored?.profile.tint ?? null
+  }
   get artifactsEnabled(): boolean {
     return this.stored?.profile.gateway.artifactsEnabled ?? false
   }

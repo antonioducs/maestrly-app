@@ -301,6 +301,7 @@ describe('legacy single-bot adoption', () => {
         DBUS_SESSION_BUS_ADDRESS: `unix:path=/home/synthetic/.cache/maestrly-bots/${botId}/bus`,
         BROWSER: '/usr/local/bin/maestrly-bot-browser',
         MAESTRLY_BOT_BROWSER_PROFILE: `/home/synthetic/.config/maestrly-bots/${botId}/chromium`,
+        GTK_THEME: 'Adwaita:dark',
       },
       browserArea: fleetEnvironmentTile(slot),
     }))
@@ -315,6 +316,7 @@ describe('legacy single-bot adoption', () => {
       displays: {
         startBot,
         stopBot: vi.fn(async () => {}),
+        redecorate: vi.fn(async () => {}),
         acquireVnc: vi.fn(async () => ({ port: 5903, release: () => {} })),
         dispose: vi.fn(async () => {}),
       },

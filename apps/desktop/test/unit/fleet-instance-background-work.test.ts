@@ -140,10 +140,12 @@ function fakeDisplays() {
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
         BROWSER: '/usr/local/bin/maestrly-bot-browser',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
+        GTK_THEME: 'Adwaita:dark',
       },
       browserArea: fleetEnvironmentTile(slot),
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
+    redecorate: vi.fn(async (_botId: string) => {}),
     acquireVnc: vi.fn(async () => ({ port: 5903, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }

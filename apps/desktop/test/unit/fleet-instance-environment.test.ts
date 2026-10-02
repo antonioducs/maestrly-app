@@ -37,6 +37,7 @@ import { InstanceInputQueue } from '../../src/main/fleet/instance/queue'
 import { botIdentityPrompt } from '../../src/main/fleet/instance/identity'
 import { gateInstanceAppTool } from '../../src/main/fleet/instance/gate'
 import { createInstanceControlServer, InstanceHttpError } from '../../src/main/fleet/instance/server'
+import * as wallpaperPainter from '../../src/main/fleet/instance/desktop/paint-wallpaper'
 import type { DisplaySurface, VncMode } from '../../src/main/fleet/instance/displays'
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { conversationScreen } from '../../src/main/conversation-screen'
@@ -85,10 +86,12 @@ function fakeDisplays(home: string) {
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
         BROWSER: '/usr/local/bin/maestrly-bot-browser',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
+        GTK_THEME: 'Adwaita:dark',
       },
       browserArea: fleetEnvironmentTile(slot),
     })),
     stopBot: vi.fn(async (_botId: string) => {}),
+    redecorate: vi.fn(async (_botId: string) => {}),
     acquireVnc: vi.fn(async (_surface: DisplaySurface, _mode: VncMode) => ({ port: 5903, release: vi.fn() })),
     dispose: vi.fn(async () => {}),
   }
@@ -757,8 +760,107 @@ describe('bot environment registry', () => {
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(home, '.cache', 'maestrly-bots', 'alpha', 'bus')}`,
       BROWSER: '/usr/local/bin/maestrly-bot-browser',
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(home, '.config', 'maestrly-bots', 'alpha', 'chromium'),
+      GTK_THEME: 'Adwaita:dark',
     })
     expect(conversationShellEnv(runtime.bot('beta').primaryConversationId!)).toMatchObject({ DISPLAY: ':2' })
+  })
+
+  it('paints the wallpaper of a bot once it is installed, and again only when its name or color changes', async () => {
+    const { runtime, displays } = environment()
+    await runtime.start()
+    const install = (extra: Partial<FleetInstanceProfile>, name = 'Alpha') =>
+      runtime.installBot({ profile: profile('alpha', name, extra), slot: 1, gatewayToken: tokenA })
+    await install({ tint: '#8b6cf0' })
+    // The first install started the display before the profile was known: it is painted once the profile is in.
+    expect(displays.redecorate.mock.calls).toEqual([['alpha']])
+    expect(runtime.bot('alpha')).toMatchObject({ name: 'Alpha', tint: '#8b6cf0' })
+
+    await install({ tint: '#8b6cf0' })
+    await install({ tint: '#8b6cf0', instructions: 'Other instructions.', ceiling: 'full' })
+    expect(displays.redecorate).toHaveBeenCalledTimes(1)
+
+    await install({ tint: '#3f9fd8' })
+    expect(displays.redecorate).toHaveBeenCalledTimes(2)
+    await install({ tint: '#3f9fd8' }, 'Ada')
+    expect(displays.redecorate).toHaveBeenCalledTimes(3)
+    // A gateway that stops sending a color takes the bot back to the neutral one.
+    await install({}, 'Ada')
+    expect(runtime.bot('alpha').tint).toBeNull()
+    expect(displays.redecorate).toHaveBeenCalledTimes(4)
+    expect(displays.redecorate.mock.calls.every(([botId]) => botId === 'alpha')).toBe(true)
+  })
+
+  it('installs a bot even when its wallpaper cannot be painted', async () => {
+    const displays = fakeDisplays(home)
+    displays.redecorate.mockRejectedValue(new Error('painting failed'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { runtime } = environment(displays)
+    await runtime.start()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Alpha', { tint: '#8b6cf0' }), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Ada', { tint: '#8b6cf0' }), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    await settle(20)
+    expect(runtime.bot('alpha').name).toBe('Ada')
+    expect(errors.mock.calls.filter(([line]) => String(line).includes('painting failed'))).toHaveLength(2)
+    // Without displays (outside a container) there is nothing to paint and nothing to fail.
+    await runtime.dispose()
+    const bare = new EnvironmentRuntime({ ...environment().deps, displays: null })
+    environments.push(bare)
+    await bare.start()
+    await expect(
+      bare.installBot({ profile: profile('beta', 'Beta', { tint: '#8b6cf0' }), slot: 2, gatewayToken: tokenB })
+    ).resolves.toBeDefined()
+  })
+
+  it('gives the wallpaper the stored look of a bot, nothing for an unknown bot, and the language of the app', async () => {
+    const painted = vi.spyOn(wallpaperPainter, 'paintWallpaper').mockResolvedValue()
+    const { runtime } = environment()
+    await runtime.start()
+    await runtime.installBot({
+      profile: profile('alpha', 'Alpha', { tint: '#8b6cf0' }),
+      slot: 1,
+      gatewayToken: tokenA,
+    })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    const display = (botId: string, slot: number) =>
+      ({ botId, slot, display: `:${slot}` }) as Parameters<
+        NonNullable<ReturnType<typeof productionDisplayDeps>['decorate']>
+      >[0]
+    const folder = (botId: string) => path.join(home, '.cache', 'maestrly-bots', botId)
+
+    const deps = productionDisplayDeps(home)
+    await deps.decorate?.(display('alpha', 1))
+    await deps.decorate?.(display('beta', 2))
+    await deps.decorate?.(display('gamma', 3))
+    expect(painted.mock.calls).toEqual([
+      [{ folder: folder('alpha'), display: ':1', name: 'Alpha', tint: '#8b6cf0' }],
+      [{ folder: folder('beta'), display: ':2', name: 'Beta', tint: null }],
+    ])
+    // The look and the language can come from elsewhere, and a painting that fails is the caller's to log.
+    let locale = 'pt-BR'
+    const custom = productionDisplayDeps(
+      home,
+      (botId) => (botId === 'alpha' ? { name: 'Custom', tint: '#112233' } : null),
+      () => locale
+    )
+    await custom.decorate?.(display('alpha', 1))
+    expect(painted.mock.calls.at(-1)).toEqual([
+      { folder: folder('alpha'), display: ':1', name: 'Custom', tint: '#112233' },
+    ])
+    expect(custom.language?.()).toBe('pt_BR')
+    locale = 'en'
+    expect(custom.language?.()).toBe('en')
+    locale = 'fr'
+    expect(custom.language?.()).toBe('en')
+    painted.mockRejectedValueOnce(new Error('hsetroot is not installed'))
+    await expect(custom.decorate?.(display('alpha', 1))).rejects.toThrow('hsetroot is not installed')
+    // Without a look given, the language is the app's own.
+    expect(deps.language?.()).toBe('en')
+    setAppSetting('locale', 'pt-BR')
+    expect(deps.language?.()).toBe('pt_BR')
   })
 
   it('lends VNC servers for the screens of installed bots and the environment screen only', async () => {

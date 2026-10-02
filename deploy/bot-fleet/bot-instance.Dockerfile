@@ -64,6 +64,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep jq fd-find zip unzip sqlite3 less procps file xz-utils iptables iproute2 util-linux \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
+# The look of each bot's Linux desktop: hsetroot and librsvg2-bin paint the wallpaper, xterm, pcmanfm and mousepad are
+# the apps behind the dock, gnome-themes-extra gives the GTK 2 file manager a dark theme, and the three libraries are
+# what the desktop programs of the next layers link to.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    hsetroot librsvg2-bin xterm pcmanfm mousepad gnome-themes-extra libxdamage1 libxfixes3 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/local/include/node /usr/local/include/node
 COPY --from=build /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
@@ -90,6 +96,10 @@ COPY --from=build /app/config /opt/maestrly/config
 COPY deploy/bot-fleet/openbox-rc.xml /opt/maestrly/openbox-rc.xml
 COPY deploy/bot-fleet/openbox-environment-rc.xml /opt/maestrly/openbox-environment-rc.xml
 COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
+# The desktop of the bots' apps displays: icons, launchers, programs and the Openbox theme.
+COPY deploy/bot-fleet/desktop /opt/maestrly/desktop
+COPY deploy/bot-fleet/desktop/theme/Maestrly /usr/share/themes/Maestrly
+COPY deploy/bot-fleet/desktop/applications/ /usr/share/applications/
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
@@ -98,6 +108,9 @@ RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoi
     chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \
     chmod 0755 /usr/local/bin/maestrly-bot-browser && \
+    chmod -R a+rX /opt/maestrly/desktop /usr/share/themes/Maestrly && \
+    chmod 0644 /usr/share/applications/maestrly-*.desktop && \
+    cat /opt/maestrly/desktop/xterm/XTerm >> /etc/X11/app-defaults/XTerm && \
     mkdir -p /home/bot/.config/tint2 && chown -R bot:bot /home/bot && \
     chmod 4755 /opt/maestrly/node_modules/electron/dist/chrome-sandbox
 USER bot
