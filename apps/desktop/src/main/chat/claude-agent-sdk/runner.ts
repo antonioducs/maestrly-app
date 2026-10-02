@@ -72,9 +72,12 @@ import {
 import { recordModelCallUsage } from '../usage-diagnostics'
 import {
   CLAUDE_AUTHENTICATION_REQUIRED_MESSAGE,
+  claudeOAuthRefreshContentionMessage,
+  claudeRefreshContentionRetryDelay,
   claudeRuntimeErrorMessage,
   claudeSubscriptionErrorMessage,
   isClaudeAuthenticationRequired,
+  isClaudeOAuthRefreshContention,
   redactClaudeCredentials,
 } from './errors'
 import {
@@ -282,6 +285,11 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number, signal?: 
     if (timeout) clearTimeout(timeout)
     if (signal && resolveAbort) signal.removeEventListener('abort', resolveAbort)
   }
+}
+
+/** Waits `ms`, or less when `signal` aborts. */
+async function pause(ms: number, signal: AbortSignal): Promise<void> {
+  await settleWithin(new Promise<never>(() => {}), ms, signal)
 }
 
 function diagnosticEntries(value: unknown): string[] {
@@ -1113,6 +1121,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
   let sessionId = ''
   let sessionAccepted = false
   let sessionPersisted = false
+  /** A session a failed attempt resumed, holding its prompt, that a retry forks from; retired unless the turn persists. */
+  let retryForkSource: { sessionId: string; owner: ClaudeRuntimeTarget } | null = null
   let result: SDKResultMessage | null = null
   let context: ClaudeContextSnapshot | null = null
   let streamMapper: ReturnType<typeof createClaudeStreamMapper> | null = null
@@ -1376,6 +1386,10 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     let assistantFailure: unknown
     let failureCode: 'claude-accounts-exhausted' | undefined
     let switchingAccount = false
+    /** Whether this turn's session forks `existing`, whose message mappings then move to the new session. */
+    let forksExisting = resolution.forkSession
+    let refreshContentionRetries = 0
+    const turnStartTarget = currentTarget
     const rotationError = (resolution: Exclude<ResolveClaudeTargetResult, { ok: true }>): Error => {
       if (resolution.error === 'aborted') return args.signal.reason ?? new Error(resolution.message)
       const error = new Error(resolution.message)
@@ -1567,6 +1581,47 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         toProviderId: currentTarget.providerId,
         reason: classification.info.reason,
         resetsAt: classification.info.resetsAt,
+      })
+      return true
+    }
+    /**
+     * Starts the turn again after an OAuth refresh contention, once the lock had time to clear. Only while nothing of
+     * the turn reached the bubble: the same user message is sent again, so no output or tool may have come before.
+     */
+    const retryAfterRefreshContention = async (): Promise<boolean> => {
+      if (args.signal.aborted || state.planSubmitted || switchingAccount || messages[0].parts.length > 0) return false
+      const delayMs = claudeRefreshContentionRetryDelay(refreshContentionRetries)
+      if (delayMs === null) return false
+      refreshContentionRetries += 1
+      chatDiag({
+        kind: 'claude-oauth-refresh-contention-retry',
+        attempt: refreshContentionRetries,
+        delayMs,
+        conv: args.conversationId,
+      })
+      closeQuery()
+      // Resume the conversation as it was before this turn. A failed tip resume may already have appended the user
+      // message to the session, so fork at its last assistant message instead, as an edit/resend does.
+      let resume: typeof nextResume = {}
+      if (currentTarget === turnStartTarget && resolution.resume) {
+        if (resolution.forkSession)
+          resume = { resume: resolution.resume, resumeSessionAt: resolution.resumeSessionAt, forkSession: true }
+        else if (existing?.sessionId === resolution.resume && existing.lastAssistantUuid)
+          resume = { resume: existing.sessionId, resumeSessionAt: existing.lastAssistantUuid, forkSession: true }
+      }
+      const failedSessionId = sessionId
+      sessionId = ''
+      result = null
+      if (failedSessionId && failedSessionId === resume.resume)
+        retryForkSource = { sessionId: failedSessionId, owner: currentTarget }
+      else if (failedSessionId) await retireManagedSession(failedSessionId)
+      await pause(delayMs, args.signal)
+      args.signal.throwIfAborted()
+      forksExisting = resume.forkSession === true
+      nextResume = resume
+      nextPrompt = buildClaudeSessionPrompt(currentUser, claudeSeedTranscript(history, resume.resume), {
+        dropImages: args.dropImages,
+        transientContext: runtime!.transientContext,
       })
       return true
     }
@@ -1786,7 +1841,12 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               if (sdkMessage.error && observeQuotaFailure(sdkMessage)) break
               // Local quota diagnostics are not model prose; a later rate event may
               // confirm them. Preserve usage but keep intermediate errors out of the bubble.
-              if (sdkMessage.error !== 'rate_limit' && sdkMessage.error !== 'billing_error') {
+              // An OAuth refresh contention becomes a retry or the turn's error instead.
+              if (
+                sdkMessage.error !== 'rate_limit' &&
+                sdkMessage.error !== 'billing_error' &&
+                !(sdkMessage.error && isClaudeOAuthRefreshContention(sdkMessage))
+              ) {
                 applyMappedEvents(mapped)
                 backgroundPrefix.closeAll()
                 persist()
@@ -1868,6 +1928,18 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           } else {
             throw error
           }
+        }
+
+        const refreshContention =
+          portableCompactionRequested ||
+          intentionalPlanInterruptIssued ||
+          (result?.subtype === 'success' && !result.is_error)
+            ? null
+            : (claudeOAuthRefreshContentionMessage(assistantFailure) ?? claudeOAuthRefreshContentionMessage(result))
+        if (refreshContention) {
+          if (await retryAfterRefreshContention()) continue
+          fatal = refreshContention
+          break
         }
 
         if (result?.subtype === 'success') await state.toolJournal?.drain(args.signal)
@@ -2088,6 +2160,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         nextResume = {}
       } catch (error) {
         nextPrompt.reject(error)
+        if (isClaudeOAuthRefreshContention(error) && (await retryAfterRefreshContention())) continue
         if (await performFailover(error)) continue
         throw error
       }
@@ -2267,7 +2340,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       if (
         attemptedProviderIds.size === 1 &&
         !inTurnCompactions &&
-        resolution.forkSession &&
+        forksExisting &&
         existing &&
         sessionId !== existing.sessionId
       ) {
@@ -2439,6 +2512,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     args.signal.removeEventListener('abort', onAbort)
     closeQuery()
     if (sessionId && !sessionPersisted && !retiredSessionIds.has(sessionId)) await retireManagedSession(sessionId)
+    if (retryForkSource && !sessionPersisted && !retiredSessionIds.has(retryForkSource.sessionId))
+      await retireManagedSession(retryForkSource.sessionId, retryForkSource.owner)
     await runtime?.close().catch(() => undefined)
     accountAttempt?.release()
     if (dirty) persist()
