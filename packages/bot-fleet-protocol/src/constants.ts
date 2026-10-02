@@ -218,3 +218,6 @@ export const FLEET_ENVIRONMENT_LIMITS = {
  * settings); tile k (1 to 8) holds the browser of the bot in slot k.
  */
 export const FLEET_ENVIRONMENT_DISPLAY = { columns: 3, rows: 3, width: 3840, height: 2400 } as const
+
+/** Typed, revision-aware environment configuration, independent of any bot. */
+export const FLEET_ENVIRONMENT_SETTINGS_FEATURE = 'environment-settings-v1'

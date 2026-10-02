@@ -168,6 +168,45 @@ export function isManagedProvider(providerId: string | null | undefined): boolea
 // valid without migration. Each additional account derives providerId `builtin_*@acc_<uuid>`.
 // ----------------------------------------------------------------------------
 
+/** Labels never change default-slot credential locations or provider IDs. */
+export const SUBSCRIPTION_DEFAULT_LABELS_KEY = 'chat.subscriptionDefaultLabels'
+
+export function defaultSubscriptionLabel(kind: ChatSubscriptionProviderKind): string | null {
+  try {
+    const labels: unknown = JSON.parse(getAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY) ?? '{}')
+    if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return null
+    const value = (labels as Record<string, unknown>)[kind]
+    return typeof value === 'string' && value.trim() ? value.trim() : null
+  } catch {
+    return null
+  }
+}
+
+export function renameDefaultSubscriptionAccount(kind: ChatSubscriptionProviderKind, label: string): void {
+  if (!isChatSubscriptionProviderKind(kind) || !label.trim()) throw new Error('Invalid account label.')
+  const labels: Record<string, string> = {}
+  for (const key of Object.keys(SUBSCRIPTION_BASE_PROVIDERS) as ChatSubscriptionProviderKind[]) {
+    const previous = defaultSubscriptionLabel(key)
+    if (previous) labels[key] = previous
+  }
+  labels[kind] = label.trim()
+  setAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY, JSON.stringify(labels))
+}
+
+export function removeDefaultSubscriptionAccountLabel(kind: ChatSubscriptionProviderKind): void {
+  const labels: Record<string, string> = {}
+  for (const key of Object.keys(SUBSCRIPTION_BASE_PROVIDERS) as ChatSubscriptionProviderKind[]) {
+    const label = defaultSubscriptionLabel(key)
+    if (key !== kind && label) labels[key] = label
+  }
+  setAppSetting(SUBSCRIPTION_DEFAULT_LABELS_KEY, JSON.stringify(labels))
+}
+
+function labeledDefaultProvider(base: ChatProvider): ChatProvider {
+  const label = base.builtin && defaultSubscriptionLabel(base.builtin)
+  return label ? { ...base, name: label, accountLabel: label } : base
+}
+
 const SUBSCRIPTION_ACCOUNTS_KEY = 'chat.subscriptionAccounts'
 
 const SUBSCRIPTION_BASE_PROVIDERS: Record<ChatSubscriptionProviderKind, ChatProvider> = {
@@ -266,7 +305,7 @@ function getSubscriptionProvider(id: string): ChatProvider | undefined {
   )
   if (!base) return undefined
   const accountId = subscriptionAccountId(id)
-  if (!accountId) return base
+  if (!accountId) return labeledDefaultProvider(base)
   const account = getSubscriptionAccount(accountId)
   return account && account.kind === base.builtin ? providerForSubscriptionAccount(account) : undefined
 }
@@ -370,7 +409,7 @@ export function listProviders(): ChatProvider[] {
 export function listAvailableChatProviders(): ChatProvider[] {
   const accounts = listSubscriptionAccounts()
   const withAccounts = (base: ChatProvider): ChatProvider[] => [
-    base,
+    labeledDefaultProvider(base),
     ...accounts.filter((a) => a.kind === base.builtin).map(providerForSubscriptionAccount),
   ]
   return [

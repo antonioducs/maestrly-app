@@ -435,10 +435,12 @@ describe('environment UI wiring', () => {
 
   it('chooses the default compaction model on the environment and lets a bot inherit it', () => {
     const view = source('components/fleet/EnvironmentView.tsx')
-    expect(view).toContain('environmentCompactionAvailability(')
-    expect(view).toContain('fleetEnvironmentSelections(')
-    expect(view).toContain('<CompactionFields')
-    expect(view).toContain('compaction: value')
+    const compaction = source('components/fleet/EnvironmentCompaction.tsx')
+    expect(view).toContain('<EnvironmentCompaction')
+    expect(compaction).toContain('environmentCompactionAvailability(')
+    expect(compaction).toContain('fleetEnvironmentSelections(')
+    expect(compaction).toContain('<CompactionFields')
+    expect(compaction).toContain('compaction: value')
     // Its models follow the environment's accounts, including an account added while it has no bots.
     expect(view).toMatch(/optionsKey=\{JSON\.stringify\(\[listsKey, lists\.accounts \?\? null\]\)\}/)
     const settings = source('components/fleet/BotSettings.tsx')

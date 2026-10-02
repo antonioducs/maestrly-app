@@ -1,3 +1,4 @@
+import { fleetEnvironmentSettings } from './api-fleet-environment-settings'
 import './floating-strip'
 import { contextBridge } from 'electron'
 import { localDataApi } from './api-local-data'
@@ -160,6 +161,7 @@ const api = {
   ...platformApi,
   ...botApi,
   ...fleetApi,
+  fleetEnvironmentSettings,
   ...fleetInstallerApi,
   ...artifactsApi,
 }

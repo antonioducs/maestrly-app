@@ -101,6 +101,29 @@ describe('environment compaction defaults', () => {
     expect(botEvents(events, scout).at(-1)?.bot).toMatchObject({ compaction: x, compactionSource: 'environment' })
   })
 
+  it('rejects stale shared preference edits without replacing the newer name or default', async () => {
+    const h = await harness(Date.now, { environments: true })
+    const before = await environment(h)
+    const x = model('model-x')
+    await patchEnvironment(h, {
+      name: 'Changed',
+      compaction: x,
+      expected: { name: before.name, compaction: before.compaction },
+    })
+    const stale = await h.request('PATCH', '/v1/environments/test', {
+      name: 'Stale',
+      compaction: model('model-y'),
+      expected: { name: before.name, compaction: before.compaction },
+    })
+    expect(await json(stale, 409)).toMatchObject({ code: 'CONFLICT' })
+    expect(await environment(h)).toMatchObject({ name: 'Changed', compaction: x })
+    // An unrelated resource update does not invalidate a name-only compare-and-set.
+    expect(await patchEnvironment(h, { name: 'Final', expected: { name: 'Changed' } })).toMatchObject({
+      name: 'Final',
+      compaction: x,
+    })
+  })
+
   it('gives a new bot the default, keeps a bot model its own, and inherits again with null', async () => {
     const h = await harness(Date.now, { environments: true })
     const x = model('model-x'),

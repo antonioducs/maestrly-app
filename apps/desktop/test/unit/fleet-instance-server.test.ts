@@ -417,9 +417,17 @@ describe('instance control HTTP', () => {
     expect(environment.checkRuntimes).toHaveBeenCalledTimes(1)
   })
 
+  it('refuses settings explicitly when the legacy environment has no service', async () => {
+    const { base } = await setup()
+    const response = await send(base, 'GET', '/v1/settings/preferences')
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'CONFLICT' })
+  })
+
   it("lists the environment's models for its default compaction model", async () => {
     expect(INSTANCE_CAPABILITIES).toEqual([
       'files',
+      'environment-settings-v1',
       'provisioning',
       'environments',
       'environment-compaction',

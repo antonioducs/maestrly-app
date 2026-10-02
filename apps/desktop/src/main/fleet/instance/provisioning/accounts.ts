@@ -10,6 +10,8 @@ import {
   addProvider,
   addSubscriptionAccount,
   getProviderKind,
+  defaultSubscriptionLabel,
+  removeDefaultSubscriptionAccountLabel,
   listAvailableChatProviders,
   listProviders,
   listSubscriptionAccounts,
@@ -35,6 +37,62 @@ export const SUBSCRIPTION_PROVIDER_KIND: Record<FleetSubscriptionKind, ChatSubsc
   grok: 'grok-subscription',
   'github-copilot': 'github-copilot-subscription',
   cursor: 'cursor-subscription',
+}
+/** Authentication is independent of the model catalog and visibility filters. */
+export function botSubscriptionStatus(kind: FleetSubscriptionKind, id: string | null) {
+  switch (kind) {
+    case 'codex':
+      return getCodexSubscriptionManager(id).peekStatus()
+    case 'claude':
+      return getClaudeSubscriptionManager(id).peekStatus()
+    case 'grok':
+      return getGrokSubscriptionManager(id).getStatusSnapshot()
+    case 'github-copilot':
+      return getGitHubCopilotSubscriptionManager(id).peekStatus()
+    case 'cursor':
+      return getCursorSubscriptionManager(id).peekStatus()
+    case 'antigravity':
+      return getAntigravitySubscriptionManager(id).getStatus()
+  }
+}
+/** Warm actual manager status without consulting or changing model visibility. */
+export async function refreshBotAccountStatus(): Promise<void> {
+  await Promise.all(
+    (Object.keys(SUBSCRIPTION_PROVIDER_KIND) as FleetSubscriptionKind[]).flatMap((kind) => {
+      const slots = [
+        null,
+        ...listSubscriptionAccounts()
+          .filter((slot) => slot.kind === SUBSCRIPTION_PROVIDER_KIND[kind])
+          .map((slot) => slot.id),
+      ]
+      return slots.map(async (id) => {
+        try {
+          switch (kind) {
+            case 'codex':
+              await getCodexSubscriptionManager(id).getStatus()
+              break
+            case 'claude':
+              await getClaudeSubscriptionManager(id).status()
+              break
+            case 'grok':
+              await getGrokSubscriptionManager(id).getStatus()
+              break
+            case 'github-copilot':
+              await getGitHubCopilotSubscriptionManager(id).getStatus()
+              break
+            case 'cursor':
+              await getCursorSubscriptionManager(id).getStatus()
+              break
+            case 'antigravity':
+              getAntigravitySubscriptionManager(id).getStatus()
+              break
+          }
+        } catch {
+          /* An unavailable manager has no authenticated snapshot. */
+        }
+      })
+    })
+  )
 }
 function cachedAccount(kind: FleetSubscriptionKind, id: string | null): { email: string | null; plan: string | null } {
   switch (kind) {
@@ -63,7 +121,7 @@ function cachedAccount(kind: FleetSubscriptionKind, id: string | null): { email:
   }
 }
 export function listBotAccounts(input: {
-  connectedProviderIds: ReadonlySet<string>
+  connectedProviderIds?: ReadonlySet<string>
   signingIn: ReadonlyArray<{ kind: FleetSubscriptionKind; accountId: string | null }>
 }): FleetBotAccounts {
   const apiKeys: FleetBotAccounts['apiKeys'] = []
@@ -91,9 +149,12 @@ export function listBotAccounts(input: {
     ]
     for (const accountId of slots) {
       const providerId = subscriptionProviderIdFor(providerKind, accountId)
-      const connected = input.connectedProviderIds.has(providerId)
-      const signingIn = input.signingIn.some((slot) => slot.kind === kind && slot.accountId === accountId)
-      if (!accountId && !connected && !signingIn) continue
+      const status = botSubscriptionStatus(kind, accountId)
+      const connected = status?.authenticated === true
+      const signingIn =
+        status?.state === 'signing-in' ||
+        input.signingIn.some((slot) => slot.kind === kind && slot.accountId === accountId)
+      if (!accountId && !connected && !signingIn && !defaultSubscriptionLabel(providerKind)) continue
       subscriptions.push({
         kind,
         accountId,
@@ -185,13 +246,14 @@ export async function importBotAccounts(items: readonly FleetAccountImportItem[]
     try {
       results.push({ index, ...(await importAccount(item)), error: null })
     } catch (error) {
-      const secret = item.type === 'api-key' ? item.key : item.type === 'cursor' ? item.apiKey : item.token
-      const message = error instanceof Error ? error.message : 'The account could not be imported.'
       results.push({
         index,
         target: null,
         outcome: 'failed',
-        error: (secret ? message.split(secret).join('[redacted]') : message).slice(0, 300),
+        error:
+          error instanceof Error && [secureError, 'The API key is empty.'].includes(error.message)
+            ? error.message
+            : 'The account could not be imported.',
       })
     }
   }
@@ -225,6 +287,7 @@ export async function removeBotSubscription(kind: FleetSubscriptionKind, slot: s
         break
     }
   }
+  if (slot === 'default') removeDefaultSubscriptionAccountLabel(providerKind)
   const providerId = subscriptionProviderIdFor(providerKind, slot === 'default' ? null : slot)
   invalidateProvider(providerId)
   invalidateModels(providerId)

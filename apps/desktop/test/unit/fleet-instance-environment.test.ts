@@ -375,6 +375,7 @@ describe('bot environment registry', () => {
     })
     expect(aggregate.capabilities).toEqual([
       'files',
+      'environment-settings-v1',
       'provisioning',
       'environments',
       'environment-compaction',
@@ -387,6 +388,7 @@ describe('bot environment registry', () => {
       ready: true,
       capabilities: [
         'files',
+        'environment-settings-v1',
         'provisioning',
         'environments',
         'environment-compaction',
@@ -935,6 +937,7 @@ describe('bot environment registry', () => {
         ready: true,
         capabilities: [
           'files',
+          'environment-settings-v1',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -947,6 +950,7 @@ describe('bot environment registry', () => {
         environmentId: 'env-one',
         capabilities: [
           'files',
+          'environment-settings-v1',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -963,6 +967,7 @@ describe('bot environment registry', () => {
         profile: { botId: 'beta', name: 'Beta' },
         capabilities: [
           'files',
+          'environment-settings-v1',
           'provisioning',
           'environments',
           'environment-compaction',

@@ -280,6 +280,7 @@ export function BotConversation({
   onOpenScreen,
   onOpenSettings,
   onOpenEnvironmentScreen,
+  onOpenEnvironmentSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -287,6 +288,7 @@ export function BotConversation({
   onOpenScreen: () => void
   onOpenSettings: () => void
   onOpenEnvironmentScreen?: () => void
+  onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -429,6 +431,7 @@ export function BotConversation({
             onOpenScreen={onOpenScreen}
             onOpenSettings={onOpenSettings}
             onOpenEnvironmentScreen={onOpenEnvironmentScreen}
+            onOpenEnvironmentSettings={onOpenEnvironmentSettings}
           />
           {error && (
             <p role="alert" className="mt-2 text-xs text-destructive">

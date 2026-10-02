@@ -26,6 +26,8 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { platformApi } from '../../src/preload/api-platform'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
+import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 
@@ -65,6 +67,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['platformApi', platformApi],
   ['botApi', botApi],
   ['fleetApi', fleetApi],
+  ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['artifactsApi', artifactsApi],
 ]
@@ -297,7 +300,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(520)
+    expect(keys).toHaveLength(521)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -306,6 +309,17 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardRead', 'screen-channel')
     await api.fleetScreenClipboardWrite('screen-channel', 'copied text')
     expect(invokeSpy).toHaveBeenCalledWith('fleet:screenClipboardWrite', 'screen-channel', 'copied text')
+  })
+
+  it('exposes a fixed, environment-addressed method for every settings operation', () => {
+    expect(Object.keys(fleetEnvironmentSettings).sort()).toEqual(Object.keys(FLEET_SETTINGS_OPERATIONS).sort())
+    expect(api.fleetEnvironmentSettings).toBe(fleetEnvironmentSettings)
+    const input = { expectedRevision: 'synthetic-revision' }
+    for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
+      invokeSpy.mockClear()
+      method('synthetic-environment', input as never)
+      expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
+    }
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {

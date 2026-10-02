@@ -10,13 +10,20 @@ import {
   type SyntheticEvent,
 } from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
+import { requestMainNavigation } from './main-navigation'
 import type { SettingsSection } from '@/components/settings/nav'
+import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
 
 export type MemoryTarget = { kind: 'personal' } | { kind: 'workspace'; workspaceId: string }
 
 export type FleetView =
   | { kind: 'bot'; botId: string; tab: 'conversation' | 'screen' | 'settings' }
-  | { kind: 'environment'; environmentId: string; tab: 'overview' | 'screen' }
+  | {
+      kind: 'environment'
+      environmentId: string
+      tab: 'overview' | 'screen' | 'settings'
+      section?: EnvironmentSettingsSection
+    }
   | { kind: 'server' }
   | { kind: 'inbox' }
   | { kind: 'memory' }
@@ -118,14 +125,16 @@ export function useMainPanels({
       window.api.onConversationOpen(async ({ conversation, focus }) => {
         await refreshWorkspaces()
         if (!focus) return
-        setProjectNotesWs(null)
-        setProjectMemoryWs(null)
-        setSettingsOpen(false)
-        setArtifactsOpen(false)
-        setOnboardingOpen(false)
-        setFleetView(null)
-        setCreateBot(false)
-        setActive(conversation)
+        requestMainNavigation(() => {
+          setProjectNotesWs(null)
+          setProjectMemoryWs(null)
+          setSettingsOpen(false)
+          setArtifactsOpen(false)
+          setOnboardingOpen(false)
+          setFleetView(null)
+          setCreateBot(false)
+          setActive(conversation)
+        })
       }),
     [refreshWorkspaces, setActive]
   )
@@ -133,39 +142,45 @@ export function useMainPanels({
   const handleCreated = useCallback(
     async (conversation: Conversation) => {
       await refreshWorkspaces()
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      if (onboardingOpenRef.current) {
-        window.api.setOnboardingDone(true)
-        setOnboardingOpen(false)
-      }
-      setFleetView(null)
-      setCreateBot(false)
-      setActive(conversation)
+      requestMainNavigation(() => {
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        if (onboardingOpenRef.current) {
+          window.api.setOnboardingDone(true)
+          setOnboardingOpen(false)
+        }
+        setFleetView(null)
+        setCreateBot(false)
+        setActive(conversation)
+      })
     },
     [refreshWorkspaces, setActive]
   )
 
   const openSettings = useCallback((sectionOrEvent: SettingsSection | SyntheticEvent = 'chat') => {
     const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
-    setFleetView(null)
-    setCreateBot(false)
-    setSettingsSection(section)
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setOnboardingOpen(false)
-    setArtifactsOpen(false)
-    setSettingsOpen(true)
+    requestMainNavigation(() => {
+      setFleetView(null)
+      setCreateBot(false)
+      setSettingsSection(section)
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setOnboardingOpen(false)
+      setArtifactsOpen(false)
+      setSettingsOpen(true)
+    })
   }, [])
 
   const openArtifacts = useCallback(() => {
-    setFleetView(null)
-    setCreateBot(false)
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setOnboardingOpen(false)
-    setSettingsOpen(false)
-    setArtifactsOpen(true)
+    requestMainNavigation(() => {
+      setFleetView(null)
+      setCreateBot(false)
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setOnboardingOpen(false)
+      setSettingsOpen(false)
+      setArtifactsOpen(true)
+    })
   }, [])
 
   useEffect(() => {
@@ -174,13 +189,15 @@ export function useMainPanels({
   }, [openArtifacts])
 
   const openOnboarding = useCallback(() => {
-    setProjectNotesWs(null)
-    setProjectMemoryWs(null)
-    setSettingsOpen(false)
-    setArtifactsOpen(false)
-    setFleetView(null)
-    setCreateBot(false)
-    setOnboardingOpen(true)
+    requestMainNavigation(() => {
+      setProjectNotesWs(null)
+      setProjectMemoryWs(null)
+      setSettingsOpen(false)
+      setArtifactsOpen(false)
+      setFleetView(null)
+      setCreateBot(false)
+      setOnboardingOpen(true)
+    })
   }, [])
 
   useEffect(() => {
@@ -200,34 +217,40 @@ export function useMainPanels({
 
   const handleSelect = useCallback(
     (conversation: Conversation) => {
-      setProjectNotesWs(null)
-      setProjectMemoryWs(null)
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      setOnboardingOpen(false)
-      setFleetView(null)
-      setCreateBot(false)
-      setActive(conversation)
+      requestMainNavigation(() => {
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        setOnboardingOpen(false)
+        setFleetView(null)
+        setCreateBot(false)
+        setActive(conversation)
+      })
     },
     [setActive]
   )
 
   const openCreateBot = useCallback((environmentId: string | null = null) => {
-    setCreateBotEnvironmentId(environmentId)
-    setArtifactsOpen(false)
-    setCreateBot(true)
+    requestMainNavigation(() => {
+      setCreateBotEnvironmentId(environmentId)
+      setArtifactsOpen(false)
+      setCreateBot(true)
+    })
   }, [])
 
   const openFleetView = useCallback(
     (view: FleetView) => {
-      setProjectNotesWs(null)
-      setProjectMemoryWs(null)
-      setSettingsOpen(false)
-      setArtifactsOpen(false)
-      setOnboardingOpen(false)
-      setCreateBot(false)
-      setActive(null)
-      setFleetView(view)
+      requestMainNavigation(() => {
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        setOnboardingOpen(false)
+        setCreateBot(false)
+        setActive(null)
+        setFleetView(view)
+      })
     },
     [setActive]
   )

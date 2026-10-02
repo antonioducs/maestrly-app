@@ -40,6 +40,7 @@ export function BotComposer({
   onOpenScreen,
   onOpenSettings,
   onOpenEnvironmentScreen,
+  onOpenEnvironmentSettings,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -47,6 +48,7 @@ export function BotComposer({
   onOpenSettings: () => void
   /** A bot of an environment manages skills, accounts and MCP servers on its environment's screen. */
   onOpenEnvironmentScreen?: () => void
+  onOpenEnvironmentSettings?: (target: 'skills' | 'mcp') => void
 }) {
   const { t } = useTranslation('fleet')
   const [draft, setDraft] = useState('')
@@ -62,6 +64,8 @@ export function BotComposer({
   onOpenScreenRef.current = onOpenScreen
   const onOpenEnvironmentScreenRef = useRef(onOpenEnvironmentScreen)
   onOpenEnvironmentScreenRef.current = onOpenEnvironmentScreen
+  const onOpenEnvironmentSettingsRef = useRef(onOpenEnvironmentSettings)
+  onOpenEnvironmentSettingsRef.current = onOpenEnvironmentSettings
   // An environment still on an image from before environments has no environment screen: its settings open in the
   // bot's browser area, with a takeover, as they did before environments.
   const environment = hasEnvironments(fleet.state.connection)
@@ -91,6 +95,10 @@ export function BotComposer({
             bot: {
               ...botSource.bot,
               manage: async (target: 'skills' | 'mcp') => {
+                if (onOpenEnvironmentSettingsRef.current) {
+                  onOpenEnvironmentSettingsRef.current(target)
+                  return
+                }
                 await window.api.fleetEnvironmentUiOpen(environmentId, target)
                 onOpenEnvironmentScreenRef.current?.()
               },
@@ -339,13 +347,25 @@ export function BotComposer({
               fontScale={1}
               onFontScale={() => {}}
               source={source}
-              manageMcpLabel={environmentId ? t('composer.manageMcpEnvironment') : t('composer.manageMcp')}
+              manageMcpLabel={
+                onOpenEnvironmentSettings
+                  ? t('composer.manageMcpSettings')
+                  : environmentId
+                    ? t('composer.manageMcpEnvironment')
+                    : t('composer.manageMcp')
+              }
             />
             <ChatSkillsMenu
               conversationId={bot.id}
               onChanged={reloadCommands}
               source={source}
-              manageSkillsLabel={environmentId ? t('composer.manageSkillsEnvironment') : t('composer.manageSkills')}
+              manageSkillsLabel={
+                onOpenEnvironmentSettings
+                  ? t('composer.manageSkillsSettings')
+                  : environmentId
+                    ? t('composer.manageSkillsEnvironment')
+                    : t('composer.manageSkills')
+              }
               emptySkillsLabel={t('composer.noSkills')}
             />
             {option && option.efforts.length > 0 && (

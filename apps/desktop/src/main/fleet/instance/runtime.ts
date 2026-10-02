@@ -152,7 +152,8 @@ export function visibleFleetModels<T extends { providerId: string; modelId: stri
 export function effectiveFleetSelection(
   options: FleetSelectionOption[],
   saved: FleetSelection | null,
-  defaults: { providerId: string | null; modelId: string | null; reasoning: string | null; fastMode: boolean }
+  defaults: { providerId: string | null; modelId: string | null; reasoning: string | null; fastMode: boolean },
+  visibleOptions: FleetSelectionOption[] = options
 ): FleetSelection | null {
   const option = saved && options.find((item) => item.providerId === saved.providerId && item.modelId === saved.modelId)
   if (option)
@@ -162,7 +163,8 @@ export function effectiveFleetSelection(
       fastMode: option.fastMode && saved!.fastMode,
     }
   const fallback =
-    options.find((item) => item.providerId === defaults.providerId && item.modelId === defaults.modelId) ?? options[0]
+    visibleOptions.find((item) => item.providerId === defaults.providerId && item.modelId === defaults.modelId) ??
+    visibleOptions[0]
   if (!fallback) return null
   return {
     providerId: fallback.providerId,
@@ -173,9 +175,9 @@ export function effectiveFleetSelection(
 }
 
 /** The models the environment's accounts offer, as bots choose them; the accounts are shared by every bot. */
-export async function loadFleetAccountOptions(): Promise<FleetSelectionOption[]> {
+export async function loadFleetAccountOptions(includeHidden = false): Promise<FleetSelectionOption[]> {
   const models = await listChatRunnerCapabilities(true)
-  return visibleFleetModels(models, getHiddenChatModelsFor).map((model) => ({
+  return (includeHidden ? models : visibleFleetModels(models, getHiddenChatModelsFor)).map((model) => ({
     id: `${model.providerId}::${model.modelId}`,
     providerId: model.providerId,
     providerLabel: model.providerLabel,
@@ -234,7 +236,7 @@ export interface BotRuntimeHost {
   /** The environment's event stream; each bot event carries its bot id. */
   readonly events: InstanceEvents
   readonly gatewayUrl: string | null
-  /** The models of the environment's accounts; `force` asks for a fresh list. */
+  /** Complete catalog, including user-hidden models; `force` asks for a fresh list. */
   accountOptions(force: boolean): Promise<FleetSelectionOption[]>
   /** The other bots of the environment. */
   peers(botId: string): BotIdentityPeer[]
@@ -343,6 +345,15 @@ export class BotRuntime {
   }
   get name(): string | null {
     return this.stored?.profile.name ?? null
+  }
+  /** Read-only usage for the environment editor; no conversation or credentials cross this boundary. */
+  settingsUsage() {
+    return {
+      id: this.botId,
+      name: this.name ?? this.botId,
+      selection: this.currentSelection(),
+      compaction: this.stored?.profile.compaction ?? null,
+    }
   }
   get artifactsEnabled(): boolean {
     return this.stored?.profile.gateway.artifactsEnabled ?? false
@@ -589,18 +600,35 @@ export class BotRuntime {
     }
   }
   private currentSelection(): FleetSelection | null {
-    return effectiveFleetSelection(this.accountOptions, this.stored?.profile.selection ?? null, {
-      providerId: getAppSetting('chat.defaultProvider'),
-      modelId: getAppSetting('chat.defaultModel'),
-      reasoning: getAppSetting('chat.defaultReasoning'),
-      fastMode: getAppSetting('chat.defaultFastMode') === '1',
-    })
+    return effectiveFleetSelection(
+      this.accountOptions,
+      this.stored?.profile.selection ?? null,
+      {
+        providerId: getAppSetting('chat.defaultProvider'),
+        modelId: getAppSetting('chat.defaultModel'),
+        reasoning: getAppSetting('chat.defaultReasoning'),
+        fastMode: getAppSetting('chat.defaultFastMode') === '1',
+      },
+      visibleFleetModels(this.accountOptions, getHiddenChatModelsFor)
+    )
   }
   async profile(value: FleetInstanceProfile): Promise<FleetInstanceStatus> {
     if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
     const profile = fleetInstanceProfileSchema.parse(value)
     if (profile.botId !== this.botId)
       throw new InstanceHttpError(400, 'INVALID_REQUEST', 'The profile names another bot.')
+    for (const field of ['selection', 'compaction'] as const) {
+      const selection = profile[field]
+      const previous = this.stored?.profile[field]
+      if (
+        selection &&
+        !(field === 'compaction' && profile.compactionInherited) &&
+        getHiddenChatModelsFor(selection.providerId).includes(selection.modelId) &&
+        (previous?.providerId !== selection.providerId || previous?.modelId !== selection.modelId)
+      ) {
+        throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Hidden models cannot be selected for new settings.')
+      }
+    }
     this.stored = { profile, primaryConversationId: this.stored?.primaryConversationId ?? null }
     writeStoredProfile(this.botId, this.stored)
     // An install carries the bot's final settings: once they apply, a conversation an uninstall suspended resumes.
@@ -718,7 +746,10 @@ export class BotRuntime {
   }
   async selections(): Promise<{ options: FleetSelectionOption[]; current: FleetSelection | null }> {
     await this.refreshAccounts(true)
-    return { options: this.accountOptions, current: this.currentSelection() }
+    return {
+      options: visibleFleetModels(this.accountOptions, getHiddenChatModelsFor),
+      current: this.currentSelection(),
+    }
   }
   /** The environment's accounts changed: the bot reads its models again and may start queued work. */
   accountsChanged(): void {

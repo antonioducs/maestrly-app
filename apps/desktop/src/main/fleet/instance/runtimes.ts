@@ -18,7 +18,7 @@ type RuntimeVersion = Pick<FleetRuntimeInfo, 'version' | 'source'>
  * Code query until it ends, a Codex connection until no bot is working. Nothing listed means the next use starts the
  * selected version.
  */
-function runtimesInUse(id: FleetRuntimeInfo['id']): RuntimeVersion[] {
+export function runtimesInUse(id: FleetRuntimeInfo['id']): RuntimeVersion[] {
   if (id === 'claude-code') return botClaudeRuntime().inUse()
   if (id === 'antigravity-acp') {
     return listAntigravitySubscriptionManagers().flatMap((manager): RuntimeVersion[] => {

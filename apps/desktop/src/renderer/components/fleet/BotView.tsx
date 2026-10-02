@@ -1,12 +1,13 @@
 import { useTranslation } from 'react-i18next'
 import { useCallback, useRef, useState, type KeyboardEvent } from 'react'
-import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import { FLEET_ENVIRONMENT_SETTINGS_FEATURE, type FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { environmentOf, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import { ChatWindowButton, ChatWindowHost } from '@/components/chat/ChatWindowHost'
+import type { EnvironmentSettingsSection } from './environment-settings/sections'
 import { BotConversation } from './BotConversation'
 import { BotScreen } from './BotScreen'
 import { BotSettings, type SettingsLeaveGuard } from './BotSettings'
@@ -48,8 +49,12 @@ export function BotView({
     if (guard) guard(() => onView(next))
     else onView(next)
   }
-  const openEnvironment = (next: 'overview' | 'screen') =>
-    environment && go({ kind: 'environment', environmentId: environment.id, tab: next })
+  const environmentSettings =
+    !!environment &&
+    fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE) &&
+    environment.capabilities.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
+  const openEnvironment = (next: 'overview' | 'screen' | 'settings', section?: EnvironmentSettingsSection) =>
+    environment && go({ kind: 'environment', environmentId: environment.id, tab: next, section })
   const setTab = (next: typeof tab) => {
     if (next !== tab) go({ kind: 'bot', botId: bot.id, tab: next })
   }
@@ -195,6 +200,11 @@ export function BotView({
                   onOpenScreen={() => setTab('screen')}
                   onOpenSettings={() => setTab('settings')}
                   onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+                  onOpenEnvironmentSettings={
+                    environmentSettings
+                      ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
+                      : undefined
+                  }
                 />
               )}
             </ChatWindowHost>
@@ -216,7 +226,9 @@ export function BotView({
             bot={bot}
             fleet={fleet}
             onOpenScreen={() => setTab('screen')}
-            onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+            onOpenEnvironment={
+              environment ? () => openEnvironment(environmentSettings ? 'settings' : 'overview') : undefined
+            }
             onArchived={() => onView({ kind: 'server' })}
             leaveGuard={leaveGuard}
           />

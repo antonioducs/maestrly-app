@@ -48,7 +48,7 @@ failures prevent automatic retries of the rejected version.
 When creating a bot in a new environment, select a connected Google AI account
 in the account setup list and complete the Google sign-in card after the
 environment starts. You can also choose **Sign in with Google AI (Antigravity)**
-in an existing environment's accounts section, or reconnect an existing slot.
+in an existing environment's **Settings → Accounts** section, or reconnect an existing slot.
 Use matching desktop, gateway, and bot-image releases that support Google AI.
 
 This starts a separate Google session in the environment; it does not transfer
@@ -59,10 +59,12 @@ up an account slot created for that attempt. If the callback port is occupied on
 your computer, close the other sign-in and retry; this provider has no device-code
 fallback. All bots in that environment can use its connected accounts.
 
-The environment's **Model runtimes** section shows its ACP version, a pending
+The environment's **Settings → Components** section shows its ACP version, a pending
 version while work still uses the old process, and update status. **Check for
-updates** requests an immediate check; automatic installation follows the
-runtime's preference. The server setting
+updates** discovers releases; **Update** installs one explicitly. Scheduled
+automatic installation follows the runtime's preference. The settings page also exposes installation, manual updates,
+rollback when available, and the automatic-update preference. Older environments
+retain the original runtime summary in Overview until updated. The server setting
 `MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES=off` disables scheduled checks. See
 [Bot fleet](bot-fleet.md) for server setup and environment updates.
 

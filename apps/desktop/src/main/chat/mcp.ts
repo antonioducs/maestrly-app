@@ -21,6 +21,7 @@ import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation'
 import { getAppSetting, setAppSetting } from '../store'
 import { transaction } from '../store/db'
+import { writeSettingsRevision } from '../store/app-settings'
 import { isSecureStorageAvailable, secureGet, secureSet, secureRemove } from '../secure-store'
 import { gateInstanceAppTool } from '../fleet/instance/gate'
 import type { ChatToolImage, ToolOutput } from '../../shared/chat'
@@ -135,13 +136,18 @@ export function listMcpServers(): McpServer[] {
   })
 }
 
-function saveMcpServers(list: McpServer[], options: McpSaveOptions = {}): void {
+function saveMcpServers(list: McpServer[], changedId: string, options: McpSaveOptions = {}): void {
   return atomicMcpWrite(() => {
     const stored = list.map((server) => {
       const identity = storedOnly(server)
       if (server.unavailable) return identity
       const details = detailsOnly(server)
-      if (isSecureStorageAvailable() && secureSet(DETAILS_PREFIX + server.id, JSON.stringify(details))) return identity
+      const serialized = JSON.stringify(details)
+      // Preserve other servers' encrypted records (and revisions). The target still requires a successful write.
+      if (isSecureStorageAvailable()) {
+        if (server.id !== changedId && secureGet(DETAILS_PREFIX + server.id) === serialized) return identity
+        if (secureSet(DETAILS_PREFIX + server.id, serialized)) return identity
+      }
       if (options.requireSecure) throw new Error('Secure credential storage is unavailable.')
       return { ...identity, ...details }
     })
@@ -174,7 +180,7 @@ export function addMcpServer(
       args: input.args,
       env: input.env,
     }
-    saveMcpServers([...listMcpServers(), server], options)
+    saveMcpServers([...listMcpServers(), server], server.id, options)
     return server
   })
 }
@@ -190,7 +196,10 @@ export function updateMcpServer(id: string, patch: Partial<McpServer>, options: 
       delete next.unavailable
     }
     list[idx] = next
-    saveMcpServers(list, options)
+    saveMcpServers(list, id, options)
+    // Detail-only updates leave the identity JSON unchanged but still invalidate remote editors.
+    writeSettingsRevision('mcp:' + id)
+    writeSettingsRevision('mcp')
     invalidateMcpRuntime(id)
     if (mcpServerFingerprint(previous) !== mcpServerFingerprint(next)) removeMcpCatalog(id)
   })
@@ -234,7 +243,10 @@ export function upsertMcpServerByName(
 
 export function removeMcpServer(id: string): void {
   return atomicMcpWrite(() => {
-    saveMcpServers(listMcpServers().filter((s) => s.id !== id))
+    saveMcpServers(
+      listMcpServers().filter((s) => s.id !== id),
+      id
+    )
     if (!secureRemove(DETAILS_PREFIX + id)) throw new Error('Secure credential storage is unavailable.')
     invalidateMcpRuntime(id)
     removeMcpCatalog(id)
@@ -315,6 +327,7 @@ export async function connectMcpServer(server: McpServer, options: McpRequestOpt
         command: server.command!,
         args: server.args ?? [],
         env: server.env,
+        stderr: 'ignore',
       })
       await client.connect(transport, options)
     }
@@ -336,7 +349,7 @@ function getMcpRuntime(): LazyMcpRuntime {
   return sharedMcpRuntime
 }
 
-function invalidateMcpRuntime(serverId: string): void {
+export function invalidateMcpRuntime(serverId: string): void {
   sharedMcpRuntime?.invalidate(serverId)
 }
 
