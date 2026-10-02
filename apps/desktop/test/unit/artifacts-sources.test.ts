@@ -59,6 +59,11 @@ function harness() {
     dataDir: () => path.join(root, 'local'),
     host: { ensureStarted: async () => hosts[0].admin, stop: vi.fn(async () => {}) },
     idleStopMs: 5,
+    // As in the app, the host lets go of its files first: Windows cannot delete a database that is still open.
+    removeDir: async (dir) => {
+      await hosts[0].close()
+      rmSync(dir, { recursive: true, force: true })
+    },
   })
   const vault = new InviteVault({ get: () => null, set: () => true, remove: () => {} })
   const openExternal = vi.fn(async () => {})
