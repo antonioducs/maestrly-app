@@ -55,6 +55,7 @@ import type {
   McpServerInfo,
 } from '../../../shared/chat'
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../shared/runtime-assets'
+import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
 import { SubagentProfilesSettings } from './subagent-profiles/SubagentProfilesSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { ChatGptWebSettings } from './ChatGptWebSettings'
@@ -1533,6 +1534,7 @@ export function ApiKeySettings({
             onChanged={refresh}
             lockedDescriptionKey={appToolsLocked ? 'plusMenu.appToolsBotLocked' : undefined}
           />
+          {!appToolsLocked && <AppToolGroupSettings config={config} onChanged={refresh} />}
           <FlagToggle
             headingKey="settings.imageGenHeading"
             descriptionKey="settings.imageGenDescription"
@@ -1798,6 +1800,44 @@ function FlagToggle({
       >
         <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
       </button>
+    </div>
+  )
+}
+
+/** Global default of each app-tool group; inactive while the whole surface is off. */
+function AppToolGroupSettings({ config, onChanged }: { config: ChatConfig; onChanged: () => void }) {
+  const { t } = useTranslation('chat')
+  const inactive = !config.appToolsEnabled
+  return (
+    <div className="-mt-1 flex flex-col gap-0.5 border-l border-border pl-3" aria-disabled={inactive}>
+      <p className="mb-1 text-[11px] text-muted-foreground">{t('settings.appToolGroupsDescription')}</p>
+      {APP_TOOL_GROUPS.map((group) => {
+        const on = config.appToolGroups?.[group] ?? true
+        const label = t(`appToolGroups.${group}.label`)
+        return (
+          <div key={group} className={cn('flex items-center justify-between gap-3 py-0.5', inactive && 'opacity-50')}>
+            <div className="min-w-0 truncate">
+              <span className="text-[12px] text-foreground">{label}</span>
+              <span className="ml-1.5 text-[11px] text-muted-foreground">{t(`appToolGroups.${group}.desc`)}</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={on}
+              aria-label={label}
+              disabled={inactive}
+              onClick={() => window.api.chatSetAppToolGroup(group, !on).then(onChanged)}
+              className={cn(
+                'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors disabled:cursor-not-allowed',
+                on ? 'bg-emerald-500/70' : 'bg-white/10'
+              )}
+              title={on ? t('settings.toggleOn') : t('settings.toggleOff')}
+            >
+              <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
+            </button>
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -365,6 +365,7 @@ import type {
   ChatAttachmentInput,
   ChatConfig,
   ChatConvTools,
+  ChatConvToolsPatch,
   ChatGptWebStatus,
   ChatMessage,
   ChatModelMeta,
@@ -435,6 +436,14 @@ import {
 import { chatDiag } from './diag-log'
 import { getCompactionSummarizer } from './compaction-summarizer'
 import { isBotMode } from '../fleet/instance/config'
+import { isAppToolGroup, sanitizeAppToolGroupPatch } from '../../shared/app-tool-groups'
+import {
+  globalAppToolGroups,
+  globalAppToolsEnabled,
+  resolveAppToolAccess,
+  setGlobalAppToolGroup,
+  setGlobalAppToolsEnabled,
+} from './app-tool-access'
 import { invalidateUnifiedUsageCache } from '../usage/usage-service'
 import { registerSubscriptionUsageIpc } from './subscription-usage-ipc'
 import {
@@ -2151,13 +2160,14 @@ export function fleetChatGetConvTools(conversationId: string): ChatConvTools {
     : { app: false, mcpDisabled: [], imageGen: getAppFlag(IMAGE_GEN_FLAG, true) }
 }
 
-export function fleetChatSetConvTools(
-  conversationId: string,
-  patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }
-): { ok: boolean } {
+export function fleetChatSetConvTools(conversationId: string, patch: ChatConvToolsPatch): { ok: boolean } {
   if (typeof conversationId === 'string') {
     const cur = getConvUiPrefs(conversationId).chat?.tools ?? {}
-    patchConvChat(conversationId, { tools: { ...cur, ...(patch ?? {}) } })
+    const { appGroups, ...rest } = patch ?? {}
+    // Group overrides merge per group, so pinning one group keeps the others inheriting the global setting.
+    const groups =
+      appGroups === undefined ? cur.appGroups : { ...cur.appGroups, ...sanitizeAppToolGroupPatch(appGroups) }
+    patchConvChat(conversationId, { tools: { ...cur, ...rest, ...(groups ? { appGroups: groups } : {}) } })
   }
   return { ok: true }
 }
@@ -2230,7 +2240,8 @@ function buildConfig(): ChatConfig {
       url: s.url,
       command: s.command,
     })),
-    appToolsEnabled: getAppFlag('chat.appTools', false),
+    appToolsEnabled: globalAppToolsEnabled(),
+    appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
     openAIHarnessEnabled: getAppFlag('chat.openAIHarness', true),
@@ -2789,11 +2800,13 @@ export function primeChatTurnSelection(
   })
 }
 
-/** Resolved conversation tool state (app-tools + disabled MCP servers + image generation). */
+/** Resolved conversation tool state (app-tools + app-tool groups + disabled MCP servers + image generation). */
 function convToolsFor(conversationId: string): ChatConvTools {
   const t = getConvUiPrefs(conversationId).chat?.tools
+  const appAccess = resolveAppToolAccess(conversationId)
   return {
-    app: t?.app ?? getAppFlag('chat.appTools', false),
+    app: appAccess.enabled,
+    appGroups: appAccess.groups,
     mcpDisabled: t?.mcpDisabled ?? [],
     imageGen: imageGenEnabledFor(conversationId),
   }
@@ -3581,6 +3594,7 @@ async function currentChatHistoryStats(
             false,
             effort.ok ? effort.reasoningEffort : undefined
           )
+          const appAccess = resolveAppToolAccess(conversationId)
           const { skills, agents, envelope } = await buildCursorHarnessContext({
             projectId: conv.workspaceId,
             cwd: conv.cwd,
@@ -3591,7 +3605,8 @@ async function currentChatHistoryStats(
             harness: harnessFor('cursor-subscription', selection.modelId, {
               flags: captureHarnessFlags(),
             }),
-            appToolsEnabled: convToolsFor(conversationId).app,
+            appToolsEnabled: appAccess.enabled,
+            disabledAppToolGroups: appAccess.disabledGroups,
             maestrlyUltra: effort.ok && effort.maestrlyUltra,
           })
           const names = new Set(builtinToolNamesForMode(mode))
@@ -10595,7 +10610,13 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   // Native app tools (drawer) — toggle (in-process, no HTTP/token).
   deps.mhandle('chat:set-app-tools', (_e, enabled: boolean) => {
-    setAppFlag('chat.appTools', enabled === true)
+    setGlobalAppToolsEnabled(enabled === true)
+    return { ok: true }
+  })
+  // One app-tool group (terminal, browser, …) — global default; conversations may override it per group.
+  deps.mhandle('chat:set-app-tool-group', (_e, group: unknown, enabled: unknown) => {
+    if (!isAppToolGroup(group) || typeof enabled !== 'boolean') return { ok: false }
+    setGlobalAppToolGroup(group, enabled)
     return { ok: true }
   })
   // Image generation (native Codex imagegen + generate_image for other models) — GLOBAL
@@ -10778,10 +10799,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
 
   // Tools PER CONVERSATION (app-tools + disabled MCP servers + image generation).
   deps.mhandle('chat:get-conv-tools', (_e, conversationId: string) => fleetChatGetConvTools(conversationId))
-  deps.mhandle(
-    'chat:set-conv-tools',
-    (_e, conversationId: string, patch: { app?: boolean; mcpDisabled?: string[]; imageGen?: boolean }) =>
-      fleetChatSetConvTools(conversationId, patch)
+  deps.mhandle('chat:set-conv-tools', (_e, conversationId: string, patch: ChatConvToolsPatch) =>
+    fleetChatSetConvTools(conversationId, patch)
   )
 
   // Edit last message + resend: truncate from the edited message seq and run a new turn.

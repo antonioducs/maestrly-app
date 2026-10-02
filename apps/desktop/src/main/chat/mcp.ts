@@ -28,6 +28,7 @@ import type { ChatToolImage, ToolOutput } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { toolOutputImages } from '../../shared/chat'
+import { appToolGroupOf, type AppToolGroup } from '../../shared/app-tool-groups'
 import type { MaestroWorkerScope } from '../maestro-worker-scope'
 import {
   chatToolOutputToAiSdkOutput,
@@ -735,6 +736,8 @@ export async function buildAppTools(args: {
   only?: Set<string>
   /** If present, OMIT these drawer tools in addition to mode policy. */
   exclude?: Set<string>
+  /** App-tool groups the user turned off; their tools are omitted even when `only` lists them. */
+  disabledGroups?: readonly AppToolGroup[]
   /** Host-only operational scope for a delegated Maestro worker. Never enters a visible tool schema. */
   workerScope?: MaestroWorkerScope
   /** Effective capability of the model receiving app-tool results. */
@@ -756,8 +759,14 @@ export async function buildAppTools(args: {
     return { tools: {}, close: async () => {} }
   }
   // Always exclude MCP review_plan: Plan uses the built-in submit-and-release version, not the blocking one.
+  const disabledGroups = new Set(args.disabledGroups ?? [])
+  const groupEnabled = (name: string) => {
+    const group = appToolGroupOf(name)
+    return group === null || !disabledGroups.has(group)
+  }
   const accept = (listedTool: ListedMcpTool) =>
     appToolAllowed(args.mode, listedTool.name) &&
+    groupEnabled(listedTool.name) &&
     (args.only?.has(listedTool.name) ?? true) &&
     !(args.exclude?.has(listedTool.name) ?? false)
   const restricted = capabilityBehaviorFor(args.mode) !== 'agent'

@@ -297,6 +297,24 @@ summaries covering changed content. Restarting preserves valid completed work;
 preparation resumes only when a conversation is used, rather than scanning and
 processing every old chat.
 
+## Maestrly tool groups
+
+Maestrly tools are enabled by default. Existing explicit global or conversation
+choices remain unchanged. **Settings → Chat → Tools** keeps the master switch
+and lets you enable or disable Terminal, Browser, Notes, Memory, Conversation
+history, Debugger, Artifacts and Kanban separately. Expand **Maestrly tools** in
+the conversation's **+** menu to change its groups. Changing one group pins only
+that group's choice; the others continue to inherit the global settings.
+
+A disabled group removes its tools from the next turn's catalog, including
+delegated workers. The existing mode limits and permission rules still apply.
+Bots keep their Maestrly tools enabled and ignore these group choices.
+
+The Memory group controls memory tools, including personal memory tools. Memory
+recall and automatic extraction have their own settings under **Models & agents**;
+turn off personal memory there to also disable context injection and background
+writes.
+
 ## Memory core and catalog
 
 Project conversations with memory enabled share their workspace's durable memory;
@@ -328,8 +346,9 @@ and fleet bots keep their existing memory scopes. Personal memory does not sync
 between devices or with the fleet gateway.
 
 Create or edit an entry in the central view, or ask an assistant in Agent or
-Design mode to save it. Memory tools remain available when general app tools are
-disabled. Ask and Plan can read memories; writes retain the conversation's
+Design mode to save it. Personal memory tools remain available when the general
+app-tools switch is off, unless the Memory group is also disabled. Ask and Plan
+can read memories; writes retain the conversation's
 permission rules. Sharing memories does not share permission approvals or other
 chats' transcripts. Prefer replacing an outdated entry over saving contradictory
 facts. The central view supports pinning, archiving, restoring, permanent deletion

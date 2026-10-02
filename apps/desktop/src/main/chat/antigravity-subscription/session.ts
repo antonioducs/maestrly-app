@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { ChatMessage } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
+import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { isBotMode } from '../../fleet/instance/config'
 import { gitEnvInfo } from '../../git-service'
 import { getConversation } from '../../store'
@@ -35,6 +36,7 @@ export interface BuildAntigravityInstructionsArgs {
   maestrlyUltra?: boolean
   harness?: ResolvedHarness
   appToolsEnabled?: boolean
+  disabledAppToolGroups?: readonly AppToolGroup[]
 }
 
 export interface AntigravityInstructions {
@@ -111,6 +113,7 @@ export async function buildAntigravityInstructions(
       cwd: args.cwd,
       mode: args.mode,
       appToolsEnabled: args.appToolsEnabled ?? false,
+      ...(args.disabledAppToolGroups ? { disabledAppToolGroups: args.disabledAppToolGroups } : {}),
       hasNotesTab: notes,
       projectContext,
       skillsContext: skillsCatalog(skills, args.projectId !== null),

@@ -6,6 +6,7 @@ import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
 import type { MaestroDelegationSnapshotV1 } from './maestro'
 import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
+import type { AppToolGroupState } from './app-tool-groups'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -15,10 +16,20 @@ export type ChatMode = 'agent' | 'design' | 'plan' | 'ask'
 
 export interface ChatConvTools {
   app: boolean
+  /** Resolved state of each app-tool group. Absent (bot conversations) means every group is on. */
+  appGroups?: AppToolGroupState
 
   mcpDisabled: string[]
 
   imageGen: boolean
+}
+
+/** Partial update of a conversation's tool overrides; `appGroups` merges per group. */
+export interface ChatConvToolsPatch {
+  app?: boolean
+  appGroups?: Partial<AppToolGroupState>
+  mcpDisabled?: string[]
+  imageGen?: boolean
 }
 
 export interface ChatModelRef {
@@ -1705,6 +1716,8 @@ export interface ChatConfig {
   mcpServers: McpServerInfo[]
 
   appToolsEnabled: boolean
+  /** Global state of each app-tool group. Absent means every group is on. */
+  appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
 

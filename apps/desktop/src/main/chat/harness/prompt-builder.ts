@@ -5,6 +5,7 @@ import {
   type OpenAIPromptMode,
 } from './strategies/prompt-layout'
 import type { ChatBehavior, HarnessSourceProvenance, ResolvedHarness } from './types'
+import type { AppToolGroup } from '../../../shared/app-tool-groups'
 
 export interface BuildHarnessPromptInput {
   harness: ResolvedHarness
@@ -12,6 +13,8 @@ export interface BuildHarnessPromptInput {
   scope?: 'project' | 'standalone'
   mode: ChatBehavior
   appToolsEnabled: boolean
+  /** App-tool groups the user turned off; the prompt stops naming their tools. */
+  disabledAppToolGroups?: readonly AppToolGroup[]
   hasNotesTab: boolean
   nativeTools?: { localShell: boolean; applyPatch: boolean }
   projectContext?: string | null
@@ -75,6 +78,7 @@ export function buildHarnessPrompt(input: BuildHarnessPromptInput): CompiledHarn
     cwd: input.cwd,
     mode: responsesMode(input.mode),
     appToolsEnabled: input.appToolsEnabled,
+    ...(input.disabledAppToolGroups ? { disabledAppToolGroups: input.disabledAppToolGroups } : {}),
     hasNotesTab: input.hasNotesTab,
     projectContext: input.projectContext,
     skillsContext: input.skillsContext,

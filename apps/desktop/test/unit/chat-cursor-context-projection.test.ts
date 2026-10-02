@@ -20,6 +20,7 @@ import { hashCursorToolSignature } from '../../src/main/chat/cursor-subscription
 import { builtinToolNamesForMode } from '../../src/main/chat/tools'
 import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled } from '../../src/main/chat/image-gen'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
+import { resolveAppToolAccess } from '../../src/main/chat/app-tool-access'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -128,6 +129,8 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       conversationId,
       mode: 'agent',
       modelId: 'composer-2.5',
+      // The runner builds the envelope from the conversation's resolved app-tool settings.
+      appToolsEnabled: resolveAppToolAccess(conversationId).enabled,
     })
     expect(envelope.instructions).toContain('# Durable project memory')
     expect(envelope.instructions).toContain('When a catalog title looks relevant')
