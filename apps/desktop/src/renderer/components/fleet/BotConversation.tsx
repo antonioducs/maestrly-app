@@ -4,9 +4,11 @@ import { Loader2, Wrench, X } from 'lucide-react'
 import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { takeoverBlocksResume } from '@/lib/fleet/selectors'
+import { ownsTakeover, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
+import { isComputerTool } from '@/lib/fleet/format'
 import { latestTodoItemId, visibleTranscriptItems } from '@/lib/fleet/forms'
+import { Button } from '@/components/ui/button'
 import { TodoList } from '@/components/chat/TodoCard'
 import { InteractionCard } from './InteractionCard'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
@@ -18,6 +20,20 @@ import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { parseArtifactToolResult } from '../../../shared/artifacts'
 import { baseToolName, fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
+
+/** On a tool that works on the bot's computer: takes the owner there. */
+function ShowOnComputer({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation('fleet')
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="whitespace-nowrap rounded-md bg-popover px-2 py-0.5 text-xs text-foreground/80 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {t('computer.showOnComputer')}
+    </button>
+  )
+}
 
 function TranscriptRow({
   bot,
@@ -165,7 +181,7 @@ function TranscriptRow({
   }
   if (item.kind === 'tool')
     return (
-      <div className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
+      <div className="group/row rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           {item.state === 'running' ? (
             <Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
@@ -174,7 +190,12 @@ function TranscriptRow({
           )}
           <code className="text-foreground">{item.name}</code>
           <span className="truncate">{item.target}</span>
-          <span className="ml-auto">
+          <span className="ml-auto flex items-center gap-2">
+            {isComputerTool(item.name) && (
+              <span className="opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100 motion-reduce:transition-none">
+                <ShowOnComputer onClick={onOpenScreen} />
+              </span>
+            )}
             {t(
               `transcript.tool.${item.state === 'running' && (bot.status === 'paused' || bot.status === 'human') ? 'paused' : item.state}`
             )}
@@ -212,10 +233,12 @@ function BotAgentActivity({
   bot,
   segment,
   imageCache,
+  onShowOnComputer,
 }: {
   bot: FleetBot
   segment: Extract<FleetActivitySegment, { kind: 'activity' }>
   imageCache: FleetImageCache
+  onShowOnComputer: () => void
 }) {
   const { t } = useTranslation('fleet')
   return (
@@ -229,6 +252,7 @@ function BotAgentActivity({
           <BotTranscriptImages botId={bot.id} images={segment.images.slice(-THUMBNAILS_MAX)} cache={imageCache} />
         )
       }
+      toolAction={(step) => (isComputerTool(step.toolName) ? <ShowOnComputer onClick={onShowOnComputer} /> : null)}
       renderToolDetail={(step) => {
         const item = step.source
         if (item.kind !== 'tool') return null
@@ -265,6 +289,7 @@ export function BotConversation({
   onOpenScreen,
   onOpenSettings,
   onOpenEnvironmentScreen,
+  onGiveBack,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -273,6 +298,8 @@ export function BotConversation({
   onOpenScreen: () => void
   onOpenSettings: () => void
   onOpenEnvironmentScreen?: () => void
+  /** The owner controls the computer: reveals it and asks about handing control back. */
+  onGiveBack: () => void
 }) {
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
@@ -350,7 +377,13 @@ export function BotConversation({
           )}
           {segments.map((segment) =>
             segment.kind === 'activity' ? (
-              <BotAgentActivity key={segment.key} bot={bot} segment={segment} imageCache={imageCache} />
+              <BotAgentActivity
+                key={segment.key}
+                bot={bot}
+                segment={segment}
+                imageCache={imageCache}
+                onShowOnComputer={onOpenScreen}
+              />
             ) : (
               <TranscriptRow
                 key={segment.item.id}
@@ -385,6 +418,11 @@ export function BotConversation({
                 <button type="button" className="text-primary" onClick={() => void startBot(fleet, bot)}>
                   {t('action.start')}
                 </button>
+              )}
+              {bot.status === 'human' && ownsTakeover(bot.takeover, fleet.state.connection.deviceId) && (
+                <Button size="sm" className="rounded-full px-4" onClick={onGiveBack}>
+                  {t('screen.give')}
+                </Button>
               )}
               {bot.status === 'paused' && (
                 <button

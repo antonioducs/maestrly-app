@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { FLEET_ENVIRONMENTS_FEATURE, FLEET_UNIFIED_DESKTOP_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { botComputerMode } from '../../src/renderer/lib/fleet/provisioning'
 import { resources } from '../../src/shared/i18n/resources'
 
 const source = (path: string) => readFileSync(new URL(`../../src/renderer/${path}`, import.meta.url), 'utf8')
@@ -32,23 +34,90 @@ describe('fleet renderer wiring', () => {
     for (const event of ['onFleetConnection', 'onFleetEvent']) expect(hook).toContain(event)
     for (const unsubscribe of ['offConnection()', 'offEvent()']) expect(hook).toContain(unsubscribe)
   })
-  it('exposes keyboard accessible bot tabs and keeps the screen and settings extension points', () => {
+  it('lays a bot out as a chat header beside a computer, with its settings in a panel over both', () => {
     const view = source('components/fleet/BotView.tsx')
-    expect(view).toContain('role="tablist"')
-    expect(view).toContain('onKeyDown={onKeyDown}')
-    for (const component of ['BotWorkspace', 'BotConversation', 'BotScreen', 'BotSettings'])
+    expect(view).not.toContain('role="tablist"')
+    expect(view).not.toContain('role="tab"')
+    for (const component of ['BotWorkspace', 'BotChatHeader', 'BotConversation', 'BotScreen', 'BotSettingsSheet'])
       expect(view).toContain(`<${component}`)
-    expect(view).toContain("['conversation', 'screen', 'settings']")
+    // The settings live in the panel; the view no longer renders them as a page of its own.
+    expect(view).not.toContain('<BotSettings\n')
+    expect(view).toContain("'conversation' | 'screen' | 'settings'")
+    const sheet = source('components/fleet/BotSettingsSheet.tsx')
+    expect(sheet).toContain('<BotSettings')
+    expect(sheet).toContain('leaveGuard.current')
+    expect(sheet).toContain("t('settingsSheet.close')")
+    const header = source('components/fleet/BotChatHeader.tsx')
+    expect(header).toContain("t('view.settingsButton')")
+    expect(header).toContain("t('workspace.open')")
+    for (const catalog of [resources.en.fleet, resources['pt-BR'].fleet]) {
+      expect(catalog.view.settingsButton).toEqual(expect.any(String))
+      expect(catalog.view).not.toHaveProperty('botTabs')
+      for (const key of ['title', 'close'] as const) expect(catalog.settingsSheet[key], key).toEqual(expect.any(String))
+      for (const key of [
+        'open',
+        'close',
+        'maximize',
+        'restore',
+        'chatPane',
+        'computerPane',
+        'panes',
+        'chip',
+        'resize',
+      ] as const)
+        expect(catalog.workspace[key], key).toEqual(expect.any(String))
+      for (const key of [
+        'holderBot',
+        'holderYou',
+        'holderOther',
+        'giveBackShort',
+        'showOnComputer',
+        'legacyNote',
+        'unavailable',
+        'unavailableDescription',
+        'retry',
+      ] as const)
+        expect(catalog.computer[key], key).toEqual(expect.any(String))
+    }
+    expect(resources['pt-BR'].fleet.view.settingsButton).toBe('Ajustes do bot')
+    expect(resources['pt-BR'].fleet.workspace.open).toBe('Computador')
+    expect(resources['pt-BR'].fleet.computer.showOnComputer).toBe('Ver no computador')
+  })
+  it('lays a computer out from what its environment advertises', () => {
+    const bot = { environmentId: 'acme' }
+    const running = (...capabilities: string[]) => ({ lifecycle: 'running' as const, capabilities })
+    expect(botComputerMode(bot, running(FLEET_ENVIRONMENTS_FEATURE, FLEET_UNIFIED_DESKTOP_FEATURE))).toBe('unified')
+    expect(botComputerMode(bot, running(FLEET_ENVIRONMENTS_FEATURE))).toBe('legacy')
+    // An image from before environments has one display: the bot's browser.
+    expect(botComputerMode(bot, running('provisioning'))).toBe('browser-only')
+    expect(botComputerMode({ environmentId: null }, undefined)).toBe('browser-only')
+    expect(botComputerMode(bot, undefined)).toBe('browser-only')
+  })
+  it('chooses the screen a computer opens from the capability of its environment', () => {
+    const screen = source('components/fleet/BotScreen.tsx')
+    expect(screen).toContain("mode === 'unified' ? 'apps' : mode === 'browser-only' ? 'browser' : surface")
+    expect(source('components/fleet/BotView.tsx')).toContain('botComputerMode(bot, environment)')
+    expect(source('lib/fleet/provisioning.ts')).toContain('FLEET_UNIFIED_DESKTOP_FEATURE')
+  })
+  it('links computer tools to the computer and offers the way back while the owner controls it', () => {
+    const conversation = source('components/fleet/BotConversation.tsx')
+    expect(conversation).toContain('isComputerTool(')
+    expect(conversation).toContain("t('computer.showOnComputer')")
+    expect(conversation).toContain('ownsTakeover(bot.takeover, fleet.state.connection.deviceId)')
+    expect(conversation).toContain('onClick={onGiveBack}')
+    const screen = source('components/fleet/BotScreen.tsx')
+    expect(screen).toContain('giveBackRequest')
+    expect(screen).toContain('onReveal')
   })
   it('keeps foreign takeovers in view mode and blocks resume actions', () => {
     const screen = source('components/fleet/BotScreen.tsx')
-    const view = source('components/fleet/BotView.tsx')
+    const header = source('components/fleet/BotChatHeader.tsx')
     const conversation = source('components/fleet/BotConversation.tsx')
     expect(screen).toContain('ownsTakeover(takeover, fleet.state.connection.deviceId)')
-    expect(screen).toContain("const mode = human ? 'control' : 'view'")
-    expect(screen).toContain('screen.footerOther')
+    expect(screen).toContain("const controlMode = human ? 'control' : 'view'")
+    expect(screen).toContain('computer.holderOther')
     expect(screen).toContain('screen.takeConflict')
-    for (const component of [view, conversation]) {
+    for (const component of [header, conversation]) {
       expect(component).toContain('disabled={takeoverBlocksResume(bot.takeover)}')
       expect(component).toContain("t('action.resumeBlocked')")
     }

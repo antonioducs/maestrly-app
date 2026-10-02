@@ -302,8 +302,8 @@ export function BotSettings({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 's') return
-      // A dialog on top (a routine, a confirmation) owns the keyboard.
-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+      // A dialog on top (a routine, a confirmation) owns the keyboard; the panel these settings sit in does not.
+      if (document.querySelector('[role="dialog"]:not([data-bot-settings-sheet]), [role="alertdialog"]')) return
       event.preventDefault()
       void saveRef.current()
     }

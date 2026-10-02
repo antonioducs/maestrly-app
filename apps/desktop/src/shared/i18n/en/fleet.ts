@@ -470,21 +470,36 @@ export default {
   },
   view: {
     server: 'Server',
-    botTabs: 'Bot views',
-    conversation: 'Conversation',
-    screen: 'Screen',
-    settings: 'Settings',
+    settingsButton: 'Bot settings',
+  },
+  settingsSheet: {
+    title: '{{name}} settings',
+    close: 'Close settings',
   },
   workspace: {
-    open: 'Open computer',
+    open: 'Computer',
     close: 'Close computer',
     maximize: 'Maximize computer',
     restore: 'Restore conversation',
-    showChat: 'Show conversation',
-    showComputer: 'Show computer',
+    chatPane: 'Conversation',
+    computerPane: 'Computer',
+    panes: 'Visible panel',
+    chip: 'Computer · {{name}}',
     resize: 'Resize conversation and computer',
     chatRegion: '{{name}} conversation',
     computerRegion: '{{name}} computer',
+  },
+  computer: {
+    holderBot: '{{name}} in control',
+    holderYou: 'You are in control',
+    holderOther: '{{device}} in control',
+    giveBackShort: 'Give back to {{name}}',
+    showOnComputer: 'Show on computer',
+    legacyNote:
+      'This environment keeps separate Browser and Apps areas. Restart it on the current image for one desktop.',
+    unavailable: 'Screen unavailable',
+    unavailableDescription: 'The connection to the computer dropped. The bot keeps working.',
+    retry: 'Try again',
   },
   action: {
     start: 'Start',
@@ -676,8 +691,6 @@ export default {
   },
   screen: {
     live: 'Live',
-    you: 'You',
-    holder: 'Screen controlled by {{name}}',
     unknownDevice: 'Another device',
     takeConflict: 'The bot is finishing a step; try again in a moment.',
     controlTime: 'Time in control',
@@ -692,7 +705,6 @@ export default {
     optional: 'Optional',
     keepControl: 'Keep control',
     give: 'Give back',
-    giveBack: 'Give back to {{name}}',
     region: '{{name}}’s screen',
     viewHint: 'Just watching. Take control to click and type.',
     clipboard: {
@@ -718,10 +730,6 @@ export default {
     useEnvironmentScreen: 'Use the environment screen',
     environmentAccountDescription:
       '{{name}} needs a model account. Accounts live in its environment, {{environment}}: sign in on the environment screen.',
-    footerHuman: 'Your keyboard and mouse control the server desktop. {{name}} is paused until you give control back.',
-    footerOther: '{{name}} is controlling the screen. You can keep watching.',
-    footerWaiting: '{{name}} is waiting for you on this screen. Take control to help.',
-    footerView: 'You are watching {{name}}’s desktop on {{host}}. The bot runs in the background.',
     phase: {
       connecting: 'Connecting to screen…',
       live: 'Live',

@@ -476,9 +476,11 @@ describe('environment UI wiring', () => {
 
   it('switches bot screen areas, keeps takeover control, and reports the shared display conflict', () => {
     const screen = source('components/fleet/BotScreen.tsx')
-    expect(screen).toContain("const mode = human ? 'control' : 'view'")
-    expect(screen).toContain("t('screen.browser')")
-    expect(screen).toContain("t('screen.apps')")
+    expect(screen).toContain("const controlMode = human ? 'control' : 'view'")
+    expect(screen).toContain('<ScreenSurfaceToggle')
+    const header = source('components/fleet/BotComputerHeader.tsx')
+    expect(header).toContain("t('screen.browser')")
+    expect(header).toContain("t('screen.apps')")
     expect(screen).toContain('useFleetScreen(')
     const frame = source('components/fleet/ScreenFrame.tsx')
     expect(frame).toContain('isScreenConflict(')

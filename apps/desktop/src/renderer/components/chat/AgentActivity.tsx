@@ -170,6 +170,8 @@ export interface AgentActivityProps<S> {
   /** Images the steps produced, shown under the line whether it is open or not. */
   thumbnails?: ReactNode
   renderToolDetail: (step: ActivityToolStep<S>) => ReactNode
+  /** An action on a tool step's row, shown while the row is hovered or focused (e.g. to see the step elsewhere). */
+  toolAction?: (step: ActivityToolStep<S>) => ReactNode
   /** A note under a reasoning step's text, e.g. that it was cut. */
   reasoningNote?: (step: Extract<ActivityStep<S>, { kind: 'reasoning' }>) => ReactNode
   onOpenMention?: OpenFileReference
@@ -192,6 +194,7 @@ export function AgentActivity<S>({
   durationMs,
   thumbnails,
   renderToolDetail,
+  toolAction,
   reasoningNote,
   onOpenMention,
   searchQuery,
@@ -328,6 +331,7 @@ export function AgentActivity<S>({
             steps={steps}
             live={live}
             renderToolDetail={renderToolDetail}
+            toolAction={toolAction}
             reasoningNote={reasoningNote}
             onOpenMention={onOpenMention}
             searchQuery={searchQuery}
@@ -343,13 +347,21 @@ function ActivityTimeline<S>({
   steps,
   live,
   renderToolDetail,
+  toolAction,
   reasoningNote,
   onOpenMention,
   searchQuery,
   currentSearchMatch,
 }: Pick<
   AgentActivityProps<S>,
-  'steps' | 'live' | 'renderToolDetail' | 'reasoningNote' | 'onOpenMention' | 'searchQuery' | 'currentSearchMatch'
+  | 'steps'
+  | 'live'
+  | 'renderToolDetail'
+  | 'toolAction'
+  | 'reasoningNote'
+  | 'onOpenMention'
+  | 'searchQuery'
+  | 'currentSearchMatch'
 >) {
   const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set())
   const toggle = (id: string) =>
@@ -373,6 +385,7 @@ function ActivityTimeline<S>({
           onToggleRow={toggle}
           thinking={live && row.kind === 'reasoning' && row.step === lastStep}
           renderToolDetail={renderToolDetail}
+          toolAction={toolAction}
           reasoningNote={reasoningNote}
           onOpenMention={onOpenMention}
           searchQuery={searchQuery}
@@ -413,10 +426,20 @@ function RowChevron({ open }: { open: boolean }) {
   )
 }
 
-function ToolRowHead<S>({ step, open, onToggle }: { step: ActivityToolStep<S>; open: boolean; onToggle: () => void }) {
+function ToolRowHead<S>({
+  step,
+  open,
+  onToggle,
+  action,
+}: {
+  step: ActivityToolStep<S>
+  open: boolean
+  onToggle: () => void
+  action?: ReactNode
+}) {
   const { t } = useTranslation('chat')
   const label = toolLabel(t, step, step.status === 'running' || step.status === 'waiting' ? 'live' : 'done')
-  return (
+  const head = (
     <button type="button" className={rowHead} aria-expanded={open} onClick={onToggle}>
       <RowIcon icon={CATEGORY_ICON[step.category]} status={step.status} />
       <span className="min-w-0 truncate" title={plainLabel(label)}>
@@ -425,6 +448,16 @@ function ToolRowHead<S>({ step, open, onToggle }: { step: ActivityToolStep<S>; o
       </span>
       <RowChevron open={open} />
     </button>
+  )
+  if (!action) return head
+  // Beside the row's button, not inside it: revealed by hovering the row or focusing the action.
+  return (
+    <div className="group/row relative">
+      {head}
+      <div className="absolute right-7 top-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover/row:opacity-100 motion-reduce:transition-none">
+        {action}
+      </div>
+    </div>
   )
 }
 
@@ -439,6 +472,7 @@ function ActivityTimelineRow<S>({
   onToggleRow,
   thinking,
   renderToolDetail,
+  toolAction,
   reasoningNote,
   onOpenMention,
   searchQuery,
@@ -452,7 +486,7 @@ function ActivityTimelineRow<S>({
   thinking: boolean
 } & Pick<
   AgentActivityProps<S>,
-  'renderToolDetail' | 'reasoningNote' | 'onOpenMention' | 'searchQuery' | 'currentSearchMatch'
+  'renderToolDetail' | 'toolAction' | 'reasoningNote' | 'onOpenMention' | 'searchQuery' | 'currentSearchMatch'
 >) {
   const { t } = useTranslation('chat')
   if (row.kind === 'narration')
@@ -520,7 +554,12 @@ function ActivityTimelineRow<S>({
           <ol className="mb-1 ml-7 flex min-w-0 flex-col">
             {row.steps.map((step) => (
               <li key={step.id} className="min-w-0">
-                <ToolRowHead step={step} open={openRows.has(step.id)} onToggle={() => onToggleRow(step.id)} />
+                <ToolRowHead
+                  step={step}
+                  open={openRows.has(step.id)}
+                  onToggle={() => onToggleRow(step.id)}
+                  action={toolAction?.(step)}
+                />
                 {openRows.has(step.id) && <div className={detailBox}>{renderToolDetail(step)}</div>}
               </li>
             ))}
@@ -531,7 +570,7 @@ function ActivityTimelineRow<S>({
   }
   return (
     <li className="min-w-0">
-      <ToolRowHead step={row.step} open={open} onToggle={onToggle} />
+      <ToolRowHead step={row.step} open={open} onToggle={onToggle} action={toolAction?.(row.step)} />
       {open && <div className={detailBox}>{renderToolDetail(row.step)}</div>}
     </li>
   )

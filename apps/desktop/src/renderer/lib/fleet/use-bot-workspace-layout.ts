@@ -5,7 +5,8 @@ type Pane = 'chat' | 'computer'
 const DEFAULT_RATIO = 45
 const CHAT_MIN = 360
 const COMPUTER_MIN = 480
-export const BOT_WORKSPACE_SEPARATOR_WIDTH = 6
+/** A hairline; its hit area is wider than the line it draws. */
+export const BOT_WORKSPACE_SEPARATOR_WIDTH = 1
 
 function savedRatio(key: string): number {
   try {
@@ -66,6 +67,11 @@ export function useBotWorkspaceLayout(server: string | null, botId: string, init
     setMode('chat')
     setLastVisiblePane('chat')
   }, [])
+  /** Narrow, one pane shows at a time; a maximized computer goes back to the split to let the conversation in. */
+  const showPane = useCallback((pane: Pane) => {
+    setLastVisiblePane(pane)
+    setMode((current) => (current === 'computer' ? 'split' : current))
+  }, [])
   const maximize = () => {
     setMode('computer')
     setLastVisiblePane('computer')
@@ -91,7 +97,7 @@ export function useBotWorkspaceLayout(server: string | null, botId: string, init
     closeComputer,
     maximize,
     restore,
-    showPane: setLastVisiblePane,
+    showPane,
   }
 }
 

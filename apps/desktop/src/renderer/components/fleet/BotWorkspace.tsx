@@ -1,28 +1,23 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
-import { Maximize2, Minimize2, Monitor, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/components/ui/button'
 import { BOT_WORKSPACE_SEPARATOR_WIDTH, type BotWorkspaceLayout } from '@/lib/fleet/use-bot-workspace-layout'
 
-/** Stable pane containers keep drafts and the remote screen alive while changing the layout. */
+/**
+ * Stable pane containers keep drafts and the remote screen alive while changing the layout. Each pane draws its own
+ * header; only a hairline divides them.
+ */
 export function BotWorkspace({
   botId,
   name,
   layout,
-  visible,
   conversation,
   computer,
-  onOpenComputer,
-  onCloseComputer,
 }: {
   botId: string
   name: string
   layout: BotWorkspaceLayout
-  visible: boolean
   conversation: ReactNode
   computer: ReactNode
-  onOpenComputer: () => void
-  onCloseComputer: () => void
 }) {
   const { t } = useTranslation('fleet')
   const pointer = useRef<number | null>(null)
@@ -62,56 +57,7 @@ export function BotWorkspace({
   }
   const rounded = (value: number) => Math.round(value * 100) / 100
   return (
-    <div
-      data-bot-workspace={botId}
-      data-workspace-mode={layout.mode}
-      inert={!visible}
-      className={visible ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}
-    >
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 border-b border-border px-3 py-1">
-        {layout.mode === 'split' && layout.narrow && (
-          <div className="mr-auto flex gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-pressed={layout.lastVisiblePane === 'chat'}
-              onClick={() => layout.showPane('chat')}
-            >
-              {t('workspace.showChat')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-pressed={layout.lastVisiblePane === 'computer'}
-              onClick={() => layout.showPane('computer')}
-            >
-              {t('workspace.showComputer')}
-            </Button>
-          </div>
-        )}
-        {layout.mode === 'chat' ? (
-          <Button size="sm" variant="ghost" onClick={onOpenComputer}>
-            <Monitor className="size-3.5" />
-            {t('workspace.open')}
-          </Button>
-        ) : (
-          <>
-            <Button size="sm" variant="ghost" onClick={layout.mode === 'computer' ? layout.restore : layout.maximize}>
-              {layout.mode === 'computer' ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-              {t(layout.mode === 'computer' ? 'workspace.restore' : 'workspace.maximize')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onCloseComputer}
-              aria-label={t('workspace.close')}
-              title={t('workspace.close')}
-            >
-              <X className="size-3.5" />
-            </Button>
-          </>
-        )}
-      </div>
+    <div data-bot-workspace={botId} data-workspace-mode={layout.mode} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div ref={layout.container} className={`relative flex min-h-0 min-w-0 flex-1 ${dragging ? 'select-none' : ''}`}>
         <section
           id="fleet-workspace-conversation"
@@ -133,7 +79,7 @@ export function BotWorkspace({
           tabIndex={split ? 0 : -1}
           className={
             split
-              ? 'z-10 shrink-0 cursor-col-resize touch-none bg-border/60 hover:bg-primary/60 focus-visible:bg-primary focus-visible:outline-none'
+              ? `relative z-10 shrink-0 cursor-col-resize touch-none transition-colors before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-[''] hover:bg-foreground/40 focus-visible:bg-foreground/40 focus-visible:outline-none ${dragging ? 'bg-foreground/40' : 'bg-border'}`
               : 'hidden'
           }
           style={{ width: BOT_WORKSPACE_SEPARATOR_WIDTH }}

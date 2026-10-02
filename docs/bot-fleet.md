@@ -233,17 +233,30 @@ Each bot is told which other bots share its environment and that its home folder
 
 ### Screens of a bot
 
-Choose **Screen** or **Open computer** in a bot conversation to watch its computer beside the chat. Drag the divider,
-or focus it and use the arrow keys, to adjust their widths; Home and End move it to either limit. The app remembers
-the preferred split for each server and bot. **Maximize computer** fills the bot view with the screen;
-**Restore conversation** brings back the chat. Drafts, image attachments, the reading position, and the screen
-connection survive this change. Messages continue arriving while the conversation is hidden.
+Choose **Computer** in a bot's conversation header to watch its computer beside the chat. Each panel has its own
+header; a thin divider separates them. Drag the divider, or focus it and use the arrow keys, to adjust their
+widths; Home and End move it to either limit. The app remembers the preferred split for each server and bot.
+**Maximize computer** fills the bot view with the screen; **Restore conversation** brings back the chat. Drafts,
+image attachments, the reading position, and the screen connection survive this change. Messages continue arriving
+while the conversation is hidden.
 
-When the available area is narrower than 846 pixels, **Show conversation** and **Show computer** switch between
-the two panels. Widening the window restores the split. **Close computer** stops the viewing stream and returns to
-the chat. If you control the computer, closing it first asks you to give it back, with the usual optional note;
-a failed release leaves the computer open. Watching allows conversation as usual; takeover keeps the bot paused
-and retains the existing message restrictions. Reconnecting the bot screen does not take focus from the composer.
+When the available area is narrower than 841 pixels, a **Conversation | Computer** switch in each panel's header
+shows one panel at a time. Widening the window restores the split. The × on the **Computer · name** chip is
+**Close computer**: it stops the viewing stream and returns to the chat. If you control the computer, closing it
+first asks you to give it back, with the usual optional note; a failed release leaves the computer open. Watching
+allows conversation as usual; takeover keeps the bot paused and retains the existing message restrictions, and the
+locked composer offers **Give back**, which brings the computer into view and asks for the note. Reconnecting the
+bot screen does not take focus from the composer.
+
+Under the screen, a bar says who is in control: **name in control** with **Take control** while you watch,
+**You in control** with the time and **Give back to name** while you control it, or the name of another device that
+has taken it over. The screen's frame turns green while you control it. A tool row for the bot's browser, computer, or
+terminal shows **Show on computer** when you hover over or focus it, which opens the computer.
+
+An environment whose image advertises the unified desktop shows one screen, the bot's **Apps** desktop with its
+browser as a window. An environment on an older image keeps its **Browser** and **Apps** areas, chosen with a switch
+in the computer's header; an image from before environments only has the browser, so **Apps** stays disabled until the
+environment restarts.
 
 Each bot has two screen areas, shown in the app with a **Browser** | **Apps** switch:
 
@@ -306,7 +319,7 @@ The environment view has **Overview** and **Screen** tabs:
 - **Overview** lists its bots, with **New bot in this environment**; **Environment accounts**; **Skills and MCP**; a link to the environment screen; **Resources**, with memory, CPU, uptime, version, and **Memory limit**; **Start and stop**; and **Archive**. **Restart environment**, **Stop environment**, and **Archive** each ask for confirmation and name every bot they affect.
 - **Screen** shows the environment screen. **Take control** operates it without holding or pausing any bot; **Stop controlling** returns to watching.
 
-A bot's view has **Conversation**, **Screen**, and **Settings** tabs. Its **Settings** keep what belongs to the bot, in sections listed at the side: **Identity** (name, role, and what it does), **Autonomy**, **Model** (its **Main model** and **Compaction**), **Conversations with other bots**, **Routines**, **Bot memory**, **Environment**, and **Archive**. **Autonomy** shows, for each ceiling, what the bot does on its own and what it asks you about. Changes to the identity, autonomy, models, and peers wait in a bar that names each changed field until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; leaving the settings with unsaved changes asks first. Routines and bot memory are saved as you change them. The **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
+A bot's view shows its **Conversation** and, beside it, its **Computer**. **Bot settings**, the gear in the conversation header, opens the bot's settings in a panel over both; the screen keeps streaming behind it. The settings keep what belongs to the bot, in sections listed at the side: **Identity** (name, role, and what it does), **Autonomy**, **Model** (its **Main model** and **Compaction**), **Conversations with other bots**, **Routines**, **Bot memory**, **Environment**, and **Archive**. **Autonomy** shows, for each ceiling, what the bot does on its own and what it asks you about. Changes to the identity, autonomy, models, and peers wait in a bar that names each changed field until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; closing the panel (**Close settings**, Esc, or the dark area) with unsaved changes asks first. Routines and bot memory are saved as you change them. The **Environment** section links to the environment that holds its accounts, skills, MCP servers, and resources.
 
 Model accounts belong to the environment. Add them under **Environment accounts** in the environment view: use **Add an API key** for **OpenAI compatible (Chat Completions)**, **OpenAI Responses**, or **Anthropic**, with an optional base URL for a compatible endpoint; **Log in on the environment screen** to authenticate in the environment's Maestrly window; **Bring from this computer…**; or sign in to subscriptions as described below. Adding an API key requires secure credential storage in the environment; otherwise the request is refused. Each bot then chooses its own **Main model** among the environment's accounts in its **Settings**.
 
@@ -314,9 +327,9 @@ Each environment has a **Default compaction model**, chosen in its environment v
 
 | View or action | What happens |
 | --- | --- |
-| **Conversation** | Send text or up to eight images, follow the transcript and tool activity, view screenshots and generated images returned by tools, answer questions, and handle approval requests. Messages sent while paused wait. |
+| **Conversation** | Send text or up to eight images, follow the transcript and tool activity, view screenshots and generated images returned by tools, answer questions, and handle approval requests. Browser, computer, and terminal tool rows link to the computer with **Show on computer**. Messages sent while paused wait. |
 | **Awaiting you** | Collects permission requests, questions, and help requests across bots. You decide; the bot cannot approve for you. |
-| **Screen** | Watch the bot's **Browser** area or **Apps** screen without sending input. **Take control** pauses the bot at the next safe step; its active turn may be interrupted. Your keyboard and mouse then operate the area you select. Only one control session at a time can use an environment's browser areas and environment screen, which share one display; a second one shows "Another screen in this environment is being controlled." **Apps** screens have their own pointer and keyboard. **Give back** accepts an optional note; the bot is told how long you controlled it, reads the note, takes a fresh screenshot, and continues. If the controller disconnects, control releases automatically after five minutes without a control connection. |
+| **Computer** | Watch the bot's computer without sending input: its desktop on the unified desktop, or its **Browser** area or **Apps** screen on an older image. **Take control** pauses the bot at the next safe step; its active turn may be interrupted. Your keyboard and mouse then operate the screen you watch. Only one control session at a time can use an environment's browser areas and environment screen, which share one display; a second one shows "Another screen in this environment is being controlled." **Apps** screens have their own pointer and keyboard. **Give back** accepts an optional note; the bot is told how long you controlled it, reads the note, takes a fresh screenshot, and continues. If the controller disconnects, control releases automatically after five minutes without a control connection. |
 | **Pause / Resume** | Pause holds the bot and its queued work; resume permits it to continue. Paused routines are skipped. Other bots in the environment are not affected. |
 | **Start / Stop / Restart** | Act on the whole environment and every bot in it, from the environment view or the **Server** page. The home volume remains. |
 | **Archive** | In a bot's **Settings**, archives that bot only. In the environment view, removes the environment's container and archives every bot in it. Records and the home volume are kept. |

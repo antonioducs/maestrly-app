@@ -11,6 +11,7 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PROVISIONING_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   type FleetBot,
   type FleetBotAccounts,
   type FleetBotSkills,
@@ -124,6 +125,20 @@ export function environmentScreenAvailability(
   environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
 ): EnvironmentScreenAvailability {
   return needsRestart(environment, FLEET_ENVIRONMENTS_FEATURE) ? 'restart-environment' : 'ready'
+}
+export type BotComputerMode = 'unified' | 'legacy' | 'browser-only'
+/**
+ * How a bot's computer is laid out. A gateway without environments, or an environment's image from before them, has
+ * one display: the bot's browser. An image with the unified desktop shows one desktop, the bot's apps screen, with
+ * its browser as one more window. Any other image keeps a separate Browser and Apps area to choose between.
+ */
+export function botComputerMode(
+  bot: Pick<FleetBot, 'environmentId'>,
+  environment: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'> | undefined
+): BotComputerMode {
+  if (!environment || bot.environmentId === null) return 'browser-only'
+  if (environmentScreenAvailability(environment) === 'restart-environment') return 'browser-only'
+  return environment.capabilities.includes(FLEET_UNIFIED_DESKTOP_FEATURE) ? 'unified' : 'legacy'
 }
 export type EnvironmentCompactionAvailability =
   | 'unsupported'

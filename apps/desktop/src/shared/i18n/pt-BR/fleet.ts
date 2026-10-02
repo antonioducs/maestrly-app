@@ -471,21 +471,36 @@ export default {
   },
   view: {
     server: 'Servidor',
-    botTabs: 'Telas do bot',
-    conversation: 'Conversa',
-    screen: 'Tela',
-    settings: 'Ajustes',
+    settingsButton: 'Ajustes do bot',
+  },
+  settingsSheet: {
+    title: 'Ajustes do {{name}}',
+    close: 'Fechar ajustes',
   },
   workspace: {
-    open: 'Abrir computador',
+    open: 'Computador',
     close: 'Fechar computador',
     maximize: 'Maximizar computador',
     restore: 'Restaurar conversa',
-    showChat: 'Mostrar conversa',
-    showComputer: 'Mostrar computador',
+    chatPane: 'Conversa',
+    computerPane: 'Computador',
+    panes: 'Painel visível',
+    chip: 'Computador · {{name}}',
     resize: 'Redimensionar conversa e computador',
     chatRegion: 'Conversa do {{name}}',
     computerRegion: 'Computador do {{name}}',
+  },
+  computer: {
+    holderBot: '{{name}} no controle',
+    holderYou: 'Você no controle',
+    holderOther: '{{device}} no controle',
+    giveBackShort: 'Devolver ao {{name}}',
+    showOnComputer: 'Ver no computador',
+    legacyNote:
+      'Este ambiente mantém o Navegador e os Apps separados. Reinicie-o na imagem atual para ter uma área de trabalho só.',
+    unavailable: 'Tela indisponível',
+    unavailableDescription: 'A conexão com o computador caiu. O bot continua trabalhando.',
+    retry: 'Tentar de novo',
   },
   action: {
     start: 'Iniciar',
@@ -677,8 +692,6 @@ export default {
   },
   screen: {
     live: 'Ao vivo',
-    you: 'Você',
-    holder: 'Quem controla a tela: {{name}}',
     unknownDevice: 'Outro dispositivo',
     takeConflict: 'O bot está terminando um passo. Tente novamente em instantes.',
     controlTime: 'Tempo no controle',
@@ -693,7 +706,6 @@ export default {
     optional: 'Opcional',
     keepControl: 'Continuar no controle',
     give: 'Devolver',
-    giveBack: 'Devolver ao {{name}}',
     region: 'Tela do {{name}}',
     viewHint: 'Só assistindo. Assuma o controle para clicar e digitar.',
     clipboard: {
@@ -719,10 +731,6 @@ export default {
     useEnvironmentScreen: 'Usar a tela do ambiente',
     environmentAccountDescription:
       'O {{name}} precisa de uma conta de modelo. As contas ficam no ambiente dele, {{environment}}: faça login na tela do ambiente.',
-    footerHuman: 'Seu teclado e mouse controlam o desktop no servidor. O {{name}} espera você devolver.',
-    footerOther: '{{name}} está controlando a tela. Você pode continuar assistindo.',
-    footerWaiting: 'O {{name}} espera você nesta tela. Assuma o controle para ajudar.',
-    footerView: 'Você está só assistindo o desktop do {{name}} no {{host}}. O bot roda em segundo plano.',
     phase: {
       connecting: 'Conectando à tela…',
       live: 'Ao vivo',
