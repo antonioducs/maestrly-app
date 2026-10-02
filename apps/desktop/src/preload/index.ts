@@ -3,6 +3,7 @@ import { contextBridge } from 'electron'
 import { localDataApi } from './api-local-data'
 import { appApi } from './api-app'
 import { chatApi } from './api-chat'
+import { chatWindowApi } from './api-chat-window'
 import { conversationMigrationApi } from './api-conversation-migration'
 import { drawerApi } from './api-drawer'
 import { memoryApi } from './api-memory'
@@ -23,6 +24,8 @@ import { botApi } from './api-bot'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { artifactsApi } from './api-artifacts'
+
+export type * from '../shared/chat-window'
 
 export type {
   ConversationBranchInfo,
@@ -153,6 +156,7 @@ const api = {
   ...soundApi,
   ...updateApi,
   ...chatApi,
+  ...chatWindowApi,
   ...platformApi,
   ...botApi,
   ...fleetApi,

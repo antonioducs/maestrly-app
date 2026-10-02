@@ -41,9 +41,9 @@ describe('shared contenteditable MentionEditor contract', () => {
     expect(editorCoreSource).toContain("child.dataset.agentMentionId ?? ''")
     expect(editorCoreSource).toContain('span.dataset.agentMentionId = id')
     // Assign IDs when autocomplete selects chips and preserve them in the DOM.
-    expect(editorCoreSource).toContain('makeAgentChip(t, agent, crypto.randomUUID())')
+    expect(editorCoreSource).toContain('makeAgentChip(editor.ownerDocument, t, agent, crypto.randomUUID())')
     expect(editorCoreSource).toContain(
-      "function makeAgentChip(t: TFunction<'chat'>, agent: SubagentAgentDto, id: string)"
+      "function makeAgentChip(document: Document, t: TFunction<'chat'>, agent: SubagentAgentDto, id: string)"
     )
   })
 
@@ -56,7 +56,7 @@ describe('shared contenteditable MentionEditor contract', () => {
     expect(editorCoreSource).not.toContain('findAgentMentions(text)')
     // Create chips only at validated occurrence ranges with their IDs.
     expect(editorCoreSource).toMatch(
-      /byIndex\.set\(\s*m\.start,\s*\{ end: m\.end, el: makeAgentChip\(t, agent, m\.id\) \}\s*\)/
+      /byIndex\.set\(\s*m\.start,\s*\{ end: m\.end, el: makeAgentChip\(document, t, agent, m\.id\) \}\s*\)/
     )
   })
 

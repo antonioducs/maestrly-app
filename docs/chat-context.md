@@ -22,6 +22,25 @@ Archiving preserves history and files for restoration. Deleting removes that
 chat's managed files and saved permissions; deleting a project does not delete
 standalone chats. Back up the application profile to preserve these files.
 
+## Separate chat windows
+
+Use **Open chat in new window** in a conversation's header to detach a standalone
+chat, workspace agent, or fleet bot conversation. Chats and workspace conversations
+also offer this action in their sidebar menu. Each conversation has one window;
+using the action again focuses it. Different conversations can stay open side by
+side, including on different monitors, while you navigate the main app.
+
+The same chat remains active when moved: drafts, attachments, queued messages,
+and incoming responses stay with it. Close the detached window or choose
+**Return to app** to bring the conversation back without stopping its work.
+Local chats offer a button to open their tools in the main window; a pending
+plan changes that action to **Review plan**. Bot screen and settings actions
+continue to use the main app.
+
+Window positions are remembered for the current app session. Detached windows
+are not reopened automatically after restarting Maestrly, and closing the whole
+application still follows its normal shutdown behavior.
+
 ## Task lists
 
 The task card shows valid entries from the agent's latest task list. Malformed

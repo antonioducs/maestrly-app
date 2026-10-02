@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Mic, MicOff, Square, Loader2, ChevronDown, Check } from 'lucide-react'
@@ -70,6 +71,7 @@ export function ChatMicButton({
   onAutoSend?: (text: string) => boolean
   disabled?: boolean
 }) {
+  const ownerDocument = useChatDocument()
   const { t, i18n } = useTranslation('chat')
   const [status, setStatus] = useState<Status>('idle')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -172,9 +174,9 @@ export function ChatMicButton({
     const onDoc = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setMenuOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [menuOpen, refreshDevices])
+    ownerDocument.addEventListener('mousedown', onDoc)
+    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+  }, [ownerDocument, menuOpen, refreshDevices])
 
   const cleanupStream = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop())

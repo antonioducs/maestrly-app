@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -79,6 +80,7 @@ export function ChatSkillsMenu({
   /** Shown for a bot with no skills yet, where the menu is the way to reach the bot's own skill settings. */
   emptySkillsLabel?: string
 }) {
+  const ownerDocument = useChatDocument()
   const source = providedSource ?? localChatComposerSource(conversationId)
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
@@ -120,19 +122,19 @@ export function ChatSkillsMenu({
     if (!open) return
     void load()
     const onDoc = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('[data-select-content]')) return
+      if ((event.target as Element | null)?.closest?.('[data-select-content]')) return
       if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
     }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    ownerDocument.addEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      ownerDocument.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [ownerDocument, open])
 
   const setOverride = (name: string, override: ChatSkillOverride | 'inherit'): void => {
     void source.chatSkillSetOverride(name, override).then(changed)

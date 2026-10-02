@@ -4,6 +4,11 @@ A bot is a Maestrly agent that runs in Docker on this computer or on a Linux ser
 
 **Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
 
+A bot's conversation header offers **Open chat in new window**. The window stays
+open while you view other bots or workspaces, including live messages and pending
+questions. Closing it returns the conversation to the main app and preserves
+unsent text and attachments. See [separate chat windows](chat-context.md#separate-chat-windows).
+
 ## Set up the bot server
 
 Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.

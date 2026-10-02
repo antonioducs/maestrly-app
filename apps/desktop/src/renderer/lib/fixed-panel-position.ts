@@ -19,7 +19,7 @@ export interface FixedPanelPlacement {
  * containment and others. A throwaway probe lets the browser answer instead of guessing which properties apply.
  */
 export function fixedContainingBlock(host: Element): ViewportBox {
-  const probe = document.createElement('div')
+  const probe = host.ownerDocument.createElement('div')
   probe.setAttribute('aria-hidden', 'true')
   probe.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none'
   host.appendChild(probe)
@@ -70,9 +70,10 @@ export function fixedPanelPlacement(
   options: { anchor?: Element; width: number; estimatedHeight: number; align?: 'start' | 'end' }
 ): FixedPanelPlacement {
   const { left, top, right, bottom } = (options.anchor ?? host).getBoundingClientRect()
+  const ownerWindow = host.ownerDocument.defaultView ?? window
   return placeFixedPanel({
     anchor: { left, top, right, bottom },
-    viewport: { width: window.innerWidth, height: window.innerHeight },
+    viewport: { width: ownerWindow.innerWidth, height: ownerWindow.innerHeight },
     container: fixedContainingBlock(host),
     width: options.width,
     estimatedHeight: options.estimatedHeight,

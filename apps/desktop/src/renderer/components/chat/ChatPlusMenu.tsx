@@ -1,3 +1,4 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, ImageIcon, Bot, ExternalLink, Loader2, ArrowLeft, Shield, SlidersHorizontal } from 'lucide-react'
@@ -60,6 +61,7 @@ export function ChatPlusMenu({
   source?: ChatComposerSource
   manageMcpLabel?: string
 }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const source = providedSource ?? localChatComposerSource(conversationId)
   const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
@@ -123,13 +125,13 @@ export function ChatPlusMenu({
       if (e.key !== 'Escape' || activePanel === 'subagents') return
       setActivePanel(null)
     }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
+    ownerDocument.addEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKey)
     return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
+      ownerDocument.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKey)
     }
-  }, [activePanel])
+  }, [ownerDocument, activePanel])
 
   useEffect(() => setActivePanel(null), [conversationId])
 

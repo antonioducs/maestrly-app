@@ -154,7 +154,8 @@ describe('Maestro renderer contract', () => {
     expect(copyButton).toBeGreaterThan(-1)
     expect(deleteButton).toBeGreaterThan(copyButton)
     expect(deleteButton - copyButton).toBeLessThan(900)
-    expect(control).toContain("window.confirm(t('maestro.confirmRemoveResource', { label: resource.label }))")
+    expect(control).toContain('const ownerWindow = useChatOwnerWindow()')
+    expect(control).toContain("ownerWindow.confirm(t('maestro.confirmRemoveResource', { label: resource.label }))")
     expect(control).toContain('onRemove={value.pool.length > 1 ? () => removeResource(index) : undefined}')
   })
 

@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils'
 import { findActivePairedReviewLoop } from '@/lib/review-loop-split'
 import { Sidebar } from '@/components/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
+import { ChatWindowButton, ChatWindowHost } from '@/components/chat/ChatWindowHost'
+import { useDetachedChatKeys } from '@/lib/chat-windows'
 import { ReviewLoopPickerDialog } from '@/components/chat/ReviewLoopPickerDialog'
 import { ReviewLoopSplitView } from '@/components/chat/ReviewLoopSplitView'
 import { ConversationBranchChip } from '@/components/ConversationBranchChip'
@@ -34,7 +36,7 @@ import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
 import { useFleet } from '@/lib/fleet/use-fleet'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
-import { BotView } from '@/components/fleet/BotView'
+import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
 import { ServerView } from '@/components/fleet/ServerView'
 import { InboxView } from '@/components/fleet/InboxView'
@@ -60,6 +62,7 @@ export function DesktopApp() {
   const mainRef = useRef<HTMLElement>(null)
 
   const [mountedConvs, setMountedConvs] = useState<Conversation[]>([])
+  const detachedChatKeys = useDetachedChatKeys()
   const [unsafeChatIds, setUnsafeChatIds] = useState<ReadonlySet<string>>(new Set())
   const lastVisibleAtRef = useRef<Record<string, number>>({})
   const [hardPressure, setHardPressure] = useState(false)
@@ -176,6 +179,13 @@ export function DesktopApp() {
     }
     return ids
   }, [splitReviewLoop])
+  const protectedChatIds = useMemo(() => {
+    const ids = new Set(protectedReviewIds)
+    for (const key of detachedChatKeys) {
+      if (key.startsWith('conversation:')) ids.add(key.slice('conversation:'.length))
+    }
+    return ids
+  }, [protectedReviewIds, detachedChatKeys])
 
   useEffect(() => {
     void window.api.chatReviewLoopStatuses().then(setReviewLoops)
@@ -474,10 +484,10 @@ export function DesktopApp() {
         autoReclaimEnabled,
         lastVisibleAt: lastVisibleAtRef.current,
         hardPressure,
-        protectedIds: protectedReviewIds,
+        protectedIds: protectedChatIds,
       })
     )
-  }, [active?.id, autoReclaimEnabled, hardPressure, protectedReviewIds, statuses, mountedConvs.length, unsafeChatIds])
+  }, [active?.id, autoReclaimEnabled, hardPressure, protectedChatIds, statuses, mountedConvs.length, unsafeChatIds])
 
   useEffect(() => {
     if (autoReclaimEnabled !== true) return
@@ -488,14 +498,14 @@ export function DesktopApp() {
             autoReclaimEnabled,
             lastVisibleAt: lastVisibleAtRef.current,
             hardPressure,
-            protectedIds: protectedReviewIds,
+            protectedIds: protectedChatIds,
           })
         )
       },
       Math.min(30_000, CHAT_VIEW_COLD_TTL_MS)
     )
     return () => window.clearInterval(timer)
-  }, [active?.id, autoReclaimEnabled, hardPressure, protectedReviewIds, statuses, unsafeChatIds])
+  }, [active?.id, autoReclaimEnabled, hardPressure, protectedChatIds, statuses, unsafeChatIds])
 
   useEffect(() => {
     const live = new Set(allConversations.map((c) => c.id))
@@ -753,15 +763,7 @@ export function DesktopApp() {
                   onOpenSettings={() => openSettings('artifacts')}
                 />
               )}
-              {fleetView?.kind === 'bot' && fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId) && (
-                <BotView
-                  bot={fleet.state.snapshot.bots.find((bot) => bot.id === fleetView.botId)!}
-                  view={fleetView}
-                  fleet={fleet}
-                  onView={openFleetView}
-                  onOpenBot={openFleetBot}
-                />
-              )}
+              <PersistentBotViews view={fleetView} fleet={fleet} onView={openFleetView} onOpenBot={openFleetBot} />
               {fleetView?.kind === 'environment' &&
                 fleet.state.snapshot.environments.some((environment) => environment.id === fleetView.environmentId) && (
                   <EnvironmentView
@@ -829,6 +831,7 @@ export function DesktopApp() {
                     )}
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
+                    {active && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
                     {active?.botOrigin && <BotManagementControls conversation={active} />}
                     {active?.scope === 'project' &&
                       active.archived === 0 &&
@@ -870,6 +873,7 @@ export function DesktopApp() {
                   )}
 
                   {mountedConvs.map((c) => {
+                    const currentConversation = allConversations.find((conversation) => conversation.id === c.id) ?? c
                     const splitRole = splitReviewLoop
                       ? splitReviewLoop.participants.executor.conversationId === c.id
                         ? 'executor'
@@ -896,20 +900,51 @@ export function DesktopApp() {
                           if (splitRole && active?.id !== c.id) focusReviewPane(c.id)
                         }}
                       >
-                        <ChatView
-                          key={c.id}
-                          conversationId={c.id}
-                          workspaceId={c.workspaceId}
-                          cwd={c.cwd}
-                          experience={c.experience}
-                          botManaged={!!c.botOrigin && c.botManagementState === 'active'}
-                          botConversation={c.botOrigin ? c : undefined}
-                          botName={c.botOrigin?.botName}
-                          onExperienceChange={handleConversationExperienceChange}
-                          visible={(splitRole !== null || active?.id === c.id) && !mainOverride}
-                          status={statuses[c.id] ?? c.status}
-                          onEvictionSafetyChange={onChatEvictionSafetyChange}
-                        />
+                        <ChatWindowHost
+                          target={{ kind: 'conversation', id: c.id }}
+                          title={[
+                            workspaces.find((workspace) => workspace.id === c.workspaceId)?.name,
+                            currentConversation.name,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                          onReattach={() => handleSidebarConversationSelect(currentConversation)}
+                          onShowSource={() => handleSidebarConversationSelect(currentConversation)}
+                          actions={
+                            <Button
+                              variant="ghost"
+                              size={pendingPlanIds.has(c.id) ? 'sm' : 'icon'}
+                              className={pendingPlanIds.has(c.id) ? 'h-7 gap-1.5 px-2 text-xs' : 'size-7'}
+                              title={t(pendingPlanIds.has(c.id) ? 'chatWindow.plan' : 'chatWindow.tools')}
+                              onClick={() => {
+                                handleSidebarConversationSelect(currentConversation)
+                                if (pendingPlanIds.has(c.id)) openDrawerTab(c.id, 'plan')
+                                setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
+                                void window.api.chatWindowShowSource(`conversation:${c.id}`)
+                              }}
+                            >
+                              <PanelRight className="size-4" />
+                              {pendingPlanIds.has(c.id) && t('chatWindow.plan')}
+                            </Button>
+                          }
+                        >
+                          {(detached) => (
+                            <ChatView
+                              key={c.id}
+                              conversationId={c.id}
+                              workspaceId={c.workspaceId}
+                              cwd={c.cwd}
+                              experience={c.experience}
+                              botManaged={!!c.botOrigin && c.botManagementState === 'active'}
+                              botConversation={c.botOrigin ? c : undefined}
+                              botName={c.botOrigin?.botName}
+                              onExperienceChange={handleConversationExperienceChange}
+                              visible={detached || ((splitRole !== null || active?.id === c.id) && !mainOverride)}
+                              status={statuses[c.id] ?? c.status}
+                              onEvictionSafetyChange={onChatEvictionSafetyChange}
+                            />
+                          )}
+                        </ChatWindowHost>
                       </div>
                     )
                   })}

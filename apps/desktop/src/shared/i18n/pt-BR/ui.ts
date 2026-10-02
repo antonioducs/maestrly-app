@@ -3,6 +3,15 @@
  * ⚠️ A chave `panel.*` já vem do bootstrap da infra — PRESERVE-a. Chave ausente aqui cai no en (fallbackLng).
  */
 export default {
+  chatWindow: {
+    open: 'Abrir chat em nova janela',
+    focus: 'Focar janela do chat',
+    return: 'Voltar ao app',
+    detached: 'Esta conversa está aberta em outra janela.',
+    failed: 'Não foi possível abrir a janela do chat. Sua conversa continua aqui. Tente novamente.',
+    tools: 'Abrir ferramentas na janela principal',
+    plan: 'Revisar plano',
+  },
   artifacts: {
     publishingBot: {
       label: 'Publicar artefatos',

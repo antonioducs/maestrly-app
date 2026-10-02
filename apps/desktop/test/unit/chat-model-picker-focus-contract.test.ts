@@ -60,7 +60,8 @@ describe('model shortcuts and composer focus contract', () => {
     expect(modelChipSource).toContain('avoidOverflow = false')
     // Fixed placement goes through the helper that also corrects for transformed ancestors such as dialogs.
     expect(modelChipSource).toContain('fixedPanelPlacement(root, {')
-    expect(modelChipSource).toContain("window.addEventListener('scroll', reposition, true)")
+    expect(modelChipSource).toContain('const ownerWindow = useChatOwnerWindow()')
+    expect(modelChipSource).toContain("ownerWindow.addEventListener('scroll', reposition, true)")
     expect(modelChipSource).toContain('chatHiddenModels()')
     expect(modelChipSource).toContain('!(hiddenModels[r.providerId] ?? []).includes(r.modelId)')
   })

@@ -1,8 +1,10 @@
+import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Download } from 'lucide-react'
 
 export function ChatImageLightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
   const [ownedSrc, setOwnedSrc] = useState(src)
   useEffect(() => {
@@ -26,13 +28,13 @@ export function ChatImageLightbox({ src, name, onClose }: { src: string; name: s
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
-    document.addEventListener('keydown', onKey)
+    ownerDocument.addEventListener('keydown', onKey)
     return () => {
       cancelled = true
-      document.removeEventListener('keydown', onKey)
+      ownerDocument.removeEventListener('keydown', onKey)
       if (owned) URL.revokeObjectURL(owned)
     }
-  }, [onClose, src])
+  }, [ownerDocument, onClose, src])
 
   return (
     <div

@@ -1,3 +1,4 @@
+import { useChatOwnerWindow, useChatDocument } from '@/lib/chat-window-context'
 import {
   useCallback,
   useEffect,
@@ -61,6 +62,8 @@ export function SearchSelect({
   panelWidth?: number
   panelAlign?: 'start' | 'end'
 }) {
+  const ownerWindow = useChatOwnerWindow()
+  const ownerDocument = useChatDocument()
   const { t } = useTranslation('ui')
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -78,7 +81,7 @@ export function SearchSelect({
     if (!button || !wrap) return
     const r = button.getBoundingClientRect()
     const PANEL = 280
-    const opensUp = r.bottom + PANEL > window.innerHeight && r.top > PANEL
+    const opensUp = r.bottom + PANEL > ownerWindow.innerHeight && r.top > PANEL
     setUp(opensUp)
     if (avoidOverflow) {
       setPanelStyle(
@@ -90,7 +93,7 @@ export function SearchSelect({
         }).style
       )
     }
-  }, [avoidOverflow, panelAlign, panelWidth])
+  }, [ownerWindow, avoidOverflow, panelAlign, panelWidth])
 
   const openPanel = () => {
     positionPanel()
@@ -111,20 +114,21 @@ export function SearchSelect({
       e.stopPropagation()
       setOpen(false)
     }
+    positionPanel()
     const onViewportChange = () => positionPanel()
-    document.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey, true)
+    ownerDocument.addEventListener('mousedown', onDown)
+    ownerWindow.addEventListener('keydown', onKey, true)
     if (avoidOverflow) {
-      window.addEventListener('resize', onViewportChange)
-      window.addEventListener('scroll', onViewportChange, true)
+      ownerWindow.addEventListener('resize', onViewportChange)
+      ownerWindow.addEventListener('scroll', onViewportChange, true)
     }
     return () => {
-      document.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onViewportChange)
-      window.removeEventListener('scroll', onViewportChange, true)
+      ownerDocument.removeEventListener('mousedown', onDown)
+      ownerWindow.removeEventListener('keydown', onKey, true)
+      ownerWindow.removeEventListener('resize', onViewportChange)
+      ownerWindow.removeEventListener('scroll', onViewportChange, true)
     }
-  }, [open, avoidOverflow, positionPanel])
+  }, [ownerDocument, ownerWindow, open, avoidOverflow, positionPanel])
 
   useEffect(() => {
     if (activeIndex >= 0) optionRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
