@@ -104,6 +104,7 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
       throw new Error('query not expected')
     }),
     deleteSession: vi.fn(async () => {}),
+    pause: vi.fn(async () => {}),
     ...overrides,
   }
   return {
@@ -613,6 +614,92 @@ describe('Claude subscription manager', () => {
 
     expect((await manager.listModels()).map((model) => model.value)).toEqual(bundledIds)
     expect(queryFactory).toHaveBeenCalledTimes(3)
+  })
+
+  const refreshContention =
+    'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh. This is usually transient; retry in a minute, and if it persists close other Claude Code processes or sign in again'
+  const runtimeAccount = {
+    apiProvider: 'firstParty',
+    email: 'dev@example.com',
+    organization: 'org-1',
+    subscriptionType: 'max',
+  }
+
+  it('probes a model seed again after an OAuth refresh contention without requiring a sign-in', async () => {
+    let contended = 1
+    const queryFactory = vi.fn((params: { options?: { model?: string } }) => ({
+      initializationResult: async () => {
+        if (params.options?.model === 'opus' && contended-- > 0) throw new Error(refreshContention)
+        return { account: runtimeAccount }
+      },
+      supportedModels: async () => [{ value: params.options?.model ?? 'default', displayName: 'x' }],
+      close: vi.fn(),
+    }))
+    const pause = vi.fn(async (_ms: number) => {})
+    const { manager } = fixture({ queryFactory: queryFactory as never, pause })
+    const authenticationRequired = vi.fn()
+    manager.onAuthenticationRequired(authenticationRequired)
+
+    expect((await manager.listModels()).map((model) => model.value)).toEqual([
+      'default',
+      'fable',
+      'opus',
+      ...bundledIds,
+    ])
+    expect(queryFactory).toHaveBeenCalledTimes(4)
+    expect(pause).toHaveBeenCalledOnce()
+    expect(pause.mock.calls[0][0]).toBeGreaterThanOrEqual(5_000)
+    expect(authenticationRequired).not.toHaveBeenCalled()
+    await manager.listModels()
+    expect(queryFactory).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not cache a model list that a lasting refresh contention cut short', async () => {
+    const queryFactory = vi.fn((params: { options?: { model?: string } }) => ({
+      initializationResult: async () => {
+        if (params.options?.model === 'opus') throw new Error(refreshContention)
+        return { account: runtimeAccount }
+      },
+      supportedModels: async () => [{ value: params.options?.model ?? 'default', displayName: 'x' }],
+      close: vi.fn(),
+    }))
+    const pause = vi.fn(async () => {})
+    const { manager } = fixture({ queryFactory: queryFactory as never, pause })
+    const authenticationRequired = vi.fn()
+    manager.onAuthenticationRequired(authenticationRequired)
+
+    expect((await manager.listModels()).map((model) => model.value)).toEqual(['default', 'fable', ...bundledIds])
+    // Default and fable once, opus on its first attempt and on each of the three retries.
+    expect(queryFactory).toHaveBeenCalledTimes(6)
+    expect(pause).toHaveBeenCalledTimes(3)
+    await manager.listModels()
+    expect(queryFactory).toHaveBeenCalledTimes(12)
+    expect(authenticationRequired).not.toHaveBeenCalled()
+    expect((await manager.status()).authenticated).toBe(true)
+  })
+
+  it('reads usage again after an OAuth refresh contention', async () => {
+    const response = { rate_limits_available: true, rate_limits: {} }
+    let contended = 1
+    const close = vi.fn()
+    const queryFactory = vi.fn(() => ({
+      initializationResult: async () => ({ account: runtimeAccount }),
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+        if (contended-- > 0) throw new Error(refreshContention)
+        return response
+      },
+      close,
+    }))
+    const pause = vi.fn(async () => {})
+    const { manager } = fixture({ queryFactory: queryFactory as never, pause })
+    const authenticationRequired = vi.fn()
+    manager.onAuthenticationRequired(authenticationRequired)
+
+    await expect(manager.getUsage()).resolves.toBe(response)
+    expect(queryFactory).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledTimes(2)
+    expect(pause).toHaveBeenCalledOnce()
+    expect(authenticationRequired).not.toHaveBeenCalled()
   })
 
   it('merges only the allowed conversation shell variables over the runtime environment of one query', () => {

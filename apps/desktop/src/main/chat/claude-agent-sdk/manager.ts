@@ -23,8 +23,10 @@ import { spawnCli } from '../../platform'
 import {
   CLAUDE_AUTHENTICATION_REQUIRED_MESSAGE,
   ClaudeSubscriptionError,
+  claudeRefreshContentionRetryDelay,
   claudeSubscriptionErrorMessage,
   isClaudeAuthenticationRequired,
+  isClaudeOAuthRefreshContention,
 } from './errors'
 import { claudeSubscriptionRuntimeEnvironment } from './runtime-env'
 import { allowedConversationShellEnv, type ConversationShellEnv } from '../conversation-env'
@@ -135,6 +137,8 @@ export interface ClaudeSubscriptionManagerDependencies {
     sessionId: string,
     options: { dir: string; configDirectory: string; environment: Record<string, string> }
   ) => Promise<void>
+  /** Waits between probe attempts. */
+  pause: (ms: number) => Promise<void>
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {
@@ -248,6 +252,7 @@ const DEFAULT_DEPENDENCIES: ClaudeSubscriptionManagerDependencies = {
   },
   queryFactory: query,
   deleteSession: deleteSessionInIsolatedProcess,
+  pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1145,7 +1150,7 @@ export class ClaudeSubscriptionManager {
 
     let discovery = this.usageDiscovery
     if (!discovery || discovery.identityKey !== identityKey) {
-      const promise = this.probeUsage(identity)
+      const promise = this.retryRefreshContention(identity, () => this.probeUsage(identity))
         .then((value) => {
           this.assertAccountIdentity(identity)
           this.cachedUsage = { identityKey, fetchedAt: Date.now(), value }
@@ -1164,16 +1169,35 @@ export class ClaudeSubscriptionManager {
     return discovery.promise
   }
 
+  /** Runs a probe again while it fails only because another process of the account is refreshing the OAuth token. */
+  private async retryRefreshContention<T>(
+    identity: ClaudeSubscriptionAccountIdentity,
+    probe: () => Promise<T>
+  ): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await probe()
+      } catch (error) {
+        const delay = isClaudeOAuthRefreshContention(error) ? claudeRefreshContentionRetryDelay(attempt) : null
+        if (delay === null || this.disposed) throw error
+        await this.dependencies.pause(delay)
+        this.assertAccountIdentity(identity)
+      }
+    }
+  }
+
   private async discoverModels(identity: ClaudeSubscriptionAccountIdentity): Promise<ModelInfo[]> {
     const union = new Map<string, ModelInfo>()
     let failure: unknown
+    let contended = false
     for (const seed of CLAUDE_MODEL_PROBE_SEEDS) {
       try {
-        const models = await this.probeSupportedModels(seed, identity)
+        const models = await this.retryRefreshContention(identity, () => this.probeSupportedModels(seed, identity))
         for (const model of models) if (!union.has(model.value)) union.set(model.value, model)
       } catch (error) {
         failure ??= error
         if (this.requireAuthentication(error)) throw error
+        if (isClaudeOAuthRefreshContention(error)) contended = true
       }
     }
     // Compatibility with runtimes that do not yet materialize modelPicker during initialize: the feed still
@@ -1210,7 +1234,8 @@ export class ClaudeSubscriptionManager {
     }
     const models = [...union.values()]
     this.assertAccountIdentity(identity)
-    this.cachedModels = models.map((model) => ({ ...model }))
+    // Caching a list a refresh contention cut short would hide those models; the next request probes again.
+    if (!contended) this.cachedModels = models.map((model) => ({ ...model }))
     return models
   }
 

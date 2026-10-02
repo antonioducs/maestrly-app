@@ -45,6 +45,64 @@ function authenticationDiagnosticEntries(value: unknown, seen = new Set<unknown>
 }
 
 /**
+ * Claude Code serializes OAuth refreshes with a lock in the profile directory. A process that cannot take it gives up
+ * after a few seconds with this diagnostic, and a holder that dies mid-refresh leaves the lock until it turns stale
+ * (60 s). Every process of the same account shares that lock, so concurrent starts after the token expired hit it.
+ */
+const OAUTH_REFRESH_CONTENTION = [/\banother (?:Claude Code )?process is refreshing\b/i, /\bexited mid-refresh\b/i]
+
+function isOAuthRefreshContentionLine(line: string): boolean {
+  return OAUTH_REFRESH_CONTENTION.some((pattern) => pattern.test(line))
+}
+
+/**
+ * Waits before each new attempt after an OAuth refresh contention. Together with Claude Code's own lock attempts they
+ * outlast a lock left by a holder that died mid-refresh.
+ */
+export const CLAUDE_REFRESH_CONTENTION_RETRY_DELAYS_MS = [5_000, 15_000, 45_000] as const
+
+export function claudeRefreshContentionRetryDelay(attempt: number): number | null {
+  const delay = CLAUDE_REFRESH_CONTENTION_RETRY_DELAYS_MS[attempt]
+  // Jitter keeps processes that failed together from contending again together.
+  return delay === undefined ? null : delay + Math.floor(Math.random() * 1_000)
+}
+
+/**
+ * Transport diagnostics of an error, plus the text of the SDK's two failure envelopes: a synthetic assistant message
+ * (with `error` set, its content is the diagnostic) and an `is_error` result. Model output is never inspected.
+ */
+function sdkFailureDiagnosticEntries(error: unknown): string[] {
+  const entries = authenticationDiagnosticEntries(error)
+  if (!isRecord(error)) return entries
+  if (error.type === 'assistant' && typeof error.error === 'string' && isRecord(error.message)) {
+    const content = error.message.content
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (isRecord(block) && block.type === 'text' && typeof block.text === 'string' && block.text.trim())
+          entries.push(block.text.trim())
+      }
+    }
+  }
+  if (error.type === 'result' && error.is_error === true && typeof error.result === 'string' && error.result.trim())
+    entries.push(error.result.trim())
+  return entries
+}
+
+/** Whether a turn or probe failed only because another process of the same account was refreshing its OAuth token. */
+export function isClaudeOAuthRefreshContention(error: unknown): boolean {
+  return sdkFailureDiagnosticEntries(error).some((entry) => entry.split('\n').some(isOAuthRefreshContentionLine))
+}
+
+/** The refresh contention diagnostic of `error`, redacted; null when it is another failure. */
+export function claudeOAuthRefreshContentionMessage(error: unknown): string | null {
+  for (const entry of sdkFailureDiagnosticEntries(error)) {
+    const line = entry.split('\n').find(isOAuthRefreshContentionLine)
+    if (line) return redactClaudeCredentials(line.trim())
+  }
+  return null
+}
+
+/**
  * Terminal subscription authentication failures require an explicit login. Keep
  * this classification shared by probes and chat turns so stale CLI auth status
  * cannot make an expired credential admissible again.
@@ -54,8 +112,13 @@ export function isClaudeAuthenticationRequired(error: unknown): boolean {
     const status = error.status ?? error.statusCode ?? error.code
     if (status === 401 || status === '401') return true
   }
-  const diagnostic = authenticationDiagnosticEntries(error).join('\n')
-  if (!diagnostic) return false
+  // The contention diagnostic ends with "…or sign in again", yet the credential is still valid: it is transient.
+  const diagnostic = authenticationDiagnosticEntries(error)
+    .join('\n')
+    .split('\n')
+    .filter((line) => !isOAuthRefreshContentionLine(line))
+    .join('\n')
+  if (!diagnostic.trim()) return false
   return [
     /\bauthentication[_\s-]*error\b/i,
     /\boauth\b[^\n]{0,80}\b(?:expired|invalid|revoked)\b/i,
