@@ -138,9 +138,10 @@ function fakeDisplays() {
       env: {
         DISPLAY: `:${slot}`,
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
-        BROWSER: '/usr/local/bin/maestrly-bot-browser',
+        BROWSER: '/usr/local/bin/maestrly-open-url',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
         GTK_THEME: 'Adwaita:dark',
+        MAESTRLY_DESKTOP_SOCKET: `${home}/.cache/maestrly-bots/${botId}/desktop.sock`,
       },
       browserArea: fleetEnvironmentTile(slot),
     })),

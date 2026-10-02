@@ -17,6 +17,7 @@ import {
   type FleetImportResults,
   type FleetInstanceBotInstall,
   type FleetInstanceEnvironmentStatus,
+  type FleetInstanceHold,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
   type FleetLoginAttempt,
@@ -55,6 +56,7 @@ import type { EnvironmentInstanceConfig } from './config'
 import { paintWallpaper } from './desktop/paint-wallpaper'
 import {
   BOT_GTK_THEME,
+  BOT_URL_OPENER,
   type BotDisplay,
   type BotDisplayEnv,
   type DisplayManagerDeps,
@@ -99,6 +101,18 @@ export interface EnvironmentDisplays {
   dispose(): Promise<void>
 }
 
+/** A bot whose desktop services start: its apps display, and its conversation and hold as they are when asked. */
+export interface BotDesktopTarget {
+  botId: string
+  display: BotDisplay
+  conversationId(): string | null
+  hold(): FleetInstanceHold
+}
+/** The desktop services of one bot: its desktop socket, terminal windows and browser window. */
+export interface BotDesktopHandle {
+  dispose(): Promise<void>
+}
+
 export interface EnvironmentRuntimeDeps {
   config: EnvironmentInstanceConfig
   /** Maestrly's data folder. */
@@ -120,14 +134,17 @@ export interface EnvironmentRuntimeDeps {
    * the keyboard, until the returned function is called.
    */
   holdScreenFocus(owner: ScreenFocusOwner | null): () => void
+  /**
+   * Starts the desktop services of a bot whose apps display started: the socket its dock, links and terminal windows
+   * use. A failure is logged and the bot runs without them. Absent outside a container.
+   */
+  desktop?(target: BotDesktopTarget): Promise<BotDesktopHandle>
 }
 
 function log(level: 'info' | 'error', message: string): void {
   console.error(JSON.stringify({ component: 'bot-instance', level, message }))
 }
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-/** The browser wrapper every bot's `BROWSER` names; it opens Chromium with the bot's own profile. */
-const BOT_BROWSER = '/usr/local/bin/maestrly-bot-browser'
 
 function gatewayUrl(value: string | undefined): string | null {
   if (!value) return null
@@ -153,6 +170,8 @@ export function currentEnvironmentRuntime(): EnvironmentRuntime | null {
 export class EnvironmentRuntime {
   readonly events = new InstanceEvents()
   private readonly registry = new Map<string, BotRuntime>()
+  /** The desktop services of the bots whose apps display runs. */
+  private readonly desktops = new Map<string, BotDesktopHandle>()
   private readonly host: BotRuntimeHost
   private readonly displays: EnvironmentDisplays | null
   private options: FleetSelectionOption[] = []
@@ -227,6 +246,7 @@ export class EnvironmentRuntime {
     this.unwireBrokers?.()
     this.unwireBrokers = null
     await this.logins.dispose()
+    for (const botId of [...this.desktops.keys()]) await this.stopDesktop(botId)
     for (const bot of [...this.registry.values()]) await bot.dispose()
     this.registry.clear()
     await this.displays?.dispose().catch((error: unknown) => log('error', errorMessage(error)))
@@ -323,7 +343,7 @@ export class EnvironmentRuntime {
         if (conversationId)
           await this.deps.closeConversation(conversationId).catch((error: unknown) => log('error', errorMessage(error)))
         await bot.dispose({ uninstall: true })
-        await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+        await this.stopScreens(botId)
       }
       clearGatewayToken(botId)
       if (!options.purge) return
@@ -404,9 +424,9 @@ export class EnvironmentRuntime {
     if (existing) {
       if (token !== null) existing.setGatewayToken(token)
       if (existing.slot !== slot) {
-        await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+        await this.stopScreens(botId)
         existing.slot = slot
-        existing.attachScreen(await this.startDisplay(botId, slot))
+        existing.attachScreen(await this.startDisplay(existing))
         writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
       }
       if (hold.paused) await existing.hold('paused')
@@ -424,7 +444,7 @@ export class EnvironmentRuntime {
     if (token !== null) writeGatewayToken(botId, token)
     const bot = new BotRuntime(botId, slot, this.host)
     try {
-      bot.attachScreen(await this.startDisplay(botId, slot))
+      bot.attachScreen(await this.startDisplay(bot))
       await bot.start()
       if (hold.paused) await bot.hold('paused')
       if (hold.takeover) await bot.hold('takeover')
@@ -432,7 +452,7 @@ export class EnvironmentRuntime {
       writeInstalledBots([...members.filter((member) => member.botId !== botId), { botId, slot }])
     } catch (error) {
       await bot.dispose()
-      await this.displays?.stopBot(botId).catch(() => undefined)
+      await this.stopScreens(botId)
       if (!wasMember && token !== null) clearGatewayToken(botId)
       throw error
     }
@@ -449,11 +469,11 @@ export class EnvironmentRuntime {
   private async recreate(member: InstalledBot): Promise<void> {
     const bot = new BotRuntime(member.botId, member.slot, this.host)
     try {
-      bot.attachScreen(await this.startDisplay(member.botId, member.slot))
+      bot.attachScreen(await this.startDisplay(bot))
       await bot.start()
     } catch (error) {
       await bot.dispose()
-      await this.displays?.stopBot(member.botId).catch(() => undefined)
+      await this.stopScreens(member.botId)
       throw error
     }
     this.registry.set(member.botId, bot)
@@ -463,10 +483,12 @@ export class EnvironmentRuntime {
    * and browser profile, so its computer tools and programs never fall back to the environment display, the
    * environment's session bus or its default browser profile, which every bot shares.
    */
-  private async startDisplay(botId: string, slot: number): Promise<BotScreen | null> {
+  private async startDisplay(bot: BotRuntime): Promise<BotScreen | null> {
     if (!this.displays) return null
+    const { botId, slot } = bot
     try {
       const display = await this.displays.startBot(botId, slot)
+      await this.startDesktop(bot, display)
       return {
         display: display.display,
         width: display.width,
@@ -485,15 +507,43 @@ export class EnvironmentRuntime {
       }
     }
   }
+  /** Starts the desktop services of a bot on its display; without them the bot still runs, so a failure is logged. */
+  private async startDesktop(bot: BotRuntime, display: BotDisplay): Promise<void> {
+    if (!this.deps.desktop) return
+    await this.stopDesktop(bot.botId)
+    try {
+      const handle = await this.deps.desktop({
+        botId: bot.botId,
+        display,
+        conversationId: () => bot.primaryConversationId,
+        hold: () => bot.holdManager.state,
+      })
+      this.desktops.set(bot.botId, handle)
+    } catch (error) {
+      log('error', `The desktop services of bot ${bot.botId} did not start: ${errorMessage(error)}`)
+    }
+  }
+  private async stopDesktop(botId: string): Promise<void> {
+    const handle = this.desktops.get(botId)
+    if (!handle) return
+    this.desktops.delete(botId)
+    await handle.dispose().catch((error: unknown) => log('error', errorMessage(error)))
+  }
+  /** Stops a bot's desktop services, then the display they run on. */
+  private async stopScreens(botId: string): Promise<void> {
+    await this.stopDesktop(botId)
+    await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
+  }
   /** The variables the display manager gives a bot's programs: its display, its session bus and its browser. */
   private fallbackEnv(botId: string, slot: number): BotDisplayEnv {
     const paths = botPaths(this.deps.userData, this.deps.home, botId)
     return {
       DISPLAY: `:${slot}`,
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(paths.cache, 'bus')}`,
-      BROWSER: BOT_BROWSER,
+      BROWSER: BOT_URL_OPENER,
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(paths.browserConfig, 'chromium'),
       GTK_THEME: BOT_GTK_THEME,
+      MAESTRLY_DESKTOP_SOCKET: path.join(paths.cache, 'desktop.sock'),
     }
   }
   /** Deletes what belongs to one bot only. Its settings go last, so an interrupted purge can run again. */

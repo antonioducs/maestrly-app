@@ -299,9 +299,10 @@ describe('legacy single-bot adoption', () => {
       env: {
         DISPLAY: `:${slot}`,
         DBUS_SESSION_BUS_ADDRESS: `unix:path=/home/synthetic/.cache/maestrly-bots/${botId}/bus`,
-        BROWSER: '/usr/local/bin/maestrly-bot-browser',
+        BROWSER: '/usr/local/bin/maestrly-open-url',
         MAESTRLY_BOT_BROWSER_PROFILE: `/home/synthetic/.config/maestrly-bots/${botId}/chromium`,
         GTK_THEME: 'Adwaita:dark',
+        MAESTRLY_DESKTOP_SOCKET: `/home/synthetic/.cache/maestrly-bots/${botId}/desktop.sock`,
       },
       browserArea: fleetEnvironmentTile(slot),
     }))

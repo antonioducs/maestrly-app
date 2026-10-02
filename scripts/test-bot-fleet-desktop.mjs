@@ -3,9 +3,13 @@
 // ones named by --only <name>[,<name>]: node scripts/bot-fleet-images.mjs --only bot, then
 // node scripts/test-bot-fleet-desktop.mjs --only look.
 //
-//   look   Each bot's apps display (:1, :2) has its own wallpaper, painted from the bot's tint, with the dock over its
-//          bottom center, a running window manager and taskbar, and dark Maestrly title bars. Updating a bot's tint
-//          paints its wallpaper again.
+//   look      Each bot's apps display (:1, :2) has its own wallpaper, painted from the bot's tint, with the dock over its
+//             bottom center, a running window manager and taskbar, and dark Maestrly title bars. Updating a bot's tint
+//             paints its wallpaper again.
+//   terminal  The dock's Terminal opens a window on the bot's own terminal; closing the window keeps the shell, and the
+//             dock opens the same shell again.
+//   files     The dock's Files shows the bot's home folder, with a file its shell just wrote, which opens in the editor.
+//   url       A link a program on the bot's desktop opens lands in the bot's Maestrly browser, not in Chromium.
 //
 // More scenarios register in `scenarios` below. It runs the bot image as it is, MAESTRLY_GATEWAY_BOT_IMAGE as for the
 // gateway or maestrly/bot-instance:local, and never pulls, builds or tags an image. It installs synthetic bots through the
@@ -15,7 +19,7 @@
 // fails.
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -181,6 +185,66 @@ const firstStop = async (bot) =>
     )?.[1] ?? '#000000'
   )
 
+// ---- The fixture pages and the dock -------------------------------------------------------------------------------
+
+const FIXTURE = 'http://127.0.0.1:8111'
+/** What the fixture pages and programs reported: hits with their user agent, shell pids, typed values, sizes. */
+const fixture = async () =>
+  JSON.parse(
+    await docker([
+      'exec',
+      name,
+      'node',
+      '-e',
+      `fetch('${FIXTURE}/state').then((response) => response.text()).then(console.log)`,
+    ])
+  )
+const xdotool = (bot, ...args) => onDisplay(':' + bot.slot, 'xdotool', ...args)
+const windows = async (bot, ...query) =>
+  (await xdotool(bot, 'search', '--onlyvisible', ...query).catch(() => '')).split('\n').filter(Boolean)
+/** The dock, as tint2 shows it: its window's position and size on the bot's display. */
+async function dock(bot) {
+  const [panel] = await windows(bot, '--class', 'tint2')
+  if (!panel) throw new Error(bot.name + ' has no dock')
+  const shell = await xdotool(bot, 'getwindowgeometry', '--shell', panel)
+  const value = (key) => Number(new RegExp('^' + key + '=(-?\\d+)', 'm').exec(shell)?.[1])
+  return { x: value('X'), y: value('Y'), width: value('WIDTH'), height: value('HEIGHT') }
+}
+/** Clicks a launcher of the dock: 0 Browser, 1 Terminal, 2 Files (tint2rc: 10 px padding, 44 px icons, 8 px apart). */
+async function launch(bot, index) {
+  const panel = await dock(bot)
+  const x = panel.x + 10 + index * (44 + 8) + 22
+  const y = panel.y + Math.floor(panel.height / 2)
+  await xdotool(bot, 'mousemove', String(x), String(y), 'click', '1')
+}
+/** Types a command into the active window of the bot's display, as its owner would, and runs it. */
+async function typeCommand(bot, command) {
+  await xdotool(bot, 'type', '--delay', '15', '--', command)
+  await xdotool(bot, 'key', 'Return')
+}
+/** Opens the bot's terminal from the dock and waits for its window to take the keyboard. */
+async function openTerminal(bot) {
+  await launch(bot, 1)
+  await poll(
+    bot.name + "'s terminal window",
+    async () => (await windows(bot, '--class', 'Maestrly-Terminal')).length > 0
+  )
+  const [window] = await windows(bot, '--class', 'Maestrly-Terminal')
+  await xdotool(bot, 'windowactivate', '--sync', window)
+  // The window shows the shell's earlier output first; give its prompt a moment.
+  await sleep(800)
+  return window
+}
+async function closeTerminals(bot) {
+  for (const window of await windows(bot, '--class', 'Maestrly-Terminal'))
+    await xdotool(bot, 'windowclose', window).catch(() => undefined)
+  await poll(
+    bot.name + "'s terminal windows to close",
+    async () => (await windows(bot, '--class', 'Maestrly-Terminal')).length === 0
+  )
+}
+const desktopSocket = (bot) => `/home/bot/.cache/maestrly-bots/${bot.botId}/desktop.sock`
+
 // ---- Scenarios ---------------------------------------------------------------------------------------------------
 
 /** A window manager of the display's own, and a taskbar window, found through the display itself. */
@@ -286,7 +350,103 @@ async function look() {
   })
 }
 
-const scenarios = new Map([['look', { title: "The look of each bot's desktop", run: look }]])
+async function terminal() {
+  const [alpha] = BOTS
+  await closeTerminals(alpha)
+  const before = (await fixture()).pids.length
+  await openTerminal(alpha)
+  await typeCommand(alpha, `curl -s ${FIXTURE}/pid/$$`)
+  await poll('the shell to report its pid', async () => (await fixture()).pids.length > before)
+  await capture(alpha, 'terminal')
+  // Closing the window ends only the window: the shell, with its pid, is still there to open again.
+  await closeTerminals(alpha)
+  await openTerminal(alpha)
+  await typeCommand(alpha, `curl -s ${FIXTURE}/pid/$$`)
+  await poll('the shell to report its pid again', async () => (await fixture()).pids.length > before + 1)
+  const pids = (await fixture()).pids.slice(before)
+  step('shell pids', { pids })
+  check(
+    'the dock opens a window on the bot terminal, and again on the same shell after it closed',
+    /^\d+$/.test(pids[0]) && pids[0] === pids[1],
+    { pids }
+  )
+  await closeTerminals(alpha)
+}
+
+async function files() {
+  const [alpha] = BOTS
+  const file = 'desktop-files-probe.txt'
+  await openTerminal(alpha)
+  await typeCommand(alpha, `printf 'Synthetic note\\n' > ~/${file}`)
+  await poll('the file the shell wrote', async () => (await inContainer(`cat /home/bot/${file}`)) === 'Synthetic note')
+  await closeTerminals(alpha)
+  await launch(alpha, 2)
+  await poll("the bot's file window", async () => (await windows(alpha, '--class', 'Pcmanfm')).length > 0)
+  const [folder] = await windows(alpha, '--class', 'Pcmanfm')
+  await xdotool(alpha, 'windowactivate', '--sync', folder)
+  await sleep(1200)
+  await capture(alpha, 'files')
+  const title = await xdotool(alpha, 'getwindowname', folder)
+  check("the dock's Files shows the bot's home folder", /\bbot\b/.test(title), { title })
+  // Typing a name selects that file in the folder; Enter opens it in the text editor.
+  await xdotool(alpha, 'type', '--delay', '40', '--', 'desktop-files-probe')
+  await sleep(400)
+  await xdotool(alpha, 'key', 'Return')
+  let editor = []
+  await poll(
+    'the file in the text editor',
+    async () => {
+      editor = await windows(alpha, '--name', 'desktop-files-probe')
+      return editor.length > 0
+    },
+    30_000
+  ).catch(() => undefined)
+  await capture(alpha, 'files-editor')
+  check('the file the shell wrote is in the folder and opens in the editor', editor.length > 0, {
+    editorTitle: editor.length ? await xdotool(alpha, 'getwindowname', editor[0]) : null,
+  })
+  await inContainer('pkill -x mousepad || true; pkill -x pcmanfm || true')
+}
+
+async function url() {
+  const [alpha] = BOTS
+  const before = (await fixture()).hits.filter((hit) => hit.path === '/forward').length
+  const opened = await docker([
+    'exec',
+    '-e',
+    'DISPLAY=:' + alpha.slot,
+    '-e',
+    'MAESTRLY_DESKTOP_SOCKET=' + desktopSocket(alpha),
+    name,
+    'xdg-open',
+    FIXTURE + '/forward',
+  ]).then(
+    () => 'ok',
+    (error) => error.message
+  )
+  step('xdg-open', { opened })
+  await poll(
+    'the link in the bot browser',
+    async () => (await fixture()).hits.filter((hit) => hit.path === '/forward').length > before
+  )
+  const hit = (await fixture()).hits.filter((entry) => entry.path === '/forward').at(-1)
+  const chromium = await inContainer('pgrep -c -x chromium || true')
+  check(
+    "a link opened on the bot's desktop lands in its Maestrly browser",
+    /Electron\//.test(hit.ua) && chromium === '0',
+    {
+      userAgent: hit.ua,
+      chromiumProcesses: chromium,
+    }
+  )
+}
+
+const scenarios = new Map([
+  ['look', { title: "The look of each bot's desktop", run: look }],
+  ['terminal', { title: "The dock's Terminal and the bot's shell", run: terminal }],
+  ['files', { title: "The dock's Files and the editor", run: files }],
+  ['url', { title: 'Links from the desktop open in the Maestrly browser', run: url }],
+])
 
 function parseScenarios(argv) {
   const names = [...scenarios.keys()]
@@ -348,7 +508,22 @@ async function main(chosen) {
   await docker(['start', name])
   port = Number((await docker(['port', name, '7680/tcp'])).split('\n')[0].split(':').at(-1))
   await poll('instance health', async () => (await request('/v1/health')).ready, 120_000)
+  await docker([
+    'exec',
+    '-d',
+    name,
+    'node',
+    '-e',
+    readFileSync(path.join(root, 'deploy/bot-fleet/test/desktop-pages.cjs'), 'utf8'),
+  ])
+  await poll('fixture pages', () => fixture())
   for (const bot of BOTS) await install(bot)
+  // Every scenario starts from a desktop that is up: its wallpaper painted and its dock shown.
+  for (const bot of BOTS)
+    await poll(bot.name + "'s desktop", async () => {
+      const root = await onDisplay(':' + bot.slot, 'xprop', '-root', '_XROOTPMAP_ID')
+      return /pixmap id/.test(root) && (await desktopPrograms(bot)).taskbar !== null
+    })
   for (const scenario of chosen) {
     const entry = { name: scenario, title: scenarios.get(scenario).title, checks: result.checks.length }
     result.scenarios.push(entry)

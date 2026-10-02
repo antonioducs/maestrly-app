@@ -83,6 +83,18 @@ test('the Dockerfile installs the desktop programs and copies the desktop, its t
   assert.match(dockerfile, /^COPY deploy\/bot-fleet\/desktop\/applications\/ \/usr\/share\/applications\/$/m)
   // xterm, which has no bitmap fonts in the image, gets its dark look and an Xft font from its app defaults.
   assert.match(dockerfile, /cat \/opt\/maestrly\/desktop\/xterm\/XTerm >> \/etc\/X11\/app-defaults\/XTerm/)
+  // The dock launchers, the link opener and the terminal windows run these programs from PATH.
+  for (const program of ['maestrly-desktop', 'maestrly-pty-attach', 'maestrly-open-url']) {
+    assert.match(
+      dockerfile,
+      new RegExp(`^COPY [^\\n]*deploy/bot-fleet/desktop/bin/${program}[^\\n]* /usr/local/bin/$`, 'm'),
+      program
+    )
+    assert.match(dockerfile, new RegExp(`chmod 0755 [^\\n]*/usr/local/bin/${program}\\b`), program)
+    const source = read('desktop/bin', program)
+    assert.ok(source.startsWith(program === 'maestrly-open-url' ? '#!/bin/sh\n' : '#!/usr/local/bin/node\n'), program)
+    assert.ok(!source.includes('\r'), `${program} has LF line endings`)
+  }
   const xterm = read('desktop/xterm/XTerm')
   assert.match(xterm, /^\*faceName: DejaVu Sans Mono$/m)
   assert.match(xterm, /^\*background: #0b0b0d$/m)
@@ -191,14 +203,14 @@ test('the launchers name their app in English and Portuguese, run the Maestrly d
   }
 })
 
-test('plain text opens in the text editor while web links keep their browser', () => {
+test("plain text opens in the text editor and web links in the bot's Maestrly browser", () => {
   const entrypoint = read('bot-entrypoint.sh')
   const mime = /<<'MIME'\n([\s\S]*?)\nMIME\n/.exec(entrypoint)?.[1].split('\n')
   assert.deepEqual(mime, [
     '[Default Applications]',
-    'x-scheme-handler/http=chromium.desktop',
-    'x-scheme-handler/https=chromium.desktop',
-    'text/html=chromium.desktop',
+    'x-scheme-handler/http=maestrly-url.desktop',
+    'x-scheme-handler/https=maestrly-url.desktop',
+    'text/html=maestrly-url.desktop',
     'text/plain=org.xfce.mousepad.desktop',
   ])
   // The GTK 2 file manager reads its dark theme from this file; the GTK 3 programs get GTK_THEME from the display manager.

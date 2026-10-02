@@ -5,7 +5,13 @@ import { holdScreenFocus, setScreenFocusOwner, showWindow } from '../../screen-f
 import { createInstanceControlServer } from './server'
 import { parseBotInstanceConfig } from './config'
 import { DisplayManager } from './displays'
-import { EnvironmentRuntime, currentEnvironmentRuntime, productionDisplayDeps } from './environment'
+import { startBotDesktop } from './desktop/bot-desktop'
+import {
+  EnvironmentRuntime,
+  currentEnvironmentRuntime,
+  productionDisplayDeps,
+  type BotDesktopTarget,
+} from './environment'
 import type { BotRuntime } from './runtime'
 
 /** The environment runtime of this process, or null outside bot mode and before it starts. */
@@ -73,6 +79,8 @@ export async function startBotInstanceMode(
     home,
     displays,
     floatBrowser: hooks.floatBrowser,
+    // A bot's desktop needs its apps display: outside a container there is none.
+    ...(displays ? { desktop: (target: BotDesktopTarget) => startBotDesktop(target) } : {}),
     closeConversation: hooks.closeConversation,
     purgeConversation: hooks.purgeConversation,
     openSettings: (target) => {

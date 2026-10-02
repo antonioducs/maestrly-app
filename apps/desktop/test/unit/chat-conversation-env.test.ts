@@ -98,6 +98,7 @@ describe('conversation shell environment', () => {
       'BROWSER',
       'MAESTRLY_BOT_BROWSER_PROFILE',
       'GTK_THEME',
+      'MAESTRLY_DESKTOP_SOCKET',
     ])
     expect(conversationShellEnv('conv-a')).toEqual(botA)
     expect(conversationShellEnv('conv-b')).toEqual({})

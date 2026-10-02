@@ -30,9 +30,10 @@ function botEnv(botId: string, slot: number): Record<string, string> {
   return {
     DISPLAY: ':' + slot,
     DBUS_SESSION_BUS_ADDRESS: `unix:path=${HOME}/.cache/maestrly-bots/${botId}/bus`,
-    BROWSER: '/usr/local/bin/maestrly-bot-browser',
+    BROWSER: '/usr/local/bin/maestrly-open-url',
     MAESTRLY_BOT_BROWSER_PROFILE: `${HOME}/.config/maestrly-bots/${botId}/chromium`,
     GTK_THEME: 'Adwaita:dark',
+    MAESTRLY_DESKTOP_SOCKET: `${HOME}/.cache/maestrly-bots/${botId}/desktop.sock`,
   }
 }
 
@@ -344,6 +345,9 @@ describe('DisplayManager apps displays', () => {
     expect(() => new DisplayManager({ ...deps, home: '/home/with space' })).toThrow(/home/)
     const deepHome = new DisplayManager({ ...deps, home: '/' + 'h'.repeat(80) })
     await expect(deepHome.startBot('x'.repeat(32), 1)).rejects.toThrow(/too long/)
+    // The desktop socket sits beside the bus socket, with a longer name: it is the one that must fit.
+    const almost = new DisplayManager({ ...deps, home: '/' + 'h'.repeat(49) })
+    await expect(almost.startBot('x'.repeat(28), 1)).rejects.toThrow(/desktop socket path .* too long/)
     expect(spawner.named('Xvfb')).toHaveLength(1)
   })
 

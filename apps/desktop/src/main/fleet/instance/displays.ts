@@ -23,6 +23,8 @@ export type BotDisplayEnv = {
   MAESTRLY_BOT_BROWSER_PROFILE: string
   /** Only the bot's own programs are dark: the environment's Electron must keep reporting a light color scheme. */
   GTK_THEME: string
+  /** The bot's desktop socket, where its dock, links and terminal windows reach the environment's Maestrly. */
+  MAESTRLY_DESKTOP_SOCKET: string
 }
 
 /** The GTK theme of the programs on a bot's apps display, so they match the dark title bars and dock. */
@@ -88,7 +90,8 @@ type SurfaceKind = DisplaySurface['kind']
 const PROGRAMS: readonly Program[] = ['dbus-daemon', 'Xvfb', 'openbox', 'tint2']
 const DESKTOP: readonly Program[] = ['openbox', 'tint2']
 const ENVIRONMENT_DISPLAY = ':0'
-const BROWSER_WRAPPER = '/usr/local/bin/maestrly-bot-browser'
+/** Opens links in the bot's Maestrly browser, which shares the environment's site logins, through its desktop socket. */
+export const BOT_URL_OPENER = '/usr/local/bin/maestrly-open-url'
 const OPENBOX_CONFIG = '/opt/maestrly/openbox-rc.xml'
 const BROWSER_VNC_BASE = 5900
 const APPS_VNC_BASE = 5950
@@ -362,12 +365,16 @@ export class DisplayManager {
     assertSlot(slot)
     const bus = `${this.home}/.cache/maestrly-bots/${botId}/bus`
     if (bus.length > SOCKET_PATH_MAX) throw new RangeError(`The bus socket path of bot ${botId} is too long: ${bus}`)
+    const desktop = `${this.home}/.cache/maestrly-bots/${botId}/desktop.sock`
+    if (desktop.length > SOCKET_PATH_MAX)
+      throw new RangeError(`The desktop socket path of bot ${botId} is too long: ${desktop}`)
     const env: BotDisplayEnv = Object.freeze({
       DISPLAY: `:${slot}`,
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${bus}`,
-      BROWSER: BROWSER_WRAPPER,
+      BROWSER: BOT_URL_OPENER,
       MAESTRLY_BOT_BROWSER_PROFILE: `${this.home}/.config/maestrly-bots/${botId}/chromium`,
       GTK_THEME: BOT_GTK_THEME,
+      MAESTRLY_DESKTOP_SOCKET: desktop,
     })
     return Object.freeze({
       botId,

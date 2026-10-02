@@ -10,6 +10,7 @@ export const CONVERSATION_SHELL_ENV_KEYS = [
   'BROWSER',
   'MAESTRLY_BOT_BROWSER_PROFILE',
   'GTK_THEME',
+  'MAESTRLY_DESKTOP_SOCKET',
 ] as const
 
 export type ConversationShellEnv = Partial<Record<(typeof CONVERSATION_SHELL_ENV_KEYS)[number], string>>

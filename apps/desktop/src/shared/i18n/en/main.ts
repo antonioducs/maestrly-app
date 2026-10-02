@@ -18,6 +18,15 @@ export default {
     extTimeout:
       'timeout: the extension did not respond. Open the “Code” tab of this conversation (VS Code must be loaded to control debugging).',
   },
+  botDesktop: {
+    presenterUnavailable: 'The browser window is not available on this desktop.',
+    noConversation: 'This bot has no conversation yet.',
+    invalidUrl: 'Only http and https links open in the browser.',
+    terminalFailed: 'The terminal window could not open.',
+    terminalTitle: 'Terminal {{number}}',
+    exitOk: 'The shell ended.',
+    exitFailed: 'The shell ended with code {{code}}. Press any key to close this window.',
+  },
   floating: {
     browser: 'Browser',
     vscode: 'Code',

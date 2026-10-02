@@ -100,6 +100,8 @@ COPY deploy/bot-fleet/tint2rc /opt/maestrly/tint2rc
 COPY deploy/bot-fleet/desktop /opt/maestrly/desktop
 COPY deploy/bot-fleet/desktop/theme/Maestrly /usr/share/themes/Maestrly
 COPY deploy/bot-fleet/desktop/applications/ /usr/share/applications/
+# The dock launchers, the link opener and the terminal windows reach the environment's Maestrly through these.
+COPY deploy/bot-fleet/desktop/bin/maestrly-desktop deploy/bot-fleet/desktop/bin/maestrly-pty-attach deploy/bot-fleet/desktop/bin/maestrly-open-url /usr/local/bin/
 COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
@@ -108,6 +110,7 @@ RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoi
     chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \
     chmod 0755 /usr/local/bin/maestrly-bot-browser && \
+    chmod 0755 /usr/local/bin/maestrly-desktop /usr/local/bin/maestrly-pty-attach /usr/local/bin/maestrly-open-url && \
     chmod -R a+rX /opt/maestrly/desktop /usr/share/themes/Maestrly && \
     chmod 0644 /usr/share/applications/maestrly-*.desktop && \
     cat /opt/maestrly/desktop/xterm/XTerm >> /etc/X11/app-defaults/XTerm && \

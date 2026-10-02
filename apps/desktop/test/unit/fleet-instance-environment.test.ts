@@ -28,6 +28,7 @@ import * as chatService from '../../src/main/chat/service'
 import {
   EnvironmentRuntime,
   productionDisplayDeps,
+  type BotDesktopTarget,
   type EnvironmentRuntimeDeps,
 } from '../../src/main/fleet/instance/environment'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
@@ -84,9 +85,10 @@ function fakeDisplays(home: string) {
       env: {
         DISPLAY: `:${slot}`,
         DBUS_SESSION_BUS_ADDRESS: `unix:path=${home}/.cache/maestrly-bots/${botId}/bus`,
-        BROWSER: '/usr/local/bin/maestrly-bot-browser',
+        BROWSER: '/usr/local/bin/maestrly-open-url',
         MAESTRLY_BOT_BROWSER_PROFILE: `${home}/.config/maestrly-bots/${botId}/chromium`,
         GTK_THEME: 'Adwaita:dark',
+        MAESTRLY_DESKTOP_SOCKET: `${home}/.cache/maestrly-bots/${botId}/desktop.sock`,
       },
       browserArea: fleetEnvironmentTile(slot),
     })),
@@ -740,6 +742,72 @@ describe('bot environment registry', () => {
     }
   )
 
+  it("starts each bot's desktop services with its display and stops them with its screens", async () => {
+    const handles: Array<{ botId: string; display: string; dispose: ReturnType<typeof vi.fn> }> = []
+    const order: string[] = []
+    const displays = fakeDisplays(home)
+    displays.dispose.mockImplementation(async () => {
+      order.push('displays')
+    })
+    const desktop = vi.fn(async (target: BotDesktopTarget) => {
+      const dispose = vi.fn(async () => {
+        order.push('desktop ' + target.botId)
+      })
+      handles.push({ botId: target.botId, display: target.display.display, dispose })
+      return { present: vi.fn(), dispose }
+    })
+    const setup = environment(displays)
+    const runtime = new EnvironmentRuntime({ ...setup.deps, desktop })
+    environments.push(runtime)
+    await runtime.start()
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    expect(handles.map(({ botId, display }) => [botId, display])).toEqual([
+      ['alpha', ':1'],
+      ['beta', ':2'],
+    ])
+    const target = desktop.mock.calls[0][0]
+    expect(target.conversationId()).toBe(runtime.bot('alpha').primaryConversationId)
+    expect(target.hold()).toMatchObject({ state: 'none' })
+
+    // A new slot is a new display: the old services stop first.
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 3, gatewayToken: tokenA })
+    expect(handles[0].dispose).toHaveBeenCalledTimes(1)
+    expect(handles.at(-1)).toMatchObject({ botId: 'alpha', display: ':3' })
+
+    await runtime.uninstallBot('beta', { purge: false })
+    expect(handles[1].dispose).toHaveBeenCalledTimes(1)
+
+    await runtime.dispose()
+    expect(handles.at(-1)!.dispose).toHaveBeenCalledTimes(1)
+    // The services stop before the displays they run on.
+    expect(order.at(-1)).toBe('displays')
+    expect(order.indexOf('desktop alpha')).toBeLessThan(order.indexOf('displays'))
+  })
+
+  it('installs a bot whose desktop services fail to start, and starts none without a display', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const displays = fakeDisplays(home)
+    const start = displays.startBot.getMockImplementation()!
+    displays.startBot.mockImplementation(async (botId: string, slot: number) => {
+      if (slot === 2) throw new Error('Display :2 is already in use.')
+      return start(botId, slot)
+    })
+    const desktop = vi.fn(async (target: BotDesktopTarget) => {
+      if (target.botId === 'alpha') throw new Error('socket busy')
+      return { present: vi.fn(), dispose: vi.fn(async () => {}) }
+    })
+    const runtime = new EnvironmentRuntime({ ...environment(displays).deps, desktop })
+    environments.push(runtime)
+    await runtime.start()
+    await expect(
+      runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    ).resolves.toBeDefined()
+    expect(errors.mock.calls.some(([line]) => String(line).includes('socket busy'))).toBe(true)
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    expect(desktop.mock.calls.map(([target]) => target.botId)).toEqual(['alpha'])
+  })
+
   it('gives a bot whose apps display cannot start its own display variables, never the environment ones', async () => {
     const displays = fakeDisplays(home)
     displays.startBot.mockRejectedValueOnce(new Error('Display :1 is already in use.'))
@@ -758,9 +826,10 @@ describe('bot environment registry', () => {
       DISPLAY: ':1',
       // Built by the bot's own Maestrly, which joins paths as the platform does.
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${path.join(home, '.cache', 'maestrly-bots', 'alpha', 'bus')}`,
-      BROWSER: '/usr/local/bin/maestrly-bot-browser',
+      BROWSER: '/usr/local/bin/maestrly-open-url',
       MAESTRLY_BOT_BROWSER_PROFILE: path.join(home, '.config', 'maestrly-bots', 'alpha', 'chromium'),
       GTK_THEME: 'Adwaita:dark',
+      MAESTRLY_DESKTOP_SOCKET: path.join(home, '.cache', 'maestrly-bots', 'alpha', 'desktop.sock'),
     })
     expect(conversationShellEnv(runtime.bot('beta').primaryConversationId!)).toMatchObject({ DISPLAY: ':2' })
   })
