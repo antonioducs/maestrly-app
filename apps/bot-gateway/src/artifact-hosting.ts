@@ -1,3 +1,4 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { openArtifactHost, type ArtifactAdmin, type ArtifactHost } from '@maestrly/artifact-host'
 import {
@@ -11,9 +12,12 @@ import {
 import type { Store } from './store.js'
 import type { GatewayConfig } from './config.js'
 import type { FleetNetwork } from './network.js'
+import { ArtifactViewerProxy, viewerUnavailable } from './artifact-viewer-proxy.js'
 
 export class ArtifactHosting {
   private host: ArtifactHost | null = null
+  /** Forwards viewer requests to `host`; replaced with it, so a restart cuts the old host's requests. */
+  private viewer: ArtifactViewerProxy | null = null
   private problem: FleetArtifactHost['status']['problem'] = null
   private queue: Promise<unknown> = Promise.resolve()
   private value: FleetArtifactSettings
@@ -46,6 +50,26 @@ export class ArtifactHosting {
   /** Admit a complete RPC, including its guard, before a lifecycle change can close the host. */
   withAdmin<T>(action: (admin: ArtifactAdmin | null) => Promise<T>): Promise<T> {
     return this.serial(() => action(this.admin()))
+  }
+  /**
+   * Serves a request for the viewer from the gateway's public port. Browser requests never wait in the admin queue;
+   * while hosting is off, failed or restarting, they are answered as unavailable.
+   */
+  serveViewer(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const host = this.host
+    const viewer = this.viewer
+    if (!host || !viewer) {
+      viewerUnavailable(res)
+      return Promise.resolve()
+    }
+    return viewer.forward(req, res, host.port)
+  }
+  private detach(): ArtifactHost | null {
+    const old = this.host
+    this.host = null
+    this.viewer?.close()
+    this.viewer = null
+    return old
   }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const run = this.queue.then(action)
@@ -95,12 +119,10 @@ export class ArtifactHosting {
   }
   private async reopen() {
     try {
-      const old = this.host
-      this.host = null
-      await old?.close()
+      await this.detach()?.close()
       this.problem = null
       if (!this.value.enabled) return
-      this.host = await openArtifactHost(
+      const host = await openArtifactHost(
         {
           dataDir: path.join(this.deps.config.dataDir, 'artifacts'),
           host: this.deps.config.artifactsHost,
@@ -121,6 +143,8 @@ export class ArtifactHosting {
             } as FleetGatewayEvent),
         }
       )
+      this.host = host
+      this.viewer = new ArtifactViewerProxy()
     } catch (error) {
       const code = (error as { code?: string })?.code
       this.problem =
@@ -133,9 +157,7 @@ export class ArtifactHosting {
   }
   close(): Promise<void> {
     return this.serial(async () => {
-      const old = this.host
-      this.host = null
-      await old?.close()
+      await this.detach()?.close()
     })
   }
 }

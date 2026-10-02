@@ -34,6 +34,9 @@ export const ADMIN_METHODS = [
   'addComment',
   'setCommentResolved',
   'deleteComment',
+  'exportArtifact',
+  'putBlobs',
+  'importArtifact',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]
 
 export type AdminMethod = (typeof ADMIN_METHODS)[number]

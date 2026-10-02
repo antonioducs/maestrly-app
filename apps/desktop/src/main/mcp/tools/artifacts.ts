@@ -6,7 +6,7 @@ import { RepositoryScopeError } from '../../repository-scope'
 import { err, type McpToolContext, ok } from './context'
 
 /** Turns a failed artifact operation into what the agent is told, never leaking more than the error's own message. */
-export function artifactToolFailure(t: McpToolContext['t'], resolveService: () => ArtifactsService) {
+export function artifactToolFailure(t: McpToolContext['t']) {
   return (error: unknown) => {
     if (error instanceof RepositoryScopeError)
       return err(t('errors.artifacts.directoryRefused', { message: error.message }))
@@ -16,13 +16,13 @@ export function artifactToolFailure(t: McpToolContext['t'], resolveService: () =
     }
     if (error.code === 'host_unavailable') {
       const reason = error.details?.reason
+      if (reason === 'server_absent') return err(t('errors.artifacts.serverAbsent'))
+      if (reason === 'server_unsupported') return err(t('errors.artifacts.serverUnsupported'))
       if (reason === 'server_unreachable') return err(t('errors.artifacts.serverUnavailable'))
       if (reason === 'server_off') return err(t('errors.artifacts.serverOff'))
       if (reason === 'bot_off') return err(t('errors.artifacts.botOff'))
       if (reason === 'no_viewer') return err(t('errors.artifacts.noViewer'))
-      if (reason === 'disabled') return err(t('errors.artifacts.hostDisabled'))
-      if (reason === 'port_in_use')
-        return err(t('errors.artifacts.portInUse', { port: resolveService().getSettings().port }))
+      if (reason === 'on_this_computer') return err(t('errors.artifacts.onThisComputer'))
       return err(t('errors.artifacts.hostUnavailable'))
     }
     return err(t(`errors.artifacts.${error.code}`, { ...error.details, message: error.message }))
@@ -70,7 +70,7 @@ export function registerArtifactTools(
     return { files: decoded }
   }
 
-  const failure = artifactToolFailure(t, resolveService)
+  const failure = artifactToolFailure(t)
 
   const published = (result: { detail: { id: string; title: string; currentVersion: number }; skipped: string[] }) =>
     ok(

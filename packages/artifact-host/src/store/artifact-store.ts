@@ -78,6 +78,14 @@ export interface NewVersion {
   files: FileRecord[]
 }
 
+/** An artifact arriving from another host, as a whole: every version, its previews, and its sharing defaults. */
+export interface ImportedArtifact {
+  artifact: NewArtifact & { updatedAt: number; commentsEnabled: boolean }
+  /** Numbered from 1 without gaps. */
+  versions: (NewVersion & { number: number })[]
+  thumbnails: ThumbnailRecord[]
+}
+
 export interface SessionRecord {
   id: string
   artifactId: string
@@ -201,6 +209,50 @@ export class ArtifactStore {
     })
   }
 
+  /**
+   * Writes an imported artifact, private, in one transaction; `also` adds the rows that belong to it in other
+   * stores (its comments) within that transaction.
+   */
+  importArtifact(record: ImportedArtifact, also: () => void = () => {}): void {
+    const { artifact, versions, thumbnails } = record
+    transaction(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT INTO artifacts (id, title, description, owner_kind, owner_id, workspace_id, conversation_id,
+             conversation_title, current_version, visibility, comments_enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, ?)`
+        )
+        .run(
+          artifact.id,
+          artifact.title,
+          artifact.description,
+          artifact.ownerKind,
+          artifact.ownerId,
+          artifact.workspaceId,
+          artifact.conversationId,
+          artifact.conversationTitle,
+          versions.length,
+          artifact.commentsEnabled ? 1 : 0,
+          artifact.createdAt,
+          artifact.updatedAt
+        )
+      for (const version of versions) this.insertVersion(artifact.id, version.number, version)
+      const insertThumbnail = this.db.prepare(
+        `INSERT INTO thumbnails (artifact_id, version, sha256, content_type, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      for (const thumbnail of thumbnails)
+        insertThumbnail.run(
+          artifact.id,
+          thumbnail.version,
+          thumbnail.sha256,
+          thumbnail.contentType,
+          thumbnail.bytes,
+          thumbnail.createdAt
+        )
+      also()
+    })
+  }
+
   /** Adds version `expected + 1`, or fails with `version_conflict` when another version was added meanwhile. */
   addVersion(id: string, version: NewVersion, expected: number, conversationTitle?: string | null): number {
     return transaction(this.db, () => {
@@ -318,6 +370,19 @@ export class ArtifactStore {
         .run(id, version, thumbnail.sha256, thumbnail.contentType, thumbnail.bytes, thumbnail.createdAt)
       return previous ? (previous.sha256 as string) : null
     })
+  }
+
+  /** Every version's thumbnail, oldest version first. */
+  listThumbnails(id: string): ThumbnailRecord[] {
+    return (this.db.prepare('SELECT * FROM thumbnails WHERE artifact_id = ? ORDER BY version').all(id) as Row[]).map(
+      (row) => ({
+        version: row.version as number,
+        sha256: row.sha256 as string,
+        contentType: row.content_type as string,
+        bytes: row.bytes as number,
+        createdAt: row.created_at as number,
+      })
+    )
   }
 
   /** The thumbnail of the newest version up to `maxVersion` that has one. */

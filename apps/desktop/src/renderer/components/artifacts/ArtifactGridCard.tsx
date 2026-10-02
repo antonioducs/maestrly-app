@@ -185,9 +185,6 @@ export function ArtifactGridCard({
         </div>
       </div>
       <div className="min-w-0 px-0.5 pt-2.5">
-        <span className="mb-1 inline-block rounded border border-border px-1.5 text-[10px] text-muted-foreground">
-          {t(`artifacts.server.${item.host}`)}
-        </span>
         {projectLabel && (
           <p className="mb-0.5 truncate font-mono text-[11px] leading-4 text-muted-foreground">{projectLabel}</p>
         )}

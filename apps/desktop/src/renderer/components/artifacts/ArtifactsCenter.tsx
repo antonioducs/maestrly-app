@@ -13,8 +13,6 @@ import { ArtifactGridCard } from './ArtifactGridCard'
 import { EmptyState, LoadingGrid, NoMatchState, type SuggestionKey, UnavailableState } from './ArtifactsStates'
 import {
   ALL_PROJECTS,
-  ARTIFACT_HOSTS,
-  type HostFilter,
   ARTIFACT_SORTS,
   type Arrival,
   type ArtifactSort,
@@ -27,10 +25,10 @@ import {
   showToolbar,
   visibleArtifacts,
 } from './artifacts-view'
-import { HostStatusChip } from './HostStatusChip'
-import { PortDialog } from './PortDialog'
+import { LegacyArtifactsBanner } from './LegacyArtifactsNotice'
+import { ServerStatusChip } from './ServerStatusChip'
 import { ShareDialog } from './ShareDialog'
-import { useArtifacts } from './use-artifacts'
+import { useArtifacts, useLegacyArtifacts } from './use-artifacts'
 
 /** How long a new artifact or version stays marked as new. */
 const ARRIVAL_MS = 9_000
@@ -103,7 +101,7 @@ function Notices({ notices, onDismiss }: { notices: Notice[]; onDismiss: (id: nu
   )
 }
 
-/** Every artifact on this computer: where it came from, its versions, and the owner's actions. */
+/** Every artifact on the bot server: where it came from, its versions, and the owner's actions. */
 export function ArtifactsCenter({
   onClose,
   onShowSidebar,
@@ -117,9 +115,9 @@ export function ArtifactsCenter({
 }) {
   const { t } = useTranslation('ui')
   const [locale] = useLocale()
-  const { items, status, serverStatus, loading, listed, error, refresh } = useArtifacts()
+  const { items, serverStatus, loading, listed, error, refresh } = useArtifacts()
+  const legacy = useLegacyArtifacts()
   const { notices, push, dismiss } = useNotices()
-  const [host, setHost] = useState<HostFilter>('all')
   const [query, setQuery] = useState('')
   const [project, setProject] = useState<ProjectFilter>(ALL_PROJECTS)
   const [sort, setSort] = useState<ArtifactSort>('updated')
@@ -129,8 +127,7 @@ export function ArtifactsCenter({
   const [shareId, setShareId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [hostBusy, setHostBusy] = useState(false)
-  const [portDialog, setPortDialog] = useState(false)
+  const [serverBusy, setServerBusy] = useState(false)
   const [pendingSuggestion, setPendingSuggestion] = useState<SuggestionKey | null>(null)
   const [arrived, setArrived] = useState<ReadonlyMap<string, Arrival>>(new Map())
   const searchRef = useRef<HTMLInputElement>(null)
@@ -140,21 +137,11 @@ export function ArtifactsCenter({
 
   const options = useMemo(() => projectOptions(items, locale), [items, locale])
   const visible = useMemo(
-    () => visibleArtifacts(items, { query, project, sort, locale, host }),
-    [items, query, project, sort, locale, host]
+    () => visibleArtifacts(items, { query, project, sort, locale }),
+    [items, query, project, sort, locale]
   )
-  const body = centerBody({
-    loading,
-    status,
-    serverReady: serverStatus?.state === 'ready',
-    listed,
-    total: items.length,
-    visible: visible.length,
-  })
-  const toolbar =
-    body.kind !== 'loading' &&
-    body.kind !== 'unavailable' &&
-    (showToolbar(items.length, query, project) || host !== 'all' || items.some((item) => item.host === 'server'))
+  const body = centerBody({ loading, server: serverStatus, listed, total: items.length, visible: visible.length })
+  const toolbar = body.kind !== 'loading' && body.kind !== 'unavailable' && showToolbar(items.length, query, project)
   const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined
   const sharing = shareId ? items.find((item) => item.id === shareId) : undefined
 
@@ -292,37 +279,19 @@ export function ArtifactsCenter({
     }
   }
 
-  const runHost = async (action: () => Promise<unknown>, done?: () => void) => {
-    setHostBusy(true)
+  const runServer = async (action: () => Promise<unknown>) => {
+    setServerBusy(true)
     try {
       await action()
       await refresh()
-      done?.()
     } catch (reason) {
       push({ tone: 'bad', text: t('artifacts.error', { message: message(reason) }) })
     } finally {
-      setHostBusy(false)
+      setServerBusy(false)
     }
   }
-  const enableHosting = () =>
-    runHost(async () => {
-      const settings = await window.api.artifacts.getSettings()
-      await window.api.artifacts.setSettings({ ...settings, hostEnabled: true })
-    })
-  const retryHost = () =>
-    runHost(async () => {
-      const next = await window.api.artifacts.start()
-      if (next.problem === 'port_in_use')
-        push({ tone: 'info', text: t('artifacts.notice.stillBusy', { port: next.port }) })
-    })
-  const savePort = async (port: number) => {
-    const settings = await window.api.artifacts.getSettings()
-    await window.api.artifacts.setSettings({ ...settings, port })
-    setPortDialog(false)
-    await refresh()
-    const next = await window.api.artifacts.status()
-    if (next.state === 'running') push({ tone: 'ok', text: t('artifacts.notice.hostRunning', { port: next.port }) })
-  }
+  const enableHosting = () => runServer(() => window.api.artifacts.setServerHost({ enabled: true }))
+  const retryServer = () => runServer(async () => {})
 
   const suggest = (key: SuggestionKey) => {
     setPendingSuggestion(key)
@@ -346,7 +315,6 @@ export function ArtifactsCenter({
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="artifact-card-select"]')?.focus())
   }
   const clearFilters = () => {
-    setHost('all')
     setQuery('')
     setProject(ALL_PROJECTS)
     searchRef.current?.focus()
@@ -398,11 +366,14 @@ export function ArtifactsCenter({
               <h1 className="mb-1.5 text-2xl font-semibold tracking-tight text-foreground">{t('artifacts.title')}</h1>
               <p className="max-w-[58ch] text-[13.5px] text-muted-foreground">{t('artifacts.description')}</p>
             </div>
-            {status && <HostStatusChip status={status} onOpenSettings={onOpenSettings} />}
+            {!loading && <ServerStatusChip status={serverStatus} onOpenSettings={onOpenSettings} />}
           </header>
 
+          <LegacyArtifactsBanner count={legacy.items.length} onOpenSettings={onOpenSettings} />
+
           {body.kind === 'grid' || body.kind === 'no-match'
-            ? nearQuota(status) && (
+            ? nearQuota(serverStatus) &&
+              serverStatus?.state === 'ready' && (
                 <div
                   role="status"
                   data-testid="artifacts-quota"
@@ -413,8 +384,8 @@ export function ArtifactsCenter({
                     <b className="block font-semibold text-foreground">{t('artifacts.quota.title')}</b>
                     <span className="text-[12.5px] text-foreground/75">
                       {t('artifacts.quota.text', {
-                        used: formatBytes(status?.storageBytes ?? 0),
-                        total: formatBytes(status?.quotaBytes ?? 0),
+                        used: formatBytes(serverStatus.storageBytes),
+                        total: formatBytes(serverStatus.quotaBytes),
                       })}
                     </span>
                   </div>
@@ -430,14 +401,6 @@ export function ArtifactsCenter({
               )
             : null}
 
-          {serverStatus && (serverStatus.state === 'off' || serverStatus.state === 'unreachable') && (
-            <div role="status" className="mb-4 rounded-lg border border-artifact-warn/30 p-3 text-sm">
-              <p>{t(`artifacts.server.${serverStatus.state}`)}</p>
-              <Button variant="ghost" size="sm" onClick={onOpenSettings}>
-                {t('artifacts.server.settings')}
-              </Button>
-            </div>
-          )}
           {toolbar && (
             <div className="mb-5 flex flex-wrap items-center gap-2" data-testid="artifacts-toolbar">
               <label className="flex h-8 min-w-[220px] flex-[1_1_260px] items-center gap-2 rounded-md border border-border-strong bg-black/[0.18] pl-2.5 pr-2 text-muted-foreground focus-within:border-ring">
@@ -464,18 +427,6 @@ export function ArtifactsCenter({
                   /
                 </kbd>
               </label>
-              <Select value={host} onValueChange={(value) => setHost(value as HostFilter)}>
-                <SelectTrigger className="h-8 w-auto" aria-label={t('artifacts.server.filter')}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ARTIFACT_HOSTS.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {t(`artifacts.server.${value}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Select value={project} onValueChange={setProject}>
                 <SelectTrigger
                   className="h-8 w-auto max-w-[240px] border-border-strong bg-black/[0.18] text-[12.5px]"
@@ -518,7 +469,7 @@ export function ArtifactsCenter({
             </div>
           )}
 
-          {error && status?.state === 'running' && (
+          {error && serverStatus?.state === 'ready' && (
             <p role="alert" className="mb-4 text-xs text-destructive">
               {t('artifacts.error', { message: error })}
             </p>
@@ -528,11 +479,9 @@ export function ArtifactsCenter({
           {body.kind === 'unavailable' && (
             <UnavailableState
               reason={body.reason}
-              port={status?.port ?? 0}
-              busy={hostBusy}
+              busy={serverBusy}
               onEnable={() => void enableHosting()}
-              onRetry={() => void retryHost()}
-              onChangePort={() => setPortDialog(true)}
+              onRetry={() => void retryServer()}
               onOpenSettings={onOpenSettings}
             />
           )}
@@ -595,9 +544,6 @@ export function ArtifactsCenter({
           }}
           onConfirm={() => void remove(confirm)}
         />
-      )}
-      {portDialog && status && (
-        <PortDialog busyPort={status.port} onSave={savePort} onCancel={() => setPortDialog(false)} />
       )}
     </div>
   )

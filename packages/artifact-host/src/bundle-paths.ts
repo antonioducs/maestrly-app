@@ -65,7 +65,8 @@ export function normalizeBundlePath(input: string): string {
   return input
 }
 
-export function validateBundle(files: readonly { path: string; bytes: Uint8Array }[], entry: string): void {
+/** Checks a version's files; only their paths and sizes matter, so stored files can be checked without reading them. */
+export function validateBundle(files: readonly { path: string; bytes: { byteLength: number } }[], entry: string): void {
   if (files.length > MAX_FILES_PER_VERSION)
     throw new ArtifactHostError('too_many_files', `At most ${MAX_FILES_PER_VERSION} files per version`)
   const seen = new Set<string>()

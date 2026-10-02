@@ -74,6 +74,8 @@ describe('environment routes', () => {
       'files',
       'environment-settings-v1',
       'artifacts',
+      'artifacts-gateway-viewer',
+      'artifacts-transfer',
       'provisioning',
       'environments',
       'environment-compaction',

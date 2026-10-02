@@ -442,9 +442,7 @@ export function ShareDialog({
                   >
                     <AlertTriangle className="size-3.5 shrink-0 text-artifact-warn" aria-hidden="true" />
                     <p className="min-w-[200px] flex-1 text-xs text-foreground/85">
-                      {t(
-                        item.host === 'server' ? 'artifacts.server.addressUnavailable' : 'artifacts.share.addressLocal'
-                      )}
+                      {t('artifacts.server.addressUnavailable')}
                     </p>
                     <Button
                       size="sm"
@@ -459,9 +457,7 @@ export function ShareDialog({
                     </Button>
                   </div>
                 )}
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {t(item.host === 'server' ? 'artifacts.server.hosted' : 'artifacts.share.awake')}
-                </p>
+                <p className="mt-2 text-xs text-muted-foreground">{t('artifacts.server.hosted')}</p>
               </Section>
             )}
 

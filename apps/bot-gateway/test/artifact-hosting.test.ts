@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, expect, test } from 'vitest'
@@ -12,6 +13,21 @@ const cleanups: (() => Promise<void>)[] = []
 afterEach(async () => {
   for (const close of cleanups.splice(0)) await close()
 })
+
+/** The gateway's public entry for the viewer, reduced to what hosting decides; returns how to fetch through it. */
+async function viewerEntry(hosting: ArtifactHosting) {
+  const server = createServer((req, res) => void hosting.serveViewer(req, res))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  cleanups.push(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+  const port = (server.address() as { port: number }).port
+  return async (target = '/robots.txt') => {
+    const response = await fetch(`http://127.0.0.1:${port}${target}`)
+    return { status: response.status, body: await response.text() }
+  }
+}
 
 test('network shares the bridge gateway exemption and normalizes mapped IPv4', async () => {
   const network = new FleetNetwork(new FakeDockerDriver(), 'maestrly-bots')
@@ -102,9 +118,50 @@ test('occupied ports become host errors and a subsequent start recovers', async 
     store.close()
     rmSync(dir, { recursive: true, force: true })
   })
+  const viewer = await viewerEntry(hosting)
   expect((await hosting.update({ enabled: true })).status).toMatchObject({ state: 'error', problem: 'port_in_use' })
   expect(hosting.admin()).toBeNull()
+  expect((await viewer()).status).toBe(503)
   await new Promise<void>((resolve) => occupied.close(() => resolve()))
   await hosting.start()
   expect((await hosting.state()).status.state).toBe('running')
+  expect((await viewer()).status).toBe(200)
+})
+
+test('the viewer follows the running host: unavailable while off, then each reopened host', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'gateway-artifacts-'))
+  const config = { ...loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }), artifactsPort: 0 }
+  const store = new Store(dir)
+  const hosting = new ArtifactHosting({
+    store,
+    config,
+    network: new FleetNetwork(new FakeDockerDriver(), config.network),
+    emit: () => {},
+  })
+  cleanups.push(async () => {
+    await hosting.close()
+    store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+  const viewer = await viewerEntry(hosting)
+  expect(await viewer()).toEqual({ status: 503, body: 'Artifact hosting is unavailable' })
+  await hosting.update({ enabled: true })
+  expect(await viewer()).toEqual({ status: 200, body: 'User-agent: *\nDisallow: /\n' })
+  const id = (
+    await hosting.admin()!.create({
+      title: 'Synthetic page',
+      owner: { kind: 'device', id: 'device-1' },
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+      files: [{ path: 'index.html', bytes: new TextEncoder().encode('<p>Test</p>') }],
+    })
+  ).id
+  // Port 0 binds a new port on every reopen: the viewer must reach the host that runs now.
+  await hosting.update({ quotaGb: 3 })
+  expect((await viewer(`/a/${id}`)).status).toBe(200)
+  await hosting.update({ enabled: false })
+  expect((await viewer(`/a/${id}`)).status).toBe(503)
+  await hosting.update({ enabled: true })
+  expect((await viewer(`/a/${id}`)).status).toBe(200)
+  await hosting.close()
+  expect((await viewer(`/a/${id}`)).status).toBe(503)
 })

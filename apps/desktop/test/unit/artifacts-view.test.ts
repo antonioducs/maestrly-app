@@ -14,7 +14,7 @@ import {
   showToolbar,
   visibleArtifacts,
 } from '../../src/renderer/components/artifacts/artifacts-view'
-import type { ArtifactHostStatus, ArtifactListItem } from '../../src/shared/artifacts'
+import type { ArtifactListItem, ArtifactServerStatus } from '../../src/shared/artifacts'
 
 function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactListItem {
   return {
@@ -26,7 +26,6 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
     visibility: 'private',
     createdAt: 1,
     updatedAt: 1,
-    host: 'local',
     bot: null,
     elsewhere: false,
     conversation: null,
@@ -40,7 +39,15 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
   }
 }
 
-const running: ArtifactHostStatus = { state: 'running', port: 4010, storageBytes: 10, quotaBytes: 100 }
+const ready: ArtifactServerStatus = {
+  state: 'ready',
+  canOpen: true,
+  canMove: true,
+  artifactCount: 1,
+  storageBytes: 10,
+  quotaBytes: 100,
+  problem: null,
+}
 
 describe('artifacts center view', () => {
   it('filters by project, standalone conversations, and search over title and description', () => {
@@ -102,30 +109,29 @@ describe('artifacts center view', () => {
     expect(showToolbar(1, '', STANDALONE)).toBe(true)
   })
 
-  it('warns near the storage limit only while the host runs', () => {
-    expect(nearQuota({ ...running, storageBytes: 89 })).toBe(false)
-    expect(nearQuota({ ...running, storageBytes: 90 })).toBe(true)
-    expect(nearQuota({ state: 'error', problem: 'crashed', port: 4010, storageBytes: 99, quotaBytes: 100 })).toBe(false)
+  it('warns near the storage limit of the bot server', () => {
+    expect(nearQuota({ ...ready, storageBytes: 89 })).toBe(false)
+    expect(nearQuota({ ...ready, storageBytes: 90 })).toBe(true)
+    expect(nearQuota({ state: 'off', canMove: true })).toBe(false)
     expect(nearQuota(null)).toBe(false)
   })
 
-  it('never claims there are no artifacts when the host could not list them', () => {
+  it('explains every state of the bot server instead of claiming there are no artifacts', () => {
     const body = (input: Partial<Parameters<typeof centerBody>[0]>) =>
-      centerBody({ loading: false, status: running, listed: true, total: 0, visible: 0, ...input })
+      centerBody({ loading: false, server: ready, listed: true, total: 0, visible: 0, ...input })
     expect(body({ loading: true })).toEqual({ kind: 'loading' })
-    expect(body({ status: { state: 'starting', port: 4010 } })).toEqual({ kind: 'loading' })
-    expect(body({ status: { state: 'error', problem: 'port_in_use', port: 4010 }, listed: false })).toEqual({
-      kind: 'unavailable',
-      reason: 'port_in_use',
-    })
-    expect(body({ status: { state: 'stopped', problem: 'disabled', port: 4010 }, listed: false })).toEqual({
-      kind: 'unavailable',
-      reason: 'disabled',
-    })
-    expect(body({ status: { state: 'stopped', port: 4010 }, listed: false })).toEqual({
-      kind: 'unavailable',
-      reason: 'stopped',
-    })
+    const reasons: [ArtifactServerStatus | null, string][] = [
+      [{ state: 'absent' }, 'absent'],
+      [{ state: 'unsupported' }, 'unsupported'],
+      [{ state: 'unreachable' }, 'unreachable'],
+      [{ state: 'off', canMove: true }, 'off'],
+      [{ ...ready, problem: 'port_in_use' }, 'problem'],
+      [null, 'unreachable'],
+    ]
+    for (const [server, reason] of reasons)
+      expect(body({ server, listed: false }), reason).toEqual({ kind: 'unavailable', reason })
+    // A ready server that could not list says so, rather than "no artifacts".
+    expect(body({ listed: false })).toEqual({ kind: 'unavailable', reason: 'unreachable' })
     expect(body({})).toEqual({ kind: 'empty' })
     expect(body({ total: 2, visible: 0 })).toEqual({ kind: 'no-match' })
     expect(body({ total: 2, visible: 2 })).toEqual({ kind: 'grid' })
@@ -142,32 +148,11 @@ describe('artifacts center view', () => {
   })
 })
 
-describe('artifact hosts and sources', () => {
-  it('filters hosts independently from project and search', () => {
-    const items = [item('local'), item('server', { host: 'server' })]
-    const options = { query: '', project: ALL_PROJECTS, sort: 'updated' as const, locale: 'en' }
-    expect(visibleArtifacts(items, { ...options, host: 'all' })).toHaveLength(2)
-    expect(visibleArtifacts(items, { ...options, host: 'server' }).map((item) => item.id)).toEqual(['server'])
-    expect(visibleArtifacts(items, { ...options, host: 'local' }).map((item) => item.id)).toEqual(['local'])
-    expect(visibleArtifacts(items, { ...options, host: 'server', query: 'local' })).toEqual([])
-  })
-  it('labels bot and other-computer sources before their host', () => {
-    expect(artifactSource(item('a'))).toBe('local')
-    expect(artifactSource(item('a', { host: 'server' }))).toBe('server')
+describe('artifact sources', () => {
+  it('labels bots and other computers, and nothing else', () => {
+    expect(artifactSource(item('a'))).toBe('own')
     expect(artifactSource(item('a', { elsewhere: true }))).toBe('elsewhere')
     expect(artifactSource(item('a', { bot: { id: 'bot', name: null }, elsewhere: true }))).toBe('bot')
-  })
-  it('keeps listed cards visible when the local host is disabled', () => {
-    expect(
-      centerBody({
-        loading: false,
-        status: { state: 'stopped', problem: 'disabled', port: 4010 },
-        serverReady: true,
-        listed: true,
-        total: 2,
-        visible: 2,
-      })
-    ).toEqual({ kind: 'grid' })
   })
 })
 

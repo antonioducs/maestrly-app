@@ -45,6 +45,8 @@ it('discovers provisioning on the gateway and the live bot', async () => {
     'files',
     'environment-settings-v1',
     'artifacts',
+    'artifacts-gateway-viewer',
+    'artifacts-transfer',
     'provisioning',
     'environments',
     'environment-compaction',

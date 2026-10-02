@@ -7,6 +7,9 @@ import type net from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_ARTIFACTS_FEATURE,
+  FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+  FLEET_ARTIFACTS_TRANSFER_FEATURE,
   FLEET_PROTOCOL_HEADER,
   fleetInstanceInputSchema,
   fleetInstanceProfileSchema,
@@ -22,6 +25,7 @@ import { Lifecycle } from '../src/lifecycle.js'
 import { Routines, nextRun, nextWeeklyRun } from '../src/routines.js'
 import { Store } from '../src/store.js'
 import { createSchema5Database } from './store-fixtures.js'
+import { harness } from './harness.js'
 
 const dirs: string[] = []
 const closeFns: (() => Promise<void>)[] = []
@@ -778,5 +782,21 @@ describe('routines', () => {
     expect(f.store.routineById(routine.id)?.lastOutcome).toBe('skipped_missed')
     f.lifecycle.close()
     f.store.close()
+  })
+})
+
+describe('artifact viewer', () => {
+  it('advertises that the public port serves the artifact viewer, whether hosting is on or off', async () => {
+    const h = await harness()
+    const features = async () => (await (await h.request('GET', '/v1/meta')).json()).features as string[]
+    expect(await features()).toEqual(
+      expect.arrayContaining([
+        FLEET_ARTIFACTS_FEATURE,
+        FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+        FLEET_ARTIFACTS_TRANSFER_FEATURE,
+      ])
+    )
+    await h.artifacts.update({ enabled: true })
+    expect(await features()).toContain(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)
   })
 })

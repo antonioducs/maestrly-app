@@ -1,5 +1,7 @@
 import {
   FLEET_ARTIFACTS_FEATURE,
+  FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
+  FLEET_ARTIFACTS_TRANSFER_FEATURE,
   fleetArtifactHostSchema,
   type FleetArtifactHost,
   type FleetArtifactSettingsPatch,
@@ -7,6 +9,16 @@ import {
 import type { ArtifactServerStatus } from '../../shared/artifacts'
 import type { FleetClientService } from '../fleet/client/service'
 import { createFleetAdmin, serverUnavailable, type ArtifactSource } from './sources'
+
+const LOOPBACK_NAMES = new Set(['127.0.0.1', 'localhost', '[::1]'])
+const isLoopbackOrigin = (origin: string): boolean => {
+  try {
+    const url = new URL(origin)
+    return url.protocol === 'http:' && LOOPBACK_NAMES.has(url.hostname)
+  } catch {
+    return false
+  }
+}
 
 /** The paired server's settings and transport; a reconnect never reuses a previous device's authority. */
 export class ServerArtifacts {
@@ -25,9 +37,20 @@ export class ServerArtifacts {
     const c = this.deps.fleet.getConnection()
     return c.url && c.deviceId ? `${c.url}\n${c.deviceId}` : null
   }
+  /**
+   * Where this computer opens the server's viewer. A gateway that serves it answers at the paired address, which
+   * already follows an SSH tunnel. The artifact host accepts only loopback names or its public address as Host, so a
+   * gateway paired at another address is reached through the public address, and an older gateway through its separate
+   * artifact port.
+   */
   private base(): string | null {
+    const publicAddress = this.cached?.settings.publicAddress || null
+    if (this.deps.fleet.hasFeature(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)) {
+      const gateway = this.deps.fleet.getConnection().url
+      if (gateway && (isLoopbackOrigin(gateway) || gateway === publicAddress)) return gateway
+    }
     const port = this.deps.viewerPort()
-    return port ? `http://127.0.0.1:${port}` : this.cached?.settings.publicAddress || null
+    return port ? `http://127.0.0.1:${port}` : publicAddress
   }
   status(): ArtifactServerStatus {
     const c = this.deps.fleet.getConnection()
@@ -35,10 +58,12 @@ export class ServerArtifacts {
     if (c.state !== 'connected') return { state: 'unreachable' }
     if (!this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) return { state: 'unsupported' }
     if (this.failed || !this.cached || this.identity !== this.currentIdentity()) return { state: 'unreachable' }
-    if (!this.cached.settings.enabled) return { state: 'off' }
+    if (!this.cached.settings.enabled)
+      return { state: 'off', canMove: this.deps.fleet.hasFeature(FLEET_ARTIFACTS_TRANSFER_FEATURE) }
     return {
       state: 'ready',
       canOpen: this.cached.status.state === 'running' && !!this.base(),
+      canMove: this.deps.fleet.hasFeature(FLEET_ARTIFACTS_TRANSFER_FEATURE),
       artifactCount: this.cached.status.artifactCount,
       storageBytes: this.cached.status.storageBytes,
       quotaBytes: this.cached.status.quotaBytes,
@@ -94,10 +119,12 @@ export class ServerArtifacts {
       throw serverUnavailable()
     }
   }
+  /** Why the server cannot host artifacts now, or null when it can. */
   unavailable() {
     const status = this.status()
-    if (status.state === 'absent' || status.state === 'unsupported') return null
     if (status.state === 'ready' && !status.problem) return null
+    if (status.state === 'absent') return serverUnavailable('server_absent')
+    if (status.state === 'unsupported') return serverUnavailable('server_unsupported')
     return serverUnavailable(status.state === 'off' ? 'server_off' : 'server_unreachable')
   }
   source(): ArtifactSource | null {

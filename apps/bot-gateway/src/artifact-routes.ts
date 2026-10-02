@@ -103,7 +103,9 @@ export async function artifactRoute(
             : DEVICE_ADMIN_METHODS,
       guard: (method, args) => {
         if ('botId' in caller) return botArgs(admin, caller.botId, method, args)
-        if (method === 'create') return [{ ...object(args[0]), owner: { kind: 'device', id: caller.deviceId } }]
+        // A device creates and moves in artifacts only under its own name.
+        if (method === 'create' || method === 'importArtifact')
+          return [{ ...object(args[0]), owner: { kind: 'device', id: caller.deviceId } }]
         return args
       },
     })

@@ -303,6 +303,7 @@ describe('first bot artifact publishing', () => {
     const ready = {
       state: 'ready' as const,
       canOpen: true,
+      canMove: true,
       artifactCount: 0,
       storageBytes: 0,
       quotaBytes: 100,
@@ -310,8 +311,13 @@ describe('first bot artifact publishing', () => {
     }
     expect(canOfferBotPublishing(['artifacts'], ready)).toBe(true)
     expect(canOfferBotPublishing([], ready)).toBe(false)
-    for (const state of ['absent', 'unsupported', 'unreachable', 'off'] as const) {
-      expect(canOfferBotPublishing(['artifacts'], { state })).toBe(false)
+    for (const status of [
+      { state: 'absent' },
+      { state: 'unsupported' },
+      { state: 'unreachable' },
+      { state: 'off', canMove: true },
+    ] as const) {
+      expect(canOfferBotPublishing(['artifacts'], status)).toBe(false)
     }
     expect(botPublishingRequest(false, true)).toEqual({})
     expect(botPublishingRequest(true, true)).toEqual({ publishArtifacts: true })

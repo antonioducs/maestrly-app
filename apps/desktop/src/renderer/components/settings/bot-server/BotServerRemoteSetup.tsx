@@ -9,10 +9,12 @@ import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
 export function BotServerRemoteSetup({
   record,
+  defaultHosts = 'bots-and-artifacts',
   onBack,
   onInstall,
 }: {
   record?: FleetInstallRecord | null
+  defaultHosts?: FleetInstallHosts
   onBack: () => void
   onInstall: (input: FleetInstallRemoteInput) => void
 }) {
@@ -26,7 +28,7 @@ export function BotServerRemoteSetup({
     privateKey: '',
   })
   const [passphrase, setPassphrase] = useState('')
-  const [hosts, setHosts] = useState<FleetInstallHosts>('bots-and-artifacts')
+  const [hosts, setHosts] = useState<FleetInstallHosts>(defaultHosts)
   const [deviceName, setDeviceName] = useState(t(`settings.deviceNameDefault.${window.api.platformInfo.os}`))
   const [allowPrivateNetwork, setAllowPrivateNetwork] = useState(record?.allowPrivateNetwork ?? false)
   const [advanced, setAdvanced] = useState(false)
