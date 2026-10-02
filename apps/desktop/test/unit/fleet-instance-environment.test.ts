@@ -298,6 +298,7 @@ describe('bot environment registry', () => {
         { botId: 'beta', slot: 2, status: { profile: { botId: 'beta', name: 'Beta' }, conversationId: convB } },
       ],
     })
+    // Without displays, bots have no desktop: clients keep their separate screens.
     expect(aggregate.capabilities).toEqual([
       'provisioning',
       'environments',
@@ -773,6 +774,14 @@ describe('bot environment registry', () => {
       ['alpha', ':1'],
       ['beta', ':2'],
     ])
+    // With a desktop for each bot, the environment tells clients to show one screen per bot.
+    expect(runtime.health().capabilities).toContain('unified-desktop')
+    expect((await runtime.environmentStatus()).capabilities).toContain('unified-desktop')
+    expect((await runtime.bot('alpha').status()).capabilities).toContain('unified-desktop')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(botIdentityPrompt(getConversation(runtime.bot('alpha').primaryConversationId!)!.cwd)).toContain(
+      'one Linux desktop of your own'
+    )
     const target = desktop.mock.calls[0][0]
     expect(target.conversationId()).toBe(runtime.bot('alpha').primaryConversationId)
     expect(target.hold()).toMatchObject({ state: 'none' })

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import {
   FLEET_PROTOCOL_VERSION,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_BOT_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   type FleetBotMemory,
@@ -233,6 +234,8 @@ export interface BotRuntimeHost {
   accountOptions(force: boolean): Promise<FleetSelectionOption[]>
   /** The other bots of the environment. */
   peers(botId: string): BotIdentityPeer[]
+  /** What the environment offers, which each status advertises; the instance's own list without one. */
+  capabilities?(): string[]
   /** Shows the bot's browser in its area of the environment display. */
   floatBrowser(conversationId: string): void
   /** Brings the app a tool of the bot uses forward on its desktop, when the environment gives bots one. */
@@ -580,7 +583,9 @@ export class BotRuntime {
     const conversation = getConversation(id)
     if (conversation) {
       if (this.registeredConversation?.id === id) this.registeredConversation.cwd = conversation.cwd
-      setBotIdentity(conversation.cwd, this.stored.profile, () => this.host.peers(this.botId))
+      setBotIdentity(conversation.cwd, this.stored.profile, () => this.host.peers(this.botId), {
+        unifiedDesktop: () => this.host.capabilities?.().includes(FLEET_UNIFIED_DESKTOP_FEATURE) ?? false,
+      })
     }
     const selection = this.currentSelection()
     if (selection) {
@@ -922,7 +927,7 @@ export class BotRuntime {
                           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
-      capabilities: [...INSTANCE_CAPABILITIES],
+      capabilities: this.host.capabilities?.() ?? [...INSTANCE_CAPABILITIES],
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
       accounts: { connected: providers.length > 0, providers },

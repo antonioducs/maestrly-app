@@ -176,6 +176,7 @@ The fleet protocol stays at version 1; environments add fields and routes with d
 | Current desktop app and gateway, environment on an image from before environments | The environment runs its single bot through its original routes. Adding a bot, the **Apps** screen, and the environment screen ask you to restart the environment first. Archiving that bot stops the environment and keeps its data. A later start on the old image holds the archived bot before reporting the environment as running. Restart onto the current image for the full environment lifecycle. |
 | Desktop app from before environments, current gateway | Bots list, chat, and configure as before; configuring a bot changes its environment, which its other bots share. **Start**, **Stop**, and **Restart** of a bot act on its environment when the bot is alone in it; otherwise the gateway refuses with "This bot shares its environment. Restart the environment instead." **Screen** shows the bot's browser area only. In an environment on the current bot image, **Log in on the bot's screen** opens Maestrly's settings on the environment screen, which that app cannot show; add an API key or bring accounts from your computer instead. Activity history omits environment entries, and memory figures appear only for bots alone in their environment. That app cannot stop or archive environments; on current bot images, an environment whose bots it archived keeps running. |
 | Current desktop app, gateway from before environments | The app keeps the interface from before environments: one container per bot, with accounts, skills, and MCP servers in each bot's **Settings**. |
+| Desktop app from before the unified desktop, environment on the current image | The **Browser** \| **Apps** switch still works. **Apps** shows the whole desktop, browser window included; **Browser** shows the browser at the top left of its area, at the size of its window on the desktop. |
 
 Desktop apps from before environments can list, restore and delete an archived environment containing exactly one bot through their archived-bot controls. This includes bots archived before the gateway upgrade. An archived environment containing several bots requires an environment-aware desktop app, so a bot shortcut cannot restore or delete its neighbours. Current desktop apps request `separateEnvironments=1` on the archived-bot collection and show archived environments separately.
 
@@ -184,6 +185,9 @@ Desktop apps from before environments can list, restore and delete an archived e
 The gateway migrates schemas 5, 6 and 7 to 8 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled. Older gateways cannot open schema 8; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Environment default compaction models need the gateway's `environment-compaction` feature. Desktop apps without it keep choosing a model in each bot's **Settings**; they show a bot that uses its environment's default as that model, and saving it there makes it the bot's own. An environment on an image without the capability keeps working with its default, but choosing the default from the desktop app asks you to restart the environment first. The maximum context window needs the gateway's `context-limit` feature; desktop apps hide the field without it. An environment running an image without the capability keeps its models' windows, and its settings ask you to restart it.
+
+The unified desktop needs the environment's image to advertise the `unified-desktop` capability. An environment on an
+older image keeps its separate **Browser** and **Apps** areas until it restarts onto the current image.
 
 A bot's reasoning appears in its conversation when the gateway has the `transcript-reasoning` feature and the environment's image has the matching capability. Transcripts carry it as `reasoning` items, which the bot and the gateway send only to a reader that asks for them with `reasoning=1` on the transcript and event routes; an older gateway or desktop app never receives them and keeps working as before. Until the gateway and the environment are updated, a conversation shows the bot's tool steps and text without its reasoning.
 
@@ -207,6 +211,7 @@ Compose publishes only the gateway's public listener on the Docker host's loopba
 | Control server, port `7680` | Each environment container | Fleet Docker network. Every request needs that environment's control token, which only the gateway holds. |
 | Environment display `:0`, 3840×2400 | Each environment container | Inside the container. A 3×3 grid of 1280×800 tiles: tile 0 shows the environment screen (Maestrly's settings) and tile *k* the browser of the bot in slot *k*. |
 | Apps displays `:1` to `:8`, 1280×800 | Each environment container, one per bot slot | Inside the container. Each has its own window manager, taskbar, and session bus. |
+| Desktop socket `~/.cache/maestrly-bots/<bot-id>/desktop.sock` | Each environment container, one per bot | Inside the container. A Unix socket readable only by its owner, used by the bot's dock, link opener, terminal windows, and browser window. |
 | VNC servers, ports `5900` to `5917` and `5952` to `5967` | Each environment container | Container loopback only (`127.0.0.1` and `::1`), without a password. |
 
 The environment screen uses VNC ports 5900 (control) and 5901 (view). The browser area of the bot in slot *k* uses 5900 + 2*k* and 5901 + 2*k*; its apps display uses 5950 + 2*k* and 5951 + 2*k*. A VNC server starts when the gateway opens a screen tunnel for its area and mode, is shared by that area's clients, and stops 60 seconds after its last client leaves. Do not publish any of these ports on the host.
@@ -221,7 +226,7 @@ An environment is the unit of sharing, isolation, and resources. When you create
 | The home folder (`/home/bot`), its files, and the tools installed there | Conversation, queue, pause, and screen takeover |
 | Model accounts: API keys and subscription sign-ins | Model selection and compaction model |
 | Skills and MCP servers | Bot memory, routines, and requests in **Awaiting you** |
-| Site logins: the cookies of the browser the bots drive with `browser_*` | A **Browser** area and an **Apps** screen |
+| Site logins: the cookies of the browser the bots drive with `browser_*` | A desktop with its browser as a window (a **Browser** area and an **Apps** screen on older images) |
 | The environment screen (Maestrly's settings) | Its gateway token and peer message budget |
 | Start, stop, restart, update, archive, and delete forever | Archive, restore, and delete forever of the bot alone |
 
@@ -258,7 +263,25 @@ browser as a window. An environment on an older image keeps its **Browser** and 
 in the computer's header; an image from before environments only has the browser, so **Apps** stays disabled until the
 environment restarts.
 
-Each bot has two screen areas, shown in the app with a **Browser** | **Apps** switch:
+A bot's desktop is its own 1280×800 Linux desktop, with a wallpaper in the bot's tint, a dock with **Browser**,
+**Terminal**, and **Files**, and the windows of its programs:
+
+- **Browser** shows the bot's Maestrly browser, the one it drives with `browser_*`, as a window of the desktop. The
+  browser itself runs in the environment's one Maestrly process and shares its cookies with the other bots; the window
+  shows it live, and your clicks, typing, and scrolling reach only that bot's tabs, address bar, page, and sign-in
+  popups, which open inside the window. Move and resize the window freely, from 480×320 up to 1280×800; it opens where
+  you left it. Closing it hides it, and the dock's **Browser** shows it again. Copy and paste work between the browser
+  and the other programs of the desktop.
+- **Terminal** opens a window on the bot's terminal, the one its terminal tools use: one window per terminal, up to
+  eight. Closing a window keeps its shell running, and the dock opens the same shell again.
+- **Files** opens the bot's home folder; text files open in a text editor. Links opened by programs on the desktop,
+  and the bot's `BROWSER`, open in its Maestrly browser.
+
+When the bot's tools act on its browser or a terminal, that window comes to the front without taking the keyboard from
+the window you are typing in; a terminal it creates opens the same way. Nothing comes forward while you control the
+computer.
+
+An environment on an older image has two screen areas instead, shown in the app with a **Browser** | **Apps** switch:
 
 - **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Browser popups, such as sign-in windows, open inside the bot's area. The main page answers JavaScript dialogs using the bot’s automatic dialog policy, without opening native windows. Native dialogs in popups are suppressed so they cannot interrupt another screen; popup confirmations are canceled.
 - **Apps** is the bot's own Linux desktop. Its `computer_*` tools, its shells, and the programs it starts use this display. Its `BROWSER` opens Chromium with a separate profile for that bot, so these windows open on the right screen; that Chromium profile does not share the cookies of the **Browser** area.

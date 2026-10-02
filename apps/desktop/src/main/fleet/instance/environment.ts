@@ -5,6 +5,7 @@ import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROTOCOL_VERSION,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_SCREEN,
   fleetEnvironmentTile,
   fleetInstanceBotInstallSchema,
@@ -227,6 +228,7 @@ export class EnvironmentRuntime {
         this.bots()
           .filter((bot) => bot.botId !== botId && bot.name)
           .map((bot) => ({ botId: bot.botId, name: bot.name! })),
+      capabilities: () => this.capabilities(),
       floatBrowser: (conversationId) => this.deps.floatBrowser(conversationId),
       present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
     }
@@ -265,8 +267,16 @@ export class EnvironmentRuntime {
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
-      capabilities: [...INSTANCE_CAPABILITIES],
+      capabilities: this.capabilities(),
     }
+  }
+
+  /**
+   * What this environment offers. With an apps display and desktop services for each bot (the bot image), each bot has
+   * one desktop where its browser is presented, so clients show one screen per bot.
+   */
+  private capabilities(): string[] {
+    return [...INSTANCE_CAPABILITIES, ...(this.displays && this.deps.desktop ? [FLEET_UNIFIED_DESKTOP_FEATURE] : [])]
   }
 
   /** The installed bot, or NOT_FOUND. */
@@ -305,7 +315,7 @@ export class EnvironmentRuntime {
     )
     return {
       environmentId: this.deps.config.environmentId ?? null,
-      capabilities: [...INSTANCE_CAPABILITIES],
+      capabilities: this.capabilities(),
       appVersion: app.getVersion(),
       protocol: FLEET_PROTOCOL_VERSION,
       ready: this.ready,
