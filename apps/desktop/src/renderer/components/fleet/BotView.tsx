@@ -1,31 +1,40 @@
 import { useTranslation } from 'react-i18next'
-import { useRef, type KeyboardEvent } from 'react'
+import { useEffect, useRef, type KeyboardEvent } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { FleetView } from '@/lib/use-main-panels'
 import { environmentOf, takeoverBlocksResume } from '@/lib/fleet/selectors'
 import { hasEnvironments, startBot } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
+import { useBotWorkspaceLayout } from '@/lib/fleet/use-bot-workspace-layout'
 import { BotConversation } from './BotConversation'
-import { BotScreen } from './BotScreen'
+import { BotScreen, type ScreenCloseGuard } from './BotScreen'
 import { BotSettings, type SettingsLeaveGuard } from './BotSettings'
+import { BotWorkspace } from './BotWorkspace'
 
 const tabs = ['conversation', 'screen', 'settings'] as const
-export function BotView({
-  bot,
-  view,
-  fleet,
-  onView,
-  onOpenBot,
-}: {
+type BotViewProps = {
   bot: FleetBot
   view: Extract<FleetView, { kind: 'bot' }>
   fleet: FleetController
   onView: (view: FleetView) => void
   onOpenBot: (id: string) => void
-}) {
+}
+
+export function BotView(props: BotViewProps) {
+  return <BotViewContent key={JSON.stringify([props.fleet.state.connection.url, props.bot.id])} {...props} />
+}
+
+function BotViewContent({ bot, view, fleet, onView, onOpenBot }: BotViewProps) {
   const { t } = useTranslation('fleet')
-  const tab = view.tab
+  const layout = useBotWorkspaceLayout(fleet.state.connection.url, bot.id, view.tab === 'screen' ? 'split' : 'chat')
+  const tab = view.tab === 'settings' ? 'settings' : layout.mode === 'chat' ? 'conversation' : 'screen'
+  const screenCloseGuard = useRef<ScreenCloseGuard | null>(null)
+  const { openComputer } = layout
+  useEffect(() => {
+    // Existing destinations (including help requests) still reveal the computer.
+    if (view.tab === 'screen') openComputer()
+  }, [view.tab, openComputer])
   const environment = hasEnvironments(fleet.state.connection)
     ? environmentOf(fleet.state.snapshot.environments, bot)
     : undefined
@@ -39,7 +48,22 @@ export function BotView({
   const openEnvironment = (next: 'overview' | 'screen') =>
     environment && go({ kind: 'environment', environmentId: environment.id, tab: next })
   const setTab = (next: typeof tab) => {
-    if (next !== tab) go({ kind: 'bot', botId: bot.id, tab: next })
+    const navigate = () => {
+      const apply = () => {
+        if (next === 'screen') layout.openComputer()
+        else if (next === 'conversation') layout.closeComputer()
+        onView({ kind: 'bot', botId: bot.id, tab: next })
+      }
+      if (next === 'conversation' && layout.mode !== 'chat' && screenCloseGuard.current) {
+        if (!screenCloseGuard.current(apply)) {
+          // A pending return dialog lives in this pane, including after leaving settings or a narrow chat.
+          layout.openComputer()
+          onView({ kind: 'bot', botId: bot.id, tab: 'screen' })
+        }
+      } else apply()
+    }
+    if (tab === 'settings' && next !== tab && leaveGuard.current) leaveGuard.current(navigate)
+    else navigate()
   }
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = tabs.indexOf(tab)
@@ -59,9 +83,9 @@ export function BotView({
     event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#fleet-tab-${next}`)?.focus()
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="border-b border-border px-5 py-2">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <span
             className="flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-white"
             style={{ background: bot.tint }}
@@ -103,7 +127,8 @@ export function BotView({
                 type="button"
                 role="tab"
                 aria-selected={tab === name}
-                aria-controls={`fleet-panel-${name}`}
+                aria-controls={name === 'settings' ? 'fleet-panel-settings' : 'fleet-panel-workspace'}
+                tabIndex={tab === name ? 0 : -1}
                 onClick={() => setTab(name)}
                 onKeyDown={onKeyDown}
                 className={`rounded-md px-3 py-1.5 text-xs focus-visible:ring-2 focus-visible:ring-ring ${tab === name ? 'bg-surface-elevated text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
@@ -154,31 +179,53 @@ export function BotView({
           </p>
         )}
       <div
-        id={`fleet-panel-${tab}`}
+        id="fleet-panel-workspace"
         role="tabpanel"
-        aria-labelledby={`fleet-tab-${tab}`}
-        className="flex min-h-0 flex-1 flex-col"
+        aria-labelledby={layout.mode === 'chat' ? 'fleet-tab-conversation' : 'fleet-tab-screen'}
+        className={tab === 'settings' ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 flex-col'}
+        inert={tab === 'settings'}
       >
-        {tab === 'conversation' ? (
-          <BotConversation
-            key={bot.id}
-            bot={bot}
-            fleet={fleet}
-            onOpenBot={onOpenBot}
-            onOpenScreen={() => setTab('screen')}
-            onOpenSettings={() => setTab('settings')}
-            onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-          />
-        ) : tab === 'screen' ? (
-          <BotScreen
-            key={bot.id}
-            bot={bot}
-            fleet={fleet}
-            onOpenSettings={() => setTab('settings')}
-            onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
-            onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-          />
-        ) : (
+        <BotWorkspace
+          botId={bot.id}
+          name={bot.name}
+          layout={layout}
+          visible={tab !== 'settings'}
+          onOpenComputer={() => setTab('screen')}
+          onCloseComputer={() => setTab('conversation')}
+          conversation={
+            <BotConversation
+              bot={bot}
+              fleet={fleet}
+              visible={tab !== 'settings' && layout.showChat}
+              onOpenBot={onOpenBot}
+              onOpenScreen={() => setTab('screen')}
+              onOpenSettings={() => setTab('settings')}
+              onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+            />
+          }
+          computer={
+            layout.computerOpened ? (
+              <BotScreen
+                bot={bot}
+                fleet={fleet}
+                streaming={layout.mode !== 'chat'}
+                visible={tab !== 'settings' && layout.showComputer}
+                closeGuard={screenCloseGuard}
+                onOpenSettings={() => setTab('settings')}
+                onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+                onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+              />
+            ) : null
+          }
+        />
+      </div>
+      {tab === 'settings' && (
+        <div
+          id="fleet-panel-settings"
+          role="tabpanel"
+          aria-labelledby="fleet-tab-settings"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+        >
           <BotSettings
             key={bot.id}
             bot={bot}
@@ -188,8 +235,8 @@ export function BotView({
             onArchived={() => onView({ kind: 'server' })}
             leaveGuard={leaveGuard}
           />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

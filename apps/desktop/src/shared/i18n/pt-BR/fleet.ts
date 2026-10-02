@@ -476,6 +476,17 @@ export default {
     screen: 'Tela',
     settings: 'Ajustes',
   },
+  workspace: {
+    open: 'Abrir computador',
+    close: 'Fechar computador',
+    maximize: 'Maximizar computador',
+    restore: 'Restaurar conversa',
+    showChat: 'Mostrar conversa',
+    showComputer: 'Mostrar computador',
+    resize: 'Redimensionar conversa e computador',
+    chatRegion: 'Conversa do {{name}}',
+    computerRegion: 'Computador do {{name}}',
+  },
   action: {
     start: 'Iniciar',
     stop: 'Parar',

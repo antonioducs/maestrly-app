@@ -36,7 +36,8 @@ describe('fleet renderer wiring', () => {
     const view = source('components/fleet/BotView.tsx')
     expect(view).toContain('role="tablist"')
     expect(view).toContain('onKeyDown={onKeyDown}')
-    expect(view).toContain("tab === 'conversation'")
+    for (const component of ['BotWorkspace', 'BotConversation', 'BotScreen', 'BotSettings'])
+      expect(view).toContain(`<${component}`)
     expect(view).toContain("['conversation', 'screen', 'settings']")
   })
   it('keeps foreign takeovers in view mode and blocks resume actions', () => {

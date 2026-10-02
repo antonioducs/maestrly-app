@@ -233,6 +233,18 @@ Each bot is told which other bots share its environment and that its home folder
 
 ### Screens of a bot
 
+Choose **Screen** or **Open computer** in a bot conversation to watch its computer beside the chat. Drag the divider,
+or focus it and use the arrow keys, to adjust their widths; Home and End move it to either limit. The app remembers
+the preferred split for each server and bot. **Maximize computer** fills the bot view with the screen;
+**Restore conversation** brings back the chat. Drafts, image attachments, the reading position, and the screen
+connection survive this change. Messages continue arriving while the conversation is hidden.
+
+When the available area is narrower than 846 pixels, **Show conversation** and **Show computer** switch between
+the two panels. Widening the window restores the split. **Close computer** stops the viewing stream and returns to
+the chat. If you control the computer, closing it first asks you to give it back, with the usual optional note;
+a failed release leaves the computer open. Watching allows conversation as usual; takeover keeps the bot paused
+and retains the existing message restrictions. Reconnecting the bot screen does not take focus from the composer.
+
 Each bot has two screen areas, shown in the app with a **Browser** | **Apps** switch:
 
 - **Browser** is the bot's own browser window, which it drives with `browser_*`. All browser windows of an environment run in its one Maestrly process and share its cookies, so a site login made in one bot's browser is available to the other bots. Browser popups, such as sign-in windows, open inside the bot's area. The main page answers JavaScript dialogs using the bot’s automatic dialog policy, without opening native windows. Native dialogs in popups are suppressed so they cannot interrupt another screen; popup confirmations are canceled.

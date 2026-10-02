@@ -23,6 +23,8 @@ export function useFleetScreen({
   surface,
   mode,
   disabled,
+  visible = true,
+  autoFocus = true,
   onControlLost,
 }: {
   container: RefObject<HTMLDivElement | null>
@@ -31,6 +33,10 @@ export function useFleetScreen({
   surface: FleetScreenSurface | null
   mode: 'view' | 'control'
   disabled: boolean
+  /** A hidden pane keeps its connection, but accepts no input. */
+  visible?: boolean
+  /** Bot workspaces leave focus with the adjacent composer, including on reconnect. */
+  autoFocus?: boolean
   onControlLost?: () => void
 }) {
   const [phase, setPhase] = useState<ScreenPhase>('connecting')
@@ -40,12 +46,25 @@ export function useFleetScreen({
   const retries = useRef(new ScreenRetries())
   const lost = useRef(onControlLost)
   lost.current = onControlLost
+  const presentation = useRef({ visible, autoFocus })
+  presentation.current = { visible, autoFocus }
+  const remoteRef = useRef<RFB | null>(null)
   const request = `${kind}:${id}:${surface ?? ''}`
   const [blocked, setBlocked] = useState<string | null>(null)
   const conflict = mode === 'control' && blocked === request
   const effective = conflict ? 'view' : mode
   useEffect(() => {
-    if (disabled || !container.current) return
+    if (remoteRef.current) remoteRef.current.viewOnly = effective === 'view' || !visible
+    const focused = container.current?.ownerDocument.activeElement
+    if (!visible && focused instanceof HTMLElement && container.current?.contains(focused)) focused.blur()
+  }, [container, visible, effective])
+  useEffect(() => {
+    if (disabled) {
+      // Closing and explicitly reopening the computer starts a new viewing attempt.
+      retries.current.reset()
+      return
+    }
+    if (!container.current) return
     let disposed = false
     let channel: FleetScreenChannel | null = null
     let rfb: RFB | null = null
@@ -88,7 +107,8 @@ export function useFleetScreen({
         channel = opened
         if (Number(opened.readyState) === WebSocket.OPEN) setPhase('live')
         const remote = new NoVncClient(container.current, opened, { shared: true })
-        remote.viewOnly = effective === 'view'
+        remote.viewOnly = effective === 'view' || !presentation.current.visible
+        remoteRef.current = remote
         remote.scaleViewport = true
         remote.resizeSession = false
         remote.qualityLevel = 6
@@ -107,7 +127,8 @@ export function useFleetScreen({
           // The screen really answered: a later refusal of this screen may retry again.
           retries.current.reset()
           setPhase('live')
-          if (effective === 'control') remote.focus({ preventScroll: true })
+          if (effective === 'control' && presentation.current.visible && presentation.current.autoFocus)
+            remote.focus({ preventScroll: true })
         })
         remote.addEventListener('disconnect', () => {
           if (!disposed) setPhase((value) => (value === 'offline' ? value : 'error'))
@@ -131,6 +152,7 @@ export function useFleetScreen({
     return () => {
       disposed = true
       detachClipboard?.()
+      if (remoteRef.current === rfb) remoteRef.current = null
       rfb?.disconnect()
       channel?.close()
     }
@@ -172,7 +194,7 @@ export function ScreenFrame({
   // Under control that is the only pointer; a watched screen overrides it to keep the local one.
   const cursor = interactive ? 'cursor-default' : 'cursor-not-allowed [&_canvas]:!cursor-not-allowed'
   return (
-    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/85 p-4">
+    <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black/85 p-4">
       <div
         ref={container}
         role="region"

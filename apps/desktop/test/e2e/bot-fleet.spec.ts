@@ -76,7 +76,13 @@ function stateContrastOnDialog(locator: Locator): Promise<number> {
   })
 }
 
-test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', async () => {
+test('fleet UI pairs, handles requests, creates a bot, controls its screen, and schedules a routine', () =>
+  runFleetScenario(false))
+
+test('bot split workspace preserves conversation, screen sessions and isolated layout preferences', () =>
+  runFleetScenario(true))
+
+async function runFleetScenario(workspaceOnly: boolean) {
   test.setTimeout(180_000)
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-fleet-e2e-'))
   const requests: Array<{ key: string; body: unknown; path: string; method: string | undefined }> = []
@@ -357,7 +363,33 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
   let skillSelection: { kind: 'all' | 'none' } = { kind: 'all' }
   let subagentsEnabled = true
   let subagentProfilesEnabled = true
-  let takeoverConflicts = 1
+  if (workspaceOnly) {
+    bots.push(fleetBotSchema.parse({ ...base, id: 'diary', name: 'Diary' }))
+    for (let index = 0; index < 35; index++)
+      transcript.push({
+        id: `history-${index}`,
+        at: now(),
+        kind: 'assistant',
+        text: `Workspace history ${index}\n\nA synthetic message with enough content to scroll.`,
+        streaming: false,
+      })
+    transcript.push({
+      id: 'workspace-help',
+      at: now(),
+      kind: 'help',
+      helpId: 'help-1',
+      reason: 'Sign in to the workspace fixture',
+      state: 'pending',
+      resolvedAt: null,
+      note: null,
+    })
+  }
+  const screenSockets = new Set<Duplex>()
+  let screenConnections = 0
+  let rejectRelease = false
+  let holdRelease: Promise<void> | undefined
+  let finishRelease: (() => void) | undefined
+  let takeoverConflicts = workspaceOnly ? 0 : 1
   let rejectCancellation = false
   function emit(event: unknown) {
     const valid = fleetGatewayEventSchema.parse(event)
@@ -986,6 +1018,19 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
         break
       }
       case 'botTakeoverRelease': {
+        // The gateway broadcasts this intermediate state before the instance finishes releasing.
+        if (workspaceOnly && bot)
+          emit({
+            type: 'bot.updated',
+            at: now(),
+            bot: fleetBotSchema.parse({ ...bot, takeover: { ...bot.takeover, state: 'releasing' } }),
+          })
+        if (rejectRelease) {
+          if (workspaceOnly && bot) emit({ type: 'bot.updated', at: now(), bot })
+          send(503, { code: 'UNAVAILABLE', message: 'Synthetic release failure' })
+          return
+        }
+        await holdRelease
         value = {
           state: 'none',
           deviceId: null,
@@ -1050,6 +1095,62 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
       send(500, { code: 'INTERNAL', message: 'The fake gateway failed; see the test output' })
     }
   })
+  if (workspaceOnly)
+    server.on('upgrade', (request, socket: Duplex) => {
+      screenConnections++
+      screenSockets.add(socket)
+      socket.on('error', () => {})
+      socket.on('close', () => screenSockets.delete(socket))
+      const accept = createHash('sha1')
+        .update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+        .digest('base64')
+      socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
+      )
+      const send = (payload: Buffer) => socket.write(Buffer.concat([Buffer.from([0x82, payload.length]), payload]))
+      send(Buffer.from('RFB 003.008\n'))
+      let buffered = Buffer.alloc(0)
+      let stage = 0
+      // Minimal RFB 3.8 server: negotiate no authentication and a true-color desktop.
+      socket.on('data', (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk])
+        while (buffered.length >= 2) {
+          const opcode = buffered[0] & 15
+          let length = buffered[1] & 127
+          let offset = 2
+          if (length === 126) {
+            if (buffered.length < 4) return
+            length = buffered.readUInt16BE(2)
+            offset = 4
+          } else if (length === 127) {
+            socket.destroy()
+            return
+          }
+          const masked = Boolean(buffered[1] & 128)
+          const total = offset + (masked ? 4 : 0) + length
+          if (buffered.length < total) return
+          buffered = buffered.subarray(total)
+          if (opcode === 8) {
+            socket.end(Buffer.from([0x88, 0]))
+            return
+          }
+          if (opcode !== 2) continue
+          if (stage++ === 0) send(Buffer.from([1, 1]))
+          else if (stage === 2) send(Buffer.from([0, 0, 0, 0]))
+          else if (stage === 3) {
+            const init = Buffer.alloc(28)
+            init.writeUInt16BE(640, 0)
+            init.writeUInt16BE(480, 2)
+            init.set([32, 24, 0, 1], 4)
+            for (const offset of [8, 10, 12]) init.writeUInt16BE(255, offset)
+            init.set([16, 8, 0], 14)
+            init.writeUInt32BE(4, 20)
+            init.write('Test', 24)
+            send(init)
+          }
+        }
+      })
+    })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('No address')
@@ -1156,6 +1257,257 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(page.getByRole('button', { name: /fleet-e2e-host/ })).toBeVisible()
     // A gateway without environments keeps the flat list and the views from before them.
     await expect(page.getByRole('button', { name: /^Ambiente / })).toHaveCount(0)
+    if (workspaceOnly) {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+      await page.getByRole('button', { name: /Scout/ }).first().click()
+      const workspace = page.locator('[data-bot-workspace="scout"]')
+      const conversation = page.getByRole('region', { name: 'Conversa do Scout', exact: true })
+      const computer = page.getByRole('region', { name: 'Computador do Scout', exact: true })
+      const separator = page.getByRole('separator', { name: 'Redimensionar conversa e computador' })
+      const draft = page.locator('[data-placeholder="Mensagem para Scout…"]')
+      const scroll = page.locator('[data-bot-transcript-scroll]')
+      const ratio = async () => Number(await separator.getAttribute('aria-valuenow'))
+      const openScout = async () => {
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Scout/ }).first().click()
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+      }
+      await test.step('opening the screen keeps a live conversation beside one VNC session', async () => {
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await draft.fill('Keep this unsent workspace draft')
+        await page
+          .locator('input[type="file"][accept*="image/*"]')
+          .setInputFiles({ name: 'workspace.png', mimeType: 'image/png', buffer: png })
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(
+          computer.getByRole('region', { name: 'Tela do Scout', exact: true }).locator('canvas')
+        ).toBeVisible()
+        await expect.poll(() => screenSockets.size).toBe(1)
+        emit({
+          type: 'transcript.upsert',
+          botId: 'scout',
+          at: now(),
+          item: {
+            id: 'workspace-live',
+            at: now(),
+            kind: 'assistant',
+            text: 'Live response beside the computer',
+            streaming: true,
+          },
+        })
+        await expect(conversation.getByText('Live response beside the computer')).toBeVisible()
+        await page.screenshot({ path: test.info().outputPath('bot-workspace-split.png') })
+      })
+      const canvas = await computer.locator('canvas').elementHandle()
+      expect(canvas).not.toBeNull()
+      const connections = screenConnections
+      const tickets = requests.filter((request) => request.key === 'botScreenTicket').length
+      await test.step('maximize and restore preserve draft, attachment, scroll and canvas', async () => {
+        await scroll.evaluate((node) => {
+          node.scrollTop = 120
+          node.dispatchEvent(new Event('scroll'))
+        })
+        const position = await scroll.evaluate((node) => node.scrollTop)
+        expect(position).toBeGreaterThan(0)
+        await page.getByRole('button', { name: 'Maximizar computador', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'computer')
+        await expect(conversation).toBeHidden()
+        await page.screenshot({ path: test.info().outputPath('bot-workspace-maximized.png') })
+        emit({
+          type: 'transcript.upsert',
+          botId: 'scout',
+          at: now(),
+          item: {
+            id: 'workspace-hidden',
+            at: now(),
+            kind: 'assistant',
+            text: 'Received while the conversation was hidden',
+            streaming: false,
+          },
+        })
+        await page.getByRole('button', { name: 'Restaurar conversa', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect(draft).toHaveText('Keep this unsent workspace draft')
+        await expect(page.getByAltText('workspace.png')).toBeVisible()
+        await expect(conversation.getByText('Received while the conversation was hidden')).toBeAttached()
+        await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBe(position)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+        expect(requests.filter((request) => request.key === 'botScreenTicket')).toHaveLength(tickets)
+      })
+      let savedRatio = 0
+      await test.step('keyboard bounds and pointer cancellation do not reconnect the screen', async () => {
+        await separator.focus()
+        await separator.press('Home')
+        const minimum = Number(await separator.getAttribute('aria-valuemin'))
+        await expect.poll(ratio).toBe(minimum)
+        await separator.press('ArrowLeft')
+        await expect.poll(ratio).toBe(minimum)
+        await separator.press('End')
+        const maximum = Number(await separator.getAttribute('aria-valuemax'))
+        await expect.poll(ratio).toBe(maximum)
+        await separator.press('ArrowRight')
+        await expect.poll(ratio).toBe(maximum)
+        await separator.press('ArrowLeft')
+        expect(await ratio()).toBeLessThan(maximum)
+        const box = await separator.boundingBox()
+        expect(box).not.toBeNull()
+        await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(box!.x - 50, box!.y + box!.height / 2)
+        await separator.dispatchEvent('pointercancel', { pointerId: 1, pointerType: 'mouse', bubbles: true })
+        savedRatio = await ratio()
+        await page.mouse.move(box!.x - 150, box!.y + box!.height / 2)
+        await page.mouse.up()
+        await expect.poll(ratio).toBe(savedRatio)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+        expect(screenSockets.size).toBe(1)
+      })
+      await test.step('narrow layouts switch both ways without losing either pane', async () => {
+        await app!.evaluate(({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0]
+          window.setMinimumSize(600, 600)
+          window.setSize(760, 900)
+        })
+        if (await computer.isVisible())
+          await page.getByRole('button', { name: 'Mostrar conversa', exact: true }).click()
+        await page.getByRole('button', { name: 'Mostrar computador', exact: true }).click()
+        await expect(computer).toBeVisible()
+        await expect(conversation).toBeHidden()
+        await page.getByRole('button', { name: 'Mostrar conversa', exact: true }).click()
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeHidden()
+        await expect(draft).toHaveText('Keep this unsent workspace draft')
+        await expect(page.getByAltText('workspace.png')).toBeVisible()
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+        await expect(conversation).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect.poll(ratio).toBe(savedRatio)
+        expect(await computer.locator('canvas').evaluate((node, original) => node === original, canvas)).toBe(true)
+        expect(screenConnections).toBe(connections)
+      })
+      await test.step('closing observation closes its stream and a help card reopens split', async () => {
+        await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await expect.poll(() => screenSockets.size).toBe(0)
+        expect(requests.filter((request) => request.key === 'botTakeoverRelease')).toHaveLength(0)
+        await conversation.getByRole('button', { name: 'Abrir a tela', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        await expect.poll(() => screenSockets.size).toBe(1)
+      })
+      await test.step('closing takeover waits for release and a failed release leaves the workspace open', async () => {
+        await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: 'Assumir a tela do Scout?' })
+          .getByRole('button', { name: 'Assumir', exact: true })
+          .click()
+        await expect(page.getByRole('status', { name: 'Quem controla a tela: Você' })).toBeVisible()
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(760, 900))
+        await page.getByRole('button', { name: 'Mostrar conversa', exact: true }).click()
+        await expect(computer).toBeHidden()
+        await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+        // The return dialog belongs to the computer pane, which must be revealed before asking for the note.
+        await expect(computer).toBeVisible()
+        const giveBack = page
+          .getByRole('dialog')
+          .filter({ has: page.getByRole('button', { name: 'Devolver', exact: true }) })
+        await expect(giveBack).toBeVisible()
+        const note = giveBack.getByRole('textbox')
+        await note.fill('Keep editing this note while the computer reconnects')
+        await expect.poll(() => screenSockets.size).toBe(1)
+        const beforeReconnect = screenConnections
+        for (const socket of screenSockets) socket.end(Buffer.from([0x88, 2, 0x0f, 0xa3]))
+        await expect.poll(() => screenConnections).toBe(beforeReconnect + 1)
+        await expect(computer.locator('canvas')).toHaveJSProperty('width', 640)
+        await expect(note).toBeFocused()
+        await expect(note).toHaveValue('Keep editing this note while the computer reconnects')
+        rejectRelease = true
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect.poll(() => requests.filter((request) => request.key === 'botTakeoverRelease').length).toBe(1)
+        await expect(page.getByRole('alert')).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(giveBack).toBeVisible()
+        rejectRelease = false
+        holdRelease = new Promise<void>((resolve) => {
+          finishRelease = resolve
+        })
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect.poll(() => requests.filter((request) => request.key === 'botTakeoverRelease').length).toBe(2)
+        await expect(page.getByRole('status', { name: 'Quem controla a tela: Scout' })).toBeVisible()
+        await expect(computer).toBeVisible()
+        await expect(giveBack).toBeVisible()
+        finishRelease!()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await expect(giveBack).toBeHidden()
+        await expect.poll(() => screenSockets.size).toBe(0)
+        expect(requests.filter((request) => request.key === 'botTakeoverRelease').at(-1)?.body).toMatchObject({
+          note: 'Keep editing this note while the computer reconnects',
+          continue: true,
+        })
+        await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1600, 1000))
+      })
+      await test.step('settings retain the dirty guard when opening a screen', async () => {
+        await page.getByRole('tab', { name: 'Ajustes', exact: true }).click()
+        await page.getByLabel('Nome', { exact: true }).fill('Uncommitted Scout name')
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        const leave = page.getByRole('dialog', { name: 'Sair sem salvar?' })
+        await expect(leave).toBeVisible()
+        await leave.getByRole('button', { name: 'Continuar editando', exact: true }).click()
+        await expect(page.getByLabel('Nome', { exact: true })).toHaveValue('Uncommitted Scout name')
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        await leave.getByRole('button', { name: 'Descartar', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'split')
+        expect(requests.filter((request) => request.key === 'botPatch')).toHaveLength(0)
+      })
+      await test.step('leaving settings for chat reveals a controlled computer before asking for release', async () => {
+        await page.getByRole('button', { name: 'Assumir controle', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: 'Assumir a tela do Scout?' })
+          .getByRole('button', { name: 'Assumir', exact: true })
+          .click()
+        await expect(page.getByRole('status', { name: 'Quem controla a tela: Você' })).toBeVisible()
+        await page.getByRole('tab', { name: 'Ajustes', exact: true }).click()
+        await page.getByLabel('Nome', { exact: true }).fill('Another unsaved name')
+        await page.getByRole('tab', { name: 'Conversa', exact: true }).click()
+        await page
+          .getByRole('dialog', { name: 'Sair sem salvar?' })
+          .getByRole('button', { name: 'Descartar', exact: true })
+          .click()
+        await expect(computer).toBeVisible()
+        const giveBack = page
+          .getByRole('dialog')
+          .filter({ has: page.getByRole('button', { name: 'Devolver', exact: true }) })
+        await expect(giveBack).toBeVisible()
+        await giveBack.getByRole('button', { name: 'Devolver', exact: true }).click()
+        await expect(workspace).toHaveAttribute('data-workspace-mode', 'chat')
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+      })
+      await test.step('ratios survive reload and remain isolated between bots', async () => {
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Diary/ }).first().click()
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        await separator.focus()
+        await separator.press('Home')
+        const diaryRatio = await ratio()
+        expect(diaryRatio).not.toBe(savedRatio)
+        await openScout()
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.reload()
+        await openScout()
+        await expect.poll(ratio).toBe(savedRatio)
+        await page.getByRole('tab', { name: /^Bots/ }).click()
+        await page.getByRole('button', { name: /Diary/ }).first().click()
+        await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+        await expect.poll(ratio).toBe(diaryRatio)
+      })
+      return
+    }
     await page.getByRole('button', { name: 'Memória sobre você', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Memória sobre você' })).toBeVisible()
     await expect(page.getByRole('combobox', { name: 'Quem vê' })).toHaveCount(0)
@@ -1847,13 +2199,15 @@ test('fleet UI pairs, handles requests, creates a bot, controls its screen, and 
     await expect(deleteDialog).toHaveCount(0)
     await expect(archivedSection.getByText('Nenhum bot arquivado.')).toBeVisible()
   } finally {
+    finishRelease?.()
     if (occupiedPort) await new Promise<void>((resolve) => occupiedPort!.close(() => resolve()))
     await app?.close()
     for (const stream of streams) stream.end()
+    for (const socket of screenSockets) socket.destroy()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await rm(root, { recursive: true, force: true })
   }
-})
+}
 
 test('fleet UI organizes bots in environments that share accounts, screens and lifecycle', async () => {
   test.setTimeout(240_000)
@@ -3153,6 +3507,10 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await page.waitForTimeout(1000)
     expect(botTickets('scout', 'apps')).toHaveLength(2)
     expect(botTickets('scout', 'browser')).toHaveLength(2)
+    // Closing the stream gives an explicit re-open a fresh retry allowance, even though the pane stays mounted.
+    await page.getByRole('button', { name: 'Fechar computador', exact: true }).click()
+    await page.getByRole('tab', { name: 'Tela', exact: true }).click()
+    await expect.poll(() => botTickets('scout', 'apps').length).toBe(4)
 
     // Another Mac takes the shared display between this Mac's control ticket and its use: this Mac watches instead
     // of retrying control, and says why.

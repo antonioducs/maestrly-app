@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetScreenSurface, FleetTakeoverState } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,8 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ScreenFrame, useFleetScreen } from './ScreenFrame'
 
 const surfaces = ['browser', 'apps'] as const
+/** Returns false when takeover must finish or the owner must confirm giving control back. */
+export type ScreenCloseGuard = (close: () => void) => boolean
 
 export function BotScreen({
   bot,
@@ -18,12 +20,18 @@ export function BotScreen({
   onOpenSettings,
   onOpenEnvironment,
   onOpenEnvironmentScreen,
+  streaming = true,
+  visible = true,
+  closeGuard,
 }: {
   bot: FleetBot
   fleet: FleetController
   onOpenSettings: () => void
   onOpenEnvironment?: () => void
   onOpenEnvironmentScreen?: () => void
+  streaming?: boolean
+  visible?: boolean
+  closeGuard?: RefObject<ScreenCloseGuard | null>
 }) {
   const { t } = useTranslation('fleet')
   const target = useRef<HTMLDivElement>(null)
@@ -35,6 +43,7 @@ export function BotScreen({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
+  const pendingClose = useRef<(() => void) | null>(null)
   // With environments a bot has a browser area and an apps screen; before them, its browser area only.
   const environments = hasEnvironments(fleet.state.connection)
   const environment = environments ? environmentOf(fleet.state.snapshot.environments, bot) : undefined
@@ -53,7 +62,9 @@ export function BotScreen({
     id: bot.id,
     surface: environments ? shown : null,
     mode,
-    disabled: shaded,
+    disabled: shaded || !streaming,
+    visible,
+    autoFocus: false,
     onControlLost: () => setTakeover((value) => ({ ...value, state: 'none', since: null })),
   })
   const phase = screen.phase
@@ -62,13 +73,39 @@ export function BotScreen({
   )
   useEffect(() => {
     setTakeover(bot.takeover)
-    if (takeoverBlocksResume(bot.takeover)) setPopover(null)
-  }, [bot.takeover])
+    const releasingHere =
+      bot.takeover.state === 'releasing' &&
+      fleet.state.connection.deviceId !== null &&
+      bot.takeover.deviceId === fleet.state.connection.deviceId
+    // The gateway broadcasts releasing before the HTTP operation completes. Keep the return dialog and close
+    // intent until giveBack succeeds, or restores control on failure.
+    if (ownsTakeover(bot.takeover, fleet.state.connection.deviceId) || releasingHere) {
+      setPopover((value) => (value === 'take' ? null : value))
+    } else if (takeoverBlocksResume(bot.takeover)) {
+      pendingClose.current = null
+      setPopover(null)
+    }
+  }, [bot.takeover, fleet.state.connection.deviceId])
   useEffect(() => {
     if (mode !== 'control') return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [mode])
+  useImperativeHandle(
+    closeGuard,
+    () => (close) => {
+      // Do not disconnect a controller while takeover or release is still in flight.
+      if (busy || (takeover.state !== 'none' && takeover.state !== 'human')) return false
+      if (human) {
+        pendingClose.current = close
+        setPopover('give')
+        return false
+      }
+      close()
+      return true
+    },
+    [busy, human, takeover.state]
+  )
 
   function onSurfaceKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     const next = nextRadioIndex(index, event.key, surfaces.length)
@@ -119,6 +156,10 @@ export function BotScreen({
       setPopover(null)
       setNote('')
       screen.resetRetries()
+      const close = pendingClose.current
+      pendingClose.current = null
+      // A completed release must not navigate back if the owner already left this bot.
+      if (target.current) close?.()
     } catch (cause) {
       setError(fleetErrorText(cause, t))
     } finally {
@@ -142,7 +183,7 @@ export function BotScreen({
           })
   const alert = error || (screen.error && fleetErrorText(screen.error, t))
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="relative flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
         <span className="rounded-full bg-surface-elevated px-2 py-1 text-xs font-medium text-status-ready">
           ● {t('screen.live')}
@@ -208,7 +249,13 @@ export function BotScreen({
               <span className="font-mono text-xs" aria-label={t('screen.controlTime')}>
                 {formatTimer(now - Date.parse(takeover.since ?? new Date(now).toISOString()))}
               </span>
-              <Button size="sm" onClick={() => setPopover('give')}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  pendingClose.current = null
+                  setPopover('give')
+                }}
+              >
                 {t('screen.giveBack', { name: bot.name })}
               </Button>
             </>
@@ -252,7 +299,15 @@ export function BotScreen({
               </label>
             )}
             <div className="mt-3 flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setPopover(null)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  pendingClose.current = null
+                  setPopover(null)
+                }}
+              >
                 {popover === 'take' ? t('screen.cancel') : t('screen.keepControl')}
               </Button>
               <Button
@@ -270,7 +325,7 @@ export function BotScreen({
       <ScreenFrame
         container={target}
         label={t('screen.region', { name: bot.name })}
-        interactive={human && !screen.conflict}
+        interactive={visible && human && !screen.conflict}
         clipboardError={screen.clipboardError}
       >
         {shaded && (

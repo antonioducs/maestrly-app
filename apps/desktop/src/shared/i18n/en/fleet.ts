@@ -475,6 +475,17 @@ export default {
     screen: 'Screen',
     settings: 'Settings',
   },
+  workspace: {
+    open: 'Open computer',
+    close: 'Close computer',
+    maximize: 'Maximize computer',
+    restore: 'Restore conversation',
+    showChat: 'Show conversation',
+    showComputer: 'Show computer',
+    resize: 'Resize conversation and computer',
+    chatRegion: '{{name}} conversation',
+    computerRegion: '{{name}} computer',
+  },
   action: {
     start: 'Start',
     stop: 'Stop',

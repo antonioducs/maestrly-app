@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Wrench, X } from 'lucide-react'
 import type { FleetBot, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
@@ -260,6 +260,7 @@ const THUMBNAILS_MAX = 8
 export function BotConversation({
   bot,
   fleet,
+  visible = true,
   onOpenBot,
   onOpenScreen,
   onOpenSettings,
@@ -267,6 +268,7 @@ export function BotConversation({
 }: {
   bot: FleetBot
   fleet: FleetController
+  visible?: boolean
   onOpenBot: (id: string) => void
   onOpenScreen: () => void
   onOpenSettings: () => void
@@ -279,17 +281,20 @@ export function BotConversation({
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottomRef = useRef(true)
   const oldHeightRef = useRef<number | null>(null)
+  const scrollTopRef = useRef(0)
   useEffect(() => {
     fleet.ensureTranscript(bot.id)
   }, [bot.id, fleet.ensureTranscript])
-  useEffect(() => {
+  useLayoutEffect(() => {
     const node = scrollRef.current
-    if (!node) return
+    if (!node || !visible) return
     if (oldHeightRef.current !== null) {
-      node.scrollTop += node.scrollHeight - oldHeightRef.current
+      node.scrollTop = scrollTopRef.current + node.scrollHeight - oldHeightRef.current
       oldHeightRef.current = null
     } else if (atBottomRef.current) node.scrollTop = node.scrollHeight
-  }, [transcript?.items])
+    else node.scrollTop = scrollTopRef.current
+    scrollTopRef.current = node.scrollTop
+  }, [transcript?.items, visible])
   const locked = ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
   const lastItem = transcript?.items.at(-1)
   const runningToolLast = lastItem?.kind === 'tool' && lastItem.state === 'running'
@@ -305,8 +310,12 @@ export function BotConversation({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
+        data-bot-transcript-scroll
         onScroll={(event) => {
           const node = event.currentTarget
+          // Hiding a pane can emit a zero-position scroll. It must not replace the reading position.
+          if (!visible || node.clientHeight === 0) return
+          scrollTopRef.current = node.scrollTop
           atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
         }}
         className="min-h-0 flex-1 overflow-y-auto"
