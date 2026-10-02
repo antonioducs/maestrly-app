@@ -105,7 +105,10 @@ export interface BranchInfo {
   remoteRefs: RemoteBranchInfo[]
 }
 
-export async function listBranches(top: string): Promise<BranchInfo> {
+export async function listBranches(
+  top: string,
+  options: { includeLocalRemotes?: boolean } = {}
+): Promise<BranchInfo> {
   const current = (await gitOrNull(top, ['branch', '--show-current'])) || ''
   const localRaw = await gitOrNull(top, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
   const remoteRaw = await gitOrNull(top, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes'])
@@ -124,7 +127,7 @@ export async function listBranches(top: string): Promise<BranchInfo> {
             ref: `refs/remotes/${short}`,
           }
         })
-        .filter((item) => !local.includes(item.name))
+        .filter((item) => options.includeLocalRemotes || !local.includes(item.name))
     : []
   const remoteOnly = [...new Set(remoteRefs.map((item) => item.name))]
   return { current, local, remote: remoteOnly, remoteRefs }
@@ -235,6 +238,8 @@ export interface CreateWorktreeArgs {
   dest?: string
   /** Bot allocation must never attach to a branch or checkout that already exists. */
   exclusive?: boolean
+  /** Dispatch reserves its journal-specific directory atomically before Git can adopt it. */
+  reserveDestination?: boolean
   /** New branches only: start at this exact commit instead of the freshest `base` ref. */
   baseRevision?: string
 }
@@ -243,6 +248,45 @@ export interface CreateWorktreeArgs {
 export async function resolveCommit(cwd: string, revision = 'HEAD'): Promise<string | null> {
   if (!revision || revision.startsWith('-')) return null
   return gitOrNull(cwd, ['rev-parse', '--verify', '--quiet', `${revision}^{commit}`], 5_000)
+}
+
+/** Literal branch names only: no revision expressions, options, or checkout shorthand. */
+export async function isValidDispatchBranch(branch: string): Promise<boolean> {
+  if (!branch || branch.startsWith('-') || branch === 'HEAD' || branch.startsWith('refs/')) return false
+  return (await gitOrNull(process.cwd(), ['check-ref-format', `refs/heads/${branch}`])) !== null
+}
+
+/** Resolve local or fetched remote branches without evaluating arbitrary revision expressions. */
+export async function resolveDispatchBranch(top: string, branch: string): Promise<string | null> {
+  if (!(await isValidDispatchBranch(branch))) return null
+  const local = await resolveCommit(top, `refs/heads/${branch}`)
+  if (local) return local
+  const refs = (await listBranches(top, { includeLocalRemotes: true })).remoteRefs.filter(
+    (ref) => ref.name === branch || `${ref.remote}/${ref.name}` === branch
+  )
+  if (refs.length !== 1) return null
+  return resolveCommit(top, refs[0].ref)
+}
+
+/** Roll back only a successfully allocated, unchanged checkout at its journal-specific path. */
+export async function removeDispatchWorktree(
+  top: string,
+  cwd: string,
+  branch: string,
+  baseRevision: string
+): Promise<void> {
+  const tree = (await listWorktrees(top)).find((entry) => entry.path === cwd)
+  if (
+    !tree ||
+    tree.branch !== branch ||
+    tree.head !== baseRevision ||
+    (await resolveCommit(top, `refs/heads/${branch}`)) !== baseRevision
+  )
+    throw new Error('Dispatch worktree ownership changed; manual recovery is required.')
+  // No force: user files or locks must survive cancellation and recovery.
+  await removeWorktree(top, cwd)
+  // Compare-and-delete avoids deleting a ref moved by a concurrent writer.
+  await git(top, ['update-ref', '-d', `refs/heads/${branch}`, baseRevision])
 }
 
 /**
@@ -360,6 +404,13 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<string> 
     }
     await configureAppWorktreePush(top, existing.path) // repair existing worktree configuration
     return existing.path
+  }
+
+  if (args.reserveDestination) {
+    if (!args.exclusive || !dest) throw new Error('Directory reservation requires an exclusive destination.')
+    await fs.mkdir(path.dirname(wtPath), { recursive: true })
+    // Unlike git worktree add, mkdir rejects even an empty directory created by another allocator.
+    await fs.mkdir(wtPath)
   }
 
   if (isNewBranch) {

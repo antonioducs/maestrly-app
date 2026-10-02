@@ -3,6 +3,7 @@ import { BOT_APP_TOOLS_GUIDANCE } from '../../../fleet/instance/identity'
 import { capabilityBehaviorFor } from '../../../../shared/chat-mode'
 import { renderDesignModePrompt } from '../../design-mode-prompt'
 import { MEMORY_TOOL_GUIDANCE } from '../../memory-tool-guidance'
+import { HOST_ASK_DISPATCH_GUIDANCE } from '../host-contracts'
 
 /**
  * Reusable Responses-prompt composition strategies. They know slots — base instructions, mode,
@@ -50,7 +51,7 @@ const modeOverlay = (mode: OpenAIPromptMode): string => {
   if (mode === 'ask') {
     return `# Maestrly mode
 
-ASK MODE has restricted tools. Use the available read and safe-recording tools to ground answers in real project context. ${restrictedCapabilities} If the task requires changes or commands, tell the user to switch to Agent mode.`
+ASK MODE has restricted tools. Use the available read and safe-recording tools to ground answers in real project context. ${restrictedCapabilities} ${HOST_ASK_DISPATCH_GUIDANCE} If the task requires changes or commands in this conversation, tell the user to switch to Agent mode.`
   }
 
   if (mode === 'plan') {

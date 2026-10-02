@@ -1,5 +1,5 @@
 import { isBotMode } from '../../fleet/instance/config'
-import { buildMaestrlyBasePrompt } from '../harness/host-contracts'
+import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, AUTONOMOUS_INSTRUCTIONS, withAutonomousPolicy } from '../autonomous'
 import { remoteChatPolicy, withRemoteChatPolicy } from '../remote-policy'
@@ -841,7 +841,8 @@ export function maestrlyDeveloperInstructions(
       common +
       ' This turn is Ask mode: investigate with the supplied read-only Maestrly readers when useful and answer ' +
       'from the real project. Do not modify files, run commands, or call mutating app, MCP, or skill tools. You may use ' +
-      'request_user_input only when the answer truly requires a decision from the user.'
+      'request_user_input only when the answer truly requires a decision from the user. ' +
+      HOST_ASK_DISPATCH_GUIDANCE
     )
   }
   if (mode === 'maestro') {

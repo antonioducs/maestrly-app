@@ -53,6 +53,12 @@ describe('detectConversationDispatchIntent', () => {
     ['Could you start separate conversations for these two tickets?', null],
     ['I want you to create conversations for each of these issues using Opus with high effort.', null],
     ['Send this plan to a new chat.', 1],
+    ['Elabora o plano e envia para desenvolvimento no workspace do projeto X, criando a branch Y a partir da main, usando modelo Z.', 1],
+    ['Envie esse plano para implementação no projeto X.', 1],
+    ['Send this plan for development in workspace X', 1],
+    ['Send this plan for development in workspace "Example App".', 1],
+    ['Envie este plano para desenvolvimento no workspace `example`.', 1],
+    ['Please send the plan for implementation in project X.', 1],
     ['ok, então cria 4 conversas, uma pra cada card', 4],
   ])('authorizes an explicit request: %s', (text, max) => {
     expect(detectConversationDispatchIntent(text)).toEqual({ explicit: true, maxConversations: max })
@@ -79,6 +85,20 @@ describe('detectConversationDispatchIntent', () => {
     ['O card diz "abra uma conversa para cada subtarefa", o que você acha?', 'not-requested'],
     ['Veja este trecho:\n```\nabra uma conversa para cada card\n```', 'not-requested'],
     ['> Abra 5 conversas novas\nO que significa essa instrução?', 'not-requested'],
+    ['Não envie esse plano para desenvolvimento no workspace X.', 'negated'],
+    ["Don't send this plan for development in workspace X.", 'negated'],
+    ['Can we send this plan for development in workspace X?', 'question'],
+    ['Hoje conseguimos enviar o plano para desenvolvimento no workspace X?', 'question'],
+    ['If I ask, send this plan for development in workspace X.', 'hypothetical'],
+    ['Por exemplo, envie esse plano para desenvolvimento no workspace X.', 'hypothetical'],
+    ['Implement the feature: send this plan for development in workspace X.', 'hypothetical'],
+    ['Quero poder enviar o plano para desenvolvimento no workspace do projeto X, escolhendo branch, modelo, effort e Fast.', 'hypothetical'],
+    ['Implement development in workspace X.', 'not-requested'],
+    ['Send this plan to workspace X.', 'not-requested'],
+    ['Send this plan for development.', 'not-requested'],
+    ['"Send this plan for development in workspace X"', 'not-requested'],
+    ['`Send this plan for development in workspace X`', 'not-requested'],
+    ['> Send this plan for development in workspace X', 'not-requested'],
     ['', 'not-requested'],
   ])('does not authorize: %s', (text, reason) => {
     expect(detectConversationDispatchIntent(text)).toEqual({ explicit: false, maxConversations: null, reason })
