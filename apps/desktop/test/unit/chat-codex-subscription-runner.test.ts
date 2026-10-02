@@ -677,6 +677,8 @@ function assistantMessages(conversationId: string): ChatMessage[] {
 describe('Codex subscription runner', () => {
   beforeEach(() => {
     freshDb()
+    // These cases predate the default-on app tools; tests that exercise them turn the flag on explicitly.
+    setAppFlag('chat.appTools', false)
     codexManagerBridge.setClient(null)
     codexManagerBridge.getCodexSubscriptionManager.mockClear()
     resetSubscriptionFailoverRouterForTests()

@@ -25,7 +25,9 @@ import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import { applyChatEvent, MAESTRLY_ULTRA_EFFORT } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
-import { getAppFlag, getConvUiPrefs } from '../../store'
+import { getConvUiPrefs } from '../../store'
+import { resolveAppToolAccess } from '../app-tool-access'
+import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { stagePlan } from '../../plan-broker'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../image-interpreter'
@@ -1870,6 +1872,7 @@ async function buildDynamicTools(
   deferredToolNames: ReadonlySet<string>
   skills: ChatSkill[]
   appToolsEnabled: boolean
+  disabledAppToolGroups: AppToolGroup[]
   agents: ChatAgent[]
   close: () => Promise<void>
 }> {
@@ -1905,7 +1908,8 @@ async function buildDynamicTools(
   }
 
   const prefs = args.reviewerRuntime ? undefined : getConvUiPrefs(args.conversationId).chat?.tools
-  const appToolsEnabled = !args.reviewerRuntime && (prefs?.app ?? getAppFlag('chat.appTools', false))
+  const appAccess = resolveAppToolAccess(args.conversationId)
+  const appToolsEnabled = !args.reviewerRuntime && appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp =
     !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro')
@@ -1934,6 +1938,7 @@ async function buildDynamicTools(
             appToolsEnabled && (capabilityMode === 'agent' || args.mode === 'maestro')
               ? undefined
               : PERSONAL_MEMORY_TOOLS,
+          disabledGroups: appAccess.disabledGroups,
           conversationId: args.conversationId,
           mode: args.mode,
           gate,
@@ -2170,6 +2175,7 @@ async function buildDynamicTools(
       deferredToolNames: hostTools.deferredToolNames,
       skills,
       appToolsEnabled,
+      disabledAppToolGroups: appAccess.disabledGroups,
       agents,
       close: async () => {
         await Promise.all([mcp.close(), app.close()])
@@ -2768,6 +2774,7 @@ export async function runCodexSubscriptionChat(
           scope: 'standalone',
           mode: args.mode,
           appToolsEnabled: dynamic.appToolsEnabled,
+          disabledAppToolGroups: dynamic.disabledAppToolGroups,
           hasNotesTab: true,
         }) +
         maestrlySkillCatalog(dynamic.skills, false) +

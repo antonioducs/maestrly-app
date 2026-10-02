@@ -284,6 +284,16 @@ export default {
     kindSkill: 'skill',
     kindPrompt: 'prompt',
   },
+  appToolGroups: {
+    terminal: { label: 'Terminal', desc: 'run and follow commands in the drawer' },
+    browser: { label: 'Browser', desc: 'navigate, read and interact with pages' },
+    notes: { label: 'Notes', desc: 'conversation and project notebooks' },
+    memory: { label: 'Memory', desc: 'search and save durable memories' },
+    history: { label: 'Conversation history', desc: 'search earlier parts of the conversation' },
+    debug: { label: 'Debugger', desc: 'breakpoints and stepping in the Code tab' },
+    artifacts: { label: 'Artifacts', desc: 'publish and update web pages' },
+    board: { label: 'Kanban', desc: 'boards and cards linked to the workspace' },
+  },
   plusMenu: {
     add: 'Add',
     imageFile: 'Image / file',
@@ -308,6 +318,9 @@ export default {
     appToolsLabel: 'Maestrly tools',
     appToolsDesc: 'terminal, browser, notes, memory, debug',
     appToolsBotLocked: 'Always on for bots: their browser, screen and help tools depend on them',
+    appToolGroupsShow: 'Choose which groups this conversation gets',
+    appToolGroupsHide: 'Hide tool groups',
+    appToolGroupsSome: '{{on}} of {{total}} groups on',
     imageGenLabel: 'Image generation',
     imageGenDesc: 'lets the model draw images in this conversation',
     mcpServers: 'MCP servers',
@@ -1122,6 +1135,8 @@ export default {
     appToolsHeading: 'Maestrly tools',
     appToolsDescription:
       "Gives the chat the app's native tools (terminal, browser, notes, memory, debug) — in-process, with no MCP setup needed. They ask for approval when used (or in YOLO mode).",
+    appToolGroupsDescription:
+      'Turn off a group to remove its tools from every chat — for example to save context on smaller models. Each conversation can still change its groups in the + menu.',
     imageGenHeading: 'Image generation',
     imageGenDescription:
       'Lets models create images in the chat. Codex uses its native generator; other models (Claude, Copilot, API providers) get a `generate_image` tool that runs on the ChatGPT subscription you connected — so it requires a connected ChatGPT account and consumes it.',

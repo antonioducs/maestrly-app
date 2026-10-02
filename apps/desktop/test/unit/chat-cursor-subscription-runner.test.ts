@@ -80,6 +80,7 @@ import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
 import { storedPdfPart } from '../helpers/pdf-parts'
 import { supportsChatToolImages } from '../../src/main/chat/tool-capabilities'
 import { closeDb, freshDb } from '../helpers/db'
+import { setAppFlag } from '../../src/main/store'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { REVIEWER_READONLY_TOOL_NAMES } from '../../src/main/chat/tools'
 
@@ -308,6 +309,8 @@ describe('Cursor subscription runner', () => {
 
   beforeEach(() => {
     freshDb()
+    // These cases predate the default-on app tools and never exercise the full in-process registry.
+    setAppFlag('chat.appTools', false)
     cwd = mkdtempSync(path.join(os.tmpdir(), 'maestrly-cursor-runner-'))
     h.resolveSubagentExecutionProfile.mockReset()
     h.runCursorSubagent.mockReset()

@@ -4,6 +4,8 @@ import { capabilityBehaviorFor } from '../../../../shared/chat-mode'
 import { renderDesignModePrompt } from '../../design-mode-prompt'
 import { MEMORY_TOOL_GUIDANCE } from '../../memory-tool-guidance'
 import { HOST_ASK_DISPATCH_GUIDANCE } from '../host-contracts'
+import type { AppToolGroup } from '../../../../shared/app-tool-groups'
+import { appToolPromptGroups, listJoin } from '../app-tool-prompt'
 
 /**
  * Reusable Responses-prompt composition strategies. They know slots — base instructions, mode,
@@ -19,6 +21,8 @@ export interface OpenAIPromptLayoutInput {
   cwd: string
   mode: OpenAIPromptMode
   appToolsEnabled: boolean
+  /** App-tool groups the user turned off; the prompt stops naming their tools. */
+  disabledAppToolGroups?: readonly AppToolGroup[]
   hasNotesTab: boolean
   projectContext?: string | null
   skillsContext?: string | null
@@ -65,13 +69,17 @@ PLAN MODE has restricted tools. Investigate with the available read and safe-rec
 ${mode === 'design' ? 'DESIGN MODE uses Agent-equivalent capabilities. It' : 'AGENT MODE'} provides tools to read, search, edit and write files, run commands, and track non-trivial work with todo_write. Prefer small, verifiable actions. Read the relevant code before editing it. Permission-sensitive tools are gated by the harness; explain the reason concisely when approval is requested.`
 }
 
-const appToolsOverlay = (enabled: boolean, hasNotesTab: boolean, mode: OpenAIPromptMode): string => {
+const appToolsOverlay = (
+  enabled: boolean,
+  hasNotesTab: boolean,
+  mode: OpenAIPromptMode,
+  disabledGroups: readonly AppToolGroup[] = []
+): string => {
   if (isBotMode()) return enabled ? `# Maestrly app tools\n\n${BOT_APP_TOOLS_GUIDANCE}` : ''
   const capabilityMode = capabilityBehaviorFor(mode)
-  const groups = hasNotesTab
-    ? 'terminal_*, browser_*, notes_*, memory_*, and debug_*'
-    : 'terminal_*, browser_*, memory_*, and debug_*'
-  const preferred = hasNotesTab ? 'terminal_*, memory_*, and notes_*' : 'terminal_* and memory_*'
+  const toolGroups = appToolPromptGroups(hasNotesTab, mode, disabledGroups)
+  const groups = listJoin(toolGroups.listed.map((group) => `${group}_*`))
+  const preferred = listJoin(toolGroups.preferred.map((group) => `${group}_*`))
 
   if (!enabled) {
     return `# Maestrly app tools
@@ -80,17 +88,27 @@ Drawer tools are disabled. If the task genuinely requires them, ask the user to 
   }
 
   if (capabilityMode !== 'agent') {
-    const restricted = hasNotesTab
-      ? 'notes list/read/create/write/append, memory search/list/read, browser navigation/read, and terminal read'
-      : 'memory search/list/read, browser navigation/read, and terminal read'
+    const restricted = listJoin(toolGroups.restricted)
     return `# Maestrly app tools
 
-Drawer tools are enabled with this mode's restricted catalog: ${restricted}. Use only the tools actually exposed; mutating tools outside this list remain unavailable. Never reach the app through curl/HTTP or inspect legacy local credentials.`
+${
+  restricted
+    ? `Drawer tools are enabled with this mode's restricted catalog: ${restricted}. Use only the tools actually exposed; mutating tools outside this list remain unavailable.`
+    : "Drawer tools are enabled, but none of this mode's restricted catalog is on. Use only the tools actually exposed."
+}${toolGroups.disabledNote} Never reach the app through curl/HTTP or inspect legacy local credentials.`
   }
 
   return `# Maestrly app tools
 
-Drawer tools are available as ${groups}. Use them directly. Prefer ${preferred} over equivalent native tools when the user should see, follow, or edit a long-running result or durable project decision in the drawer. A quick internal one-off can stay on native tools. Never reach the app through curl/HTTP or inspect legacy local credentials.`
+${
+  groups
+    ? `Drawer tools are available as ${groups}. Use them directly.${
+        preferred
+          ? ` Prefer ${preferred} over equivalent native tools when the user should see, follow, or edit a long-running result or durable project decision in the drawer. A quick internal one-off can stay on native tools.`
+          : ''
+      }`
+    : 'Drawer tools are available only as exposed in your tool set.'
+}${toolGroups.disabledNote} Never reach the app through curl/HTTP or inspect legacy local credentials.`
 }
 
 const skillsOverlay = (skillsContext: string | null | undefined): string => {
@@ -145,7 +163,7 @@ export function composeOpenAICodexPortPrompt(input: OpenAIPromptLayoutInput): Co
       ". Reply in the user's language. Use only tools actually exposed by this harness, and never invent a Codex-only tool or protocol.",
     modeOverlay(input.mode),
     openAINativeToolsPromptOverlay(input.nativeTools, input.mode),
-    appToolsOverlay(input.appToolsEnabled, input.hasNotesTab, input.mode),
+    appToolsOverlay(input.appToolsEnabled, input.hasNotesTab, input.mode, input.disabledAppToolGroups),
     MEMORY_TOOL_GUIDANCE,
     '# Rendering\n\nThe chat supports GitHub-flavored Markdown, tables, and Mermaid diagrams. Use a Mermaid code block for diagrams instead of ASCII art.',
   ])

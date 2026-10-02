@@ -290,6 +290,16 @@ export default {
     kindSkill: 'skill',
     kindPrompt: 'prompt',
   },
+  appToolGroups: {
+    terminal: { label: 'Terminal', desc: 'roda e acompanha comandos na gaveta' },
+    browser: { label: 'Navegador', desc: 'navega, lê e interage com páginas' },
+    notes: { label: 'Notas', desc: 'cadernos da conversa e do projeto' },
+    memory: { label: 'Memória', desc: 'busca e salva memórias duráveis' },
+    history: { label: 'Histórico da conversa', desc: 'busca trechos anteriores da conversa' },
+    debug: { label: 'Debug', desc: 'breakpoints e passo a passo na aba Código' },
+    artifacts: { label: 'Artefatos', desc: 'publica e atualiza páginas web' },
+    board: { label: 'Kanban', desc: 'quadros e cards vinculados ao workspace' },
+  },
   plusMenu: {
     add: 'Adicionar',
     imageFile: 'Imagem / arquivo',
@@ -314,6 +324,9 @@ export default {
     appToolsLabel: 'Ferramentas do Maestrly',
     appToolsDesc: 'terminal, navegador, notas, memória, debug',
     appToolsBotLocked: 'Sempre ligadas no bot: o navegador, a tela e o pedido de ajuda dependem delas',
+    appToolGroupsShow: 'Escolher os grupos desta conversa',
+    appToolGroupsHide: 'Ocultar grupos de ferramentas',
+    appToolGroupsSome: '{{on}} de {{total}} grupos ligados',
     imageGenLabel: 'Geração de imagem',
     imageGenDesc: 'permite ao modelo desenhar imagens nesta conversa',
     mcpServers: 'Servidores MCP',
@@ -1137,6 +1150,8 @@ export default {
     appToolsHeading: 'Ferramentas do Maestrly',
     appToolsDescription:
       'Dá ao chat as ferramentas nativas do app (terminal, navegador, notas, memória, debug) — in-process, sem precisar configurar MCP. Pedem aprovação ao serem usadas (ou no modo YOLO).',
+    appToolGroupsDescription:
+      'Desligue um grupo para tirar as ferramentas dele de todos os chats — por exemplo, para economizar contexto em modelos menores. Cada conversa ainda pode ajustar os grupos no menu +.',
     imageGenHeading: 'Geração de imagem',
     imageGenDescription:
       'Permite que os modelos criem imagens no chat. O Codex usa o gerador nativo dele; os demais modelos (Claude, Copilot, provedores por API) ganham a ferramenta `generate_image`, que roda na assinatura do ChatGPT conectada — ou seja, exige uma conta ChatGPT conectada e consome ela.',
