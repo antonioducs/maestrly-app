@@ -194,7 +194,7 @@ async function returnToApp(child: Page) {
   await closed
 }
 
-test('detached standalone stream survives navigation, minimized source and native close with queued images', async ({
+test('detached standalone stream survives navigation, background source and native close with queued images', async ({
   session,
 }) => {
   const { app, page, requests } = session
@@ -231,21 +231,28 @@ test('detached standalone stream survives navigation, minimized source and nativ
   await session.newChat('Main navigation chat')
   await expect(editor(page)).toHaveText('')
   const mainWindow = await app.browserWindow(page)
-  await mainWindow.evaluate((window) => window.minimize())
-  await expect.poll(() => mainWindow.evaluate((window) => window.isMinimized())).toBe(true)
-  chunk(session.held(), 'while main is minimized ')
-  await expect(child.getByText('Detached streaming proof: while main is minimized', { exact: false })).toBeVisible()
+  // Xvfb has no window manager to honor minimization. Keep native minimize coverage on
+  // macOS/Windows, and exercise an explicitly hidden source window on every platform.
+  if (process.platform !== 'linux') {
+    await mainWindow.evaluate((window) => window.minimize())
+    await expect.poll(() => mainWindow.evaluate((window) => window.isMinimized())).toBe(true)
+    chunk(session.held(), 'while main is minimized ')
+    await expect(child.getByText('Detached streaming proof: while main is minimized', { exact: false })).toBeVisible()
+  }
+  await mainWindow.evaluate((window) => window.hide())
+  await expect.poll(() => mainWindow.evaluate((window) => window.isVisible())).toBe(false)
+  const nativeChild = await app.browserWindow(child)
+  await expect.poll(() => nativeChild.evaluate((window) => window.isVisible())).toBe(true)
+  chunk(session.held(), 'while main is hidden ')
+  await expect(child.getByText('while main is hidden', { exact: false })).toBeVisible()
   await expect(child.locator('button[title="Stop"]:visible')).toBeVisible()
 
   // Native close must request reattachment; destroying/closing the Page directly bypasses this handshake.
   const closed = child.waitForEvent('close')
-  const nativeChild = await app.browserWindow(child)
   await nativeChild.evaluate((window) => window.close())
   await closed
-  await mainWindow.evaluate((window) => {
-    window.restore()
-    window.focus()
-  })
+  await expect.poll(() => mainWindow.evaluate((window) => window.isVisible())).toBe(true)
+  await expect.poll(() => mainWindow.evaluate((window) => window.isMinimized())).toBe(false)
   await expect(editor(page)).toHaveText('unsent native-close draft')
   await expect(page.getByText('1 queued', { exact: true })).toBeVisible()
   finish(session.held())
