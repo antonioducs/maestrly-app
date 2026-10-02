@@ -89,17 +89,8 @@ export function EnvironmentSettings({
       setPending(() => proceed)
       setSaveFailed(false)
     }
-    const closing = (event: BeforeUnloadEvent) => {
-      if (!draft.current?.dirty) return
-      event.preventDefault()
-      event.returnValue = ''
-    }
     window.addEventListener(MAIN_NAVIGATION_EVENT, leaving)
-    window.addEventListener('beforeunload', closing)
-    return () => {
-      window.removeEventListener(MAIN_NAVIGATION_EVENT, leaving)
-      window.removeEventListener('beforeunload', closing)
-    }
+    return () => window.removeEventListener(MAIN_NAVIGATION_EVENT, leaving)
   }, [])
   useEffect(() => {
     const key = (event: globalThis.KeyboardEvent) => {

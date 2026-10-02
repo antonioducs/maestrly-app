@@ -84,6 +84,12 @@ async function launch(pair = true) {
     )
     await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
   }
+  if (!pair) {
+    // Without an OS keyring (Linux CI) the pairing token lives in memory only, so a relaunch must pair again.
+    const connection = await page.evaluate(() => window.api.fleetGetConnection())
+    if (connection.tokenPersistence === 'memory')
+      await page.evaluate((url) => window.api.fleetConnect({ url, code: 'ABCD-EFGH' }), gateway.url)
+  }
   await page.getByRole('tab', { name: /^Bots/ }).click()
   await openEnvironment()
 }
@@ -357,6 +363,17 @@ test('runtime actions poll and cancel remotely; preferences survive relaunch and
   await section('preferences')
   await expect(panel().getByRole('switch', { name: 'Geração de imagens', exact: true })).not.toBeChecked()
   await expect(panel().getByRole('switch', { name: 'Ferramentas de aplicativos', exact: true })).toBeDisabled()
+})
+
+test('closing the app with an unsaved draft is never blocked', async () => {
+  await section('preferences')
+  await panel().getByRole('switch', { name: 'Geração de imagens', exact: true }).click()
+  await expect(panel().getByRole('button', { name: 'Salvar alterações', exact: true }).first()).toBeEnabled()
+  // A beforeunload guard would cancel the window close silently, so quitting would hang.
+  await Promise.race([
+    app.close(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('The app did not close with a draft')), 20_000)),
+  ])
 })
 
 test('switching environments drops delayed responses and old images cannot write settings', async () => {
