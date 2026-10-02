@@ -1,5 +1,8 @@
 import {
   FLEET_GATEWAY_ROUTES,
+  FLEET_FILE_LIMITS,
+  fleetFileIdSchema,
+  type FleetFileRef,
   FLEET_PROTOCOL_VERSION,
   FLEET_IMAGE_LIMITS,
   buildPath,
@@ -76,6 +79,82 @@ export class FleetApiClient {
     }
   }
 
+  async getFileMeta(botId: string, fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
+    fleetFileIdSchema.parse(fileId)
+    const ref = await this.call('botFileMeta', { params: { id: botId, fileId }, signal })
+    if (ref.id !== fileId) throw new FleetClientError('INTERNAL', 200, 'Invalid file metadata')
+    return ref
+  }
+
+  /** The caller must consume or cancel the response body. The signal covers the entire transfer. */
+  async openFile(
+    botId: string,
+    fileId: string,
+    signal?: AbortSignal
+  ): Promise<{ ref: FleetFileRef; response: Response }> {
+    const transferSignal = AbortSignal.any([AbortSignal.timeout(300_000), ...(signal ? [signal] : [])])
+    const ref = await this.getFileMeta(botId, fileId, transferSignal)
+    let response: Response | undefined
+    try {
+      response = await fetch(this.origin + buildPath(FLEET_GATEWAY_ROUTES.botFile.path, { id: botId, fileId }), {
+        headers: this.headers(),
+        redirect: 'error',
+        signal: transferSignal,
+      })
+      if (!response.ok) {
+        const parsed = fleetErrorEnvelopeSchema.safeParse(await response.json().catch(() => null))
+        throw new FleetClientError(
+          parsed.success ? parsed.data.code : response.status === 401 ? 'UNAUTHORIZED' : 'INTERNAL',
+          response.status,
+          parsed.success ? parsed.data.message : 'File unavailable'
+        )
+      }
+      const length = response.headers.get('content-length')
+      if (
+        response.status !== 200 ||
+        !response.body ||
+        length === null ||
+        !/^\d+$/.test(length) ||
+        Number(length) !== ref.byteSize ||
+        ref.byteSize > FLEET_FILE_LIMITS.downloadMaxBytes ||
+        response.headers.get('content-type') !== ref.mediaType ||
+        !/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(ref.mediaType) ||
+        (response.headers.has('content-encoding') && response.headers.get('content-encoding') !== 'identity')
+      )
+        throw new FleetClientError('INTERNAL', response.status, 'Invalid file response')
+      const reader = response.body.getReader()
+      let size = 0
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            transferSignal.throwIfAborted()
+            const next = await reader.read()
+            if (next.done) {
+              if (size !== ref.byteSize) throw new Error('Incomplete file')
+              controller.close()
+              reader.releaseLock()
+              return
+            }
+            size += next.value.byteLength
+            if (size > ref.byteSize) throw new Error('File too large')
+            controller.enqueue(next.value)
+          } catch (error) {
+            await reader.cancel().catch(() => undefined)
+            controller.error(error)
+          }
+        },
+        async cancel(reason) {
+          await reader.cancel(reason)
+        },
+      })
+      return { ref, response: new Response(body, { headers: response.headers }) }
+    } catch (error) {
+      if (response && !response.bodyUsed) await response.body?.cancel().catch(() => undefined)
+      if (error instanceof FleetClientError) throw error
+      throw new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'File download failed')
+    }
+  }
+
   async getImage(botId: string, imageId: string): Promise<{ mediaType: string; data: Uint8Array }> {
     let response: Response
     try {
@@ -137,6 +216,7 @@ export class FleetApiClient {
       params?: Record<string, string | number>
       query?: Record<string, string | number | boolean | null | undefined>
       body?: unknown
+      signal?: AbortSignal
     } = {}
   ): Promise<RouteResponse<K>> {
     const route = FLEET_GATEWAY_ROUTES[key]
@@ -153,7 +233,10 @@ export class FleetApiClient {
         method: route.method,
         headers,
         body,
-        signal: AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000),
+        redirect: 'error',
+        signal: options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000)])
+          : AbortSignal.timeout(SLOW_ROUTES[key] ?? 15_000),
       })
     } catch (error) {
       throw new FleetClientError(

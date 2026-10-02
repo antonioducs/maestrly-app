@@ -454,6 +454,7 @@ const FLEET_STATUS: Record<Extract<FleetTranscriptItem, { kind: 'tool' }>['state
 const pinnedFleetItem = (item: FleetStepItem): boolean =>
   item.kind === 'tool' &&
   ((baseToolName(item.name) === 'todo_write' && !!item.todos) ||
+    !!item.files?.length ||
     ['artifact_create', 'artifact_update'].includes(baseToolName(item.name)))
 
 export type FleetActivitySegment =

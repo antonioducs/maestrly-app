@@ -5,6 +5,7 @@ import {
   FLEET_OWNER_MEMORY_LIMITS,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   FLEET_MESSAGE_TEXT_MAX,
   FLEET_PROTOCOL_VERSION,
   FLEET_QUEUE_PREVIEW_MAX,
@@ -53,6 +54,8 @@ import {
   fleetActivitySchema,
   fleetPendingInteractionSchema,
   fleetImageMediaTypeSchema,
+  fleetFileRefSchema,
+  fleetFileNameSchema,
   fleetUsageSchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
@@ -152,31 +155,50 @@ export function base64DecodedBytes(value: string): number {
   return Math.floor((value.length * 3) / 4) - padding
 }
 
-/** An image the owner attaches to a message, base64-encoded (the desktop composer's formats and limits). */
-export const fleetAttachmentInputSchema = z.object({
-  name: z.string().min(1).max(200),
-  mediaType: fleetImageMediaTypeSchema,
-  dataBase64: z
-    .string()
-    .min(4)
-    .max(Math.ceil(FLEET_IMAGE_LIMITS.attachmentMaxBytes / 3) * 4)
-    .regex(/^[A-Za-z0-9+/]+={0,2}$/),
-})
+/** Original attachment bytes. Older clients omit kind for images; text uses UTF-8 and text/plain. */
+export const fleetAttachmentInputSchema = z
+  .object({
+    name: fleetFileNameSchema,
+    kind: z.enum(['image', 'pdf', 'text']).default('image'),
+    mediaType: z.union([fleetImageMediaTypeSchema, z.literal('application/pdf'), z.literal('text/plain')]),
+    dataBase64: z
+      .string()
+      .max(Math.ceil(FLEET_FILE_LIMITS.pdfMaxBytes / 3) * 4)
+      // Repeated capture groups overflow the regexp stack on multi-megabyte documents.
+      .refine((value) => value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value), 'Invalid base64'),
+  })
+  .superRefine((value, ctx) => {
+    const bytes = base64DecodedBytes(value.dataBase64)
+    const max =
+      value.kind === 'pdf'
+        ? FLEET_FILE_LIMITS.pdfMaxBytes
+        : value.kind === 'text'
+          ? FLEET_FILE_LIMITS.textMaxBytes
+          : FLEET_IMAGE_LIMITS.attachmentMaxBytes
+    if (bytes > max || (bytes === 0 && value.kind !== 'text'))
+      ctx.addIssue({ code: 'custom', message: 'Invalid attachment size', path: ['dataBase64'] })
+    const validType =
+      value.kind === 'image'
+        ? fleetImageMediaTypeSchema.safeParse(value.mediaType).success
+        : value.mediaType === (value.kind === 'pdf' ? 'application/pdf' : 'text/plain')
+    if (!validType)
+      ctx.addIssue({ code: 'custom', message: 'Attachment kind does not match media type', path: ['mediaType'] })
+  })
 export type FleetAttachmentInput = z.infer<typeof fleetAttachmentInputSchema>
 
 const fleetAttachmentsSchema = z
   .array(fleetAttachmentInputSchema)
-  .max(FLEET_IMAGE_LIMITS.attachmentsMax)
+  .max(FLEET_FILE_LIMITS.attachmentsMax)
   .default([])
   .refine(
     (items) =>
       items.reduce((sum, item) => sum + base64DecodedBytes(item.dataBase64), 0) <=
-      FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes,
+      FLEET_FILE_LIMITS.attachmentsTotalMaxBytes,
     'attachments exceed the total size limit'
   )
   .refine(
-    (items) => items.every((item) => base64DecodedBytes(item.dataBase64) <= FLEET_IMAGE_LIMITS.attachmentMaxBytes),
-    'an attachment exceeds the per-image size limit'
+    (items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax,
+    'too many PDF attachments'
   )
 
 /** A message needs text or at least one image. */
@@ -1085,6 +1107,8 @@ export const FLEET_GATEWAY_ROUTES = {
   botTranscript: { method: 'GET', path: '/v1/bots/:id/transcript', body: null, response: fleetTranscriptPageSchema },
   // Binary: the image bytes with their Content-Type (a FleetImageRef id from the transcript).
   botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
+  botFileMeta: { method: 'GET', path: '/v1/bots/:id/files/:fileId', body: null, response: fleetFileRefSchema },
+  botFile: { method: 'GET', path: '/v1/bots/:id/files/:fileId/content', body: null, response: null },
   botMessageSend: {
     method: 'POST',
     path: '/v1/bots/:id/messages',
@@ -1349,6 +1373,8 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   // Binary: the image bytes with their Content-Type.
   botImage: { method: 'GET', path: '/v1/bots/:botId/images/:imageId', body: null, response: null },
+  botFileMeta: { method: 'GET', path: '/v1/bots/:botId/files/:fileId', body: null, response: fleetFileRefSchema },
+  botFile: { method: 'GET', path: '/v1/bots/:botId/files/:fileId/content', body: null, response: null },
   botInputSend: {
     method: 'POST',
     path: '/v1/bots/:botId/inputs',

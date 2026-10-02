@@ -163,6 +163,87 @@ afterEach(async () => {
 })
 
 describe('bot environment registry', () => {
+  it('publishes private file snapshots from the bot conversation and retains them across restart', async () => {
+    const { runtime, a, b, convA } = await twoBots()
+    const cwd = getConversation(convA)!.cwd
+    const original = Buffer.from([80, 75, 3, 4, 0, 255])
+    await writeFile(path.join(cwd, 'report.zip'), original)
+    const ref = await a.publishFile('report.zip')
+    await writeFile(path.join(cwd, 'report.zip'), 'changed source')
+    await expect(b.fileMeta(ref.id)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(a.publishFile('../outside')).rejects.toThrow()
+    const read = async (bot: typeof a) => {
+      const result = await bot.file(ref.id)
+      const chunks: Buffer[] = []
+      for await (const chunk of result.stream) chunks.push(Buffer.from(chunk))
+      return Buffer.concat(chunks)
+    }
+    expect(await read(a)).toEqual(original)
+    await runtime.dispose()
+    const restarted = environment()
+    await restarted.runtime.start()
+    const restored = restarted.runtime.bot('alpha')
+    expect(await restored.fileMeta(ref.id)).toEqual(ref)
+    expect(await read(restored)).toEqual(original)
+  })
+
+  it('retains an unreadable PDF without retrying it after restart or blocking later messages', async () => {
+    const setup = environment()
+    await setup.runtime.start()
+    const configured = profile('alpha', 'Alpha', {
+      compaction: {
+        providerId: model.providerId,
+        modelId: model.modelId,
+        reasoning: null,
+        fastMode: false,
+        intervalTokens: 100_000,
+      },
+    })
+    const start = vi
+      .spyOn(chatService, 'startExecutorChatTurn')
+      .mockRejectedValueOnce(new Error('pdf-unreadable'))
+      .mockImplementation(async (input) => {
+        input.slot?.release()
+        return {
+          executionId: input.conversationId,
+          conversationId: input.conversationId,
+          assistantMessageId: () => null,
+          cancel: () => {},
+          done: Promise.resolve({ status: 'success', assistantMessageId: null }),
+        } as never
+      })
+    await setup.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    const alpha = setup.runtime.bot('alpha')
+    const pdf = Buffer.from('%PDF-1.7\nunreadable')
+    const receipt = await alpha.input({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: '',
+      attachments: [
+        { kind: 'pdf', name: 'broken.pdf', mediaType: 'application/pdf', dataBase64: pdf.toString('base64') },
+      ],
+    })
+    await vi.waitFor(() => expect(alpha.queue.list()[0]?.attachmentError).toBe('pdf-unreadable'))
+    expect(start.mock.calls[0][0].attachments).toMatchObject([{ kind: 'pdf', bytes: pdf }])
+    await setup.runtime.dispose()
+    const restarted = environment()
+    await restarted.runtime.start()
+    await restarted.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    const restored = restarted.runtime.bot('alpha')
+    await restored.input({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: 'Continue with another task',
+      attachments: [],
+    })
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+    const transcript = await restored.transcript(null, 200)
+    expect(transcript.items.find((item) => item.id === receipt.itemId)).toMatchObject({
+      attachmentError: 'pdf-unreadable',
+      queued: true,
+    })
+    expect(restored.queue.list().find((item) => item.id === receipt.inputId)?.attachmentError).toBe('pdf-unreadable')
+  })
   it('waits for gateway membership before dispatching a restored queue and applies an offline pause first', async () => {
     const first = environment()
     await first.runtime.start()
@@ -293,6 +374,7 @@ describe('bot environment registry', () => {
       ],
     })
     expect(aggregate.capabilities).toEqual([
+      'files',
       'provisioning',
       'environments',
       'environment-compaction',
@@ -304,6 +386,7 @@ describe('bot environment registry', () => {
       ok: true,
       ready: true,
       capabilities: [
+        'files',
         'provisioning',
         'environments',
         'environment-compaction',
@@ -851,6 +934,7 @@ describe('bot environment registry', () => {
         protocol: 1,
         ready: true,
         capabilities: [
+          'files',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -862,6 +946,7 @@ describe('bot environment registry', () => {
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
         environmentId: 'env-one',
         capabilities: [
+          'files',
           'provisioning',
           'environments',
           'environment-compaction',
@@ -877,6 +962,7 @@ describe('bot environment registry', () => {
       expect(await (await request('GET', '/v1/bots/beta/status')).json()).toMatchObject({
         profile: { botId: 'beta', name: 'Beta' },
         capabilities: [
+          'files',
           'provisioning',
           'environments',
           'environment-compaction',

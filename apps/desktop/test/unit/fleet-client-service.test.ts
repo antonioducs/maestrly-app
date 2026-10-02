@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const state = vi.hoisted(() => ({
   settings: new Map<string, string>(),
@@ -10,7 +13,14 @@ const state = vi.hoisted(() => ({
     onEvent: (event: unknown) => void
   }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
+  download: vi.fn(),
+  reveal: vi.fn(),
 }))
+vi.mock('electron', async (original) => ({
+  ...(await original<typeof import('electron')>()),
+  shell: { showItemInFolder: state.reveal },
+}))
+vi.mock('../../src/main/fleet/client/downloads', () => ({ saveFleetFile: state.download }))
 vi.mock('../../src/main/store', () => ({
   getAppSetting: (key: string) => state.settings.get(key) ?? null,
   setAppSetting: (key: string, value: string) => {
@@ -70,6 +80,8 @@ function response(data: unknown): Response {
   })
 }
 beforeEach(() => {
+  state.download.mockReset()
+  state.reveal.mockReset()
   state.settings.clear()
   state.secure.clear()
   state.features = undefined
@@ -103,6 +115,80 @@ beforeEach(() => {
   )
 })
 describe('fleet client service', () => {
+  it('restores existing downloads across service restarts and isolates paired gateways', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'fleet-history-'))
+    try {
+      const firstPath = join(directory, 'report.pdf')
+      const secondPath = join(directory, 'report (1).pdf')
+      await writeFile(firstPath, 'first')
+      await writeFile(secondPath, 'second')
+      const service = new FleetClientService()
+      Object.assign(service, {
+        api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+        connection: { features: ['files'], deviceId: 'device-1' },
+      })
+      state.download.mockResolvedValueOnce(firstPath).mockResolvedValueOnce(secondPath)
+      const first = await service.downloadFile('bot', 'f-file')
+      const second = await service.downloadFile('bot', 'f-file')
+      expect(second).not.toBe(first)
+      await expect(service.revealDownload(firstPath)).rejects.toThrow('FLEET_LOCAL_DOWNLOAD_MISSING')
+      await expect(service.revealDownload('550e8400-e29b-41d4-a716-446655440000')).rejects.toThrow()
+      expect(state.reveal).not.toHaveBeenCalled()
+      service.stop()
+      const restarted = new FleetClientService()
+      Object.assign(restarted, { connection: { deviceId: 'device-1' } })
+      expect(await restarted.getDownload('bot', 'f-file')).toBe(second)
+      expect(await restarted.getDownload('other-bot', 'f-file')).toBeNull()
+      await restarted.revealDownload(first)
+      await restarted.revealDownload(second)
+      expect(state.reveal.mock.calls).toEqual([[firstPath], [secondPath]])
+      Object.assign(restarted, { connection: { deviceId: 'another-gateway-device' } })
+      expect(await restarted.getDownload('bot', 'f-file')).toBeNull()
+      Object.assign(restarted, { connection: { deviceId: 'device-1' } })
+      await rm(secondPath)
+      expect(await restarted.getDownload('bot', 'f-file')).toBe(first)
+      await rm(firstPath)
+      expect(await restarted.getDownload('bot', 'f-file')).toBeNull()
+      await expect(restarted.revealDownload(second)).rejects.toThrow('FLEET_LOCAL_DOWNLOAD_MISSING')
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+  it('cancels active file transfers when this connection is stopped', async () => {
+    const service = new FleetClientService()
+    Object.assign(service, {
+      api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    state.download.mockImplementation(
+      (_api, _botId, _fileId, { signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    )
+    const saving = service.downloadFile('bot', 'f-file')
+    await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
+    service.stop()
+    await expect(saving).rejects.toThrow()
+    expect(state.download.mock.calls[0][3].signal.aborted).toBe(true)
+  })
+
+  it('never starts saving a file if the connection changed during metadata checks', async () => {
+    const service = new FleetClientService()
+    let finish!: (value: { capabilities: string[] }) => void
+    Object.assign(service, {
+      api: {
+        call: () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      },
+      connection: { features: ['files'], deviceId: 'device-1' },
+    })
+    const saving = service.downloadFile('bot', 'f-file')
+    service.stop()
+    finish({ capabilities: ['files'] })
+    await expect(saving).rejects.toThrow()
+    expect(state.download).not.toHaveBeenCalled()
+  })
   it('refreshes advertised features on connect and every reconnect, defaulting absent metadata to empty', async () => {
     state.features = ['provisioning']
     const service = new FleetClientService()

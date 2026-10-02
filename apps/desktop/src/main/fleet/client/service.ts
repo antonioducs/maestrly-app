@@ -1,9 +1,11 @@
 import type { ArtifactHostEvent } from '@maestrly/artifact-host'
 import { disposeBotLogins } from './provisioning/logins'
 import os from 'node:os'
+import { shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_FILES_FEATURE,
   FLEET_PROTOCOL_VERSION,
   isAllowedFleetUrl,
   normalizePairingCode,
@@ -26,6 +28,8 @@ import {
   type TokenPersistence,
 } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
+import { saveFleetFile } from './downloads'
+import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
 
 export type FleetConnectionView = {
   features: string[]
@@ -61,6 +65,7 @@ export class FleetClientService {
   }
   private snapshot: FleetSnapshot = emptySnapshot()
   private generation = 0
+  private downloads = new AbortController()
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
@@ -83,6 +88,8 @@ export class FleetClientService {
   }
 
   stop(): void {
+    this.downloads.abort()
+    this.downloads = new AbortController()
     void disposeBotLogins()
     this.generation++
     this.events?.stop()
@@ -91,6 +98,10 @@ export class FleetClientService {
   }
 
   private setConnection(patch: Partial<FleetConnectionView>): void {
+    if (patch.state === 'unauthorized' || patch.state === 'incompatible') {
+      this.downloads.abort()
+      this.downloads = new AbortController()
+    }
     this.connection = { ...this.connection, ...patch }
     broadcast('fleet:connection', this.connection)
     if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
@@ -113,6 +124,28 @@ export class FleetClientService {
   }
   getImage(botId: string, imageId: string) {
     return this.requireApi().getImage(botId, imageId)
+  }
+
+  async downloadFile(botId: string, fileId: string): Promise<string> {
+    const api = this.requireApi()
+    const deviceId = this.connection.deviceId
+    if (!deviceId) throw new Error('Fleet is not paired')
+    const signal = this.downloads.signal
+    if (!this.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    const bot = await api.call('botGet', { params: { id: botId }, signal })
+    signal.throwIfAborted()
+    if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+    const destination = await saveFleetFile(api, botId, fileId, { signal })
+    return rememberFleetDownload(deviceId, botId, fileId, destination)
+  }
+
+  getDownload(botId: string, fileId: string): Promise<string | null> {
+    const deviceId = this.connection.deviceId
+    return deviceId ? findFleetDownload(deviceId, botId, fileId) : Promise.resolve(null)
+  }
+
+  async revealDownload(receipt: string): Promise<void> {
+    shell.showItemInFolder(await fleetDownloadPath(receipt))
   }
 
   private useCredentials(url: string, token: string, tokenPersistence: TokenPersistence): void {

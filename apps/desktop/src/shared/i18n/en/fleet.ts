@@ -1,4 +1,18 @@
 export default {
+  files: {
+    download: 'Download',
+    downloadName: 'Download {{name}}',
+    downloading: 'Downloading…',
+    saved: 'Saved to Downloads.',
+    showInFolder: 'Show in folder',
+    revealFailed: 'Could not show the file. Open your Downloads folder to find it.',
+    unavailable: 'This file is no longer available.',
+    failed: 'Could not download the file. Check the bot connection and try again.',
+    updateRequired: 'Update the bot server and restart this environment to send documents and download files.',
+    invalidAttachment: 'The attachment could not be read. Remove it and send a valid file.',
+    unreadablePdf: 'This PDF could not be read. It may be damaged or password-protected. Send another copy.',
+    notSent: 'Not sent',
+  },
   provisioning: {
     picker: {
       tabs: 'What to bring',
@@ -572,10 +586,13 @@ export default {
     measured: 'Measured',
     estimated: 'Estimated',
     attachmentError: {
-      type: 'Choose a PNG, JPEG, WebP, or GIF image.',
-      size: 'Each image must be 5 MiB or smaller.',
-      count: 'You can attach up to 8 images.',
+      type: 'Choose an image, PDF, or text/code file.',
+      size: 'Images must be at most 5 MiB, PDFs 10 MiB, and text/code files 256 KiB.',
+      count: 'You can attach up to 8 files.',
       total: 'Attachments must total 20 MiB or less.',
+      pdfCount: 'You can attach up to 4 PDFs per message.',
+      unsupported: 'Update the bot server and restart this environment to send PDF and text files.',
+      invalid: 'This file does not contain a valid image, PDF, or UTF-8 text.',
     },
     placeholder: 'Message {{name}}…',
     manageMcp: "Manage MCP servers on the bot's screen",

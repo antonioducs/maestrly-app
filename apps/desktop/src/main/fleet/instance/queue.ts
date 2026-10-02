@@ -2,15 +2,18 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
-  FLEET_IMAGE_LIMITS,
+  FLEET_FILE_LIMITS,
   fleetInstanceInputSchema,
+  fleetImageMediaTypeSchema,
   type FleetInstanceInput,
   type FleetInputReceipt,
   type FleetImageRef,
+  type FleetFileRef,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 import type { ChatAttachmentInput } from '../../../shared/chat'
-import { imageMediaType } from './images'
+import { attachmentText, validateAttachmentBytes } from './incoming-attachments'
+import { openScopedFile } from './files'
 import type { TranscriptInputs } from './transcript'
 
 type StoredInput = Omit<FleetInstanceInput, 'attachments'>
@@ -36,9 +39,10 @@ const storedInputSchema = z.object({
   peer: z.object({ botId: z.string(), name: z.string() }).optional(),
 })
 const attachmentSchema = z.object({
-  id: z.string().regex(/^q-[a-f0-9-]{36}-[0-7]$/),
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  byteSize: z.number().int().positive().max(FLEET_IMAGE_LIMITS.attachmentMaxBytes),
+  id: z.string().regex(/^q-(?:file-)?[a-f0-9-]{36}-[0-7]$/),
+  kind: z.enum(['image', 'pdf', 'text']).default('image'),
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf', 'text/plain']),
+  byteSize: z.number().int().nonnegative().max(FLEET_FILE_LIMITS.pdfMaxBytes),
   name: z.string(),
 })
 
@@ -50,6 +54,7 @@ export interface QueuedInput {
   itemId: string
   started: boolean
   nativeMessageId?: string
+  attachmentError?: 'invalid-attachment' | 'pdf-unreadable'
 }
 const recordSchema = z.object({
   id: z.string().uuid(),
@@ -59,6 +64,7 @@ const recordSchema = z.object({
   itemId: z.string(),
   started: z.boolean(),
   nativeMessageId: z.string().optional(),
+  attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
 })
 const stateSchema = z.object({ items: z.array(recordSchema) })
 
@@ -110,7 +116,7 @@ export async function appendSettledLog(file: string, values: readonly unknown[])
 const settledInput = (item: QueuedInput) => item.started && !!item.nativeMessageId
 
 /**
- * A bot's durable input queue. Owner images wait as files in `attachmentRoot/<inputId>/`, a folder only this queue
+ * A bot's durable input queue. Owner attachments wait as files in `attachmentRoot/<inputId>/`, a folder only this queue
  * uses: its sweep removes every input folder there that no queued input owns.
  *
  * Inputs that settled (started, their native message known) move from the queue file to its settled log, so that the
@@ -143,12 +149,25 @@ export class InstanceInputQueue {
     return path.join(this.attachmentRoot, id)
   }
   private attachmentFile(id: string, index: number, mediaType: string): string {
-    const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }[mediaType]
-    if (!ext || !/^[a-f0-9-]{36}$/.test(id) || index < 0 || index > 7) throw new Error('Invalid queued image reference')
+    const ext = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/webp': 'webp',
+      'image/gif': 'gif',
+      'application/pdf': 'pdf',
+      'text/plain': 'txt',
+    }[mediaType]
+    if (!ext || !/^[a-f0-9-]{36}$/.test(id) || index < 0 || index > 7)
+      throw new Error('Invalid queued attachment reference')
     return path.join(this.attachmentDir(id), index + '.' + ext)
   }
   refs(item: QueuedInput): FleetImageRef[] {
-    return item.attachments.map((entry) => ({ ...entry }))
+    return item.attachments.flatMap((entry) => {
+      const mediaType = fleetImageMediaTypeSchema.safeParse(entry.mediaType)
+      return entry.kind === 'image' && mediaType.success
+        ? [{ id: entry.id, name: entry.name, mediaType: mediaType.data, byteSize: entry.byteSize }]
+        : []
+    })
   }
   private async readAttachment(
     item: QueuedInput,
@@ -156,25 +175,45 @@ export class InstanceInputQueue {
     index: number
   ): Promise<Buffer> {
     const file = this.attachmentFile(item.id, index, entry.mediaType)
-    const stat = await fs.lstat(file)
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== entry.byteSize)
-      throw new Error('Queued image is invalid')
-    const bytes = await fs.readFile(file)
-    if (bytes.length !== entry.byteSize || imageMediaType(bytes) !== entry.mediaType)
-      throw new Error('Queued image is invalid')
-    return bytes
+    for (const directory of [this.attachmentRoot, this.attachmentDir(item.id)]) {
+      const stat = await fs.lstat(directory)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Invalid attachment directory')
+    }
+    const root = await fs.realpath(this.attachmentRoot)
+    const handle = await openScopedFile(root, path.resolve(root, path.relative(this.attachmentRoot, file)))
+    try {
+      if ((await handle.stat()).size !== entry.byteSize) throw new Error('Queued attachment is invalid')
+      const buffer = Buffer.alloc(entry.byteSize + 1)
+      let length = 0
+      while (length < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null)
+        if (!bytesRead) break
+        length += bytesRead
+      }
+      if (length !== entry.byteSize) throw new Error('Queued attachment is invalid')
+      const bytes = buffer.subarray(0, length)
+      validateAttachmentBytes(entry, bytes)
+      return bytes
+    } finally {
+      await handle.close()
+    }
   }
   async readAttachments(item: QueuedInput): Promise<ChatAttachmentInput[]> {
     return Promise.all(
       item.attachments.map(async (entry, index) => {
         const bytes = await this.readAttachment(item, entry, index)
-        return { name: entry.name, mediaType: entry.mediaType, kind: 'image' as const, bytes }
+        return {
+          name: entry.name,
+          mediaType: entry.mediaType,
+          kind: entry.kind,
+          ...(entry.kind === 'text' ? { data: attachmentText(bytes) } : { bytes }),
+        }
       })
     )
   }
   async readImage(imageId: string): Promise<{ mediaType: string; bytes: Uint8Array } | null> {
     for (const item of this.list()) {
-      const index = item.attachments.findIndex((entry) => entry.id === imageId)
+      const index = item.attachments.findIndex((entry) => entry.kind === 'image' && entry.id === imageId)
       if (index < 0) continue
       try {
         const entry = item.attachments[index]
@@ -185,6 +224,29 @@ export class InstanceInputQueue {
       }
     }
     return null
+  }
+  fileRefs(item: QueuedInput): FleetFileRef[] {
+    return item.attachments
+      .filter((entry) => entry.kind !== 'image')
+      .map(({ id, name, mediaType, byteSize }) => ({ id, name, mediaType, byteSize }))
+  }
+  async readFile(fileId: string): Promise<{ ref: FleetFileRef; bytes: Uint8Array } | null> {
+    for (const item of this.list()) {
+      const index = item.attachments.findIndex((entry) => entry.kind !== 'image' && entry.id === fileId)
+      if (index < 0) continue
+      try {
+        return {
+          ref: this.fileRefs(item).find((entry) => entry.id === fileId)!,
+          bytes: await this.readAttachment(item, item.attachments[index], index),
+        }
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+  async fileMeta(fileId: string): Promise<FleetFileRef | null> {
+    return (await this.readFile(fileId))?.ref ?? null
   }
   async cleanup(id: string): Promise<void> {
     await fs.rm(this.attachmentDir(id), { recursive: true, force: true })
@@ -300,7 +362,9 @@ export class InstanceInputQueue {
   }
 
   async enqueue(
-    raw: Omit<FleetInstanceInput, 'attachments'> & { attachments?: FleetInstanceInput['attachments'] }
+    raw: Omit<FleetInstanceInput, 'attachments'> & {
+      attachments?: z.input<typeof fleetInstanceInputSchema>['attachments']
+    }
   ): Promise<FleetInputReceipt> {
     const input = fleetInstanceInputSchema.parse(raw)
     if (input.source === 'routine' && !input.routine) throw new Error('Routine source requires routine metadata.')
@@ -314,7 +378,7 @@ export class InstanceInputQueue {
     try {
       for (const [index, attachment] of input.attachments.entries()) {
         const bytes = Buffer.from(attachment.dataBase64, 'base64')
-        if (imageMediaType(bytes) !== attachment.mediaType) throw new Error('Attachment bytes do not match media type')
+        validateAttachmentBytes(attachment, bytes)
         const destination = this.attachmentFile(id, index, attachment.mediaType)
         await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
         const temporary = destination + '.' + randomUUID() + '.tmp'
@@ -325,7 +389,8 @@ export class InstanceInputQueue {
           await fs.rm(temporary, { force: true }).catch(() => undefined)
         }
         attachments.push({
-          id: `q-${id}-${index}`,
+          id: `q-${attachment.kind === 'image' ? '' : 'file-'}${id}-${index}`,
+          kind: attachment.kind,
           name: attachment.name,
           mediaType: attachment.mediaType,
           byteSize: bytes.length,
@@ -384,6 +449,17 @@ export class InstanceInputQueue {
       const item = items.find((candidate) => candidate.id === id)
       if (!item) throw new Error('Input not found')
       item.started = true
+      return { result: undefined, changed: true }
+    })
+  }
+
+  /** Keep rejected documents available to download/remove, without retrying permanent admission failures. */
+  async failAttachment(id: string, error: NonNullable<QueuedInput['attachmentError']>): Promise<void> {
+    await this.update((items) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item || item.nativeMessageId) return { result: undefined, changed: false }
+      item.started = false
+      item.attachmentError = error
       return { result: undefined, changed: true }
     })
   }

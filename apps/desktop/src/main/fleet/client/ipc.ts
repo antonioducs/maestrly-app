@@ -1,9 +1,11 @@
 import { app } from 'electron'
+import { validateAttachmentBytes } from '../instance/incoming-attachments'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
   fleetBotIdSchema,
+  fleetFileIdSchema,
   fleetEnvironmentIdSchema,
   fleetPatchEnvironmentRequestSchema,
   fleetEnvironmentUpdateRequestSchema,
@@ -20,8 +22,8 @@ import {
   fleetTakeoverReleaseRequestSchema,
   fleetUiOpenRequestSchema,
   fleetSendMessageRequestSchema,
-  fleetImageMediaTypeSchema,
-  FLEET_IMAGE_LIMITS,
+  FLEET_FILES_FEATURE,
+  FLEET_FILE_LIMITS,
   FLEET_REASONING_QUERY,
   fleetAddApiKeyAccountRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
@@ -46,18 +48,18 @@ const outgoingAttachments = z
   .array(
     z
       .object({
+        kind: z.enum(['image', 'pdf', 'text']).default('image'),
         name: z.string().min(1).max(200),
-        mediaType: fleetImageMediaTypeSchema,
-        data: z
-          .instanceof(Uint8Array)
-          .refine((data) => data.byteLength > 0 && data.byteLength <= FLEET_IMAGE_LIMITS.attachmentMaxBytes),
+        mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf', 'text/plain']),
+        data: z.instanceof(Uint8Array).refine((data) => data.byteLength <= FLEET_FILE_LIMITS.pdfMaxBytes),
       })
       .strict()
   )
-  .max(FLEET_IMAGE_LIMITS.attachmentsMax)
+  .max(FLEET_FILE_LIMITS.attachmentsMax)
   .refine(
-    (items) => items.reduce((sum, item) => sum + item.data.byteLength, 0) <= FLEET_IMAGE_LIMITS.attachmentsTotalMaxBytes
+    (items) => items.reduce((sum, item) => sum + item.data.byteLength, 0) <= FLEET_FILE_LIMITS.attachmentsTotalMaxBytes
   )
+  .refine((items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax)
 const imageId = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
 const connectInput = z
   .object({
@@ -206,17 +208,44 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     })
   )
   reg.mhandle('fleet:sendMessage', (_event, botId: unknown, text: unknown, attachments: unknown = []) => {
+    const admitted = outgoingAttachments.parse(attachments)
+    try {
+      for (const attachment of admitted) validateAttachmentBytes(attachment, attachment.data)
+    } catch {
+      throw new Error('FLEET_ATTACHMENT_INVALID')
+    }
     const input = fleetSendMessageRequestSchema.parse({
       text: z.string().max(16_000).parse(text),
-      attachments: outgoingAttachments.parse(attachments).map((item) => ({
+      attachments: admitted.map((item) => ({
+        kind: item.kind,
         name: item.name,
         mediaType: item.mediaType,
         dataBase64: Buffer.from(item.data).toString('base64'),
       })),
       idempotencyKey: fleet.idempotencyKey(),
     })
+    if (input.attachments.some((attachment) => attachment.kind !== 'image')) {
+      if (!fleet.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+      return fleet.call('botGet', { params: { id: id.parse(botId) } }).then((bot) => {
+        if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
+        return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
+      })
+    }
     return fleet.call('botMessageSend', { params: { id: id.parse(botId) }, body: input })
   })
+  reg.mhandle('fleet:downloadFile', (_event, botId: unknown, fileId: unknown) =>
+    fleet.downloadFile(id.parse(botId), fleetFileIdSchema.parse(fileId)).catch((error: unknown) => {
+      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND'))
+        throw new Error('FLEET_FILE_NOT_FOUND')
+      throw error
+    })
+  )
+  reg.handle('fleet:getDownload', (_event, botId: unknown, fileId: unknown) =>
+    fleet.getDownload(id.parse(botId), fleetFileIdSchema.parse(fileId))
+  )
+  reg.mhandle('fleet:revealDownload', (_event, receipt: unknown) =>
+    fleet.revealDownload(z.string().uuid().parse(receipt))
+  )
   reg.handle('fleet:getImage', (_event, botId: unknown, rawImageId: unknown) =>
     fleet.getImage(id.parse(botId), imageId.parse(rawImageId)).catch((error: unknown) => {
       // IPC keeps only the message: mark a truly missing image so the UI can tell it from a failed load.

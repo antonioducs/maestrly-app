@@ -289,6 +289,21 @@ describe('timeline rows and summary', () => {
 })
 
 describe('bot transcript segments', () => {
+  it('keeps downloadable files visible outside collapsed bot activity', () => {
+    const file = { id: 'f-report', name: 'report.pdf', mediaType: 'application/pdf', byteSize: 10 }
+    const published = botTool('m1:1', 'bot_share_file', { files: [file] })
+    const segments = fleetActivitySegments(
+      [user('input:1'), botTool('m1:0', 'bash'), published, assistant('m1:2', 'Ready.')],
+      { working: false }
+    )
+    expect(segments.some((segment) => segment.kind === 'item' && segment.item === published)).toBe(true)
+    expect(
+      segments
+        .filter((segment) => segment.kind === 'activity')
+        .flatMap((segment) => segment.steps)
+        .some((step) => step.source === published)
+    ).toBe(false)
+  })
   const at = '2026-09-29T10:00:00.000Z'
   const assistant = (id: string, value: string): FleetTranscriptItem => ({
     kind: 'assistant',

@@ -12,12 +12,14 @@ import {
   type FleetTranscriptPage,
   type FleetQuestion,
   type FleetImageRef,
+  type FleetFileRef,
   type FleetTodo,
 } from '@maestrly/bot-fleet-protocol'
 import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
 import type { PermissionRequest } from '../../chat/permission'
 import { appendSettledLog, promptForInput, readSettledLog, settledLog, type QueuedInput } from './queue'
 import { imageId } from './images'
+import { publishedFileRefs } from './attachment-files'
 import { fleetImageMediaTypeSchema } from '@maestrly/bot-fleet-protocol'
 
 const at = (time: number): string => new Date(time).toISOString()
@@ -137,6 +139,7 @@ function toolItem(
         routineTitle = short(result.title, 80)
     } catch {}
   }
+  const files = status === 'completed' ? publishedFileRefs(part.toolName, output ?? '') : undefined
   return {
     kind: 'tool',
     id: `${message.id}:${index}`,
@@ -152,6 +155,7 @@ function toolItem(
           : 'running',
     output: output ? short(output, FLEET_TOOL_OUTPUT_MAX) : null,
     images,
+    ...(files ? { files } : {}),
     ...(part.toolName === 'todo_write' ? { todos: fleetTodos(part.input) } : {}),
   }
 }
@@ -171,6 +175,32 @@ function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
       byteSize: entry.byteSize ?? null,
       name: entry.name,
     }))
+}
+function ownerFileRefs(message: ChatMessage): FleetFileRef[] {
+  return message.parts
+    .flatMap((entry): FleetFileRef[] => {
+      if (entry.type !== 'file') return []
+      if (entry.kind === 'pdf' && entry.artifactId && entry.byteSize !== undefined)
+        return [
+          {
+            id: imageId('a', message.id, entry.id),
+            name: entry.name,
+            mediaType: 'application/pdf',
+            byteSize: entry.byteSize,
+          },
+        ]
+      if (entry.kind === 'text')
+        return [
+          {
+            id: imageId('a', message.id, entry.id),
+            name: entry.name,
+            mediaType: 'text/plain',
+            byteSize: Buffer.byteLength(entry.data ?? '', 'utf8'),
+          },
+        ]
+      return []
+    })
+    .slice(0, 8)
 }
 /** The queued inputs a projection links native user messages to. */
 export interface TranscriptInputs {
@@ -257,7 +287,7 @@ export function projectMessages(
         })
       } else if (part.type === 'text') {
         if (message.role === 'user') {
-          if (!part.text && !linked) continue
+          if (!part.text && !linked && !ownerImageRefs(message).length && !ownerFileRefs(message).length) continue
           items.push({
             kind: 'user',
             id,
@@ -272,6 +302,7 @@ export function projectMessages(
               .slice(0, 10)
               .map((source) => ({ id: source.id, title: source.title })),
             images: ownerImageRefs(message),
+            files: ownerFileRefs(message),
           })
         } else if (message.role === 'assistant') {
           items.push({
@@ -329,7 +360,8 @@ export function projectMessages(
     }
     if (message.role === 'user' && !message.parts.some((part) => part.type === 'text')) {
       const images = ownerImageRefs(message)
-      if (images.length)
+      const files = ownerFileRefs(message)
+      if (images.length || files.length)
         items.push({
           kind: 'user',
           id: linked?.itemId ?? `${message.id}:0`,
@@ -344,6 +376,7 @@ export function projectMessages(
             .slice(0, 10)
             .map((source) => ({ id: source.id, title: source.title })),
           images,
+          files,
         })
     }
     for (const item of items) projected.push({ messageId: message.id, item })

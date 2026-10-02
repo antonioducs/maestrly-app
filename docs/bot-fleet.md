@@ -9,6 +9,57 @@ open while you view other bots or workspaces, including live messages and pendin
 questions. Closing it returns the conversation to the main app and preserves
 unsent text and attachments. See [separate chat windows](chat-context.md#separate-chat-windows).
 
+## Send and download files
+
+Drag files onto a bot's message composer or choose them with **+**. You can send
+attachments without typing a message. Supported inputs are PNG, JPEG, WebP and
+GIF images, PDFs, and UTF-8 text or source-code files (including Markdown, JSON,
+CSV and YAML). DOCX, XLSX and ZIP are not supported as incoming attachments.
+
+| Limit | Maximum |
+| --- | --- |
+| Image | 5 MiB |
+| PDF | 10 MiB; four PDFs per message |
+| Text or code file | 256 KiB |
+| One message | Eight files and 20 MiB total |
+
+PDFs use the same processing as desktop chats: supported models receive the
+document; other models receive text extracted in the bot's environment. Scanned
+PDFs without a text layer need a model that can read the document; automatic OCR
+is not included. An unreadable or password-protected PDF is marked **Not sent**.
+Its queued copy stays available to download or remove, and later messages can
+continue without repeatedly retrying the invalid document.
+
+Ask the bot to share a generated file. It uses `bot_share_file` with a file in
+its conversation directory, and a download card appears in the conversation.
+Published files can be any format, including PDF, ZIP, DOCX and XLSX, up to
+100 MiB each. Clicking **Download** saves to this computer's Downloads folder.
+Existing files are preserved with a numbered suffix, and files are never opened
+automatically. Download buttons also appear on document attachments you sent.
+After downloading, **Show in folder** reveals the saved copy in your file manager,
+including its numbered suffix when an older file already existed.
+The app remembers downloads across navigation and restarts. It checks that the
+saved copy still exists when the card appears or the window regains focus; a
+deleted or moved copy is no longer shown as saved. Downloads are tracked separately
+for each paired bot server.
+
+Transfers use the paired gateway connection: the same flow works with Docker on
+this computer and with the SSH tunnel to a VPS. No public link or artifact-hosting
+setting is required. The bot's environment must be running and reachable.
+Disconnecting this computer cancels its active transfers and removes incomplete
+downloads; click **Download** again after reconnecting.
+
+Published files are snapshots, so changing the source does not change an existing
+download. They survive environment restarts and updates in the bot's persistent
+data. Each bot can retain up to 200 published files and 1 GiB total; a publication
+that would exceed either limit is refused. Permanently deleting the bot or its
+environment removes these snapshots. Include the environment volume in backups.
+
+Documents and downloads require the desktop, gateway and running environment
+image to support files. If the app asks you to update, update the server and
+restart the environment onto the current image. Older versions can continue
+exchanging images and text messages.
+
 ## Set up the bot server
 
 Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
@@ -566,6 +617,9 @@ The memory writes listed above are explicit bot exemptions. Permanent deletion w
 `memory_forget` keeps the normal approval gate; it is not one of those exemptions.
 
 The ceiling is a maximum, not a request for broader permission. The bot cannot raise it; pending permission decisions stay with you even when you choose **Full access**. The ceiling and **Conversations with other bots** limit a bot's own tools and messages. They do not isolate it from other bots in its environment.
+
+Permission cards appear in the conversation while pending and disappear once
+approved, denied, or expired.
 
 ## Security and data
 

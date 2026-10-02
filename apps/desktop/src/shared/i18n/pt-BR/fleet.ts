@@ -1,4 +1,19 @@
 export default {
+  files: {
+    download: 'Baixar',
+    downloadName: 'Baixar {{name}}',
+    downloading: 'Baixando…',
+    saved: 'Salvo em Downloads.',
+    showInFolder: 'Mostrar na pasta',
+    revealFailed: 'Não foi possível mostrar o arquivo. Abra a pasta Downloads para encontrá-lo.',
+    unavailable: 'Este arquivo não está mais disponível.',
+    failed: 'Não foi possível baixar o arquivo. Verifique a conexão com o bot e tente novamente.',
+    updateRequired: 'Atualize o servidor de bots e reinicie este ambiente para enviar documentos e baixar arquivos.',
+    invalidAttachment: 'Não foi possível ler o anexo. Remova-o e envie um arquivo válido.',
+    unreadablePdf:
+      'Não foi possível ler este PDF. Ele pode estar danificado ou protegido por senha. Envie outra cópia.',
+    notSent: 'Não enviado',
+  },
   provisioning: {
     picker: {
       tabs: 'O que trazer',
@@ -574,10 +589,13 @@ export default {
     measured: 'medido',
     estimated: 'estimado',
     attachmentError: {
-      type: 'Escolha uma imagem PNG, JPEG, WebP ou GIF.',
-      size: 'Cada imagem deve ter no máximo 5 MiB.',
-      count: 'Você pode anexar até 8 imagens.',
+      type: 'Escolha uma imagem, PDF ou arquivo de texto/código.',
+      size: 'Imagens podem ter até 5 MiB, PDFs 10 MiB e arquivos de texto/código 256 KiB.',
+      count: 'Você pode anexar até 8 arquivos.',
       total: 'Os anexos devem somar no máximo 20 MiB.',
+      pdfCount: 'Você pode anexar até 4 PDFs por mensagem.',
+      unsupported: 'Atualize o servidor de bots e reinicie este ambiente para enviar PDFs e arquivos de texto.',
+      invalid: 'Este arquivo não contém uma imagem, PDF ou texto UTF-8 válido.',
     },
     placeholder: 'Mensagem para {{name}}…',
     manageMcp: 'Gerenciar servidores MCP na tela do bot',
