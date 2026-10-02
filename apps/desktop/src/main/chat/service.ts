@@ -1,6 +1,6 @@
 import { MEMORY_SETTINGS_KEY, parseMemorySettings, readMemorySettings } from '../memory/settings'
 import { scheduleMemoryExtraction } from '../memory/extraction/scheduler'
-import { prepareTurnMemory } from '../memory/turn-memory'
+import { isMemoryContextPart, prepareTurnMemory } from '../memory/turn-memory'
 import { conversationPermissionScope } from '../../shared/conversation-scope'
 import { resolveConversationExecutionContext } from '../conversation-context'
 import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
@@ -382,7 +382,7 @@ import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1 } from '../../shared/maestro'
 import { tFor } from '../i18n'
-import { getMainWebContents } from '../window-ipc'
+import { getMainWebContents, sendToConversation } from '../window-ipc'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
 import { registerMaestroIpc } from './maestro-ipc'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
@@ -2499,9 +2499,16 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
 
 /** Connects the broker to active conversations (asked → prompt + awaiting; resolved → dismiss + transition). */
 function wireBroker(b: PermissionBroker): void {
+  const companionRequests = new Set<string>()
   b.on('asked', (req: PermissionRequest) => {
     const run = active.get(req.conversationId)
-    if (!run) return
+    if (!run) {
+      if (chatGptWeb.sessionForConversation(req.conversationId)) {
+        companionRequests.add(req.id)
+        sendToConversation(req.conversationId, `chat:permission:${req.conversationId}`, toRequestPayload(req))
+      }
+      return
+    }
     run.send(`chat:permission:${req.conversationId}`, toRequestPayload(req))
     if (req.toolCallId) {
       const ev: ChatStreamEvent = {
@@ -2517,12 +2524,16 @@ function wireBroker(b: PermissionBroker): void {
     'resolved',
     (ev: { conversationId: string; toolCallId?: string; requestId: string; decision: 'allow' | 'deny' }) => {
       const run = active.get(ev.conversationId)
-      if (!run) return
+      const companionRequest = companionRequests.delete(ev.requestId)
       const resolved: ChatPermissionEvent = {
         kind: 'resolved',
         requestId: ev.requestId,
         toolCallId: ev.toolCallId,
         decision: ev.decision,
+      }
+      if (!run) {
+        if (companionRequest) sendToConversation(ev.conversationId, `chat:permission:${ev.conversationId}`, resolved)
+        return
       }
       run.send(`chat:permission:${ev.conversationId}`, resolved)
       if (ev.toolCallId && ev.decision === 'allow') {
@@ -4059,9 +4070,15 @@ async function startSend(
       const p = await readMentionPart(conv.cwd, m)
       if (p) parts.push(p)
     }
-    for (const p of hiddenParts) parts.push(p)
+    const companionPersonalMemory =
+      conv.scope === 'standalone' && isChatGptWebProvider(selection.providerId)
+        ? chatGptWeb.capabilitiesForConversation(conversationId).capabilities.personalMemory ?? 'off'
+        : null
+    for (const part of hiddenParts) {
+      if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
+    }
     const turnMemory =
-      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory
+      opts?.internal || internalLoop || opts?.dispatchSeed || opts?.skipMemory || companionPersonalMemory === 'off'
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -5582,7 +5599,9 @@ async function startSend(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         releaseCwdActivityOnce()
-        if (!isolated && !controller.signal.aborted) scheduleMemoryExtraction(conversationId)
+        if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
+          scheduleMemoryExtraction(conversationId)
+        }
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         const guard = maestroGuardContinuation
         if (guard) {
@@ -9764,8 +9783,25 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   if (!chatGptWebUnsubscribe) {
     chatGptWebUnsubscribe = chatGptWeb.onChatGptWebChange(broadcastChatGptWebStatus)
   }
-  // Bridge hooks: the only write is an explicit delivery to chat or the originating Plan tab.
+  // Bridge hooks bind explicit deliveries and personal-memory permission requests to the originating chat.
   chatGptWeb.setChatGptWebHooks({
+    authorizePersonalMemoryWrite: async (conversationId, toolName, signal) => {
+      const conversation = getConversation(conversationId)
+      if (conversation?.scope !== 'standalone' || conversation.botOrigin || isBotMode()) {
+        throw new Error('personal-memory-unavailable')
+      }
+      const mode = modeFor(conversationId)
+      if (mode !== 'agent' && mode !== 'design') throw new Error('personal-memory-mode-denied')
+      await getBroker().assert({
+        conversationId,
+        projectId: null,
+        permissionScope: conversationPermissionScope(conversation),
+        action: 'mcp',
+        resources: [toolName],
+        toolName,
+        signal,
+      })
+    },
     turnCompleted: (conversationId) => {
       if (!getConversation(conversationId)) return
       touchConversation(conversationId, Date.now())
@@ -9890,6 +9926,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       gh?: unknown
       conversation?: unknown
       memory?: unknown
+      personalMemory?: unknown
       browser?: unknown
       mcp?: unknown
     }
@@ -9905,6 +9942,12 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (value.memory !== 'off' && value.memory !== 'read') {
       throw new Error('invalid-capabilities')
     }
+    if (
+      value.personalMemory !== undefined && value.personalMemory !== 'off' &&
+      value.personalMemory !== 'read' && value.personalMemory !== 'write'
+    ) {
+      throw new Error('invalid-capabilities')
+    }
     if (!value.mcp || typeof value.mcp !== 'object' || Array.isArray(value.mcp)) {
       throw new Error('invalid-capabilities')
     }
@@ -9916,6 +9959,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       gh: value.gh,
       conversation: value.conversation,
       memory: value.memory,
+      personalMemory: value.personalMemory ?? 'off',
       browser: value.browser,
       mcp: value.mcp as Record<string, 'off' | 'read' | 'write'>,
     })

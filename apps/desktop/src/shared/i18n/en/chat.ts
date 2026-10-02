@@ -7,6 +7,26 @@ export default {
     openFailed: 'Could not open the artifact.',
   },
   mcp: { unavailable: 'Its connection details could not be read on this computer. Configure it again.' },
+  personalMemorySettings: {
+    dialogTitle: 'Personal memory settings',
+    enabledHint: 'Use personal memories across chats in this profile.',
+    loading: 'Loading memory settings…',
+    loadFailed: 'Could not load memory settings. Try again.',
+    retry: 'Retry',
+    cancel: 'Cancel',
+    close: 'Close',
+    saving: 'Saving…',
+    discardTitle: 'Discard changes?',
+    discardDescription: 'Your unsaved memory settings will be lost.',
+    keepEditing: 'Keep editing',
+    discard: 'Discard changes',
+
+    extractionHint: 'Automatic extraction may examine up to the most recent 96,000 characters of the active conversation on its first run. It does not scan old chats in bulk.',
+    title: 'Personal memory',
+    description: 'Private memories shared across your chats on this profile. Independent from project memory.',
+    manage: 'Manage personal memory',
+    enabled: 'Enable personal memory',
+  },
   memorySettings: {
     title: 'Memory',
     description: 'How agents use durable project memory.',
@@ -136,6 +156,9 @@ export default {
     splitClose: 'Dismiss split view',
   },
   chatGptWebAccess: {
+    personalMemoryTitle: 'Personal memory',
+    personalMemoryDescription: 'Allow this Companion to access personal memories shared by standalone chats in this local profile. Off shares no memory; Read allows recall only. This is independent of project memory.',
+    personalMemoryWriteDescription: 'Write also allows saving, archiving, restoring and deleting memories in Agent or Design mode, subject to local permissions. Deletion requires confirmation.',
     locked: 'This session keeps its current access. Open the ChatGPT tab to prepare changes and restart safely.',
     browserTitle: 'Browser / Visual review',
     browserDescription:

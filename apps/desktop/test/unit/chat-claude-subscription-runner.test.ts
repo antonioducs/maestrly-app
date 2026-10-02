@@ -24,7 +24,8 @@ const h = vi.hoisted(() => ({
 vi.mock('../../src/main/plan-broker', () => ({
   stagePlan: h.stagePlan,
 }))
-vi.mock('../../src/main/chat/mcp', () => ({
+vi.mock('../../src/main/chat/mcp', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/mcp')>()),
   buildMcpTools: h.buildMcpTools,
   buildAppTools: h.buildAppTools,
 }))

@@ -11,6 +11,26 @@ export default {
     openFailed: 'Não foi possível abrir o artefato.',
   },
   mcp: { unavailable: 'Não deu para ler os dados de conexão neste computador. Configure de novo.' },
+  personalMemorySettings: {
+    dialogTitle: 'Configurações da memória pessoal',
+    enabledHint: 'Use memórias pessoais nos chats deste perfil.',
+    loading: 'Carregando configurações da memória…',
+    loadFailed: 'Não foi possível carregar as configurações da memória. Tente novamente.',
+    retry: 'Tentar novamente',
+    cancel: 'Cancelar',
+    close: 'Fechar',
+    saving: 'Salvando…',
+    discardTitle: 'Descartar alterações?',
+    discardDescription: 'As configurações de memória não salvas serão perdidas.',
+    keepEditing: 'Continuar editando',
+    discard: 'Descartar alterações',
+
+    extractionHint: 'Na primeira execução, a extração automática pode examinar até os 96.000 caracteres mais recentes da conversa ativa. Ela não examina chats antigos em massa.',
+    title: 'Memória pessoal',
+    description: 'Memórias privadas compartilhadas entre seus chats neste perfil. Independente da memória dos projetos.',
+    manage: 'Gerenciar memória pessoal',
+    enabled: 'Ativar memória pessoal',
+  },
   memorySettings: {
     title: 'Memória',
     description: 'Como os agentes usam a memória durável do projeto.',
@@ -140,6 +160,9 @@ export default {
     splitClose: 'Dispensar visão dividida',
   },
   chatGptWebAccess: {
+    personalMemoryTitle: 'Memória pessoal',
+    personalMemoryDescription: 'Permita que este Companion acesse as memórias pessoais compartilhadas entre chats avulsos neste perfil local. Desativado não compartilha memórias; Leitura permite apenas consultar. Este acesso é independente da memória do projeto.',
+    personalMemoryWriteDescription: 'Escrita também permite salvar, arquivar, restaurar e excluir memórias nos modos Agente ou Design, conforme as permissões locais. A exclusão exige confirmação.',
     locked: 'Esta sessão mantém o acesso atual. Abra a aba ChatGPT para preparar mudanças e reiniciar com segurança.',
     browserTitle: 'Browser / Revisão visual',
     browserDescription:

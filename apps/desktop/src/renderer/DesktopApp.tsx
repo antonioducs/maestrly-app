@@ -1,3 +1,4 @@
+import { PersonalMemoryView } from '@/components/PersonalMemoryView'
 /** Local desktop shell. Keep live conversations mounted while project panels replace the main view.
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -208,7 +209,7 @@ export function DesktopApp() {
     },
     [projectSetup.requestProject]
   )
-  const nav = useMainPanels({ workspaces, setActive, refreshWorkspaces })
+  const nav = useMainPanels({ workspaces, standaloneConversations, setActive, refreshWorkspaces })
   const fleet = useFleet()
   const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
@@ -232,7 +233,7 @@ export function DesktopApp() {
   const {
     projectNotesWs,
     setProjectNotesWs,
-    projectMemoryWs,
+    memoryTarget,
     focusMemoryId,
     focusMemoryRequest,
     setProjectMemoryWs,
@@ -726,12 +727,20 @@ export function DesktopApp() {
                   onClose={() => setProjectNotesWs(null)}
                 />
               )}
-              {projectMemoryWs && (
-                <ProjectMemoryView
-                  workspaceId={projectMemoryWs}
+              {memoryTarget?.kind === 'personal' && (
+                <PersonalMemoryView
                   focusMemoryId={focusMemoryId}
                   focusMemoryRequest={focusMemoryRequest}
-                  workspaceName={workspaces.find((w) => w.id === projectMemoryWs)?.name ?? ''}
+                  onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
+                  onClose={() => setProjectMemoryWs(null)}
+                />
+              )}
+              {memoryTarget?.kind === 'workspace' && (
+                <ProjectMemoryView
+                  workspaceId={memoryTarget.workspaceId}
+                  focusMemoryId={focusMemoryId}
+                  focusMemoryRequest={focusMemoryRequest}
+                  workspaceName={workspaces.find((w) => w.id === memoryTarget.workspaceId)?.name ?? ''}
                   onShowSidebar={sidebarOpen ? undefined : () => setSidebarOpen(true)}
                   onClose={() => setProjectMemoryWs(null)}
                 />

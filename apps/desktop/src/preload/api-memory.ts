@@ -1,5 +1,8 @@
 import { ipcRenderer } from 'electron'
 import type {
+  LocalMemory,
+  LocalMemoryMutationResult,
+  PersonalMemorySettings,
   LocalMemoryCreateInput,
   LocalMemoryFilters,
   LocalMemoryUpdateInput,
@@ -9,7 +12,45 @@ import type {
   MemoryPromotionPreviewInput,
 } from '../shared/memory'
 
+export type PersonalMemoryCreateInput = Pick<
+  LocalMemoryCreateInput,
+  'title' | 'content' | 'type' | 'scope' | 'tags' | 'pinned' | 'importance'
+>
+export type PersonalMemoryUpdateInput = Partial<PersonalMemoryCreateInput> & Pick<LocalMemoryUpdateInput, 'status'>
+
+export type PersonalMemoryFilters = Pick<LocalMemoryFilters, 'limit' | 'offset' | 'query' | 'pinned'> & {
+  type?: LocalMemory['type']
+  status?: LocalMemory['status']
+}
+
 export const memoryApi = {
+  searchPersonalMemories: (query: string, filters?: Omit<PersonalMemoryFilters, 'query'>): Promise<LocalMemory[]> =>
+    ipcRenderer.invoke('personal-memory:search', query, filters),
+  getPersonalMemoryIndexStatus: (): Promise<MemoryIndexStatus> =>
+    ipcRenderer.invoke('personal-memory:index-status-get'),
+  rebuildPersonalMemoryIndex: (): Promise<void> => ipcRenderer.invoke('personal-memory:index-rebuild'),
+  onPersonalMemorySettingsChanged: (callback: (settings: PersonalMemorySettings) => void): (() => void) => {
+    const listener = (_event: unknown, settings: PersonalMemorySettings) => callback(settings)
+    ipcRenderer.on('personal-memory:settings-changed', listener)
+    return () => ipcRenderer.removeListener('personal-memory:settings-changed', listener)
+  },
+  listPersonalMemories: (filters?: PersonalMemoryFilters): Promise<LocalMemory[]> =>
+    ipcRenderer.invoke('personal-memory:list', filters),
+  getPersonalMemory: (id: string): Promise<LocalMemory | undefined> => ipcRenderer.invoke('personal-memory:get', id),
+  createPersonalMemory: (input: PersonalMemoryCreateInput): Promise<LocalMemoryMutationResult> =>
+    ipcRenderer.invoke('personal-memory:create', input),
+  updatePersonalMemory: (id: string, patch: PersonalMemoryUpdateInput): Promise<LocalMemoryMutationResult> =>
+    ipcRenderer.invoke('personal-memory:update', id, patch),
+  archivePersonalMemory: (id: string): Promise<unknown> => ipcRenderer.invoke('personal-memory:archive', id),
+  restorePersonalMemory: (id: string): Promise<unknown> => ipcRenderer.invoke('personal-memory:restore', id),
+  forgetPersonalMemory: (id: string, confirmed: boolean): Promise<unknown> =>
+    ipcRenderer.invoke('personal-memory:forget', id, confirmed),
+  exportPersonalMemories: (): Promise<{ json: string; markdown: string }> =>
+    ipcRenderer.invoke('personal-memory:export'),
+  getPersonalMemorySettings: (): Promise<PersonalMemorySettings> => ipcRenderer.invoke('personal-memory:settings-get'),
+  setPersonalMemorySettings: (settings: PersonalMemorySettings): Promise<void> =>
+    ipcRenderer.invoke('personal-memory:settings-set', settings),
+
   listMemories: (workspaceId: string, filters?: LocalMemoryFilters) =>
     ipcRenderer.invoke('memory:list', workspaceId, filters),
   getMemory: (workspaceId: string, id: string) => ipcRenderer.invoke('memory:get', workspaceId, id),

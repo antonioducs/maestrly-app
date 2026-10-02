@@ -443,7 +443,7 @@ export default {
     memory_upsert: {
       title: 'Remember durable information',
       description:
-        'Creates or updates one structured memory. Use only for explicitly durable information that can change a future decision; never store hypotheses, raw output, secrets, or temporary state.',
+        'Creates a structured memory when id is omitted, or updates an existing entry by id in the current memory space. Use only for explicitly durable information that can change a future decision; never store hypotheses, raw output, secrets, or temporary state.',
     },
     memory_archive: { title: 'Archive memory', description: 'Reversibly removes a local memory from future searches.' },
     memory_restore: { title: 'Restore memory', description: 'Restores an archived local memory to active status.' },

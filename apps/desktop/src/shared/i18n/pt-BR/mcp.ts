@@ -441,7 +441,7 @@ export default {
     memory_upsert: {
       title: 'Memorizar informação durável',
       description:
-        'Cria ou atualiza uma memória estruturada. Use apenas para informação explicitamente durável que possa mudar uma decisão futura; nunca guarde hipóteses, output bruto, segredos ou estado temporário.',
+        'Cria uma memória estruturada quando id é omitido, ou atualiza uma entrada existente pelo id no espaço de memória atual. Use apenas para informação explicitamente durável que possa mudar uma decisão futura; nunca guarde hipóteses, output bruto, segredos ou estado temporário.',
     },
     memory_archive: {
       title: 'Arquivar memória',

@@ -1,3 +1,4 @@
+import { getConversation } from '../../store'
 import { withCursorAccountRun } from './account-runs'
 import { cursorModelSelectionsEqual } from './manager'
 import { resolveCursorHarness } from '../harness/adapters/cursor'
@@ -11,7 +12,7 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { selectSubagentToolNames } from '../tools'
 import { CONVERSATION_DISPATCH_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
-import { MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
+import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
 import { createCursorStreamMapper, resolveCursorTerminalEvidence } from '../cursor-sdk/stream-map'
 import { estimateCursorPublishedCostUsd } from '../cursor-sdk/models'
 import { cursorSdkErrorMessage, redactCursorCredentials } from '../cursor-sdk/errors'
@@ -106,7 +107,7 @@ async function runCursorSubagentInScope(args: RunCursorSubagentArgs): Promise<{
     (args.harness ?? resolveCursorHarness(effective.modelId)).prompts.subagent ?? '',
     args.definition.prompt,
     `You are the delegated Maestrly subagent "${args.agentName}". Work only on the supplied task.`,
-    MEMORY_TOOL_GUIDANCE,
+    getConversation(args.conversationId)?.scope === 'standalone' ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',

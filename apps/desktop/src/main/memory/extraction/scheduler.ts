@@ -6,7 +6,9 @@ import { getCompactionSummarizer } from '../../chat/compaction-summarizer'
 import { getConversation } from '../../store'
 import { getExtractionState, saveExtractionState } from '../../store/memory-extraction-state'
 import { listLocalMemories } from '../local-memory-service'
-import { readMemorySettings } from '../settings'
+import { memorySettingsForSpace } from '../settings'
+import { onPersonalMemorySettingsChanged } from '../personal-memory-settings'
+import { extractionAllowed, extractionCommitGuard } from './guards'
 import { memorySpaceForConversation } from '../spaces'
 import { applyExtraction } from './apply'
 import { maybeConsolidate } from './consolidation'
@@ -19,6 +21,8 @@ export interface ExtractionDeps {
   oneShot: typeof runOneShotText
   now: () => number
   selection?: OneShotSelection | null
+  /** Host-derived authorization, checked again after every wait and at commit. */
+  authorized?: () => boolean
 }
 const defaultDeps: ExtractionDeps = { oneShot: runOneShotText, now: Date.now }
 
@@ -26,13 +30,24 @@ const defaultDeps: ExtractionDeps = { oneShot: runOneShotText, now: Date.now }
 export function resolveExtractionSelection(conversationId: string): OneShotSelection | null {
   const bot = getCompactionSummarizer(conversationId)
   if (bot) return bot()
-  const settings = readMemorySettings().extraction
+  const space = memorySpaceForConversation(conversationId)
+  if (!space || !extractionAllowed(space)) return null
+  const settings = memorySettingsForSpace(space).extraction
   return settings.enabled && settings.selection ? settings.selection : null
 }
 
-const pending = new Map<string, { timer: NodeJS.Timeout; firstAt: number; upToSeq: number }>()
+const pending = new Map<string, { personal: boolean; timer: NodeJS.Timeout; firstAt: number; upToSeq: number }>()
 /** The running extraction of each conversation; `settled` resolves when it has returned. */
-const running = new Map<string, { controller: AbortController; settled: Promise<void> }>()
+const running = new Map<string, { personal: boolean; controller: AbortController; settled: Promise<void> }>()
+
+onPersonalMemorySettingsChanged(() => {
+  for (const [id, entry] of pending)
+    if (entry.personal) {
+      clearTimeout(entry.timer)
+      pending.delete(id)
+    }
+  for (const [id, entry] of running) if (entry.personal) void cancelMemoryExtraction(id, 0)
+})
 
 export function scheduleMemoryExtraction(
   conversationId: string,
@@ -40,11 +55,15 @@ export function scheduleMemoryExtraction(
   deps: Partial<ExtractionDeps> & { run?: (id: string, upToSeq: number) => Promise<unknown> } = {}
 ): void {
   try {
+    const space = memorySpaceForConversation(conversationId)
     if (
-      !memorySpaceForConversation(conversationId) ||
+      deps.authorized?.() === false ||
+      !space ||
+      !extractionAllowed(space) ||
       !(deps.selection === undefined ? resolveExtractionSelection(conversationId) : deps.selection)
     )
       return
+    const allowed = extractionCommitGuard(space)
     const now = (deps.now ?? Date.now)()
     const current = pending.get(conversationId)
     if (current) clearTimeout(current.timer)
@@ -54,11 +73,15 @@ export function scheduleMemoryExtraction(
     const timer = setTimeout(() => {
       pending.delete(conversationId)
       void Promise.resolve()
-        .then(() => (deps.run ?? ((id, seq) => runMemoryExtraction(id, seq, deps)))(conversationId, target))
+        .then(() =>
+          allowed() && deps.authorized?.() !== false
+            ? (deps.run ?? ((id, seq) => runMemoryExtraction(id, seq, deps)))(conversationId, target)
+            : undefined
+        )
         .catch(() => console.warn('[memory-extraction] Scheduled run failed'))
     }, delay)
     timer.unref?.()
-    pending.set(conversationId, { timer, firstAt, upToSeq: target })
+    pending.set(conversationId, { personal: space.kind === 'personal', timer, firstAt, upToSeq: target })
   } catch {
     console.warn('[memory-extraction] Scheduling failed')
   }
@@ -101,9 +124,11 @@ export async function runMemoryExtraction(
   overrides: Partial<ExtractionDeps> = {}
 ): Promise<ExtractionOutcome> {
   if (running.has(conversationId)) return 'busy'
+  const space = memorySpaceForConversation(conversationId)
   const controller = new AbortController()
   let settle!: () => void
   const run = {
+    personal: space?.kind === 'personal',
     controller,
     settled: new Promise<void>((resolve) => {
       settle = resolve
@@ -113,12 +138,19 @@ export async function runMemoryExtraction(
   // Checked after every wait: once cancelled, the run writes nothing more.
   const signal = controller.signal
   const deps = { ...defaultDeps, ...overrides }
+  const commitAllowed = space ? extractionCommitGuard(space) : () => false
+  const authorized = () => {
+    try {
+      return commitAllowed() && deps.authorized?.() !== false
+    } catch {
+      return false
+    }
+  }
   try {
     const now = deps.now()
-    const space = memorySpaceForConversation(conversationId)
     const selection = deps.selection === undefined ? resolveExtractionSelection(conversationId) : deps.selection
     const conversation = getConversation(conversationId)
-    if (!space || !selection || !conversation) return 'idle'
+    if (!space || !selection || !conversation || !authorized()) return 'idle'
     const existing = getExtractionState(conversationId)
     const state = existing ?? {
       conversationId,
@@ -148,7 +180,10 @@ export async function runMemoryExtraction(
         })
         if (!page.length) break
         for (const row of page) {
-          const block = renderExtractionTranscript([row], { bot: space.kind === 'bot' })[0]
+          const block = renderExtractionTranscript([row], {
+            bot: space.kind === 'bot',
+            personal: space.kind === 'personal',
+          })[0]
           if (!block) continue
           if (chars && chars + block.text.length > EXTRACTION_LIMITS.initialLookbackChars) break lookback
           oldest = row.seq
@@ -158,7 +193,7 @@ export async function runMemoryExtraction(
         before = page[page.length - 1].seq - 1
       }
       state.lastSeq = oldest < 0 ? -1 : oldest - 1
-      saveExtractionState(state)
+      if (space.kind !== 'personal') saveExtractionState(state)
     }
     const blocks: ExtractionBlock[] = []
     let cursor = state.lastSeq
@@ -168,7 +203,10 @@ export async function runMemoryExtraction(
       if (!page.length) break
       for (const row of page) {
         cursor = row.seq
-        const block = renderExtractionTranscript([row], { bot: space.kind === 'bot' })[0]
+        const block = renderExtractionTranscript([row], {
+          bot: space.kind === 'bot',
+          personal: space.kind === 'personal',
+        })[0]
         if (!block) continue
         blocks.push(block)
         chars += block.text.length
@@ -181,7 +219,9 @@ export async function runMemoryExtraction(
     let attempts = state.attempts
     try {
       for (const chunk of chunkExtractionBlocks(blocks, EXTRACTION_LIMITS.chunkChars, EXTRACTION_LIMITS.maxChunks)) {
-        const catalog = listLocalMemories(space.id, { status: 'active', limit: 300 })
+        const snapshotMemories = listLocalMemories(space.id, { status: 'active', limit: 300 })
+        const snapshots = new Map(snapshotMemories.map((memory) => [memory.id, memory]))
+        const catalog = snapshotMemories
           .map(
             (memory) =>
               `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content.replace(/\s+/g, ' ').slice(0, 160)}`
@@ -192,7 +232,7 @@ export async function runMemoryExtraction(
         const ownerEntries = chunkOwner
           ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
           : null
-        if (signal.aborted) return 'cancelled'
+        if (signal.aborted || !authorized()) return 'cancelled'
         const last = chunk[chunk.length - 1]
         let output = null
         for (let retry = 0; retry < 2; retry++) {
@@ -216,7 +256,7 @@ export async function runMemoryExtraction(
             model: { providerId: selection.providerId, modelId: selection.modelId },
             usage: result.usage,
           })
-          if (signal.aborted) return 'cancelled'
+          if (signal.aborted || !authorized()) return 'cancelled'
           output = parseExtractionOutput(result.text)
           if (output !== null) break
         }
@@ -227,10 +267,13 @@ export async function runMemoryExtraction(
             output,
             conversationId,
             originMessageId: last.messageId,
+            snapshots,
+            userMessageIds: space.kind === 'personal' ? new Set(chunk.map((block) => block.messageId)) : undefined,
             ...(chunkOwner ? { owner: chunkOwner } : {}),
             signal,
+            authorized,
           })
-        if (signal.aborted) return 'cancelled'
+        if (signal.aborted || !authorized()) return 'cancelled'
         attempts = 0
         lastSeq = last.seq
         saveExtractionState({
@@ -245,7 +288,7 @@ export async function runMemoryExtraction(
         })
       }
     } catch (error) {
-      if (signal.aborted) return 'cancelled'
+      if (signal.aborted || !authorized()) return 'cancelled'
       saveExtractionState({
         ...state,
         spaceId: space.id,
@@ -267,10 +310,11 @@ export async function runMemoryExtraction(
       oneShot: deps.oneShot,
       now,
       signal,
+      authorized,
     }).catch(() => console.warn('[memory-extraction] Consolidation failed'))
-    return signal.aborted ? 'cancelled' : 'done'
+    return signal.aborted || !authorized() ? 'cancelled' : 'done'
   } catch {
-    if (signal.aborted) return 'cancelled'
+    if (signal.aborted || !authorized()) return 'cancelled'
     console.warn('[memory-extraction] Run failed')
     return 'failed'
   } finally {

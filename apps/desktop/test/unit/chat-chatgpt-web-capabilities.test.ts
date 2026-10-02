@@ -23,6 +23,18 @@ const servers: McpServer[] = [
 ]
 
 describe('ChatGPT Web capability policy', () => {
+  it('keeps personal memory opt-in and independent from project memory', () => {
+    const stored = { memory: 'read', personalMemory: 'write' } as ChatGptWebCapabilities
+    expect(resolveChatGptWebCapabilities(undefined, [], 'standalone').personalMemory).toBe('off')
+    expect(resolveChatGptWebCapabilities(stored, [], 'standalone')).toMatchObject({
+      memory: 'off', personalMemory: 'write',
+    })
+    expect(resolveChatGptWebCapabilities(stored, [], 'project').personalMemory).toBe('off')
+    const read = resolveChatGptWebCapabilities({ ...stored, personalMemory: 'read' }, [], 'standalone')
+    const write = resolveChatGptWebCapabilities(stored, [], 'standalone')
+    expect(chatGptWebCapabilityFingerprint(read, [])).not.toBe(chatGptWebCapabilityFingerprint(write, []))
+  })
+
   it('intersects standalone restrictions without changing browser or MCP preferences', () => {
     const policy = resolveChatGptWebCapabilities(
       {
@@ -55,6 +67,7 @@ describe('ChatGPT Web capability policy', () => {
       gh: 'read',
       conversation: 'off',
       memory: 'off',
+      personalMemory: 'off',
       browser: 'off',
       mcp: { jira: 'read', disabled: 'off' },
     })

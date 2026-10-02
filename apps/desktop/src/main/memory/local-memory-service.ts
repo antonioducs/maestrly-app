@@ -257,3 +257,13 @@ export function resolveLocalMemoryId(spaceId: string, idOrPrefix: string): strin
   if (rows.length === 1) return rows[0].id
   return rows.length > 1 ? 'ambiguous' : undefined
 }
+
+/** Complete enumeration for reconciliation/export; the public list API remains paginated. */
+export function listAllLocalMemories(workspaceId: string, filters: LocalMemoryFilters = {}): LocalMemory[] {
+  const result: LocalMemory[] = []
+  for (let offset = 0; ; offset += 500) {
+    const page = listLocalMemories(workspaceId, { ...filters, limit: 500, offset })
+    result.push(...page)
+    if (page.length < 500) return result
+  }
+}

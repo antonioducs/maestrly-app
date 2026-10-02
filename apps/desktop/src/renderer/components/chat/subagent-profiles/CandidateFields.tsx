@@ -27,6 +27,7 @@ export function CandidateFields({
   catalogRevision,
   density = 'compact',
   allowOff = false,
+  responsive = false,
   readOnly = false,
   onChange,
 }: {
@@ -34,6 +35,7 @@ export function CandidateFields({
   config: ChatConfig
   catalogRevision: number
   density?: 'compact' | 'comfortable'
+  responsive?: boolean
 
   allowOff?: boolean
 
@@ -113,7 +115,14 @@ export function CandidateFields({
   const selectContentClassName = density === 'comfortable' ? '[&_[role=option]]:text-sm [&_input]:text-sm' : undefined
 
   return (
-    <div className="grid min-w-0 flex-1 grid-cols-[minmax(110px,0.8fr)_minmax(140px,1.4fr)_minmax(150px,1fr)] gap-1.5">
+    <div
+      className={cn(
+        'grid min-w-0 flex-1 gap-1.5',
+        responsive
+          ? 'grid-cols-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_minmax(0,1fr)]'
+          : 'grid-cols-[minmax(110px,0.8fr)_minmax(140px,1.4fr)_minmax(150px,1fr)]'
+      )}
+    >
       <SearchSelect
         className={selectClassName}
         contentClassName={selectContentClassName}
@@ -181,7 +190,7 @@ export function CandidateFields({
           disabled={readOnly}
           onClick={() => onChange(changeSubagentProfileFastMode(candidate, candidate.fastMode !== true))}
           className={cn(
-            'col-span-3 inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-white/[0.05]',
+            'col-span-full inline-flex w-fit items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-white/[0.05]',
             candidate.fastMode === true
               ? 'bg-amber-500/10 text-amber-300 hover:bg-amber-500/15'
               : 'text-muted-foreground hover:text-foreground'
@@ -192,13 +201,15 @@ export function CandidateFields({
         </button>
       )}
       {noConfigurableEffort && !allowOff && (
-        <p className="col-span-3 text-[11px] text-amber-300">{t('subagentProfiles.noConfigurableEffort')}</p>
+        <p className="col-span-full text-[11px] text-amber-300">{t('subagentProfiles.noConfigurableEffort')}</p>
       )}
       {unavailableFable && (
-        <p className="col-span-3 text-[11px] text-red-300">{t('subagentProfiles.modelUnavailable')}</p>
+        <p className="col-span-full text-[11px] text-red-300">{t('subagentProfiles.modelUnavailable')}</p>
       )}
       {allowCustomEffort && !allowOff && candidate.effort && (
-        <p className="col-span-3 text-[11px] text-amber-300">{t('subagentProfiles.diagnostics.effort-unverified')}</p>
+        <p className="col-span-full text-[11px] text-amber-300">
+          {t('subagentProfiles.diagnostics.effort-unverified')}
+        </p>
       )}
     </div>
   )

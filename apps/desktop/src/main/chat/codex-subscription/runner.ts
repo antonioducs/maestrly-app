@@ -1,3 +1,4 @@
+import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { isBotMode } from '../../fleet/instance/config'
 import { buildMaestrlyBasePrompt } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
@@ -1580,7 +1581,12 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       if (isBotMode() && questions.some((question) => question.isSecret)) {
         throw new Error('Secret questions are not supported in fleet bot mode. Continue without requesting secrets.')
       }
-      emit({ kind: 'tool-input-start', messageId: route.messageId, toolCallId: visibleItemId, toolName: 'ask_question' })
+      emit({
+        kind: 'tool-input-start',
+        messageId: route.messageId,
+        toolCallId: visibleItemId,
+        toolName: 'ask_question',
+      })
       emit(
         {
           kind: 'tool-call',
@@ -1916,8 +1922,14 @@ async function buildDynamicTools(
         })
       : { tools: {}, close: async () => {} }
   const app =
-    !args.reviewerRuntime && (capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled
+    !args.reviewerRuntime &&
+    (((capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled) ||
+      hasPersonalMemoryTools(args.conversationId))
       ? await buildAppTools({
+          only:
+            appToolsEnabled && (capabilityMode === 'agent' || args.mode === 'maestro')
+              ? undefined
+              : PERSONAL_MEMORY_TOOLS,
           conversationId: args.conversationId,
           mode: args.mode,
           gate,

@@ -75,7 +75,7 @@ function bridge(label: string, overrides: Partial<Parameters<typeof createChatGp
 
 describe('multi-session companion router', () => {
   it('publishes one gateway catalog version bump', () => {
-    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('12')
+    expect(CHATGPT_WEB_TOOL_CATALOG_VERSION).toBe('13')
   })
   it('supports stateless MCP discovery probes', async () => {
     const router = createBridgeRouter()

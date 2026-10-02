@@ -15,6 +15,16 @@ vi.mock('../../src/main/store', () => ({
 import { registerMemoryIpc } from '../../src/main/memory-ipc'
 
 describe('registerMemoryIpc', () => {
+  it('validates personal settings before writing them', () => {
+    const { reg, mhandles } = createTestRegistrar()
+    registerMemoryIpc(reg)
+    const set = mhandles.get('personal-memory:settings-set')!
+    expect(() => set({} as never, { enabled: 'yes' })).toThrow('Invalid personal memory settings')
+    expect(() =>
+      set({} as never, { enabled: true, autoRecall: true, extraction: { enabled: true, selection: null } })
+    ).toThrow('memory-model-required')
+  })
+
   it('registers memory channels with the expected registrars', () => {
     const { reg, handles, mhandles, ons, mons } = createTestRegistrar()
 
@@ -31,6 +41,12 @@ describe('registerMemoryIpc', () => {
       'memory:read',
       'memory:search',
       'memory:shared-list',
+      'personal-memory:export',
+      'personal-memory:get',
+      'personal-memory:index-status-get',
+      'personal-memory:list',
+      'personal-memory:search',
+      'personal-memory:settings-get',
     ])
     expect([...mhandles.keys()].sort()).toEqual([
       'memory:archive',
@@ -42,6 +58,13 @@ describe('registerMemoryIpc', () => {
       'memory:restore',
       'memory:shared-open',
       'memory:update',
+      'personal-memory:archive',
+      'personal-memory:create',
+      'personal-memory:forget',
+      'personal-memory:index-rebuild',
+      'personal-memory:restore',
+      'personal-memory:settings-set',
+      'personal-memory:update',
     ])
     expect([...ons.keys()]).toEqual([])
     expect([...mons.keys()].sort()).toEqual(['memory:enabled-set', 'memory:write'])

@@ -407,7 +407,16 @@ describe('MCP app tools inventory', () => {
     expect(names).toContain('notes_write_page')
     expect(names).toContain('terminal_create')
     expect(names).toContain('browser_navigate')
-    expect(names.some((name) => /^(project_notes_|memory_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
+    expect(names.filter((name) => name.startsWith('memory_')).sort()).toEqual([
+      'memory_archive',
+      'memory_forget',
+      'memory_list',
+      'memory_read',
+      'memory_restore',
+      'memory_search',
+      'memory_upsert',
+    ])
+    expect(names.some((name) => /^(project_notes_|board_|kanban_|get_linked_kanban)/.test(name))).toBe(false)
   })
 
   it('keeps the registered tool names and input schema shapes stable', async () => {
