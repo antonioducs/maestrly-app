@@ -937,10 +937,11 @@ describe('Codex subscription runner', () => {
           ? request.developerInstructions.slice(0, -memoryCore.length)
           : request.developerInstructions
         expect(createHash('sha256').update(base.replaceAll(cwd, '<cwd>')).digest('hex')).toBe(
-          'a0e1ada60acc099b0a99fb4c09869a14ac8b9cc0ff5ba2efb4b02af7776cd613'
+          '13d3b6724979a2d28998d0ad7d13246131d9008d4dae384d88b53958f28cbb74'
         )
         expect(request.baseInstructions).toBeUndefined()
         expect(request.developerInstructions).toContain('general assistant')
+        expect(request.developerInstructions).toContain('when start_conversations is exposed')
         expect(request.developerInstructions).not.toContain('PRIVATE FILE MUST NOT BECOME INSTRUCTIONS')
         expect(request.developerInstructions).not.toContain('# Durable project memory')
         expect(request.developerInstructions).toContain('app tools are disabled')

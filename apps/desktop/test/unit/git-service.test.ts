@@ -31,6 +31,9 @@ import {
   getDefaultBranch,
   currentGitHead,
   resolveCommit,
+  resolveDispatchBranch,
+  isValidDispatchBranch,
+  removeDispatchWorktree,
 } from '../../src/main/git-service'
 import { worktreeRelPath, workspaceDataRelPath } from '../../src/main/app-paths'
 
@@ -502,5 +505,163 @@ describe('excludeFromGitInfo', () => {
     const notRepo = mkdtempSync(path.join(os.tmpdir(), 'notrepo-'))
     await expect(excludeFromGitInfo(notRepo, ['.x'])).resolves.toBeUndefined()
     rmSync(notRepo, { recursive: true, force: true })
+  })
+})
+
+describe('dispatch branch resolution and ownership', () => {
+  it('resolves qualified remote bases even when a local branch has the same name', async () => {
+    const local = git(repo, ['rev-parse', 'HEAD'])
+    git(repo, ['update-ref', 'refs/remotes/origin/main', local])
+    writeFileSync(path.join(repo, 'local.txt'), 'local-only commit\n')
+    git(repo, ['add', '-A'])
+    git(repo, ['commit', '-qm', 'local change'])
+    expect(await resolveDispatchBranch(repo, 'origin/main')).toBe(local)
+    expect(await resolveDispatchBranch(repo, 'main')).toBe(git(repo, ['rev-parse', 'HEAD']))
+    const inventory = await listBranches(repo, { includeLocalRemotes: true })
+    expect(inventory.remoteRefs).toContainEqual({ remote: 'origin', name: 'main', ref: 'refs/remotes/origin/main' })
+  })
+
+  it('exposes qualified remote names that disambiguate remote-only bases', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    git(repo, ['update-ref', 'refs/remotes/origin/release', head])
+    git(repo, ['update-ref', 'refs/remotes/upstream/release', head])
+    expect(await resolveDispatchBranch(repo, 'release')).toBe(null)
+    const inventory = await listBranches(repo, { includeLocalRemotes: true })
+    for (const ref of inventory.remoteRefs) {
+      expect(await resolveDispatchBranch(repo, `${ref.remote}/${ref.name}`)).toBe(head)
+    }
+  })
+
+  it('resolves literal branches and rejects revision expressions and missing refs', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    expect(await resolveDispatchBranch(repo, 'main')).toBe(head)
+    git(repo, ['update-ref', 'refs/remotes/origin/remote-only', head])
+    expect(await resolveDispatchBranch(repo, 'remote-only')).toBe(head)
+    for (const branch of ['main~1', 'main^{commit}', '--help', '@{-1}', 'refs/heads/main', 'bad name']) {
+      expect(await isValidDispatchBranch(branch)).toBe(false)
+      expect(await resolveDispatchBranch(repo, branch)).toBe(null)
+    }
+    expect(await resolveDispatchBranch(repo, 'missing')).toBe(null)
+    expect(await resolveDispatchBranch(repo, head)).toBe(null)
+    git(repo, ['tag', 'tag-only'])
+    expect(await resolveDispatchBranch(repo, 'tag-only')).toBe(null)
+  })
+
+  it('preserves existing branches and paths on exclusive allocation failure', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    const dest = path.join(ext, 'owned')
+    mkdirSync(dest)
+    writeFileSync(path.join(dest, 'keep'), 'user data')
+    await expect(
+      createWorktree({
+        top: repo,
+        branch: 'new',
+        base: 'main',
+        isNewBranch: true,
+        exclusive: true,
+        baseRevision: head,
+        dest,
+      })
+    ).rejects.toThrow(/destination already exists/)
+    expect(readFileSync(path.join(dest, 'keep'), 'utf8')).toBe('user data')
+    git(repo, ['branch', 'existing'])
+    await expect(
+      createWorktree({
+        top: repo,
+        branch: 'existing',
+        base: 'main',
+        isNewBranch: true,
+        exclusive: true,
+        baseRevision: head,
+        dest: path.join(ext, 'new'),
+      })
+    ).rejects.toThrow(/branch already exists/)
+    expect(git(repo, ['rev-parse', 'existing'])).toBe(head)
+  })
+
+  it('keeps the winning allocation when two callers race for the same branch', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    const results = await Promise.allSettled(
+      ['one', 'two'].map((name) =>
+        createWorktree({
+          top: repo,
+          branch: 'race',
+          base: 'main',
+          isNewBranch: true,
+          exclusive: true,
+          baseRevision: head,
+          dest: path.join(ext, name),
+        })
+      )
+    )
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    const winner = results.find((result) => result.status === 'fulfilled') as PromiseFulfilledResult<string>
+    expect(git(winner.value, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(repo, ['rev-parse', 'race'])).toBe(head)
+  })
+
+  it('removes a confirmed allocation but refuses mismatched ownership and dirty worktrees', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    const dest = await createWorktree({
+      top: repo,
+      branch: 'owned',
+      base: 'main',
+      isNewBranch: true,
+      exclusive: true,
+      baseRevision: head,
+      dest: path.join(ext, 'owned'),
+    })
+    await expect(removeDispatchWorktree(repo, dest, 'main', head)).rejects.toThrow(/ownership changed/)
+    writeFileSync(path.join(dest, 'keep'), 'user data')
+    await expect(removeDispatchWorktree(repo, dest, 'owned', head)).rejects.toThrow()
+    expect(readFileSync(path.join(dest, 'keep'), 'utf8')).toBe('user data')
+    expect(git(repo, ['rev-parse', 'owned'])).toBe(head)
+    rmSync(path.join(dest, 'keep'))
+    await removeDispatchWorktree(repo, dest, 'owned', head)
+    expect(existsSync(dest)).toBe(false)
+    expect(await resolveDispatchBranch(repo, 'owned')).toBe(null)
+  })
+
+  it('atomically reserves a dispatch path when separate branches race for the same directory', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    const dest = path.join(ext, 'reserved')
+    const results = await Promise.allSettled(
+      ['one', 'two'].map((branch) =>
+        createWorktree({
+          top: repo,
+          branch,
+          base: 'main',
+          isNewBranch: true,
+          exclusive: true,
+          baseRevision: head,
+          dest,
+          reserveDestination: true,
+        })
+      )
+    )
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(git(dest, ['rev-parse', 'HEAD'])).toBe(head)
+    expect((await listWorktrees(repo)).filter((tree) => tree.path === dest)).toHaveLength(1)
+  })
+
+  it('leaves an orphaned hook failure intact for explicit recovery', async () => {
+    const head = git(repo, ['rev-parse', 'HEAD'])
+    installPostCheckoutHook(repo, 'exit 1')
+    const dest = path.join(ext, 'orphan')
+    await expect(
+      createWorktree({
+        top: repo,
+        branch: 'orphan',
+        base: 'main',
+        isNewBranch: true,
+        exclusive: true,
+        baseRevision: head,
+        dest,
+      })
+    ).rejects.toThrow()
+    expect(git(repo, ['rev-parse', 'orphan'])).toBe(head)
+    expect(existsSync(dest)).toBe(true)
   })
 })

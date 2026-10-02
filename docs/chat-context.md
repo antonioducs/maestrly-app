@@ -109,7 +109,7 @@ keeps the plan.
 
 ### By asking the agent
 
-In an Agent or Design turn you can ask for new conversations in plain language,
+In an Agent, Design or Ask turn you can ask for new conversations in plain language,
 for example:
 
 - "Open one conversation for each of these cards and start development with
@@ -117,8 +117,15 @@ for example:
 - "Abra uma conversa para cada card e comece o desenvolvimento."
 - "Send this plan to a new conversation."
 
+Ask exposes these handoff tools only when your message explicitly asks to start
+conversations or send work to a project. Your current chat stays in Ask mode;
+the development conversation starts in Agent mode. File editing and shell
+commands remain unavailable in the source Ask chat.
+
 The agent starts conversations only when your latest message explicitly asks for
-them. It does not start them when you ask for analysis or planning, ask whether
+them, including an explicit handoff such as “Send this plan for development in
+workspace Example, on a new branch feat/example from main.” It does not start
+them when you ask for analysis or planning, ask whether
 it is possible, give an example, describe a feature, or quote text, code or card
 content. If you state a number ("open 3 conversations"), no more than that are
 started for that message. When the request is not explicit, the agent tells you
@@ -135,7 +142,23 @@ never means low effort.
 
 By default each task gets its own worktree and branch (`task/<title>-<id>`) from
 the current commit; uncommitted changes are not included. You can ask for the
-same checkout instead. Each new conversation receives a self-contained task
+same checkout instead when staying in the source project without a target.
+
+From standalone or project chats, you can choose a registered workspace. The
+agent discovers workspace names, paths, default branches and available branches,
+uses the canonical workspace ID, and asks when names are ambiguous. Standalone
+chats require a workspace choice. Targeting a workspace, a new branch or a base
+branch always creates a worktree; **Same checkout** is unavailable with a target.
+An explicit target starts from its workspace's configured default branch unless
+you choose a base such as `main`. The base is resolved and pinned in the target
+repository: a local branch takes precedence, and qualified remote names such as
+`origin/main` use the locally fetched remote reference. Dispatch does not fetch
+remote updates. Ambiguous remote-only names require choosing a qualified name.
+A project request without a target retains the current-commit behavior.
+Only branch/base and model/effort/Fast settings you choose are passed explicitly.
+Batch target fields apply to all tasks unless a task overrides them.
+
+Each new conversation receives a self-contained task
 from the agent, marked **Started from another conversation**, rather than a
 copy of this transcript. The agent's reply lists each conversation with its
 status and an **Open** link.
@@ -149,11 +172,16 @@ it in that conversation.
 ### Limits
 
 Up to 20 conversations can be started per request; ask again for more.
-Starting conversations requires a local project conversation. It is unavailable
-in standalone chats, bot conversations, Kanban web chats, archived
+Starting conversations is available in Agent/Design mode in local standalone
+and project chats. It is unavailable in Plan and Maestro modes,
+bot conversations, Kanban web chats, archived
 conversations, conversations with an unfinished migration and multi-repository
 conversations, and the app gives the reason. A review loop blocks only the
-**Same checkout** option. Card contents come from whatever the agent can
+**Same checkout** option. Missing or unknown workspace IDs, invalid or existing
+branch names, unresolved base branches, and targets combined with **Same
+checkout** are reported as errors rather than silently choosing another target.
+Results identify the destination workspace and resolved base revision.
+Card contents come from whatever the agent can
 already read, such as a connected MCP server or text you paste; no Jira
 integration is added. Nothing is pushed, opened as a pull request or merged
 automatically.

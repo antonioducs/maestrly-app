@@ -281,9 +281,9 @@ export async function createConversation(args: CreateConversationArgs): Promise<
       branch: args.branch,
       base,
       isNewBranch: args.isNewBranch,
-      dest: externalWorktreeDir(ws.id, args.branch),
+      dest: externalWorktreeDir(ws.id, args.baseRevision && args.id ? `dispatch-${args.id}` : args.branch),
       // A pinned task branch must be new: never attach to an existing branch or checkout.
-      ...(args.baseRevision ? { baseRevision: args.baseRevision, exclusive: true } : {}),
+      ...(args.baseRevision ? { baseRevision: args.baseRevision, exclusive: true, reserveDestination: !!args.id } : {}),
     })
     branch = args.branch
   } else {
