@@ -605,6 +605,11 @@ export const fleetInstanceProfileSchema = z.object({
   selection: fleetSelectionSchema.nullable(),
   compaction: fleetCompactionConfigSchema.nullable().default(null),
   gateway: z.object({ peersEnabled: z.boolean(), artifactsEnabled: z.boolean().default(false) }),
+  /** The bot's color, for its desktop. Gateways from before the unified desktop send none. */
+  tint: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
 /** Installs or updates a bot in an environment instance: its profile, its display slot and its own gateway token. */

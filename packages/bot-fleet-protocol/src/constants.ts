@@ -174,6 +174,12 @@ export const FLEET_REASONING_QUERY = 'reasoning'
  * Codex runtimes and can be asked to check for newer releases.
  */
 export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
+/**
+ * Instance capability: each bot has one desktop, its apps display, where the environment's Maestrly browser is
+ * presented beside its other programs. Screens open its `apps` surface; images without it keep separate Browser and
+ * Apps areas.
+ */
+export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
 export const FLEET_RUNTIME_IDS = ['claude-code', 'codex'] as const
 /** The release channel of a runtime, as the desktop reports it (`RuntimeAssetUpdateState`). */
 export const FLEET_RUNTIME_STATES = [

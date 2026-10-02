@@ -21,6 +21,7 @@ import {
   FLEET_ENVIRONMENT_UPDATES_FEATURE,
   FLEET_RUNTIME_IDS,
   FLEET_RUNTIME_UPDATES_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
   type FleetRoute,
   fleetRuntimeInfoSchema,
   fleetRuntimesCheckResponseSchema,
@@ -202,6 +203,21 @@ describe('domain contracts', () => {
         gateway: { peersEnabled: true, artifactsEnabled: 'true' },
       }).success
     ).toBe(false)
+  })
+
+  it('names the unified desktop capability and accepts an optional bot tint', () => {
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask',
+      selection: null,
+      gateway: { peersEnabled: true },
+    }
+    expect(FLEET_UNIFIED_DESKTOP_FEATURE).toBe('unified-desktop')
+    expect(fleetInstanceProfileSchema.parse(profile).tint).toBeUndefined()
+    expect(fleetInstanceProfileSchema.parse({ ...profile, tint: '#8b6cf0' }).tint).toBe('#8b6cf0')
+    expect(() => fleetInstanceProfileSchema.parse({ ...profile, tint: 'purple' })).toThrow()
   })
 
   it('exports the fleet egress modes and environment keys', () => {

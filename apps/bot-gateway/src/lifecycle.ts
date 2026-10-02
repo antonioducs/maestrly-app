@@ -545,6 +545,7 @@ export class Lifecycle {
         peersEnabled: bot.talksTo.length > 0,
         artifactsEnabled: bot.publishArtifacts && this.artifactsEnabled(),
       },
+      tint: bot.tint,
     }
   }
   private insertEnvironment(name: string, memoryLimitBytes: number | null, at: string): string {
